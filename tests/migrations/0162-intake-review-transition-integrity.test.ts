@@ -46,7 +46,7 @@ describe("0162 — intake review transition integrity (APPLIED, checksum frozen)
     expect(
       createHash("sha256").update(SQL).digest("hex"),
       "0162 is APPLIED in production with this checksum. Never edit an applied " +
-        "migration — write a new one (next free is 0165).",
+        "migration — write a new one (next free is 0166).",
     ).toBe(APPLIED_SHA);
     const ledger = readFileSync(
       join(process.cwd(), "docs/production/migration-ledger.md"),

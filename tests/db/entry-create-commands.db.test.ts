@@ -260,6 +260,32 @@ describe("0164 — EXECUTE is authenticated-only", () => {
     expect(r.rows[0].auth_x).toBe(true);
   });
 
+  it("0165: service_role EXECUTE is REVOKED, and the full ACL is exact", async () => {
+    // 0164 left service_role holding EXECUTE (Supabase's ALTER DEFAULT
+    // PRIVILEGES grants it at create time and 0164 revoked only public+anon).
+    // 0165 repairs it. This asserts the whole ACL, not just one probe, so a
+    // future grant to any role fails here.
+    const r = await adminQuery(
+      `select has_function_privilege('authenticated', p.oid, 'execute') as auth_x,
+              has_function_privilege('anon',          p.oid, 'execute') as anon_x,
+              has_function_privilege('service_role',  p.oid, 'execute') as svc_x,
+              (select count(*)::int from aclexplode(p.proacl) a where a.grantee = 0) as public_entries,
+              (select string_agg(a.grantee::regrole::text, ',' order by a.grantee::regrole::text)
+                 from aclexplode(p.proacl) a) as grantees,
+              pg_get_userbyid(p.proowner) as owner
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname='public' and p.proname='create_laser_entry'`,
+    );
+    expect(r.rows[0].auth_x, "authenticated keeps EXECUTE").toBe(true);
+    expect(r.rows[0].anon_x, "anon must not hold EXECUTE").toBe(false);
+    expect(r.rows[0].svc_x, "0165 revokes service_role EXECUTE").toBe(false);
+    expect(r.rows[0].public_entries, "PUBLIC must hold no EXECUTE").toBe(0);
+    expect(r.rows[0].grantees, "exactly postgres + authenticated remain").toBe(
+      "authenticated,postgres",
+    );
+    expect(r.rows[0].owner, "postgres ownership is preserved").toBe("postgres");
+  });
+
   it("it is SECURITY DEFINER with a pinned empty search_path", async () => {
     const r = await adminQuery(
       `select p.prosecdef, array_to_string(p.proconfig, ',') as cfg
