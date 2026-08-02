@@ -74,6 +74,7 @@ describe("PR CI — path-aware lane selection", () => {
     for (const job of [
       "validate",
       "db-integration",
+      "browser-e2e-shard",
       "browser-e2e",
       "payment-browser-e2e",
       "mobile-completion-e2e",
@@ -81,9 +82,39 @@ describe("PR CI — path-aware lane selection", () => {
     ]) {
       expect(jobs, `${job} must still exist`).toContain(job);
     }
-    // Six gated lanes, each declaring `needs: changes` and an `if:`.
+    // Six gated lanes declare `needs: changes` + an `if:` on classifier output.
     expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(6);
     expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(6);
+  });
+
+  it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
+    // Branch protection must never depend on "browser shard 1 (extended)".
+    expect(CI).toMatch(/ {2}browser-e2e:\n {4}name: browser e2e \(local stack\)/);
+    expect(CI).toMatch(/needs: \[changes, browser-e2e-shard\]/);
+    expect(CI).toMatch(/if: always\(\)/);
+  });
+
+  it("the aggregator fails on a failed or cancelled shard and passes on a legitimate skip", () => {
+    expect(CI).toMatch(/needs\.browser-e2e-shard\.result/);
+    expect(CI).toMatch(/skipped\)/);
+    expect(CI).toMatch(/browser_run.*= "true".*exit 1|exit 1/s);
+    expect(CI).toMatch(/all browser shards passed/);
+  });
+
+  it("extended coverage is split across two separate shard jobs", () => {
+    expect(CI).toMatch(/browser_shards=\$\{r\.extended \? "\[1,2\]" : "\[1\]"\}/);
+    expect(CI).toMatch(/--shard=\$\{\{ matrix\.shard \}\}\/2/);
+    expect(CI).toMatch(/fromJson\(needs\.changes\.outputs\.browser_shards\)/);
+  });
+
+  it("shard traces are uploaded independently", () => {
+    expect(CI).toMatch(/playwright-traces-shard-\$\{\{ matrix\.shard \}\}/);
+  });
+
+  it("emits timing diagnostics including a timeout hint", () => {
+    expect(CI).toMatch(/Timing diagnostics/);
+    expect(CI).toMatch(/test duration \(s\)/);
+    expect(CI).toMatch(/exceeded its timeout budget/);
   });
 
   it("docs-only skips the build/unit lane", () => {
@@ -95,15 +126,38 @@ describe("PR CI — path-aware lane selection", () => {
     expect(forced.length).toBeGreaterThanOrEqual(5);
   });
 
-  it("keeps concurrency cancellation for superseded PR runs", () => {
-    expect(CI).toMatch(/concurrency:/);
+  it("keeps PR-scoped concurrency cancellation for superseded runs", () => {
+    expect(CI).toMatch(
+      /group: hone-pr-ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}/,
+    );
     expect(CI).toMatch(/cancel-in-progress: true/);
+  });
+
+  it("honours the documented latency budgets", () => {
+    const budget = (job: string): number => {
+      const m = new RegExp(`  ${job}:\\n(?:.*\\n)*?    timeout-minutes: (\\d+)`).exec(CI);
+      return m ? Number(m[1]) : -1;
+    };
+    expect(budget("changes")).toBeLessThanOrEqual(2);
+    expect(budget("validate")).toBeLessThanOrEqual(8);
+    expect(budget("db-integration")).toBeLessThanOrEqual(8);
+    expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(10);
+    expect(budget("google-browser-e2e")).toBeLessThanOrEqual(10);
+    expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
+    // Targeted 8 / extended 10, expressed conditionally.
+    expect(CI).toMatch(/timeout-minutes: \$\{\{ needs\.changes\.outputs\.browser_extended == 'true' && 10 \|\| 8 \}\}/);
   });
 
   it("every job declares an explicit timeout", () => {
     const jobCount = jobNames(CI).length;
     const timeouts = (CI.match(/^ {4}timeout-minutes:/gm) ?? []).length;
     expect(timeouts).toBe(jobCount);
+  });
+
+  it("exposes the browser selection as job outputs", () => {
+    for (const k of ["browser_run", "browser_extended", "browser_specs", "browser_shards", "browser_reason"]) {
+      expect(CI, `${k} must be a job output`).toMatch(new RegExp(`${k}: \\$\\{\\{ steps\\.browser\\.outputs\\.${k} \\}\\}`));
+    }
   });
 });
 

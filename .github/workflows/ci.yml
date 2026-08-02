@@ -32,7 +32,9 @@ on:
 # Keeps CI minutes bounded and stops a slow run from blocking the
 # next attempt.
 concurrency:
-  group: ci-${{ github.ref }}
+  # PR-scoped so a new push to the SAME pull request cancels its superseded run.
+  # Nightly/manual concurrency is separate (see nightly.yml).
+  group: hone-pr-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,7 +47,7 @@ jobs:
   changes:
     name: changed-path detection
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       application: ${{ steps.classify.outputs.application }}
@@ -57,6 +59,11 @@ jobs:
       mobile: ${{ steps.classify.outputs.mobile }}
       ci_workflows: ${{ steps.classify.outputs.ci_workflows }}
       full_matrix_required: ${{ steps.classify.outputs.full_matrix_required }}
+      browser_run: ${{ steps.browser.outputs.browser_run }}
+      browser_extended: ${{ steps.browser.outputs.browser_extended }}
+      browser_specs: ${{ steps.browser.outputs.browser_specs }}
+      browser_shards: ${{ steps.browser.outputs.browser_shards }}
+      browser_reason: ${{ steps.browser.outputs.browser_reason }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -88,13 +95,42 @@ jobs:
         id: classify
         run: node scripts/classify-changes.mjs --files-from changed.txt --github-output
 
+      - name: Select browser groups
+        id: browser
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            (async () => {
+              const m = await import("./scripts/browser-groups.mjs");
+              const files = fs.readFileSync("changed.txt","utf8").split("\n").filter(Boolean);
+              const r = m.selectBrowserGroups(files);
+              const specs = m.specsForGroups(r.groups);
+              const out = [
+                `browser_run=${r.groups.length > 0}`,
+                `browser_extended=${r.extended}`,
+                `browser_specs=${specs ? specs.map(s => "e2e/" + s).join(" ") : ""}`,
+                // Extended coverage is split across two SEPARATE JOBS, so each
+                // shard gets its own runner and its own Supabase stack. That
+                // preserves the isolation the single-worker config protects.
+                `browser_shards=${r.extended ? "[1,2]" : "[1]"}`,
+                `browser_reason=${r.reason.replace(/\n/g," ").slice(0,300)}`,
+              ].join("\n");
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, out + "\n");
+              console.log(out);
+            })();
+          '
+
+      - name: Plan summary
+        run: node scripts/ci-plan.mjs --files "$(paste -sd, changed.txt)" || true
+
 
   validate:
     name: typecheck / lint / build / test / safety gates
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
 
     # Dummy / test-safe env values. The build and test harness do not
     # need real Supabase / Stripe / Resend / Twilio / cron credentials
@@ -192,7 +228,7 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 8
 
     steps:
       - name: Checkout repository
@@ -269,12 +305,19 @@ jobs:
   # refuses hosted URLs by construction (e2e/helpers/local-env.ts);
   # no external service is called; live payments stay structurally
   # disabled. Separate job: a flake here never blocks the fast lane.
-  browser-e2e:
-    name: browser e2e (local stack)
+  browser-e2e-shard:
+    # Dynamic name — branch protection must NOT depend on it. The stable
+    # required check is the `browser-e2e` aggregator at the end of this file.
+    name: browser shard ${{ matrix.shard }} (${{ needs.changes.outputs.browser_extended == 'true' && 'extended' || 'targeted' }})
     needs: changes
-    if: ${{ needs.changes.outputs.browser_core == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
+    if: ${{ needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Targeted PR lane budget is 8 min; an extended shard is allowed 10.
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 10 || 8 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(needs.changes.outputs.browser_shards) }}
 
     steps:
       - name: Checkout repository
@@ -315,8 +358,22 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Browser E2E (core memory loop)
-        run: npm run test:e2e
+      - name: Record setup duration
+        id: setup_done
+        run: echo "at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Browser E2E (${{ needs.changes.outputs.browser_extended == 'true' && 'extended shard' || 'targeted groups' }})
+        id: e2e
+        run: |
+          set -euo pipefail
+          echo "reason: ${{ needs.changes.outputs.browser_reason }}"
+          if [ "${{ needs.changes.outputs.browser_extended }}" = "true" ]; then
+            echo "extended coverage — native Playwright shard ${{ matrix.shard }} of 2"
+            npx playwright test --shard=${{ matrix.shard }}/2
+          else
+            echo "targeted specs: ${{ needs.changes.outputs.browser_specs }}"
+            npx playwright test ${{ needs.changes.outputs.browser_specs }}
+          fi
         env:
           # Enables the guarded fake-Resend transport for the welcome-email
           # contracts (success / provider-rejection / provider-exception /
@@ -329,9 +386,52 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-traces
+          # Per-shard so two shards never clobber each other's artifact.
+          name: playwright-traces-shard-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
+
+      - name: Timing diagnostics
+        if: always()
+        run: |
+          NOW=$(date +%s)
+          SETUP_END=${{ steps.setup_done.outputs.at }}
+          echo "shard              : ${{ matrix.shard }}"
+          echo "mode               : ${{ needs.changes.outputs.browser_extended == 'true' && 'extended (sharded)' || 'targeted' }}"
+          echo "selected specs     : ${{ needs.changes.outputs.browser_specs }}"
+          echo "selection reason   : ${{ needs.changes.outputs.browser_reason }}"
+          echo "test duration (s)  : $(( NOW - SETUP_END ))"
+          echo "job outcome        : ${{ steps.e2e.outcome }}"
+          if [ "${{ steps.e2e.outcome }}" = "cancelled" ]; then
+            echo "NOTE: cancelled — most likely the job exceeded its timeout budget."
+          fi
+
+  # Stable required check. Branch protection points HERE, never at a dynamic
+  # shard name. It succeeds only when every required shard succeeded or was
+  # legitimately skipped, and fails if any shard failed or was cancelled.
+  browser-e2e:
+    name: browser e2e (local stack)
+    needs: [changes, browser-e2e-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Aggregate browser shard results
+        run: |
+          RESULT="${{ needs.browser-e2e-shard.result }}"
+          echo "shard job result: $RESULT"
+          echo "browser lane requested: ${{ needs.changes.outputs.browser_run }}"
+          case "$RESULT" in
+            success)
+              echo "all browser shards passed"; exit 0 ;;
+            skipped)
+              if [ "${{ needs.changes.outputs.browser_run }}" = "true" ]; then
+                echo "shards were skipped but the diff required browser coverage"; exit 1
+              fi
+              echo "no browser coverage required for this diff — satisfied"; exit 0 ;;
+            *)
+              echo "browser shards did not pass (result: $RESULT)"; exit 1 ;;
+          esac
 
   # PR #419. Dedicated payment browser E2E lane. Same LOCAL-only posture as
   # browser-e2e (local Next production build + local Supabase, no secrets, no
@@ -346,7 +446,7 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -426,7 +526,7 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -497,7 +597,7 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository

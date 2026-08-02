@@ -116,6 +116,38 @@ protection — it does not silently disappear.
 weakened. Run it manually before a deliberate release candidate, or whenever you
 doubt a risk classification.
 
+### Know the scope before you test
+
+```bash
+npm run ci:plan              # what CI will run for this diff, and why
+npm run verify:changed       # run the focused local checks that diff warrants
+npm run verify:changed -- --plan   # dry run, execute nothing
+```
+
+**Use `ci:plan` output rather than inventing test scope by hand.** The CI
+classifier and the local verifier share one path map (`scripts/classify-changes.mjs`
++ `scripts/browser-groups.mjs`); there is deliberately no second competing map,
+so local expectations cannot drift from CI behaviour.
+
+### Browser coverage is selected, not blanket
+
+Measured: `browser e2e (local stack)` was **15.9–16.8 min**, of which **14.2 min
+was the single test step** — 53 specs running serially (`workers: 1`). Setup was
+only ~2.6 min, so caching setup was never the win.
+
+Now: a PR runs only the browser **groups** its diff can affect (plus `smoke`),
+and genuinely broad runs are **sharded across two separate jobs** — separate
+runners mean separate Supabase stacks, preserving the isolation the
+single-worker config protects.
+
+Shared paths (`e2e/helpers/**`, `playwright.config.*`, `lib/supabase/**`,
+`middleware.*`, app shell, `package.json`, `.github/workflows/**`) force
+**extended** coverage. Unattributable application code **fails safe to extended**
+— never to a narrow group.
+
+The required check is the stable `browser e2e (local stack)` **aggregator**.
+Branch protection must never point at a dynamic shard name.
+
 ### Local testing by migration risk class
 
 1. **Privilege-only / comment-only / metadata-only** — source-contract test,
@@ -139,7 +171,37 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
 
 ---
 
-## 4. Production safety
+## 4. CI watchers and delivery ceremony
+
+- **Exactly one active watcher per PR head.** Starting a new one requires
+  stopping any stale watcher first.
+- **Never poll in parallel** with a watcher, and never re-check a running job
+  repeatedly. Report only when a run **settles**, or on a genuine
+  timeout/failure.
+- **A superseded head's watcher must terminate.** When you push a new head,
+  cancel the superseded GitHub Actions run rather than letting it burn minutes.
+- **Conditional exact-head merge authorization is honoured as given.** If the
+  user authorizes a merge at an exact head, merge at that head once CI settles
+  green — do not re-ask. A **changed head invalidates the authorization**.
+- **No post-merge full CI rerun.** After merging, verify only: branch
+  containment, deployment success where applicable, and a clean tree.
+- **Green CI is not merge authorization.**
+
+Every required job has a latency budget; a job exceeding it **fails clearly**
+rather than appearing stuck:
+
+| Job | Budget |
+|---|---|
+| changed-path detection | 2 min |
+| validate (typecheck/lint/build/unit) | 8 min |
+| db integration | 8 min |
+| targeted browser lane | 8 min |
+| extended browser shard | 10 min |
+| payment / Google / mobile | 10 min each |
+
+---
+
+## 5. Production safety
 
 - No production write or migration without explicit, per-change authorization.
 - Read-only production SQL is `supabase db query --linked`. Never `db execute`.
