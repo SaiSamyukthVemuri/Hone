@@ -125,8 +125,13 @@ describe("(P1-1) galvanic intensity is retired from every current write surface"
     expect(
       (BLOCK_ACTIONS.match(/galvanic_intensity_percent:\s*null/g) ?? []).length,
     ).toBe(2);
-    // Add-another-pass insert forces NULL and never reads a forged form field.
-    expect(ACTIONS).toMatch(/galvanic_intensity_percent:\s*null/);
+    // L18 Phase 1A: add-another-pass now writes through the 0164 command
+    // `create_electrolysis_entry`, which takes NO galvanic_intensity_percent
+    // parameter at all and always stores NULL server-authoritatively. That is
+    // STRONGER than the previous `galvanic_intensity_percent: null` literal —
+    // the value is not merely forced, it is inexpressible by the caller.
+    expect(ACTIONS).toMatch(/rpc\(\s*\n?\s*"create_electrolysis_entry"/);
+    expect(ACTIONS).not.toMatch(/p_galvanic_intensity_percent/);
     expect(ACTIONS).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
   });
 });

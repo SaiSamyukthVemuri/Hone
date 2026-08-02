@@ -4,8 +4,9 @@ Hone uses Supabase Postgres. **As of 2026-08-02 the production migration max = 0
 (`0163_revoke_authenticated_intake_insert.sql`) — 162 applied, each exactly once, `0162`
 immediately preceding `0163`. `0158` is deliberately skipped and will never be applied.
 `0163` was applied 2026-08-02, independently verified, and is now **frozen**, as is `0162`
-before it. The repository max is also **0163**, so repository and hosted migration state
-**match**; the next migration number is **0164**.**
+before it. The **repository max is now 0164** (`0164_clean_entry_create_commands.sql`), which is
+written and tested but **NOT APPLIED**, so repo max and hosted max deliberately differ until it
+is applied; the next migration number is **0165**.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -28,13 +29,39 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 - File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration
   number is one above the current repo max — see the
-  [migration ledger](./production/migration-ledger.md). **Current repo max `0163`, so the next is
-  `0164`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
+  [migration ledger](./production/migration-ledger.md). **Current repo max `0164`, so the next is
+  `0165`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
   anywhere it can go stale: derive it from
   `supabase/migrations/` (as `scripts/verify-production.mjs` does).
-  **Repo and hosted are at parity: both are `0163`.** `0163` was applied 2026-08-02 and is
-  frozen — see the intake INSERT boundary entry below and
-  [known-limitations L22](./production/known-limitations.md).
+  **Note the repo/hosted split right now: repo max is `0164`, hosted (production) max is
+  `0163`.** `0164` is written and tested but **NOT APPLIED** — see the clinical entry command
+  boundary entry below and [known-limitations L18](./production/known-limitations.md).
+
+**Clinical entry command boundary (0164 — WRITTEN, NOT APPLIED).** L18 Phase 1A. `authenticated`
+holds direct row DML on five clinical tables; closing that means moving every legitimate runtime
+writer onto narrow reviewed commands FIRST, deploying them, and only then revoking the grants.
+`0164` is the first step and is **purely additive — it revokes nothing**. It adds two SECURITY
+DEFINER commands with `search_path = ''`: **`create_electrolysis_entry`** and
+**`create_laser_entry`**. Each requires a non-null `auth.uid()`, resolves `studio_id` and
+`client_id` from the trusted `sessions` row (never from a parameter), requires the caller to be an
+**ACTIVE practitioner of that same studio** matched by `auth.uid()`, re-checks the asserted client
+against the session's real client, and — for electrolysis — refuses a block belonging to another
+session and a probe lot outside the studio. Neither takes a studio, practitioner or actor
+parameter, so attribution is not expressible by the caller. Every clinical value passes through
+verbatim, so the existing CHECK constraints and the 0119/0159/0160 guard triggers remain the only
+validation authority. `galvanic_intensity_percent` is retired and is **not a parameter at all** —
+new rows always store NULL. EXECUTE is revoked from `PUBLIC` and `anon` and granted to
+`authenticated` only; there is deliberately **no service-role command**, because ordinary
+practitioner charting must not run through an admin client.
+**Scope:** only the two cleanly separable writers (`addElectrolysisEntryAction`,
+`addLaserEntryAction`) were migrated. `createTreatmentAreaWithEntryAction` and
+`updateTreatmentAreaWithEntryAction` write `session_blocks` AND `electrolysis_entries` as one user
+intent and are deferred to the combined block/entry phase so both writes can become genuinely
+atomic; they are the only two exceptions permitted by
+`tests/security/entry-direct-dml-guard.test.ts`. **Neither entry table is command-boundary
+complete and L18 is NOT closed** — see
+[known-limitations L18](./production/known-limitations.md) and
+[l18-command-inventory.md](./production/l18-command-inventory.md).
 
 **Intake INSERT boundary (0163 — APPLIED 2026-08-02, frozen).** 0162 closed the review *transition*,
 but its guard is a BEFORE **UPDATE** trigger and so never fires on INSERT. Until 0163 an

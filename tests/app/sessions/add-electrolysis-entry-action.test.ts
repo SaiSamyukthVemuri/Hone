@@ -19,6 +19,7 @@ const B = "Slight swelling (edema)";
 
 type Ret = { data: unknown; error: unknown };
 const state = {
+  rpcName: null as string | null,
   insertCalls: 0,
   insertPayload: null as Record<string, unknown> | null,
   insertReturn: { data: { id: "e1" }, error: null } as Ret,
@@ -30,6 +31,18 @@ const state = {
 
 function makeMockSupabase() {
   return {
+    // L18 Phase 1A: the write is now the narrow 0164 command, not a direct
+    // table INSERT. `insertCalls` / `insertPayload` still mean "the write
+    // happened, with these values" — only the transport changed — so every
+    // pre-existing gate assertion below keeps its original meaning.
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      state.rpcName = name;
+      state.insertCalls++;
+      state.insertPayload = args;
+      const ret = state.insertReturn;
+      const id = (ret.data as { id?: string } | null)?.id ?? null;
+      return { data: ret.error ? null : id, error: ret.error };
+    },
     from(table: string) {
       const eqs: Record<string, unknown> = {};
       const builder: Record<string, unknown> = {};
@@ -98,6 +111,7 @@ function fd(opts: {
 beforeEach(() => {
   state.insertCalls = 0;
   state.insertPayload = null;
+  state.rpcName = null;
   state.insertReturn = { data: { id: "e1" }, error: null };
   state.readCalls = 0;
   state.readEqs = {};
@@ -111,7 +125,7 @@ describe("Gate 3 — malformed-payload contract (fail BEFORE any insert)", () =>
     const res = await addElectrolysisEntryAction(fd({ omitChips: true }));
     expect(res).toEqual({ ok: true, entryId: "e1", observationChips: [] });
     expect(state.insertCalls).toBe(1);
-    expect(state.insertPayload?.observation_chips).toEqual([]);
+    expect(state.insertPayload?.p_observation_chips).toEqual([]);
   });
 
   it("EXPLICIT empty array → [], proceeds, one entry", async () => {
@@ -166,7 +180,7 @@ describe("Gate 4 — duplicate-verification contract (raw stored duplicate FAILS
     const res = await addElectrolysisEntryAction(
       fd({ chips: JSON.stringify(["Coarse hair", "coarse hair", "COARSE HAIR"]) }),
     );
-    expect(state.insertPayload?.observation_chips).toEqual([A]);
+    expect(state.insertPayload?.p_observation_chips).toEqual([A]);
     expect(res).toEqual({ ok: true, entryId: "e1", observationChips: [A] });
   });
 
@@ -252,7 +266,7 @@ describe("Gate 5 — atomicity / retry safety", () => {
     await addElectrolysisEntryAction(
       fd({ chips: JSON.stringify([A]), comments: "tender near jaw" }),
     );
-    expect(state.insertPayload?.comments).toBe("tender near jaw");
-    expect(state.insertPayload?.observation_chips).toEqual([A]);
+    expect(state.insertPayload?.p_comments).toBe("tender near jaw");
+    expect(state.insertPayload?.p_observation_chips).toEqual([A]);
   });
 });

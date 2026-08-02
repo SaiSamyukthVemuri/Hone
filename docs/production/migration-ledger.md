@@ -14,14 +14,14 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-02, post-0163 apply)
+## Current state (verified 2026-08-02, post-0163 apply; 0164 written and unapplied)
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0163** (`0163_revoke_authenticated_intake_insert.sql`, applied 2026-08-02T17:37:23Z→17:37:27Z) |
-| **Repo migration max** | **0163** — **hosted == repo.** Parity restored by the 2026-08-02T17:37Z apply; see the 0163 record below. Next free number is **0164**. |
-| **Total migrations in repo** | **162** (`0001` … `0157`, `0159`, `0160`, `0161`, `0162`, `0163` — **no `0158`**) |
-| **Total applied in production** | **162**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). Every file on disk is applied. |
+| **Repo migration max** | **0164** — **hosted != repo.** `0164` (L18 Phase 1A clean entry create commands) is written and tested but **NOT APPLIED**; see the 0164 proposal below. Next free number is **0165**. |
+| **Total migrations in repo** | **163** (`0001` … `0157`, `0159` … `0164` — **no `0158`**) |
+| **Total applied in production** | **162**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). The 163rd file on disk, `0164`, is **NOT applied**. |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
 | **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its source merge (PR #483) completed on 2026-07-30 (merge `c64366c9ba4130283932bbe21e32bf2ed62c4975`) and deployed successfully. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
@@ -49,6 +49,28 @@ merge — with two deliberate exceptions noted below.
 - **Code-only PR** — a PR that ships behaviour with *no* migration (the hosted max does not move).
 - **Dormant migration** — applied and merged, but nothing in production reads or writes it
   because a flag is off, no worker exists, or no tenant is eligible.
+
+### 0164 — PROPOSAL (written, tested, **NOT APPLIED**)
+
+**`0164_clean_entry_create_commands.sql` — L18 Phase 1A: narrow reviewed create commands for the
+two cleanly separable entry writers.**
+
+| Field | Value |
+|---|---|
+| **Migration** | `0164_clean_entry_create_commands.sql` |
+| **Status** | **NOT APPLIED.** Repo max `0164`, hosted max `0163`. Awaiting explicit apply authorization. |
+| **Class** | **Purely additive** — two SECURITY DEFINER functions plus their EXECUTE grants. **No** schema, column, constraint, index, policy, trigger or grant-removal change; **no** data change, backfill or deletion. **Nothing is revoked**, so direct DML keeps working throughout this phase and the deployed application is unaffected by the apply. |
+| **Finding** | `L18` — `authenticated` holds direct row DML on five clinical tables. Closing it requires moving every legitimate runtime writer onto narrow commands FIRST, deploying, and only then revoking. This is the first step. |
+| **Writer census** | Phase 0 recon verified **25** runtime write sites, **not the 26** the findings register records — the register's figure came from a proximity grep; the corrected count follows each `.from()` statement chain to bracket depth zero. See [l18-command-inventory.md](./l18-command-inventory.md). |
+| **What it adds** | `create_electrolysis_entry(...)` and `create_laser_entry(...)`. Both: SECURITY DEFINER; `search_path = ''`; require a non-null `auth.uid()`; resolve `studio_id`/`client_id` from the trusted `sessions` row; require the caller to be an **ACTIVE practitioner of that same studio** matched by `auth.uid()`; re-check the asserted client against the session's real client; explicit typed parameters only; no dynamic SQL; no generic JSON patch; return only the new row id. The electrolysis command additionally refuses a block from another session and a probe lot outside the studio. |
+| **Attribution** | Neither command takes a studio, practitioner or actor parameter, so a caller cannot assert another practitioner or redirect a row to another tenant. `galvanic_intensity_percent` is retired and is **not a parameter at all** — new rows always store NULL. |
+| **Validation** | Unchanged and un-reimplemented: every clinical value passes through verbatim, so the existing CHECK constraints and the 0119/0159 `guard_finalized_clinical_write` and 0160 `guard_immutable_clinical_lineage` triggers remain the sole authority. |
+| **Privileges** | EXECUTE revoked from `PUBLIC` **and** `anon` explicitly (the 0129/0130 lesson), granted to `authenticated` only. **No service-role command** — ordinary practitioner charting must not run through an admin client, and both commands require a non-null `auth.uid()` anyway. `postgres` retains ownership. |
+| **Scope — honest** | Only the two cleanly separable writers moved. `createTreatmentAreaWithEntryAction` and `updateTreatmentAreaWithEntryAction` write `session_blocks` AND `electrolysis_entries` as one user intent and are **deferred** to the combined block/entry phase so both writes become genuinely atomic. **Neither entry table is command-boundary complete. L18 is NOT closed.** |
+| **Drift guard** | `tests/security/entry-direct-dml-guard.test.ts` fails CI if a runtime direct writer reappears. Exactly **two** exceptions, pinned to exact file AND function, each labelled `TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION` in source; the count is asserted, so a third cannot be appended quietly. It is not a growable allowlist. |
+| **Transaction + locks** | Opens its own `begin; … commit;` with `set local lock_timeout = '5s'`, per the 0159–0163 precedent. |
+| **Editable?** | **Yes, for now.** Deliberately **not** checksum-frozen while unapplied; it must be frozen in the same change that records its apply. Applied migrations (`0159`–`0163`) are frozen and must never be edited. |
+| **Proof** | `tests/db/entry-create-commands.db.test.ts` (25 cases on a fresh pinned reset) and `tests/migrations/0164-clean-entry-create-commands.test.ts` (source contract + the repo migration-max tripwire, moved here from the 0163 test), plus `tests/app/sessions/entry-actions-use-commands.test.ts`. |
 
 ### 0163 — APPLIED 2026-08-02
 

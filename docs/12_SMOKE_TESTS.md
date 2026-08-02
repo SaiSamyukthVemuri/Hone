@@ -1138,6 +1138,52 @@ Fixes a P1 overclaim: `sendPostcareEmailAction` used `postcare_email_sent_at` as
 
 Operator-run, **read-only** pre-flight that proves remote production matches the repo's required state before live payments / broader sensitive-data use. `scripts/verify-production.mjs` (run `node --env-file=.env.local scripts/verify-production.mjs` from the production-linked Mac) reads prod exclusively via `supabase db query --linked` and checks: remote migration max — **derived from `supabase/migrations/` at run time, never hardcoded** (currently **0157**; the literal "0099" in earlier revisions of this entry was exactly the staleness the derivation was introduced to prevent); the 0093 (private treatment-image bucket + `treatment_images` RLS policies + integrity trigger), 0097 (intake-link columns), 0098 (intake-reminder columns + indexes + `claim_email_send`/`record_email_result` branches), and 0099 (`practitioner_note`) effects; RLS on the curated critical tables (incl. payments + `record_keeping_*`); zero unresolved critical payment ops alerts (count only); Stripe gates 1/1/0/0 (spawns `check-stripe-gates.mjs`); and a fresh reminder heartbeat (≤ 45 min, Upstash). It **fails closed** — prints only PASS/FAIL/INCOMPLETE + scalars (no secrets/PII/rows), exits non-zero if any required check fails or can't be verified (e.g. Upstash env absent → heartbeat INCOMPLETE, not PASS), and distinguishes `PRODUCTION VERIFIED ✓` (automated only) from the manual dashboard checks. It performs **no writes / no migration / no cron / no email / no Stripe writes**; not a CI gate, not a live-payment enablement step. Runbook + manual checks: **docs/16 §17.13** (cross-referenced from docs/10). Pinned by `tests/scripts/verify-production.test.ts` (read-only contract, no secrets/PII, fail-closed, required-check coverage, runbook present). Live payments remain disabled.
 
+## Clinical entry command boundary smoke (migration 0164 — NOT APPLIED)
+
+L18 Phase 1A. **The migration is written and tested but NOT APPLIED**: repo migration max is
+`0164`, hosted (production) max is `0163`. The migration is **purely additive** — it revokes no
+grant and drops no policy — so the deployed application keeps working before, during and after an
+apply, and direct DML remains available throughout this phase.
+
+**L18 status:** PARTIAL — the two clean entry-only creation paths now use narrow commands. Two
+electrolysis entry writers remain temporarily direct because they are coupled to `session_blocks`
+and must move atomically in the combined block/entry phase. Direct table grants remain in place.
+**Neither entry table is command-boundary complete; L18 is not closed.**
+
+**What moved.** `addElectrolysisEntryAction` → `create_electrolysis_entry`; `addLaserEntryAction`
+→ `create_laser_entry`. **What did NOT move**, deliberately:
+`createTreatmentAreaWithEntryAction` and `updateTreatmentAreaWithEntryAction`, which write
+`session_blocks` and `electrolysis_entries` as one user intent.
+
+**Automated coverage (run these now):** `npm run test:db` →
+`tests/db/entry-create-commands.db.test.ts` (25 cases against a real migrated database):
+authorized electrolysis and laser creates succeed and store the clinical values, including a
+fractional `thermolysis_duration_seconds` of `0.733` that must not truncate; cross-studio callers,
+wrong-client assertions, foreign sessions, foreign blocks and inactive practitioners are all
+denied; the commands take no practitioner parameter at all; every existing CHECK still rejects an
+invalid mode / pulse_count / intensity / apilus_modality / non-array chips payload; a refused
+command leaves no row; `anon` cannot execute either command and `authenticated` can; both are
+SECURITY DEFINER with `search_path=""`; a service-role caller is refused; and the 0159/0160/0162/
+0163 boundaries are all still intact. `npm test` →
+`tests/migrations/0164-clean-entry-create-commands.test.ts` (source contract + the repo
+migration-max tripwire, which moved here from the 0163 test),
+`tests/security/entry-direct-dml-guard.test.ts` (the static drift guard: exactly two permitted
+exceptions, pinned to exact file AND function, each carrying the label
+`TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION`), and
+`tests/app/sessions/entry-actions-use-commands.test.ts`.
+
+**Reset discipline:** run the DB lane against a database reset with the **pinned** CLI
+(`npx --yes supabase@2.102.0 db reset --local`) and confirm grants parity before trusting a
+result.
+
+**Operator check — ONLY AFTER 0164 IS APPLIED (read-only, no writes):** confirm
+`supabase migration list --linked` shows `0164` in Remote exactly once; confirm both functions are
+`prosecdef = true` with `proconfig = search_path=""`; confirm
+`has_function_privilege('anon', …, 'execute')` is **false** and `'authenticated'` is **true** for
+both; and confirm `has_table_privilege('authenticated','public.electrolysis_entries','insert')` is
+**still true** — this phase must not have revoked anything. Then, in the app, add another pass to
+an existing treatment area and record a laser entry, and confirm both save exactly as before.
+
 ## Intake INSERT boundary smoke (migration 0163 — APPLIED 2026-08-02)
 
 Closes the residual `0162` could not reach. **`0163` was APPLIED to production 2026-08-02** and

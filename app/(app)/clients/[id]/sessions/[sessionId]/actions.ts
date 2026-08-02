@@ -330,41 +330,54 @@ export async function addElectrolysisEntryAction(
     nullableString(formData.get("probe_lot_id")),
   );
   if (!lotCheck.ok) throw new Error(lotCheck.error);
-  const { data: inserted, error } = await supabase
-    .from("electrolysis_entries")
-    .insert({
-      session_id: sessionId,
-      block_id: blockId,
-      area,
-      areas,
-      probe_size: probeSize,
-      probe_lot_id: lotCheck.value,
-      mode,
-      intensity: nullableNumber(formData.get("intensity")),
-      duration_seconds: nullableNumber(formData.get("duration_seconds")),
-      pulse_count: pulseCount,
-      pulse_delay_seconds: pulseDelaySeconds,
-      comments: nullableString(formData.get("comments")),
-      observation_chips: observationChips,
-      apilus_modality: apilusModality,
-      energy_level: energyLevel,
-      minutes_performed: minutesPerformed,
-      probe_type: probeType,
-      machine_frequency: machineFrequency,
-      hairs_treated: hairsTreated,
-      galvanic_ma: galvanicMa,
-      galvanic_duration_seconds: galvanicDurationSeconds,
-      // Retired reading: a NEW entry always stores NULL (server-authoritative).
-      galvanic_intensity_percent: null,
-      thermolysis_intensity_percent: thermolysisIntensityPercent,
-      thermolysis_duration_seconds: thermolysisDurationSeconds,
-      units_of_lye: unitsOfLye,
-    })
-    // Return ONLY the new row id here. This is the value produced by the INSERT
-    // statement (a RETURNING clause) — NOT a post-commit re-read — so the chip
-    // verification below deliberately does a SEPARATE query by this id.
-    .select("id")
-    .single();
+  // L18 Phase 1A: the write goes through the narrow reviewed command
+  // `create_electrolysis_entry` (migration 0164) instead of a direct table
+  // INSERT. The command is SECURITY DEFINER with a pinned empty search_path;
+  // it requires a non-null auth.uid(), resolves the studio and client from the
+  // trusted `sessions` row, requires the caller to be an ACTIVE practitioner of
+  // that studio, re-checks the asserted client, and refuses a block belonging
+  // to another session or a probe lot outside the studio. studio_id, client_id
+  // and practitioner attribution are therefore no longer expressible by the
+  // caller. Every clinical value is passed through verbatim, so the existing
+  // CHECK constraints and the 0119/0159/0160 guard triggers remain the only
+  // validation authority and this path's behaviour is unchanged.
+  //
+  // It returns the new row id — the value produced by the INSERT's RETURNING
+  // clause, NOT a post-commit re-read — so the chip verification below
+  // deliberately still does a SEPARATE query by this id.
+  const { data: insertedId, error } = await supabase.rpc(
+    "create_electrolysis_entry",
+    {
+      p_session_id: sessionId,
+      p_client_id: clientId,
+      p_block_id: blockId,
+      p_area: area,
+      p_areas: areas,
+      p_probe_size: probeSize,
+      p_probe_lot_id: lotCheck.value,
+      p_mode: mode,
+      p_intensity: nullableNumber(formData.get("intensity")),
+      p_duration_seconds: nullableNumber(formData.get("duration_seconds")),
+      p_pulse_count: pulseCount,
+      p_pulse_delay_seconds: pulseDelaySeconds,
+      p_comments: nullableString(formData.get("comments")),
+      p_observation_chips: observationChips,
+      p_apilus_modality: apilusModality,
+      p_energy_level: energyLevel,
+      p_minutes_performed: minutesPerformed,
+      p_probe_type: probeType,
+      p_machine_frequency: machineFrequency,
+      p_hairs_treated: hairsTreated,
+      p_galvanic_ma: galvanicMa,
+      p_galvanic_duration_seconds: galvanicDurationSeconds,
+      // galvanic_intensity_percent is RETIRED: it is not a parameter at all,
+      // and the command always stores NULL server-authoritatively.
+      p_thermolysis_intensity_percent: thermolysisIntensityPercent,
+      p_thermolysis_duration_seconds: thermolysisDurationSeconds,
+      p_units_of_lye: unitsOfLye,
+    },
+  );
+  const inserted = typeof insertedId === "string" ? insertedId : null;
 
   if (error || !inserted) {
     // The insert itself failed → no row exists. Safe for the caller to retry.
@@ -374,7 +387,7 @@ export async function addElectrolysisEntryAction(
       error: `Failed to add entry: ${error?.message ?? "the entry did not persist"}`,
     };
   }
-  const entryId = (inserted as { id: string }).id;
+  const entryId = inserted;
 
   // PERSISTED-ROW VERIFICATION (structural guard against the silent partial-write
   // defect class behind this incident: an insert can "succeed" yet the clinical
@@ -440,13 +453,20 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
       : null;
 
   const supabase = await createClient();
-  const { error } = await supabase.from("laser_entries").insert({
-    session_id: sessionId,
-    zone,
-    session_number: Number.isFinite(sessionNumber) ? sessionNumber : null,
-    equipment_params:
+  // L18 Phase 1A: written through the narrow reviewed command
+  // `create_laser_entry` (migration 0164) rather than a direct table INSERT.
+  // Same contract as the electrolysis command: non-null auth.uid(), studio and
+  // client resolved from the trusted `sessions` row, ACTIVE practitioner of
+  // that studio required, asserted client re-checked. The thrown message shape
+  // is unchanged.
+  const { error } = await supabase.rpc("create_laser_entry", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_zone: zone,
+    p_session_number: Number.isFinite(sessionNumber) ? sessionNumber : null,
+    p_equipment_params:
       Object.keys(equipmentParams).length > 0 ? equipmentParams : null,
-    observation_notes: nullableString(formData.get("observation_notes")),
+    p_observation_notes: nullableString(formData.get("observation_notes")),
   });
 
   if (error) throw new Error(`Failed to add entry: ${error.message}`);
