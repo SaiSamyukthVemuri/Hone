@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-
 const MIG_DIR = join(process.cwd(), "supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0154_")) as string;
 const SQL = readFileSync(join(MIG_DIR, FILE), "utf8");
@@ -11,7 +10,6 @@ describe("0154 — practitioner_notifications.dedupe_key (additive, partial-uniq
     expect(FILE).toMatch(/^0154_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0153_"))).toBe(true);
-    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
   });
 
   it("adds a NULLABLE dedupe_key column (additive, no NOT NULL, no default)", () => {

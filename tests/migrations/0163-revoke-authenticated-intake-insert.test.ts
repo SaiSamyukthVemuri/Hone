@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-
 // Migration 0163 — remove the `authenticated` INSERT capability on
 // client_intake_forms, closing the residual 0162 explicitly did NOT close:
 // 0162's guard is a BEFORE UPDATE trigger, so a member could skip the
@@ -35,13 +34,11 @@ describe("0163 — intake INSERT boundary (repo migration-max tripwire)", () => 
     expect(files.some((f) => f.startsWith("0162_"))).toBe(true);
     expect(files.filter((f) => /^0163_/.test(f))).toHaveLength(1);
     // Nothing beyond 0163 may exist.
-    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
     expect(files.filter((f) => /^0[2-9]\d\d_/.test(f))).toEqual([]);
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(165);
     expect(new Set(nums).size).toBe(nums.length);
     // 0158 stays permanently skipped.
     expect(files.filter((f) => /^0158_/.test(f))).toEqual([]);

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { isRepoMax, versionsAbove } from "./helpers/migration-state";
+
+/** This file's own migration version — the ONLY number it hard-codes. */
+const SELF_VERSION = "0165";
 
 // Migration 0165 — revoke the unintended `service_role` EXECUTE that 0164 left
 // on `create_laser_entry`. Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE
@@ -28,13 +32,13 @@ describe("0165 — service_role EXECUTE repair (repo migration-max tripwire)", (
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0164_"))).toBe(true);
     expect(files.filter((f) => /^0165_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    expect(versionsAbove(SELF_VERSION)).toEqual([]);
     expect(files.filter((f) => /^0[2-9]\d\d_/.test(f))).toEqual([]);
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(165);
+    expect(isRepoMax(SELF_VERSION)).toBe(true);
     expect(new Set(nums).size).toBe(nums.length);
     expect(files.filter((f) => /^0158_/.test(f))).toEqual([]);
   });

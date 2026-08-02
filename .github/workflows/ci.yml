@@ -36,8 +36,63 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # -------------------------------------------------------------------------
+  # Changed-path detection. Runs first; every other lane keys off its outputs.
+  # Classification lives in scripts/classify-changes.mjs and is proved by
+  # tests/ci/classify-changes.test.ts, so lane selection is verified by unit
+  # test rather than by pushing commits to trigger each lane.
+  # -------------------------------------------------------------------------
+  changes:
+    name: changed-path detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      application: ${{ steps.classify.outputs.application }}
+      database: ${{ steps.classify.outputs.database }}
+      security: ${{ steps.classify.outputs.security }}
+      payment: ${{ steps.classify.outputs.payment }}
+      google_calendar: ${{ steps.classify.outputs.google_calendar }}
+      browser_core: ${{ steps.classify.outputs.browser_core }}
+      mobile: ${{ steps.classify.outputs.mobile }}
+      ci_workflows: ${{ steps.classify.outputs.ci_workflows }}
+      full_matrix_required: ${{ steps.classify.outputs.full_matrix_required }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Full history so the PR BASE sha is reachable — the diff must be
+          # against the merge base, not merely the previous commit, or a
+          # multi-commit PR would classify only its most recent push.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Collect changed files
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            MB="$(git merge-base "$BASE" "$HEAD_SHA" 2>/dev/null || echo "$BASE")"
+            git diff --name-only "$MB" "$HEAD_SHA" > changed.txt || true
+          else
+            git show --name-only --pretty=format: "${{ github.sha }}" > changed.txt
+          fi
+          echo "--- changed files ---"; cat changed.txt
+
+      - name: Classify
+        id: classify
+        run: node scripts/classify-changes.mjs --files-from changed.txt --github-output
+
+
   validate:
     name: typecheck / lint / build / test / safety gates
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -134,6 +189,8 @@ jobs:
   #     untouched; a Docker hiccup here never blocks typecheck/lint.
   db-integration:
     name: db integration (local supabase)
+    needs: changes
+    if: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -214,6 +271,8 @@ jobs:
   # disabled. Separate job: a flake here never blocks the fast lane.
   browser-e2e:
     name: browser e2e (local stack)
+    needs: changes
+    if: ${{ needs.changes.outputs.browser_core == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -284,6 +343,8 @@ jobs:
   # port collision with browser-e2e, and a flake here never blocks the fast lane.
   payment-browser-e2e:
     name: payment browser e2e (fake stripe)
+    needs: changes
+    if: ${{ needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -362,6 +423,8 @@ jobs:
   # Separate job (own runner) → no port collision with the other browser lanes.
   mobile-completion-e2e:
     name: mobile completion e2e (chromium iphone-profile)
+    needs: changes
+    if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -431,6 +494,8 @@ jobs:
   # Separate job (own runner) → no port collision with the other browser lanes.
   google-browser-e2e:
     name: google browser e2e (fake google)
+    needs: changes
+    if: ${{ needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

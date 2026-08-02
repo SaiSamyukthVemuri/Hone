@@ -35,12 +35,10 @@ describe("0160 — immutable clinical lineage", () => {
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0159_"))).toBe(true);
     expect(files.filter((f) => /^0160_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(165); // 0165 = service_role EXECUTE repair (NOT APPLIED)
     expect(new Set(nums).size).toBe(nums.length);
   });
 

@@ -1,0 +1,138 @@
+name: nightly full matrix
+
+# The complete matrix. PR CI is risk-based (see ci.yml + scripts/classify-changes.mjs)
+# and runs only the lanes a diff can affect; this workflow is where the FULL
+# coverage lives so nothing is lost — it is moved, not weakened.
+#
+# Runs:
+#   * nightly on a schedule
+#   * on demand via workflow_dispatch (use this before a deliberate release
+#     candidate, or to re-validate a PR whose risk classification you doubt)
+
+on:
+  schedule:
+    # 07:00 UTC daily — after the existing 09:00/09:30 UTC calendar crons would
+    # otherwise contend, and before a working day starts in North America.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this manual full matrix is being run (recorded in the run)"
+        required: false
+        default: "manual full-matrix validation"
+
+# A newer nightly supersedes an in-flight one; never burn minutes on a stale run.
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-matrix:
+    name: full matrix (${{ matrix.lane }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      # One lane failing must not hide the others — the nightly's job is to tell
+      # you everything that is broken, not the first thing.
+      fail-fast: false
+      matrix:
+        include:
+          - lane: "typecheck / lint / build / unit / safety gates"
+            command: "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates && npm run check:migration-extensions"
+            needs_supabase: false
+            needs_browsers: false
+            timeout: 25
+          - lane: "full migration chain + db/rls integration"
+            command: "npm run test:db"
+            needs_supabase: true
+            needs_browsers: false
+            timeout: 30
+          - lane: "core browser e2e"
+            command: "npm run test:e2e"
+            needs_supabase: true
+            needs_browsers: true
+            timeout: 40
+          - lane: "payment e2e (fake stripe)"
+            command: "npm run test:e2e:payment"
+            needs_supabase: true
+            needs_browsers: true
+            timeout: 40
+          - lane: "mobile completion e2e"
+            command: "npm run test:e2e:mobile"
+            needs_supabase: true
+            needs_browsers: true
+            timeout: 40
+          - lane: "google e2e (fake google)"
+            command: "npm run test:e2e:google"
+            needs_supabase: true
+            needs_browsers: true
+            timeout: 40
+
+    env:
+      NEXT_PUBLIC_APP_ORIGIN: "http://localhost:3111"
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "dummy-anon-key"
+      SUPABASE_SERVICE_ROLE_KEY: "dummy-service-role-key"
+      RESEND_API_KEY: "re_dummy_resend_key"
+      STRIPE_SECRET_KEY: "sk_test_dummy"
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_dummy"
+      STRIPE_WEBHOOK_SECRET: "whsec_dummy"
+      CRON_SECRET: "dummy-cron-secret"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Browsers are only fetched for the lanes that actually drive one, and the
+      # download is cached across runs.
+      - name: Cache Playwright browsers
+        if: matrix.needs_browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Install Playwright browsers
+        if: matrix.needs_browsers
+        run: npx playwright install --with-deps chromium
+
+      # Supabase is only started for lanes that need a database. The DB-less
+      # lane skips several minutes of container startup entirely.
+      - name: Start local Supabase
+        if: matrix.needs_supabase
+        uses: supabase/setup-cli@v1
+        with:
+          # Pinned deliberately: a newer CLI's `db reset` strips Data-API grants
+          # and every authenticated query then fails at the privilege layer,
+          # which looks exactly like an application bug. Bump only with a
+          # grants-parity re-verification.
+          version: 2.102.0
+
+      - name: Bring up the database
+        if: matrix.needs_supabase
+        run: supabase start
+
+      - name: Run lane
+        run: ${{ matrix.command }}
+
+      # Traces are large; upload them only when there is a failure to inspect.
+      - name: Upload traces on failure
+        if: failure() && matrix.needs_browsers
+        uses: actions/upload-artifact@v4
+        with:
+          name: traces-${{ strategy.job-index }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

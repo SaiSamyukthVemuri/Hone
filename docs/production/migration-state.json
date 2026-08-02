@@ -1,0 +1,13 @@
+{
+  "$comment": [
+    "CANONICAL CURRENT-STATE RECORD — the single source of truth for hosted migration state.",
+    "Repository state (repo max, next free number, totals) is DERIVED from supabase/migrations/*.sql",
+    "by scripts/migration-state.mjs and must never be written here or duplicated in docs.",
+    "Hosted state cannot be derived from filenames, so it is declared here ONCE and referenced",
+    "everywhere else. Update this file in the same change that records a production apply."
+  ],
+  "hosted_migration_max": "0165",
+  "hosted_applied_at": "2026-08-02T20:20:06Z",
+  "hosted_note": "0165_revoke_service_role_laser_entry_execute.sql applied 2026-08-02T20:20:02Z-20:20:06Z. See docs/production/migration-ledger.md for the full apply record and frozen checksums.",
+  "ledger": "docs/production/migration-ledger.md"
+}

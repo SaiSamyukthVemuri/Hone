@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-
 // Migration 0159 — PERMANENTLY RETIRE signed/finalized clinical records, plus the
 // privilege hardening that is safe to take without an application change.
 //
@@ -77,7 +76,6 @@ describe("0159 — retirement (repo migration-max tripwire)", () => {
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0157_"))).toBe(true);
     expect(files.filter((f) => /^0159_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
     // The absolute repo-max pin moved to the 0160 test (0160 = immutable clinical
     // lineage, the follow-up this migration's header points at).
     const nums = files
