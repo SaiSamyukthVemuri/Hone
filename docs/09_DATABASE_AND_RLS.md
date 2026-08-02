@@ -1,12 +1,11 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-07-30 the production migration max = 0161
-(`0161_service_order_and_colors.sql`) — 160 applied, each exactly once, `0160` immediately
-preceding `0161`. `0158` is deliberately skipped and will never be applied. The
-hosted max is 0161 — `0161_service_order_and_colors.sql`
-was applied 2026-07-30 and independently verified. The **repository max is now 0162**
-(`0162_intake_review_transition_integrity.sql`), which is written and tested but **NOT
-APPLIED**, so repo max and hosted max deliberately differ until it is applied.**
+Hone uses Supabase Postgres. **As of 2026-08-02 the production migration max = 0162
+(`0162_intake_review_transition_integrity.sql`) — 161 applied, each exactly once, `0161`
+immediately preceding `0162`. `0158` is deliberately skipped and will never be applied.
+`0162` was applied 2026-08-02, independently verified, and is now **frozen**. The repository
+max is also **0162**, so repository and hosted migration state **match**; the next migration
+number is **0163**.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -18,7 +17,7 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 > **Historical note.** Earlier revisions of this section stated, at various dates, "96
 > migrations, 0096 not yet applied", "production is at 0112", and "production migration max =
 > 0113", "the production max is 0157", "the production max is 0160". All of those are **superseded** —
-> the production max is **0161**. The per-migration
+> the production max is **0162**. The per-migration
 > prose table below remains historical through ~0092; everything from 0093 onward is
 > enumerated in the migration ledger linked above. Dated statements elsewhere in the docs are
 > point-in-time history, not current state.
@@ -33,11 +32,11 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
   `0163`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
   anywhere it can go stale: derive it from
   `supabase/migrations/` (as `scripts/verify-production.mjs` does).
-  **Note the repo/hosted split right now: repo max is `0162`, hosted (production) max is still
-  `0161`.** `0162` is written and tested but **NOT APPLIED** — see the intake review boundary
-  entry below and [known-limitations L22](./production/known-limitations.md).
+  **Repo and hosted are at parity: both are `0162`.** `0162` was applied 2026-08-02 and is
+  frozen — see the intake review boundary entry below and
+  [known-limitations L22](./production/known-limitations.md).
 
-**Intake review transition integrity (0162 — WRITTEN, NOT APPLIED).** Migration `0118` made
+**Intake review transition integrity (0162 — APPLIED 2026-08-02, frozen).** Migration `0118` made
 submitted/reviewed intake answers immutable, but every one of its review checks sits inside
 `if old.status in ('submitted','reviewed')`, so an OLD row that is still `in_progress` never
 enters the block and the **incoming** transition to `reviewed` was unguarded. An authenticated
