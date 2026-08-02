@@ -8,12 +8,14 @@ is planned from.
 **Baseline:** production branch `722bd617c6ca1fd17c34b9378b44aad2570e24e8` · hosted migration max
 `0163` · next migration `0164`.
 
-**Status: PHASE 1A DELIVERED (migration `0164`, NOT APPLIED).** The two cleanly separable
-entry-only writers now call narrow reviewed commands. The two block-coupled writers are
-deliberately unchanged — see [Hard stop](#hard-stop--unresolved-cross-table-transaction-dependency),
-which remains the reason they are deferred.
+**Status: PHASE 1A DELIVERED, LASER-ONLY (migration `0164`, NOT APPLIED).** `addLaserEntryAction`
+is the **only** writer moved. **All three electrolysis writers are block-coupled** and are
+deliberately unchanged — see [Hard stop](#hard-stop--unresolved-cross-table-transaction-dependency).
 
-**L18 status: PARTIAL — the two clean entry-only creation paths now use narrow commands. Two electrolysis entry writers remain temporarily direct because they are coupled to `session_blocks` and must move atomically in the combined block/entry phase. Direct table grants remain in place.**
+> **Correction.** An earlier revision of this document and of migration `0164` classified
+> `addElectrolysisEntryAction` as cleanly separable. That was **wrong**. addElectrolysisEntryAction can create a default session_blocks row through ensureBlockForSession before creating the electrolysis entry; the two writes are not atomic today and must move together.
+
+**L18 status: PARTIAL — the clean laser-entry creation path uses a narrow command. Electrolysis entry writers remain direct because each relevant user workflow can depend on `session_blocks` and must move atomically in the combined phase. Direct table grants remain in place.**
 
 ---
 
@@ -53,7 +55,10 @@ Five write sites across four server actions. **All four are server-action module
 carries `"use client"`, and no browser or client component writes any of the five tables directly.
 **All four use the RLS-scoped `createClient()`**; none uses `createAdminClient()`.
 
-### 1. `addElectrolysisEntryAction` — **cleanly separable**
+**Only ONE of the four is genuinely entry-only: `addLaserEntryAction`.** The other three all write
+`session_blocks` for the same user intent and move together in the combined phase.
+
+### 1. `addElectrolysisEntryAction` — **BLOCK-COUPLED, deferred**
 
 | Field | Value |
 |---|---|
@@ -65,11 +70,11 @@ carries `"use client"`, and no browser or client component writes any of the fiv
 | Lineage | `studio` server-derived from the authenticated practitioner; `session_id`/`client_id` validated by `assertSessionVisible`; `probe_lot_id` validated to belong to this studio by `validateProbeLotId` |
 | Validation / defaulting | Strict `formData` parsing (a malformed/non-array payload throws before any write); pulse clamping; structured reading columns by modality; retired `galvanic_intensity_percent` forced NULL server-side |
 | Audit / events | None on this path (`session_audit` is written elsewhere in the file, at `:756`) |
-| Multi-table transaction | **None** — `electrolysis_entries` only (one INSERT plus a re-read) |
-| Replacement | **`create_electrolysis_entry(...)`** — SECURITY DEFINER, `search_path = ''`, explicit typed params (migration `0164`) |
-| Phase | **MOVED in 0164** |
+| Multi-table transaction | **YES.** addElectrolysisEntryAction can create a default session_blocks row through ensureBlockForSession before creating the electrolysis entry; the two writes are not atomic today and must move together. The block write and the entry write are in separate transactions, so a failed entry write leaves the newly created block behind. The action deliberately still supports legacy callers that omit `block_id`, so this path cannot simply be removed. |
+| Replacement | Cannot be an entry-only command |
+| Phase | **DEFERRED to the combined block/entry phase.** Labelled `TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION` in source and pinned by `tests/security/entry-direct-dml-guard.test.ts` |
 
-### 2. `addLaserEntryAction` — **cleanly separable**
+### 2. `addLaserEntryAction` — **cleanly separable (the ONLY one)**
 
 | Field | Value |
 |---|---|
@@ -115,7 +120,7 @@ carries `"use client"`, and no browser or client component writes any of the fiv
 
 ## Hard stop — unresolved cross-table transaction dependency
 
-**Two of the four `electrolysis_entries` writers cannot be moved to an entries-only command.**
+**ALL THREE `electrolysis_entries` writers are block-coupled and cannot be moved to an entries-only command.**
 
 `createTreatmentAreaWithEntryAction` and `updateTreatmentAreaWithEntryAction` each write
 `session_blocks` **and** `electrolysis_entries` as one user-visible command. Moving only the entry
@@ -145,14 +150,14 @@ halted here for a decision.
 | **B — merge with the block phase** | One phase covering `session_blocks` + `electrolysis_entries` + `laser_entries`, with block+entry as a single atomic command. | The only route to genuinely atomic block+entry writes and to revoking the entry grants. Larger than “one focused PR” as scoped, and supersedes the 0129 RPCs. |
 | **C — accept current semantics explicitly** | Entries-only commands for all four writers; block+entry stays non-atomic exactly as today, compensating soft-delete preserved. | Moves all five Phase-1 sites, but knowingly ships commands that do not meet the atomicity requirement, and the update path keeps its no-compensation gap. Requires an explicit written waiver of that requirement. |
 
-**Option A was chosen and delivered as migration `0164` (Phase 1A).** It is the only option that
+**Option A was chosen and delivered as migration `0164` (Phase 1A) — but narrower than first scoped: LASER-ONLY.** It is the only option that
 satisfies every constraint as written, ships real value now, and leaves the atomicity problem to
 the phase that can actually solve it. The two entangled actions are a `session_blocks` problem
 wearing an `electrolysis_entries` hat.
 
-**Neither entry table is command-boundary complete.** `electrolysis_entries` still has two direct
-writers; `laser_entries` has none left, but its grant is unchanged and it will only be revoked
-with the rest. **L18 is not closed.**
+**Neither entry table is command-boundary complete.** `electrolysis_entries` still has **all three**
+of its direct writers; `laser_entries` has none left, but its grant is unchanged and will only be
+revoked with the rest. **L18 is not closed.**
 
 ---
 

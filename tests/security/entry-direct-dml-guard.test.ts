@@ -7,23 +7,36 @@ import { join } from "node:path";
 // tables.
 // ===========================================================================
 //
-// Migration 0164 added narrow reviewed create commands and the two CLEANLY
-// SEPARABLE writers now call them. Direct table grants are still in place (this
-// phase revokes nothing), so nothing at the database layer stops a future
-// change from reintroducing a direct write. This guard is that stop.
+// Migration 0164 added ONE narrow reviewed create command — `create_laser_entry`
+// — and `addLaserEntryAction` now calls it. Direct table grants are still in
+// place (this phase revokes nothing), so nothing at the database layer stops a
+// future change from reintroducing a direct write. This guard is that stop.
 //
-// It is deliberately NOT a generic, growable allowlist. There are exactly TWO
-// permitted exceptions, both pinned to an exact file AND an exact enclosing
+// SCOPE, STATED PRECISELY. This phase closes the LASER creation path only.
+// `electrolysis_entries` is NOT command-bound in any respect: ALL THREE of its
+// runtime writers remain direct, and this guard must never be read as claiming
+// otherwise.
+//
+// It is deliberately NOT a generic, growable allowlist. There are exactly THREE
+// permitted exceptions, each pinned to an exact file AND an exact enclosing
 // function. Renaming, moving, or adding one fails CI, and so does removing the
-// required label. The count itself is asserted, so a third can never be
+// required label. The count itself is asserted, so a fourth can never be
 // appended quietly.
 //
 // THE EXCEPTIONS EXPIRE in the combined session_blocks/electrolysis_entries
-// phase. Both write session_blocks AND electrolysis_entries as one user intent
-// (create compensates with a soft delete; update does not compensate at all),
-// so making them genuinely atomic requires a command that owns BOTH writes —
-// which is session_blocks work, out of scope here. When that phase lands, these
-// two exceptions and this comment must go with it.
+// phase. Every one of them can write session_blocks AND electrolysis_entries
+// for a single user intent:
+//   * createTreatmentAreaWithEntryAction — block then entry; compensates with a
+//     soft delete if the entry fails.
+//   * updateTreatmentAreaWithEntryAction — block then entry; NO compensation.
+//   * addElectrolysisEntryAction — when the form omits `block_id` (a legacy
+//     caller shape it deliberately still supports) it calls
+//     ensureBlockForSession, which INSERTs a session_blocks row before the
+//     entry write. A failed entry write leaves that block behind. An earlier
+//     revision of this phase wrongly classified it as entry-only.
+// Making any of them genuinely atomic requires a command that owns BOTH writes
+// — session_blocks work, out of scope here. When that phase lands, these three
+// exceptions and this comment must go with it.
 
 const TABLES = ["electrolysis_entries", "laser_entries"] as const;
 
@@ -31,6 +44,10 @@ const EXCEPTION_LABEL = "TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION";
 
 /** The ONLY runtime call sites permitted to write these tables directly. */
 const EXCEPTIONS: ReadonlyArray<{ file: string; fn: string }> = [
+  {
+    file: "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
+    fn: "addElectrolysisEntryAction",
+  },
   {
     file: "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
     fn: "createTreatmentAreaWithEntryAction",
@@ -104,17 +121,38 @@ function directWriteSites(): Site[] {
 describe("L18 Phase 1A — entry-table direct DML guard", () => {
   const sites = directWriteSites();
 
-  it("1. the two migrated clean actions contain NO direct entry-table DML", () => {
-    const migrated = ["addElectrolysisEntryAction", "addLaserEntryAction"];
-    const offenders = sites.filter((s) => migrated.includes(s.fn));
+  it("1. addLaserEntryAction contains NO direct laser_entries DML", () => {
+    const offenders = sites.filter((s) => s.fn === "addLaserEntryAction");
     expect(
       offenders,
-      "addElectrolysisEntryAction and addLaserEntryAction must write only through " +
-        "create_electrolysis_entry / create_laser_entry (migration 0164)",
+      "addLaserEntryAction must write only through create_laser_entry (0164)",
     ).toEqual([]);
   });
 
-  it("2. no runtime direct writer exists outside the pinned exceptions", () => {
+  it("2. no runtime direct writer on laser_entries exists at all", () => {
+    const laser = sites.filter((s) => s.table === "laser_entries");
+    expect(
+      laser,
+      "laser_entries has no permitted direct writer in or after this phase",
+    ).toEqual([]);
+  });
+
+  it("3. electrolysis direct DML is NOT claimed closed by this phase", () => {
+    const elec = sites.filter((s) => s.table === "electrolysis_entries");
+    expect(
+      elec.length,
+      "all three electrolysis writers must still be direct — this phase does " +
+        "not make electrolysis_entries command-bound",
+    ).toBeGreaterThan(0);
+    const fns = [...new Set(elec.map((s) => s.fn))].sort();
+    expect(fns).toEqual([
+      "addElectrolysisEntryAction",
+      "createTreatmentAreaWithEntryAction",
+      "updateTreatmentAreaWithEntryAction",
+    ]);
+  });
+
+  it("4. no runtime direct writer exists outside the pinned exceptions", () => {
     const unexpected = sites.filter(
       (s) => !EXCEPTIONS.some((e) => e.file === s.file && e.fn === s.fn),
     );
@@ -126,15 +164,16 @@ describe("L18 Phase 1A — entry-table direct DML guard", () => {
     ).toEqual([]);
   });
 
-  it("3. the exceptions are exactly the two block-coupled treatment-area actions", () => {
+  it("5. the exceptions are exactly the three block-coupled electrolysis actions", () => {
     const names = [...new Set(sites.map((s) => s.fn))].sort();
     expect(names).toEqual([
+      "addElectrolysisEntryAction",
       "createTreatmentAreaWithEntryAction",
       "updateTreatmentAreaWithEntryAction",
     ]);
   });
 
-  it("4. each exception is in its exact current file and function scope", () => {
+  it("6. each exception is in its exact current file and function scope", () => {
     for (const e of EXCEPTIONS) {
       const found = sites.filter((s) => s.file === e.file && s.fn === e.fn);
       expect(
@@ -146,16 +185,16 @@ describe("L18 Phase 1A — entry-table direct DML guard", () => {
     }
   });
 
-  it("5. the exception count is exactly two", () => {
-    expect(EXCEPTIONS).toHaveLength(2);
+  it("7. the exception count is exactly three and cannot silently grow", () => {
+    expect(EXCEPTIONS).toHaveLength(3);
     const distinct = new Set(sites.map((s) => `${s.file}::${s.fn}`));
     expect(
       distinct.size,
-      "exactly two runtime functions may write these tables directly",
-    ).toBe(2);
+      "exactly three runtime functions may write these tables directly",
+    ).toBe(3);
   });
 
-  it("6. a renamed, moved or newly added exception fails CI", () => {
+  it("8. a renamed, moved or newly added exception fails CI", () => {
     // The assertion above is exact-set equality on (file, function), so any
     // rename/move/addition changes the set and fails. This case pins the
     // property itself so the exactness is never relaxed to a subset check.
@@ -164,7 +203,7 @@ describe("L18 Phase 1A — entry-table direct DML guard", () => {
     expect(actual).toEqual(declared);
   });
 
-  it("7. each exception carries the required label in source", () => {
+  it("9. each exception carries the required label in source", () => {
     for (const e of EXCEPTIONS) {
       const src = readFileSync(e.file, "utf8");
       const start = src.indexOf(`function ${e.fn}`);
@@ -179,7 +218,7 @@ describe("L18 Phase 1A — entry-table direct DML guard", () => {
     }
   });
 
-  it("8. this guard states when the exceptions expire", () => {
+  it("10. this guard states when the exceptions expire", () => {
     const self = readFileSync("tests/security/entry-direct-dml-guard.test.ts", "utf8");
     expect(self).toMatch(/THE EXCEPTIONS EXPIRE in the combined/i);
     // Newline-tolerant: the expiry sentence wraps across comment lines.
@@ -192,16 +231,19 @@ describe("L18 Phase 1A — entry-table direct DML guard", () => {
     expect(TABLES).toEqual(["electrolysis_entries", "laser_entries"]);
   });
 
-  it("the migrated actions call the 0164 commands", () => {
+  it("the migrated action calls the 0164 command, and no electrolysis command exists", () => {
     const src = readFileSync(
       "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
       "utf8",
     );
-    expect(src).toMatch(/rpc\(\s*\n?\s*"create_electrolysis_entry"/);
     expect(src).toMatch(/rpc\("create_laser_entry"/);
+    expect(
+      src,
+      "there is no electrolysis command in this phase",
+    ).not.toMatch(/create_electrolysis_entry/);
   });
 
-  it("neither migrated action reaches for the admin client", () => {
+  it("the actions module never reaches for the admin client", () => {
     const src = readFileSync(
       "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
       "utf8",

@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-// L18 Phase 1A — the two migrated server actions must call the narrow 0164
-// commands and keep their existing public contract. Source-contract style,
+// L18 Phase 1A — the ONE migrated server action (addLaserEntryAction) must call
+// the narrow 0164 command and keep its existing public contract.
+//
+// addElectrolysisEntryAction is NOT migrated and is asserted UNCHANGED below:
+// when the form omits `block_id` it calls ensureBlockForSession, which INSERTs
+// a session_blocks row before the entry is written, so it is block-coupled and
+// moves with the combined phase. Source-contract style,
 // matching the other action tests in this suite: these actions reach Supabase,
 // `revalidatePath` and `getCurrentPractitionerWithStudio`, so the behavioural
 // proof lives in tests/db/entry-create-commands.db.test.ts and the browser lane.
@@ -18,66 +23,6 @@ function bodyOf(fn: string): string {
   const next = SRC.indexOf("\nexport async function", start + 10);
   return SRC.slice(start, next === -1 ? SRC.length : next);
 }
-
-describe("addElectrolysisEntryAction — calls create_electrolysis_entry", () => {
-  const body = bodyOf("addElectrolysisEntryAction");
-
-  it("calls the 0164 command and no longer inserts directly", () => {
-    expect(body).toMatch(/rpc\(\s*\n?\s*"create_electrolysis_entry"/);
-    expect(body).not.toMatch(/from\("electrolysis_entries"\)[\s\S]{0,200}?\.insert\(/);
-  });
-
-  it("passes the session and the asserted client so the command can re-check lineage", () => {
-    expect(body).toMatch(/p_session_id:\s*sessionId/);
-    expect(body).toMatch(/p_client_id:\s*clientId/);
-  });
-
-  it("does NOT pass a studio, practitioner or actor id", () => {
-    expect(body).not.toMatch(/p_studio_id|p_practitioner_id|p_created_by|p_actor/);
-  });
-
-  it("does NOT pass the retired galvanic_intensity_percent", () => {
-    expect(body).not.toMatch(/p_galvanic_intensity_percent/);
-  });
-
-  it("preserves the mode-gated reading parameters", () => {
-    for (const p of [
-      "p_galvanic_ma",
-      "p_galvanic_duration_seconds",
-      "p_thermolysis_intensity_percent",
-      "p_thermolysis_duration_seconds",
-      "p_units_of_lye",
-      "p_observation_chips",
-      "p_pulse_count",
-      "p_pulse_delay_seconds",
-    ]) {
-      expect(body, `${p} must still be sent`).toContain(p);
-    }
-  });
-
-  it("keeps the persisted-row verification read and its result contract", () => {
-    // The verification SELECT is a READ and is deliberately retained: the
-    // command returns the id from its INSERT ... RETURNING, so the chip check
-    // must still be a SEPARATE query by that id.
-    expect(body).toMatch(/from\("electrolysis_entries"\)[\s\S]{0,120}?\.select\("observation_chips"\)/);
-    expect(body).toMatch(/code:\s*"unverified"/);
-    expect(body).toMatch(/code:\s*"not_persisted"/);
-    expect(body).toMatch(/code:\s*"invalid_input"/);
-    expect(body).toMatch(/return \{ ok: true, entryId, observationChips \}/);
-  });
-
-  it("keeps its revalidation behaviour", () => {
-    expect(body).toMatch(/revalidatePath\(`\/clients\/\$\{clientId\}\/sessions\/\$\{sessionId\}`\)/);
-    expect(body).toMatch(/revalidatePath\(`\/clients\/\$\{clientId\}`\)/);
-  });
-
-  it("keeps the pre-write validation that must fail before any insert", () => {
-    expect(body).toMatch(/parseSubmittedChips/);
-    expect(body).toMatch(/CHIPS_UNREADABLE_ERROR/);
-    expect(body).toMatch(/validateProbeLotId/);
-    expect(body).toMatch(/assertSessionVisible\(studio\.id, clientId, sessionId\)/);
-  });
-});
 
 describe("addLaserEntryAction — calls create_laser_entry", () => {
   const body = bodyOf("addLaserEntryAction");
@@ -109,13 +54,35 @@ describe("addLaserEntryAction — calls create_laser_entry", () => {
   });
 });
 
-describe("the deferred block-coupled actions are unchanged", () => {
+describe("the electrolysis writers are ALL deferred and unchanged", () => {
   const BLOCK_SRC = readFileSync(
     "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
     "utf8",
   );
 
-  it("both still write electrolysis_entries directly, and are labelled", () => {
+  it("addElectrolysisEntryAction still inserts directly and was NOT migrated", () => {
+    const body = bodyOf("addElectrolysisEntryAction");
+    expect(body).toMatch(/from\("electrolysis_entries"\)[\s\S]{0,400}?\.insert\(/);
+    expect(body).not.toMatch(/create_electrolysis_entry/);
+  });
+
+  it("addElectrolysisEntryAction is block-coupled via ensureBlockForSession", () => {
+    // THIS is why it could not move in this phase: with no submitted block_id
+    // it creates a session_blocks row first, in a separate transaction from the
+    // entry write. A failed entry write would leave that block behind.
+    const body = bodyOf("addElectrolysisEntryAction");
+    expect(body).toMatch(/ensureBlockForSession\(/);
+    const helper = SRC.slice(SRC.indexOf("async function ensureBlockForSession"));
+    expect(helper).toMatch(/from\("session_blocks"\)[\s\S]{0,200}?\.insert\(/);
+  });
+
+  it("it keeps its server-authoritative retirement of galvanic_intensity_percent", () => {
+    const body = bodyOf("addElectrolysisEntryAction");
+    expect(body).toMatch(/galvanic_intensity_percent:\s*null/);
+    expect(body).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
+  });
+
+  it("the two treatment-area actions are unchanged and labelled", () => {
     for (const fn of [
       "createTreatmentAreaWithEntryAction",
       "updateTreatmentAreaWithEntryAction",
@@ -125,10 +92,10 @@ describe("the deferred block-coupled actions are unchanged", () => {
       const preamble = BLOCK_SRC.slice(Math.max(0, start - 2500), start);
       expect(preamble).toContain("TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION");
     }
-    expect(BLOCK_SRC).toMatch(/from\("electrolysis_entries"\)[\s\S]{0,200}?\.insert\(/);
   });
 
-  it("neither was migrated to the 0164 commands in this phase", () => {
+  it("no electrolysis command exists in this phase", () => {
+    expect(SRC).not.toMatch(/create_electrolysis_entry/);
     expect(BLOCK_SRC).not.toMatch(/create_electrolysis_entry|create_laser_entry/);
   });
 });

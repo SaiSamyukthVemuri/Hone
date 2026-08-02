@@ -37,29 +37,25 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
   `0163`.** `0164` is written and tested but **NOT APPLIED** — see the clinical entry command
   boundary entry below and [known-limitations L18](./production/known-limitations.md).
 
-**Clinical entry command boundary (0164 — WRITTEN, NOT APPLIED).** L18 Phase 1A. `authenticated`
-holds direct row DML on five clinical tables; closing that means moving every legitimate runtime
-writer onto narrow reviewed commands FIRST, deploying them, and only then revoking the grants.
-`0164` is the first step and is **purely additive — it revokes nothing**. It adds two SECURITY
-DEFINER commands with `search_path = ''`: **`create_electrolysis_entry`** and
-**`create_laser_entry`**. Each requires a non-null `auth.uid()`, resolves `studio_id` and
-`client_id` from the trusted `sessions` row (never from a parameter), requires the caller to be an
-**ACTIVE practitioner of that same studio** matched by `auth.uid()`, re-checks the asserted client
-against the session's real client, and — for electrolysis — refuses a block belonging to another
-session and a probe lot outside the studio. Neither takes a studio, practitioner or actor
-parameter, so attribution is not expressible by the caller. Every clinical value passes through
-verbatim, so the existing CHECK constraints and the 0119/0159/0160 guard triggers remain the only
-validation authority. `galvanic_intensity_percent` is retired and is **not a parameter at all** —
-new rows always store NULL. EXECUTE is revoked from `PUBLIC` and `anon` and granted to
-`authenticated` only; there is deliberately **no service-role command**, because ordinary
-practitioner charting must not run through an admin client.
-**Scope:** only the two cleanly separable writers (`addElectrolysisEntryAction`,
-`addLaserEntryAction`) were migrated. `createTreatmentAreaWithEntryAction` and
-`updateTreatmentAreaWithEntryAction` write `session_blocks` AND `electrolysis_entries` as one user
-intent and are deferred to the combined block/entry phase so both writes can become genuinely
-atomic; they are the only two exceptions permitted by
-`tests/security/entry-direct-dml-guard.test.ts`. **Neither entry table is command-boundary
-complete and L18 is NOT closed** — see
+**Clinical entry command boundary (0164 — WRITTEN, NOT APPLIED, LASER-ONLY).** L18 Phase 1A.
+`authenticated` holds direct row DML on five clinical tables; closing that means moving every
+legitimate runtime writer onto narrow reviewed commands FIRST, deploying them, and only then
+revoking the grants. `0164` is the first step and is **purely additive — it revokes nothing**. It
+adds ONE SECURITY DEFINER command with `search_path = ''`: **`create_laser_entry`**. It requires a
+non-null `auth.uid()`, resolves `studio_id` and `client_id` from the trusted `sessions` row (never
+from a parameter), requires the caller to be an **ACTIVE practitioner of that same studio** matched
+by `auth.uid()`, and re-checks the asserted client against the session's real client. It takes no
+studio, practitioner or actor parameter, so attribution is not expressible by the caller. Clinical
+values pass through verbatim, so the existing CHECK constraints and the 0119/0159/0160 guard
+triggers remain the only validation authority. EXECUTE is revoked from `PUBLIC` and `anon` and
+granted to `authenticated` only; there is deliberately **no service-role command**.
+**Scope — only `addLaserEntryAction` moved.** **All three `electrolysis_entries` writers are
+block-coupled and are deferred** to the combined block/entry phase so both writes can become
+genuinely atomic: `createTreatmentAreaWithEntryAction` and `updateTreatmentAreaWithEntryAction`
+write a block then an entry (the first compensates with a soft delete, the second not at all), and
+`addElectrolysisEntryAction` can create a default `session_blocks` row through `ensureBlockForSession` before creating the electrolysis entry; the two writes are not atomic today and must move together. They are the only three exceptions permitted by
+`tests/security/entry-direct-dml-guard.test.ts`. **`electrolysis_entries` is NOT command-bound in
+any respect, neither entry table is command-boundary complete, and L18 is NOT closed** — see
 [known-limitations L18](./production/known-limitations.md) and
 [l18-command-inventory.md](./production/l18-command-inventory.md).
 

@@ -76,14 +76,9 @@ describe("(5/8/9) galvanic intensity + reaction_type historical-data preservatio
     expect(
       (BLOCK_ACTIONS.match(/galvanic_intensity_percent:\s*null/g) ?? []).length,
     ).toBe(2);
+    // The add-another-pass action also forces NULL and never reads a forged field.
     const ACTIONS = read(`${BASE}/actions.ts`);
-    // L18 Phase 1A: add-another-pass now writes through the 0164 command
-    // `create_electrolysis_entry`, which takes NO galvanic_intensity_percent
-    // parameter at all and always stores NULL server-authoritatively. That is
-    // STRONGER than the previous `galvanic_intensity_percent: null` literal —
-    // the value is not merely forced, it is inexpressible by the caller.
-    expect(ACTIONS).toMatch(/rpc\(\s*\n?\s*"create_electrolysis_entry"/);
-    expect(ACTIONS).not.toMatch(/p_galvanic_intensity_percent/);
+    expect(ACTIONS).toMatch(/galvanic_intensity_percent:\s*null/);
     expect(ACTIONS).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
   });
   it("reaction_type is PRESERVED while its chip stays selected and cleared ONLY when removed (never invented)", () => {
