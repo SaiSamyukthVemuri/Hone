@@ -1,0 +1,235 @@
+#!/usr/bin/env node
+// ---------------------------------------------------------------------------
+// Browser test groups + deterministic path→group selection.
+//
+// MEASURED PROBLEM (GitHub Actions, runs 30764322410 / 30765446327 / 30766404661)
+//   browser e2e (local stack) ......... 15.9 / 16.4 / 16.8 min
+//     └─ "Browser E2E (core memory loop)" step alone .... 14.2 min
+//        setup was only ~2.6 min total (Supabase 1.5, Playwright 0.4,
+//        migration chain 0.3, npm ci 0.2)
+//
+// So caching setup is marginal. The cost is 53 specs running strictly
+// serially (`fullyParallel: false, workers: 1` in playwright.config.ts).
+// The fix is to run only the specs a diff can affect on a PR, and to shard
+// the extended suite across SEPARATE JOBS for full/nightly runs — separate
+// runners mean separate Supabase stacks, which preserves the isolation the
+// single-worker config was protecting.
+//
+// This module is pure so the mapping is proved by table-driven tests rather
+// than by pushing commits.
+// ---------------------------------------------------------------------------
+
+/**
+ * Every browser group. `specs` are matched against the e2e/ filename.
+ * A spec belonging to no group falls into `extended` — never dropped.
+ */
+export const BROWSER_GROUPS = {
+  smoke: {
+    description: "fastest proof the app boots, auth works and the memory loop records",
+    specs: ["core-memory-loop.spec.ts", "safe-willow-contract.spec.ts"],
+  },
+  sessions: {
+    description: "sessions / treatment-memory charting",
+    specs: [
+      "charting-usability-polish.spec.ts",
+      "clinical-notes.spec.ts",
+      "conditional-numbing-notes.spec.ts",
+      "copy-settings-machine-readings.spec.ts",
+      "custom-area-commit.spec.ts",
+      "galvanic-intensity-retirement.spec.ts",
+      "multi-area-charting.spec.ts",
+      "multi-area-charting-release.spec.ts",
+      "observation-chips-loading.spec.ts",
+      "observation-chips-save-cycle.spec.ts",
+      "picoblend-precision.spec.ts",
+      "probe-inventory-linkage-mobile.spec.ts",
+      "probe-lot-history-autofill-mobile.spec.ts",
+      "probe-lot-scope-and-copy-mobile.spec.ts",
+      "whole-session-copy.spec.ts",
+      "blend-machine-order-mobile.spec.ts",
+      "finish-appointment-mobile.spec.ts",
+      "combined-today-workflow.spec.ts",
+      "dashboard-memory-visibility.spec.ts",
+      "before-today-imported.spec.ts",
+    ],
+  },
+  intake: {
+    description: "client intake capture and practitioner review",
+    specs: ["intake-review-integrity.spec.ts"],
+  },
+  portal: {
+    description: "client portal and tokenised links",
+    specs: ["appointment-token-hash.spec.ts", "personal-notes-bullets-mobile.spec.ts", "pinned-note-edit-mobile.spec.ts"],
+  },
+  booking: {
+    description: "public booking and appointment lifecycle",
+    specs: [
+      "client-booking-outside-hours.spec.ts",
+      "manual-override-buffer-booking.spec.ts",
+      "move-appointment-custom-time.spec.ts",
+      "move-appointment-mobile-submit.spec.ts",
+      "move-appointment-responsive.spec.ts",
+      "safe-willow-appointment-lifecycle.spec.ts",
+      "create-plan-from-appointment.spec.ts",
+    ],
+  },
+  calendar: {
+    description: "calendar surfaces, services and colours",
+    specs: [
+      "service-calendar-color-mobile.spec.ts",
+      "service-order-and-colors.spec.ts",
+      "disinfectant-notification.spec.ts",
+    ],
+  },
+  owner_admin: {
+    description: "owner/admin, onboarding, studio setup and capacity",
+    specs: [
+      "invitation-reconciliation.spec.ts",
+      "invite-only.spec.ts",
+      "new-studio-wizard.spec.ts",
+      "onboarding.spec.ts",
+      "quick-import.spec.ts",
+      "welcome-email-admin.spec.ts",
+      "practitioner-availability-compat.spec.ts",
+      "practitioner-booking-studio-b.spec.ts",
+      "practitioner-quick-book-studio-b.spec.ts",
+      "practitioner-reassignment-studio-b.spec.ts",
+      "practitioner-schedule-owner.spec.ts",
+      "practitioner-schedule-studio-b.spec.ts",
+    ],
+  },
+  marketing: {
+    description: "public marketing site",
+    specs: ["marketing-homepage.spec.ts", "marketing-pages.spec.ts"],
+  },
+  responsive: {
+    description: "cross-cutting responsive behaviour",
+    specs: ["mobile-ux.spec.ts"],
+  },
+  google: {
+    description: "Google Calendar surfaces (fake Google)",
+    specs: ["google-calendar-connection.spec.ts", "google-calendar-integrations.spec.ts"],
+  },
+};
+
+/**
+ * Path → group. Order matters only for readability; all matches accumulate.
+ * SHARED paths deliberately map to `EXTENDED` (everything), because a shared
+ * helper can affect any workflow and filename proximity alone would miss it.
+ */
+export const EXTENDED = "__extended__";
+
+const SHARED_PATTERNS = [
+  // Changing CI itself can alter how every lane runs, so it must not be able
+  // to narrow browser coverage. Without this a workflow change would set
+  // full_matrix_required=true while selecting NO browser group — the lane
+  // would be skipped exactly when the most caution is warranted.
+  /^\.github\/workflows\//,
+  /^scripts\/(classify-changes|browser-groups|ci-plan)\.mjs$/,
+  /^e2e\/helpers\//,
+  /^playwright\.config\./,
+  /^lib\/supabase\//,
+  /^lib\/auth\//,
+  /^middleware\./,
+  /^app\/layout\.tsx$/,
+  /^app\/globals\.css$/,
+  /^components\/(ui|layout|shell)\//,
+  /^package(-lock)?\.json$/,
+  /^tsconfig/,
+  /^next\.config\./,
+];
+
+const PATH_TO_GROUP = [
+  { group: "intake", patterns: [/intake/i] },
+  { group: "portal", patterns: [/portal/i, /pinned[-_]?note/i, /personal[-_]?note/i] },
+  { group: "booking", patterns: [/booking/i, /appointments?/i, /reschedule/i, /\bbook\b/i, /treatment-plans/i] },
+  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i] },
+  { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
+  { group: "owner_admin", patterns: [/onboarding/i, /invitation/i, /invite/i, /\badmin\b/i, /practitioner/i, /studio/i, /import/i] },
+  { group: "marketing", patterns: [/^app\/\(marketing\)/, /marketing/i] },
+  { group: "google", patterns: [/google[-_]?calendar/i] },
+  { group: "responsive", patterns: [/mobile/i, /responsive/i] },
+];
+
+/** All spec files for a set of group names, deduplicated and sorted. */
+export function specsForGroups(groups) {
+  if (groups.includes(EXTENDED)) return null; // null = run everything
+  const out = new Set();
+  for (const g of groups) {
+    for (const s of BROWSER_GROUPS[g]?.specs ?? []) out.add(s);
+  }
+  return [...out].sort();
+}
+
+/**
+ * Decide which browser groups a diff affects.
+ * Returns { groups, extended, reason }.
+ */
+export function selectBrowserGroups(files) {
+  const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
+  if (list.length === 0) {
+    return { groups: [EXTENDED], extended: true, reason: "no detectable diff — failing safe to extended coverage" };
+  }
+
+  // Docs / ledger / migration-only never need a browser.
+  const NON_BROWSER = [/^docs\//, /\.md$/, /^supabase\/migrations\//, /^tests\/(db|migrations|security|audits|scripts|ci)\//];
+  if (list.every((f) => NON_BROWSER.some((re) => re.test(f)))) {
+    return { groups: [], extended: false, reason: "docs / ledger / migration-only — no browser coverage needed" };
+  }
+
+  const shared = list.filter((f) => SHARED_PATTERNS.some((re) => re.test(f)));
+  if (shared.length > 0) {
+    return {
+      groups: [EXTENDED],
+      extended: true,
+      reason: `shared browser/app infrastructure changed (${shared[0]}) — a shared helper can affect any workflow, so filename proximity is not enough`,
+    };
+  }
+
+  const groups = new Set();
+  const why = [];
+  for (const f of list) {
+    for (const rule of PATH_TO_GROUP) {
+      if (rule.patterns.some((re) => re.test(f))) {
+        if (!groups.has(rule.group)) why.push(`${rule.group} <- ${f}`);
+        groups.add(rule.group);
+      }
+    }
+  }
+
+  // A changed spec always selects its own group.
+  for (const f of list) {
+    const base = f.startsWith("e2e/") ? f.slice(4) : null;
+    if (!base) continue;
+    for (const [g, def] of Object.entries(BROWSER_GROUPS)) {
+      if (def.specs.includes(base)) {
+        if (!groups.has(g)) why.push(`${g} <- ${f}`);
+        groups.add(g);
+      }
+    }
+  }
+
+  if (groups.size === 0) {
+    // Touched app/component code we could not attribute. Fail SAFE.
+    const appish = list.some((f) => /^(app|components|lib|hooks)\//.test(f));
+    if (appish) {
+      return {
+        groups: [EXTENDED],
+        extended: true,
+        reason: "application code changed but no group matched — failing safe to extended coverage",
+      };
+    }
+    return { groups: [], extended: false, reason: "no browser-affecting paths" };
+  }
+
+  // Smoke always accompanies a targeted run: it is the cheapest proof the app
+  // still boots and authenticates before the targeted specs are believed.
+  groups.add("smoke");
+  return { groups: [...groups].sort(), extended: false, reason: why.join("; ") };
+}
+
+if (process.argv[1] && process.argv[1].endsWith("browser-groups.mjs")) {
+  const files = process.argv.slice(2);
+  const r = selectBrowserGroups(files);
+  console.log(JSON.stringify({ ...r, specs: specsForGroups(r.groups) }, null, 2));
+}

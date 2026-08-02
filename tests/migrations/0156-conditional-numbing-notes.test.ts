@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-
 // Migration 0156 — conditional numbing notes. Additive nullable column +
 // carries it through the two authoritative atomic RPCs. Carries the repo
 // migration-max tripwire.
@@ -22,7 +21,6 @@ describe("0156 — conditional numbing notes (repo migration-max tripwire)", () 
     // Collision guard: exactly ONE 0156 migration. The absolute repo-max pin
     // moved to the 0157 test (0157 = whole-session copy setup now follows).
     expect(files.filter((f) => /^0156_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
   });
 
   it("adds ONE nullable text column, no default, no NOT NULL, no backfill", () => {

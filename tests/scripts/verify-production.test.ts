@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { migrationState } from "../migrations/helpers/migration-state";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { getMigrationState as deriveExpectedRaw } from "../../scripts/migration-state.mjs";
+const deriveExpected = () => (deriveExpectedRaw() as { repo_migration_max: string }).repo_migration_max;
 
 // PR #308. Read-only production verification script. The script is an
 // operator-run tool (it shells `supabase db query --linked`, which CI can't do),
@@ -81,7 +85,7 @@ describe("verify-production: covers every required check", () => {
     expect(CODE).not.toMatch(/EXPECTED_MIGRATION_MAX\s*=\s*"\d{4}"/);
     expect(CODE).toMatch(/function deriveExpectedMigrationMax/);
     expect(CODE).toMatch(/EXPECTED_MIGRATION_MAX\s*=\s*deriveExpectedMigrationMax\(\)/);
-    expect(CODE).toMatch(/"supabase",\s*"migrations"/);
+    expect(CODE).toMatch(/getMigrationState\(\)\.repo_migration_max/);
     expect(CODE).toMatch(/schema_migrations/);
   });
 
@@ -92,20 +96,12 @@ describe("verify-production: covers every required check", () => {
     // and hosted reconcile at 0120 (the verifier's "Remote migration max" PASSES).
     // This assertion still fails on the next new migration, forcing a conscious
     // review of the pre-live verifier.
-    const nums = readdirSync(join(process.cwd(), "supabase", "migrations"))
-      .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-      .filter(Boolean)
-      .map((m) => (m as RegExpExecArray)[1])
-      .sort();
-    // Repo max advances to 0154 (Chloe card-change notifications: a nullable
-    // additive dedupe_key on practitioner_notifications + a partial unique index
-    // so the setup_intent.succeeded webhook can write an idempotent studio
-    // notification when a client adds/replaces a card). 0154 is migration-first:
-    // it is repo-only until its hosted apply — UNTIL then the live verifier's
-    // "Remote migration max" will (correctly) report expected 0153 vs the current
-    // remote, the intended pending-apply signal. This assertion still fails on the
-    // next new migration, forcing a conscious review of the verifier.
-    expect(nums[nums.length - 1]).toBe("0165");
+    // The verifier no longer scans supabase/migrations itself — it delegates to
+    // scripts/migration-state.mjs, so there is exactly ONE derivation of the repo
+    // max in the repository. This asserts the delegation and agreement, and needs
+    // no edit when a migration lands.
+    expect(CODE).toMatch(/getMigrationState/);
+    expect(deriveExpected()).toBe(migrationState().repo_migration_max);
   });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);

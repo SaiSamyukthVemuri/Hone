@@ -23,7 +23,12 @@
     "check:fresh-managed": "node scripts/check-fresh-managed-extensions.mjs",
     "check:db-types": "node scripts/check-db-types.mjs",
     "check:prod-env-gates": "node scripts/check-production-env-gates.mjs",
-    "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates && npm run check:migration-extensions"
+    "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates && npm run check:migration-extensions",
+    "verify:prepush": "node scripts/verify-prepush.mjs",
+    "migration:state": "node scripts/migration-state.mjs",
+    "ci:classify": "node scripts/classify-changes.mjs",
+    "ci:plan": "node scripts/ci-plan.mjs",
+    "verify:changed": "node scripts/verify-changed.mjs"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.66.0",

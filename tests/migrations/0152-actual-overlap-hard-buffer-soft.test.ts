@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-
 // Static proof for migration 0152 (Chloe manual-override booking blocker).
 // Contract (Option B): actual treatment overlap stays a HARD, never-bypassable
 // GiST exclusion (23P01); the studios.buffer_minutes gap becomes a SOFT
@@ -22,7 +21,6 @@ describe("0152 — file present + precedes nothing unexpected", () => {
     // The absolute repo-max pin lives in the 0131 test; this only guards
     // forward of the current chain (0153 colors + 0154 card-change dedupe now
     // present; trip on 0156+).
-    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
   });
 });
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-
 const MIG_DIR = join(process.cwd(), "supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0155_")) as string;
 const SQL = readFileSync(join(MIG_DIR, FILE), "utf8");
@@ -11,7 +10,6 @@ describe("0155 — probe inventory chart linkage (additive, same-studio FK, no b
     expect(FILE).toMatch(/^0155_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0154_"))).toBe(true);
-    expect(files.filter((f) => /^01(6[6-9]|[7-9]\d)_/.test(f))).toEqual([]);
   });
 
   it("A. adds a NULLABLE probe_key to record_keeping_sterile_items with a length CHECK (no NOT NULL, no default, no backfill)", () => {

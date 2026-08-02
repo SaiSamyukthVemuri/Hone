@@ -42,6 +42,7 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import path from "node:path";
+import { getMigrationState } from "./migration-state.mjs";
 
 // Mirrored from lib/cron/reminder-heartbeat.ts (a .mjs script can't import the
 // TS module). CRON_INTERVAL_MINUTES = 15; stale after 3 missed runs = 45 min.
@@ -54,18 +55,10 @@ const REMINDER_STALE_AFTER_MINUTES = 45;
 // prefix in the repo (e.g. 0100_postcare_send_state.sql -> "0100"). If the repo
 // gains a migration, the expected value tracks automatically.
 function deriveExpectedMigrationMax() {
-  const dir = path.join(process.cwd(), "supabase", "migrations");
-  const nums = readdirSync(dir)
-    .map((f) => /^(\d{4})_.*\.sql$/.exec(f))
-    .filter(Boolean)
-    .map((m) => m[1])
-    .sort();
-  if (nums.length === 0) {
-    throw new Error(
-      "no supabase/migrations/NNNN_*.sql files found — run from the repo root",
-    );
-  }
-  return nums[nums.length - 1];
+  // Canonical: one derivation, shared with the tests and the docs guards.
+  // Previously this scanned supabase/migrations itself, which meant the repo
+  // max was computed in two places that could disagree.
+  return getMigrationState().repo_migration_max;
 }
 const EXPECTED_MIGRATION_MAX = deriveExpectedMigrationMax();
 
