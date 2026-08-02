@@ -1,13 +1,12 @@
 # 09 Database and RLS
 
-Hone uses Supabase Postgres. **As of 2026-08-02 the production migration max = 0164
-(`0164_clean_entry_create_commands.sql`) — 163 applied, each exactly once, `0163`
+Hone uses Supabase Postgres. **As of 2026-08-02 the production migration max = 0165
+(`0165_revoke_service_role_laser_entry_execute.sql`) — 164 applied, each exactly once, `0163`
 immediately preceding `0164`. `0158` is deliberately skipped and will never be applied.
 `0163` was applied 2026-08-02, independently verified, and is now **frozen**, as is `0162`
-before it. `0164` was applied 2026-08-02 and is **frozen**. The **repository max is now 0165**
-(`0165_revoke_service_role_laser_entry_execute.sql`), which is written and tested but **NOT
-APPLIED**, so repo max and hosted max deliberately differ until it is applied; the next
-migration number is **0166**.**
+before it. `0164` and `0165` were both applied 2026-08-02 and are **frozen**. The repository max is also
+**0165**, so repository and hosted migration state **match**; the next migration number is
+**0166**.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -34,20 +33,20 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
   `0166`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
   anywhere it can go stale: derive it from
   `supabase/migrations/` (as `scripts/verify-production.mjs` does).
-  **Note the repo/hosted split right now: repo max is `0165`, hosted (production) max is
-  `0164`.** `0165` (revoke the unintended `service_role` EXECUTE that `0164` left on
-  `create_laser_entry`) is written and tested but **NOT APPLIED** — see
-  [known-limitations L18](./production/known-limitations.md).
+  **Repo and hosted are at parity: both are `0165`.** `0165` (revoke the unintended
+  `service_role` EXECUTE that `0164` left on `create_laser_entry`) was applied 2026-08-02 and is
+  frozen — see [known-limitations L18](./production/known-limitations.md).
 
-**`service_role` EXECUTE repair (0165 — WRITTEN, NOT APPLIED).** `0164` intended EXECUTE on
+**`service_role` EXECUTE repair (0165 — APPLIED 2026-08-02, frozen).** `0164` intended EXECUTE on
 `create_laser_entry` to reach `authenticated` only, and its header said so — but Supabase's
 `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` **and `service_role`** at
 create time, and `0164` revoked only from `public` and `anon`. The deployed ACL was therefore
 `{postgres=X, authenticated=X, service_role=X}`. This is the same defect as `0129` (which left
 `anon` holding EXECUTE until `0130`), one role over. **No exposure was found:** the command's
 first statement requires a non-null `auth.uid()`, so a service-role caller raises
-`check_violation` before touching a row. `0165` revokes that one grant on that one signature and
-changes nothing else. The generalised rule — an authenticated-only clinical RPC must revoke from
+`check_violation` before touching a row. `0165` revoked that one grant on that one signature and
+changed nothing else — the post-apply ACL is exactly `{postgres=X, authenticated=X}` and the
+function definition md5 is byte-identical across the apply. The generalised rule — an authenticated-only clinical RPC must revoke from
 `public`, `anon` AND `service_role` explicitly, by name — is now pinned by
 `tests/security/clinical-rpc-grant-guard.test.ts`, which excludes `returns trigger` functions
 because those are not directly callable.

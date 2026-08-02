@@ -905,7 +905,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
   });
 
-  it("the ledger states hosted max 0164 and repo max 0165 (0165 is written, NOT applied)", () => {
+  it("the ledger states hosted max 0165 and repo max 0165 (0165 is APPLIED)", () => {
     // Pinned to the specific rows. An existence check is not enough: the ledger
     // names 0159 in several places, so a flipped hosted-max row would still find
     // a match somewhere else in the file.
@@ -914,13 +914,13 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     // the reverse of what they enforced while it was still an unapplied DRAFT.
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Hosted (production) migration max row must read 0164",
+      "the ledger's Hosted (production) migration max row must read 0165",
     ).toMatch(
-      /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0164\*\*/,
+      /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0165\*\*/,
     );
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Repo migration max row must read 0165 (0165 is written but NOT applied)",
+      "the ledger's Repo migration max row must read 0165 (hosted == repo)",
     ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0165\*\*/);
     expect(
       MIGRATION_LEDGER,
@@ -959,7 +959,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     ).not.toMatch(/\|\s*\*\*(?:Hosted \(production\)|Repo) migration max\*\*\s*\|\s*\*\*015[79]\*\*/);
   });
 
-  it("production migration max is stated as 0164 where a max is asserted", () => {
+  it("production migration max is stated as 0165 where a max is asserted", () => {
     for (const [name, doc] of [
       ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
       ["docs/production/current-state.md", CURRENT_STATE],
@@ -967,14 +967,14 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
       ["README.md", README],
       ["docs/roadmap/CANONICAL_ROADMAP.md", ROADMAP],
     ] as const) {
-      expect(doc, `${name} must assert production migration max 0164`).toMatch(
-        /(?:migration max|max)[^.\n]{0,80}\b0164\b/i,
+      expect(doc, `${name} must assert production migration max 0165`).toMatch(
+        /(?:migration max|max)[^.\n]{0,80}\b0165\b/i,
       );
       expect(
         doc,
-        `${name} must not still assert a production migration max of 0157, 0159, 0161, 0162 or 0163`,
+        `${name} must not still assert a production migration max of 0157, 0159, 0161-0164`,
       ).not.toMatch(
-        /production\s+migration\s+max\s*(?:=|is|:)?\s*\*{0,2}(?:015[79]|016[123])\b/i,
+        /production\s+migration\s+max\s*(?:=|is|:)?\s*\*{0,2}(?:015[79]|016[1234])\b/i,
       );
     }
   });

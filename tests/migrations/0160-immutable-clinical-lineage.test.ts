@@ -78,26 +78,26 @@ describe("0160 — immutable clinical lineage", () => {
     // 0160 itself remains applied and immutable — that is asserted above.
     expect(
       dbRls,
-      "docs/09 must state the production migration max is 0164",
-    ).toMatch(/production migration max = 0164/i);
+      "docs/09 must state the production migration max is 0165",
+    ).toMatch(/production migration max = 0165/i);
     // 0163 is now APPLIED, so repo max and hosted max MATCH again. (This pin
     // oscillates by design: parity while nothing is pending, split while a
     // migration is written and unapplied.)
     expect(
       dbRls,
-      "docs/09 must record 0164 as applied, not as written-but-unapplied",
-    ).toMatch(/0164[\s\S]{0,200}applied 2026-08-02/i);
+      "docs/09 must record 0165 as applied, not as written-but-unapplied",
+    ).toMatch(/0165[\s\S]{0,200}applied 2026-08-02/i);
     // 0164 is written but NOT APPLIED, so repo and hosted deliberately DIFFER
     // again. (This pin oscillates by design: parity while nothing is pending,
     // split while a migration is written and unapplied.)
     expect(
       dbRls,
-      "docs/09 must state the repository max is 0165 and that it is NOT APPLIED",
-    ).toMatch(/repository max is now 0165[\s\S]{0,240}NOT\s*\n?APPLIED/i);
+      "docs/09 must state repository and hosted migration state match",
+    ).toMatch(/repository and hosted migration state \*{0,2}match/i);
     expect(
       dbRls,
-      "docs/09 must not claim repo and hosted max are equal while 0165 is unapplied",
-    ).not.toMatch(/repository and hosted migration state \*{0,2}match/i);
+      "docs/09 must not still describe 0165 as NOT APPLIED",
+    ).not.toMatch(/0165[^.\n]{0,120}\bNOT\s*\n?APPLIED\b/i);
     expect(
       dbRls,
       "docs/09 must not still claim hosted max is 0161",

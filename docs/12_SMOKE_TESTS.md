@@ -1138,7 +1138,7 @@ Fixes a P1 overclaim: `sendPostcareEmailAction` used `postcare_email_sent_at` as
 
 Operator-run, **read-only** pre-flight that proves remote production matches the repo's required state before live payments / broader sensitive-data use. `scripts/verify-production.mjs` (run `node --env-file=.env.local scripts/verify-production.mjs` from the production-linked Mac) reads prod exclusively via `supabase db query --linked` and checks: remote migration max — **derived from `supabase/migrations/` at run time, never hardcoded** (currently **0157**; the literal "0099" in earlier revisions of this entry was exactly the staleness the derivation was introduced to prevent); the 0093 (private treatment-image bucket + `treatment_images` RLS policies + integrity trigger), 0097 (intake-link columns), 0098 (intake-reminder columns + indexes + `claim_email_send`/`record_email_result` branches), and 0099 (`practitioner_note`) effects; RLS on the curated critical tables (incl. payments + `record_keeping_*`); zero unresolved critical payment ops alerts (count only); Stripe gates 1/1/0/0 (spawns `check-stripe-gates.mjs`); and a fresh reminder heartbeat (≤ 45 min, Upstash). It **fails closed** — prints only PASS/FAIL/INCOMPLETE + scalars (no secrets/PII/rows), exits non-zero if any required check fails or can't be verified (e.g. Upstash env absent → heartbeat INCOMPLETE, not PASS), and distinguishes `PRODUCTION VERIFIED ✓` (automated only) from the manual dashboard checks. It performs **no writes / no migration / no cron / no email / no Stripe writes**; not a CI gate, not a live-payment enablement step. Runbook + manual checks: **docs/16 §17.13** (cross-referenced from docs/10). Pinned by `tests/scripts/verify-production.test.ts` (read-only contract, no secrets/PII, fail-closed, required-check coverage, runbook present). Live payments remain disabled.
 
-## Clinical entry command boundary smoke (0164 APPLIED 2026-08-02, LASER-ONLY; 0165 NOT APPLIED)
+## Clinical entry command boundary smoke (0164 + 0165 APPLIED 2026-08-02, LASER-ONLY)
 
 L18 Phase 1A. **`0164` was APPLIED to production 2026-08-02T19:39:45Z→19:39:49Z** and is frozen at
 `sha256 a1f3aa27…39a3826`; hosted max is `0164`. It is **purely additive** — it revokes no table
@@ -1147,8 +1147,9 @@ grant and drops no policy — so direct DML remains available throughout this ph
 ⚠️ **`0164` shipped with an unintended `service_role` EXECUTE grant on `create_laser_entry`**
 (Supabase's `ALTER DEFAULT PRIVILEGES` grants it at create time; `0164` revoked only `public` and
 `anon`). Discovered in post-apply verification. **No exposure found** — the command requires a
-non-null `auth.uid()`, so a service-role caller raises `check_violation`. **Migration `0165`
-repairs it and is WRITTEN but NOT APPLIED** (repo max `0165`, hosted `0164`).
+non-null `auth.uid()`, so a service-role caller raises `check_violation`. **Migration `0165` repaired it and was APPLIED
+2026-08-02T20:20:02Z→20:20:06Z** — the ACL is now exactly
+`{postgres=X/postgres,authenticated=X/postgres}`; hosted max `0165`, repo == hosted.
 
 **L18 status:** PARTIAL — the clean laser-entry creation path uses a narrow command. Electrolysis entry writers remain direct because each relevant user workflow can depend on `session_blocks` and must move atomically in the combined phase. Direct table grants remain in place.
 **`electrolysis_entries` is NOT command-bound; neither entry table is command-boundary complete;
@@ -1180,7 +1181,7 @@ DML is **not** claimed closed), and `tests/app/sessions/entry-actions-use-comman
 (`npx --yes supabase@2.102.0 db reset --local`) and confirm grants parity before trusting a
 result.
 
-**Operator check — AFTER `0165` IS APPLIED (read-only, no writes):** confirm
+**Operator check (read-only, no writes):** confirm
 `supabase migration list --linked` shows `0165` in Remote exactly once; confirm the
 `create_laser_entry` ACL is exactly `{postgres=X/postgres,authenticated=X/postgres}` — i.e.
 `authenticated` **true**, `anon` **false**, PUBLIC **0 entries**, `service_role` **false**, owner

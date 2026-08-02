@@ -14,20 +14,20 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-02, post-0164 apply; 0165 written and unapplied)
+## Current state (verified 2026-08-02, post-0165 apply)
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0164** (`0164_clean_entry_create_commands.sql`, applied 2026-08-02T19:39:45Z→19:39:49Z) |
-| **Repo migration max** | **0165** — **hosted != repo.** `0165` (revoke the unintended `service_role` EXECUTE left by `0164`) is written and tested but **NOT APPLIED**; see the 0165 proposal below. Next free number is **0166**. |
+| **Hosted (production) migration max** | **0165** (`0165_revoke_service_role_laser_entry_execute.sql`, applied 2026-08-02T20:20:02Z→20:20:06Z) |
+| **Repo migration max** | **0165** — **hosted == repo.** Parity restored by the 2026-08-02T20:20Z apply. Next free number is **0166**. |
 | **Total migrations in repo** | **164** (`0001` … `0157`, `0159` … `0165` — **no `0158`**) |
-| **Total applied in production** | **163**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). The 164th file on disk, `0165`, is **NOT applied**. |
+| **Total applied in production** | **164**, each applied **exactly once** (0 duplicate versions, no repaired or reverted entry). Every file on disk is applied. |
 | **`0158`** | **Deliberately skipped, permanently.** DRAFT PR #481 carries a *different*, superseded migration under that number on a branch retained as audit evidence; two artifacts must never share a number. `0158` will never be applied. |
 | **`0160`** | **APPLIED 2026-07-30**, exactly once. Immutable clinical lineage. Its source merge (PR #483) completed on 2026-07-30 (merge `c64366c9ba4130283932bbe21e32bf2ed62c4975`) and deployed successfully. |
 | **Immediately preceding `0160`** | `0159` (which is itself immediately preceded by `0157`) |
 | **Reconciliation** | `supabase migration list --linked` shows Local and Remote matching at **every** version, including `0162` — there is no longer any pending row. `0159`/`0160` Remote populated 2026-07-30. **`0161` was APPLIED 2026-07-30 and is present in Remote exactly once (sha256 `e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46`).** **`0162` was APPLIED 2026-08-02 and is present in Remote exactly once (sha256 `41ccc745536806a417614b92202634811f0ae9e854f584f26badbf6ec01c1088`).** |
 
-**Every migration `0001`–`0157` plus `0159`–`0164` is applied in production.** The recent tail was applied
+**Every migration `0001`–`0157` plus `0159`–`0165` is applied in production.** The recent tail was applied
 **migration-first** — the migration applied to production and verified *before* the code
 merge — with two deliberate exceptions noted below.
 
@@ -50,7 +50,7 @@ merge — with two deliberate exceptions noted below.
 - **Dormant migration** — applied and merged, but nothing in production reads or writes it
   because a flag is off, no worker exists, or no tenant is eligible.
 
-### 0165 — PROPOSAL (written, tested, **NOT APPLIED**)
+### 0165 — APPLIED 2026-08-02
 
 **`0165_revoke_service_role_laser_entry_execute.sql` — revoke the unintended `service_role`
 EXECUTE that `0164` left on `create_laser_entry`.**
@@ -58,7 +58,9 @@ EXECUTE that `0164` left on `create_laser_entry`.**
 | Field | Value |
 |---|---|
 | **Migration** | `0165_revoke_service_role_laser_entry_execute.sql` |
-| **Status** | **NOT APPLIED.** Repo max `0165`, hosted max `0164`. Awaiting explicit apply authorization. |
+| **Status** | ✅ **APPLIED 2026-08-02T20:20:02Z → 20:20:06Z** at authorized head `2fe88d6e176b13b3620921280e75182e6cdedae2` (CI run `30764322410`, success at that exact sha). Hosted max `0164`→**`0165`**; applied 163→164; repo == hosted. No error, no notices. |
+| **Frozen checksum** | `sha256 b3a150bd1d6478b7eaafe42f0ec599bcae123bacb8bc7106085196f921492193`. **FROZEN — never edit.** |
+| **Post-apply verification** | ACL `{postgres=X/postgres,authenticated=X/postgres}` — was `{postgres,authenticated,service_role}`. `service_role` EXECUTE **true → false**; `authenticated` **true**; `anon` **false**; PUBLIC **0 ACL entries**. Function UNCHANGED: `pg_get_functiondef` md5 **`b25acad06fda86adb9a85e334ca0570d`** identical before and after, `prosecdef=true`, `proconfig=search_path=""`, owner `postgres` — REVOKE does not touch the definition. Direct table DML unchanged: `laser_entries` INSERT **true**, `electrolysis_entries` INSERT **true**. ZERO clinical rows changed across the apply (laser 2, electrolysis 44, sessions 82 before and after). |
 | **Class** | One `REVOKE` on one exact function signature. **No** function recreation, body change, schema, policy, trigger or data change; **no** table-privilege change; **no** `ALTER DEFAULT PRIVILEGES` change. |
 | **Defect** | `0164` intended EXECUTE for `authenticated` only and said so in its header. Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` AND `service_role` at create time; `0164` revoked only `public` and `anon`. Deployed ACL after the apply: `{postgres=X, authenticated=X, service_role=X}`. |
 | **Precedent** | Identical class to `0129` (revoked only `from public`, leaving `anon`) which `0130` repaired. `0164` quoted that lesson and reproduced it one role over. |
@@ -66,7 +68,7 @@ EXECUTE that `0164` left on `create_laser_entry`.**
 | **Preserved** | `authenticated` EXECUTE; `anon`/PUBLIC already none; `postgres` ownership; the function body, `prosecdef` and `search_path` (no `create or replace`); all direct table DML. |
 | **Prevention** | `tests/security/clinical-rpc-grant-guard.test.ts` now requires every authenticated-only clinical RPC to revoke from `public`, `anon` AND `service_role` explicitly, searching all migrations so a later repair counts. `returns trigger` functions are excluded — they are not directly callable (`0A000`), so EXECUTE on them is inert. |
 | **Transaction + locks** | Own `begin; … commit;` with `set local lock_timeout = '5s'`, per the 0159–0164 precedent. |
-| **Editable?** | **Yes, for now.** Not checksum-frozen while unapplied; freeze it in the change that records its apply. |
+| **Editable?** | **NO — FROZEN as of the 2026-08-02 apply.** `0159`–`0165` are applied and must never be edited. |
 | **Proof** | `tests/migrations/0165-revoke-service-role-laser-entry-execute.test.ts` (19 source-contract cases + the repo migration-max tripwire, moved here from the 0164 test) and `tests/db/entry-create-commands.db.test.ts` (23 cases; asserts the full post-0165 ACL is exactly `{authenticated, postgres}` with `service_role` **false** and `postgres` still owner). |
 
 ### 0164 — APPLIED 2026-08-02
