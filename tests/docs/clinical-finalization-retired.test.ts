@@ -950,7 +950,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     ).not.toMatch(/\|\s*\*\*(?:Hosted \(production\)|Repo) migration max\*\*\s*\|\s*\*\*015[79]\*\*/);
   });
 
-  it("production migration max is stated as 0161 where a max is asserted", () => {
+  it("production migration max is stated as 0162 where a max is asserted", () => {
     for (const [name, doc] of [
       ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
       ["docs/production/current-state.md", CURRENT_STATE],
@@ -958,13 +958,15 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
       ["README.md", README],
       ["docs/roadmap/CANONICAL_ROADMAP.md", ROADMAP],
     ] as const) {
-      expect(doc, `${name} must assert production migration max 0161`).toMatch(
-        /(?:migration max|max)[^.\n]{0,80}\b0161\b/i,
+      expect(doc, `${name} must assert production migration max 0162`).toMatch(
+        /(?:migration max|max)[^.\n]{0,80}\b0162\b/i,
       );
       expect(
         doc,
-        `${name} must not still assert a production migration max of 0157 or 0159`,
-      ).not.toMatch(/production\s+migration\s+max\s*(?:=|is|:)?\s*\*{0,2}015[79]\b/i);
+        `${name} must not still assert a production migration max of 0157, 0159 or 0161`,
+      ).not.toMatch(
+        /production\s+migration\s+max\s*(?:=|is|:)?\s*\*{0,2}(?:015[79]|0161)\b/i,
+      );
     }
   });
 

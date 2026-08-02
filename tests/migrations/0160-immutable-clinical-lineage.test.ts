@@ -29,7 +29,7 @@ function fn(name: string): string {
 }
 
 describe("0160 — immutable clinical lineage", () => {
-  // The repo-max pin now lives in the 0161 test; 0160 remains the PRODUCTION max.
+  // The repo-max pin now lives in the 0162 test; 0162 is the current PRODUCTION max.
   it("is present, 0159 precedes it, exactly one 0160, and nothing 0162+ yet", () => {
     expect(FILE).toMatch(/^0160_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -40,7 +40,7 @@ describe("0160 — immutable clinical lineage", () => {
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(162); // 0161 = service order + colours (UNAPPLIED)
+    expect(nums[nums.length - 1]).toBe(162); // 0162 = intake review transition integrity (APPLIED 2026-08-02)
     expect(new Set(nums).size).toBe(nums.length);
   });
 
@@ -74,28 +74,31 @@ describe("0160 — immutable clinical lineage", () => {
       ).not.toMatch(/repo max \(0160\) is deliberately one ahead/i);
     }
     const dbRls = read("docs/09_DATABASE_AND_RLS.md").replace(/\s+/g, " ");
-    // 0161 was applied 2026-07-30, so the production max advanced past 0160.
+    // 0162 was applied 2026-08-02, so the production max advanced past 0161.
     // 0160 itself remains applied and immutable — that is asserted above.
     expect(
       dbRls,
-      "docs/09 must state the production migration max is 0161",
-    ).toMatch(/production migration max = 0161/i);
-    // 0162 is written but NOT APPLIED, so repo max and hosted max deliberately
-    // DIFFER. docs/09 must say so explicitly rather than claim they match —
-    // an operator reading "both 0161" would not know an unapplied migration is
-    // sitting in the repo.
+      "docs/09 must state the production migration max is 0162",
+    ).toMatch(/production migration max = 0162/i);
+    // 0162 is now APPLIED, so repo max and hosted max MATCH again. This pair of
+    // assertions is the reverse of what it enforced while 0162 was an unapplied
+    // draft: docs/09 must now state parity, and must NOT still describe a split.
     expect(
       dbRls,
-      "docs/09 must state hosted max is 0161",
-    ).toMatch(/hosted max is 0161/i);
+      "docs/09 must state repository and hosted migration state match",
+    ).toMatch(/repository and hosted migration state \*{0,2}match/i);
     expect(
       dbRls,
-      "docs/09 must state the repository max is 0162 and that it is NOT APPLIED",
-    ).toMatch(/repository max is now 0162[\s\S]{0,200}NOT\s*\n?APPLIED/i);
+      "docs/09 must record 0162 as applied, not as written-but-unapplied",
+    ).toMatch(/0162[\s\S]{0,200}applied 2026-08-02/i);
     expect(
       dbRls,
-      "docs/09 must not claim repo and hosted max are equal while 0162 is unapplied",
-    ).not.toMatch(/repository max and hosted max are both/i);
+      "docs/09 must not still describe 0162 as NOT APPLIED",
+    ).not.toMatch(/0162[^.\n]{0,120}\bNOT\s*\n?APPLIED\b/i);
+    expect(
+      dbRls,
+      "docs/09 must not still claim hosted max is 0161",
+    ).not.toMatch(/hosted max is (?:still )?0161/i);
     expect(
       dbRls,
       "docs/09 must name 0163 as the next number to allocate",
