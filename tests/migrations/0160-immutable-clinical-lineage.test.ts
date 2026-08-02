@@ -35,12 +35,12 @@ describe("0160 — immutable clinical lineage", () => {
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0159_"))).toBe(true);
     expect(files.filter((f) => /^0160_/.test(f))).toHaveLength(1);
-    expect(files.filter((f) => /^01(6[2-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[3-9]|[7-9]\d)_/.test(f))).toEqual([]);
     const nums = files
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    expect(nums[nums.length - 1]).toBe(161); // 0161 = service order + colours (UNAPPLIED)
+    expect(nums[nums.length - 1]).toBe(162); // 0161 = service order + colours (UNAPPLIED)
     expect(new Set(nums).size).toBe(nums.length);
   });
 
@@ -80,14 +80,26 @@ describe("0160 — immutable clinical lineage", () => {
       dbRls,
       "docs/09 must state the production migration max is 0161",
     ).toMatch(/production migration max = 0161/i);
+    // 0162 is written but NOT APPLIED, so repo max and hosted max deliberately
+    // DIFFER. docs/09 must say so explicitly rather than claim they match —
+    // an operator reading "both 0161" would not know an unapplied migration is
+    // sitting in the repo.
     expect(
       dbRls,
-      "docs/09 must state repo and hosted max are both 0161 now that it is applied",
-    ).toMatch(/repository max and hosted max are both 0161/i);
+      "docs/09 must state hosted max is 0161",
+    ).toMatch(/hosted max is 0161/i);
     expect(
       dbRls,
-      "docs/09 must name 0162 as the next number to allocate",
-    ).toMatch(/Current max `0161`, so the next is\s*`0162`/i);
+      "docs/09 must state the repository max is 0162 and that it is NOT APPLIED",
+    ).toMatch(/repository max is now 0162[\s\S]{0,200}NOT\s*\n?APPLIED/i);
+    expect(
+      dbRls,
+      "docs/09 must not claim repo and hosted max are equal while 0162 is unapplied",
+    ).not.toMatch(/repository max and hosted max are both/i);
+    expect(
+      dbRls,
+      "docs/09 must name 0163 as the next number to allocate",
+    ).toMatch(/Current repo max `0162`, so the next is\s*`0163`/i);
   });
 
   it("the applied 0160 checksum is pinned in the ledger and matches the file on disk", () => {

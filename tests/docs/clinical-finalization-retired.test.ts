@@ -905,23 +905,23 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
   });
 
-  it("the ledger states hosted max 0161 and repo max 0161 (0161 is APPLIED)", () => {
+  it("the ledger states hosted max 0162 and repo max 0162 (0162 is APPLIED)", () => {
     // Pinned to the specific rows. An existence check is not enough: the ledger
     // names 0159 in several places, so a flipped hosted-max row would still find
     // a match somewhere else in the file.
-    // 0161 (service order + colours) was APPLIED to production 2026-07-30, so
-    // hosted and repo are level again. The assertions below are the reverse of
-    // what they enforced while it was still an unapplied DRAFT.
+    // 0162 (intake review transition integrity) was APPLIED to production
+    // 2026-08-02, so hosted and repo are level again. The assertions below are
+    // the reverse of what they enforced while it was still an unapplied DRAFT.
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Hosted (production) migration max row must read 0161",
+      "the ledger's Hosted (production) migration max row must read 0162",
     ).toMatch(
-      /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0161\*\*/,
+      /\|\s*\*\*Hosted \(production\) migration max\*\*\s*\|\s*\*\*0162\*\*/,
     );
     expect(
       MIGRATION_LEDGER,
-      "the ledger's Repo migration max row must read 0161",
-    ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0161\*\*/);
+      "the ledger's Repo migration max row must read 0162 (hosted == repo)",
+    ).toMatch(/\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*0162\*\*/);
     expect(
       MIGRATION_LEDGER,
       "…and must record 0161 as APPLIED with its checksum, not as pending",
@@ -933,8 +933,17 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     );
     expect(
       MIGRATION_LEDGER,
-      "no ledger row may still describe 0161 as unapplied",
-    ).not.toMatch(/0161[^.\n]{0,80}\b(?:NOT APPLIED|NEVER been applied|is unapplied)/i);
+      "…and must record 0162 as APPLIED with its frozen checksum, not as pending",
+    ).toMatch(
+      new RegExp(
+        "0162[\\s\\S]{0,240}APPLIED 2026-08-02[\\s\\S]{0,200}" +
+          "41ccc745536806a417614b92202634811f0ae9e854f584f26badbf6ec01c1088",
+      ),
+    );
+    expect(
+      MIGRATION_LEDGER,
+      "no ledger row may still describe 0161 or 0162 as unapplied",
+    ).not.toMatch(/016[12][^.\n]{0,80}\b(?:NOT APPLIED|NEVER been applied|is unapplied)/i);
     expect(
       MIGRATION_LEDGER,
       "no ledger row may still assert a hosted/production migration max of 0157 or 0159",

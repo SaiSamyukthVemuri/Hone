@@ -12,7 +12,7 @@ describe("0153 — services.calendar_color (additive, CHECK-constrained, no rose
     const files = readdirSync(MIG_DIR);
     expect(files.some((f) => f.startsWith("0152_"))).toBe(true);
     // 0154 (card-change notification dedupe_key) now exists; guard forward of it.
-    expect(files.filter((f) => /^01(6[2-9]|[7-9]\d)_/.test(f))).toEqual([]);
+    expect(files.filter((f) => /^01(6[3-9]|[7-9]\d)_/.test(f))).toEqual([]);
   });
   it("adds calendar_color, defaults it, sets NOT NULL, and CHECK-constrains to the six allowed keys", () => {
     expect(SQL).toMatch(/add column if not exists calendar_color text/);

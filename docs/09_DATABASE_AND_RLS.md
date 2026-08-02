@@ -3,8 +3,10 @@
 Hone uses Supabase Postgres. **As of 2026-07-30 the production migration max = 0161
 (`0161_service_order_and_colors.sql`) — 160 applied, each exactly once, `0160` immediately
 preceding `0161`. `0158` is deliberately skipped and will never be applied. The
-repository max and hosted max are both 0161 — `0161_service_order_and_colors.sql`
-was applied 2026-07-30 and independently verified.**
+hosted max is 0161 — `0161_service_order_and_colors.sql`
+was applied 2026-07-30 and independently verified. The **repository max is now 0162**
+(`0162_intake_review_transition_integrity.sql`), which is written and tested but **NOT
+APPLIED**, so repo max and hosted max deliberately differ until it is applied.**
 The canonical, regularly-reconciled ledger is
 [docs/production/migration-ledger.md](./production/migration-ledger.md); the current-state
 summary is [docs/production/current-state.md](./production/current-state.md). Always re-check
@@ -27,10 +29,51 @@ Most migrations are **additive** and **idempotent** (`drop … if exists` before
 
 - File name: `00NN_<short_underscore_name>.sql`, padded to four digits. The next migration
   number is one above the current repo max — see the
-  [migration ledger](./production/migration-ledger.md). **Current max `0161`, so the next is
-  `0162`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
+  [migration ledger](./production/migration-ledger.md). **Current repo max `0162`, so the next is
+  `0163`** — `0158` is permanently skipped and must never be reused. Do not hardcode this number
   anywhere it can go stale: derive it from
   `supabase/migrations/` (as `scripts/verify-production.mjs` does).
+  **Note the repo/hosted split right now: repo max is `0162`, hosted (production) max is still
+  `0161`.** `0162` is written and tested but **NOT APPLIED** — see the intake review boundary
+  entry below and [known-limitations L22](./production/known-limitations.md).
+
+**Intake review transition integrity (0162 — WRITTEN, NOT APPLIED).** Migration `0118` made
+submitted/reviewed intake answers immutable, but every one of its review checks sits inside
+`if old.status in ('submitted','reviewed')`, so an OLD row that is still `in_progress` never
+enters the block and the **incoming** transition to `reviewed` was unguarded. An authenticated
+direct PostgREST `PATCH` could therefore drive `in_progress -> reviewed` with `submitted_at`
+still NULL (`UPDATE 1`), producing a clinical record marked reviewed for an intake the client
+never submitted. PR #497 closed the application and UI half of this (deployed); `0162` closes the
+database half by **replacing the `enforce_intake_terminal_immutability()` body** (same trigger
+name, still `SECURITY INVOKER`, still `search_path = ''`). Any UPDATE where
+`new.status = 'reviewed' AND old.status IS DISTINCT FROM 'reviewed'` must satisfy:
+`old.status = 'submitted'`; `old.submitted_at IS NOT NULL`; `new.submitted_at` unchanged;
+`new.reviewed_by` non-null AND an **active** practitioner whose `user_id = auth.uid()` **and**
+whose `studio_id = old.studio_id` (0118 checked only `user_id`/`active`, which one user holding
+practitioner rows in two studios could satisfy with the wrong studio's row). **`reviewed_at` is
+now stamped by the database** (`transaction_timestamp()`), so a backdated or future value cannot
+be forged — the DB, not the client, is authoritative for the review timestamp. Two further
+hardenings: `reviewed` is terminal for end users (0118 blocked only the regression to
+`in_progress`, leaving `reviewed -> submitted` open as a two-step attribution-laundering path),
+and review metadata cannot be attached to a non-reviewed row. **A third hardening closes a
+bypass adversarial review found in the first draft of 0162:** an authenticated member could
+forge the client's own submission (`in_progress -> submitted`, setting `submitted_at`
+themselves) and then perform a review that satisfied every section-1 predicate against the
+evidence they had just manufactured — reaching `reviewed` from `in_progress` in two statements
+instead of one. Reproduced end-to-end as `authenticated` on a CI-parity database. `0162`
+therefore also refuses any authenticated transition **into** `submitted`: only the client
+submits, through the public tokenized route, which runs as service role and is exempt.
+**Not closed by 0162:** its guard is a BEFORE **UPDATE** trigger, so an authenticated member can
+still `INSERT` a brand-new row already `reviewed` with a NULL `submitted_at` and a forged
+`reviewed_at` (reproduced locally, rolled back). That is the broader `authenticated` direct-DML
+limitation tracked as **L18**, out of this migration's scope. **Service role:** the blanket
+`auth.uid() is null` exemption is deliberately NOT preserved for the review transition — a caller
+audit found `status: "reviewed"` written in exactly one place in the repository, on the
+authenticated path — so a service-role review fails closed, while the service-role client
+submission (`in_progress -> submitted`), inserts and link-metadata writes are untouched. No
+schema, data, grant or policy change; no backfill. Behaviour is proven by
+`tests/db/intake-review-db-boundary.db.test.ts` (full adversarial matrix + a real two-connection
+concurrency race) and pinned by `tests/migrations/0162-intake-review-transition-integrity.test.ts`.
 
 **Tenant consistency constraints (0094, PR #278 — APPLIED to production 2026-07; the "not yet applied" note below is superseded).** Sensitive clinical/import child tables now prove their parent rows are same-studio via **composite foreign keys** (the same pattern the payment subsystem already used): `sessions`→clients`(studio_id,client_id)` + appointments`(studio_id,appointment_id)`, `session_blocks`→sessions`(studio_id,session_id)`, `client_intake_forms`/`treatment_plans`→clients`(studio_id,client_id)`, `imported_treatment_memories`→clients + import_batches`(studio_id,…)`, and `electrolysis_entries`→session_blocks`(session_id,block_id)` (its block must belong to its own session). New parent unique keys: `sessions(studio_id,id)`, `session_blocks(session_id,id)`, `import_batches(studio_id,id)`. **Composite FKs, not triggers** — PG17 column-list `ON DELETE SET NULL (col)` keeps SET-NULL parents from nulling the NOT-NULL `studio_id`. Each composite **replaces** the prior single-column FK (mirroring its ON DELETE; behavior-preserving) so each table pair keeps exactly **one** relationship — two FKs between a pair make PostgREST embedded selects ambiguous. (`electrolysis_entries_session_id_fkey` is kept — different pair.) No RLS weakened. `treatment_images` (0093 trigger) and the payment tables were already enforced and are untouched. **0094 is applied in production (2026-07); the earlier "must not be applied until approved" gating is historical.**
 

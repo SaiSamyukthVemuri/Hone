@@ -21,7 +21,7 @@ This section **is** maintained as current. Everything under "Decision log" below
 
 ### Whole-session copy does not carry the probe lot/batch — `Open, migration-scoped`
 
-**Status (2026-07-31): OPEN. Needs a NEW migration (next verified-free number, expected 0162).
+**Status (2026-07-31, amended 2026-08-01): OPEN. Needs a NEW migration. `0162` is now ALLOCATED to the intake review transition integrity fix (written, not applied), so this work must take the next free number — expected 0163.
 Deliberately NOT attempted in PR A2, which is code-only.**
 
 *What is true today.* Copying a whole prior session reproduces the machine/probe setup but

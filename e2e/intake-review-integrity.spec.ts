@@ -19,11 +19,16 @@ import { loginAsOwner } from "./helpers/flows";
 // only where the copy itself is the deliverable (the in-progress notice, the
 // confirmation text, the safe failure string).
 //
-// SCOPE. This proves the APPLICATION and UI path. It does NOT prove the
-// database boundary — an authenticated direct PostgREST PATCH can still drive
-// in_progress -> reviewed, because migration 0118 nests its review guards under
-// `if old.status in ('submitted','reviewed')`. Closing that needs a separately
-// authorized migration 0162. See docs/production/known-limitations.md L22.
+// SCOPE. This proves the APPLICATION and UI path. On THIS branch the local lane
+// runs with migration 0162 in the chain, so the database boundary is also
+// closed for the database these tests execute against — proven directly by
+// tests/db/intake-review-db-boundary.db.test.ts, not here.
+//
+// What remains open is PRODUCTION: hosted migration max is still 0161, so 0162
+// is not applied and the direct-PostgREST UPDATE path is still reachable there.
+// Separately, 0162's guard is a BEFORE UPDATE trigger, so the INSERT path (a
+// member creating a row already `reviewed`) is out of its scope and tracked as
+// L18. See docs/production/known-limitations.md L22.
 //
 // Both viewports are exercised from this one spec: 390x844 (the iPhone-class
 // width the operator actually uses) and 1280x800 desktop.
