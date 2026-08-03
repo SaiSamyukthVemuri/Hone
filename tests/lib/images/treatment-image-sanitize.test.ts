@@ -94,6 +94,42 @@ describe("sanitizeTreatmentImage — strips metadata + deterministic output", ()
       expect(outMeta.format).toBe("jpeg");
     }
   });
+  it("BAKES EXIF orientation into the pixels rather than relying on the tag", async () => {
+    // libvips moved 8.17.3 -> 8.18.3 with sharp 0.35, and orientation handling
+    // lives in libvips — so this is proven BEHAVIOURALLY, not by grepping for
+    // `.rotate()`. A non-square image tagged Orientation=6 (rotate 90° CW) must
+    // come back with its dimensions SWAPPED and no orientation tag left: that is
+    // only possible if the rotation was applied to the pixels.
+    // `withMetadata({ orientation })` is the API that actually writes the tag —
+    // `withExif({ IFD0: { Orientation } })` does not (verified: sharp reads it
+    // back as 1), which would have made this test pass vacuously.
+    const tagged = await solid(12, 4)
+      .withMetadata({ orientation: 6 })
+      .jpeg()
+      .toBuffer();
+
+    // Sanity: the input really is 12x4 as stored, carrying an orientation tag.
+    const inMeta = await sharp(tagged).metadata();
+    expect(inMeta.width).toBe(12);
+    expect(inMeta.height).toBe(4);
+    expect(inMeta.orientation).toBe(6);
+
+    const r = await sanitizeTreatmentImage({
+      bytes: tagged,
+      declaredContentType: "image/jpeg",
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const outMeta = await sharp(r.bytes).metadata();
+      // Rotated 90°: 12x4 becomes 4x12 in the actual pixel data.
+      expect(outMeta.width).toBe(4);
+      expect(outMeta.height).toBe(12);
+      // ...and nothing is left for a viewer to re-apply.
+      expect(outMeta.orientation).toBeUndefined();
+      expect(outMeta.exif).toBeUndefined();
+    }
+  });
+
   it("output is re-encoded sanitized bytes, not the original buffer", async () => {
     const input = await solid().withExif({ IFD0: { Copyright: "x" } }).jpeg().toBuffer();
     const r = await sanitizeTreatmentImage({ bytes: input, declaredContentType: "image/jpeg" });
