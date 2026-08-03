@@ -2,9 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import {
+  mapSessionCommandError,
+  GENERIC_SESSION_COMMAND_ERROR,
+} from "@/lib/sessions/session-command-errors";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { getActiveTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import type { Modality } from "@/lib/types/database";
 import { captureServerEvent } from "@/lib/analytics/server";
 
@@ -175,106 +178,37 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     appointmentEndsAt = (appt.ends_at as string | null) ?? null;
   }
 
-  const cutoff = new Date(Date.now() - COALESCE_MINUTES * 60 * 1000).toISOString();
-  const { data: existing, error: lookupErr } = await supabase
-    .from("sessions")
-    .select("id, appointment_id")
-    .eq("studio_id", studio.id)
-    .eq("client_id", clientId)
-    .eq("practitioner_id", practitioner.id)
-    .eq("modality", modality as Modality)
-    .gte("started_at", cutoff)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (lookupErr) {
-    throw new Error(`Failed to look up session: ${lookupErr.message}`);
+  // L18 Phase 3: the coalesce lookup, the appointment-link promotion and the
+  // insert are now ONE transaction via start_session (migration 0167).
+  //
+  // The old sequence read a recent session and then INSERTed if it found none —
+  // a read-then-write window in which two concurrent "Start session" clicks
+  // could both miss and create DUPLICATE sessions for a single visit. The
+  // command takes the lookup FOR UPDATE, so the second caller blocks and then
+  // reuses the row the first one created.
+  //
+  // Appointment validation (same studio, same client, unassigned-or-mine) and
+  // the electrolysis-only single-active-plan auto-attach moved into the command
+  // with it, so neither can drift from the write.
+  const { data: startRows, error: startErr } = await supabase.rpc("start_session", {
+    p_client_id: clientId,
+    p_modality: modality as Modality,
+    p_appointment_id: appointmentId,
+    p_coalesce_minutes: COALESCE_MINUTES,
+  });
+  if (startErr) {
+    throw new Error(`Failed to start session: ${mapSessionCommandError(startErr)}`);
   }
-
-  let sessionId: string;
-  if (existing) {
-    // Reusing a recent session (coalesce window): leave its treatment_plan_id
-    // exactly as-is. Auto-attach only applies to genuinely new sessions, so
-    // we never override a plan the practitioner already chose or detached.
-    //
-    // PR #156. appointment_id is the same shape: we never overwrite a
-    // link the practitioner already chose. We DO promote a null link
-    // to a verified appointment id (the practitioner clicked "Chart
-    // session" from the appointment detail page; the existing row was
-    // logged without that context); the row stays single-source-of-
-    // truth for the visit and the FK gets stamped at the moment we
-    // learn it. If the existing row already has a different
-    // appointment_id we leave it; that scenario only happens if two
-    // distinct write-forwards landed in the same 90-minute window and
-    // is rare enough that silently keeping the older link is safer
-    // than guessing.
-    sessionId = existing.id;
-    if (appointmentId && !existing.appointment_id) {
-      const { error: updateErr } = await supabase
-        .from("sessions")
-        .update({ appointment_id: appointmentId })
-        .eq("id", existing.id)
-        .is("appointment_id", null);
-      if (updateErr) {
-        // Non-fatal: the session row is already valid and complete;
-        // the missing FK is a memory hint, not a correctness invariant.
-        // Log and continue so the practitioner is not blocked by an
-        // alert-table write failure.
-        console.error(
-          JSON.stringify({
-            event: "session_appointment_link_update_failed",
-            sessionId: existing.id,
-            appointmentId,
-            code: updateErr.code,
-            message: updateErr.message,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      }
-    }
-  } else {
-    // Auto-attach (Session Logging Phase 2), electrolysis-only: treatment
-    // plans, schedules, and planned-vs-actual TTT are electrolysis-centered,
-    // so auto-attaching a laser session to an active electrolysis plan would
-    // be confusing. Laser sessions are therefore never auto-attached (they
-    // can still be attached manually on the session page). For an
-    // electrolysis session, attach only when the client has exactly one
-    // active plan; zero or multiple active plans → leave unattached (the
-    // session page's TreatmentPlanAttachment widget shows a chooser for the
-    // multiple case). Closed plans never qualify;
-    // getActiveTreatmentPlansForClient filters to status='active' and scopes
-    // by studio_id + client_id (a foreign client simply yields no plans).
-    // No new query/action; reuses the existing helper. treatment_plan_id is
-    // the only added insert field.
-    let autoPlanId: string | null = null;
-    if (modality === "electrolysis") {
-      const activePlans = await getActiveTreatmentPlansForClient(
-        studio.id,
-        clientId,
-      );
-      if (activePlans.length === 1) autoPlanId = activePlans[0].id;
-    }
-
-    const { data, error } = await supabase
-      .from("sessions")
-      .insert({
-        studio_id: studio.id,
-        client_id: clientId,
-        practitioner_id: practitioner.id,
-        performed_by_practitioner_id: practitioner.id,
-        modality: modality as Modality,
-        treatment_plan_id: autoPlanId,
-        // PR #156. Validated above against (studio_id, client_id);
-        // null when the create flow had no appointment in scope.
-        appointment_id: appointmentId,
-      })
-      .select("id")
-      .single();
-    if (error) {
-      throw new Error(`Failed to start session: ${error.message}`);
-    }
-    sessionId = data.id;
+  const started = Array.isArray(startRows)
+    ? (startRows[0] as { session_id?: string; reused?: boolean } | undefined)
+    : (startRows as { session_id?: string; reused?: boolean } | null);
+  if (!started?.session_id) {
+    throw new Error(`Failed to start session: ${GENERIC_SESSION_COMMAND_ERROR}`);
   }
+  const sessionId: string = started.session_id;
+  // The command reports whether it reused a session in the coalesce window,
+  // which is exactly what the old `existing` lookup told the analytics event.
+  const reusedExisting = started.reused === true;
 
   // PR #180. Auto-mark the linked appointment completed BEFORE
   // revalidate so the calendar / appointment detail page sees the
@@ -303,7 +237,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     properties: {
       studio_id: studio.id,
       modality,
-      is_new_session: !existing,
+      is_new_session: !reusedExisting,
     },
   });
 

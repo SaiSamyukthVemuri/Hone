@@ -14,7 +14,59 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-03, post-0166 apply)
+## Current state (verified 2026-08-03, post-0167 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0167** (`0167_session_write_commands.sql`, applied 2026-08-03T16:04:38Z→16:04:40Z) |
+| **Repo migration max** | **0167** — **hosted == repo.** Next free number is **0168**. |
+| **Total migrations in repo** | **166** (`0001` … `0157`, `0159` … `0167` — **no `0158`**) |
+| **Total applied in production** | **166**, each applied **exactly once**. Applied count moved 165 → 166. |
+| **`0167` checksum (frozen)** | `507034dd01987308f976a3097da5fabd902165ea66a699e0b9550d67d5619b2e` |
+| **Authorized head** | `aee9dd94fc0835f24bcd0fb45b965fea82bff299` (PR #505), CI run `30828905065` SUCCESS |
+
+### 0167 — L18 Phase 3: the `sessions` write-command boundary
+
+**Class: additive function/RPC.** Eight `authenticated`-only commands
+(`start_session`, `set_session_price`, `set_next_session_note`, `set_session_performer`,
+`edit_session_started_at`, `soft_delete_session`, `set_session_treatment_plan`,
+`set_session_aftercare_explained`) plus two fully-revoked internal helpers. **No table,
+column, constraint, index, policy or trigger change; no data change; no privilege
+revoked.** Applied **migration-first**, ahead of the PR #505 code merge.
+
+**Post-apply verification (production, read-only):**
+
+| Check | Result |
+|---|---|
+| Hosted max | `0166` → **`0167`** |
+| Applied count | 165 → **166** |
+| `sessions` rows | **83 → 83** (unchanged) |
+| `session_audit` rows | **12 → 12** (unchanged) |
+| `treatment_plans` rows | **10 → 10** (unchanged) |
+| `appointments` rows | **124 → 124** (unchanged) |
+| Functions present before | **0 of 10** |
+| Effective EXECUTE | 8 commands `authenticated` only; `anon` ✗ and `service_role` ✗ on **all 10**; both helpers denied to all three roles |
+| `SECURITY DEFINER` + `search_path=""` | **10 of 10** |
+| `start_session` closes the duplicate race | `for update` present in deployed `prosrc` |
+| `edit_session_started_at` writes its audit row atomically | `insert into public.session_audit` present |
+| `soft_delete_session` derives the actor | `deleted_by` + `auth.uid()` present |
+| Any command writes `record_status` | **0** |
+| Any command accepts `p_studio_id` | **0** |
+| `sessions` triggers | **4 of 4 intact** |
+| Direct `authenticated` UPDATE on `sessions` | **still granted** — nothing revoked |
+
+⚠️ **Behavioural write-probing was NOT performed.** The `db query` classifier blocks
+INSERT/UPDATE-bearing SQL, so these commands are **source- and privilege-verified in
+production, never behaviourally exercised there.** Behaviour is proven on a fresh local
+stack (34 DB cases) and in the targeted browser lane, not against production data.
+
+**L18 REMAINS OPEN.** `treatment_images` still has **3** direct writers, and direct
+authenticated DML on `sessions` is **not** revoked. Revocation is a separate final
+migration once treatment_images also reaches zero.
+
+---
+
+## Previous state (verified 2026-08-03, post-0166 apply)
 
 | Field | Value |
 |---|---|

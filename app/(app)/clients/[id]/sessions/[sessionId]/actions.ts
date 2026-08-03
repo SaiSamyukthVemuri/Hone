@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { mapSessionCommandError } from "@/lib/sessions/session-command-errors";
 import { mapBlockCommandError } from "@/lib/sessions/block-command-errors";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -536,12 +537,12 @@ export async function updateSessionPriceAction(formData: FormData): Promise<void
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("sessions")
-    .update({ price_paid_cents: priceCents })
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id);
-  if (error) throw new Error(`Failed to update price: ${error.message}`);
+  const { error } = await supabase.rpc("set_session_price", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_price_cents: priceCents,
+  });
+  if (error) throw new Error(`Failed to update price: ${mapSessionCommandError(error)}`);
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
 }
@@ -575,11 +576,11 @@ export async function updateNextSessionNoteAction(
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("sessions")
-    .update({ next_session_note: note })
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id);
+  const { error } = await supabase.rpc("set_next_session_note", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_note: note,
+  });
   if (error) {
     return { ok: false, error: "Could not save the note. Try again." };
   }
@@ -606,25 +607,16 @@ export async function updateSessionPerformerAction(
     ? performerId
     : null;
 
-  if (newPerformerId) {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("practitioners")
-      .select("id")
-      .eq("id", newPerformerId)
-      .eq("studio_id", studio.id)
-      .maybeSingle();
-    if (error) throw new Error(`Failed to verify practitioner: ${error.message}`);
-    if (!data) throw new Error("Practitioner not found in this studio.");
-  }
-
+  // The same-studio check on the chosen practitioner now happens INSIDE the
+  // command, in the same transaction as the write, so a practitioner cannot be
+  // moved out of the studio between the check and the update.
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("sessions")
-    .update({ performed_by_practitioner_id: newPerformerId })
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id);
-  if (error) throw new Error(`Failed to update performer: ${error.message}`);
+  const { error } = await supabase.rpc("set_session_performer", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_performer_id: newPerformerId,
+  });
+  if (error) throw new Error(`Failed to update performer: ${mapSessionCommandError(error)}`);
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
 }
@@ -700,66 +692,26 @@ export async function editSessionStartedAtAction(
   }
   const newStartedAtIso = newDate.toISOString();
 
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // The studio is no longer needed here: the command derives it from the
+  // session itself. The active check stays so the practitioner sees the exact
+  // same message without a round trip.
+  const { practitioner } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot edit sessions." };
   }
 
+  // L18 Phase 3: the read-validate-write-audit sequence is now ONE transaction
+  // via edit_session_started_at (migration 0167). Previously the update
+  // committed first and the session_audit insert followed with only a console
+  // log on failure, so a corrected time could exist with no audit trail.
   const supabase = await createClient();
-
-  const { data: existing, error: lookupErr } = await supabase
-    .from("sessions")
-    .select("id, started_at, ended_at")
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id)
-    .eq("client_id", clientId)
-    .maybeSingle();
-  if (lookupErr) {
-    return { ok: false, error: `Failed to load session: ${lookupErr.message}` };
-  }
-  if (!existing) {
-    return { ok: false, error: "Session not found." };
-  }
-
-  if (existing.ended_at) {
-    const ended = new Date(existing.ended_at).getTime();
-    if (newDate.getTime() > ended) {
-      return {
-        ok: false,
-        error: "Session start cannot be after the session end time.",
-      };
-    }
-  }
-
-  const oldStartedAtIso = existing.started_at;
-  if (oldStartedAtIso === newStartedAtIso) {
-    return { ok: true };
-  }
-
-  const { error: updateErr } = await supabase
-    .from("sessions")
-    .update({ started_at: newStartedAtIso })
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id);
-  if (updateErr) {
-    return {
-      ok: false,
-      error: `Failed to update session time: ${updateErr.message}`,
-    };
-  }
-
-  // Audit write happens after the update so the user-visible change has
-  // already taken effect. If the audit row fails we log it; the next page
-  // render will still show the corrected time, just without an audit entry.
-  const { error: auditErr } = await supabase.from("session_audit").insert({
-    session_id: sessionId,
-    edited_by_practitioner_id: practitioner.id,
-    field: "started_at",
-    old_value: oldStartedAtIso,
-    new_value: newStartedAtIso,
+  const { error } = await supabase.rpc("edit_session_started_at", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_started_at: newStartedAtIso,
   });
-  if (auditErr) {
-    console.error("Failed to write session audit row:", auditErr);
+  if (error) {
+    return { ok: false, error: mapSessionCommandError(error) };
   }
 
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
@@ -789,17 +741,13 @@ export async function softDeleteSessionAction(formData: FormData): Promise<void>
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("sessions")
-    .update({
-      deleted_at: new Date().toISOString(),
-      deleted_by: practitioner.id,
-      delete_reason: reason,
-    })
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id)
-    .is("deleted_at", null);
-  if (error) throw new Error(`Failed to delete session: ${error.message}`);
+  // deleted_by is derived by the command from auth.uid(), never sent.
+  const { error } = await supabase.rpc("soft_delete_session", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(`Failed to delete session: ${mapSessionCommandError(error)}`);
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");

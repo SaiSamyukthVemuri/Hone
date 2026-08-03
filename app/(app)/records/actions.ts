@@ -213,11 +213,11 @@ export async function addExposureIncidentRecordAction(
 export async function markAftercareExplainedAction(
   formData: FormData,
 ): Promise<RecordActionResult> {
-  let practitionerId: string, studioId: string;
+  // The stamping practitioner and the studio are now derived inside the command
+  // from auth.uid(); this call remains as the AUTH GATE, so an unauthenticated
+  // or non-member caller still gets the generic error here, exactly as before.
   try {
-    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-    practitionerId = practitioner.id;
-    studioId = studio.id;
+    await getCurrentPractitionerWithStudio();
   } catch {
     return { ok: false, error: GENERIC_ERROR };
   }
@@ -232,21 +232,13 @@ export async function markAftercareExplainedAction(
   const explained = explainedRaw === "true";
   if (!sessionId) return { ok: false, error: GENERIC_ERROR };
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("sessions")
-    .update(
-      explained
-        ? {
-            aftercare_and_risks_explained_at: new Date().toISOString(),
-            aftercare_and_risks_explained_by: practitionerId,
-          }
-        : {
-            aftercare_and_risks_explained_at: null,
-            aftercare_and_risks_explained_by: null,
-          },
-    )
-    .eq("id", sessionId)
-    .eq("studio_id", studioId);
+  // L18 Phase 3: both columns are set or cleared together inside
+  // set_session_aftercare_explained (migration 0167), and the stamping
+  // practitioner is derived from auth.uid() rather than sent by the caller.
+  const { error } = await supabase.rpc("set_session_aftercare_explained", {
+    p_session_id: sessionId,
+    p_explained: explained,
+  });
   if (error) return { ok: false, error: GENERIC_ERROR };
   revalidatePath("/records");
   return { ok: true };

@@ -141,10 +141,18 @@ describe("Client Procedure Records (generated, never invented)", () => {
 
   it("aftercare mark is explicit, reversible, and the only writer", () => {
     expect(ACTIONS).toMatch(/markAftercareExplainedAction/);
-    expect(ACTIONS).toMatch(
-      /aftercare_and_risks_explained_at: new Date\(\)\.toISOString\(\)/,
+    // L18 Phase 3: both columns are now set/cleared together inside
+    // set_session_aftercare_explained (migration 0167). The property is
+    // unchanged and asserted MORE strongly there — the stamping practitioner
+    // is derived from auth.uid() instead of being sent by the caller.
+    expect(ACTIONS).toMatch(/rpc\("set_session_aftercare_explained"/);
+    expect(ACTIONS).toMatch(/p_explained: explained/);
+    const MIGRATION = readFileSync(
+      "supabase/migrations/0167_session_write_commands.sql",
+      "utf8",
     );
-    expect(ACTIONS).toMatch(/aftercare_and_risks_explained_at: null/);
+    expect(MIGRATION).toMatch(/aftercare_and_risks_explained_at\s*=/);
+    expect(MIGRATION).toMatch(/aftercare_and_risks_explained_by\s*=/);
     expect(FORMS).toMatch(
       /Mark: procedure risks explained and aftercare information provided/,
     );
