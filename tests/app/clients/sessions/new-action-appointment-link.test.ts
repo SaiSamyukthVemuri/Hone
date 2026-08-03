@@ -111,8 +111,24 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // from the server-resolved practitioner+studio, never from the
     // form. The form only supplies client_id (the route param) and
     // modality (the button identity) and the optional appointment_id.
-    expect(SOURCE).toMatch(/studio_id:\s*studio\.id/);
-    expect(SOURCE).toMatch(/practitioner_id:\s*practitioner\.id/);
+    // L18 Phase 3: neither value is sent AT ALL any more. start_session
+    // (migration 0167) derives the studio and the practitioner from the
+    // actor's active membership, which is strictly stronger than the old
+    // server-resolved insert payload — there is no parameter to forge.
+    const params = SOURCE.slice(
+      SOURCE.indexOf('rpc("start_session"'),
+      SOURCE.indexOf("});", SOURCE.indexOf('rpc("start_session"')),
+    );
+    expect(params).toMatch(/p_client_id: clientId/);
+    expect(params).toMatch(/p_modality: modality/);
+    expect(params).not.toMatch(/studio/i);
+    expect(params).not.toMatch(/practitioner/i);
+    const MIGRATION = readFileSync(
+      "supabase/migrations/0167_session_write_commands.sql",
+      "utf8",
+    );
+    const seg = MIGRATION.slice(MIGRATION.indexOf("function public.start_session("));
+    expect(seg.slice(0, seg.indexOf(")"))).not.toMatch(/p_studio_id|p_practitioner_id/);
   });
 
   it("writes appointment_id on insert when validated, null otherwise", () => {
@@ -129,15 +145,33 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // the new flow has a validated id, we stamp it. The update is
     // additionally guarded by .is("appointment_id", null) so the
     // promotion is atomic with respect to a concurrent write.
-    expect(SOURCE).toMatch(/if \(appointmentId && !existing\.appointment_id\)/);
-    expect(SOURCE).toMatch(/\.is\(\s*["']appointment_id["']\s*,\s*null\s*\)/);
+    // L18 Phase 3: the promotion moved INSIDE start_session, where it is
+    // genuinely atomic — the coalesce lookup is taken FOR UPDATE, so the old
+    // read-then-write window (two clicks could both miss and duplicate the
+    // session) is closed rather than merely guarded.
+    const MIGRATION = readFileSync(
+      "supabase/migrations/0167_session_write_commands.sql",
+      "utf8",
+    );
+    const seg = MIGRATION.slice(
+      MIGRATION.indexOf("function public.start_session("),
+    );
+    const body = seg.slice(0, seg.indexOf("$$;"));
+    expect(body).toMatch(/for update/);
+    expect(body).toMatch(/if p_appointment_id is not null and v_existing_appt is null then/);
+    expect(body).toMatch(/and s\.appointment_id is null/);
   });
 
   it("a non-fatal link-update failure does not break session creation", () => {
     // The session row itself is the canonical clinical artefact; the
     // FK pointer is a memory hint. A failure to stamp the pointer is
     // logged but never re-thrown to the practitioner.
-    expect(SOURCE).toMatch(/session_appointment_link_update_failed/);
+    // The separate, fail-soft link update no longer exists: the promotion is
+    // part of the same transaction as the reuse, so there is no partial state
+    // to log around. A command failure is surfaced through the shared mapper
+    // rather than swallowed.
+    expect(SOURCE).not.toMatch(/session_appointment_link_update_failed/);
+    expect(SOURCE).toMatch(/mapSessionCommandError\(startErr\)/);
   });
 });
 

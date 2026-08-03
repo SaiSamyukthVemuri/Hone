@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { mapSessionCommandError } from "@/lib/sessions/session-command-errors";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type {
@@ -321,34 +322,30 @@ export async function attachChartEntryToPlanAction(
   if (!planId) return { ok: false, error: "Missing plan id." };
   if (!clientId) return { ok: false, error: "Missing client id." };
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  await getCurrentPractitionerWithStudio();
   const supabase = await createClient();
 
-  // Verify the plan belongs to this studio and is still attachable
-  // (active). Attaching to a closed plan is a UI mistake we reject here.
-  const { data: plan, error: planErr } = await supabase
-    .from("treatment_plans")
-    .select("id, status, client_id")
-    .eq("id", planId)
-    .eq("studio_id", studio.id)
-    .maybeSingle();
-  if (planErr) return { ok: false, error: planErr.message };
-  if (!plan) return { ok: false, error: "Plan not found." };
-  if (plan.status !== "active") {
-    return { ok: false, error: "Cannot attach to a closed plan." };
-  }
-  if (plan.client_id !== clientId) {
-    return { ok: false, error: "Plan does not belong to this client." };
-  }
-
-  const { error } = await supabase
-    .from("sessions")
-    .update({ treatment_plan_id: planId })
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id)
-    .eq("client_id", clientId);
+  // L18 Phase 3: plan validation (same studio, still active, same client) and
+  // the session write are ONE transaction via set_session_treatment_plan
+  // (migration 0167), so a plan cannot be closed between the check and the
+  // attach. The rejection wording is unchanged.
+  const { error } = await supabase.rpc("set_session_treatment_plan", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_plan_id: planId,
+  });
   if (error) {
-    return { ok: false, error: `Failed to attach session: ${error.message}` };
+    const mapped = mapSessionCommandError(error);
+    // These three are the plan-validation outcomes the action returned
+    // verbatim before; everything else keeps the "Failed to attach" prefix.
+    if (
+      mapped === "Plan not found." ||
+      mapped === "Cannot attach to a closed plan." ||
+      mapped === "Plan does not belong to this client."
+    ) {
+      return { ok: false, error: mapped };
+    }
+    return { ok: false, error: `Failed to attach session: ${mapped}` };
   }
 
   revalidatePath(`/clients/${clientId}`);
@@ -364,18 +361,18 @@ export async function detachChartEntryFromPlanAction(
   if (!sessionId) return { ok: false, error: "Missing session id." };
   if (!clientId) return { ok: false, error: "Missing client id." };
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  await getCurrentPractitionerWithStudio();
   const supabase = await createClient();
 
-  // Detach is allowed regardless of the attached plan's status.
-  const { error } = await supabase
-    .from("sessions")
-    .update({ treatment_plan_id: null })
-    .eq("id", sessionId)
-    .eq("studio_id", studio.id)
-    .eq("client_id", clientId);
+  // Detach is allowed regardless of the attached plan's status: a NULL plan id
+  // skips plan validation entirely inside the command.
+  const { error } = await supabase.rpc("set_session_treatment_plan", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_plan_id: null,
+  });
   if (error) {
-    return { ok: false, error: `Failed to detach session: ${error.message}` };
+    return { ok: false, error: `Failed to detach session: ${mapSessionCommandError(error)}` };
   }
 
   revalidatePath(`/clients/${clientId}`);

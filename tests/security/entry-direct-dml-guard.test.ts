@@ -29,11 +29,21 @@ import { join } from "node:path";
 // atomic intent; 0129 and 0166 own them, and no action may touch them directly.
 
 const TABLES = [
+  "sessions",
   "session_blocks",
   "session_block_areas",
   "electrolysis_entries",
   "laser_entries",
 ] as const;
+
+/**
+ * `treatment_images` is the LAST direct-writer surface in L18 and is
+ * deliberately OUT OF SCOPE for Phase 3. It is measured, and pinned at its
+ * exact current count, so this phase cannot be mistaken for having closed it
+ * and a drive-by change there cannot slip in unnoticed.
+ */
+const OUT_OF_SCOPE_TABLE = "treatment_images";
+const OUT_OF_SCOPE_EXPECTED = 3;
 
 /**
  * The exception list is EMPTY and must stay empty. A future phase that needs a
@@ -113,7 +123,43 @@ function directWriteSites(): Site[] {
   return sites;
 }
 
-describe("L18 Phase 2 — charting-table direct DML guard", () => {
+/** Same statement-chain walk, for a single table outside TABLES. */
+function directWriteSitesFor(table: string): Site[] {
+  const sites: Site[] = [];
+  for (const file of sourceFiles()) {
+    const src = readFileSync(file, "utf8");
+    const fnStarts = [...src.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm)].map(
+      (m) => ({ idx: m.index ?? 0, name: m[1] }),
+    );
+    const fromRe = new RegExp(`\\.from\\(\\s*["']${table}["']\\s*\\)`, "g");
+    let m: RegExpExecArray | null;
+    while ((m = fromRe.exec(src)) !== null) {
+      let i = m.index + m[0].length;
+      let depth = 0;
+      let chain = "";
+      while (i < src.length) {
+        const ch = src[i];
+        if ("([{".includes(ch)) depth++;
+        else if (")]}".includes(ch)) depth--;
+        else if (ch === ";" && depth <= 0) break;
+        chain += ch;
+        i++;
+      }
+      const op = /\.(insert|update|delete|upsert)\s*\(/.exec(chain);
+      if (!op) continue;
+      const owner = fnStarts.filter((f) => f.idx < m!.index).pop();
+      sites.push({
+        file: file.split("\\").join("/"),
+        fn: owner?.name ?? "(top-level)",
+        table,
+        op: op[1],
+      });
+    }
+  }
+  return sites;
+}
+
+describe("L18 Phase 3 — command-bound table direct DML guard", () => {
   const sites = directWriteSites();
 
   // The census IS the deliverable, so print it in full rather than asserting a
@@ -128,7 +174,7 @@ describe("L18 Phase 2 — charting-table direct DML guard", () => {
       );
     }).join("\n");
     // eslint-disable-next-line no-console
-    console.log(`\nL18 Phase 2 runtime writer census —\n${report}\n`);
+    console.log(`\nL18 runtime writer census —\n${report}\n  ${OUT_OF_SCOPE_TABLE} (out of scope): ${directWriteSitesFor(OUT_OF_SCOPE_TABLE).length}\n`);
     expect(report).toContain("session_blocks: ");
   });
 
@@ -227,13 +273,56 @@ describe("L18 Phase 2 — charting-table direct DML guard", () => {
     expect(unknown, "an unreviewed block/entry command appeared").toEqual([]);
   });
 
-  it("11. the guard covers all four charting tables", () => {
+  it("11. the guard covers all five command-bound tables", () => {
     expect(TABLES).toEqual([
+      "sessions",
       "session_blocks",
       "session_block_areas",
       "electrolysis_entries",
       "laser_entries",
     ]);
+  });
+
+  it("13. sessions has NO runtime direct writer (L18 Phase 3)", () => {
+    expect(
+      sites.filter((s) => s.table === "sessions"),
+      "every sessions write must go through a 0167 command",
+    ).toEqual([]);
+  });
+
+  it("14. treatment_images is UNCHANGED at exactly three direct writers", () => {
+    // Phase 3 does not touch it. If this number moves in either direction the
+    // change was not part of this phase and must be reviewed on its own terms.
+    const rows = directWriteSitesFor(OUT_OF_SCOPE_TABLE);
+    expect(rows).toHaveLength(OUT_OF_SCOPE_EXPECTED);
+    expect([...new Set(rows.map((r) => r.fn))].sort()).toEqual([
+      "archiveTreatmentImageAction",
+      "updateTreatmentImageNoteAction",
+      "uploadTreatmentImageAction",
+    ]);
+  });
+
+  it("15. the eight 0167 session commands are the only session writers", () => {
+    const src = [
+      "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
+      "app/(app)/clients/[id]/sessions/new/actions.ts",
+      "app/(app)/clients/[id]/treatment-plans-actions.ts",
+      "app/(app)/records/actions.ts",
+    ]
+      .map((f) => readFileSync(f, "utf8"))
+      .join("\n");
+    for (const cmd of [
+      "start_session",
+      "set_session_price",
+      "set_next_session_note",
+      "set_session_performer",
+      "edit_session_started_at",
+      "soft_delete_session",
+      "set_session_treatment_plan",
+      "set_session_aftercare_explained",
+    ]) {
+      expect(src, `${cmd} must be called`).toContain(`"${cmd}"`);
+    }
   });
 
   it("12. no charting-table write runs through the admin client", () => {

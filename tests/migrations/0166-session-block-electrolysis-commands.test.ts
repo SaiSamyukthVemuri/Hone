@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // Migration 0166 — L18 Phase 2. Narrow commands for session_blocks +
 // electrolysis_entries. Behavioural proof lives in
@@ -33,10 +32,9 @@ const HELPERS = [
 ];
 
 describe("0166 — repo migration-max tripwire (derived)", () => {
-  it("is the repo max and nothing above it exists", () => {
-    expect(isRepoMax(SELF_VERSION)).toBe(true);
-    expect(versionsAbove(SELF_VERSION)).toEqual([]);
-  });
+  // The "nothing above me" tripwire moved to 0167's own test when that
+  // migration landed: only the CURRENT repository maximum may assert it.
+  // 0166 keeps only the claim that is true forever — its own transition.
   it("declares its migration-max transition", () => {
     expect(PROSE).toMatch(/Migration max 0165 -> 0166/i);
   });

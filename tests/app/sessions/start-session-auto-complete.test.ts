@@ -104,7 +104,9 @@ describe("startSessionAction: helper is invoked after session insert", () => {
     const callIdx = ACTIONS.indexOf(
       "maybeMarkAppointmentCompletedOnSessionStart({",
     );
-    const insertIdx = ACTIONS.indexOf('.from("sessions")');
+    // L18 Phase 3: the insert is now inside start_session (migration 0167);
+    // the ordering property is unchanged and anchored to the command call.
+    const insertIdx = ACTIONS.indexOf('rpc("start_session"');
     const redirectIdx = ACTIONS.lastIndexOf(
       "redirect(`/clients/${clientId}/sessions/${sessionId}`)",
     );

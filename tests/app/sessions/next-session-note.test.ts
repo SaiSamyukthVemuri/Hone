@@ -34,10 +34,20 @@ function codeOnly(src: string): string {
 describe("capture: updateNextSessionNoteAction", () => {
   const CODE = codeOnly(SESSION_ACTIONS);
 
-  it("writes sessions.next_session_note scoped to the studio", () => {
-    expect(CODE).toMatch(
-      /\.update\(\{ next_session_note: note \}\)\s*\n?\s*\.eq\("id", sessionId\)\s*\n?\s*\.eq\("studio_id", studio\.id\)/,
+  it("writes sessions.next_session_note through the studio-scoped command", () => {
+    // L18 Phase 3: the studio is no longer supplied by the caller at all — the
+    // command DERIVES it from the session, which is strictly stronger than the
+    // old .eq("studio_id", studio.id) scoping it replaces.
+    expect(CODE).toMatch(/rpc\("set_next_session_note"/);
+    expect(CODE).toMatch(/p_session_id: sessionId/);
+    expect(CODE).toMatch(/p_client_id: clientId/);
+    expect(CODE).toMatch(/p_note: note/);
+    const MIGRATION = readFileSync(
+      "supabase/migrations/0167_session_write_commands.sql",
+      "utf8",
     );
+    expect(MIGRATION).toMatch(/set next_session_note = p_note/);
+    expect(MIGRATION).toMatch(/and s\.studio_id = v_studio_id/);
   });
 
   it("verifies session visibility before writing", () => {
@@ -46,7 +56,7 @@ describe("capture: updateNextSessionNoteAction", () => {
       CODE.indexOf("export async function updateSessionPerformerAction"),
     );
     const visIdx = body.indexOf("assertSessionVisible(studio.id, clientId, sessionId)");
-    const writeIdx = body.indexOf("next_session_note: note");
+    const writeIdx = body.indexOf('rpc("set_next_session_note"');
     expect(visIdx).toBeGreaterThan(-1);
     expect(writeIdx).toBeGreaterThan(visIdx);
   });
