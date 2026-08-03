@@ -14,7 +14,72 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-03, post-0167 apply)
+## Current state (verified 2026-08-03, post-0168 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0168** (`0168_treatment_image_write_commands.sql`, applied 2026-08-03T17:23:06Z→17:23:14Z) |
+| **Repo migration max** | **0168** — **hosted == repo.** Next free number is **0169**. |
+| **Total migrations in repo** | **167** (`0001` … `0157`, `0159` … `0168` — **no `0158`**) |
+| **Total applied in production** | **167**, each applied **exactly once**. Applied count moved 166 → 167. |
+| **`0168` checksum (frozen)** | `8408af03df458391e75820c0a78ffa04628965b3cf1ae65af3897f1e390adac9` |
+| **Authorized head** | `c8c99caf95890a68eefc6302cfe00e1c39cbe213` (PR #506), CI run `30835292509` SUCCESS |
+
+### 0168 — L18 Phase 4: the `treatment_images` write-command boundary
+
+**Class: additive function/RPC.** Three `authenticated`-only commands
+(`create_treatment_image_metadata`, `set_treatment_image_note`,
+`archive_treatment_image`) plus one fully-revoked internal helper
+(`treatment_image_actor`). **No table, column, constraint, index, policy or
+trigger change; no data change; no privilege revoked.** Applied
+**migration-first**, ahead of the PR #506 code merge.
+
+**This completes the L18 application-writer programme.** With Phases 1A–4
+applied, EVERY L18 table has zero direct runtime writers:
+`sessions` 0 · `session_blocks` 0 · `session_block_areas` 0 ·
+`electrolysis_entries` 0 · `laser_entries` 0 · `treatment_images` 0.
+
+**Post-apply verification (production, read-only):**
+
+| Check | Result |
+|---|---|
+| Hosted max | `0167` → **`0168`** |
+| Applied count | 166 → **167** |
+| `treatment_images` rows | **3 → 3** (2 live, unchanged) |
+| `sessions` / `session_blocks` / `electrolysis_entries` | **83 / 61 / 45**, all unchanged |
+| Functions present before | **0 of 4** |
+| Effective EXECUTE | 3 commands `authenticated` only; `anon` ✗, `service_role` ✗ and **0 PUBLIC grants** on all 4; the helper denied to every client role |
+| `SECURITY DEFINER` + `search_path=""` | **4 of 4** |
+| Any command can reach storage | **0** |
+| Any command issues a hard DELETE | **0** |
+| Any command consults `current_user` | **0** |
+| Actor derived from `auth.uid()` | confirmed |
+| Fixed `treatment-images` bucket validated | confirmed |
+| Studio/client/image-bound path validated | confirmed |
+| Session/block/client consistency validated | confirmed |
+| Note length + archived-row protection | confirmed |
+| `deleted_at` / `deleted_by` derived | confirmed |
+| `treatment_images` triggers | **3 of 3 intact** |
+| Direct `authenticated` INSERT on `treatment_images` | **still granted** — nothing revoked |
+
+⚠️ **Behavioural write-probing was NOT performed.** The `db query` classifier blocks
+INSERT/UPDATE-bearing SQL, so these commands are **source- and privilege-verified in
+production, never behaviourally exercised there.** Behaviour is proven on a fresh
+local stack (28 DB cases) and in the extended browser lane.
+
+⚠️ **Storage and Postgres are still NOT one transaction.** The upload writes a
+storage object through the service-role client and then records metadata through
+this command. The application's compensating cleanup — remove the object on
+metadata failure, CRITICAL alert if that removal also fails — remains load-bearing
+and must not be removed on the grounds that the metadata write is now a command.
+
+**L18 REMAINS OPEN.** Direct authenticated table DML is **not** revoked by this
+migration. The final L18 revocation is a separate migration, now unblocked because
+every application writer is gone.
+
+---
+
+## Previous state (verified 2026-08-03, post-0167 apply)
 
 | Field | Value |
 |---|---|

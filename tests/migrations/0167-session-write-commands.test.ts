@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // L18 Phase 3 — migration 0167 source contract.
@@ -33,12 +32,8 @@ const HELPERS: ReadonlyArray<{ name: string; args: string }> = [
 ];
 const ALL = [...PUBLIC_COMMANDS, ...HELPERS];
 
-describe("0167 — migration state", () => {
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0167")).toBe(true);
-    expect(versionsAbove("0167")).toEqual([]);
-  });
-});
+// The "nothing above me" tripwire moved to 0168's own test when that migration
+// landed: only the CURRENT repository maximum may assert it.
 
 describe("0167 — function shape", () => {
   it("declares exactly eight public commands and two internal helpers", () => {

@@ -38,7 +38,9 @@ export async function uploadTreatmentImageAction(
 ): Promise<ImageActionResult> {
   // Auth first (may redirect/throw for non-practitioners); never wrapped so a
   // redirect propagates correctly.
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // `studio` is still needed for the storage path and the ops alerts; the
+  // uploading practitioner is now derived by the command from auth.uid().
+  const { studio } = await getCurrentPractitionerWithStudio();
 
   const clientId = String(formData.get("clientId") ?? "");
   const file = formData.get("file");
@@ -195,19 +197,25 @@ export async function uploadTreatmentImageAction(
       return { ok: false, error: "Could not store the image. Please retry." };
     }
 
-    // METADATA: RLS client insert (studio-scoped; RLS backstops the studio_id).
-    const { error: insErr } = await supabase.from("treatment_images").insert({
-      id,
-      studio_id: studio.id,
-      client_id: clientId,
-      session_id: sessionId,
-      session_block_id: sessionBlockId,
-      storage_bucket: TREATMENT_IMAGES_BUCKET,
-      storage_path: storagePath,
-      original_filename: sanitizeFilename(file.name),
-      content_type: sanitized.contentType,
-      size_bytes: sanitized.bytes.length,
-      uploaded_by: practitioner.id,
+    // METADATA plane (L18 Phase 4): recorded through create_treatment_image_metadata
+    // (migration 0168) on the AUTHENTICATED client. studio_id and uploaded_by are
+    // no longer sent — the command derives both from auth.uid() — and it re-derives
+    // the expected storage path from (studio, client, id) so a forged path cannot
+    // point at another tenant's prefix.
+    //
+    // This is a SEPARATE plane from the storage upload above and the two cannot
+    // share a transaction, so the compensating cleanup below stays exactly as it
+    // was. Nothing here makes the upload atomic.
+    const { error: insErr } = await supabase.rpc("create_treatment_image_metadata", {
+      p_id: id,
+      p_client_id: clientId,
+      p_session_id: sessionId,
+      p_session_block_id: sessionBlockId,
+      p_storage_bucket: TREATMENT_IMAGES_BUCKET,
+      p_storage_path: storagePath,
+      p_original_filename: sanitizeFilename(file.name),
+      p_content_type: sanitized.contentType,
+      p_size_bytes: sanitized.bytes.length,
     });
     if (insErr) {
       // Cleanup so a failed insert does not orphan the object. If the cleanup
@@ -316,7 +324,9 @@ export async function updateTreatmentImageNoteAction(input: {
   clientId: string;
   note: string;
 }): Promise<ImageActionResult> {
-  const { studio } = await getCurrentPractitionerWithStudio();
+  // Auth gate only: the command derives the studio from auth.uid(). Keeping
+  // this call preserves the existing unauthenticated/non-member behaviour.
+  await getCurrentPractitionerWithStudio();
   try {
     const trimmed = typeof input.note === "string" ? input.note.trim() : "";
     if (trimmed.length > TREATMENT_NOTE_MAX_LENGTH) {
@@ -329,16 +339,18 @@ export async function updateTreatmentImageNoteAction(input: {
     const value = trimmed.length > 0 ? trimmed : null;
 
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("treatment_images")
-      .update({ practitioner_note: value })
-      .eq("id", input.imageId)
-      .eq("studio_id", studio.id)
-      .eq("client_id", input.clientId)
-      .is("deleted_at", null)
-      .select("id");
+    // L18 Phase 4: the same scoping (id + studio + client + not archived) now
+    // lives inside set_treatment_image_note (migration 0168). The studio is
+    // derived from auth.uid() rather than supplied. A NULL return means no row
+    // matched — missing, wrong client, or already archived — which stays a
+    // generic "not found" so it never reveals another client's image.
+    const { data, error } = await supabase.rpc("set_treatment_image_note", {
+      p_image_id: input.imageId,
+      p_client_id: input.clientId,
+      p_note: value,
+    });
     if (error) throw new Error(error.message);
-    if (!data || data.length !== 1) {
+    if (!data) {
       return { ok: false, error: "Treatment photo not found." };
     }
     revalidatePath(`/clients/${input.clientId}/images`);
@@ -352,7 +364,9 @@ export async function archiveTreatmentImageAction(input: {
   imageId: string;
   clientId: string;
 }): Promise<ImageActionResult> {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Auth gate only: the command derives BOTH the studio and the archiving
+  // practitioner from auth.uid().
+  await getCurrentPractitionerWithStudio();
   try {
     const supabase = await createClient();
     // PR #287: archive must change exactly the CURRENT client's row. The
@@ -364,19 +378,18 @@ export async function archiveTreatmentImageAction(input: {
     // nonexistent / already-archived / wrong-client id would update zero rows
     // and still report success. A zero-row result is a generic "not found" —
     // it never reveals whether another client's image exists.
-    const { data, error } = await supabase
-      .from("treatment_images")
-      .update({
-        deleted_at: new Date().toISOString(),
-        deleted_by: practitioner.id,
-      })
-      .eq("id", input.imageId)
-      .eq("studio_id", studio.id)
-      .eq("client_id", input.clientId)
-      .is("deleted_at", null)
-      .select("id");
+    // L18 Phase 4: archive_treatment_image (migration 0168) keeps the exact
+    // scoping and adds two things the direct write could not: deleted_at is
+    // generated by the DATABASE and deleted_by is derived from auth.uid(), so an
+    // archive cannot be attributed to another practitioner. Still SOFT only —
+    // no row and no storage object is deleted. A NULL return is the generic
+    // "not found" for missing / wrong-client / already-archived.
+    const { data, error } = await supabase.rpc("archive_treatment_image", {
+      p_image_id: input.imageId,
+      p_client_id: input.clientId,
+    });
     if (error) throw new Error(error.message);
-    if (!data || data.length !== 1) {
+    if (!data) {
       return { ok: false, error: "Treatment photo not found." };
     }
     revalidatePath(`/clients/${input.clientId}/images`);
