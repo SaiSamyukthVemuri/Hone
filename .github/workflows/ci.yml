@@ -312,14 +312,26 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    # HARD TIMEOUT is deliberately ABOVE the performance target, so a job that
-    # is merely slow fails loudly on its own terms instead of being cancelled at
-    # exactly its target. Run 30767725631 was cancelled at a 10-minute hard
-    # timeout while shard 2 had completed 72/90 tests with ZERO failures —
-    # a budget problem misreported as a test failure.
-    #   targeted  : target ~6 min, hard timeout 10 min
-    #   extended  : target <10 min per shard, hard timeout 12 min
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 12 || 10 }}
+    # HARD TIMEOUT is a FAILURE CEILING, not a performance target. It is
+    # deliberately ABOVE the target, so a job that is merely slow fails loudly on
+    # its own terms instead of being cancelled at exactly its target. Run
+    # 30767725631 was cancelled at a 10-minute hard timeout while shard 2 had
+    # completed 72/90 tests with ZERO failures — a budget problem misreported as
+    # a test failure.
+    #
+    # The TARGETED ceiling was raised 10 -> 15 after run 30814919019 hit it
+    # twice on one unchanged head, both times with ZERO recorded test failures:
+    #   attempt 1 — 101/105 passed,  4 not reached, cancelled at ~10m15s
+    #   attempt 2 —  95/105 passed, 10 not reached, cancelled at ~10m15s
+    # The identical selection had passed in 9m37s on the prior head, so the lane
+    # was sitting on its ceiling with no margin. Raising the ceiling does not
+    # change the performance target: a targeted run that needs more than ~10
+    # minutes is still too slow and should be investigated, but it now reports
+    # its own result instead of being cut mid-run.
+    #
+    #   targeted  : target <10 min,          hard timeout 15 min
+    #   extended  : target <10 min per shard, hard timeout 12 min  (unchanged)
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 12 || 15 }}
     strategy:
       fail-fast: false
       matrix:

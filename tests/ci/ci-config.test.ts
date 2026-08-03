@@ -23,6 +23,23 @@ function jobNames(yaml: string): string[] {
   return out;
 }
 
+/**
+ * Parse the browser shard's conditional `timeout-minutes` into its two
+ * branches. Parsing beats matching a literal expression: the guard then
+ * survives whitespace and formatting changes, and states the two budgets as
+ * NUMBERS rather than as one brittle regex.
+ *
+ *   timeout-minutes: ${{ ... browser_extended == 'true' && <extended> || <targeted> }}
+ */
+function shardTimeoutBudgets(): { extended: number; targeted: number } {
+  const m =
+    /timeout-minutes:\s*\$\{\{\s*needs\.changes\.outputs\.browser_extended\s*==\s*'true'\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}/.exec(
+      CI,
+    );
+  if (!m) throw new Error("browser shard timeout-minutes expression not found in ci.yml");
+  return { extended: Number(m[1]), targeted: Number(m[2]) };
+}
+
 describe("PR CI — path-aware lane selection", () => {
   const jobs = jobNames(CI);
 
@@ -132,15 +149,27 @@ describe("PR CI — path-aware lane selection", () => {
     expect(CI).toMatch(/if \[ -z "\$\{SHARD_RESULT:-\}" \]/);
   });
 
-  it("the extended shard hard timeout EXCEEDS its performance target", () => {
-    // Target <10 min per extended shard; hard timeout 12. A job whose hard
-    // timeout equals its target gets cancelled for being merely slow, which is
-    // exactly how run 30767725631 was misreported as a failure.
-    expect(CI).toMatch(
-      /timeout-minutes: \$\{\{ needs\.changes\.outputs\.browser_extended == 'true' && 12 \|\| 10 \}\}/,
-    );
+  it("the shard hard timeouts EXCEED their performance targets", () => {
+    // A hard timeout is a FAILURE CEILING, not a target. A job whose ceiling
+    // equals its target gets cancelled for being merely slow — how run
+    // 30767725631 (extended) and later run 30814919019 (targeted) were both
+    // misreported as test failures.
+    const b = shardTimeoutBudgets();
+    expect(b.targeted, "targeted hard timeout").toBe(15);
+    expect(b.extended, "extended hard timeout").toBe(12);
+    expect(CI).toMatch(/hard timeout 15 min/i);
     expect(CI).toMatch(/hard timeout 12 min/i);
     expect(CI).toMatch(/target <10 min per shard/i);
+    expect(CI).toMatch(/FAILURE CEILING, not a performance target/i);
+  });
+
+  it("records the evidence for the targeted-ceiling correction", () => {
+    // Run 30814919019 hit the old 10-minute targeted ceiling TWICE on one
+    // unchanged head, both times with zero recorded test failures.
+    expect(CI).toMatch(/30814919019/);
+    expect(CI).toMatch(/101\/105/);
+    expect(CI).toMatch(/95\/105/);
+    expect(CI).toMatch(/ZERO recorded test failures/i);
   });
 
   it("shard traces are uploaded independently", () => {
@@ -214,9 +243,14 @@ describe("PR CI — path-aware lane selection", () => {
     expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("google-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
-    // Targeted hard timeout 10 (target ~6), extended shard hard timeout 12
-    // (target <10). Hard timeout must EXCEED the target — see run 30767725631.
-    expect(CI).toMatch(/timeout-minutes: \$\{\{ needs\.changes\.outputs\.browser_extended == 'true' && 12 \|\| 10 \}\}/);
+    // Targeted hard timeout 15, extended shard hard timeout 12 — both above
+    // their <10 min targets. Parsed, not line-matched, so reformatting the
+    // workflow cannot silently break this guard.
+    const b = shardTimeoutBudgets();
+    expect(b.targeted).toBeGreaterThan(10);
+    expect(b.extended).toBeGreaterThan(10);
+    expect(b.targeted).toBeLessThanOrEqual(15);
+    expect(b.extended).toBeLessThanOrEqual(12);
   });
 
   it("every job declares an explicit timeout", () => {

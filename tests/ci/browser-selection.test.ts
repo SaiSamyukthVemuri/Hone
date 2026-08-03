@@ -40,6 +40,42 @@ describe("browser group manifest integrity", () => {
 // The ten acceptance cases, table-driven.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Timeout-margin fix (fix/targeted-browser-timeout-margin): this PR changes ONLY
+// the targeted shard's hard timeout. These pins prove it changed no selection.
+// ---------------------------------------------------------------------------
+
+describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
+  it("the group set is exactly the ten existing groups", () => {
+    expect(Object.keys(BROWSER_GROUPS as Record<string, unknown>).sort()).toEqual([
+      "booking",
+      "calendar",
+      "google",
+      "intake",
+      "marketing",
+      "owner_admin",
+      "portal",
+      "responsive",
+      "sessions",
+      "smoke",
+    ]);
+  });
+
+  it("the manifest still maps all 53 specs, and the targeted lane still selects 25", () => {
+    const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
+      (g) => g.specs,
+    );
+    expect(mapped).toHaveLength(53);
+    // The exact selection that was cancelled twice at the old 10-minute ceiling.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(25);
+  });
+
+  it("targeted coverage is still ONE shard and extended still FOUR", () => {
+    expect(plan("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts").browser.sharded).toBe(false);
+    expect(plan("e2e/helpers/seed.ts").browser.sharded).toBe(true);
+  });
+});
+
 describe("acceptance case 1 — docs-only", () => {
   const p = plan("docs/production/migration-ledger.md", "README.md");
   it("runs no DB, browser, mobile, payment or Google lane", () => {
