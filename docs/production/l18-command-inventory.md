@@ -1,12 +1,15 @@
-# L18 — clinical direct-DML writer inventory (final-state record)
+# L18 — clinical direct-DML writer inventory (CLOSURE RECORD)
 
 **Purpose.** L18 recorded that `authenticated` holds direct row DML on the clinical tables. Closing
 it means moving every *legitimate runtime writer* onto narrow reviewed database commands, deploying
 those commands, and only then revoking the grants. This document is the final-state record of that
 work.
 
-**Status: writers are ZERO on every table. The revocation — migration `0169` — is prepared but
-NOT APPLIED. L18 stays OPEN until it is applied and merged.**
+**Status: L18 is CLOSED at the database layer, 2026-08-03.** Writers are ZERO on every table and
+migration `0169` — the revocation — is **APPLIED and FROZEN**
+(2026-08-03T18:25:41Z→18:25:51Z, SHA256
+`e8fb5aaa28de9a76c2196a22d60bcf8529d004ba164e570a5c1fe0b6ba5b07b6`).
+Hosted max = repo max = **0169**; next free **0170**.
 
 ---
 
@@ -73,7 +76,28 @@ loseable `session_audit` row in `editSessionStartedAtAction` (both writes are no
 
 ---
 
-## Migration `0169` — the revocation (PREPARED, NOT APPLIED)
+## Migration `0169` — the revocation (**APPLIED and FROZEN**)
+
+**Applied 2026-08-03T18:25:41Z→18:25:51Z.** SHA256
+`e8fb5aaa28de9a76c2196a22d60bcf8529d004ba164e570a5c1fe0b6ba5b07b6`.
+Hosted max = repo max = **0169**; next free **0170**; applied count 167 → 168.
+
+**Verified in production, read-only, after the apply:**
+
+| Check | Result |
+|---|---|
+| `authenticated` clinical write grants across the six tables | **12 → 0** |
+| `authenticated` SELECT | **retained on all six** |
+| `authenticated` INSERT / UPDATE / DELETE | **false on all six** |
+| `authenticated` TRUNCATE | false on all six (unchanged) |
+| `service_role` | SELECT+INSERT+UPDATE+DELETE on all six — **unchanged** |
+| `anon` / `PUBLIC` | **unchanged**; PUBLIC holds 0 grants of any kind |
+| Clinical row counts | `sessions` 83 · `session_blocks` 61 · `session_block_areas` 27 · `electrolysis_entries` 45 · `laser_entries` 2 · `treatment_images` 3 — **all unchanged** |
+| The 16 commands | **16 present**, **16 `authenticated`-EXECUTE only**, **16 `SECURITY DEFINER` with `search_path=""`** |
+
+**L18 is CLOSED at the database layer.** A studio member's browser JWT can no longer write any
+clinical table directly; every write goes through a reviewed command.
+
 
 Revokes `INSERT`, `UPDATE`, `DELETE` from `authenticated` on exactly six tables: `sessions`,
 `session_blocks`, `session_block_areas`, `electrolysis_entries`, `laser_entries`, `treatment_images`.
@@ -89,8 +113,7 @@ Revokes `INSERT`, `UPDATE`, `DELETE` from `authenticated` on exactly six tables:
   six tables in one auditable place, and so a future grant would have to actively contradict it.
 - `TRUNCATE` was already denied to `authenticated` and `anon` on all six (0159 §5b) and is untouched.
 
-Reversal, if ever needed, is a **new** migration re-granting the privileges — `0169` is frozen once
-applied.
+Reversal, if ever needed, is a **new** migration re-granting the privileges — `0169` is **frozen**.
 
 ---
 
@@ -117,10 +140,11 @@ lane only. Real practitioner traffic is the first production exercise of these p
 
 ---
 
-## Remaining to close L18
+## Closure
 
-1. Apply migration `0169` to production.
-2. Merge its PR and confirm the deployment.
+Nothing remains. Migration `0169` was applied to production on 2026-08-03 and is frozen; its PR
+(#507) merged and deployed. **L18 is CLOSED at the database layer**: the commands are in place, no
+application code writes directly, and the *capability* to do so has been removed from
+`authenticated`.
 
-Until both are done, **L18 remains OPEN**: the commands are in place and no application code writes
-directly, but the *capability* to do so is still granted to `authenticated`.
+There is no remaining engineering gate for L18.
