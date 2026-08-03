@@ -6,8 +6,8 @@
     "Hosted state cannot be derived from filenames, so it is declared here ONCE and referenced",
     "everywhere else. Update this file in the same change that records a production apply."
   ],
-  "hosted_migration_max": "0166",
-  "hosted_applied_at": "2026-08-03T12:40:42Z",
-  "hosted_note": "0166_session_block_electrolysis_commands.sql applied 2026-08-03T12:40:31Z-12:40:42Z. L18 Phase 2: four authenticated-only commands binding every runtime session_blocks/electrolysis_entries writer. Additive only - no table, column, constraint, index, policy, trigger or data change, and no privilege revoked. See docs/production/migration-ledger.md for the full apply record and frozen checksums.",
+  "hosted_migration_max": "0167",
+  "hosted_applied_at": "2026-08-03T16:04:40Z",
+  "hosted_note": "0167_session_write_commands.sql applied 2026-08-03T16:04:38Z-16:04:40Z. L18 Phase 3: eight authenticated-only commands binding every runtime public.sessions writer (10 -> 0). Additive only - no table, column, constraint, index, policy, trigger or data change, and no privilege revoked. treatment_images remains 3 direct writers and L18 remains OPEN. See docs/production/migration-ledger.md for the full apply record and frozen checksums.",
   "ledger": "docs/production/migration-ledger.md"
 }
