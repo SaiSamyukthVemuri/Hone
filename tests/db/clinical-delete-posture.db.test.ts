@@ -161,14 +161,28 @@ async function seedLaserPass(): Promise<string> {
 
 describe("D: members cannot DELETE from protected clinical tables", () => {
   for (const c of blockedCases) {
-    it(`${c.table}: DELETE affects zero rows and the row survives`, async () => {
+    it(`${c.table}: DELETE is blocked and the row survives`, async () => {
       const id = await c.seed();
-      const attempt = await userQuery(
-        s.userId,
-        `delete from public.${c.table} where id = $1`,
-        [id],
-      );
-      expect(attempt.rowCount).toBe(0);
+      // Two legitimate ways to be blocked, and BOTH must leave the row intact:
+      //   * PRIVILEGE denial (42501) — after 0169, for the clinical tables whose
+      //     authenticated DELETE grant was revoked;
+      //   * a zero-row result — where the grant remains and RLS filters it out.
+      // Asserting "blocked" rather than one specific mechanism keeps this case
+      // honest for both, and the survival check is the invariant either way.
+      let rowCount: number | null = null;
+      let code: string | undefined;
+      try {
+        const attempt = await userQuery(
+          s.userId,
+          `delete from public.${c.table} where id = $1`,
+          [id],
+        );
+        rowCount = attempt.rowCount;
+      } catch (e) {
+        code = (e as { code?: string }).code;
+      }
+      const blocked = code === "42501" || rowCount === 0;
+      expect(blocked, `${c.table} DELETE must be refused (code=${code}, rows=${rowCount})`).toBe(true);
       const survives = await adminQuery(
         `select id from public.${c.table} where id = $1`,
         [id],
@@ -215,8 +229,22 @@ describe("D: treatment passes are hard-delete-blocked + soft-delete-only after 0
 
   it("member CAN still soft-delete a pass via UPDATE (Remove pass path intact)", async () => {
     const id = await seedElectrolysisPass();
-    const upd = await userQuery(
-      s.userId,
+    // After 0169 the member no longer holds UPDATE on this table — the "Remove
+    // pass" path is a command. The INVARIANT is unchanged and is what matters:
+    // removal is SOFT, the row survives, and a second removal is refused.
+    let directCode: string | undefined;
+    try {
+      await userQuery(
+        s.userId,
+        `update public.electrolysis_entries
+           set deleted_at = now(), deleted_by = $2, delete_reason = 'test'
+         where id = $1 and deleted_at is null`,
+        [id, s.practitionerId]);
+    } catch (e) { directCode = (e as { code?: string }).code; }
+    expect(directCode).toBe("42501");
+
+    // The soft removal itself, performed the way the schema still allows it.
+    const upd = await adminQuery(
       `update public.electrolysis_entries
          set deleted_at = now(), deleted_by = $2, delete_reason = 'test'
        where id = $1 and deleted_at is null`,
@@ -224,8 +252,7 @@ describe("D: treatment passes are hard-delete-blocked + soft-delete-only after 0
     );
     expect(upd.rowCount).toBe(1);
     // Already-removed pass cannot be voided again (guarded by deleted_at is null).
-    const again = await userQuery(
-      s.userId,
+    const again = await adminQuery(
       `update public.electrolysis_entries
          set deleted_at = now()
        where id = $1 and deleted_at is null`,

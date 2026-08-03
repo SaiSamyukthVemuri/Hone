@@ -54,8 +54,17 @@ const REPARENT_MSG = /cannot be re-assigned/i;
 describe("0160 — a session cannot be moved to another client", () => {
   it("refuses client_id change for the browser role, service_role AND the owner", async () => {
     const { sessionId } = await seedSession(a);
+    // After 0169 the browser role is refused by the PRIVILEGE layer before the
+    // trigger is reached — a strictly earlier refusal. The TRIGGER itself is
+    // still proven, through the two roles that retain DML.
+    let browserCode: string | undefined;
+    try {
+      await asUser(a.userId, (q) =>
+        q("update public.sessions set client_id=$2 where id=$1", [sessionId, clientTwo]));
+    } catch (e) { browserCode = (e as { code?: string }).code; }
+    expect(browserCode).toBe("42501");
+
     for (const attempt of [
-      () => asUser(a.userId, (q) => q("update public.sessions set client_id=$2 where id=$1", [sessionId, clientTwo])),
       () => asRole("service_role", (q) => q("update public.sessions set client_id=$2 where id=$1", [sessionId, clientTwo])),
       () => adminQuery("update public.sessions set client_id=$2 where id=$1", [sessionId, clientTwo]),
     ]) {
@@ -77,11 +86,15 @@ describe("0160 — a session cannot be moved to another client", () => {
     // The guard fires on CHANGE, not on mention — an UPDATE that includes the
     // column with its existing value must not break.
     const { sessionId } = await seedSession(a);
-    await userQuery(
-      a.userId,
+    // The browser role no longer holds UPDATE at all (0169), so this asserts the
+    // TRIGGER's behaviour through service_role. The equivalent practitioner-facing
+    // property — an ordinary session stays editable — is proven through the 0167
+    // commands in tests/db/session-write-commands.db.test.ts.
+    // NOTE: asRole() rolls back by design ("privilege probes never persist"), so
+    // a write that must be OBSERVED afterwards runs as the owner instead.
+    await adminQuery(
       "update public.sessions set client_id=$2, session_notes='ok' where id=$1 and studio_id=$3",
-      [sessionId, a.clientId, a.studioId],
-    );
+      [sessionId, a.clientId, a.studioId]);
     const s = await adminQuery("select session_notes from public.sessions where id=$1", [sessionId]);
     expect(s.rows[0].session_notes).toBe("ok");
   });
@@ -97,11 +110,14 @@ describe("0160 — a settings block cannot be moved to another encounter", () =>
     // any foreign key is consulted, so this proves the GUARD refuses the re-tenant
     // rather than an FK incidentally catching it.
     const elsewhere = randomUUID();
-    await expect(
-      asUser(a.userId, (q) =>
-        q("update public.session_blocks set studio_id=$2 where id=$1", [blockId, elsewhere]),
-      ),
-    ).rejects.toThrow(REPARENT_MSG);
+    // The browser role is refused earlier still after 0169 — it holds no UPDATE.
+    let browserCode: string | undefined;
+    try {
+      await asUser(a.userId, (q) =>
+        q("update public.session_blocks set studio_id=$2 where id=$1", [blockId, elsewhere]));
+    } catch (e) { browserCode = (e as { code?: string }).code; }
+    expect(browserCode).toBe("42501");
+    // The GUARD itself is proven as the owner, who bypasses both RLS and grants.
     await expect(
       adminQuery("update public.session_blocks set studio_id=$2 where id=$1", [blockId, elsewhere]),
     ).rejects.toThrow(REPARENT_MSG);
@@ -112,11 +128,14 @@ describe("0160 — a settings block cannot be moved to another encounter", () =>
   it("refuses session_id change even when the block has NO entries (the reachable case)", async () => {
     const { blockId } = await seedSession(a);
     const other = await seedSession(a);
-    await expect(
-      asUser(a.userId, (q) =>
-        q("update public.session_blocks set session_id=$2 where id=$1", [blockId, other.sessionId]),
-      ),
-    ).rejects.toThrow(REPARENT_MSG);
+    // Browser role: refused by PRIVILEGE after 0169, before the trigger runs.
+    let code: string | undefined;
+    try {
+      await asUser(a.userId, (q) =>
+        q("update public.session_blocks set session_id=$2 where id=$1", [blockId, other.sessionId]));
+    } catch (e) { code = (e as { code?: string }).code; }
+    expect(code).toBe("42501");
+    // The GUARD itself, proven as the owner.
     await expect(
       adminQuery("update public.session_blocks set session_id=$2 where id=$1", [blockId, other.sessionId]),
     ).rejects.toThrow(REPARENT_MSG);
@@ -181,9 +200,18 @@ describe("0160 — recorded passes and photos stay with their encounter", () => 
     await expect(
       adminQuery("update public.electrolysis_entries set block_id=$2 where id=$1", [entryId, other.blockId]),
     ).rejects.toThrow(REPARENT_MSG);
-    // …but its clinical content edits freely.
-    await userQuery(
-      a.userId,
+    // …but its clinical content still edits freely. After 0169 the practitioner
+    // reaches that through the 0166 commands, not a direct UPDATE; the column
+    // itself is unfrozen, which is what this case is about.
+    let contentCode: string | undefined;
+    try {
+      await userQuery(
+        a.userId,
+        "update public.electrolysis_entries set hairs_treated=42 where id=$1 and session_id=$2",
+        [entryId, sessionId]);
+    } catch (e) { contentCode = (e as { code?: string }).code; }
+    expect(contentCode).toBe("42501");
+    await adminQuery(
       "update public.electrolysis_entries set hairs_treated=42 where id=$1 and session_id=$2",
       [entryId, sessionId],
     );
@@ -237,17 +265,16 @@ describe("0160 — recorded passes and photos stay with their encounter", () => 
         adminQuery(`update public.treatment_images set ${col}=$2 where id=$1`, [imgId, val]),
       ).rejects.toThrow(/identity columns are immutable|cannot be re-assigned/i);
     }
-    // …while the note and soft-delete paths the app actually uses still work.
-    await userQuery(
-      a.userId,
-      "update public.treatment_images set practitioner_note='fine' where id=$1 and studio_id=$2",
-      [imgId, a.studioId],
-    );
-    await userQuery(
-      a.userId,
-      "update public.treatment_images set deleted_at=now(), deleted_by=$2 where id=$1",
-      [imgId, a.practitionerId],
-    );
+    // …while the note and soft-delete paths the app actually uses still work —
+    // through the 0168 commands, which is the ONLY way the app reaches them
+    // after 0169. This is the stronger proof: the practitioner workflow is
+    // intact even though the direct grant is gone.
+    await userQuery(a.userId, "select public.set_treatment_image_note($1,$2,$3)", [
+      imgId, a.clientId, "fine",
+    ]);
+    await userQuery(a.userId, "select public.archive_treatment_image($1,$2)", [
+      imgId, a.clientId,
+    ]);
     const img = await adminQuery(
       "select practitioner_note, deleted_at is not null as gone from public.treatment_images where id=$1",
       [imgId],
@@ -289,10 +316,13 @@ describe("0160 — INSERT still establishes lineage normally", () => {
   it("the correct fix for a mis-filed session is soft-delete + re-chart, which still works", async () => {
     // This is the workflow the guard pushes people toward, so prove it is open.
     const { sessionId } = await seedSession(a);
+    // After 0169 the practitioner reaches this through the 0167 command, not a
+    // direct UPDATE — which is exactly the workflow the guard pushes toward.
+    // `deleted_by` is derived from auth.uid() inside the command.
     await userQuery(
       a.userId,
-      "update public.sessions set deleted_at=now(), deleted_by=$2, delete_reason=$3 where id=$1 and studio_id=$4",
-      [sessionId, a.practitionerId, "charted on the wrong client", a.studioId],
+      "select public.soft_delete_session($1,$2,$3)",
+      [sessionId, a.clientId, "charted on the wrong client"],
     );
     const gone = await adminQuery(
       "select deleted_at is not null as gone, delete_reason from public.sessions where id=$1",

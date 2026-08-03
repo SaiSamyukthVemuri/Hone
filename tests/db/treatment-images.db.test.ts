@@ -5,6 +5,7 @@ import {
   seedMember,
   seedSession,
   seedStudio,
+  adminQuery,
   userQuery,
   type SeededStudio,
 } from "./helpers/harness";
@@ -31,8 +32,9 @@ beforeAll(async () => {
   imageId = randomUUID();
 
   // Owner inserts a treatment image metadata row for the studio's client.
-  await userQuery(
-    s.userId,
+  // Fixture only — after 0169 `authenticated` holds no direct INSERT, and this
+  // seed is not the property under test.
+  await adminQuery(
     `insert into public.treatment_images
        (id, studio_id, client_id, session_id, session_block_id,
         storage_bucket, storage_path, original_filename, content_type,
@@ -88,26 +90,39 @@ describe("read access", () => {
 });
 
 describe("write access", () => {
-  it("a member can insert an image for their own studio", async () => {
+  it("a member can create image metadata for their own studio (via the 0168 command)", async () => {
+    // After 0169 the direct INSERT is revoked; the member reaches this through
+    // create_treatment_image_metadata, which derives studio and uploader from
+    // auth.uid(). The capability under test — a member CAN record an image for
+    // their own studio — is unchanged.
     const id = randomUUID();
     const res = await userQuery(
       member.userId,
-      `insert into public.treatment_images
-         (id, studio_id, client_id, storage_bucket, storage_path,
-          content_type, size_bytes, uploaded_by)
-       values ($1, $2, $3, 'treatment-images', $4, 'image/png', 10, $5)`,
+      `select public.create_treatment_image_metadata($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [
         id,
-        s.studioId,
         s.clientId,
+        null,
+        null,
+        "treatment-images",
         `${s.studioId}/${s.clientId}/${id}.png`,
-        member.practitionerId,
+        "shot.png",
+        "image/png",
+        10,
       ],
     );
-    expect(res.rowCount).toBe(1);
+    expect(res.rows[0].create_treatment_image_metadata).toBe(id);
   });
 
-  it("cross-studio insert is blocked by the RLS with-check", async () => {
+  it("cross-studio insert is blocked (privilege after 0169; the command refuses it too)", async () => {
+    // The command path refuses a foreign studio's client explicitly.
+    await expect(
+      userQuery(foreign.userId,
+        `select public.create_treatment_image_metadata($1,$2,null,null,$3,$4,null,$5,$6)`,
+        [randomUUID(), s.clientId, "treatment-images",
+         `${s.studioId}/${s.clientId}/x.png`, "image/png", 10]),
+    ).rejects.toThrow();
+    // ...and the direct path is gone entirely.
     await expect(
       userQuery(
         foreign.userId,
@@ -127,14 +142,13 @@ describe("write access", () => {
 });
 
 describe("correction posture: soft-delete only", () => {
-  it("a member can soft-delete (set deleted_at) their studio's image", async () => {
+  it("a member can soft-delete their studio's image (via the 0168 command)", async () => {
     const res = await userQuery(
       member.userId,
-      `update public.treatment_images set deleted_at = now()
-       where id = $1 and studio_id = $2`,
-      [imageId, s.studioId],
+      `select public.archive_treatment_image($1,$2)`,
+      [imageId, s.clientId],
     );
-    expect(res.rowCount).toBe(1);
+    expect(res.rows[0].archive_treatment_image).toBe(imageId);
   });
 
   it("no authenticated user can hard-delete or truncate", async () => {

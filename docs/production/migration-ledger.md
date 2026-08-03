@@ -14,7 +14,66 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-03, post-0168 apply)
+## Current state (verified 2026-08-03, post-0169 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0169** (`0169_revoke_authenticated_clinical_direct_dml.sql`, applied 2026-08-03T18:25:41Z→18:25:51Z) |
+| **Repo migration max** | **0169** — **hosted == repo.** Next free number is **0170**. |
+| **Total migrations in repo** | **168** (`0001` … `0157`, `0159` … `0169` — **no `0158`**) |
+| **Total applied in production** | **168**, each applied **exactly once**. Applied count moved 167 → 168. |
+| **`0169` checksum (frozen)** | `e8fb5aaa28de9a76c2196a22d60bcf8529d004ba164e570a5c1fe0b6ba5b07b6` |
+| **Authorized head** | `dc6dd45c34e76ac05f1076cdd826f1325d6ffa3f` (PR #507); PR CI `30840204981` SUCCESS and on-demand full matrix `30840247936` SUCCESS |
+
+### 0169 — L18 FINAL: direct `authenticated` DML revoked on the clinical tables
+
+**Class: privilege cutover (destructive).** This is the migration that closes L18 at the
+database layer: it removes the *capability* that `0164`–`0168` made unnecessary by moving
+all 25 original direct writers onto 16 narrow commands.
+
+Revokes `INSERT`, `UPDATE`, `DELETE` from `authenticated` on `sessions`, `session_blocks`,
+`session_block_areas`, `electrolysis_entries`, `laser_entries` and `treatment_images`.
+Six explicit statements; **no `REVOKE ALL`**, **no `GRANT`**, and no schema, policy,
+trigger, function, storage or data change.
+
+**Post-apply verification (production, read-only):**
+
+| Check | Result |
+|---|---|
+| Hosted max | `0168` → **`0169`** |
+| Applied count | 167 → **168** |
+| `authenticated` write grants across the six tables | **12 → 0** |
+| `authenticated` SELECT | **retained on all six** |
+| `authenticated` INSERT / UPDATE / DELETE | **false on all six** |
+| `authenticated` TRUNCATE | false on all six (unchanged) |
+| `service_role` | SELECT+INSERT+UPDATE+DELETE on all six — **unchanged** |
+| `anon` | unchanged (SELECT only where it had it; no writes) |
+| `PUBLIC` | **0 grants of any kind** — unchanged |
+| Row counts | `sessions` 83, `session_blocks` 61, `session_block_areas` 27, `electrolysis_entries` 45, `laser_entries` 2, `treatment_images` 3 — **all unchanged** |
+| The 16 commands | **16 present**, **16 `authenticated`-EXECUTE only**, **16 `SECURITY DEFINER` with `search_path=""`** |
+
+⚠️ **Behavioural write-probing was NOT performed in production.** The `db query` classifier
+blocks INSERT/UPDATE-bearing SQL. The revocation is verified by **effective
+`has_table_privilege`** and by ACL counts, which is a direct measurement of the privilege
+itself rather than an inference. Behaviour — that the commands still work with the grants
+gone — is proven on a fresh local stack: 126 command cases, a 1254-test DB lane, and a full
+browser matrix (`30840247936`) in which the entire E2E suite passes against a chain
+including `0169`.
+
+⚠️ **`session_block_areas` was a deliberate NO-OP.** Measured before the apply, it already
+had no `authenticated` write grant. It is named in the migration so the posture is explicit
+for all six tables in one auditable place.
+
+**L18 is now CLOSED at the database layer.** A studio member's browser JWT can no longer
+write any clinical table directly; every write goes through a reviewed command. The PR
+carrying the docs and test updates (#507) is still open.
+
+**Reversal**, if ever needed, is a NEW migration re-granting the privileges. `0169` is
+frozen.
+
+---
+
+## Previous state (verified 2026-08-03, post-0168 apply)
 
 | Field | Value |
 |---|---|
