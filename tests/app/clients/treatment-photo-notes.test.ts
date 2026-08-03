@@ -51,14 +51,30 @@ describe("updateTreatmentImageNoteAction", () => {
     expect(ACTION).toMatch(/trimmed\.length > 0 \? trimmed : null/);
   });
 
-  it("scopes the UPDATE by id + studio_id + client_id + deleted_at null with a row-affected check", () => {
-    expect(ACTION).toMatch(/\.update\(\{ practitioner_note: value \}\)/);
-    expect(ACTION).toMatch(/\.eq\("id", input\.imageId\)/);
-    expect(ACTION).toMatch(/\.eq\("studio_id", studio\.id\)/);
-    expect(ACTION).toMatch(/\.eq\("client_id", input\.clientId\)/);
-    expect(ACTION).toMatch(/\.is\("deleted_at", null\)/);
-    expect(ACTION).toMatch(/\.select\("id"\)/);
-    expect(ACTION).toMatch(/data\.length !== 1/);
+  it("saves the note through the 0168 command, with the same scoping enforced in-DB", () => {
+    // L18 Phase 4: the scoping (id + studio + client + not-already-archived)
+    // moved INSIDE set_treatment_image_note, where it is enforced in the same
+    // statement as the write and the studio is derived from auth.uid().
+    expect(ACTION).toMatch(/rpc\("set_treatment_image_note"/);
+    expect(ACTION).toMatch(/p_image_id: input\.imageId/);
+    expect(ACTION).toMatch(/p_client_id: input\.clientId/);
+    expect(ACTION).toMatch(/p_note: value/);
+    expect(ACTION).not.toMatch(/p_studio_id/);
+    expect(ACTION).toMatch(/if \(!data\)/);
+
+    const MIGRATION = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/0168_treatment_image_write_commands.sql"),
+      "utf8",
+    );
+    const seg = MIGRATION.slice(
+      MIGRATION.indexOf("function public.set_treatment_image_note("),
+    );
+    const body = seg.slice(0, seg.indexOf("$$;"));
+    expect(body).toMatch(/set practitioner_note = v_note/);
+    expect(body).toMatch(/t\.id = p_image_id/);
+    expect(body).toMatch(/t\.studio_id = v_studio/);
+    expect(body).toMatch(/t\.client_id = p_client_id/);
+    expect(body).toMatch(/t\.deleted_at is null/);
   });
 
   it("returns generic errors and revalidates the images path; no token/PII log", () => {

@@ -34,16 +34,12 @@ const TABLES = [
   "session_block_areas",
   "electrolysis_entries",
   "laser_entries",
+  "treatment_images",
 ] as const;
 
-/**
- * `treatment_images` is the LAST direct-writer surface in L18 and is
- * deliberately OUT OF SCOPE for Phase 3. It is measured, and pinned at its
- * exact current count, so this phase cannot be mistaken for having closed it
- * and a drive-by change there cannot slip in unnoticed.
- */
-const OUT_OF_SCOPE_TABLE = "treatment_images";
-const OUT_OF_SCOPE_EXPECTED = 3;
+// L18 Phase 4 closed `treatment_images`, the last direct-writer surface. There
+// is no longer an out-of-scope table on this guard: every L18 table is measured
+// and every one must be zero.
 
 /**
  * The exception list is EMPTY and must stay empty. A future phase that needs a
@@ -159,7 +155,7 @@ function directWriteSitesFor(table: string): Site[] {
   return sites;
 }
 
-describe("L18 Phase 3 — command-bound table direct DML guard", () => {
+describe("L18 Phase 4 — command-bound table direct DML guard", () => {
   const sites = directWriteSites();
 
   // The census IS the deliverable, so print it in full rather than asserting a
@@ -174,7 +170,7 @@ describe("L18 Phase 3 — command-bound table direct DML guard", () => {
       );
     }).join("\n");
     // eslint-disable-next-line no-console
-    console.log(`\nL18 runtime writer census —\n${report}\n  ${OUT_OF_SCOPE_TABLE} (out of scope): ${directWriteSitesFor(OUT_OF_SCOPE_TABLE).length}\n`);
+    console.log(`\nL18 runtime writer census —\n${report}\n`);
     expect(report).toContain("session_blocks: ");
   });
 
@@ -273,13 +269,14 @@ describe("L18 Phase 3 — command-bound table direct DML guard", () => {
     expect(unknown, "an unreviewed block/entry command appeared").toEqual([]);
   });
 
-  it("11. the guard covers all five command-bound tables", () => {
+  it("11. the guard covers all six command-bound tables", () => {
     expect(TABLES).toEqual([
       "sessions",
       "session_blocks",
       "session_block_areas",
       "electrolysis_entries",
       "laser_entries",
+      "treatment_images",
     ]);
   });
 
@@ -290,16 +287,30 @@ describe("L18 Phase 3 — command-bound table direct DML guard", () => {
     ).toEqual([]);
   });
 
-  it("14. treatment_images is UNCHANGED at exactly three direct writers", () => {
-    // Phase 3 does not touch it. If this number moves in either direction the
-    // change was not part of this phase and must be reviewed on its own terms.
-    const rows = directWriteSitesFor(OUT_OF_SCOPE_TABLE);
-    expect(rows).toHaveLength(OUT_OF_SCOPE_EXPECTED);
-    expect([...new Set(rows.map((r) => r.fn))].sort()).toEqual([
-      "archiveTreatmentImageAction",
-      "updateTreatmentImageNoteAction",
-      "uploadTreatmentImageAction",
-    ]);
+  it("14. treatment_images has NO runtime direct writer (L18 Phase 4)", () => {
+    expect(
+      directWriteSitesFor("treatment_images"),
+      "every treatment_images write must go through a 0168 command",
+    ).toEqual([]);
+  });
+
+  it("16. the three 0168 image commands are called, and the reads are untouched", () => {
+    const src = readFileSync("app/(app)/clients/[id]/images/actions.ts", "utf8");
+    for (const cmd of [
+      "create_treatment_image_metadata",
+      "set_treatment_image_note",
+      "archive_treatment_image",
+    ]) {
+      expect(src, `${cmd} must be called`).toContain(`"${cmd}"`);
+    }
+    // Signed-URL generation and the listing reads are deliberately unchanged.
+    expect(src).toMatch(/createSignedUrl/);
+    expect(src).toMatch(/\.from\("treatment_images"\)[\s\S]{0,80}\.select\(/);
+  });
+
+  it("17. EVERY L18 table is at zero — no exception list remains", () => {
+    expect(sites).toEqual([]);
+    expect(EXCEPTIONS).toHaveLength(0);
   });
 
   it("15. the eight 0167 session commands are the only session writers", () => {

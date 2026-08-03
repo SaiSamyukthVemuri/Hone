@@ -17,23 +17,26 @@ const CLIENT_A = "22222222-2222-2222-2222-222222222222";
 const IMAGE = "33333333-3333-3333-3333-333333333333";
 const PRACT = "44444444-4444-4444-4444-444444444444";
 
-// Chainable Supabase UPDATE mock: records the .eq()/.is() filters and resolves
-// .select() with a caller-supplied { data, error }.
+// L18 Phase 4: the archive is now the `archive_treatment_image` command
+// (migration 0168), so the mock records the RPC name and its arguments instead
+// of a chained UPDATE. The scoping it used to assert (id + studio + client +
+// not-already-archived) now lives INSIDE the command and is proven in
+// tests/db/treatment-image-write-commands.db.test.ts; the studio is derived
+// from auth.uid() and is no longer sent at all.
+//
+// `data` is the command's return: the image id on success, NULL when no row
+// matched. That is the same three-state contract the old row-affected check
+// produced, so every behavioural case below is unchanged in meaning.
 function makeSupabaseMock(result: { data: unknown; error: unknown }) {
-  const filters: Record<string, unknown> = {};
-  const builder: Record<string, unknown> = {};
-  builder.update = vi.fn(() => builder);
-  builder.eq = vi.fn((k: string, v: unknown) => {
-    filters[k] = v;
-    return builder;
+  const args: Record<string, unknown> = {};
+  let name = "";
+  const rpc = vi.fn(async (fn: string, params: Record<string, unknown>) => {
+    name = fn;
+    Object.assign(args, params);
+    return result;
   });
-  builder.is = vi.fn((k: string, v: unknown) => {
-    filters[`is:${k}`] = v;
-    return builder;
-  });
-  builder.select = vi.fn(async () => result);
-  const from = vi.fn(() => builder);
-  return { client: { from }, from, filters };
+  const from = vi.fn(() => ({ select: vi.fn(async () => ({ data: null, error: null })) }));
+  return { client: { rpc, from }, rpc, args, calledName: () => name };
 }
 
 const revalidatePath = vi.fn();
@@ -54,16 +57,17 @@ afterEach(() => vi.clearAllMocks());
 
 describe("archiveTreatmentImageAction: scope + zero-row handling", () => {
   it("succeeds when exactly the current client's row is archived", async () => {
-    const mock = makeSupabaseMock({ data: [{ id: IMAGE }], error: null });
+    const mock = makeSupabaseMock({ data: IMAGE, error: null });
     vi.mocked(createClient).mockResolvedValue(mock.client as never);
     const res = await archiveTreatmentImageAction({ imageId: IMAGE, clientId: CLIENT_A });
     expect(res).toEqual({ ok: true });
-    // The UPDATE is scoped by id + studio_id + client_id + not-already-deleted.
-    expect(mock.from).toHaveBeenCalledWith("treatment_images");
-    expect(mock.filters.id).toBe(IMAGE);
-    expect(mock.filters.studio_id).toBe(STUDIO);
-    expect(mock.filters.client_id).toBe(CLIENT_A);
-    expect(mock.filters["is:deleted_at"]).toBeNull();
+    // The command is called with the image and the asserted client. The studio
+    // is DERIVED inside it, so it is deliberately not sent.
+    expect(mock.calledName()).toBe("archive_treatment_image");
+    expect(mock.args.p_image_id).toBe(IMAGE);
+    expect(mock.args.p_client_id).toBe(CLIENT_A);
+    expect(mock.args).not.toHaveProperty("p_studio_id");
+    expect(mock.args).not.toHaveProperty("p_deleted_by");
     // Revalidates only the current client's images page.
     expect(revalidatePath).toHaveBeenCalledTimes(1);
     expect(revalidatePath).toHaveBeenCalledWith(`/clients/${CLIENT_A}/images`);
@@ -72,12 +76,12 @@ describe("archiveTreatmentImageAction: scope + zero-row handling", () => {
   it("rejects a zero-row update (wrong-client / cross-studio / nonexistent / already-archived) as not found", async () => {
     // The wrong-client / cross-studio / missing / already-deleted cases all
     // produce a zero-row result because the scoped UPDATE matches nothing.
-    const mock = makeSupabaseMock({ data: [], error: null });
+    const mock = makeSupabaseMock({ data: null, error: null });
     vi.mocked(createClient).mockResolvedValue(mock.client as never);
     const res = await archiveTreatmentImageAction({ imageId: IMAGE, clientId: CLIENT_A });
     expect(res).toEqual({ ok: false, error: "Treatment photo not found." });
-    // Still proves the client_id scope was applied.
-    expect(mock.filters.client_id).toBe(CLIENT_A);
+    // Still proves the client scope was asserted to the command.
+    expect(mock.args.p_client_id).toBe(CLIENT_A);
     // No success side effect: the current page is NOT revalidated.
     expect(revalidatePath).not.toHaveBeenCalled();
   });
@@ -103,7 +107,7 @@ describe("archiveTreatmentImageAction: scope + zero-row handling", () => {
   });
 
   it("the not-found error reveals nothing about another client / studio / image", async () => {
-    const mock = makeSupabaseMock({ data: [], error: null });
+    const mock = makeSupabaseMock({ data: null, error: null });
     vi.mocked(createClient).mockResolvedValue(mock.client as never);
     const res = await archiveTreatmentImageAction({ imageId: IMAGE, clientId: CLIENT_A });
     if (!res.ok) {
@@ -125,16 +129,26 @@ describe("archive source shape (PR #287)", () => {
   const ARCHIVE =
     ACTIONS.slice(ACTIONS.indexOf("export async function archiveTreatmentImageAction"));
 
-  it("scopes the archive update by id + studio_id + client_id + deleted_at null", () => {
-    expect(ARCHIVE).toMatch(/\.eq\("id", input\.imageId\)/);
-    expect(ARCHIVE).toMatch(/\.eq\("studio_id", studio\.id\)/);
-    expect(ARCHIVE).toMatch(/\.eq\("client_id", input\.clientId\)/);
-    expect(ARCHIVE).toMatch(/\.is\("deleted_at", null\)/);
+  it("archives through the 0168 command, sending no studio or actor", () => {
+    expect(ARCHIVE).toMatch(/rpc\("archive_treatment_image"/);
+    expect(ARCHIVE).toMatch(/p_image_id: input\.imageId/);
+    expect(ARCHIVE).toMatch(/p_client_id: input\.clientId/);
+    expect(ARCHIVE).not.toMatch(/p_studio_id|p_deleted_by/);
+    // The scoping moved into the command — assert it there, in the bytes.
+    const MIGRATION = readFileSync(
+      join(process.cwd(), "supabase/migrations/0168_treatment_image_write_commands.sql"),
+      "utf8",
+    );
+    const seg = MIGRATION.slice(MIGRATION.indexOf("function public.archive_treatment_image("));
+    const body = seg.slice(0, seg.indexOf("$$;"));
+    expect(body).toMatch(/t\.id = p_image_id/);
+    expect(body).toMatch(/t\.studio_id = v_studio/);
+    expect(body).toMatch(/t\.client_id = p_client_id/);
+    expect(body).toMatch(/t\.deleted_at is null/);
   });
 
-  it("proves a row was changed via .select(\"id\") and rejects zero rows", () => {
-    expect(ARCHIVE).toMatch(/\.select\("id"\)/);
-    expect(ARCHIVE).toMatch(/data\.length !== 1/);
+  it("rejects a no-row result as a generic not found", () => {
+    expect(ARCHIVE).toMatch(/if \(!data\)/);
     expect(ARCHIVE).toMatch(/error: "Treatment photo not found\."/);
   });
 
