@@ -393,12 +393,25 @@ describe("0166 — existing clinical protections are preserved", () => {
   it("14. immutable lineage columns cannot be changed through the command", async () => {
     const c = await userQuery(A.userId, CREATE_SQL, createArgs());
     const entryId = c.rows[0].entry_id as string;
-    // 0160 guards re-pointing an entry to another session.
-    await expect(
-      userQuery(A.userId,
+    // 0160 guards re-pointing an entry to another session. After 0169 there are
+    // TWO layers, and both are asserted: `authenticated` is refused by the
+    // PRIVILEGE layer, and the 0160 trigger itself is proven still live through
+    // service_role, which retains DML.
+    let privCode: string | undefined;
+    try {
+      await userQuery(A.userId,
         `update public.electrolysis_entries set session_id=$2 where id=$1`,
-        [entryId, sessionB]),
-    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+        [entryId, sessionB]);
+    } catch (e) { privCode = (e as { code?: string }).code; }
+    expect(privCode).toBe("42501");
+
+    let trigCode: string | undefined;
+    try {
+      await asRole("service_role", (q) =>
+        q(`update public.electrolysis_entries set session_id=$2 where id=$1`,
+          [entryId, sessionB]));
+    } catch (e) { trigCode = (e as { code?: string }).code; }
+    expect(trigCode).toBe(CHECK_VIOLATION);
     // And the command itself exposes no lineage parameter.
     const args = await adminQuery(
       `select pg_get_function_arguments(p.oid) a from pg_proc p
@@ -526,12 +539,19 @@ describe("0166 — effective EXECUTE privileges", () => {
     }
   });
 
-  it("direct table DML remains available — this phase revokes nothing", async () => {
+  it("direct table DML is revoked by 0169; 0166 itself revoked nothing", async () => {
+    // This phase revoked nothing — correct for its own scope. Migration 0169 is
+    // the cutover that removes the capability, so the assertion is INVERTED here
+    // rather than deleted, and SELECT is asserted retained.
     const r = await adminQuery(
       `select has_table_privilege('authenticated','public.session_blocks','insert') b,
-              has_table_privilege('authenticated','public.electrolysis_entries','insert') e`);
-    expect(r.rows[0].b).toBe(true);
-    expect(r.rows[0].e).toBe(true);
+              has_table_privilege('authenticated','public.electrolysis_entries','insert') e,
+              has_table_privilege('authenticated','public.session_blocks','select') bs,
+              has_table_privilege('authenticated','public.electrolysis_entries','select') es`);
+    expect(r.rows[0].b).toBe(false);
+    expect(r.rows[0].e).toBe(false);
+    expect(r.rows[0].bs).toBe(true);
+    expect(r.rows[0].es).toBe(true);
   });
 });
 
@@ -734,11 +754,14 @@ describe("0166 — strict allow-list block patch", () => {
     expect(b.rows[0].studio_id).toBe(A.studioId);
     expect(b.rows[0].session_id).toBe(sessionA);
     expect(b.rows[0].deleted_at).toBeNull();
-    // Re-pointing is still refused by 0160.
-    await expect(
-      userQuery(A.userId,
-        `update public.session_blocks set session_id=$2 where id=$1`, [id, sessionB]),
-    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+    // Re-pointing is still refused by 0160 — proven through service_role, since
+    // after 0169 `authenticated` no longer reaches the trigger at all.
+    let trigCode: string | undefined;
+    try {
+      await asRole("service_role", (q) =>
+        q(`update public.session_blocks set session_id=$2 where id=$1`, [id, sessionB]));
+    } catch (e) { trigCode = (e as { code?: string }).code; }
+    expect(trigCode).toBe(CHECK_VIOLATION);
   });
 
   it("15. the privilege matrix is unchanged by the extension", async () => {

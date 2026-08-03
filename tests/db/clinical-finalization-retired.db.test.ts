@@ -173,10 +173,18 @@ describe("A. retirement — no session can enter the retired lifecycle", () => {
     for (const attempt of [
       () => adminQuery("update public.sessions set record_status='finalized' where id=$1", [sessionId]),
       () => asRole("service_role", (q) => q("update public.sessions set record_status='finalized' where id=$1", [sessionId])),
-      () => asUser(a.userId, (q) => q("update public.sessions set record_status='finalized' where id=$1", [sessionId])),
     ]) {
       await expect(attempt()).rejects.toThrow(RETIRED_MSG);
     }
+    // The browser role is refused EARLIER after 0169 — it holds no UPDATE on
+    // sessions at all, so it cannot even reach the retirement guard. Both
+    // refusals are asserted so neither can silently disappear.
+    let browserCode: string | undefined;
+    try {
+      await asUser(a.userId, (q) =>
+        q("update public.sessions set record_status='finalized' where id=$1", [sessionId]));
+    } catch (e) { browserCode = (e as { code?: string }).code; }
+    expect(browserCode).toBe("42501");
     const s = await adminQuery("select record_status from public.sessions where id=$1", [sessionId]);
     expect(s.rows[0].record_status).toBe("draft");
   });
@@ -220,16 +228,17 @@ describe("A. retirement — no session can enter the retired lifecycle", () => {
 
   it("ordinary session edits are untouched by the retirement guard", async () => {
     const { sessionId } = await seedSession(a);
-    await userQuery(
-      a.userId,
-      "update public.sessions set session_notes='edited freely' where id=$1 and studio_id=$2",
-      [sessionId, a.studioId],
-    );
+    // After 0169 an ordinary edit goes through a 0167 command. The invariant is
+    // unchanged and is the point of the case: an ordinary session is NOT frozen
+    // by the retirement guard, and stays `draft`.
+    await userQuery(a.userId, "select public.set_next_session_note($1,$2,$3)", [
+      sessionId, a.clientId, "edited freely",
+    ]);
     const s = await adminQuery(
-      "select session_notes, record_status from public.sessions where id=$1",
+      "select next_session_note, record_status from public.sessions where id=$1",
       [sessionId],
     );
-    expect(s.rows[0]).toEqual({ session_notes: "edited freely", record_status: "draft" });
+    expect(s.rows[0]).toEqual({ next_session_note: "edited freely", record_status: "draft" });
   });
 });
 
@@ -274,9 +283,28 @@ describe("B. the legacy finalized artifact is preserved, not deleted", () => {
         JSON.stringify({ sub: a.userId, role: "authenticated" }),
       ]);
       await c.query("select set_config('hone.correction_session_id', $1, true)", [sessionId]);
+      // After 0169 `authenticated` cannot even reach the guard — the privilege
+      // layer refuses first (42501), which closes the original escape earlier
+      // than the trigger did.
+      // A failed statement aborts the transaction, so each probe runs inside its
+      // own savepoint.
+      await c.query("savepoint probe_authenticated");
+      await expect(
+        c.query("update public.session_blocks set energy_level = 99 where id=$1", [blockId]),
+      ).rejects.toMatchObject({ code: "42501" });
+      await c.query("rollback to savepoint probe_authenticated");
+
+      // The GUARD itself must still refuse the GUC, independently of the grant —
+      // otherwise re-granting the privilege would silently reopen the escape.
+      // Proven as service_role, which retains DML.
+      await c.query("reset role");
+      await c.query("set local role service_role");
+      await c.query("select set_config('hone.correction_session_id', $1, true)", [sessionId]);
+      await c.query("savepoint probe_service_role");
       await expect(
         c.query("update public.session_blocks set energy_level = 99 where id=$1", [blockId]),
       ).rejects.toMatchObject({ code: "23514" });
+      await c.query("rollback to savepoint probe_service_role");
     } finally {
       await c.query("rollback").catch(() => undefined);
       await c.end();
@@ -428,8 +456,10 @@ describe("C. ordinary treatment charting stays editable", () => {
       "insert into public.electrolysis_entries (id, session_id, block_id, area, hairs_treated) values ($1,$2,$3,'Chin',10)",
       [entryId, sessionId, blockId],
     );
-    await userQuery(
-      a.userId,
+    // The column is unfrozen — which is this case's point. After 0169 the
+    // practitioner reaches it through the 0166 commands, so the direct write is
+    // performed as the owner here purely to prove the column is not read-only.
+    await adminQuery(
       "update public.electrolysis_entries set hairs_treated = 25 where id=$1 and session_id=$2",
       [entryId, sessionId],
     );
@@ -455,28 +485,30 @@ describe("C. ordinary treatment charting stays editable", () => {
 
   it("nothing about an ordinary session is read-only: notes, next-visit and aftercare all edit", async () => {
     const { sessionId } = await seedSession(a);
-    await userQuery(
-      a.userId,
-      `update public.sessions
-          set session_notes = 'n', next_session_note = 'next',
-              aftercare_and_risks_explained_at = now(), aftercare_and_risks_explained_by = $3
-        where id=$1 and studio_id=$2`,
-      [sessionId, a.studioId, a.practitionerId],
-    );
+    // Every one of these is reachable by the practitioner AFTER the revocation,
+    // through the 0167 commands — which is the strongest form of this case:
+    // nothing is read-only even with direct DML gone.
+    await userQuery(a.userId, "select public.set_next_session_note($1,$2,$3)", [
+      sessionId, a.clientId, "next",
+    ]);
+    await userQuery(a.userId, "select public.set_session_aftercare_explained($1,$2)", [
+      sessionId, true,
+    ]);
+    await userQuery(a.userId, "select public.set_session_price($1,$2,$3)", [
+      sessionId, a.clientId, 4200,
+    ]);
     const s = await adminQuery(
-      "select session_notes, next_session_note, aftercare_and_risks_explained_at is not null as ac from public.sessions where id=$1",
+      "select next_session_note, price_paid_cents, aftercare_and_risks_explained_at is not null as ac from public.sessions where id=$1",
       [sessionId],
     );
-    expect(s.rows[0]).toEqual({ session_notes: "n", next_session_note: "next", ac: true });
+    expect(s.rows[0]).toEqual({ next_session_note: "next", price_paid_cents: 4200, ac: true });
   });
 
   it("an ordinary session can still be soft-deleted (no finalization freeze)", async () => {
     const { sessionId } = await seedSession(a);
-    await userQuery(
-      a.userId,
-      "update public.sessions set deleted_at = now() where id=$1 and studio_id=$2",
-      [sessionId, a.studioId],
-    );
+    await userQuery(a.userId, "select public.soft_delete_session($1,$2,$3)", [
+      sessionId, a.clientId, "no finalization freeze on an ordinary session",
+    ]);
     expect(
       (await adminQuery("select deleted_at is not null as gone from public.sessions where id=$1", [sessionId]))
         .rows[0].gone,

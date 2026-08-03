@@ -66,14 +66,16 @@ describe("sessions: client + studio must match", () => {
       ),
     ).rejects.toThrow();
   });
-  it("accepts a same-studio session (authenticated + service role)", async () => {
+  it("accepts a same-studio session (command path + service role)", async () => {
+    // After 0169 `authenticated` holds no direct INSERT on sessions — the
+    // practitioner path is start_session (0167). The tenant-consistency
+    // property under test is unchanged: a same-studio session is accepted.
     const a = await userQuery(
       s.userId,
-      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
-       values ($1,$2,$3,$4,'electrolysis')`,
-      [randomUUID(), s.studioId, s.clientId, s.practitionerId],
+      `select * from public.start_session($1,$2,$3,$4)`,
+      [s.clientId, "electrolysis", null, 0],
     );
-    expect(a.rowCount).toBe(1);
+    expect(a.rows[0].session_id).toBeTruthy();
     const b = await adminQuery(
       `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
        values ($1,$2,$3,$4,'electrolysis')`,

@@ -41,8 +41,10 @@ function insertAsOwner(overrides: Record<string, unknown> = {}) {
     uploaded_by: s.practitionerId,
     ...overrides,
   };
-  return userQuery(
-    s.userId,
+  // Fixture only — after 0169 `authenticated` holds no direct INSERT on this
+  // table. The properties under test below are the identity-column freezes,
+  // which are trigger-enforced and role-independent.
+  return adminQuery(
     `insert into public.treatment_images
        (id, studio_id, client_id, session_id, session_block_id,
         storage_bucket, storage_path, content_type, size_bytes, uploaded_by)
@@ -201,14 +203,13 @@ describe("identity immutability (trigger) + soft archive", () => {
       userQuery(s.userId, "update public.treatment_images set client_id = $1 where id = $2", [foreign.clientId, baseId]),
     ).rejects.toThrow();
   });
-  it("soft archive (deleted_at/deleted_by) still works", async () => {
+  it("soft archive (deleted_at/deleted_by) still works through the 0168 command", async () => {
     const r = await userQuery(
       s.userId,
-      `update public.treatment_images set deleted_at = now(), deleted_by = $1
-        where id = $2 and studio_id = $3 and deleted_at is null`,
-      [s.practitionerId, baseId, s.studioId],
+      `select public.archive_treatment_image($1,$2)`,
+      [baseId, s.clientId],
     );
-    expect(r.rowCount).toBe(1);
+    expect(r.rows[0].archive_treatment_image).toBe(baseId);
   });
 });
 

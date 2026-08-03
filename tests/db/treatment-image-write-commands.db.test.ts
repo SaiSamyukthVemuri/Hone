@@ -449,13 +449,17 @@ describe("0168 — preserved protections and privileges", () => {
     }
   });
 
-  it("28. this phase revokes NO table privilege — direct DML still works", async () => {
-    // Additive only. Final L18 revocation is a separate migration.
+  it("28. direct table DML is revoked by 0169; 0168 itself revoked nothing", async () => {
+    // This phase revoked nothing — correct for its own scope. Migration 0169 is
+    // the cutover that removes the capability, so the assertion is INVERTED here
+    // rather than deleted, and SELECT is asserted retained.
     const r = await adminQuery(
       `select has_table_privilege('authenticated','public.treatment_images','INSERT') i,
-              has_table_privilege('authenticated','public.treatment_images','UPDATE') u`,
+              has_table_privilege('authenticated','public.treatment_images','UPDATE') u,
+              has_table_privilege('authenticated','public.treatment_images','SELECT') s`,
     );
-    expect(r.rows[0].i).toBe(true);
-    expect(r.rows[0].u).toBe(true);
+    expect(r.rows[0].i).toBe(false);
+    expect(r.rows[0].u).toBe(false);
+    expect(r.rows[0].s).toBe(true);
   });
 });

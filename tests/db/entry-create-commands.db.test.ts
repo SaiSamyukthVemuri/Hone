@@ -324,23 +324,46 @@ describe("0164 — EXECUTE is authenticated-only", () => {
 // ---------------------------------------------------------------------------
 
 describe("0164 — additive phase: direct DML and existing boundaries intact", () => {
-  it("direct DML REMAINS available on both entry tables", async () => {
+  it("0164 itself revoked nothing — the capability was removed later, by 0169", async () => {
+    // This case originally asserted that direct DML was STILL AVAILABLE, which
+    // was the correct scope statement for 0164: that phase was additive and had
+    // to leave the deployed application working. Migration 0169 is the cutover
+    // that finally removes the capability, so the assertion is inverted here
+    // rather than deleted — the history stays legible.
     const r = await adminQuery(
       `select has_table_privilege('authenticated','public.electrolysis_entries','insert') as e_ins,
-              has_table_privilege('authenticated','public.laser_entries','insert')        as l_ins`,
+              has_table_privilege('authenticated','public.laser_entries','insert')        as l_ins,
+              has_table_privilege('authenticated','public.laser_entries','select')        as l_sel`,
     );
-    expect(r.rows[0].e_ins, "this PR must NOT have revoked production access").toBe(true);
-    expect(r.rows[0].l_ins).toBe(true);
+    expect(r.rows[0].e_ins, "0169 revokes direct INSERT").toBe(false);
+    expect(r.rows[0].l_ins).toBe(false);
+    // Reads are deliberately retained.
+    expect(r.rows[0].l_sel).toBe(true);
+    // 0164's own bytes still contain no revocation.
+    const { readFileSync } = await import("node:fs");
+    const sql = readFileSync(
+      "supabase/migrations/0164_clean_entry_create_commands.sql",
+      "utf8",
+    ).replace(/\s+/g, " ");
+    expect(sql).not.toMatch(/revoke[^;]*on table/i);
   });
 
-  it("the deferred electrolysis writers still work through direct DML", async () => {
-    const direct = await userQuery(
-      A.userId,
-      `insert into public.electrolysis_entries (session_id, block_id, area, mode)
-       values ($1,$2,'jaw','thermo') returning id`,
-      [sessionA, blockA],
-    );
-    expect(direct.rowCount).toBe(1);
+  it("the electrolysis writers deferred by 0164 are now command-bound and privilege-denied", async () => {
+    // 0164 deferred them; 0166 moved them onto commands; 0169 removed the
+    // direct capability. A direct insert is now refused by the PRIVILEGE layer,
+    // which is a stronger refusal than any application guard.
+    let code: string | undefined;
+    try {
+      await userQuery(
+        A.userId,
+        `insert into public.electrolysis_entries (session_id, block_id, area, mode)
+         values ($1,$2,'jaw','thermo') returning id`,
+        [sessionA, blockA],
+      );
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code).toBe("42501");
   });
 
   it("the 0162 intake review boundary is untouched", async () => {
@@ -384,12 +407,35 @@ describe("0164 — additive phase: direct DML and existing boundaries intact", (
       null,
       null,
     ]);
-    await expect(
-      userQuery(
+    // TWO layers now refuse this, and both are asserted.
+    //
+    // 1. PRIVILEGE — after 0169 `authenticated` has no UPDATE at all.
+    let code: string | undefined;
+    try {
+      await userQuery(
         A.userId,
         `update public.laser_entries set session_id = $2 where id = $1`,
         [res.rows[0].id, sessionB],
-      ),
-    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+      );
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code).toBe("42501");
+
+    // 2. TRIGGER — the 0160 lineage guard itself is UNCHANGED. Proven through
+    // service_role, which still holds DML, so the revocation cannot be mistaken
+    // for having replaced the protection it sits in front of.
+    let trigCode: string | undefined;
+    try {
+      await asRole("service_role", (q) =>
+        q(`update public.laser_entries set session_id = $2 where id = $1`, [
+          res.rows[0].id,
+          sessionB,
+        ]),
+      );
+    } catch (e) {
+      trigCode = (e as { code?: string }).code;
+    }
+    expect(trigCode).toBe(CHECK_VIOLATION);
   });
 });
