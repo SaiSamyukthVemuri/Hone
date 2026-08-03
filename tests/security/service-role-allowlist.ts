@@ -116,6 +116,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
+    purpose:
+      "Remove pass — the audited soft-delete of ONE electrolysis/laser entry (0114 columns).",
+    why: "Migration 0169 (L18 FINAL) left `authenticated` with SELECT only on electrolysis_entries/laser_entries, so the soft-delete UPDATE must run as service_role. Service_role bypasses RLS, so isolation is carried entirely by the code path: getCurrentPractitionerWithStudio() resolves an ACTIVE practitioner + studio server-side (never browser-supplied), assertSessionVisible(studio.id, clientId, sessionId) proves the session belongs to that studio AND the route client through the AUTHENTICATED client, and the mutation is then pinned to `.eq(\"id\")` (primary key, so at most one row) + `.eq(\"session_id\")` (the proved session; session_id is NOT NULL and FK-constrained, and neither pass table has its own studio_id/client_id) + `.is(\"deleted_at\", null)`. Exactly one changed row is required; zero is a safe failure. The table name is constrained by a two-member union type, never caller-supplied.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

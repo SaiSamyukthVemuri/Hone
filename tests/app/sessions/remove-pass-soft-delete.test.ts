@@ -80,10 +80,56 @@ describe("server actions: audited soft-delete, no hard delete", () => {
     expect(SESSION_ACTIONS_CODE).toMatch(/practitioner\.active/);
     expect(SESSION_ACTIONS_CODE).toMatch(/assertSessionVisible\(studio\.id, clientId, sessionId\)/);
     expect(SESSION_ACTIONS_CODE).toMatch(/has already been removed/);
-    // Scoped to the exact row + its session (cross-studio blocked by
-    // assertSessionVisible + RLS; only this pass is touched).
+    // Scoped to the exact row + its session. Since migration 0169 the mutation
+    // runs as service_role, which BYPASSES RLS — so these two predicates plus
+    // assertSessionVisible ARE the tenant boundary, not a backstop to it.
+    // Behaviourally proven in tests/db/remove-pass-soft-delete.db.test.ts.
     expect(SESSION_ACTIONS_CODE).toMatch(/\.eq\("id", id\)/);
     expect(SESSION_ACTIONS_CODE).toMatch(/\.eq\("session_id", sessionId\)/);
+  });
+
+  it("the authorization sequence runs BEFORE the service-role client is built", () => {
+    const fn = SESSION_ACTIONS_CODE.slice(
+      SESSION_ACTIONS_CODE.indexOf("async function softDeleteEntry("),
+    );
+    const body = fn.slice(0, fn.indexOf("\nexport async function"));
+    const actorAt = body.indexOf("getCurrentPractitionerWithStudio()");
+    const lineageAt = body.indexOf("assertSessionVisible(");
+    const adminAt = body.indexOf("createAdminClient()");
+    expect(actorAt, "actor must be resolved").toBeGreaterThan(-1);
+    expect(lineageAt, "lineage must be asserted").toBeGreaterThan(-1);
+    expect(adminAt, "the service-role client must be built").toBeGreaterThan(-1);
+    expect(actorAt, "actor resolution must precede service-role").toBeLessThan(adminAt);
+    expect(lineageAt, "lineage assertion must precede service-role").toBeLessThan(adminAt);
+  });
+
+  it("deleted_by comes from the server-resolved practitioner, never from the form", () => {
+    expect(SESSION_ACTIONS_CODE).toMatch(/deleted_by: practitioner\.id/);
+    const fn = SESSION_ACTIONS_CODE.slice(
+      SESSION_ACTIONS_CODE.indexOf("async function softDeleteEntry("),
+    );
+    const body = fn.slice(0, fn.indexOf("\nexport async function"));
+    // The only formData reads are id / session_id / client_id / reason — no
+    // practitioner or studio id can be supplied by the browser.
+    const reads = [...body.matchAll(/formData\.get\("([a-z_]+)"\)/g)].map((m) => m[1]);
+    expect(new Set(reads)).toEqual(new Set(["id", "session_id", "client_id", "reason"]));
+  });
+
+  it("requires exactly one changed row and keeps raw DB errors out of the response", () => {
+    expect(SESSION_ACTIONS_CODE).toMatch(/data\.length !== 1/);
+    // The old `Failed to remove pass: ${error.message}` leaked the raw database
+    // message; with service_role that can name tables, columns and privilege
+    // state. Fixed safe copy only.
+    expect(SESSION_ACTIONS_CODE).not.toMatch(/Failed to remove pass: \$\{error\.message\}/);
+    expect(SESSION_ACTIONS_CODE).toMatch(/Could not remove this pass\. Please try again\./);
+    // The operator log carries the sqlstate + ids, never the raw message or any
+    // clinical text.
+    expect(SESSION_ACTIONS_CODE).toMatch(/event: "remove_pass_update_failed"/);
+    const logBlock = SESSION_ACTIONS_CODE.slice(
+      SESSION_ACTIONS_CODE.indexOf('event: "remove_pass_update_failed"'),
+    ).slice(0, 400);
+    expect(logBlock).not.toMatch(/error\.message/);
+    expect(logBlock).not.toMatch(/reason|comments|observation|area\b/);
   });
 
   it("both delete-entry actions route through the soft-delete helper", () => {
