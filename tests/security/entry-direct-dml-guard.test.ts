@@ -56,7 +56,11 @@ const COMMANDS = [
   "soft_delete_session_block",
 ] as const;
 
-const ROOTS = ["app", "lib", "components"];
+// `scripts` and the root `middleware.ts` are scanned too: they hold no `.from()`
+// today, but they run against the same database and were previously outside the
+// guard entirely. `.mjs` is included for scripts/, which is written in ESM.
+const ROOTS = ["app", "lib", "components", "scripts"];
+const ROOT_FILES = ["middleware.ts"];
 
 function sourceFiles(): string[] {
   const out: string[] = [];
@@ -64,10 +68,11 @@ function sourceFiles(): string[] {
     for (const name of readdirSync(dir)) {
       const p = join(dir, name);
       if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(ts|tsx)$/.test(name)) out.push(p);
+      else if (/\.(ts|tsx|mjs)$/.test(name)) out.push(p);
     }
   };
   for (const r of ROOTS) walk(r);
+  for (const f of ROOT_FILES) out.push(f);
   return out;
 }
 
@@ -147,8 +152,84 @@ type VarSite = {
   op: string;
 };
 
-/** Receivers that are not Supabase query builders (`Buffer.from`, storage). */
-const NON_DB_RECEIVERS = new Set(["Buffer", "Array", "Object", "storage"]);
+/**
+ * Receivers that are not Supabase query builders. `storage` is deliberately NOT
+ * here: a storage chain ends in .upload/.remove/.createSignedUrl, none of which
+ * match the row-DML op regex, so it is excluded on evidence rather than by name.
+ */
+const NON_DB_RECEIVERS = new Set(["Buffer", "Array", "Object"]);
+
+/**
+ * A `.from(...)` DML chain whose SHAPE this analyzer cannot reason about, and
+ * which therefore escapes BOTH censuses. Adversarial review demonstrated these
+ * against the real regex:
+ *
+ *   createAdminClient().from(table).update(...)   — receiver is a call, not an ident
+ *   (await createClient()).from(table).update()   — receiver is a parenthesised expr
+ *   .from(TABLES[0]) / .from(`${p}_entries`)      — table expr is not an identifier
+ *   .from(a ? b : c) / .from(t as string)         — ditto
+ *
+ * Rather than pretend to parse every shape, the guard REFUSES them: any DML
+ * `.from()` that is neither a plain string literal nor <ident>.from(<ident>) is a
+ * hard failure. That converts an invisible blind spot into a loud one.
+ */
+type UnanalyzableSite = { file: string; fn: string; snippet: string };
+
+function unanalyzableFromSites(): UnanalyzableSite[] {
+  const out: UnanalyzableSite[] = [];
+  for (const file of sourceFiles()) {
+    const src = readFileSync(file, "utf8");
+    const fnStarts = [...src.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm)].map(
+      (m) => ({ idx: m.index ?? 0, name: m[1] }),
+    );
+    for (const m of src.matchAll(/\.from\(/g)) {
+      const open = (m.index ?? 0) + m[0].length - 1;
+      // Balanced read of the argument list.
+      let i = open;
+      let depth = 0;
+      let arg = "";
+      while (i < src.length) {
+        const ch = src[i];
+        if ("([{".includes(ch)) depth++;
+        else if (")]}".includes(ch)) {
+          depth--;
+          if (depth === 0) break;
+        }
+        if (depth >= 1 && i > open) arg += ch;
+        i++;
+      }
+      // Does this chain perform row DML?
+      let j = i + 1;
+      let d2 = 0;
+      let chain = "";
+      while (j < src.length) {
+        const ch = src[j];
+        if ("([{".includes(ch)) d2++;
+        else if (")]}".includes(ch)) d2--;
+        else if (ch === ";" && d2 <= 0) break;
+        chain += ch;
+        j++;
+      }
+      if (!/\.(insert|update|delete|upsert)\s*\(/.test(chain)) continue;
+
+      const argT = arg.trim();
+      const isLiteral = /^["'][\w$]+["']$/.test(argT);
+      const isIdent = /^[A-Za-z_$][\w$.]*$/.test(argT);
+      // Receiver: the token immediately preceding `.from(`.
+      const before = src.slice(Math.max(0, (m.index ?? 0) - 80), m.index ?? 0);
+      const identReceiver = /[A-Za-z_$][\w$]*\s*$/.test(before);
+      if (identReceiver && (isLiteral || isIdent)) continue; // analyzable
+
+      const owner = fnStarts.filter((f) => f.idx < (m.index ?? 0)).pop();
+      out.push({
+        file: file.split("\\").join("/"),
+        fn: owner?.name ?? "(top-level)",
+        snippet: `${before.slice(-40).trim()}.from(${argT})`,
+      });
+    }
+  }
+  return out;
+}
 
 /**
  * Census of `.from(<identifier>)` chains that perform row DML, with the client
@@ -522,7 +603,14 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
 
 describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard", () => {
   const varSites = variableTableWriteSites();
-  const key = (s: { file: string; fn: string }) => `${s.file}::${s.fn}`;
+  // Adversarial review finding: keying on file::fn let a SECOND statement inside
+  // an already-declared function (e.g. a hard `.delete()` added to
+  // softDeleteEntry itself) satisfy the census — the declared key was already
+  // present and `.find()` only ever examined the first match. The key now
+  // includes the operation and the table expression, and the counts must match
+  // exactly, so a second site is a new key and fails.
+  const key = (s: { file: string; fn: string; op: string; tableExpr: string }) =>
+    `${s.file}::${s.fn}::${s.op}::${s.tableExpr}`;
 
   it("A. the variable-table writer census is reported in full", () => {
     const report = varSites
@@ -559,17 +647,41 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
 
   it("D. each declared writer still uses the client it was reviewed with", () => {
     for (const reviewed of REVIEWED_VARIABLE_TABLE_WRITERS) {
-      const live = varSites.find((s) => key(s) === key(reviewed));
-      expect(live, `${key(reviewed)} disappeared — re-review the entry`).toBeDefined();
+      const matches = varSites.filter((s) => key(s) === key(reviewed));
+      expect(matches, `${key(reviewed)} disappeared — re-review the entry`).toHaveLength(1);
       expect(
-        live!.client,
+        matches[0].client,
         `${key(reviewed)} changed Supabase client. softDeleteEntry reverting to ` +
           "the authenticated client is exactly the 42501 production outage 0169 " +
           "caused; it must stay service-role.",
       ).toBe(reviewed.client);
-      expect(live!.op).toBe(reviewed.op);
-      expect(live!.tableExpr).toBe(reviewed.tableExpr);
     }
+  });
+
+  it("D2. the census count matches the reviewed count EXACTLY", () => {
+    // Without this, a second DML statement inside an already-declared function
+    // slips through: its file::fn key is already declared, so test C sees
+    // nothing undeclared. Empirically demonstrated by adversarial review with a
+    // hard `.delete()` added inside softDeleteEntry.
+    expect(
+      varSites.map(key).sort(),
+      "a variable-table DML site was added to (or removed from) an already-" +
+        "reviewed function. Every site is reviewed individually, not per function.",
+    ).toEqual(REVIEWED_VARIABLE_TABLE_WRITERS.map(key).sort());
+  });
+
+  it("D3. no DML `.from()` has a shape the analyzer cannot reason about", () => {
+    // The blind spots are now loud instead of silent: a chained-factory receiver
+    // (createAdminClient().from(...)), a parenthesised await, or a computed /
+    // template-literal / ternary / as-cast table expression fails HERE rather
+    // than passing unseen through both censuses.
+    const shapes = unanalyzableFromSites();
+    expect(
+      shapes,
+      "a row-DML `.from()` uses a shape this guard cannot analyze. Rewrite it as " +
+        "`const client = createAdminClient(); client.from(<identifier or literal>)` " +
+        "so the censuses can see it, or extend the analyzer deliberately.",
+    ).toEqual([]);
   });
 
   it("E. no L18 command-bound table is written through the authenticated client", () => {
