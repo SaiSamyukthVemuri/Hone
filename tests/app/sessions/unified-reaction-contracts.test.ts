@@ -69,17 +69,25 @@ describe("(5/8/9) galvanic intensity + reaction_type historical-data preservatio
     // the column (historical value untouched) and inserts force NULL.
     expect(FORM).not.toMatch(/galvanicIntensityPercent/);
     expect(read(`${BASE}/simplified-entry-form.tsx`)).not.toMatch(/galvanicIntensityPercent/);
-    // The write helper no longer emits galvanic_intensity_percent (so UPDATE omits
-    // it → preserved), while both create inserts set it explicitly to NULL.
     const BLOCK_ACTIONS = read(`${BASE}/block-actions.ts`);
-    expect(BLOCK_ACTIONS).not.toMatch(/galvanic_intensity_percent:\s*wantGalv/);
-    expect(
-      (BLOCK_ACTIONS.match(/galvanic_intensity_percent:\s*null/g) ?? []).length,
-    ).toBe(2);
-    // The add-another-pass action also forces NULL and never reads a forged field.
     const ACTIONS = read(`${BASE}/actions.ts`);
-    expect(ACTIONS).toMatch(/galvanic_intensity_percent:\s*null/);
+    // L18 Phase 2: the retirement moved from the application to the database.
+    // `write_electrolysis_entry` (migration 0166) has NO parameter for
+    // galvanic_intensity_percent: its INSERT hard-codes NULL and its UPDATE
+    // omits the column entirely, so a new row cannot carry a value and a
+    // historical one cannot be overwritten — server-authoritative in the
+    // strongest sense, since there is no longer an application literal to edit.
+    const MIGRATION = read("supabase/migrations/0166_session_block_electrolysis_commands.sql");
+    expect(MIGRATION).not.toMatch(/p_galvanic_intensity_percent/);
+    expect(MIGRATION).toMatch(/galvanic_intensity_percent/); // named in the INSERT column list
+    // Strip comments first: both modules still DOCUMENT the retirement in prose,
+    // which is the point — what must be absent is any code that writes it.
+    const blockCode = BLOCK_ACTIONS.split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+    expect(blockCode).not.toMatch(/galvanic_intensity_percent/);
     expect(ACTIONS).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
+    expect(ACTIONS).not.toMatch(/p_galvanic_intensity_percent/);
   });
   it("reaction_type is PRESERVED while its chip stays selected and cleared ONLY when removed (never invented)", () => {
     // Save payload: keep draft.reactionType only if its label chip is still selected, else null.

@@ -14,7 +14,54 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-02, post-0165 apply)
+## Current state (verified 2026-08-03, post-0166 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0166** (`0166_session_block_electrolysis_commands.sql`, applied 2026-08-03T12:40:31Z→12:40:42Z) |
+| **Repo migration max** | **0166** — **hosted == repo.** Next free number is **0167**. |
+| **Total migrations in repo** | **165** (`0001` … `0157`, `0159` … `0166` — **no `0158`**) |
+| **Total applied in production** | **165**, each applied **exactly once**. Applied count moved 164 → 165. |
+| **`0166` checksum (frozen)** | `8bd0779661819444a083485df4fe69ea9d5ec5a6b976faadcbc9f4b9d9815b43` |
+| **Authorized head** | `669cc3646e7f95aaf02af1688bacb8ba467a801d` (PR #503), CI run `30777890502` SUCCESS |
+
+### 0166 — L18 Phase 2: session_blocks + electrolysis_entries command boundary
+
+**Class: additive function/RPC.** Four `authenticated`-only commands
+(`create_block_with_entry`, `update_block_with_entry`, `add_electrolysis_pass`,
+`soft_delete_session_block`) plus four fully-revoked internal helpers. **No table, column,
+constraint, index, policy or trigger change; no data change; no privilege revoked.** The
+deployed application kept writing directly and worked unchanged throughout — this apply is
+**migration-first**, ahead of the PR #503 code merge.
+
+**Post-apply verification (production, read-only):**
+
+| Check | Result |
+|---|---|
+| Hosted max | `0165` → **`0166`** |
+| Applied count | 164 → **165** |
+| `session_blocks` rows | **61 → 61** (unchanged) |
+| `electrolysis_entries` rows | **45 → 45** (unchanged) |
+| `session_block_areas` rows | **27 → 27** (unchanged) |
+| Functions present before | **0 of 8** |
+| Effective EXECUTE | 4 commands `authenticated` only; `anon` ✗ and `service_role` ✗ on **all 8**; 4 helpers denied to all three roles |
+| `SECURITY DEFINER` + `search_path=""` | **8 of 8** |
+| Seven-key allow-list incl. `probe_inventory_item_id` | present in deployed `prosrc` |
+| `p_areas` NULL preserves the area set | present in deployed `prosrc` |
+| Entry UPDATE omits `probe_type` | confirmed |
+| Dead `p_probe_inventory_item_id` parameter | **absent from all signatures** |
+
+⚠️ **Behavioural write-probing was NOT performed.** The `db query` classifier blocks
+INSERT/UPDATE-bearing SQL, so the commands are **source- and privilege-verified in production,
+never behaviourally exercised there.** Their behaviour is proven on a fresh local stack
+(41 DB cases) and in the browser lane, not against production data.
+
+**L18 REMAINS OPEN.** Direct authenticated table DML is not revoked by this migration.
+`sessions` (10 direct writers) and `treatment_images` (3) are untouched.
+
+---
+
+## Previous state (verified 2026-08-02, post-0165 apply)
 
 | Field | Value |
 |---|---|

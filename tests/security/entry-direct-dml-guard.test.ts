@@ -3,60 +3,52 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// L18 Phase 1A — static drift guard: runtime direct row DML on the two entry
+// L18 Phase 2 — static drift guard: runtime direct row DML on the charting
 // tables.
 // ===========================================================================
 //
-// Migration 0164 added ONE narrow reviewed create command — `create_laser_entry`
-// — and `addLaserEntryAction` now calls it. Direct table grants are still in
-// place (this phase revokes nothing), so nothing at the database layer stops a
-// future change from reintroducing a direct write. This guard is that stop.
+// PHASE 1A (migration 0164) closed the LASER creation path only, and carried
+// THREE named exceptions — `addElectrolysisEntryAction`,
+// `createTreatmentAreaWithEntryAction`, `updateTreatmentAreaWithEntryAction`.
+// Each could write `session_blocks` AND `electrolysis_entries` for a single
+// user intent across two transactions, so a failed second write left the two
+// describing different treatments (or left an orphan block behind).
 //
-// SCOPE, STATED PRECISELY. This phase closes the LASER creation path only.
-// `electrolysis_entries` is NOT command-bound in any respect: ALL THREE of its
-// runtime writers remain direct, and this guard must never be read as claiming
-// otherwise.
+// PHASE 2 (migration 0166) retires all three. `create_block_with_entry`,
+// `update_block_with_entry`, `add_electrolysis_pass` and
+// `soft_delete_session_block` own both halves of every one of those workflows
+// in a single transaction, so the exception list is now EMPTY and the guard is
+// an absolute one: **no runtime code may issue row DML against these tables.**
 //
-// It is deliberately NOT a generic, growable allowlist. There are exactly THREE
-// permitted exceptions, each pinned to an exact file AND an exact enclosing
-// function. Renaming, moving, or adding one fails CI, and so does removing the
-// required label. The count itself is asserted, so a fourth can never be
-// appended quietly.
+// Direct table grants still exist at the database layer — this phase revokes
+// nothing — so nothing below the application stops a future change from
+// reintroducing a direct write. This guard is that stop, and it is deliberately
+// NOT a growable allowlist: there is no list left to append to.
 //
-// THE EXCEPTIONS EXPIRE in the combined session_blocks/electrolysis_entries
-// phase. Every one of them can write session_blocks AND electrolysis_entries
-// for a single user intent:
-//   * createTreatmentAreaWithEntryAction — block then entry; compensates with a
-//     soft delete if the entry fails.
-//   * updateTreatmentAreaWithEntryAction — block then entry; NO compensation.
-//   * addElectrolysisEntryAction — when the form omits `block_id` (a legacy
-//     caller shape it deliberately still supports) it calls
-//     ensureBlockForSession, which INSERTs a session_blocks row before the
-//     entry write. A failed entry write leaves that block behind. An earlier
-//     revision of this phase wrongly classified it as entry-only.
-// Making any of them genuinely atomic requires a command that owns BOTH writes
-// — session_blocks work, out of scope here. When that phase lands, these three
-// exceptions and this comment must go with it.
+// `session_block_areas` is included because the area rows are part of the same
+// atomic intent; 0129 and 0166 own them, and no action may touch them directly.
 
-const TABLES = ["electrolysis_entries", "laser_entries"] as const;
+const TABLES = [
+  "session_blocks",
+  "session_block_areas",
+  "electrolysis_entries",
+  "laser_entries",
+] as const;
 
-const EXCEPTION_LABEL = "TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION";
+/**
+ * The exception list is EMPTY and must stay empty. A future phase that needs a
+ * temporary exception must add it here deliberately, and the count assertions
+ * below force that to be a visible, reviewed change.
+ */
+const EXCEPTIONS: ReadonlyArray<{ file: string; fn: string }> = [];
 
-/** The ONLY runtime call sites permitted to write these tables directly. */
-const EXCEPTIONS: ReadonlyArray<{ file: string; fn: string }> = [
-  {
-    file: "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
-    fn: "addElectrolysisEntryAction",
-  },
-  {
-    file: "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
-    fn: "createTreatmentAreaWithEntryAction",
-  },
-  {
-    file: "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
-    fn: "updateTreatmentAreaWithEntryAction",
-  },
-];
+/** The four commands migration 0166 introduces. */
+const COMMANDS = [
+  "create_block_with_entry",
+  "update_block_with_entry",
+  "add_electrolysis_pass",
+  "soft_delete_session_block",
+] as const;
 
 const ROOTS = ["app", "lib", "components"];
 
@@ -76,20 +68,23 @@ function sourceFiles(): string[] {
 type Site = { file: string; fn: string; table: string; op: string };
 
 /**
- * Find every runtime direct write on the entry tables, attributing each to its
- * enclosing top-level function. Attribution walks the `.from("<table>")`
+ * Find every runtime direct write on the charting tables, attributing each to
+ * its enclosing top-level function. Attribution walks the `.from("<table>")`
  * statement chain to bracket depth zero, so an operation belonging to a later,
  * different chain in the same function is never miscounted — the same method
- * that corrected the writer census from 26 to 25.
+ * that corrected the writer census in Phase 1A. A proximity grep over the same
+ * tree reported 25 matches at a 6-line window and 27 at 12 lines; neither
+ * number is trustworthy, which is why this walks the chain instead.
  */
 function directWriteSites(): Site[] {
   const sites: Site[] = [];
+  const group = TABLES.join("|");
   for (const file of sourceFiles()) {
     const src = readFileSync(file, "utf8");
     const fnStarts = [...src.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm)].map(
       (m) => ({ idx: m.index ?? 0, name: m[1] }),
     );
-    const fromRe = /\.from\(\s*"(electrolysis_entries|laser_entries)"\s*\)/g;
+    const fromRe = new RegExp(`\\.from\\(\\s*["'](${group})["']\\s*\\)`, "g");
     let m: RegExpExecArray | null;
     while ((m = fromRe.exec(src)) !== null) {
       const table = m[1];
@@ -118,139 +113,154 @@ function directWriteSites(): Site[] {
   return sites;
 }
 
-describe("L18 Phase 1A — entry-table direct DML guard", () => {
+describe("L18 Phase 2 — charting-table direct DML guard", () => {
   const sites = directWriteSites();
 
-  it("1. addLaserEntryAction contains NO direct laser_entries DML", () => {
-    const offenders = sites.filter((s) => s.fn === "addLaserEntryAction");
+  // The census IS the deliverable, so print it in full rather than asserting a
+  // bare zero: a reader of a CI log can see exactly what was measured, and a
+  // regression names the offending file and function.
+  it("0. the runtime writer census is reported in full", () => {
+    const report = TABLES.map((t) => {
+      const rows = sites.filter((s) => s.table === t);
+      return (
+        `${t}: ${rows.length}` +
+        rows.map((s) => `\n    ${s.op.toUpperCase()} ${s.file} :: ${s.fn}`).join("")
+      );
+    }).join("\n");
+    // eslint-disable-next-line no-console
+    console.log(`\nL18 Phase 2 runtime writer census —\n${report}\n`);
+    expect(report).toContain("session_blocks: ");
+  });
+
+  it("1. session_blocks has NO runtime direct writer", () => {
+    expect(
+      sites.filter((s) => s.table === "session_blocks"),
+      "every session_blocks write must go through a 0166 command",
+    ).toEqual([]);
+  });
+
+  it("2. electrolysis_entries has NO runtime direct writer", () => {
+    expect(
+      sites.filter((s) => s.table === "electrolysis_entries"),
+      "every electrolysis_entries write must go through a 0166 command",
+    ).toEqual([]);
+  });
+
+  it("3. session_block_areas has NO runtime direct writer", () => {
+    expect(
+      sites.filter((s) => s.table === "session_block_areas"),
+      "area rows are written only by the commands that own the block",
+    ).toEqual([]);
+  });
+
+  it("4. laser_entries has NO runtime direct writer (Phase 1A, still held)", () => {
+    expect(sites.filter((s) => s.table === "laser_entries")).toEqual([]);
+  });
+
+  it("5. the total census is zero across all four tables", () => {
+    expect(
+      sites,
+      "a direct row-DML writer on a charting table was introduced. Route it " +
+        "through a reviewed command — this guard has no allowlist to add it to.",
+    ).toEqual([]);
+  });
+
+  it("6. the exception list is empty and cannot silently grow", () => {
+    expect(EXCEPTIONS).toHaveLength(0);
+    expect(new Set(sites.map((s) => `${s.file}::${s.fn}`)).size).toBe(0);
+  });
+
+  it("7. the retired Phase 1A exception label is gone from the source tree", () => {
+    const label = "TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION";
+    const offenders = sourceFiles().filter((f) => readFileSync(f, "utf8").includes(label));
     expect(
       offenders,
-      "addLaserEntryAction must write only through create_laser_entry (0164)",
+      "the three block-coupled exceptions are retired; their label must not " +
+        "survive on a function that no longer has an exception",
     ).toEqual([]);
   });
 
-  it("2. no runtime direct writer on laser_entries exists at all", () => {
-    const laser = sites.filter((s) => s.table === "laser_entries");
-    expect(
-      laser,
-      "laser_entries has no permitted direct writer in or after this phase",
-    ).toEqual([]);
-  });
-
-  it("3. electrolysis direct DML is NOT claimed closed by this phase", () => {
-    const elec = sites.filter((s) => s.table === "electrolysis_entries");
-    expect(
-      elec.length,
-      "all three electrolysis writers must still be direct — this phase does " +
-        "not make electrolysis_entries command-bound",
-    ).toBeGreaterThan(0);
-    const fns = [...new Set(elec.map((s) => s.fn))].sort();
-    expect(fns).toEqual([
-      "addElectrolysisEntryAction",
-      "createTreatmentAreaWithEntryAction",
-      "updateTreatmentAreaWithEntryAction",
-    ]);
-  });
-
-  it("4. no runtime direct writer exists outside the pinned exceptions", () => {
-    const unexpected = sites.filter(
-      (s) => !EXCEPTIONS.some((e) => e.file === s.file && e.fn === s.fn),
+  it("8. the three retired actions now call the 0166 commands", () => {
+    const blockSrc = readFileSync(
+      "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
+      "utf8",
     );
-    expect(
-      unexpected,
-      "a new direct row-DML writer on electrolysis_entries / laser_entries was " +
-        "introduced. Route it through a narrow reviewed command instead — this " +
-        "guard has no generic allowlist to add it to.",
-    ).toEqual([]);
-  });
-
-  it("5. the exceptions are exactly the three block-coupled electrolysis actions", () => {
-    const names = [...new Set(sites.map((s) => s.fn))].sort();
-    expect(names).toEqual([
-      "addElectrolysisEntryAction",
-      "createTreatmentAreaWithEntryAction",
-      "updateTreatmentAreaWithEntryAction",
-    ]);
-  });
-
-  it("6. each exception is in its exact current file and function scope", () => {
-    for (const e of EXCEPTIONS) {
-      const found = sites.filter((s) => s.file === e.file && s.fn === e.fn);
-      expect(
-        found.length,
-        `${e.fn} must still live in ${e.file} and still write an entry table ` +
-          "directly. If it moved, was renamed, or stopped writing, update this " +
-          "guard deliberately — do not widen it.",
-      ).toBeGreaterThan(0);
-    }
-  });
-
-  it("7. the exception count is exactly three and cannot silently grow", () => {
-    expect(EXCEPTIONS).toHaveLength(3);
-    const distinct = new Set(sites.map((s) => `${s.file}::${s.fn}`));
-    expect(
-      distinct.size,
-      "exactly three runtime functions may write these tables directly",
-    ).toBe(3);
-  });
-
-  it("8. a renamed, moved or newly added exception fails CI", () => {
-    // The assertion above is exact-set equality on (file, function), so any
-    // rename/move/addition changes the set and fails. This case pins the
-    // property itself so the exactness is never relaxed to a subset check.
-    const declared = EXCEPTIONS.map((e) => `${e.file}::${e.fn}`).sort();
-    const actual = [...new Set(sites.map((s) => `${s.file}::${s.fn}`))].sort();
-    expect(actual).toEqual(declared);
-  });
-
-  it("9. each exception carries the required label in source", () => {
-    for (const e of EXCEPTIONS) {
-      const src = readFileSync(e.file, "utf8");
-      const start = src.indexOf(`function ${e.fn}`);
-      expect(start, `${e.fn} not found in ${e.file}`).toBeGreaterThan(-1);
-      // The label must appear in the run-up to the function (its doc comment).
-      const preamble = src.slice(Math.max(0, start - 2500), start);
-      expect(
-        preamble.includes(EXCEPTION_LABEL),
-        `${e.fn} must be labelled "${EXCEPTION_LABEL}" so the exception is ` +
-          "visible at the call site, not only in this guard",
-      ).toBe(true);
-    }
-  });
-
-  it("10. this guard states when the exceptions expire", () => {
-    const self = readFileSync("tests/security/entry-direct-dml-guard.test.ts", "utf8");
-    expect(self).toMatch(/THE EXCEPTIONS EXPIRE in the combined/i);
-    // Newline-tolerant: the expiry sentence wraps across comment lines.
-    expect(self.replace(/\s*\n\s*\/\/\s*/g, " ")).toMatch(
-      /session_blocks\/electrolysis_entries phase/i,
-    );
-  });
-
-  it("covers both entry tables", () => {
-    expect(TABLES).toEqual(["electrolysis_entries", "laser_entries"]);
-  });
-
-  it("the migrated action calls the 0164 command, and no electrolysis command exists", () => {
-    const src = readFileSync(
+    const actionsSrc = readFileSync(
       "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
       "utf8",
     );
-    expect(src).toMatch(/rpc\("create_laser_entry"/);
-    expect(
-      src,
-      "there is no electrolysis command in this phase",
-    ).not.toMatch(/create_electrolysis_entry/);
+    expect(blockSrc).toMatch(/"create_block_with_entry"/);
+    expect(blockSrc).toMatch(/rpc\("update_block_with_entry"/);
+    expect(blockSrc).toMatch(/rpc\("soft_delete_session_block"/);
+    expect(actionsSrc).toMatch(/rpc\("add_electrolysis_pass"/);
+    // Phase 1A's laser command is untouched.
+    expect(actionsSrc).toMatch(/rpc\("create_laser_entry"/);
   });
 
-  it("the actions module never reaches for the admin client", () => {
-    const src = readFileSync(
-      "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
+  it("9. no application-side compensation survives", () => {
+    const blockSrc = readFileSync(
+      "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
       "utf8",
     );
+    // The compensating soft delete existed only because the block could commit
+    // without its entry. That is now impossible, so the compensation is gone —
+    // not merely unused.
+    expect(blockSrc).not.toMatch(/Cleanup: retire the just-created block/);
+  });
+
+  it("10. every block/entry command a runtime writer calls is a reviewed one", () => {
+    const called = new Set<string>();
+    for (const file of sourceFiles()) {
+      const src = readFileSync(file, "utf8");
+      for (const m of src.matchAll(
+        /rpc\(\s*"([a-z_]*block[a-z_]*|[a-z_]*electrolysis[a-z_]*)"/g,
+      )) {
+        called.add(m[1]);
+      }
+    }
+    const unknown = [...called].filter(
+      (c) =>
+        !(COMMANDS as readonly string[]).includes(c) &&
+        // 0129's pre-existing area commands remain legitimate callees.
+        !["create_session_block_with_areas", "update_session_block_with_areas"].includes(c),
+    );
+    expect(unknown, "an unreviewed block/entry command appeared").toEqual([]);
+  });
+
+  it("11. the guard covers all four charting tables", () => {
+    expect(TABLES).toEqual([
+      "session_blocks",
+      "session_block_areas",
+      "electrolysis_entries",
+      "laser_entries",
+    ]);
+  });
+
+  it("12. no charting-table write runs through the admin client", () => {
     expect(
-      src,
+      readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts", "utf8"),
       "ordinary practitioner charting must not run through createAdminClient()",
-    ).not.toMatch(/createAdminClient/);
+    ).not.toMatch(/createAdminClient\(/);
+
+    // block-actions.ts DOES construct an admin client, for one pre-existing,
+    // registered use that has nothing to do with the charting tables:
+    // `rememberMachineFrequencyDefault` writes the practitioner's own
+    // `practitioners.default_machine_frequency`. Assert that narrow scope
+    // rather than banning the import, so this case stays honest.
+    const blockSrc = readFileSync(
+      "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
+      "utf8",
+    );
+    const adminUses = [...blockSrc.matchAll(/createAdminClient\(\)/g)];
+    expect(adminUses).toHaveLength(1);
+    const at = adminUses[0].index ?? 0;
+    const owner = [...blockSrc.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm)]
+      .filter((f) => (f.index ?? 0) < at)
+      .pop()?.[1];
+    expect(owner).toBe("rememberMachineFrequencyDefault");
+    // ...and it touches only `practitioners`.
+    const stmt = blockSrc.slice(adminUses[0].index ?? 0, (adminUses[0].index ?? 0) + 400);
+    expect(stmt).toMatch(/\.from\("practitioners"\)/);
+    for (const t of TABLES) expect(stmt).not.toContain(`"${t}"`);
   });
 });

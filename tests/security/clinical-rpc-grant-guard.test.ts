@@ -147,9 +147,56 @@ describe("clinical RPC grant guard — authenticated-only commands", () => {
     });
   }
 
-  it("every authenticated-only command grants EXECUTE to authenticated", () => {
+  /**
+   * A function that is explicitly REVOKEd from `authenticated` and never
+   * granted back is an INTERNAL helper, not a command — it exists only to be
+   * called from inside another SECURITY DEFINER function, which runs as the
+   * owner. The "must grant to authenticated" rule does not apply to it, but
+   * every revoke rule above still does. (0166 introduced the first of these:
+   * assert_session_writable, assert_block_in_session, write_electrolysis_entry.)
+   */
+  function isInternalHelper(fn: string): boolean {
+    const revoked = migrationFiles().some((f) => {
+      const sql = readFileSync(join(MIG_DIR, f), "utf8")
+        .split("\n")
+        .map((l) => l.replace(/--.*$/, ""))
+        .join(" ")
+        .replace(/\s+/g, " ");
+      return new RegExp(
+        `revoke\\s+execute\\s+on\\s+function\\s+public\\.${fn}\\s*\\([^)]*\\)\\s*from\\s+authenticated\\b`,
+        "i",
+      ).test(sql);
+    });
+    const granted = migrationFiles().some((f) => {
+      const sql = readFileSync(join(MIG_DIR, f), "utf8")
+        .split("\n")
+        .map((l) => l.replace(/--.*$/, ""))
+        .join(" ")
+        .replace(/\s+/g, " ");
+      return new RegExp(
+        `grant\\s+execute\\s+on\\s+function\\s+public\\.${fn}\\s*\\([^)]*\\)\\s*to\\s+authenticated\\b`,
+        "i",
+      ).test(sql);
+    });
+    return revoked && !granted;
+  }
+
+  it("internal helpers are revoked from authenticated and never granted back", () => {
+    // 0166's three helpers. Only assert_session_writable gates on auth.uid()
+    // itself — the other two are called after their caller has already
+    // validated — so the check is on the revoke, not on the auth-gated set.
+    for (const fn of [
+      "assert_session_writable",
+      "assert_block_in_session",
+      "write_electrolysis_entry",
+    ]) {
+      expect(isInternalHelper(fn), `${fn} must be revoked from authenticated and not granted back`).toBe(true);
+    }
+  });
+
+  it("every authenticated-only COMMAND grants EXECUTE to authenticated", () => {
     const missing: string[] = [];
-    for (const c of authOnly) {
+    for (const c of authOnly.filter((x) => !isInternalHelper(x.fn))) {
       const granted = migrationFiles().some((f) => {
         const sql = readFileSync(join(MIG_DIR, f), "utf8")
           .split("\n")

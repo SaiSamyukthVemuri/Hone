@@ -58,16 +58,21 @@ describe("block actions: response validation and persistence", () => {
     );
   });
 
-  it("CREATE validates the response before the insert and writes the columns", () => {
+  it("CREATE validates the response before the write and carries the columns", () => {
+    // L18 Phase 2: the write is `create_block_with_entry` (migration 0166), not
+    // a direct insert. The ordering property is unchanged — validation still
+    // precedes the write — so it is asserted against the RPC call site.
     const createBody = ACTIONS_CODE.slice(
       ACTIONS_CODE.indexOf("export async function createTreatmentAreaWithEntryAction"),
       ACTIONS_CODE.indexOf("export type UpdateAreaWithEntryInput"),
     );
     const checkIdx = createBody.indexOf("normalizeClinicalResponse(input)");
-    const insertIdx = createBody.indexOf('.insert({');
+    const writeIdx = createBody.indexOf('"create_block_with_entry"');
     expect(checkIdx).toBeGreaterThan(-1);
-    expect(insertIdx).toBeGreaterThan(checkIdx);
+    expect(writeIdx).toBeGreaterThan(checkIdx);
+    // The validated columns still reach the write, via the shared block bag.
     expect(createBody).toMatch(/\.\.\.responseCheck\.columns,/);
+    expect(createBody).toMatch(/p_block: blockFields/);
   });
 
   it("EDIT validates the response before writing the columns (via blockFields / the 0129 RPC)", () => {
@@ -75,13 +80,16 @@ describe("block actions: response validation and persistence", () => {
       ACTIONS_CODE.indexOf("export async function updateTreatmentAreaWithEntryAction"),
     );
     const checkIdx = updateBody.indexOf("normalizeClinicalResponse(input)");
-    // Migration 0129: the columns are spread into the shared blockFields, written
-    // by the direct `.update(blockFields)` (single-area) or the atomic RPC.
+    // Migration 0129 put the columns in the shared blockFields bag; L18 Phase 2
+    // routes that same bag through `update_block_with_entry` (migration 0166)
+    // for BOTH the single-area and area-set paths, so there is no longer a
+    // direct `.update(blockFields)` branch to assert.
     const colsIdx = updateBody.indexOf("...responseCheck.columns,");
     expect(checkIdx).toBeGreaterThan(-1);
     expect(colsIdx).toBeGreaterThan(checkIdx);
-    expect(updateBody).toMatch(/\.update\(blockFields\)/);
-    expect(updateBody).toMatch(/rpc\(\s*"update_session_block_with_areas"/);
+    expect(updateBody).toMatch(/rpc\("update_block_with_entry"/);
+    expect(updateBody).toMatch(/p_block: blockFields/);
+    expect(updateBody).not.toMatch(/\.update\(blockFields\)/);
   });
 
   it("both input types accept the optional response fields", () => {
