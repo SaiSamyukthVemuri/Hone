@@ -46,10 +46,16 @@ describe("block-actions — persists chips structurally + preserves comments", (
     expect(ACTIONS).toMatch(/normalizeChips\(r\.observationChips\)/);
   });
   it("every electrolysis_entries write sets observation_chips ALONGSIDE comments", () => {
-    const commentsWrites = ACTIONS.match(/comments: normalizedComments\(readings\),/g) ?? [];
-    const chipWrites = ACTIONS.match(/observation_chips: normalizedChips\(readings\),/g) ?? [];
-    expect(commentsWrites.length).toBe(3); // 2 inserts + 1 update
-    expect(chipWrites.length).toBe(3); // chips written at every site — none missed
+    // L18 Phase 2: the three direct writes (2 inserts + 1 update) collapsed into
+    // TWO command calls — create_block_with_entry and update_block_with_entry —
+    // because the command itself chooses insert vs update. The property is
+    // unchanged and still exactly asserted: every write site sends chips
+    // ALONGSIDE comments, so neither can be forgotten at one of them.
+    const commentsWrites = ACTIONS.match(/p_comments: normalizedComments\(readings\),/g) ?? [];
+    const chipWrites = ACTIONS.match(/p_observation_chips: normalizedChips\(readings\),/g) ?? [];
+    expect(commentsWrites.length).toBe(2);
+    expect(chipWrites.length).toBe(2);
+    expect(ACTIONS).not.toMatch(/comments: normalizedComments\(readings\),\n(?![\s\S]{0,80}observation_chips)/);
   });
   it("chips count toward 'a reading was entered'", () => {
     expect(ACTIONS).toMatch(/Array\.isArray\(r\.observationChips\) && r\.observationChips\.length > 0/);

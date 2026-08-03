@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { mapBlockCommandError } from "@/lib/sessions/block-command-errors";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -104,14 +105,18 @@ async function assertSessionVisible(
 
 // Migration 0019/0020 plumbing: every electrolysis entry should point at a
 // session block. After the 0020 backfill, all pre-existing sessions have a
-// "Main" block. For sessions created entirely after 0019 (no entries yet),
-// this helper creates the first block on demand using the entry's own
-// treatment params as the block's initial values. Once a block exists for
-// a session, we never overwrite its params from a later entry (first-write
-// semantics). 17.5b.2 UI will surface block creation explicitly; until then
-// this stays invisible to the user.
+// "Main" block. For sessions created entirely after 0019 (no entries yet), the
+// first block is created on demand from the entry's own treatment params.
+//
+// L18 Phase 2: this helper NO LONGER READS OR WRITES the database. Finding the
+// primary block — and creating it when the session has none — now happens
+// inside `add_electrolysis_pass` (migration 0166), in the same transaction as
+// the entry and under a row lock. Two defects go with the move: the block and
+// the entry can no longer commit separately (a failed entry write used to leave
+// an orphan block behind), and the read-then-insert race that could produce two
+// "Main" blocks for concurrent first entries is gone. All this builds is the
+// value bag the command uses when it does have to create that first block.
 type EnsureBlockParams = {
-  studioId: string;
   sessionId: string;
   mode: ElectrolysisMode | null;
   apilusModality: string | null;
@@ -122,46 +127,17 @@ type EnsureBlockParams = {
   machineFrequency: string | null;
 };
 
-async function ensureBlockForSession(
-  params: EnsureBlockParams,
-): Promise<string> {
-  const supabase = await createClient();
-  const { data: existing, error: lookupErr } = await supabase
-    .from("session_blocks")
-    .select("id")
-    .eq("session_id", params.sessionId)
-    .is("deleted_at", null)
-    .order("sort_order", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (lookupErr) {
-    throw new Error(`Failed to look up session block: ${lookupErr.message}`);
-  }
-  if (existing) return existing.id;
-
-  const { data: created, error: insertErr } = await supabase
-    .from("session_blocks")
-    .insert({
-      studio_id: params.studioId,
-      session_id: params.sessionId,
-      sort_order: 1,
-      block_name: "Main",
-      mode: params.mode,
-      apilus_modality: params.apilusModality,
-      energy_level: params.energyLevel,
-      minutes_performed: params.minutesPerformed,
-      probe_type: params.probeType,
-      probe_size: params.probeSize,
-      machine_frequency: params.machineFrequency,
-    })
-    .select("id")
-    .single();
-  if (insertErr || !created) {
-    throw new Error(
-      `Failed to create session block: ${insertErr?.message ?? "no id returned"}`,
-    );
-  }
-  return created.id;
+function defaultBlockValues(params: EnsureBlockParams): Record<string, unknown> {
+  return {
+    block_name: "Main",
+    mode: params.mode,
+    apilus_modality: params.apilusModality,
+    energy_level: params.energyLevel,
+    minutes_performed: params.minutesPerformed,
+    probe_type: params.probeType,
+    probe_size: params.probeSize,
+    machine_frequency: params.machineFrequency,
+  };
 }
 
 // Chip-loading fix — the write action reports a DISCRIMINATED outcome so the form
@@ -210,16 +186,12 @@ function parseSubmittedChips(
   return { ok: true, chips: normalizeChips(parsed) };
 }
 
-// TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION
-// This action is BLOCK-COUPLED and is therefore deliberately NOT migrated to a
-// narrow entry command. When the submitted form omits `block_id` — a legacy
-// caller shape this action still supports — it calls ensureBlockForSession,
-// which INSERTs a session_blocks row before the electrolysis entry is written.
-// The two writes are in separate transactions, so a failed entry write leaves
-// the newly created block behind. Making it atomic needs a command that owns
-// BOTH writes, i.e. session_blocks work. It moves in the combined
-// session_blocks/electrolysis_entries phase, and this exception expires with
-// it. Pinned by tests/security/entry-direct-dml-guard.test.ts.
+// L18 Phase 2: the block/entry atomicity exception that used to sit here is
+// RETIRED. This action is still block-coupled — when the submitted form omits
+// `block_id` (a legacy caller shape it deliberately still supports) the primary
+// block has to be found or created — but both halves now happen inside
+// `add_electrolysis_pass` (migration 0166), in one transaction. A failed entry
+// write can no longer leave an orphan block behind.
 export async function addElectrolysisEntryAction(
   formData: FormData,
 ): Promise<AddElectrolysisEntryResult> {
@@ -309,19 +281,18 @@ export async function addElectrolysisEntryAction(
   // sessions target the correct block. Legacy form callers omit this; for
   // them we look up (or create) the primary block via ensureBlockForSession.
   const explicitBlockId = nullableString(formData.get("block_id"));
-  const blockId =
-    explicitBlockId ??
-    (await ensureBlockForSession({
-      studioId: studio.id,
-      sessionId,
-      mode,
-      apilusModality,
-      energyLevel,
-      minutesPerformed,
-      probeType,
-      probeSize,
-      machineFrequency,
-    }));
+  // When absent, the command finds-or-creates the primary block itself; these
+  // are only the values it uses if it has to create one.
+  const blockDefaults = defaultBlockValues({
+    sessionId,
+    mode,
+    apilusModality,
+    energyLevel,
+    minutesPerformed,
+    probeType,
+    probeSize,
+    machineFrequency,
+  });
 
   const pulseCount = clampedPulseCount(formData.get("pulse_count"));
   const pulseDelaySeconds = resolvePulseDelay(
@@ -340,51 +311,58 @@ export async function addElectrolysisEntryAction(
     nullableString(formData.get("probe_lot_id")),
   );
   if (!lotCheck.ok) throw new Error(lotCheck.error);
-  const { data: inserted, error } = await supabase
-    .from("electrolysis_entries")
-    .insert({
-      session_id: sessionId,
-      block_id: blockId,
-      area,
-      areas,
-      probe_size: probeSize,
-      probe_lot_id: lotCheck.value,
-      mode,
-      intensity: nullableNumber(formData.get("intensity")),
-      duration_seconds: nullableNumber(formData.get("duration_seconds")),
-      pulse_count: pulseCount,
-      pulse_delay_seconds: pulseDelaySeconds,
-      comments: nullableString(formData.get("comments")),
-      observation_chips: observationChips,
-      apilus_modality: apilusModality,
-      energy_level: energyLevel,
-      minutes_performed: minutesPerformed,
-      probe_type: probeType,
-      machine_frequency: machineFrequency,
-      hairs_treated: hairsTreated,
-      galvanic_ma: galvanicMa,
-      galvanic_duration_seconds: galvanicDurationSeconds,
-      // Retired reading: a NEW entry always stores NULL (server-authoritative).
-      galvanic_intensity_percent: null,
-      thermolysis_intensity_percent: thermolysisIntensityPercent,
-      thermolysis_duration_seconds: thermolysisDurationSeconds,
-      units_of_lye: unitsOfLye,
-    })
-    // Return ONLY the new row id here. This is the value produced by the INSERT
-    // statement (a RETURNING clause) — NOT a post-commit re-read — so the chip
-    // verification below deliberately does a SEPARATE query by this id.
-    .select("id")
-    .single();
+  // L18 Phase 2: block resolution + the entry write are ONE transaction via
+  // add_electrolysis_pass (migration 0166). The returned entry id comes from
+  // the command's own RETURNING, not a post-commit re-read, so the chip
+  // verification below is still a genuinely SEPARATE read.
+  const { data: passRows, error } = await supabase.rpc("add_electrolysis_pass", {
+    p_session_id: sessionId,
+    p_client_id: clientId,
+    p_block_id: explicitBlockId,
+    p_block_defaults: blockDefaults,
+    p_area: area,
+    p_areas_list: areas,
+    p_probe_size: probeSize,
+    p_probe_lot_id: lotCheck.value,
+    p_mode: mode,
+    p_intensity: nullableNumber(formData.get("intensity")),
+    p_duration_seconds: nullableNumber(formData.get("duration_seconds")),
+    p_pulse_count: pulseCount,
+    p_pulse_delay_seconds: pulseDelaySeconds,
+    p_comments: nullableString(formData.get("comments")),
+    p_observation_chips: observationChips,
+    p_apilus_modality: apilusModality,
+    p_energy_level: energyLevel,
+    p_minutes_performed: minutesPerformed,
+    p_probe_type: probeType,
+    p_machine_frequency: machineFrequency,
+    p_hairs_treated: hairsTreated,
+    p_galvanic_ma: galvanicMa,
+    p_galvanic_duration_seconds: galvanicDurationSeconds,
+    // galvanic_intensity_percent is RETIRED: the command takes no parameter for
+    // it, so a new row always stores NULL — enforced by the database, not here.
+    p_thermolysis_intensity_percent: thermolysisIntensityPercent,
+    p_thermolysis_duration_seconds: thermolysisDurationSeconds,
+    p_units_of_lye: unitsOfLye,
+  });
 
-  if (error || !inserted) {
-    // The insert itself failed → no row exists. Safe for the caller to retry.
+  const inserted = Array.isArray(passRows)
+    ? (passRows[0] as { entry_id?: string } | undefined)
+    : (passRows as { entry_id?: string } | null);
+  if (error || !inserted?.entry_id) {
+    // The command raises before writing anything, and rolls back the block with
+    // the entry, so a failure here means NO row exists. Safe for the caller to
+    // retry — and the message is mapped, never the raw database text.
     return {
       ok: false,
       code: "not_persisted",
-      error: `Failed to add entry: ${error?.message ?? "the entry did not persist"}`,
+      error: error
+        ? `Failed to add entry: ${mapBlockCommandError(error)}`
+        : "Failed to add entry: the entry did not persist",
     };
   }
-  const entryId = (inserted as { id: string }).id;
+  const entryId = inserted.entry_id;
+
 
   // PERSISTED-ROW VERIFICATION (structural guard against the silent partial-write
   // defect class behind this incident: an insert can "succeed" yet the clinical

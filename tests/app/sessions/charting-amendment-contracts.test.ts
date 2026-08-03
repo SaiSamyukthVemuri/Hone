@@ -119,15 +119,23 @@ describe("(P1-1) galvanic intensity is retired from every current write surface"
   });
 
   it("server is authoritative: new entries store NULL; updates omit the column (preserve history)", () => {
-    // The shared column helper no longer mode-gates galvanic_intensity_percent
-    // (so an UPDATE leaves it untouched); both create inserts force NULL.
-    expect(BLOCK_ACTIONS).not.toMatch(/galvanic_intensity_percent:\s*wantGalv/);
-    expect(
-      (BLOCK_ACTIONS.match(/galvanic_intensity_percent:\s*null/g) ?? []).length,
-    ).toBe(2);
-    // Add-another-pass insert forces NULL and never reads a forged form field.
-    expect(ACTIONS).toMatch(/galvanic_intensity_percent:\s*null/);
+    // L18 Phase 2: the retirement moved from the application to the database.
+    // `write_electrolysis_entry` (migration 0166) has NO parameter for
+    // galvanic_intensity_percent: its INSERT hard-codes NULL and its UPDATE
+    // omits the column entirely, so a new row cannot carry a value and a
+    // historical one cannot be overwritten — server-authoritative in the
+    // strongest sense, since there is no longer an application literal to edit.
+    const MIGRATION = read("supabase/migrations/0166_session_block_electrolysis_commands.sql");
+    expect(MIGRATION).not.toMatch(/p_galvanic_intensity_percent/);
+    expect(MIGRATION).toMatch(/galvanic_intensity_percent/); // named in the INSERT column list
+    // Strip comments first: both modules still DOCUMENT the retirement in prose,
+    // which is the point — what must be absent is any code that writes it.
+    const blockCode = BLOCK_ACTIONS.split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+    expect(blockCode).not.toMatch(/galvanic_intensity_percent/);
     expect(ACTIONS).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
+    expect(ACTIONS).not.toMatch(/p_galvanic_intensity_percent/);
   });
 });
 

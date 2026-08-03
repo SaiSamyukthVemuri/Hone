@@ -135,14 +135,23 @@ describe("app compatibility", () => {
     }
   });
 
-  it("the block-creation cleanup soft-deletes instead of hard-deleting", () => {
+  // L18 Phase 2 STRENGTHENED this case. The block-creation cleanup used to be a
+  // compensating soft delete, run by the application after the entry write
+  // failed but the block had already committed. `create_block_with_entry`
+  // (migration 0166) now owns both writes in one transaction, so there is
+  // nothing left to compensate for and the cleanup is gone entirely. What 0087
+  // actually protects — no hard DELETE of a clinical block, ever — is asserted
+  // more strongly than before: not "the cleanup uses update", but "no runtime
+  // code issues row DML against session_blocks at all".
+  it("the block-creation cleanup is gone: the write is atomic, and nothing hard-deletes a block", () => {
     const src = read(
       "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
     );
-    expect(src).toMatch(
-      /from\("session_blocks"\)\s*\n\s*\.update\(\{ deleted_at: new Date\(\)\.toISOString\(\) \}\)/,
-    );
-    expect(src).not.toMatch(/from\("session_blocks"\)\s*\n\s*\.delete\(\)/);
+    expect(src).not.toMatch(/from\("session_blocks"\)\s*\n?\s*\.delete\(\)/);
+    // No compensating cleanup remains, because the failure it compensated for
+    // can no longer produce a committed block.
+    expect(src).not.toMatch(/Cleanup: retire the just-created block/);
+    expect(src).toMatch(/create_block_with_entry/);
   });
 
   it("the plan-creation rollback closes the plan (the old delete was a silent no-op)", () => {

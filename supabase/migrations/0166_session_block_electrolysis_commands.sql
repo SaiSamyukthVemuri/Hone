@@ -21,6 +21,34 @@
 --     updateTreatmentAreaWithEntryAction   INSERT   block-actions.ts:1421
 --   session_block_areas (0) — already behind the 0128/0129 command boundary.
 --
+-- AFTER this migration and its application half, the same statement-chain
+-- census reports session_blocks 0, electrolysis_entries 0, session_block_areas
+-- 0 and laser_entries 0: every one of the writers above calls a command below.
+-- Pinned by tests/security/entry-direct-dml-guard.test.ts, which prints the
+-- full census and has NO remaining exception entries to grow.
+--
+-- FIELDS 0129 DOES NOT OWN (each one a silent data-loss path this had to close)
+-- ===========================================================================
+-- 0129's create INSERT and update SET lists were written for the area-selection
+-- form, and omit columns the direct writers were persisting. Routing every
+-- writer through 0129 without handling them would have stopped saving real
+-- clinical data with nothing going red:
+--   * block_notes, probe_size          — omitted by 0129's INSERT
+--   * block_name, probe_type,
+--     started_at, ended_at             — omitted by 0129's UPDATE
+--   * probe_inventory_item_id          — omitted by BOTH (the 0155 link)
+-- All seven are routed through apply_block_extra_fields, which enumerates them
+-- literally, rejects any other key, and writes by key PRESENCE so an omitted
+-- key is preserved rather than nulled.
+--
+-- Two further preservation rules, for the same reason:
+--   * p_areas NULL means "this caller does not own the area set" — 0129's
+--     update always REPLACES it, so a legacy single-area edit would otherwise
+--     DELETE the recorded areas. An explicit '[]' still clears.
+--   * the entry UPDATE omits probe_type, probe_size and probe_lot_id, so an
+--     existing entry's legacy probe data is never wiped by an edit. The INSERT
+--     still writes probe_type, where the column starts empty.
+--
 -- THE ATOMICITY PROBLEM THIS CLOSES
 -- ===========================================================================
 -- Three workflows write a block AND an entry for ONE user intent, today across
@@ -176,7 +204,6 @@ create or replace function public.write_electrolysis_entry(
   p_areas                          text[],
   p_probe_size                     text,
   p_probe_lot_id                   uuid,
-  p_probe_inventory_item_id        uuid,
   p_mode                           text,
   p_intensity                      numeric,
   p_duration_seconds               numeric,
@@ -240,7 +267,11 @@ begin
            apilus_modality               = p_apilus_modality,
            energy_level                  = p_energy_level,
            minutes_performed             = p_minutes_performed,
-           probe_type                    = p_probe_type,
+           -- probe_type is deliberately ABSENT from this patch, exactly as the
+           -- application's own entry snapshot excluded it: an existing entry may
+           -- carry legacy probe data that the block edit form does not collect,
+           -- and writing p_probe_type here would wipe it on every save. It is
+           -- still written on INSERT above, where the column starts empty.
            machine_frequency             = p_machine_frequency,
            hairs_treated                 = p_hairs_treated,
            galvanic_ma                   = p_galvanic_ma,
@@ -265,6 +296,88 @@ end;
 $$;
 
 -- ===========================================================================
+-- Shared: apply the block columns the 0128/0129 boundary deliberately does NOT
+-- own. 0129's update explicitly excludes block_name/block_notes and never
+-- touched probe_type/probe_size/started_at/ended_at; its insert additionally
+-- omits block_notes/probe_type/probe_size. Routing the block writers through
+-- 0129 alone would therefore have SILENTLY STOPPED persisting those columns —
+-- the writes would still succeed, just without the data. This closes that gap
+-- inside the SAME transaction rather than adding a competing command.
+--
+-- STRICT ALLOW-LIST, NOT A GENERIC UPDATER:
+--   * every accepted key is enumerated in SQL below;
+--   * an unknown key RAISES rather than being silently ignored;
+--   * key PRESENCE distinguishes the three cases —
+--       key absent          -> column left unchanged
+--       key present, null   -> nullable column explicitly cleared
+--       key present, value  -> column updated
+--     which COALESCE alone cannot express;
+--   * every value is cast explicitly;
+--   * id / studio_id / session_id / sort_order / deleted_* / created_at and
+--     every lineage column are unreachable — they are simply not in the list.
+-- ===========================================================================
+create or replace function public.apply_block_extra_fields(
+  p_block_id uuid,
+  p_extra    jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_key    text;
+  v_allowed constant text[] := array[
+    'block_name', 'block_notes', 'probe_type', 'probe_size',
+    'started_at', 'ended_at',
+    -- 0129 writes probe_inventory_item_id on NEITHER create nor update, so a
+    -- block saved through those functions silently loses its 0155 inventory
+    -- link. Routing every writer through them without this entry would make
+    -- that pre-existing drop universal. Enumerated and cast like the rest; the
+    -- composite FK (studio_id, probe_inventory_item_id) still refuses another
+    -- studio's item, so allow-listing it grants no cross-tenant reach.
+    'probe_inventory_item_id'
+  ];
+begin
+  if p_extra is null or p_extra = '{}'::jsonb then
+    return;
+  end if;
+
+  if jsonb_typeof(p_extra) <> 'object' then
+    raise exception 'Block patch must be an object.'
+      using errcode = 'check_violation';
+  end if;
+
+  -- Reject unknown keys loudly. A silently-ignored key is how a field stops
+  -- being saved without anything going red.
+  for v_key in select jsonb_object_keys(p_extra) loop
+    if not (v_key = any (v_allowed)) then
+      raise exception 'Unsupported block field.'
+        using errcode = 'check_violation';
+    end if;
+  end loop;
+
+  update public.session_blocks b set
+    block_name = case when p_extra ? 'block_name'
+                      then nullif(p_extra->>'block_name', '') else b.block_name end,
+    block_notes = case when p_extra ? 'block_notes'
+                       then nullif(p_extra->>'block_notes', '') else b.block_notes end,
+    probe_type = case when p_extra ? 'probe_type'
+                      then nullif(p_extra->>'probe_type', '') else b.probe_type end,
+    probe_size = case when p_extra ? 'probe_size'
+                      then nullif(p_extra->>'probe_size', '') else b.probe_size end,
+    started_at = case when p_extra ? 'started_at'
+                      then (p_extra->>'started_at')::timestamptz else b.started_at end,
+    ended_at = case when p_extra ? 'ended_at'
+                    then (p_extra->>'ended_at')::timestamptz else b.ended_at end,
+    probe_inventory_item_id = case when p_extra ? 'probe_inventory_item_id'
+                    then (p_extra->>'probe_inventory_item_id')::uuid
+                    else b.probe_inventory_item_id end
+  where b.id = p_block_id;
+end;
+$$;
+
+-- ===========================================================================
 -- COMMAND 1 — create a block, its area set and (optionally) its first entry,
 -- ATOMICALLY. Replaces createTreatmentAreaWithEntryAction, createSessionBlockAction
 -- and the block-creating half of ensureBlockForSession.
@@ -278,13 +391,13 @@ create or replace function public.create_block_with_entry(
   p_session_id                     uuid,
   p_client_id                      uuid,
   p_block                          jsonb,
+  p_block_extra                    jsonb,
   p_areas                          jsonb,
   p_with_entry                     boolean,
   p_area                           text,
   p_areas_list                     text[],
   p_probe_size                     text,
   p_probe_lot_id                   uuid,
-  p_probe_inventory_item_id        uuid,
   p_mode                           text,
   p_pulse_count                    integer,
   p_pulse_delay_seconds            numeric,
@@ -319,10 +432,13 @@ begin
     v_studio_id, p_session_id, p_block, coalesce(p_areas, '[]'::jsonb)
   );
 
+  -- Same transaction: a failure here rolls back the block AND its areas.
+  perform public.apply_block_extra_fields(v_block_id, p_block_extra);
+
   if coalesce(p_with_entry, false) then
     v_entry_id := public.write_electrolysis_entry(
       null, p_session_id, v_block_id, p_area, p_areas_list, p_probe_size,
-      p_probe_lot_id, p_probe_inventory_item_id, p_mode, null, null,
+      p_probe_lot_id, p_mode, null, null,
       p_pulse_count, p_pulse_delay_seconds, p_comments, p_observation_chips,
       p_apilus_modality, p_energy_level, p_minutes_performed, p_probe_type,
       p_machine_frequency, p_hairs_treated, p_galvanic_ma,
@@ -349,6 +465,7 @@ create or replace function public.update_block_with_entry(
   p_client_id                      uuid,
   p_block_id                       uuid,
   p_block                          jsonb,
+  p_block_extra                    jsonb,
   p_areas                          jsonb,
   p_expected_updated_at            timestamptz,
   p_with_entry                     boolean,
@@ -357,7 +474,6 @@ create or replace function public.update_block_with_entry(
   p_areas_list                     text[],
   p_probe_size                     text,
   p_probe_lot_id                   uuid,
-  p_probe_inventory_item_id        uuid,
   p_mode                           text,
   p_pulse_count                    integer,
   p_pulse_delay_seconds            numeric,
@@ -383,19 +499,44 @@ as $$
 declare
   v_studio_id uuid;
   v_entry_id  uuid;
+  v_areas     jsonb;
 begin
   v_studio_id := public.assert_session_writable(p_session_id, p_client_id);
   perform public.assert_block_in_session(p_block_id, p_session_id, v_studio_id);
 
+  -- p_areas NULL means "this caller does not own the area set" — the legacy
+  -- single-area edit path, which historically left the child rows untouched.
+  -- 0129's update always REPLACES the set, and coalescing NULL to '[]' would
+  -- therefore CLEAR it. Re-send the block's current set instead, so a caller
+  -- that submits no areas cannot delete the ones already recorded. An explicit
+  -- '[]' still clears, which is how the area-selection form removes them all.
+  if p_areas is null then
+    select coalesce(
+             jsonb_agg(jsonb_build_object(
+               'area', a.area,
+               'laterality', a.laterality,
+               'display_order', a.display_order
+             ) order by a.display_order),
+             '[]'::jsonb)
+      into v_areas
+      from public.session_block_areas a
+     where a.session_block_id = p_block_id;
+  else
+    v_areas := p_areas;
+  end if;
+
   perform public.update_session_block_with_areas(
     v_studio_id, p_session_id, p_block_id, p_block,
-    coalesce(p_areas, '[]'::jsonb), p_expected_updated_at
+    v_areas, p_expected_updated_at
   );
+
+  -- Same transaction, on the already-validated and locked block.
+  perform public.apply_block_extra_fields(p_block_id, p_block_extra);
 
   if coalesce(p_with_entry, false) then
     v_entry_id := public.write_electrolysis_entry(
       p_entry_id, p_session_id, p_block_id, p_area, p_areas_list, p_probe_size,
-      p_probe_lot_id, p_probe_inventory_item_id, p_mode, null, null,
+      p_probe_lot_id, p_mode, null, null,
       p_pulse_count, p_pulse_delay_seconds, p_comments, p_observation_chips,
       p_apilus_modality, p_energy_level, p_minutes_performed, p_probe_type,
       p_machine_frequency, p_hairs_treated, p_galvanic_ma,
@@ -426,7 +567,6 @@ create or replace function public.add_electrolysis_pass(
   p_areas_list                     text[],
   p_probe_size                     text,
   p_probe_lot_id                   uuid,
-  p_probe_inventory_item_id        uuid,
   p_mode                           text,
   p_intensity                      numeric,
   p_duration_seconds               numeric,
@@ -476,12 +616,27 @@ begin
         v_studio_id, p_session_id,
         coalesce(p_block_defaults, '{}'::jsonb), '[]'::jsonb
       );
+
+      -- 0129's INSERT column list does not include block_notes, probe_type,
+      -- probe_size, started_at or ended_at, so a default block created here
+      -- would silently drop them — the same field-drop class this migration
+      -- exists to close. Route exactly those five (enumerated literally, never
+      -- built dynamically) to the strict allow-list writer. block_name is
+      -- deliberately absent: 0129 already owns it.
+      perform public.apply_block_extra_fields(
+        v_block_id,
+        (
+          select coalesce(jsonb_object_agg(k.key, coalesce(p_block_defaults -> k.key, 'null'::jsonb)), '{}'::jsonb)
+            from unnest(array['block_notes','probe_type','probe_size','started_at','ended_at']) as k(key)
+           where p_block_defaults ? k.key
+        )
+      );
     end if;
   end if;
 
   v_entry_id := public.write_electrolysis_entry(
     null, p_session_id, v_block_id, p_area, p_areas_list, p_probe_size,
-    p_probe_lot_id, p_probe_inventory_item_id, p_mode, p_intensity,
+    p_probe_lot_id, p_mode, p_intensity,
     p_duration_seconds, p_pulse_count, p_pulse_delay_seconds, p_comments,
     p_observation_chips, p_apilus_modality, p_energy_level, p_minutes_performed,
     p_probe_type, p_machine_frequency, p_hairs_treated, p_galvanic_ma,
@@ -561,55 +716,60 @@ $$;
 -- DO-block with format(): a literal statement is auditable by reading, and
 -- tests/security/clinical-rpc-grant-guard.test.ts verifies these textually.
 -- `authenticated` is revoked from EVERY function and re-granted below only to
--- the four capability commands, so the three internal helpers cannot be
--- invoked directly to run half a workflow. Verified on a fresh reset: the
--- helpers showed auth=true until this revoke was added.
+-- the four capability commands, so the internal helpers cannot be invoked
+-- directly to run half a workflow. Verified on a fresh reset: the helpers
+-- showed auth=true until this revoke was added.
 
-revoke execute on function public.assert_session_writable(p_session_id uuid, p_client_id uuid) from public;
-revoke execute on function public.assert_session_writable(p_session_id uuid, p_client_id uuid) from anon;
-revoke execute on function public.assert_session_writable(p_session_id uuid, p_client_id uuid) from service_role;
-revoke execute on function public.assert_session_writable(p_session_id uuid, p_client_id uuid) from authenticated;
+revoke execute on function public.assert_session_writable(uuid, uuid) from public;
+revoke execute on function public.assert_session_writable(uuid, uuid) from anon;
+revoke execute on function public.assert_session_writable(uuid, uuid) from service_role;
+revoke execute on function public.assert_session_writable(uuid, uuid) from authenticated;
 
-revoke execute on function public.assert_block_in_session(p_block_id uuid, p_session_id uuid, p_studio_id uuid) from public;
-revoke execute on function public.assert_block_in_session(p_block_id uuid, p_session_id uuid, p_studio_id uuid) from anon;
-revoke execute on function public.assert_block_in_session(p_block_id uuid, p_session_id uuid, p_studio_id uuid) from service_role;
-revoke execute on function public.assert_block_in_session(p_block_id uuid, p_session_id uuid, p_studio_id uuid) from authenticated;
+revoke execute on function public.assert_block_in_session(uuid, uuid, uuid) from public;
+revoke execute on function public.assert_block_in_session(uuid, uuid, uuid) from anon;
+revoke execute on function public.assert_block_in_session(uuid, uuid, uuid) from service_role;
+revoke execute on function public.assert_block_in_session(uuid, uuid, uuid) from authenticated;
 
-revoke execute on function public.write_electrolysis_entry(p_entry_id uuid, p_session_id uuid, p_block_id uuid, p_area text, p_areas text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from public;
-revoke execute on function public.write_electrolysis_entry(p_entry_id uuid, p_session_id uuid, p_block_id uuid, p_area text, p_areas text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from anon;
-revoke execute on function public.write_electrolysis_entry(p_entry_id uuid, p_session_id uuid, p_block_id uuid, p_area text, p_areas text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from service_role;
-revoke execute on function public.write_electrolysis_entry(p_entry_id uuid, p_session_id uuid, p_block_id uuid, p_area text, p_areas text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from authenticated;
+revoke execute on function public.write_electrolysis_entry(uuid, uuid, uuid, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from public;
+revoke execute on function public.write_electrolysis_entry(uuid, uuid, uuid, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from anon;
+revoke execute on function public.write_electrolysis_entry(uuid, uuid, uuid, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from service_role;
+revoke execute on function public.write_electrolysis_entry(uuid, uuid, uuid, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from authenticated;
 
-revoke execute on function public.create_block_with_entry(p_session_id uuid, p_client_id uuid, p_block jsonb, p_areas jsonb, p_with_entry boolean, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from public;
-revoke execute on function public.create_block_with_entry(p_session_id uuid, p_client_id uuid, p_block jsonb, p_areas jsonb, p_with_entry boolean, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from anon;
-revoke execute on function public.create_block_with_entry(p_session_id uuid, p_client_id uuid, p_block jsonb, p_areas jsonb, p_with_entry boolean, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from service_role;
-revoke execute on function public.create_block_with_entry(p_session_id uuid, p_client_id uuid, p_block jsonb, p_areas jsonb, p_with_entry boolean, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from authenticated;
+revoke execute on function public.apply_block_extra_fields(uuid, jsonb) from public;
+revoke execute on function public.apply_block_extra_fields(uuid, jsonb) from anon;
+revoke execute on function public.apply_block_extra_fields(uuid, jsonb) from service_role;
+revoke execute on function public.apply_block_extra_fields(uuid, jsonb) from authenticated;
 
-revoke execute on function public.update_block_with_entry(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block jsonb, p_areas jsonb, p_expected_updated_at timestamp with time zone, p_with_entry boolean, p_entry_id uuid, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from public;
-revoke execute on function public.update_block_with_entry(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block jsonb, p_areas jsonb, p_expected_updated_at timestamp with time zone, p_with_entry boolean, p_entry_id uuid, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from anon;
-revoke execute on function public.update_block_with_entry(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block jsonb, p_areas jsonb, p_expected_updated_at timestamp with time zone, p_with_entry boolean, p_entry_id uuid, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from service_role;
-revoke execute on function public.update_block_with_entry(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block jsonb, p_areas jsonb, p_expected_updated_at timestamp with time zone, p_with_entry boolean, p_entry_id uuid, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from authenticated;
+revoke execute on function public.create_block_with_entry(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from public;
+revoke execute on function public.create_block_with_entry(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from anon;
+revoke execute on function public.create_block_with_entry(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from service_role;
+revoke execute on function public.create_block_with_entry(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from authenticated;
 
-revoke execute on function public.add_electrolysis_pass(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block_defaults jsonb, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from public;
-revoke execute on function public.add_electrolysis_pass(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block_defaults jsonb, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from anon;
-revoke execute on function public.add_electrolysis_pass(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block_defaults jsonb, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from service_role;
-revoke execute on function public.add_electrolysis_pass(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block_defaults jsonb, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) from authenticated;
+revoke execute on function public.update_block_with_entry(uuid, uuid, uuid, jsonb, jsonb, jsonb, timestamptz, boolean, uuid, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from public;
+revoke execute on function public.update_block_with_entry(uuid, uuid, uuid, jsonb, jsonb, jsonb, timestamptz, boolean, uuid, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from anon;
+revoke execute on function public.update_block_with_entry(uuid, uuid, uuid, jsonb, jsonb, jsonb, timestamptz, boolean, uuid, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from service_role;
+revoke execute on function public.update_block_with_entry(uuid, uuid, uuid, jsonb, jsonb, jsonb, timestamptz, boolean, uuid, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from authenticated;
 
-revoke execute on function public.soft_delete_session_block(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_reason text) from public;
-revoke execute on function public.soft_delete_session_block(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_reason text) from anon;
-revoke execute on function public.soft_delete_session_block(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_reason text) from service_role;
-revoke execute on function public.soft_delete_session_block(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_reason text) from authenticated;
+revoke execute on function public.add_electrolysis_pass(uuid, uuid, uuid, jsonb, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from public;
+revoke execute on function public.add_electrolysis_pass(uuid, uuid, uuid, jsonb, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from anon;
+revoke execute on function public.add_electrolysis_pass(uuid, uuid, uuid, jsonb, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from service_role;
+revoke execute on function public.add_electrolysis_pass(uuid, uuid, uuid, jsonb, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) from authenticated;
 
--- The four capability commands are callable by authenticated. The three
--- helpers stay revoked: invoking one directly would bypass its workflow.
+revoke execute on function public.soft_delete_session_block(uuid, uuid, uuid, text) from public;
+revoke execute on function public.soft_delete_session_block(uuid, uuid, uuid, text) from anon;
+revoke execute on function public.soft_delete_session_block(uuid, uuid, uuid, text) from service_role;
+revoke execute on function public.soft_delete_session_block(uuid, uuid, uuid, text) from authenticated;
 
-grant execute on function public.create_block_with_entry(p_session_id uuid, p_client_id uuid, p_block jsonb, p_areas jsonb, p_with_entry boolean, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) to authenticated;
+-- The four capability commands are callable by authenticated. The helpers
+-- stay revoked: invoking one directly would bypass its workflow.
 
-grant execute on function public.update_block_with_entry(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block jsonb, p_areas jsonb, p_expected_updated_at timestamp with time zone, p_with_entry boolean, p_entry_id uuid, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) to authenticated;
+grant execute on function public.create_block_with_entry(uuid, uuid, jsonb, jsonb, jsonb, boolean, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) to authenticated;
 
-grant execute on function public.add_electrolysis_pass(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_block_defaults jsonb, p_area text, p_areas_list text[], p_probe_size text, p_probe_lot_id uuid, p_probe_inventory_item_id uuid, p_mode text, p_intensity numeric, p_duration_seconds numeric, p_pulse_count integer, p_pulse_delay_seconds numeric, p_comments text, p_observation_chips jsonb, p_apilus_modality text, p_energy_level integer, p_minutes_performed integer, p_probe_type text, p_machine_frequency text, p_hairs_treated integer, p_galvanic_ma numeric, p_galvanic_duration_seconds integer, p_thermolysis_intensity_percent integer, p_thermolysis_duration_seconds numeric, p_units_of_lye numeric) to authenticated;
+grant execute on function public.update_block_with_entry(uuid, uuid, uuid, jsonb, jsonb, jsonb, timestamptz, boolean, uuid, text, text[], text, uuid, text, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) to authenticated;
 
-grant execute on function public.soft_delete_session_block(p_session_id uuid, p_client_id uuid, p_block_id uuid, p_reason text) to authenticated;
+grant execute on function public.add_electrolysis_pass(uuid, uuid, uuid, jsonb, text, text[], text, uuid, text, numeric, numeric, integer, numeric, text, jsonb, text, integer, integer, text, text, integer, numeric, integer, integer, numeric, numeric) to authenticated;
+
+grant execute on function public.soft_delete_session_block(uuid, uuid, uuid, text) to authenticated;
 commit;
 
 -- ---------------------------------------------------------------------------

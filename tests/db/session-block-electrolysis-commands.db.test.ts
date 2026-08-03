@@ -46,7 +46,7 @@ afterAll(async () => {
 });
 
 const CREATE_SQL = `select * from public.create_block_with_entry(
-  $1,$2,$3::jsonb,$4::jsonb,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15::jsonb,
+  $1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8::text[],$9,$10,$11,$12,$13,$14,$15::jsonb,
   $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`;
 
 function createArgs(over: Record<string, unknown> = {}) {
@@ -54,13 +54,13 @@ function createArgs(over: Record<string, unknown> = {}) {
     session: sessionA,
     client: A.clientId,
     block: JSON.stringify({ block_name: "Main", mode: "thermo" }),
+    extra: JSON.stringify({}),
     areas: JSON.stringify([]),
     withEntry: true,
     area: "chin",
     areasList: ["chin"],
     probeSize: null,
     probeLotId: null,
-    probeInvId: null,
     mode: "thermo",
     pulseCount: 1,
     pulseDelay: null,
@@ -80,23 +80,23 @@ function createArgs(over: Record<string, unknown> = {}) {
     ...over,
   };
   return [
-    a.session, a.client, a.block, a.areas, a.withEntry, a.area, a.areasList,
-    a.probeSize, a.probeLotId, a.probeInvId, a.mode, a.pulseCount, a.pulseDelay,
+    a.session, a.client, a.block, a.extra, a.areas, a.withEntry, a.area, a.areasList,
+    a.probeSize, a.probeLotId, a.mode, a.pulseCount, a.pulseDelay,
     a.comments, a.chips, a.apilus, a.energy, a.minutes, a.probeType, a.freq,
     a.hairs, a.galvMa, a.galvDur, a.thermInt, a.thermDur, a.lye,
   ];
 }
 
 const PASS_SQL = `select * from public.add_electrolysis_pass(
-  $1,$2,$3,$4::jsonb,$5,$6::text[],$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,
-  $17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`;
+  $1,$2,$3,$4::jsonb,$5,$6::text[],$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,
+  $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`;
 
 function passArgs(over: Record<string, unknown> = {}) {
   const a: Record<string, unknown> = {
     session: sessionA, client: A.clientId, block: blockA,
     defaults: JSON.stringify({ block_name: "Main" }),
     area: "jaw", areasList: ["jaw"], probeSize: null, probeLotId: null,
-    probeInvId: null, mode: "thermo", intensity: null, duration: null,
+    mode: "thermo", intensity: null, duration: null,
     pulseCount: 1, pulseDelay: null, comments: null, chips: JSON.stringify([]),
     apilus: null, energy: null, minutes: null, probeType: null, freq: null,
     hairs: null, galvMa: null, galvDur: null, thermInt: null, thermDur: null,
@@ -104,7 +104,7 @@ function passArgs(over: Record<string, unknown> = {}) {
   };
   return [
     a.session, a.client, a.block, a.defaults, a.area, a.areasList, a.probeSize,
-    a.probeLotId, a.probeInvId, a.mode, a.intensity, a.duration, a.pulseCount,
+    a.probeLotId, a.mode, a.intensity, a.duration, a.pulseCount,
     a.pulseDelay, a.comments, a.chips, a.apilus, a.energy, a.minutes,
     a.probeType, a.freq, a.hairs, a.galvMa, a.galvDur, a.thermInt, a.thermDur, a.lye,
   ];
@@ -158,10 +158,11 @@ describe("0166 — authorized workflows succeed", () => {
     const { block_id, entry_id } = c.rows[0];
     const r = await userQuery(A.userId,
       `select * from public.update_block_with_entry(
-         $1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10::text[],$11,$12,$13,$14,$15,$16,$17,$18::jsonb,
+         $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11::text[],$12,$13,$14,$15,$16,$17,$18::jsonb,
          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
-      [sessionA, A.clientId, block_id, JSON.stringify({ block_name: "Edited" }),
-       JSON.stringify([]), null, true, entry_id, "lip", ["lip"], null, null, null,
+      [sessionA, A.clientId, block_id, JSON.stringify({}),
+       JSON.stringify({ block_name: "Edited" }),
+       JSON.stringify([]), null, true, entry_id, "lip", ["lip"], null, null,
        "blend", 2, null, null, JSON.stringify([]), null, null, null, null, null,
        null, 0.5, null, null, 0.733, null]);
     expect(r.rows[0].block_id).toBe(block_id);
@@ -198,6 +199,57 @@ describe("0166 — authorized workflows succeed", () => {
     expect(r.rows[0].block_id).toBeTruthy();
     expect(await countBlocks(sid)).toBe(1);
     expect(await countEntries(sid)).toBe(1);
+  });
+
+  it("3c. the default block it creates keeps probe_type and probe_size", async () => {
+    // 0129's create INSERT column list contains neither, so routing the legacy
+    // block-less caller through this command would otherwise have silently
+    // stopped persisting both on the auto-created "Main" block — the same
+    // field-drop class this migration exists to close.
+    const fresh = await adminQuery(
+      `insert into public.sessions (studio_id, client_id, practitioner_id, modality)
+       values ($1,$2,$3,'electrolysis') returning id`,
+      [A.studioId, A.clientId, A.practitionerId]);
+    const sid = fresh.rows[0].id as string;
+    const r = await userQuery(A.userId, PASS_SQL, passArgs({
+      session: sid, block: null, area: "neck",
+      defaults: JSON.stringify({
+        block_name: "Main", mode: "thermo",
+        probe_type: "insulated", probe_size: "F2",
+        block_notes: "carried through",
+      }),
+    }));
+    const blk = await adminQuery(
+      `select block_name, mode, probe_type, probe_size, block_notes
+         from public.session_blocks where id=$1`, [r.rows[0].block_id]);
+    expect(blk.rows[0]).toEqual({
+      block_name: "Main", mode: "thermo",
+      probe_type: "insulated", probe_size: "F2",
+      block_notes: "carried through",
+    });
+  });
+
+  it("3d. a default-block bag may not smuggle a protected column", async () => {
+    const fresh = await adminQuery(
+      `insert into public.sessions (studio_id, client_id, practitioner_id, modality)
+       values ($1,$2,$3,'electrolysis') returning id`,
+      [A.studioId, A.clientId, A.practitionerId]);
+    const sid = fresh.rows[0].id as string;
+    // studio_id/session_id/deleted_at are never taken from the bag: the command
+    // derives them. A forged value is ignored, not applied.
+    const r = await userQuery(A.userId, PASS_SQL, passArgs({
+      session: sid, block: null, area: "neck",
+      defaults: JSON.stringify({
+        block_name: "Main",
+        studio_id: B.studioId, session_id: sessionB, deleted_at: "2000-01-01T00:00:00Z",
+      }),
+    }));
+    const blk = await adminQuery(
+      `select studio_id, session_id, deleted_at from public.session_blocks where id=$1`,
+      [r.rows[0].block_id]);
+    expect(blk.rows[0].studio_id).toBe(A.studioId);
+    expect(blk.rows[0].session_id).toBe(sid);
+    expect(blk.rows[0].deleted_at).toBeNull();
   });
 });
 
@@ -263,10 +315,10 @@ describe("0166 — cross-studio and forged relationships are refused", () => {
        values ($1,$2,'x','thermo') returning id`, [sessionB, blockB]);
     await expectDenied(A.userId,
       `select * from public.update_block_with_entry(
-         $1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10::text[],$11,$12,$13,$14,$15,$16,$17,$18::jsonb,
+         $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11::text[],$12,$13,$14,$15,$16,$17,$18::jsonb,
          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
-      [sessionA, A.clientId, blockA, JSON.stringify({}), JSON.stringify([]), null,
-       true, other.rows[0].id, "x", ["x"], null, null, null, "thermo", 1, null,
+      [sessionA, A.clientId, blockA, JSON.stringify({}), JSON.stringify({}), JSON.stringify([]), null,
+       true, other.rows[0].id, "x", ["x"], null, null, "thermo", 1, null,
        null, JSON.stringify([]), null, null, null, null, null, null, null, null, null, null, null]);
   });
 
@@ -282,10 +334,10 @@ describe("0166 — cross-studio and forged relationships are refused", () => {
     // Same studio + session, but a DIFFERENT block.
     await expectDenied(A.userId,
       `select * from public.update_block_with_entry(
-         $1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10::text[],$11,$12,$13,$14,$15,$16,$17,$18::jsonb,
+         $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11::text[],$12,$13,$14,$15,$16,$17,$18::jsonb,
          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
-      [sessionA, A.clientId, blockA, JSON.stringify({}), JSON.stringify([]), null,
-       true, entryId, "x", ["x"], null, null, null, "thermo", 1, null, null,
+      [sessionA, A.clientId, blockA, JSON.stringify({}), JSON.stringify({}), JSON.stringify([]), null,
+       true, entryId, "x", ["x"], null, null, "thermo", 1, null, null,
        JSON.stringify([]), null, null, null, null, null, null, null, null, null, null, null]);
   });
 
@@ -480,5 +532,225 @@ describe("0166 — effective EXECUTE privileges", () => {
               has_table_privilege('authenticated','public.electrolysis_entries','insert') e`);
     expect(r.rows[0].b).toBe(true);
     expect(r.rows[0].e).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Strict allow-list block patch (the 0129 field gap this migration closes).
+// 0129's update explicitly excludes block_name/block_notes and never touched
+// probe_type/probe_size/started_at/ended_at; its insert also omits
+// block_notes/probe_type/probe_size. Delegating alone would have SILENTLY
+// stopped persisting them.
+// --------------------------------------------------------------------------
+
+const UPDATE_SQL = `select * from public.update_block_with_entry(
+  $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11::text[],$12,$13,$14,$15,$16,$17,$18::jsonb,
+  $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`;
+
+const patchArgs = (blockId: string, extra: unknown) => [
+  sessionA, A.clientId, blockId, JSON.stringify({}), JSON.stringify(extra),
+  JSON.stringify([]), null, false, null, null, null, null, null, null, null,
+  null, null, JSON.stringify([]), null, null, null, null, null, null,
+  null, null, null, null, null,
+];
+
+async function freshBlock(extra: unknown = {}): Promise<string> {
+  const r = await userQuery(A.userId, CREATE_SQL,
+    createArgs({ extra: JSON.stringify(extra), withEntry: false }));
+  return r.rows[0].block_id as string;
+}
+const readBlock = async (id: string) =>
+  (await adminQuery(
+    `select block_name, block_notes, probe_type, probe_size, started_at, ended_at
+       from public.session_blocks where id=$1`, [id])).rows[0];
+
+describe("0166 — the area set and the inventory link are never silently lost", () => {
+  it("an ABSENT area set (p_areas null) leaves the recorded areas untouched", async () => {
+    // The legacy single-area edit path submits no areas. 0129's update always
+    // REPLACES the set, so coalescing null to '[]' would delete them.
+    const c = await userQuery(A.userId, CREATE_SQL, createArgs({
+      areas: JSON.stringify([
+        { area: "chin", laterality: "midline", display_order: 0 },
+        { area: "lip", laterality: "midline", display_order: 1 },
+      ]),
+    }));
+    const id = c.rows[0].block_id as string;
+    const before = await adminQuery(
+      `select area, laterality, display_order from public.session_block_areas
+        where session_block_id=$1 order by display_order`, [id]);
+    expect(before.rows).toHaveLength(2);
+
+    const args = patchArgs(id, {});
+    args[5] = null; // p_areas ABSENT
+    await userQuery(A.userId, UPDATE_SQL, args);
+
+    const after = await adminQuery(
+      `select area, laterality, display_order from public.session_block_areas
+        where session_block_id=$1 order by display_order`, [id]);
+    expect(after.rows).toEqual(before.rows);
+  });
+
+  it("an EXPLICIT empty set still clears the areas", async () => {
+    const c = await userQuery(A.userId, CREATE_SQL, createArgs({
+      areas: JSON.stringify([{ area: "chin", laterality: "midline", display_order: 0 }]),
+    }));
+    const id = c.rows[0].block_id as string;
+    const args = patchArgs(id, {});
+    args[5] = JSON.stringify([]); // deliberate removal
+    await userQuery(A.userId, UPDATE_SQL, args);
+    const after = await adminQuery(
+      `select count(*)::int n from public.session_block_areas where session_block_id=$1`, [id]);
+    expect(after.rows[0].n).toBe(0);
+  });
+
+  it("probe_inventory_item_id survives create AND update", async () => {
+    // 0129 writes this column on neither path; without the allow-list entry the
+    // 0155 inventory link would be dropped by every writer.
+    const item = await adminQuery(
+      `insert into public.record_keeping_sterile_items (studio_id, date_purchased, item_description)
+       values ($1, current_date, 'Ballet F2 probes') returning id`, [A.studioId]);
+    const itemId = item.rows[0].id as string;
+    const c = await userQuery(A.userId, CREATE_SQL, createArgs({
+      extra: JSON.stringify({ probe_inventory_item_id: itemId }),
+      withEntry: false,
+    }));
+    const id = c.rows[0].block_id as string;
+    const afterCreate = await adminQuery(
+      `select probe_inventory_item_id from public.session_blocks where id=$1`, [id]);
+    expect(afterCreate.rows[0].probe_inventory_item_id).toBe(itemId);
+
+    await userQuery(A.userId, UPDATE_SQL, patchArgs(id, { probe_inventory_item_id: itemId }));
+    const afterUpdate = await adminQuery(
+      `select probe_inventory_item_id from public.session_blocks where id=$1`, [id]);
+    expect(afterUpdate.rows[0].probe_inventory_item_id).toBe(itemId);
+  });
+
+  it("a cross-studio inventory id is refused by the composite FK, not accepted", async () => {
+    // session_blocks FKs (studio_id, probe_inventory_item_id) into
+    // record_keeping_sterile_items, so the allow-list writer cannot be used to
+    // point a block at another studio's item.
+    const other = await adminQuery(
+      `insert into public.record_keeping_sterile_items (studio_id, date_purchased, item_description)
+       values ($1, current_date, 'Other studio probes') returning id`, [B.studioId]);
+    const id = await freshBlock({});
+    let code: string | undefined;
+    try {
+      await userQuery(A.userId, UPDATE_SQL,
+        patchArgs(id, { probe_inventory_item_id: other.rows[0].id }));
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code).toBe("23503"); // foreign_key_violation
+  });
+});
+
+describe("0166 — strict allow-list block patch", () => {
+  it("1/2. CREATE persists block_notes and probe_size exactly", async () => {
+    const id = await freshBlock({ block_notes: "left cheek tender", probe_size: "F2" });
+    const b = await readBlock(id);
+    expect(b.block_notes).toBe("left cheek tender");
+    expect(b.probe_size).toBe("F2");
+  });
+
+  it("3-8. UPDATE persists every previously-dropped field exactly", async () => {
+    const id = await freshBlock();
+    const started = "2026-08-02T10:00:00.000Z";
+    const ended = "2026-08-02T10:45:00.000Z";
+    await userQuery(A.userId, UPDATE_SQL, patchArgs(id, {
+      block_name: "Upper lip", block_notes: "second pass",
+      probe_type: "IBL", probe_size: "F3",
+      started_at: started, ended_at: ended,
+    }));
+    const b = await readBlock(id);
+    expect(b.block_name).toBe("Upper lip");
+    expect(b.block_notes).toBe("second pass");
+    expect(b.probe_type).toBe("IBL");
+    expect(b.probe_size).toBe("F3");
+    expect(new Date(b.started_at as string).toISOString()).toBe(started);
+    expect(new Date(b.ended_at as string).toISOString()).toBe(ended);
+  });
+
+  it("9. a nullable field can be explicitly CLEARED", async () => {
+    const id = await freshBlock({ block_notes: "to be cleared", probe_size: "F1" });
+    await userQuery(A.userId, UPDATE_SQL, patchArgs(id, { block_notes: null }));
+    const b = await readBlock(id);
+    expect(b.block_notes, "present-with-null must clear").toBeNull();
+    expect(b.probe_size, "an omitted key must be left alone").toBe("F1");
+  });
+
+  it("10. an OMITTED field is left unchanged", async () => {
+    const id = await freshBlock({ block_notes: "keep me", probe_type: "ITH" });
+    await userQuery(A.userId, UPDATE_SQL, patchArgs(id, { block_name: "Renamed" }));
+    const b = await readBlock(id);
+    expect(b.block_name).toBe("Renamed");
+    expect(b.block_notes).toBe("keep me");
+    expect(b.probe_type).toBe("ITH");
+  });
+
+  it("11. an UNKNOWN patch key is REJECTED, not silently ignored", async () => {
+    const id = await freshBlock();
+    await expectDenied(A.userId, UPDATE_SQL, patchArgs(id, { not_a_column: "x" }));
+  });
+
+  it("12. protected columns cannot be supplied through the patch", async () => {
+    const id = await freshBlock();
+    for (const key of ["id", "studio_id", "session_id", "sort_order",
+                       "deleted_at", "deleted_by", "created_at"]) {
+      await expectDenied(A.userId, UPDATE_SQL, patchArgs(id, { [key]: null }));
+    }
+    // and nothing was mutated by the refused attempts
+    const b = await adminQuery(
+      `select studio_id, session_id, deleted_at from public.session_blocks where id=$1`, [id]);
+    expect(b.rows[0].studio_id).toBe(A.studioId);
+    expect(b.rows[0].session_id).toBe(sessionA);
+    expect(b.rows[0].deleted_at).toBeNull();
+  });
+
+  it("13. a failure in the extra-field assignment rolls back block, areas AND entry", async () => {
+    const b0 = await countBlocks(sessionA);
+    const e0 = await countEntries(sessionA);
+    const a0 = (await adminQuery(
+      `select count(*)::int n from public.session_block_areas`)).rows[0].n as number;
+    // Unknown key raises AFTER 0129 has created the block + areas.
+    await expectDenied(A.userId, CREATE_SQL, createArgs({
+      extra: JSON.stringify({ bogus_column: 1 }),
+      areas: JSON.stringify([{ area: "chin", laterality: "left", display_order: 0 }]),
+    }));
+    expect(await countBlocks(sessionA), "block rolled back").toBe(b0);
+    expect(await countEntries(sessionA), "entry rolled back").toBe(e0);
+    expect(
+      (await adminQuery(`select count(*)::int n from public.session_block_areas`)).rows[0].n,
+      "areas rolled back",
+    ).toBe(a0);
+  });
+
+  it("14. the extra UPDATE does not duplicate audit/lineage triggers", async () => {
+    // The block is written twice inside one command (0129 + the extra patch).
+    // Confirm the lineage guards still fire and the row is coherent — a second
+    // UPDATE must not corrupt or re-tenant it.
+    const id = await freshBlock({ block_notes: "audit check" });
+    const b = await adminQuery(
+      `select studio_id, session_id, deleted_at from public.session_blocks where id=$1`, [id]);
+    expect(b.rows[0].studio_id).toBe(A.studioId);
+    expect(b.rows[0].session_id).toBe(sessionA);
+    expect(b.rows[0].deleted_at).toBeNull();
+    // Re-pointing is still refused by 0160.
+    await expect(
+      userQuery(A.userId,
+        `update public.session_blocks set session_id=$2 where id=$1`, [id, sessionB]),
+    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+  });
+
+  it("15. the privilege matrix is unchanged by the extension", async () => {
+    const r = await adminQuery(
+      `select p.proname,
+              has_function_privilege('authenticated', p.oid,'execute') a,
+              has_function_privilege('anon', p.oid,'execute') an,
+              has_function_privilege('service_role', p.oid,'execute') s
+         from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+        where n.nspname='public' and p.proname='apply_block_extra_fields'`);
+    expect(r.rows[0].a, "the patch helper stays internal").toBe(false);
+    expect(r.rows[0].an).toBe(false);
+    expect(r.rows[0].s).toBe(false);
   });
 });

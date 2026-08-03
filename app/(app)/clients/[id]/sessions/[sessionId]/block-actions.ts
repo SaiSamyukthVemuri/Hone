@@ -31,6 +31,11 @@ import {
   PULSE_DELAY_MAX,
   PULSE_DELAY_RANGE_ERROR,
 } from "@/lib/constants";
+import {
+  mapBlockCommandError,
+  isStaleBlockVersion,
+  GENERIC_BLOCK_COMMAND_ERROR,
+} from "@/lib/sessions/block-command-errors";
 import type {
   ApilusModality,
   MachineFrequency,
@@ -360,41 +365,71 @@ export async function createSessionBlockAction(
 
   const supabase = await createClient();
 
-  // Compute next sort_order in the session.
-  const { data: existing, error: countErr } = await supabase
-    .from("session_blocks")
-    .select("sort_order")
-    .eq("session_id", input.sessionId)
-    .is("deleted_at", null)
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (countErr) return { ok: false, error: countErr.message };
-  const nextSort = (existing?.sort_order ?? 0) + 1;
-
-  const { data, error } = await supabase
-    .from("session_blocks")
-    .insert({
-      studio_id: studio.id,
-      session_id: input.sessionId,
-      sort_order: nextSort,
+  // L18 Phase 2: created through create_block_with_entry (migration 0166) with
+  // p_with_entry FALSE — a block-only create must not fabricate an
+  // electrolysis entry. sort_order is no longer computed here: the 0129
+  // boundary the command delegates to derives it as max(sort_order)+1 inside
+  // the same transaction, which also removes the read-then-insert race the
+  // application-side calculation had.
+  const { data: created, error } = await supabase.rpc("create_block_with_entry", {
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
+    p_block: {
       block_name: input.blockName ?? null,
-      block_notes: input.blockNotes ?? null,
       mode: input.mode ?? null,
       apilus_modality: input.apilusModality ?? null,
       energy_level: input.energyLevel ?? null,
       minutes_performed: input.minutesPerformed ?? null,
-      probe_type: input.probeType ?? null,
-      probe_size: input.probeSize ?? null,
       machine_frequency: input.machineFrequency ?? null,
       primary_area: areaCheck.value.primary_area,
       side: areaCheck.value.side,
       custom_area_detail: areaCheck.value.custom_area_detail,
       ...probeCheck.columns,
-    })
+    },
+    // Columns the 0129 boundary does not own. Only sent when the caller
+    // actually supplied them, so an omitted field stays unchanged.
+    p_block_extra: {
+      ...(input.blockNotes !== undefined ? { block_notes: input.blockNotes ?? null } : {}),
+      ...(input.probeType !== undefined ? { probe_type: input.probeType ?? null } : {}),
+      ...(input.probeSize !== undefined ? { probe_size: input.probeSize ?? null } : {}),
+    },
+    p_areas: [],
+    p_with_entry: false,
+    p_area: null,
+    p_areas_list: null,
+    p_probe_size: null,
+    p_probe_lot_id: null,
+    p_mode: null,
+    p_pulse_count: null,
+    p_pulse_delay_seconds: null,
+    p_comments: null,
+    p_observation_chips: null,
+    p_apilus_modality: null,
+    p_energy_level: null,
+    p_minutes_performed: null,
+    p_probe_type: null,
+    p_machine_frequency: null,
+    p_hairs_treated: null,
+    p_galvanic_ma: null,
+    p_galvanic_duration_seconds: null,
+    p_thermolysis_intensity_percent: null,
+    p_thermolysis_duration_seconds: null,
+    p_units_of_lye: null,
+  });
+  if (error) return { ok: false, error: mapBlockCommandError(error) };
+
+  const newBlockId = Array.isArray(created)
+    ? (created[0] as { block_id?: string } | undefined)?.block_id
+    : (created as { block_id?: string } | null)?.block_id;
+  if (!newBlockId) return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+
+  // Callers expect the saved row.
+  const { data, error: readErr } = await supabase
+    .from("session_blocks")
     .select("*")
+    .eq("id", newBlockId)
     .single();
-  if (error) return { ok: false, error: error.message };
+  if (readErr || !data) return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
 
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   return { ok: true, block: data as SessionBlock };
@@ -514,19 +549,122 @@ export async function updateSessionBlockAction(
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase
+
+  // L18 Phase 2: written through update_block_with_entry (migration 0166) in
+  // BLOCK-ONLY mode — p_with_entry false, so no unrelated entry is touched.
+  //
+  // The command delegates the shared block columns to 0129's
+  // update_session_block_with_areas, which writes its WHOLE allow-list from
+  // jsonb_populate_record. Sending this action's PARTIAL patch straight through
+  // would therefore NULL every allow-listed column the patch omits. So the
+  // current row is read and the patch overlaid on top, and the row's own
+  // updated_at is passed as the optimistic-concurrency value — which closes the
+  // read-modify-write window that merge would otherwise open, and reuses the
+  // stale-edit message this file already shows elsewhere.
+  const { data: current, error: readErr } = await supabase
     .from("session_blocks")
-    .update(normalizedPatch)
+    .select("*")
     .eq("id", input.blockId)
     .eq("studio_id", studio.id)
     .eq("session_id", input.sessionId)
     .is("deleted_at", null)
+    .maybeSingle();
+  if (readErr || !current) {
+    return { ok: false, error: "That settings block could not be found in this session." };
+  }
+  const before = current as SessionBlock;
+
+  // Columns 0129's update owns: send current values with the patch overlaid.
+  const shared: Record<string, unknown> = {
+    mode: before.mode,
+    apilus_modality: before.apilus_modality,
+    energy_level: before.energy_level,
+    minutes_performed: before.minutes_performed,
+    machine_frequency: before.machine_frequency,
+    probe_lot_number: before.probe_lot_number,
+    probe_lot_confirmed: before.probe_lot_confirmed,
+    probe_inventory_item_id: before.probe_inventory_item_id,
+    primary_area: before.primary_area,
+    side: before.side,
+    custom_area_detail: before.custom_area_detail,
+    probe_key: before.probe_key,
+    probe_brand: before.probe_brand,
+    probe_material: before.probe_material,
+    probe_piece_type: before.probe_piece_type,
+    probe_shank: before.probe_shank,
+    probe_size_value: before.probe_size_value,
+    probe_length: before.probe_length,
+    probe_label: before.probe_label,
+    tolerance_rating: before.tolerance_rating,
+    reaction_type: before.reaction_type,
+    reaction_notes: before.reaction_notes,
+    caution_for_next_session: before.caution_for_next_session,
+    caution_note: before.caution_note,
+    numbing_status: before.numbing_status,
+    numbing_notes: before.numbing_notes,
+  };
+  // Columns 0129 does NOT own — sent as the strict p_block_extra allow-list.
+  // Only keys actually PRESENT in the patch are sent, so an omitted field is
+  // left unchanged and an explicit null clears it.
+  const EXTRA_KEYS = [
+    "block_name",
+    "block_notes",
+    "probe_type",
+    "probe_size",
+    "started_at",
+    "ended_at",
+  ] as const;
+  const extra: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(normalizedPatch)) {
+    if ((EXTRA_KEYS as readonly string[]).includes(k)) extra[k] = v;
+    else if (k in shared) shared[k] = v;
+  }
+
+  const { error } = await supabase.rpc("update_block_with_entry", {
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
+    p_block_id: input.blockId,
+    p_block: shared,
+    p_block_extra: extra,
+    p_areas: [],
+    p_expected_updated_at: before.updated_at,
+    p_with_entry: false,
+    p_entry_id: null,
+    p_area: null,
+    p_areas_list: null,
+    p_probe_size: null,
+    p_probe_lot_id: null,
+    p_mode: null,
+    p_pulse_count: null,
+    p_pulse_delay_seconds: null,
+    p_comments: null,
+    p_observation_chips: null,
+    p_apilus_modality: null,
+    p_energy_level: null,
+    p_minutes_performed: null,
+    p_probe_type: null,
+    p_machine_frequency: null,
+    p_hairs_treated: null,
+    p_galvanic_ma: null,
+    p_galvanic_duration_seconds: null,
+    p_thermolysis_intensity_percent: null,
+    p_thermolysis_duration_seconds: null,
+    p_units_of_lye: null,
+  });
+  if (error) return { ok: false, error: mapBlockCommandError(error) };
+
+  // The command returns ids only; callers expect the saved row, so re-read it.
+  const { data: saved, error: savedErr } = await supabase
+    .from("session_blocks")
     .select("*")
+    .eq("id", input.blockId)
     .single();
-  if (error) return { ok: false, error: error.message };
+  if (savedErr || !saved) {
+    return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+  }
 
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
-  return { ok: true, block: data as SessionBlock };
+  return { ok: true, block: saved as SessionBlock };
 }
 
 // ---------------------------------------------------------------------------
@@ -607,18 +745,17 @@ export async function softDeleteSessionBlockAction(
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("session_blocks")
-    .update({
-      deleted_at: new Date().toISOString(),
-      deleted_by: practitioner.id,
-      delete_reason: reason,
-    })
-    .eq("id", input.blockId)
-    .eq("studio_id", studio.id)
-    .eq("session_id", input.sessionId)
-    .is("deleted_at", null);
-  if (error) return { ok: false, error: error.message };
+  // L18 Phase 2: soft retirement through soft_delete_session_block (0166).
+  // deleted_at and delete_reason are written by the command; deleted_by is
+  // DERIVED there from auth.uid(), so removal attribution can no longer be
+  // supplied by the caller. Still a soft delete — never a hard delete.
+  const { error } = await supabase.rpc("soft_delete_session_block", {
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
+    p_block_id: input.blockId,
+    p_reason: reason,
+  });
+  if (error) return { ok: false, error: mapBlockCommandError(error) };
 
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   return { ok: true };
@@ -914,15 +1051,11 @@ export type CreateAreaWithEntryInput = {
   probeLotConfirmed?: boolean;
 };
 
-// TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION
-// This action writes session_blocks AND electrolysis_entries as ONE user
-// intent, so it is deliberately NOT migrated to a narrow entry command in L18
-// Phase 1A. Splitting only the entry half onto an RPC would leave the pair
-// straddling two transactions — the same non-atomicity that exists today.
-// Making it genuinely atomic needs a command that owns BOTH writes, which is
-// session_blocks work. It moves in the combined
-// session_blocks/electrolysis_entries phase, and this exception expires with
-// it. Pinned by tests/security/entry-direct-dml-guard.test.ts.
+// L18 Phase 2: the block/entry atomicity exception that used to sit here is
+// RETIRED.
+// `create_block_with_entry` (migration 0166) now owns the block, its area rows
+// and the first entry in ONE transaction, so the application-side compensating
+// soft delete that used to follow a failed entry write is gone with it.
 export async function createTreatmentAreaWithEntryAction(
   input: CreateAreaWithEntryInput,
 ): Promise<BlockResult> {
@@ -956,7 +1089,6 @@ export async function createTreatmentAreaWithEntryAction(
   const areaSetCheck = input.areas !== undefined ? normalizeAreaSet(input.areas) : null;
   if (areaSetCheck && !areaSetCheck.ok) return areaSetCheck;
   const areaRows = areaSetCheck ? areaSetCheck.value : null;
-  const useAreaRpc = areaRows !== null;
   const proj = areaRows && areaRows.length > 0 ? deriveLegacyProjection(areaRows) : null;
   const blockPrimaryArea = proj
     ? proj.primaryArea
@@ -1017,115 +1149,93 @@ export async function createTreatmentAreaWithEntryAction(
     ...responseCheck.columns,
   };
 
-  let block: SessionBlock;
-  if (useAreaRpc) {
-    // ATOMIC (migration 0129): the block + its legacy projection + the COMPLETE
-    // structured area set are created together in one DB transaction — never a
-    // block with a half-written area set, and no compensating soft-delete.
-    const { data: newId, error: rpcErr } = await supabase.rpc(
-      "create_session_block_with_areas",
-      {
-        p_studio_id: studio.id,
-        p_session_id: input.sessionId,
-        p_block: blockFields,
-        p_areas: (areaRows ?? []).map((a, i) => ({
-          area: a.area,
-          laterality: a.laterality,
-          display_order: i,
-        })),
+  // L18 Phase 2: block + areas + first entry are now ONE transaction via
+  // create_block_with_entry (migration 0166). Previously the block was created
+  // first and the entry second, with a COMPENSATING soft-delete of the block if
+  // the entry write failed — that compensation is gone because a failure now
+  // rolls the block, its area rows and the entry back together.
+  //
+  // The entry payload is built from the SAME helpers the direct insert used, so
+  // its shaping is unchanged: `entryMachineSnapshot` still nulls apilus_modality
+  // and energy_level for a galvanic entry, and `structuredReadingColumns` still
+  // mode-gates the galvanic/thermolysis readings. The legacy generic
+  // `intensity`/`duration_seconds` remain unwritten — the command has no
+  // parameter for them.
+  const snap = entryMachineSnapshot({
+    mode: (input.mode ?? null) as SessionMode | null,
+    apilusModality: (input.apilusModality ?? null) as ApilusModality | null,
+    energyLevel: input.energyLevel ?? null,
+    minutesPerformed: input.minutesPerformed ?? null,
+    machineFrequency: (input.machineFrequency ?? null) as MachineFrequency | null,
+  });
+  const readingCols = structuredReadingColumns(
+    (input.mode ?? null) as SessionMode | null,
+    readings,
+  );
+  const { data: createdRows, error: cmdErr } = await supabase.rpc(
+    "create_block_with_entry",
+    {
+      p_session_id: input.sessionId,
+      p_client_id: input.clientId,
+      p_block: blockFields,
+      // 0129's create writes neither of these, so they are routed to the
+      // strict allow-list writer instead of being silently dropped.
+      p_block_extra: {
+        block_notes: null,
+        probe_inventory_item_id: inv.probeInventoryItemId,
       },
-    );
-    if (rpcErr) return { ok: false, error: `Failed to save areas: ${rpcErr.message}` };
-    const { data: row, error: rowErr } = await supabase
-      .from("session_blocks")
-      .select("*")
-      .eq("id", newId as string)
-      .single();
-    if (rowErr || !row) {
-      return { ok: false, error: rowErr?.message ?? "Saved block could not be loaded." };
-    }
-    block = row as SessionBlock;
-  } else {
-    // Area-less / legacy single-area path: a plain block insert (no area rows,
-    // so no atomicity concern).
-    const { data: existing, error: countErr } = await supabase
-      .from("session_blocks")
-      .select("sort_order")
-      .eq("session_id", input.sessionId)
-      .is("deleted_at", null)
-      .order("sort_order", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (countErr) return { ok: false, error: countErr.message };
-    const nextSort = (existing?.sort_order ?? 0) + 1;
-    const { data: row, error: blockErr } = await supabase
-      .from("session_blocks")
-      .insert({
-        studio_id: studio.id,
-        session_id: input.sessionId,
-        sort_order: nextSort,
-        ...blockFields,
-      })
-      .select("*")
-      .single();
-    if (blockErr || !row) {
-      return { ok: false, error: blockErr?.message ?? "Failed to save the settings block." };
-    }
-    block = row as SessionBlock;
-  }
+      // A brand-new block has no prior area rows, so an absent set and an empty
+      // set mean the same thing here.
+      p_areas: (areaRows ?? []).map((a, i) => ({
+        area: a.area,
+        laterality: a.laterality,
+        display_order: i,
+      })),
+      // Create the first entry only when a treatment area is present. An
+      // area-less, readings-less save creates just the block — a valid "set the
+      // area up later" state, exactly as before.
+      p_with_entry: Boolean(area),
+      p_area: area,
+      p_areas_list:
+        areaRows && areaRows.length > 0 ? areaRows.map((sa) => sa.area) : area ? [area] : null,
+      // The entry's own probe columns are not collected by this form; the
+      // probe/inventory selection belongs to the BLOCK (blockFields above).
+      p_probe_size: null,
+      p_probe_lot_id: null,
+      p_pulse_count: clampPulseCount(readings.pulseCount),
+      p_pulse_delay_seconds: resolvePulseDelaySeconds(readings),
+      p_comments: normalizedComments(readings),
+      p_observation_chips: normalizedChips(readings),
+      p_mode: snap.mode,
+      p_apilus_modality: snap.apilus_modality,
+      p_energy_level: snap.energy_level,
+      p_minutes_performed: snap.minutes_performed,
+      p_machine_frequency: snap.machine_frequency,
+      p_probe_type: null,
+      p_hairs_treated: readings.hairsTreated ?? null,
+      p_galvanic_ma: readingCols.galvanic_ma,
+      p_galvanic_duration_seconds: readingCols.galvanic_duration_seconds,
+      p_thermolysis_intensity_percent: readingCols.thermolysis_intensity_percent,
+      p_thermolysis_duration_seconds: readingCols.thermolysis_duration_seconds,
+      p_units_of_lye: readingCols.units_of_lye,
+    },
+  );
+  if (cmdErr) return { ok: false, error: mapBlockCommandError(cmdErr) };
 
-  // Create the first entry only when a treatment area is present. An
-  // area-less, readings-less save creates just the block (a valid "set the
-  // area up later" state, same as the legacy block-only case).
-  if (area) {
-    const snap = entryMachineSnapshot({
-      mode: (input.mode ?? null) as SessionMode | null,
-      apilusModality: (input.apilusModality ?? null) as ApilusModality | null,
-      energyLevel: input.energyLevel ?? null,
-      minutesPerformed: input.minutesPerformed ?? null,
-      machineFrequency: (input.machineFrequency ?? null) as
-        | MachineFrequency
-        | null,
-    });
-    const { error: entryErr } = await supabase
-      .from("electrolysis_entries")
-      .insert({
-        session_id: input.sessionId,
-        block_id: block.id,
-        area,
-        areas: areaRows && areaRows.length > 0 ? areaRows.map((sa) => sa.area) : [area],
-        probe_lot_id: null,
-        // Legacy generic intensity / duration_seconds are intentionally not
-        // written; thermolysis / galvanic readings live in their own columns.
-        pulse_count: clampPulseCount(readings.pulseCount),
-        pulse_delay_seconds: resolvePulseDelaySeconds(readings),
-        hairs_treated: readings.hairsTreated ?? null,
-        comments: normalizedComments(readings),
-        observation_chips: normalizedChips(readings),
-        ...structuredReadingColumns((input.mode ?? null) as SessionMode | null, readings),
-        // Retired reading: a NEW entry always stores NULL (server-authoritative,
-        // ignores any forged client value).
-        galvanic_intensity_percent: null,
-        ...snap,
-      });
-    if (entryErr) {
-      // Cleanup: retire the just-created block so its minutes_performed
-      // can't pollute TTT and no orphan treatment area is left behind.
-      // PR #217: SOFT delete (deleted_at), matching the app's delete
-      // posture everywhere else; the RLS hardening removed the
-      // authenticated DELETE path on session_blocks, and every read
-      // already filters deleted_at.
-      await supabase
-        .from("session_blocks")
-        .update({ deleted_at: new Date().toISOString() })
-        .eq("id", block.id)
-        .eq("studio_id", studio.id);
-      return {
-        ok: false,
-        error: `Failed to save treatment details: ${entryErr.message}`,
-      };
-    }
+  const createdBlockId = Array.isArray(createdRows)
+    ? (createdRows[0] as { block_id?: string } | undefined)?.block_id
+    : (createdRows as { block_id?: string } | null)?.block_id;
+  if (!createdBlockId) return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+
+  const { data: blockRow, error: blockReadErr } = await supabase
+    .from("session_blocks")
+    .select("*")
+    .eq("id", createdBlockId)
+    .single();
+  if (blockReadErr || !blockRow) {
+    return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
   }
+  const block = blockRow as SessionBlock;
 
   await rememberMachineFrequencyDefault(
     practitioner.id,
@@ -1188,15 +1298,12 @@ export type UpdateAreaWithEntryInput = {
   probeLotConfirmed?: boolean;
 };
 
-// TEMPORARY L18 BLOCK-ENTRY ATOMICITY EXCEPTION
-// This action writes session_blocks AND electrolysis_entries as ONE user
-// intent, so it is deliberately NOT migrated to a narrow entry command in L18
-// Phase 1A. Splitting only the entry half onto an RPC would leave the pair
-// straddling two transactions — the same non-atomicity that exists today.
-// Making it genuinely atomic needs a command that owns BOTH writes, which is
-// session_blocks work. It moves in the combined
-// session_blocks/electrolysis_entries phase, and this exception expires with
-// it. Pinned by tests/security/entry-direct-dml-guard.test.ts.
+// L18 Phase 2: the block/entry atomicity exception that used to sit here is
+// RETIRED.
+// `update_block_with_entry` (migration 0166) now owns the block, its area rows
+// and the coupled entry in ONE transaction. Previously the block update
+// committed first and the entry followed with NO compensation, so a failed
+// entry write left the two describing different treatments.
 export async function updateTreatmentAreaWithEntryAction(
   input: UpdateAreaWithEntryInput,
 ): Promise<BlockResult> {
@@ -1230,7 +1337,6 @@ export async function updateTreatmentAreaWithEntryAction(
   const areaSetCheck = input.areas !== undefined ? normalizeAreaSet(input.areas) : null;
   if (areaSetCheck && !areaSetCheck.ok) return areaSetCheck;
   const areaRows = areaSetCheck ? areaSetCheck.value : null;
-  const useAreaRpc = areaRows !== null;
   const proj = areaRows && areaRows.length > 0 ? deriveLegacyProjection(areaRows) : null;
   const blockPrimaryArea = proj
     ? proj.primaryArea
@@ -1314,138 +1420,108 @@ export async function updateTreatmentAreaWithEntryAction(
     ...responseCheck.columns,
   };
 
-  let block: SessionBlock;
-  if (useAreaRpc) {
-    // ATOMIC (migration 0129): the block update + legacy projection + the
-    // COMPLETE replacement area set commit together in ONE transaction. There is
-    // no window where the old area rows are deleted but the new set failed
-    // (which would previously have left only the first legacy-projected area).
-    const { error: rpcErr } = await supabase.rpc("update_session_block_with_areas", {
-      p_studio_id: studio.id,
-      p_session_id: input.sessionId,
-      p_block_id: input.blockId,
-      p_block: blockFields,
-      p_areas: (areaRows ?? []).map((a, i) => ({
-        area: a.area,
-        laterality: a.laterality,
-        display_order: i,
-      })),
-      p_expected_updated_at: input.expectedUpdatedAt ?? null,
-    });
-    if (rpcErr) {
-      // Distinct stale-edit conflict (someone changed the block since it loaded).
-      if (rpcErr.message?.includes("stale_block_version")) {
-        return {
-          ok: false,
-          error:
-            "This settings block was changed elsewhere. Reload the session and re-apply your edit.",
-        };
-      }
-      return { ok: false, error: `Failed to save areas: ${rpcErr.message}` };
-    }
-    const { data: row, error: rowErr } = await supabase
-      .from("session_blocks")
-      .select("*")
-      .eq("id", input.blockId)
-      .single();
-    if (rowErr || !row) {
-      return { ok: false, error: rowErr?.message ?? "Saved block could not be loaded." };
-    }
-    block = row as SessionBlock;
-  } else {
-    // No `areas` submitted → plain block update; any prior child rows are left
-    // untouched (backward-compatible single-area edit path).
-    const { data: row, error: blockErr } = await supabase
-      .from("session_blocks")
-      .update(blockFields)
-      .eq("id", input.blockId)
-      .eq("studio_id", studio.id)
-      .eq("session_id", input.sessionId)
-      .is("deleted_at", null)
-      .select("*")
-      .single();
-    if (blockErr || !row) {
-      return { ok: false, error: blockErr?.message ?? "Failed to save the settings block." };
-    }
-    block = row as SessionBlock;
-  }
-
+  // L18 Phase 2: block + areas + coupled entry are now ONE transaction via
+  // update_block_with_entry (migration 0166). Previously the block update
+  // committed first and the entry followed with NO compensation, so a failed
+  // entry write left the two describing different treatments. The
+  // optimistic-concurrency token is forwarded unchanged, so a stale edit still
+  // fails before anything is written.
+  //
+  // Entry shaping is unchanged: the same `entryMachineSnapshot` (galvanic
+  // carries no apilus params) and the same mode-gated reading columns. Legacy
+  // `intensity`/`duration_seconds` and an existing entry's `probe_type` /
+  // `probe_size` / `probe_lot_id` are all preserved — the command's update
+  // deliberately omits them, so old probe data is never wiped by an edit.
   const snap = entryMachineSnapshot({
     mode: (input.mode ?? null) as SessionMode | null,
     apilusModality: (input.apilusModality ?? null) as ApilusModality | null,
     energyLevel: input.energyLevel ?? null,
     minutesPerformed: input.minutesPerformed ?? null,
-    machineFrequency: (input.machineFrequency ?? null) as
-      | MachineFrequency
-      | null,
+    machineFrequency: (input.machineFrequency ?? null) as MachineFrequency | null,
   });
-
-  if (input.firstEntryId) {
-    // Update the first/primary entry only — entries 2..N stay exactly as-is.
+  const readingCols = structuredReadingColumns(
+    (input.mode ?? null) as SessionMode | null,
+    readings,
+  );
+  // Update the first/primary entry when one exists; create it when the block had
+  // none and readings are present. Entries 2..N stay exactly as-is.
+  const updatingEntry = Boolean(input.firstEntryId);
+  const creatingEntry = !updatingEntry && Boolean(area) && readingsPresent(readings);
+  const { error: cmdErr } = await supabase.rpc("update_block_with_entry", {
+    p_session_id: input.sessionId,
+    p_client_id: input.clientId,
+    p_block_id: input.blockId,
+    p_block: blockFields,
+    // 0129's update writes neither block_name nor probe_inventory_item_id.
+    // block_name is not collected by this form, so it is left out entirely
+    // (omitted keys are preserved); the inventory link is sent explicitly.
+    p_block_extra: { probe_inventory_item_id: inv.probeInventoryItemId },
+    // `areas` ABSENT (the legacy single-area edit path) sends NULL, which the
+    // command reads as "leave the recorded area set exactly as it is". An
+    // explicitly submitted set — including an empty one — replaces it.
+    p_areas: areaRows
+      ? areaRows.map((a, i) => ({
+          area: a.area,
+          laterality: a.laterality,
+          display_order: i,
+        }))
+      : null,
+    p_expected_updated_at: input.expectedUpdatedAt ?? null,
+    p_with_entry: updatingEntry || creatingEntry,
+    p_entry_id: input.firstEntryId ?? null,
     // The entry's area is re-keyed only when a treatment area is set; it is
-    // never nulled (preserves a NOT NULL area if the block area was cleared).
-    // Legacy intensity / duration_seconds are intentionally NOT in this
-    // patch, so any value an old entry carries is preserved. Thermolysis /
-    // galvanic readings are written to their own columns.
-    const entryUpdate: Record<string, unknown> = {
-      pulse_count: clampPulseCount(readings.pulseCount),
-      pulse_delay_seconds: resolvePulseDelaySeconds(readings),
-      hairs_treated: readings.hairsTreated ?? null,
-      comments: normalizedComments(readings),
-      observation_chips: normalizedChips(readings),
-      ...structuredReadingColumns(
-        (input.mode ?? null) as SessionMode | null,
-        readings,
-      ),
-      ...snap,
-    };
-    if (area) {
-      entryUpdate.area = area;
-      entryUpdate.areas = [area];
-    }
-    const { error: entryErr } = await supabase
-      .from("electrolysis_entries")
-      .update(entryUpdate)
-      .eq("id", input.firstEntryId)
-      .eq("block_id", input.blockId)
-      .eq("session_id", input.sessionId);
-    if (entryErr) {
+    // never nulled, preserving a NOT NULL area if the block area was cleared.
+    p_area: area ?? null,
+    // On UPDATE the existing entry's `areas` mirrors the single treatment area,
+    // as it always has; on CREATE it takes the full submitted set.
+    p_areas_list: updatingEntry
+      ? area
+        ? [area]
+        : null
+      : areaRows && areaRows.length > 0
+        ? areaRows.map((sa) => sa.area)
+        : area
+          ? [area]
+          : null,
+    p_probe_size: null,
+    p_probe_lot_id: null,
+    p_pulse_count: clampPulseCount(readings.pulseCount),
+    p_pulse_delay_seconds: resolvePulseDelaySeconds(readings),
+    p_comments: normalizedComments(readings),
+    p_observation_chips: normalizedChips(readings),
+    p_mode: snap.mode,
+    p_apilus_modality: snap.apilus_modality,
+    p_energy_level: snap.energy_level,
+    p_minutes_performed: snap.minutes_performed,
+    p_machine_frequency: snap.machine_frequency,
+    p_probe_type: null,
+    p_hairs_treated: readings.hairsTreated ?? null,
+    p_galvanic_ma: readingCols.galvanic_ma,
+    p_galvanic_duration_seconds: readingCols.galvanic_duration_seconds,
+    p_thermolysis_intensity_percent: readingCols.thermolysis_intensity_percent,
+    p_thermolysis_duration_seconds: readingCols.thermolysis_duration_seconds,
+    p_units_of_lye: readingCols.units_of_lye,
+  });
+  if (cmdErr) {
+    if (isStaleBlockVersion(cmdErr)) {
       return {
         ok: false,
-        error: `Failed to save treatment details: ${entryErr.message}`,
+        error:
+          "This settings block was changed elsewhere. Reload the session and re-apply your edit.",
       };
     }
-  } else if (area && readingsPresent(readings)) {
-    // Block had no entries: create the first one now.
-    const { error: entryErr } = await supabase
-      .from("electrolysis_entries")
-      .insert({
-        session_id: input.sessionId,
-        block_id: input.blockId,
-        area,
-        areas: areaRows && areaRows.length > 0 ? areaRows.map((sa) => sa.area) : [area],
-        probe_lot_id: null,
-        pulse_count: clampPulseCount(readings.pulseCount),
-        pulse_delay_seconds: resolvePulseDelaySeconds(readings),
-        hairs_treated: readings.hairsTreated ?? null,
-        comments: normalizedComments(readings),
-        observation_chips: normalizedChips(readings),
-        ...structuredReadingColumns(
-          (input.mode ?? null) as SessionMode | null,
-          readings,
-        ),
-        // Retired reading: a NEW entry always stores NULL (server-authoritative,
-        // ignores any forged client value).
-        galvanic_intensity_percent: null,
-        ...snap,
-      });
-    if (entryErr) {
-      return {
-        ok: false,
-        error: `Failed to save treatment details: ${entryErr.message}`,
-      };
-    }
+    return { ok: false, error: mapBlockCommandError(cmdErr) };
   }
+
+  const { data: blockRow, error: blockReadErr } = await supabase
+    .from("session_blocks")
+    .select("*")
+    .eq("id", input.blockId)
+    .single();
+  if (blockReadErr || !blockRow) {
+    return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+  }
+  const block = blockRow as SessionBlock;
 
   await rememberMachineFrequencyDefault(
     practitioner.id,
