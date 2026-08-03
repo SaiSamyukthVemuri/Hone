@@ -6,8 +6,8 @@
     "Hosted state cannot be derived from filenames, so it is declared here ONCE and referenced",
     "everywhere else. Update this file in the same change that records a production apply."
   ],
-  "hosted_migration_max": "0168",
-  "hosted_applied_at": "2026-08-03T17:23:14Z",
-  "hosted_note": "0168_treatment_image_write_commands.sql applied 2026-08-03T17:23:06Z-17:23:14Z. L18 Phase 4: three authenticated-only commands binding every runtime public.treatment_images writer (3 -> 0). EVERY L18 table is now at zero direct runtime writers. Additive only - no table, column, constraint, index, policy, trigger or data change, and no privilege revoked. L18 remains OPEN: authenticated table DML is not revoked, and the final L18 revocation is a separate migration. See docs/production/migration-ledger.md for the full apply record and frozen checksums.",
+  "hosted_migration_max": "0169",
+  "hosted_applied_at": "2026-08-03T18:25:51Z",
+  "hosted_note": "0169_revoke_authenticated_clinical_direct_dml.sql applied 2026-08-03T18:25:41Z-18:25:51Z. L18 FINAL: revokes INSERT/UPDATE/DELETE from authenticated on sessions, session_blocks, session_block_areas, electrolysis_entries, laser_entries and treatment_images - authenticated write grants 12 -> 0. authenticated SELECT RETAINED on all six; service_role, anon and PUBLIC unchanged; all 16 command EXECUTE grants unchanged. L18 is now CLOSED at the database layer. See docs/production/migration-ledger.md for the full apply record and frozen checksums.",
   "ledger": "docs/production/migration-ledger.md"
 }
