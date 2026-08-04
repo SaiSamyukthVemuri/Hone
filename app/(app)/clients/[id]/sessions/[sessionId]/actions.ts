@@ -5,6 +5,7 @@ import { mapSessionCommandError } from "@/lib/sessions/session-command-errors";
 import { mapBlockCommandError } from "@/lib/sessions/block-command-errors";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { validateProbeLotId } from "@/lib/sessions/probe-lot-validation";
 import { normalizeChips, verifyStoredChips } from "@/lib/observation-chips";
@@ -484,8 +485,35 @@ async function softDeleteEntry(
   // Verifies the session belongs to THIS studio + client (rejects cross-studio).
   await assertSessionVisible(studio.id, clientId, sessionId);
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
+  // L18 FINAL (migration 0169) revoked INSERT/UPDATE/DELETE from `authenticated`
+  // on both pass tables; only SELECT remains. The soft-delete UPDATE therefore
+  // has to run as service_role — the authenticated client now fails it with
+  // 42501, which is exactly the production regression this restores.
+  //
+  // Service_role BYPASSES RLS, so RLS no longer contributes anything to tenant
+  // isolation on this write. Everything above is therefore load-bearing, and the
+  // filter below re-states the whole lineage chain rather than leaning on it:
+  //
+  //   * the actor is a server-resolved ACTIVE practitioner of `studio`
+  //     (getCurrentPractitionerWithStudio -> session cookie -> auth.getUser());
+  //     the browser cannot supply a practitioner or studio id.
+  //   * assertSessionVisible has already proved `sessionId` names a session in
+  //     BOTH that studio and the route's client, read through the AUTHENTICATED
+  //     client so the caller's own visibility still gates it.
+  //   * `.eq("id", id)` is the primary key, so at most one row can ever match.
+  //   * `.eq("session_id", sessionId)` pins the row to that proved session.
+  //     session_id is NOT NULL and FK-constrained, so an entry belonging to
+  //     another session — and therefore to another client or studio — cannot
+  //     match. Neither pass table carries its own studio_id/client_id; the
+  //     session IS the lineage, which is why this predicate is the boundary.
+  //   * `.is("deleted_at", null)` keeps it to a single ACTIVE pass, rejecting a
+  //     double-void instead of restamping an already-removed row.
+  //
+  // The sibling pass in the same area, the block, the session, the appointment,
+  // the client and the photos are all untouched: nothing but this one entry id
+  // is addressed, and the write is an UPDATE of the three soft-delete columns.
+  const admin = createAdminClient();
+  const { data, error } = await admin
     .from(table)
     .update({
       deleted_at: new Date().toISOString(),
@@ -494,12 +522,44 @@ async function softDeleteEntry(
     })
     .eq("id", id)
     .eq("session_id", sessionId)
-    // Guard: only an ACTIVE pass can be removed — rejects double-void and, with
-    // RLS, any entry outside the caller's studio (0 rows updated).
     .is("deleted_at", null)
     .select("id");
-  if (error) throw new Error(`Failed to remove pass: ${error.message}`);
-  if (!data || data.length === 0) {
+  if (error) {
+    // Never surface the raw database message to the practitioner: with the
+    // service-role client it can name tables, columns and privilege state. Log
+    // the sqlstate + non-clinical ids for operators and return fixed copy.
+    console.error(
+      JSON.stringify({
+        event: "remove_pass_update_failed",
+        table,
+        code: error.code,
+        studioId: studio.id,
+        sessionId,
+        entryId: id,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    throw new Error("Could not remove this pass. Please try again.");
+  }
+  // Exactly one active pass must have changed. Zero means it was already removed
+  // (or never belonged to this session) — a SAFE failure, never a silent success.
+  // More than one is impossible against a primary key, so it is treated as a
+  // hard fault rather than assumed benign.
+  if (!data || data.length !== 1) {
+    if (data && data.length > 1) {
+      console.error(
+        JSON.stringify({
+          event: "remove_pass_multi_row",
+          table,
+          matched: data.length,
+          studioId: studio.id,
+          sessionId,
+          entryId: id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      throw new Error("Could not remove this pass. Please try again.");
+    }
     throw new Error("This pass has already been removed.");
   }
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
