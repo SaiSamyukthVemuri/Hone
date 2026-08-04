@@ -29,9 +29,11 @@
 -- existing appointment DML for now; that revocation is a LATER PR and only after
 -- every remaining writer has migrated.
 --
--- SAFE TO APPLY BEFORE DEPLOY. Both functions are new and reachable only by
+-- SAFE TO APPLY BEFORE DEPLOY. All FIVE functions are new and reachable only by
 -- `service_role`. Until the application caller ships, nothing calls them, so an
--- applied-but-undeployed state is inert. Deployment order is migration-first.
+-- applied-but-undeployed state is inert. Deployment order is migration-first
+-- (NEW app + OLD database returns 42883 and fails closed, with public booking
+-- down for that window).
 --
 -- 25P01 — `supabase db push` does NOT wrap a file in a transaction, so a bare
 -- `SET LOCAL` would emit 25P01 and never arm. This file opens its own
@@ -317,22 +319,34 @@ begin
   v_win_start := public.public_booking_local_to_utc(p_local_date, '00:00'::time, v_tz);
   v_win_end   := v_win_start + interval '36 hours';
 
+  -- PRECISION DOMAIN — JavaScript MILLISECONDS, by truncation, never rounding.
+  --
+  -- Postgres timestamptz keeps MICROseconds; a JS Date keeps milliseconds and
+  -- truncates on parse (.123999 -> .123, verified against date_trunc, which
+  -- truncates identically). A reservation boundary carrying microseconds would
+  -- therefore make the SQL anchor .123456 while the page offers .123 — the page
+  -- would offer a slot the command refused. Every boundary AND every candidate
+  -- is normalised to milliseconds so both engines compare in one domain. This
+  -- must be applied to the conflict boundaries too, not only to the final
+  -- equality, or the overlap filter would still run in a different domain.
+
   -- (A) opening anchor + hourly fallback, walked in LOCAL minutes.
   v_m := v_open_min;
   while v_m + p_duration_minutes <= v_close_min loop
-    v_cands := v_cands || public.public_booking_local_to_utc(
+    v_cands := v_cands || date_trunc('milliseconds', public.public_booking_local_to_utc(
       p_local_date, make_time(v_m / 60, v_m % 60, 0), v_tz
-    );
+    ));
     v_m := v_m + 60;
   end loop;
 
-  -- (B) + (C) conflict-derived anchors.
+  -- (B) + (C) conflict-derived anchors, from millisecond-normalised boundaries.
   for r in
-    select cr.starts_at,
-           case when cr.source_kind = 'appointment'
-                then cr.ends_at + make_interval(mins => v_buffer)
-                else cr.ends_at
-           end as protected_end
+    select date_trunc('milliseconds', cr.starts_at) as starts_at,
+           date_trunc('milliseconds',
+             case when cr.source_kind = 'appointment'
+                  then cr.ends_at + make_interval(mins => v_buffer)
+                  else cr.ends_at
+             end) as protected_end
       from public.studio_calendar_reservations cr
      where cr.studio_id = p_studio_id
        and cr.starts_at < v_win_end
@@ -353,10 +367,12 @@ begin
           where cr2.studio_id = p_studio_id
             and cr2.starts_at < v_win_end
             and cr2.ends_at   > v_win_start
-            and c < (case when cr2.source_kind = 'appointment'
-                          then cr2.ends_at + make_interval(mins => v_buffer)
-                          else cr2.ends_at end)
-            and (c + make_interval(mins => p_duration_minutes + v_buffer)) > cr2.starts_at
+            and c < date_trunc('milliseconds',
+                      case when cr2.source_kind = 'appointment'
+                           then cr2.ends_at + make_interval(mins => v_buffer)
+                           else cr2.ends_at end)
+            and (c + make_interval(mins => p_duration_minutes + v_buffer))
+                  > date_trunc('milliseconds', cr2.starts_at)
        );
 end;
 $$;
@@ -534,21 +550,27 @@ begin
   -- studio_id to match it exactly (see header note 4). The candidate's own
   -- protected interval carries the trailing buffer, as in slots.ts:332-335;
   -- the conflict's protected end is source-aware.
+  -- MILLISECOND DOMAIN on BOTH sides. Normalising only the membership equality
+  -- while leaving this filter in Postgres's microsecond domain reintroduced the
+  -- very mismatch it was meant to close: a reservation ending .456789 made the
+  -- millisecond-normalised candidate .456 overlap it by 789 microseconds, so a
+  -- slot the page offered came back 'time_unavailable'.
   if exists (
     select 1
       from public.studio_calendar_reservations r
      where r.studio_id = p_studio_id
        and tstzrange(
-             p_starts_at,
-             p_ends_at + make_interval(mins => v_buffer),
+             date_trunc('milliseconds', p_starts_at),
+             date_trunc('milliseconds', p_ends_at) + make_interval(mins => v_buffer),
              '[)'
            )
            && tstzrange(
-             r.starts_at,
-             case when r.source_kind = 'appointment'
-                  then r.ends_at + make_interval(mins => v_buffer)
-                  else r.ends_at
-             end,
+             date_trunc('milliseconds', r.starts_at),
+             date_trunc('milliseconds',
+               case when r.source_kind = 'appointment'
+                    then r.ends_at + make_interval(mins => v_buffer)
+                    else r.ends_at
+               end),
              '[)'
            )
   ) then
@@ -566,7 +588,11 @@ begin
              v_local_date,
              (extract(epoch from (p_ends_at - p_starts_at)) / 60)::integer
            ) c
-     where c = p_starts_at
+     -- Both sides in the millisecond domain (see the generator's note). The
+     -- candidates are already normalised; p_starts_at arrives from a JS ISO
+     -- string and so is already millisecond-precise, but it is truncated here
+     -- too so a direct caller cannot smuggle microseconds past the comparison.
+     where c = date_trunc('milliseconds', p_starts_at)
   ) then
     return 'not_a_public_slot';
   end if;
@@ -576,7 +602,7 @@ end;
 $$;
 
 comment on function public.validate_public_booking_slot(uuid, uuid, uuid, timestamptz, timestamptz) is
-  'Public-surface availability contract. Enforces practitioner membership, service eligibility, full-day blockouts, the working-hours window and shadow-row collisions in BOTH capacity modes, unlike validate_appointment_availability which fences those checks behind practitioner capacity. Validates a submitted instant; never re-derives the offer grid. Service-role only.';
+  'Public-surface availability contract. Enforces practitioner membership, service eligibility, full-day blockouts, the working-hours window and shadow-row collisions in BOTH capacity modes, unlike validate_appointment_availability which fences those checks behind practitioner capacity. RE-DERIVES the current public slot candidate set under the command''s lock protocol and requires exact millisecond-normalised membership. Service-role only.';
 
 -- ---------------------------------------------------------------------------
 -- 4. public.create_public_appointment
@@ -626,6 +652,9 @@ declare
   v_local_date  date;
   v_today       date;
   v_created_at  timestamptz;
+  v_owner_count integer;
+  v_win_start   timestamptz;
+  v_win_end     timestamptz;
 begin
   -- Lock order matches create_internal_appointment_v2 (0152:13-23): the studio
   -- row first, then the studio capacity advisory lock, then the service row.
@@ -716,20 +745,78 @@ begin
 
   v_ends_at := p_starts_at + make_interval(mins => v_service_dur);
 
-  -- Practitioner assignment is SERVER-DERIVED and unchanged from today's
-  -- behaviour: the studio's active owner (app/book/[slug]/actions.ts:761-767).
-  -- The public surface does not offer practitioner selection, and this command
-  -- takes no practitioner parameter, so it cannot be asked to.
-  -- May be NULL when the studio has no active owner. That is NOT an error: the
-  -- pre-0170 route used `owner?.id ?? null` and booked anyway, and refusing
-  -- would silently take public booking down for such a studio.
-  select pr.id into v_owner_id
+  -- Practitioner assignment is SERVER-DERIVED. The public surface offers no
+  -- practitioner selection and this command takes no practitioner parameter, so
+  -- it cannot be asked to assign one.
+  --
+  -- EXACTLY ONE ACTIVE OWNER, OR NULL. The schema does not guarantee a single
+  -- active owner per studio. An earlier revision used
+  -- `order by created_at asc limit 1`, which silently invented a product rule
+  -- ("the oldest active owner receives all public bookings") that nothing else
+  -- in the system declares, and which would decide appointment attribution, the
+  -- notification recipient and the client-facing practitioner name by row
+  -- creation order.
+  --
+  -- The pre-0170 route used `.maybeSingle()`, which ERRORS on multiple rows and
+  -- left `owner` null — i.e. it already treated ambiguity as "no practitioner".
+  -- This reproduces that outcome deterministically without failing the booking:
+  --   0 active owners -> NULL   (unchanged; a studio with no owner still books)
+  --   1 active owner  -> that owner
+  --   2+ active owners -> NULL  (ambiguous; no arbitrary winner is invented)
+  select count(*) into v_owner_count
     from public.practitioners pr
    where pr.studio_id = p_studio_id
      and pr.active = true
-     and pr.role = 'owner'
-   order by pr.created_at asc
-   limit 1;
+     and pr.role = 'owner';
+  if v_owner_count = 1 then
+    select pr.id into v_owner_id
+      from public.practitioners pr
+     where pr.studio_id = p_studio_id
+       and pr.active = true
+       and pr.role = 'owner';
+  else
+    v_owner_id := null;
+  end if;
+
+  -- SERIALIZE AGAINST APPOINTMENT-SOURCE MUTATION (the candidate-set race).
+  --
+  -- Structural calendar writers (timed blocks, breaks, blockouts, availability)
+  -- all take the studio capacity advisory lock this command already holds. The
+  -- appointment LIFECYCLE writers do not: public_cancel_appointment_with_token,
+  -- practitioner_cancel_appointment, mark_appointment_complete,
+  -- mark_appointment_no_show and reschedule_appointment each lock only their own
+  -- appointment row and never acquire the advisory lock at all.
+  --
+  -- That left a real race. A conflict-derived candidate exists only BECAUSE some
+  -- appointment generates it: an appointment ending 14:00 with a 30-minute
+  -- buffer is what makes 14:30 an offered start. If that appointment is
+  -- cancelled after this command validated membership but before it inserted,
+  -- 14:30 stops being a public candidate — and nothing else rejects it, because
+  -- with the conflict gone there is no overlap for the GiST exclusion and no gap
+  -- for HB001. The command would commit an appointment at a time the final
+  -- candidate set does not offer.
+  --
+  -- So the appointment rows that can affect this candidate window are locked
+  -- FOR UPDATE, in deterministic id order, BEFORE the candidate set is derived.
+  -- A concurrent cancellation of one of them now blocks until this transaction
+  -- commits; a cancellation that gets there first makes the candidate vanish and
+  -- membership correctly refuses.
+  --
+  -- LOCK ORDER — studios -> advisory -> services -> appointments. This is the
+  -- same order move_or_reassign_appointment uses (studios -> advisory -> appts),
+  -- and NO path in the tree acquires the advisory lock AFTER an appointment row
+  -- lock, so this introduces no cycle. Only the window's own sources are locked,
+  -- never the whole table.
+  v_win_start := public.public_booking_local_to_utc(v_local_date, '00:00'::time, v_tz);
+  v_win_end   := v_win_start + interval '36 hours';
+  perform 1
+     from public.appointments a
+    where a.studio_id = p_studio_id
+      and a.status in ('confirmed', 'completed')
+      and a.starts_at < v_win_end
+      and a.ends_at   > v_win_start - make_interval(mins => 24 * 60)
+    order by a.id
+      for update;
 
   v_avail := public.validate_public_booking_slot(
     p_studio_id, v_owner_id, p_service_id, p_starts_at, v_ends_at
@@ -828,27 +915,52 @@ commit;
 -- READ-ONLY POST-APPLY VERIFICATION (run manually; nothing below is executed)
 -- ---------------------------------------------------------------------------
 --
--- -- both functions exist, are SECURITY DEFINER, and pin an empty search_path
--- select p.proname, p.prosecdef, p.proconfig
+-- This migration creates FIVE functions. Verify every one of them.
+--
+-- -- 1. all five exist, are SECURITY DEFINER, pin an empty search_path, and
+-- --    carry the exact identity arguments this migration granted.
+-- select p.proname,
+--        pg_get_function_identity_arguments(p.oid) as identity_args,
+--        p.prosecdef                               as security_definer,
+--        array_to_string(p.proconfig, ',')         as config
 --   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 --  where n.nspname = 'public'
---    and p.proname in ('create_public_appointment', 'validate_public_booking_slot');
+--    and p.proname in ('public_booking_tz_offset_minutes',
+--                      'public_booking_local_to_utc',
+--                      'public_booking_slot_candidates',
+--                      'validate_public_booking_slot',
+--                      'create_public_appointment')
+--  order by 1;
+-- -- EXPECT 5 rows; security_definer = t; config = search_path="" for each; and
+-- --   public_booking_tz_offset_minutes  timestamp with time zone, text
+-- --   public_booking_local_to_utc       date, time without time zone, text
+-- --   public_booking_slot_candidates    uuid, date, integer
+-- --   validate_public_booking_slot      uuid, uuid, uuid, timestamp with time zone, timestamp with time zone
+-- --   create_public_appointment         uuid, uuid, uuid, timestamp with time zone, text, text, text
 --
--- -- EXECUTE reaches service_role ONLY
+-- -- 2. EXECUTE reaches service_role ONLY, for all five.
 -- select p.proname, r.rolname,
 --        has_function_privilege(r.oid, p.oid, 'EXECUTE') as can_execute
 --   from pg_proc p
 --   join pg_namespace n on n.oid = p.pronamespace
 --   cross join pg_roles r
 --  where n.nspname = 'public'
---    and p.proname in ('create_public_appointment', 'validate_public_booking_slot')
+--    and p.proname in ('public_booking_tz_offset_minutes',
+--                      'public_booking_local_to_utc',
+--                      'public_booking_slot_candidates',
+--                      'validate_public_booking_slot',
+--                      'create_public_appointment')
 --    and r.rolname in ('anon', 'authenticated', 'service_role')
 --  order by 1, 2;
+-- -- EXPECT 15 rows: anon = f and authenticated = f everywhere,
+-- --                 service_role = t everywhere.
 --
--- -- appointment table grants are UNCHANGED by this migration
+-- -- 3. appointment table grants are UNCHANGED by this migration.
 -- select r.rolname,
 --        has_table_privilege(r.oid, 'public.appointments', 'INSERT') as ins,
 --        has_table_privilege(r.oid, 'public.appointments', 'UPDATE') as upd,
 --        has_table_privilege(r.oid, 'public.appointments', 'DELETE') as del
 --   from pg_roles r where r.rolname in ('anon', 'authenticated');
+-- -- EXPECT both roles still TRUE on all three. This migration revokes NOTHING;
+-- -- the appointment DML revocation is a LATER PR.
 -- ---------------------------------------------------------------------------

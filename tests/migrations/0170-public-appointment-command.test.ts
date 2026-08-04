@@ -248,6 +248,62 @@ describe("0170 — exact public-slot membership", () => {
   });
 });
 
+describe("0170 — serialization, owner rule and precision domain", () => {
+  it("locks the window's appointment SOURCE rows before deriving candidates", () => {
+    // Cancellation/completion/no-show/reschedule lock only their own appointment
+    // row and never take the advisory lock, so the candidate set could change
+    // between validation and insert. The sources are now locked first.
+    expect(FLAT).toMatch(
+      /from public\.appointments a where a\.studio_id = p_studio_id[\s\S]{0,220}order by a\.id for update/,
+    );
+    const cmd = CODE.slice(CODE.indexOf("create or replace function public.create_public_appointment("));
+    const lockIdx = cmd.indexOf("order by a.id");
+    const validateIdx = cmd.indexOf("public.validate_public_booking_slot(");
+    expect(lockIdx, "sources must be locked").toBeGreaterThan(-1);
+    expect(lockIdx, "…BEFORE the candidate set is derived").toBeLessThan(validateIdx);
+  });
+
+  it("keeps the established lock order: studios -> advisory -> services -> appointments", () => {
+    const cmd = CODE.slice(CODE.indexOf("create or replace function public.create_public_appointment("));
+    const studios = cmd.indexOf("from public.studios s");
+    const advisory = cmd.indexOf("acquire_studio_capacity_lock");
+    const services = cmd.indexOf("from public.services sv");
+    const appts = cmd.indexOf("from public.appointments a");
+    expect(studios).toBeGreaterThan(-1);
+    expect(advisory).toBeGreaterThan(studios);
+    expect(services).toBeGreaterThan(advisory);
+    expect(appts, "appointments last — matching move_or_reassign_appointment").toBeGreaterThan(services);
+  });
+
+  it("does NOT lock the whole appointments table", () => {
+    expect(CODE).not.toMatch(/lock table/i);
+    expect(FLAT).toContain("a.studio_id = p_studio_id");
+  });
+
+  it("assigns a practitioner ONLY when there is exactly one active owner", () => {
+    expect(FLAT).toMatch(/select count\(\*\) into v_owner_count/);
+    expect(FLAT).toMatch(/if v_owner_count = 1 then/);
+    expect(FLAT).toMatch(/else v_owner_id := null;/);
+    // The invented "oldest owner wins" rule must not return.
+    expect(CODE).not.toMatch(/order by pr\.created_at/);
+  });
+
+  it("normalises every timestamp comparison to the millisecond domain", () => {
+    // Not just the final equality — the conflict boundaries too, or the filter
+    // runs in a different domain than the candidates.
+    expect(FLAT).toContain("c = date_trunc('milliseconds', p_starts_at)");
+    expect(FLAT).toContain("date_trunc('milliseconds', cr.starts_at)");
+    expect(FLAT).toContain("date_trunc('milliseconds', r.starts_at)");
+    const truncs = (CODE.match(/date_trunc\('milliseconds'/g) ?? []).length;
+    expect(truncs, "candidates, overlap filter and validator must all normalise").toBeGreaterThanOrEqual(8);
+  });
+
+  it("truncates rather than rounds", () => {
+    expect(CODE).not.toMatch(/round\(/i);
+    expect(PROSE).toMatch(/truncation, never rounding/i);
+  });
+});
+
 describe("0170 — privileges", () => {
   it("revokes EXECUTE from public, anon, authenticated AND service_role by name", () => {
     for (const fn of FUNCTIONS) {
@@ -339,6 +395,20 @@ describe("0170 — prose records the decisions a reviewer must be able to check"
     expect(PROSE).toMatch(/RE-DERIVES THE OFFER GRID AND REQUIRES EXACT MEMBERSHIP/i);
     expect(PROSE).toMatch(/LOCAL -> UTC IS PORTED/i);
     expect(PROSE).toMatch(/SERVICE END, NOT THE BUFFERED END/i);
+  });
+
+  it("no longer claims the validator never re-derives the grid", () => {
+    expect(SQL).not.toMatch(/never re-derives the offer grid/i);
+    expect(SQL).toMatch(/RE-DERIVES the current public slot candidate set/);
+  });
+
+  it("has no stale two-function language and verifies all FIVE", () => {
+    expect(PROSE).not.toMatch(/[Bb]oth functions are new/);
+    expect(PROSE).toMatch(/All FIVE functions are new/);
+    for (const fn of FUNCTIONS) {
+      expect(PROSE, `${fn} must appear in the post-apply verification`).toContain(fn);
+    }
+    expect(PROSE).toMatch(/EXPECT 15 rows/);
   });
 
   it("states that this migration does not revoke appointment table grants", () => {

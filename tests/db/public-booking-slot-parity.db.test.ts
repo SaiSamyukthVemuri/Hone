@@ -421,3 +421,138 @@ describe("regressions from adversarial review", () => {
     expect(r.rows[0].v).toBe("invalid_time");
   });
 });
+
+describe("precision domain — JavaScript milliseconds, by truncation", () => {
+  // Postgres timestamptz keeps MICROseconds; a JS Date keeps milliseconds and
+  // truncates on parse. A reservation boundary carrying microseconds would make
+  // the SQL anchor .123456 while the page offers .123 — the page would offer a
+  // slot the command refused. Both engines are normalised to milliseconds.
+  //
+  // NOTE these tests deliberately inspect the RAW textual timestamp too. An
+  // earlier version of this file compared only `new Date(v).getTime()`, which
+  // truncates the SQL value before the comparison and therefore HID the very
+  // mismatch it was supposed to catch.
+
+  /** The SQL candidates as raw microsecond-precision text. */
+  async function sqlCandidateText(f: Fixture, dateStr: string): Promise<string[]> {
+    const r = await adminQuery(
+      `select to_char(c at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') as t
+         from public.public_booking_slot_candidates($1,$2::date,$3) c order by c`,
+      [f.studioId, dateStr, f.duration],
+    );
+    return r.rows.map((row) => row.t as string);
+  }
+
+  it("the SQL function itself returns MILLISECOND-normalised values", async () => {
+    const f = await seed("us-normalised", { buffer: 30 });
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() + 9);
+    const d = day.toISOString().slice(0, 10);
+    // A timed block whose end carries microseconds.
+    await adminQuery(
+      `insert into public.studio_timed_blocks (studio_id,starts_at,ends_at,category,practitioner_id)
+       values ($1,
+               public.public_booking_local_to_utc($2::date,'11:00'::time,$3),
+               public.public_booking_local_to_utc($2::date,'12:00'::time,$3) + interval '123456 microseconds',
+               'admin', null)`,
+      [f.studioId, d, f.tz],
+    );
+    const texts = await sqlCandidateText(f, d);
+    expect(texts.length).toBeGreaterThan(0);
+    for (const t of texts) {
+      expect(t.slice(-3), `${t} must have zero microsecond remainder`).toBe("000");
+    }
+  });
+
+  it("an APPOINTMENT conflict with microseconds keeps TS and SQL in agreement", async () => {
+    const f = await seed("us-appointment", { buffer: 30 });
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() + 9);
+    const d = day.toISOString().slice(0, 10);
+    const clientId = (
+      await adminQuery(
+        `insert into public.clients (id,studio_id,name,email) values (gen_random_uuid(),$1,'C',$2) returning id`,
+        [f.studioId, `c-${f.studioId.slice(0, 8)}@harness.local`],
+      )
+    ).rows[0].id;
+    const offered = await tsOffered(f, d);
+    const r = await adminQuery(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [f.studioId, clientId, f.serviceId, new Date(offered[2]).toISOString(), (randomUUID() + randomUUID()).replace(/-/g, "")],
+    );
+    expect(r.rows[0].result).toBe("created");
+    // Push microseconds onto the committed appointment's boundaries.
+    await adminQuery(
+      `update public.appointments
+          set starts_at = starts_at + interval '654321 microseconds',
+              ends_at   = ends_at   + interval '654321 microseconds'
+        where id = $1`,
+      [r.rows[0].appointment_id],
+    );
+    const [ts, sql] = [await tsOffered(f, d), await sqlCandidates(f, d)];
+    expect(fmt(sql)).toEqual(fmt(ts));
+    for (const t of await sqlCandidateText(f, d)) expect(t.slice(-3)).toBe("000");
+  });
+
+  it("a TIMED BLOCK with microseconds keeps TS and SQL in agreement", async () => {
+    const f = await seed("us-block", { buffer: 30 });
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() + 10);
+    const d = day.toISOString().slice(0, 10);
+    await adminQuery(
+      `insert into public.studio_timed_blocks (studio_id,starts_at,ends_at,category,practitioner_id)
+       values ($1,
+               public.public_booking_local_to_utc($2::date,'11:00'::time,$3) + interval '111111 microseconds',
+               public.public_booking_local_to_utc($2::date,'12:30'::time,$3) + interval '777777 microseconds',
+               'admin', null)`,
+      [f.studioId, d, f.tz],
+    );
+    const [ts, sql] = [await tsOffered(f, d), await sqlCandidates(f, d)];
+    expect(fmt(sql)).toEqual(fmt(ts));
+  });
+
+  it("the BACKWARD-packed anchor normalises identically in both engines", async () => {
+    const f = await seed("us-backward", { buffer: 30 });
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() + 11);
+    const d = day.toISOString().slice(0, 10);
+    // A conflict whose START carries microseconds drives conflict.start - dur - buf.
+    await adminQuery(
+      `insert into public.studio_timed_blocks (studio_id,starts_at,ends_at,category,practitioner_id)
+       values ($1,
+               public.public_booking_local_to_utc($2::date,'13:00'::time,$3) + interval '999999 microseconds',
+               public.public_booking_local_to_utc($2::date,'14:00'::time,$3),
+               'admin', null)`,
+      [f.studioId, d, f.tz],
+    );
+    const [ts, sql] = [await tsOffered(f, d), await sqlCandidates(f, d)];
+    expect(fmt(sql)).toEqual(fmt(ts));
+    for (const t of await sqlCandidateText(f, d)) expect(t.slice(-3)).toBe("000");
+  });
+
+  it("the exact ISO string the loader offers is ACCEPTED by the validator", async () => {
+    const f = await seed("us-membership", { buffer: 30 });
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() + 12);
+    const d = day.toISOString().slice(0, 10);
+    await adminQuery(
+      `insert into public.studio_timed_blocks (studio_id,starts_at,ends_at,category,practitioner_id)
+       values ($1,
+               public.public_booking_local_to_utc($2::date,'11:00'::time,$3),
+               public.public_booking_local_to_utc($2::date,'12:00'::time,$3) + interval '456789 microseconds',
+               'admin', null)`,
+      [f.studioId, d, f.tz],
+    );
+    const offered = await tsOffered(f, d);
+    expect(offered.length).toBeGreaterThan(0);
+    for (const ms of offered) {
+      const iso = new Date(ms).toISOString(); // exactly what the form posts
+      const v = await adminQuery(
+        `select public.validate_public_booking_slot($1,$2,$3,$4::timestamptz,
+                 $4::timestamptz + make_interval(mins => $5)) as v`,
+        [f.studioId, f.ownerId, f.serviceId, iso, f.duration],
+      );
+      expect(v.rows[0].v, `${iso} is offered and must be accepted`).toBe("ok");
+    }
+  });
+});

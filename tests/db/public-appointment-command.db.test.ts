@@ -343,7 +343,7 @@ describe("the caller cannot request privileged behaviour", () => {
     }
   });
 
-  it("always assigns the studio's active owner", async () => {
+  it("assigns the single active owner", async () => {
     const s = await seedPublicStudio("owner-assign");
     // A second, non-owner practitioner must never be chosen.
     const other = randomUUID();
@@ -640,5 +640,100 @@ describe("practitioner attribution is resolved by the command, under the lock", 
     const r = await book(s, at(12, 10));
     expect(r.result).toBe("created");
     expect(r.practitioner_id).toBeNull();
+  });
+});
+
+describe("owner ambiguity — exactly one active owner, otherwise NULL", () => {
+  // The schema does not guarantee one active owner per studio. An earlier
+  // revision used `order by created_at asc limit 1`, silently inventing a
+  // product rule ("the oldest active owner receives all public bookings") that
+  // nothing declares and that would decide attribution, the notification
+  // recipient and the client-facing name by row creation order. The pre-0170
+  // route used `.maybeSingle()`, which errors on multiple rows and left the
+  // practitioner null — i.e. it already treated ambiguity as "no practitioner".
+
+  async function addOwner(studioId: string, label: string, createdAt?: string) {
+    const id = randomUUID();
+    const user = randomUUID();
+    const email = `${label}-${id.slice(0, 8)}@harness.local`;
+    await adminQuery(`insert into auth.users (id,email) values ($1,$2)`, [user, email]);
+    await adminQuery(
+      `insert into public.practitioners (id,studio_id,user_id,display_name,email,role,active,created_at)
+       values ($1,$2,$3,$4,$5,'owner',true, coalesce($6::timestamptz, now()))`,
+      [id, studioId, user, `Owner ${label}`, email, createdAt ?? null],
+    );
+    return id;
+  }
+
+  it("ZERO active owners -> books with a NULL practitioner", async () => {
+    const s = await seedPublicStudio("owners-zero");
+    await adminQuery(`update public.practitioners set active=false where studio_id=$1`, [
+      s.studioId,
+    ]);
+    const r = await book(s, at(13, 10));
+    expect(r.result).toBe("created");
+    expect(r.practitioner_id).toBeNull();
+  });
+
+  it("EXACTLY ONE active owner -> assigns that owner", async () => {
+    const s = await seedPublicStudio("owners-one");
+    const r = await book(s, at(13, 12));
+    expect(r.result).toBe("created");
+    expect(r.practitioner_id).toBe(s.ownerId);
+  });
+
+  it("TWO active owners -> books with a NULL practitioner, never an arbitrary winner", async () => {
+    const s = await seedPublicStudio("owners-two");
+    const second = await addOwner(s.studioId, "second");
+    const r = await book(s, at(13, 14));
+    expect(r.result, "ambiguity must not fail the booking").toBe("created");
+    expect(r.practitioner_id, "no owner may be arbitrarily chosen").toBeNull();
+    expect(r.practitioner_id).not.toBe(s.ownerId);
+    expect(r.practitioner_id).not.toBe(second);
+  });
+
+  it("created_at ordering does NOT decide the winner", async () => {
+    // The defective rule was `order by created_at asc limit 1`. Seed a SECOND
+    // owner that is deliberately OLDER than the first; the result must still be
+    // null, not the older row.
+    const s = await seedPublicStudio("owners-created-at");
+    const older = await addOwner(s.studioId, "older", "2020-01-01T00:00:00Z");
+    const r = await book(s, at(13, 16));
+    expect(r.result).toBe("created");
+    expect(r.practitioner_id, "the oldest owner must NOT win").toBeNull();
+    expect(r.practitioner_id).not.toBe(older);
+  });
+
+  it("insertion order does NOT decide the winner", async () => {
+    const s = await seedPublicStudio("owners-insert-order");
+    const a = await addOwner(s.studioId, "a");
+    const b = await addOwner(s.studioId, "b");
+    const r = await book(s, at(13, 18));
+    expect(r.practitioner_id).toBeNull();
+    expect([s.ownerId, a, b]).not.toContain(r.practitioner_id);
+  });
+
+  it("deactivating back down to one owner restores assignment", async () => {
+    const s = await seedPublicStudio("owners-back-to-one");
+    const extra = await addOwner(s.studioId, "extra");
+    expect((await book(s, at(14, 10))).practitioner_id).toBeNull();
+    await adminQuery(`update public.practitioners set active=false where id=$1`, [extra]);
+    const r = await book(s, at(14, 12));
+    expect(r.practitioner_id).toBe(s.ownerId);
+  });
+
+  it("a non-owner practitioner never counts toward the owner set", async () => {
+    const s = await seedPublicStudio("owners-with-member");
+    const user = randomUUID();
+    const member = randomUUID();
+    const email = `member-${member.slice(0, 8)}@harness.local`;
+    await adminQuery(`insert into auth.users (id,email) values ($1,$2)`, [user, email]);
+    await adminQuery(
+      `insert into public.practitioners (id,studio_id,user_id,display_name,email,role,active)
+       values ($1,$2,$3,'Member',$4,'practitioner',true)`,
+      [member, s.studioId, user, email],
+    );
+    const r = await book(s, at(14, 14));
+    expect(r.practitioner_id, "one OWNER plus a member is still unambiguous").toBe(s.ownerId);
   });
 });
