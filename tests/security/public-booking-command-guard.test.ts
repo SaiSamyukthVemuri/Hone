@@ -162,3 +162,22 @@ describe("policy split — what the command does NOT enforce", () => {
     expect(args).not.toContain("clientType");
   });
 });
+
+describe("the parity harness stays runnable on the CI Node version", () => {
+  const PARITY = readFileSync("tests/db/public-booking-slot-parity.db.test.ts", "utf8");
+
+  it("does not construct a full supabase-js client", () => {
+    // `createClient` from @supabase/supabase-js builds a RealtimeClient in its
+    // constructor, which needs a native WebSocket. CI runs Node 20, which has
+    // none, so the whole suite died at import there ("0 test") while passing on
+    // a newer local Node. PostgrestClient satisfies getAvailableSlots, adds no
+    // dependency and opens no socket.
+    expect(PARITY).not.toMatch(/^import \{[^}]*\bcreateClient\b[^}]*\} from "@supabase\/supabase-js"/m);
+    expect(PARITY).toMatch(/import \{ PostgrestClient \} from "@supabase\/postgrest-js"/);
+  });
+
+  it("imports SupabaseClient as a TYPE only, so nothing is loaded at runtime", () => {
+    const valueImport = /^import\s+(?!type\b)[^;]*from "@supabase\/supabase-js"/m;
+    expect(PARITY).not.toMatch(valueImport);
+  });
+});

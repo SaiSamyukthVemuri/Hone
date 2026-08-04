@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createClient } from "@supabase/supabase-js";
+import { PostgrestClient } from "@supabase/postgrest-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { adminQuery, closePool } from "./helpers/harness";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "../../e2e/helpers/local-env";
@@ -21,9 +22,18 @@ import { randomUUID } from "node:crypto";
 // The three anchor families come from lib/booking/slots.ts:300-319 and the
 // fallback step is FALLBACK_GRANULARITY_MINUTES = 60 (slots.ts:115) — NOT 15.
 
-const supabase = createClient(E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+// A PostgREST client, NOT a full supabase-js client. `createClient` from
+// @supabase/supabase-js constructs a RealtimeClient in its constructor, which
+// needs a native WebSocket — absent on Node 20, which CI runs. That made this
+// whole file die at import time in CI ("0 test") while passing locally on a
+// newer Node. getAvailableSlots only ever calls `.from(...)`, so the PostgREST
+// client alone satisfies it, adds no dependency, and starts no socket.
+const supabase = new PostgrestClient(`${E2E_SUPABASE_URL}/rest/v1`, {
+  headers: {
+    apikey: E2E_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${E2E_SERVICE_ROLE_KEY}`,
+  },
+}) as unknown as SupabaseClient;
 
 type Fixture = {
   studioId: string;
