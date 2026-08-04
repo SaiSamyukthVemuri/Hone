@@ -1,13 +1,13 @@
 {
   "$comment": [
-    "CANONICAL CURRENT-STATE RECORD — the single source of truth for hosted migration state.",
+    "CANONICAL CURRENT-STATE RECORD \u2014 the single source of truth for hosted migration state.",
     "Repository state (repo max, next free number, totals) is DERIVED from supabase/migrations/*.sql",
     "by scripts/migration-state.mjs and must never be written here or duplicated in docs.",
     "Hosted state cannot be derived from filenames, so it is declared here ONCE and referenced",
     "everywhere else. Update this file in the same change that records a production apply."
   ],
-  "hosted_migration_max": "0169",
-  "hosted_applied_at": "2026-08-03T18:25:51Z",
-  "hosted_note": "0169_revoke_authenticated_clinical_direct_dml.sql applied 2026-08-03T18:25:41Z-18:25:51Z. L18 FINAL: revokes INSERT/UPDATE/DELETE from authenticated on sessions, session_blocks, session_block_areas, electrolysis_entries, laser_entries and treatment_images - authenticated write grants 12 -> 0. authenticated SELECT RETAINED on all six; service_role, anon and PUBLIC unchanged; all 16 command EXECUTE grants unchanged. L18 is now CLOSED at the database layer. See docs/production/migration-ledger.md for the full apply record and frozen checksums.",
+  "hosted_migration_max": "0170",
+  "hosted_applied_at": "2026-08-04T21:27:03Z",
+  "hosted_note": "0170_public_appointment_command.sql applied 2026-08-04T21:26:58Z-21:27:03Z. Appointment boundary PR 1: adds five service_role-only SECURITY DEFINER functions (public_booking_tz_offset_minutes, public_booking_local_to_utc, public_booking_slot_candidates, validate_public_booking_slot, create_public_appointment) so the unauthenticated public booking route creates the appointment AND its mandatory appointment_audit row in one transaction, with exact public-slot membership, exact-millisecond input precision and one-snapshot owner resolution. ADDITIVE ONLY - no table grant revoked, no policy/table/trigger/index change, no backfill, no studio flag change; appointments INSERT/UPDATE/DELETE remain granted to anon and authenticated. Verified read-only post-apply: hosted max 0170 (0170 present exactly once), all five functions SECURITY DEFINER with search_path='' and EXECUTE granted to service_role only (PUBLIC/anon/authenticated false, ACL postgres=X/postgres,service_role=X/postgres), anon and authenticated calls denied 42501, and every business-row count identical before and after (appointments 135, audit 213, reservations 115, outbox 1, clients 45, studios 5). Merged as add6770aec9c6dd826851c8b6a5ae02370a3b7b1. See docs/production/migration-ledger.md.",
   "ledger": "docs/production/migration-ledger.md"
 }
