@@ -68,6 +68,46 @@ The "Next available day" button on `/book/<slug>` calls a helper that walks forw
 - Optional treatment-time hint line (`show_treatment_time_to_clients`).
 - Owner-of-studio CC-style "new booking" notification email (configurable per studio via `notify_practitioner_on_new_booking`; PR #47).
 
+### How the appointment is written (migration 0170)
+
+Public booking does **not** insert the appointment row itself. `app/book/[slug]/actions.ts`
+calls one command, `public.create_public_appointment(...)`, which creates the appointment **and**
+its `appointment_audit` row in a single transaction.
+
+Before 0170 the route inserted the appointment and then wrote the audit row ~80 lines later in a
+second statement whose error was never inspected, so a confirmed public booking could exist with
+no audit trail. Production carries exactly one such appointment.
+
+Authoritative values are derived inside the command from current database state, not accepted
+from the caller: duration comes from the **locked** `services` row, the end time from that
+duration, `status` is a literal `confirmed`, and the practitioner is the studio's active owner
+(unchanged behaviour — the public surface still offers no practitioner selection). The command
+has no parameter for a custom duration, an end time, a status, an owner-only outside-hours
+override, or arbitrary audit details.
+
+The command also enforces the public availability contract itself — practitioner membership,
+service eligibility, full-day blockouts, the working-hours window, timed blocks, recurring-break
+occurrences and buffer/overlap — because the shared `validate_appointment_availability` fences
+those checks behind `if v_cap then` and is therefore a no-op for the capacity-OFF studios that
+actually take public bookings. It validates the **submitted instant** rather than re-deriving the
+offer grid, and only ever projects UTC → local, so it cannot diverge from the TypeScript slot
+engine on a DST edge. The GiST exclusions and the `HB001` buffer trigger remain the final
+race-safe authority; the command deliberately does not catch `23P01`.
+
+Both functions are `SECURITY DEFINER`, `search_path = ''`, and **service_role only** — `anon` and
+`authenticated` cannot execute either.
+
+**What this does NOT do.** `authenticated` still holds direct `INSERT`/`UPDATE`/`DELETE` on
+`appointments`; that revocation is a later PR and only after every remaining writer has migrated.
+Other narrow appointment writers still exist (postcare email-state columns on the practitioner
+surface). **Public reschedule is the next appointment-boundary gap**: `reschedule_appointment`
+performs no availability validation of its own and does not populate the reschedule lineage
+columns. The appointment DML boundary is **not** closed.
+
+> Migration 0170 is **repo-only and unapplied** at the time of writing — hosted max remains 0169
+> (`docs/production/migration-state.json` is the canonical record). Merging the code alone enables
+> no production capability; the command must be applied during an authorized window first.
+
 ## Cancel / reschedule / manage
 
 | URL | Surface |

@@ -240,10 +240,12 @@ describe("public booking action calls the helper after appointment insert", () =
     expect(ACTIONS).toMatch(/eventType:\s*"new_booking"/);
   });
 
-  it("the call appears AFTER the appointment INSERT block (created.id is in scope)", () => {
-    // The INSERT is `.from("appointments").insert({ ... }).select("*").single()`.
-    // The helper call must appear after that block.
-    const insertIdx = ACTIONS.indexOf('.from("appointments")');
+  it("the call appears AFTER the appointment is created (createdId is in scope)", () => {
+    // Migration 0170: the appointment is created by the
+    // create_public_appointment command rather than a direct INSERT, so the RPC
+    // call is the anchor. The invariant is unchanged — the notification is a
+    // post-commit side effect.
+    const insertIdx = ACTIONS.indexOf('"create_public_appointment"');
     const helperIdx = ACTIONS.indexOf("recordPractitionerNotification({");
     expect(insertIdx).toBeGreaterThan(-1);
     expect(helperIdx).toBeGreaterThan(-1);
