@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // L18 FINAL — migration 0169 source contract.
@@ -27,12 +26,10 @@ const TABLES = [
   "treatment_images",
 ] as const;
 
-describe("0169 — migration state", () => {
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0169")).toBe(true);
-    expect(versionsAbove("0169")).toEqual([]);
-  });
-});
+// The "nothing above me" tripwire moved to the CURRENT maximum's own test when
+// 0170 landed (tests/migrations/0170-public-appointment-command.test.ts), which
+// is the repository convention: only the current max asserts isRepoMax, so a new
+// migration does not require a sweep of every older per-migration test.
 
 describe("0169 — exactly six authenticated table revocations", () => {
   it("revokes INSERT, UPDATE and DELETE on each of the six tables, by name", () => {

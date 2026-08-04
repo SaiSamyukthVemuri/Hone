@@ -757,47 +757,108 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     }
   }
 
-  // Find the owner practitioner to attribute the appointment to + notify.
-  const { data: owner } = await admin
-    .from("practitioners")
-    .select("id, display_name, email")
-    .eq("studio_id", studio.id)
-    .eq("active", true)
-    .eq("role", "owner")
-    .maybeSingle();
-
   const appointmentToken = generateAppointmentToken();
-  const { data: created, error: insertErr } = await admin
-    .from("appointments")
-    .insert({
-      studio_id: studio.id,
-      practitioner_id: owner?.id ?? null,
-      client_id: clientId,
-      service_id: serviceId,
-      starts_at: start.toISOString(),
-      ends_at: end.toISOString(),
-      duration_minutes: service.default_duration_minutes,
-      status: "confirmed",
-      notes,
-      // PR #260: store ONLY the hash at rest. The raw appointmentToken
-      // is used in-memory below to build the confirmation links, then
-      // discarded; the column-based raw token is no longer persisted.
-      cancellation_token_hash: hashAppointmentToken(appointmentToken),
-      // PR #163 (migration 0069). Stored as a canonical lowercase
-      // value; null when the visitor declined to answer the
-      // optional "How did you hear about us?" dropdown.
-      referral_source: referralSource,
-    })
-    .select("*")
-    .single();
-  if (insertErr || !created) {
+  // Migration 0170. The appointment and its MANDATORY appointment_audit row are
+  // created by one command, in one transaction. Previously this route inserted
+  // the appointment here and the audit row ~80 lines later in a second
+  // statement whose error was discarded, so a confirmed public booking could
+  // exist with no audit trail — production carries exactly one such row.
+  //
+  // Everything authoritative is derived inside the command from current
+  // database state: duration from the LOCKED service row, end time from that
+  // duration, status, the owner practitioner, and the capacity/buffer columns
+  // (trigger-derived). There is no parameter for a custom duration, an
+  // outside-hours override, or a status, so this caller cannot request one. The
+  // command re-validates studio/client/service tenancy and the full public
+  // availability contract under the studio lock, independently of the slot
+  // re-check above.
+  const { data: rpcRows, error: rpcErr } = await admin.rpc(
+    "create_public_appointment",
+    {
+      p_studio_id: studio.id,
+      p_client_id: clientId,
+      p_service_id: serviceId,
+      p_starts_at: start.toISOString(),
+      p_cancellation_token_hash: hashAppointmentToken(appointmentToken),
+      p_notes: notes,
+      p_referral_source: referralSource,
+    },
+  );
+  const commandRow = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
+  const commandResult = (commandRow?.result as string | undefined) ?? null;
+  const createdId =
+    commandResult === "created" && commandRow?.appointment_id
+      ? (commandRow.appointment_id as string)
+      : null;
+  // Authoritative row timestamp, straight from the command's own INSERT.
+  const createdAtIso = (commandRow?.created_at as string | undefined) ?? null;
+
+  // Expected business refusals come back as closed result codes, never as a
+  // thrown Postgres error. Each maps to copy the visitor already sees today; a
+  // code we do not recognise falls through to the generic message rather than
+  // leaking anything about why.
+  if (!rpcErr && commandResult && commandResult !== "created") {
+    // Exactly the codes the command can emit for an unavailable time. It
+    // reports every collision (overlap, buffer, block, break) as
+    // `time_unavailable`, so there is no separate `buffer_conflict` to map.
+    //
+    // `not_a_public_slot` belongs HERE, not in the operator bucket below. It
+    // means the submitted instant is no longer an offered slot — which is
+    // exactly what a visitor sees when a conflict is cancelled between this
+    // action's slot re-check and the command taking the studio lock, removing an
+    // after-conflict anchor. That visitor should be told to pick another time,
+    // not handed a generic "contact the studio" dead end.
+    const SLOT_TAKEN_CODES = new Set([
+      "time_unavailable",
+      "outside_availability",
+      "studio_closed",
+      "invalid_time",
+      "not_a_public_slot",
+    ]);
+    if (SLOT_TAKEN_CODES.has(commandResult)) {
+      console.error(
+        JSON.stringify({
+          event: "booking_slot_rejected",
+          studioId: studio.id,
+          code: commandResult,
+          source: "public_booking",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return {
+        ok: false,
+        error: "That time is no longer available. Please choose another time.",
+        code: "slot_taken",
+      };
+    }
+    if (commandResult === "outside_horizon") {
+      return { ok: false, error: "That date is outside the booking window." };
+    }
+    if (commandResult === "public_booking_unavailable") {
+      return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+    }
+    if (commandResult === "invalid_service") {
+      return { ok: false, error: "Service no longer available." };
+    }
+    // invalid_client / invalid_practitioner / no_practitioner / not_eligible /
+    // studio_not_found are all operator-visible states, never the visitor's
+    // fault to fix, and must not distinguish "wrong studio" from "no such row".
+    logInternalBookingError("public_booking_command_refused", {
+      code: commandResult,
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+    });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+
+  if (rpcErr || !createdId) {
     // sqlstate 23P01 = exclusion_violation (actual-overlap GiST). HB001 =
     // migration 0152's soft-buffer trigger (public booking never bypasses the
     // buffer; the slot generator already filters buffer-proximate times, so this
     // only fires on a rare race). Both map to the SAME safe copy — never the raw
     // DB message or SQLSTATE. A rejected booking must NOT trigger a confirmation
     // email, so we return before any send path.
-    if (insertErr?.code === "23P01" || insertErr?.code === "HB001") {
+    if (rpcErr?.code === "23P01" || rpcErr?.code === "HB001") {
       console.error(
         JSON.stringify({
           event: "booking_slot_collision",
@@ -818,12 +879,86 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // drop raw DB message (the appointments row carries free-text notes,
     // so its error text must never reach logs on a public surface).
     logInternalBookingError("public_booking_insert_failed", {
-      code: insertErr?.code,
+      code: rpcErr?.code,
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
+
+  // The appointment is COMMITTED (create_public_appointment returned 'created'),
+  // together with its audit row. Everything from here on is a post-commit,
+  // fail-soft side effect and must never roll the booking back.
+  //
+  // The confirmation/notification senders take an Appointment, but they read
+  // only id / starts_at / ends_at / duration_minutes (lib/email/send-appointment.ts
+  // :360-383, :423, :507-515, :534-542). Every one of those comes back from the
+  // command as an AUTHORITATIVE value, so the payload is built from the command's
+  // own return rather than by re-reading the row.
+  //
+  // This is deliberate. An earlier revision re-read the row and gated the sends
+  // on that read succeeding — which meant one transient SELECT failure would
+  // silently skip the confirmation email. That is not a cosmetic loss: the raw
+  // `appointmentToken` lives only in memory and only its SHA-256 is persisted
+  // (`cancellation_token_hash`), so the email is the ONLY carrier of the token
+  // the client needs to cancel or reschedule. Losing it is unrecoverable. The
+  // send must therefore depend on nothing that can fail after the commit.
+  const created = {
+    id: createdId,
+    starts_at: commandRow?.starts_at as string,
+    ends_at: commandRow?.ends_at as string,
+    duration_minutes: commandRow?.duration_minutes as number,
+    created_at: createdAtIso as string,
+  } as unknown as import("@/lib/types/database").Appointment;
+
+  // AUTHORITATIVE PRACTITIONER. `commandRow.practitioner_id` is the practitioner
+  // the appointment was actually assigned to, resolved inside the transaction
+  // under the studio lock. It is the ONLY source downstream may use.
+  //
+  // This route used to pre-fetch "the current active owner" BEFORE the RPC and
+  // then use that object for the notification row, the practitioner email
+  // recipient and the practitioner name shown to the client. Those could
+  // diverge: if ownership changed, or the owner was deactivated, between the
+  // pre-fetch and the command's own lookup, the appointment committed to
+  // practitioner B while every notification still named and emailed A. That is
+  // an attribution and privacy defect, so the pre-fetch is gone.
+  //
+  // Metadata is re-read by EXACT (id, studio_id) — never by "current active
+  // owner", which could resolve to someone else if activity changed again right
+  // after commit. This read is best-effort: the appointment is already
+  // committed and nothing here may fail the booking.
+  const assignedPractitionerId =
+    (commandRow?.practitioner_id as string | null | undefined) ?? null;
+  let assignedPractitioner: {
+    id: string;
+    display_name: string | null;
+    email: string | null;
+  } | null = null;
+  if (assignedPractitionerId) {
+    const { data: pr, error: prErr } = await admin
+      .from("practitioners")
+      .select("id, display_name, email")
+      .eq("id", assignedPractitionerId)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (prErr || !pr) {
+      // Safe, non-PII operational signal. Downstream degrades to the studio-name
+      // fallback and skips the practitioner-specific email rather than risking a
+      // stale recipient.
+      logInternalBookingError("public_booking_practitioner_lookup_failed", {
+        code: prErr?.code,
+        studioId: studio.id,
+      });
+    } else {
+      assignedPractitioner = pr;
+    }
+  }
+  // Client-facing practitioner label. Falls back to the studio name exactly as
+  // before when there is no assigned practitioner or the metadata read failed.
+  const practitionerDisplayName =
+    assignedPractitioner?.display_name?.trim() ||
+    assignedPractitioner?.email ||
+    studio.name;
 
   // PR #164. Fire-and-forget practitioner notification. The
   // appointment row is committed at this point; a failure inside
@@ -834,13 +969,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // appointment detail page already exposes to studio members.
   recordPractitionerNotification({
     studioId: studio.id,
-    practitionerId: owner?.id ?? null,
+    practitionerId: assignedPractitionerId,
     eventType: "new_booking",
     title: "New booking",
     body: `${clientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
-    appointmentId: created.id,
+    appointmentId: createdId,
     clientId: clientId,
-    href: `/calendar/${created.id}`,
+    href: `/calendar/${createdId}`,
   });
 
   // Fire-and-forget marketing/analytics consent capture. The appointment is
@@ -856,7 +991,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         .insert(
           buildBookingMarketingConsentRow({
             studioId: studio.id,
-            appointmentId: created.id,
+            appointmentId: createdId,
             clientId,
             consent: marketingConsent,
           }),
@@ -872,13 +1007,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     }
   })();
 
-  await admin.from("appointment_audit").insert({
-    appointment_id: created.id,
-    actor_type: "client",
-    actor_id: null,
-    action: "created",
-    details: { source: "public_booking", email, notes },
-  });
+  // The appointment_audit row is NO LONGER written here. Migration 0170 writes
+  // it inside create_public_appointment, in the same transaction as the
+  // appointment, so it cannot be skipped or silently fail. Its shape is
+  // unchanged: actor_type 'client', actor_id null, action 'created', details
+  // { source: 'public_booking', email, notes } — with the email read from the
+  // client row inside the command rather than passed across the boundary.
 
   // Single helper call up front; downstream lines share the same origin.
   const appOrigin = getRequiredAppOrigin();
@@ -890,9 +1024,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // because tracking failed. No clinical data / no raw email/phone is logged.
   void dispatchBookingConversion({
     studioId: studio.id,
-    appointmentId: created.id,
+    appointmentId: createdId,
     eventTimeUnixSeconds: Math.floor(
-      new Date(created.created_at as string).getTime() / 1000,
+      new Date(createdAtIso as string).getTime() / 1000,
     ),
     consentGranted: marketingConsent,
     email: normalizedEmail,
@@ -946,8 +1080,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       appointment: created,
       service,
       studio,
-      practitionerDisplayName:
-        owner?.display_name?.trim() || owner?.email || studio.name,
+      practitionerDisplayName,
       clientName,
       clientEmail: email,
       cancellationUrl,
@@ -956,10 +1089,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       treatmentTimeLine,
       appBaseUrl: appOrigin,
     });
-    await recordEmailAttempt(admin, created.id, "confirmation", result.ok);
+    await recordEmailAttempt(admin, createdId, "confirmation", result.ok);
     if (!result.ok) {
       logEmailFailure({
-        appointmentId: created.id,
+        appointmentId: createdId,
         emailType: "confirmation",
         error: result.error,
         retryable: result.retryable,
@@ -979,7 +1112,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // POST resolves; the helper bounds itself with a 15-second timeout.
   await sendBookingConfirmationSmsToClient({
     admin,
-    appointmentId: created.id,
+    appointmentId: createdId,
     startsAt: start,
     timezone: studio.timezone,
     studio,
@@ -995,19 +1128,26 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // new-booking notification. Default true preserves existing
   // behavior. Client confirmation email above is gated separately
   // via send_confirmation_emails and is NOT affected by this toggle.
-  if (owner?.email && studio.notify_practitioner_on_new_booking !== false) {
+  // Only the AUTHORITATIVE assigned practitioner may receive this. A null
+  // practitioner, or a failed metadata read, sends nothing — never a stale owner.
+  if (
+    assignedPractitioner?.email &&
+    studio.notify_practitioner_on_new_booking !== false
+  ) {
     await sendBookingNotificationToPractitioner({
       appointment: created,
       service,
       studio,
       practitionerName:
-        owner.display_name?.trim() || owner.email || "Practitioner",
-      practitionerEmail: owner.email,
+        assignedPractitioner.display_name?.trim() ||
+        assignedPractitioner.email ||
+        "Practitioner",
+      practitionerEmail: assignedPractitioner.email,
       clientName,
       clientEmail: email,
       clientPhone,
       notes,
-      appointmentUrl: `${appOrigin}/calendar/${created.id}`,
+      appointmentUrl: `${appOrigin}/calendar/${createdId}`,
       // PR #163. Already-labelled practitioner-facing string;
       // null when the visitor declined to answer.
       referralSourceLabel: referralSourceLabel(referralSource),
@@ -1025,7 +1165,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     properties: { studio_id: studio.id, source: "public_booking" },
   });
 
-  return { ok: true, appointmentId: created.id };
+  return { ok: true, appointmentId: createdId };
 }
 
 function trimmed(value: FormDataEntryValue | null): string {

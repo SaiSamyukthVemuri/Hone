@@ -92,9 +92,13 @@ describe("booking form — optional consent checkbox (source)", () => {
 });
 
 describe("booking action — non-blocking consent capture (source)", () => {
-  it("parses consent + inserts one booking_tracking_consents row AFTER the appointment insert", () => {
+  it("parses consent + inserts one booking_tracking_consents row AFTER the appointment is created", () => {
     expect(ACTION).toMatch(/const marketingConsent = parseMarketingConsent\(/);
-    const insertIdx = ACTION.indexOf('.from("appointments")');
+    // Migration 0170: the appointment is no longer INSERTed here — it is created
+    // by the create_public_appointment command, so that call is the anchor. The
+    // invariant is unchanged: consent capture happens only after the booking has
+    // committed.
+    const insertIdx = ACTION.indexOf('"create_public_appointment"');
     const consentIdx = ACTION.indexOf('.from("booking_tracking_consents")');
     expect(insertIdx).toBeGreaterThan(-1);
     expect(consentIdx).toBeGreaterThan(insertIdx); // consent after booking commit
