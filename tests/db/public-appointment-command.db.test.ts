@@ -736,4 +736,157 @@ describe("owner ambiguity — exactly one active owner, otherwise NULL", () => {
     const r = await book(s, at(14, 14));
     expect(r.practitioner_id, "one OWNER plus a member is still unambiguous").toBe(s.ownerId);
   });
+
+  it("THREE active owners -> NULL (the bounded limit 2 still detects ambiguity)", async () => {
+    // The resolution reads at most two rows, because the decision only
+    // distinguishes zero / one / more-than-one. Three must behave like two.
+    const s = await seedPublicStudio("owners-three");
+    await addOwner(s.studioId, "b");
+    await addOwner(s.studioId, "c");
+    const r = await book(s, at(15, 10));
+    expect(r.result).toBe("created");
+    expect(r.practitioner_id).toBeNull();
+  });
+});
+
+describe("precision — public booking accepts ONLY exact-millisecond instants", () => {
+  // Postgres keeps microseconds; a browser ISO string never does. An earlier
+  // revision TRUNCATED inside the membership comparison but then derived,
+  // persisted and returned the RAW p_starts_at — so `...123999Z` matched the
+  // legitimate `...123000Z` candidate and was stored as `...123999Z`, an instant
+  // the browser never offered. Sub-millisecond input is now REJECTED.
+
+  /** A real conflict-derived candidate carrying a non-zero millisecond fraction. */
+  async function candidateWithFraction(label: string) {
+    const s = await seedPublicStudio(label, { buffer: 30 });
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() + 6);
+    const d = day.toISOString().slice(0, 10);
+    // A timed block ending at a .123 boundary makes its raw end an offered start.
+    await adminQuery(
+      `insert into public.studio_timed_blocks (studio_id, starts_at, ends_at, category, practitioner_id)
+       values ($1, ($2 || 'T11:00:00.000Z')::timestamptz, ($2 || 'T12:00:00.123Z')::timestamptz, 'admin', null)`,
+      [s.studioId, d],
+    );
+    const cand = await adminQuery(
+      `select c from public.public_booking_slot_candidates($1,$2::date,60) c
+        where date_part('milliseconds', c) <> 0 order by c limit 1`,
+      [s.studioId, d],
+    );
+    expect(cand.rowCount, "a fractional candidate must exist").toBe(1);
+    return { s, candidate: new Date(cand.rows[0].c).toISOString() };
+  }
+
+  it("P4/P6: an exact-millisecond candidate with a real .123 fraction succeeds", async () => {
+    const { s, candidate } = await candidateWithFraction("prec-ok");
+    expect(candidate).toMatch(/\.\d{3}Z$/);
+    const r = await book(s, candidate);
+    expect(r.result).toBe("created");
+    expect(new Date(r.starts_at).toISOString()).toBe(candidate);
+    expect(new Date(r.ends_at).getTime() - new Date(r.starts_at).getTime()).toBe(60 * 60_000);
+  });
+
+  it("P5: the PERSISTED appointment and reservation carry zero microsecond remainder", async () => {
+    const { s, candidate } = await candidateWithFraction("prec-persist");
+    const r = await book(s, candidate);
+    expect(r.result).toBe("created");
+    const raw = await adminQuery(
+      `select to_char(a.starts_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') a_start,
+              to_char(a.ends_at   at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') a_end,
+              to_char(cr.starts_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') r_start,
+              to_char(cr.ends_at   at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') r_end
+         from public.appointments a
+         join public.studio_calendar_reservations cr on cr.source_id = a.id
+        where a.id = $1`,
+      [r.appointment_id],
+    );
+    const row = raw.rows[0];
+    // Raw textual proof — Date.getTime() would truncate and hide microseconds.
+    for (const [k, v] of Object.entries(row)) {
+      expect(String(v).slice(-3), `${k} must have zero microsecond remainder`).toBe("000");
+    }
+    expect(row.a_start).toBe(row.r_start);
+    expect(row.a_end).toBe(row.r_end);
+    // And the persisted value equals the validated candidate exactly.
+    expect(row.a_start).toBe(candidate.replace("Z", "000").replace(/\.(\d{3})000$/, ".$1000"));
+  });
+
+  it("P1/P8: a candidate plus 999 microseconds is REJECTED and persists nothing", async () => {
+    const { s, candidate } = await candidateWithFraction("prec-999us");
+    const before = await adminQuery(
+      `select (select count(*) from public.appointments where studio_id=$1) a,
+              (select count(*) from public.studio_calendar_reservations where studio_id=$1) r,
+              (select count(*) from public.calendar_sync_outbox where studio_id=$1) o`,
+      [s.studioId],
+    );
+    const r = await adminQuery(
+      `select * from public.create_public_appointment($1,$2,$3,
+                 ($4::timestamptz + interval '999 microseconds'),$5,null,null)`,
+      [s.studioId, s.clientId, s.serviceId, candidate, hash64()],
+    );
+    expect(r.rows[0].result).toBe("invalid_time");
+    const after = await adminQuery(
+      `select (select count(*) from public.appointments where studio_id=$1) a,
+              (select count(*) from public.studio_calendar_reservations where studio_id=$1) r,
+              (select count(*) from public.calendar_sync_outbox where studio_id=$1) o`,
+      [s.studioId],
+    );
+    expect(after.rows[0].a).toBe(before.rows[0].a);
+    expect(after.rows[0].r).toBe(before.rows[0].r);
+    expect(after.rows[0].o).toBe(before.rows[0].o);
+  });
+
+  it("P7: a candidate plus ONE microsecond is REJECTED", async () => {
+    const { s, candidate } = await candidateWithFraction("prec-1us");
+    const r = await adminQuery(
+      `select * from public.create_public_appointment($1,$2,$3,
+                 ($4::timestamptz + interval '1 microsecond'),$5,null,null)`,
+      [s.studioId, s.clientId, s.serviceId, candidate, hash64()],
+    );
+    expect(r.rows[0].result).toBe("invalid_time");
+  });
+
+  it("P2: the VALIDATOR rejects a sub-millisecond start with invalid_time", async () => {
+    const { s, candidate } = await candidateWithFraction("prec-val-start");
+    const r = await adminQuery(
+      `select public.validate_public_booking_slot($1,$2,$3,
+                ($4::timestamptz + interval '456 microseconds'),
+                ($4::timestamptz + interval '456 microseconds') + make_interval(mins => 60)) as v`,
+      [s.studioId, s.ownerId, s.serviceId, candidate],
+    );
+    // Specifically invalid_time — NOT not_a_public_slot.
+    expect(r.rows[0].v).toBe("invalid_time");
+  });
+
+  it("P3: the VALIDATOR rejects a sub-millisecond END with invalid_time", async () => {
+    const { s, candidate } = await candidateWithFraction("prec-val-end");
+    const r = await adminQuery(
+      `select public.validate_public_booking_slot($1,$2,$3,$4::timestamptz,
+                $4::timestamptz + make_interval(mins => 60) + interval '789 microseconds') as v`,
+      [s.studioId, s.ownerId, s.serviceId, candidate],
+    );
+    expect(r.rows[0].v).toBe("invalid_time");
+  });
+
+  it("the token hash of a rejected submission is never consumed", async () => {
+    const { s, candidate } = await candidateWithFraction("prec-token");
+    const token = hash64();
+    const rejected = await adminQuery(
+      `select * from public.create_public_appointment($1,$2,$3,
+                 ($4::timestamptz + interval '500 microseconds'),$5,null,null)`,
+      [s.studioId, s.clientId, s.serviceId, candidate, token],
+    );
+    expect(rejected.rows[0].result).toBe("invalid_time");
+    const used = await adminQuery(
+      `select count(*)::int n from public.appointments where cancellation_token_hash = $1`,
+      [token],
+    );
+    expect(used.rows[0].n).toBe(0);
+    // The same token still works on a legitimate submission.
+    const ok = await adminQuery(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [s.studioId, s.clientId, s.serviceId, candidate, token],
+    );
+    expect(ok.rows[0].result).toBe("created");
+  });
 });

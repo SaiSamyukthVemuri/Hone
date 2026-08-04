@@ -308,3 +308,161 @@ describe("no deadlock in the reverse direction", () => {
     }
   });
 });
+
+describe("owner resolution is a single snapshot", () => {
+  // A previous revision counted the active owners and then re-selected the id in
+  // a SECOND statement. Under READ COMMITTED each statement takes a fresh
+  // snapshot, so a concurrent activation committing between them could leave the
+  // count seeing 1 while the lookup saw 2 — and a non-STRICT `select ... into`
+  // then assigns one unspecified row, recreating arbitrary assignment.
+
+  async function seedTwoOwners(label: string) {
+    const studioId = randomUUID();
+    const mkUser = async () => {
+      const u = randomUUID();
+      await adminQuery(`insert into auth.users (id,email) values ($1,$2)`, [
+        u,
+        `${label}-${u.slice(0, 8)}@harness.local`,
+      ]);
+      return u;
+    };
+    const uA = await mkUser();
+    const uB = await mkUser();
+    const ownerA = randomUUID();
+    const ownerB = randomUUID();
+    const clientId = randomUUID();
+    const serviceId = randomUUID();
+    await adminQuery(
+      `insert into public.studios (id,name,owner_email,timezone,buffer_minutes,slug,public_booking_horizon_months)
+       values ($1,$2,$3,'UTC',30,$4,3)`,
+      [studioId, `Own ${label}`, `${label}@harness.local`, `${label}-${studioId.slice(0, 8)}`],
+    );
+    await adminQuery(
+      `insert into public.practitioners (id,studio_id,user_id,display_name,email,role,active)
+       values ($1,$2,$3,'A',$4,'owner',true), ($5,$2,$6,'B',$7,'owner',false)`,
+      [
+        ownerA,
+        studioId,
+        uA,
+        `a-${ownerA.slice(0, 8)}@harness.local`,
+        ownerB,
+        uB,
+        `b-${ownerB.slice(0, 8)}@harness.local`,
+      ],
+    );
+    await adminQuery(`insert into public.clients (id,studio_id,name,email) values ($1,$2,'C',$3)`, [
+      clientId,
+      studioId,
+      `c-${studioId.slice(0, 8)}@harness.local`,
+    ]);
+    await adminQuery(
+      `insert into public.services (id,studio_id,name,default_duration_minutes,active)
+       values ($1,$2,'S',60,true)`,
+      [serviceId, studioId],
+    );
+    await adminQuery(
+      `insert into public.studio_availability_default
+         (studio_id,day_of_week,is_open,open_time,close_time,practitioner_id)
+       select $1,g,true,'09:00','17:00',null from generate_series(0,6) g`,
+      [studioId],
+    );
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() + 4);
+    day.setUTCHours(10, 0, 0, 0);
+    return { studioId, ownerA, ownerB, clientId, serviceId, when: day.toISOString() };
+  }
+
+  it("O6: a concurrent owner ACTIVATION yields a valid serial outcome, never a mixed snapshot", async () => {
+    const f = await seedTwoOwners("o6");
+    const A = await conn();
+    const B = await conn();
+    try {
+      const bPid = (await B.query<{ pid: number }>(`select pg_backend_pid() as pid`)).rows[0].pid;
+
+      // A begins the command and holds the studio row lock.
+      await A.query("begin");
+      const created = await A.query(
+        `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+        [f.studioId, f.clientId, f.serviceId, f.when, hash64()],
+      );
+
+      // B tries to activate the second owner while A is in flight.
+      const bPromise = B.query(`update public.practitioners set active = true where id = $1`, [
+        f.ownerB,
+      ]);
+      // Activation does not touch the studio row, so it may or may not block;
+      // what matters is that A's decision came from ONE snapshot.
+      await waitUntilBlocked(bPid, 1500);
+
+      await A.query("commit");
+      await bPromise;
+
+      // A saw exactly one active owner in its single snapshot, so it assigned A.
+      // The only other valid serial outcome would be null (had it seen two).
+      const assigned = created.rows[0].practitioner_id as string | null;
+      expect(
+        assigned === f.ownerA || assigned === null,
+        `assignment must be a valid serial outcome, got ${assigned}`,
+      ).toBe(true);
+      expect(assigned, "owner B was inactive at decision time and must never be chosen").not.toBe(
+        f.ownerB,
+      );
+    } finally {
+      await A.query("rollback").catch(() => undefined);
+      await A.end();
+      await B.end();
+    }
+  }, 30_000);
+
+  it("O7: a concurrent owner INSERT cannot produce a mixed-snapshot assignment", async () => {
+    const f = await seedTwoOwners("o7");
+    const A = await conn();
+    const B = await conn();
+    try {
+      await A.query("begin");
+      const created = await A.query(
+        `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+        [f.studioId, f.clientId, f.serviceId, f.when, hash64()],
+      );
+
+      const newUser = randomUUID();
+      await adminQuery(`insert into auth.users (id,email) values ($1,$2)`, [
+        newUser,
+        `n-${newUser.slice(0, 8)}@harness.local`,
+      ]);
+      const bPromise = B.query(
+        `insert into public.practitioners (id,studio_id,user_id,display_name,email,role,active)
+         values (gen_random_uuid(),$1,$2,'New',$3,'owner',true)`,
+        [f.studioId, newUser, `n-${newUser.slice(0, 8)}@harness.local`],
+      );
+
+      await A.query("commit");
+      await bPromise;
+
+      const assigned = created.rows[0].practitioner_id as string | null;
+      expect(
+        assigned === f.ownerA || assigned === null,
+        `assignment must be a valid serial outcome, got ${assigned}`,
+      ).toBe(true);
+    } finally {
+      await A.query("rollback").catch(() => undefined);
+      await A.end();
+      await B.end();
+    }
+  }, 30_000);
+
+  it("the resolution is ONE statement — no count-then-select shape survives", async () => {
+    const r = await adminQuery(
+      `select p.prosrc from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+        where n.nspname='public' and p.proname='create_public_appointment'`,
+    );
+    const src = r.rows[0].prosrc as string;
+    expect(src, "no separate owner count statement").not.toMatch(/count\(\*\)\s+into\s+v_owner_count/);
+    expect(src, "no oldest/newest winner").not.toMatch(/order by pr\.created_at/);
+    // Exactly one statement reads the active-owner set.
+    const ownerReads = (src.match(/role\s*=\s*'owner'/g) ?? []).length;
+    expect(ownerReads, "the active-owner set must be read exactly once").toBe(1);
+    expect(src).toMatch(/with active_owners as materialized/);
+    expect(src).toMatch(/when count\(\*\) = 1 then \(array_agg\(id\)\)\[1\] else null end/);
+  });
+});

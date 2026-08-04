@@ -281,17 +281,22 @@ describe("0170 — serialization, owner rule and precision domain", () => {
   });
 
   it("assigns a practitioner ONLY when there is exactly one active owner", () => {
-    expect(FLAT).toMatch(/select count\(\*\) into v_owner_count/);
-    expect(FLAT).toMatch(/if v_owner_count = 1 then/);
-    expect(FLAT).toMatch(/else v_owner_id := null;/);
-    // The invented "oldest owner wins" rule must not return.
+    // Superseded shape: the count-then-select pair was replaced by a single
+    // materialized CTE so the decision comes from ONE snapshot.
+    expect(FLAT).toMatch(/with active_owners as materialized/);
+    expect(FLAT).toMatch(/when count\(\*\) = 1 then \(array_agg\(id\)\)\[1\] else null end/);
+    expect(CODE).not.toMatch(/v_owner_count/);
     expect(CODE).not.toMatch(/order by pr\.created_at/);
   });
 
   it("normalises every timestamp comparison to the millisecond domain", () => {
     // Not just the final equality — the conflict boundaries too, or the filter
     // runs in a different domain than the candidates.
-    expect(FLAT).toContain("c = date_trunc('milliseconds', p_starts_at)");
+    // Membership is now an exact equality because sub-millisecond INPUT is
+    // rejected up front; the truncating comparison was the thing that let a
+    // microsecond-bearing value match a candidate it was not equal to.
+    expect(FLAT).toContain("where c = p_starts_at");
+    expect(FLAT).not.toContain("where c = date_trunc('milliseconds', p_starts_at)");
     expect(FLAT).toContain("date_trunc('milliseconds', cr.starts_at)");
     expect(FLAT).toContain("date_trunc('milliseconds', r.starts_at)");
     const truncs = (CODE.match(/date_trunc\('milliseconds'/g) ?? []).length;
@@ -301,6 +306,60 @@ describe("0170 — serialization, owner rule and precision domain", () => {
   it("truncates rather than rounds", () => {
     expect(CODE).not.toMatch(/round\(/i);
     expect(PROSE).toMatch(/truncation, never rounding/i);
+  });
+});
+
+describe("0170 — precision and owner-resolution contracts", () => {
+  it("REJECTS sub-millisecond input rather than truncating it", () => {
+    // Truncating for the comparison while persisting the raw value split
+    // validation and persistence into two precision domains.
+    expect(FLAT).toMatch(
+      /if p_starts_at is null or p_starts_at is distinct from date_trunc\('milliseconds', p_starts_at\)/,
+    );
+    expect(FLAT).toMatch(
+      /p_starts_at is distinct from date_trunc\('milliseconds', p_starts_at\) or p_ends_at is distinct from date_trunc\('milliseconds', p_ends_at\)/,
+    );
+  });
+
+  it("establishes ONE authoritative start and uses it end to end", () => {
+    expect(FLAT).toContain("v_starts_at := p_starts_at;");
+    expect(FLAT).toContain("v_ends_at := v_starts_at + make_interval(mins => v_service_dur)");
+    // Derivation, validation, INSERT and RETURN all use the authoritative value.
+    expect(FLAT).toContain("v_local_date := (v_starts_at at time zone v_tz)::date");
+    expect(FLAT).toContain("p_service_id, v_starts_at, v_ends_at");
+    expect(FLAT).toContain("v_starts_at, v_ends_at, v_service_dur, 'confirmed'");
+    expect(FLAT).toContain("select 'created'::text, v_appt_id, v_starts_at, v_ends_at");
+  });
+
+  it("no raw p_starts_at reaches derivation, the INSERT values list or the return", () => {
+    const cmd = CODE.slice(CODE.indexOf("create or replace function public.create_public_appointment("));
+    const body = cmd.slice(cmd.indexOf("begin"), cmd.indexOf("$$;"));
+    // The only permitted uses are the precision check and the single assignment.
+    const uses = (body.match(/\bp_starts_at\b/g) ?? []).length;
+    expect(uses, `raw p_starts_at should appear only in the precision guard + assignment, found ${uses}`).toBeLessThanOrEqual(4);
+    expect(body).not.toMatch(/p_starts_at \+ make_interval/);
+    expect(body).not.toMatch(/p_service_id, p_starts_at, v_ends_at/);
+    expect(body).not.toMatch(/p_starts_at, v_ends_at, v_service_dur/);
+    expect(body).not.toMatch(/v_appt_id, p_starts_at, v_ends_at/);
+  });
+
+  it("membership is an EXACT equality, not a truncating one", () => {
+    expect(FLAT).toContain("where c = p_starts_at");
+    expect(FLAT).not.toContain("where c = date_trunc('milliseconds', p_starts_at)");
+  });
+
+  it("resolves the owner in ONE statement, one snapshot", () => {
+    expect(FLAT).toMatch(/with active_owners as materialized/);
+    expect(FLAT).toMatch(/when count\(\*\) = 1 then \(array_agg\(id\)\)\[1\] else null end/);
+    expect(FLAT).toMatch(/limit 2/);
+    // The count-then-select shape must not return.
+    expect(CODE).not.toMatch(/v_owner_count/);
+    expect(CODE).not.toMatch(/count\(\*\) into v_owner_count/);
+    expect(CODE).not.toMatch(/order by pr\.created_at/);
+    // The active-owner predicate appears exactly once in the command.
+    const cmd = CODE.slice(CODE.indexOf("create or replace function public.create_public_appointment("));
+    const body = cmd.slice(0, cmd.indexOf("$$;"));
+    expect((body.match(/role = 'owner'/g) ?? []).length).toBe(1);
   });
 });
 
@@ -395,6 +454,21 @@ describe("0170 — prose records the decisions a reviewer must be able to check"
     expect(PROSE).toMatch(/RE-DERIVES THE OFFER GRID AND REQUIRES EXACT MEMBERSHIP/i);
     expect(PROSE).toMatch(/LOCAL -> UTC IS PORTED/i);
     expect(PROSE).toMatch(/SERVICE END, NOT THE BUFFERED END/i);
+  });
+
+  it("no longer claims a truncating comparison stops microsecond smuggling", () => {
+    expect(SQL).not.toMatch(/cannot smuggle microseconds past the comparison/i);
+    expect(PROSE).toMatch(/sub-millisecond input is REJECTED/i);
+  });
+
+  it("describes the practitioner as the SOLE active owner, otherwise null", () => {
+    expect(SQL).toMatch(/practitioner \(the SOLE active owner, otherwise null\)/);
+    expect(SQL).not.toMatch(/practitioner \(the active owner\)/);
+  });
+
+  it("says FIVE function definitions, not two", () => {
+    expect(PROSE).toMatch(/five function definitions with no table rewrite/);
+    expect(PROSE).not.toMatch(/two function definitions/);
   });
 
   it("no longer claims the validator never re-derives the grid", () => {

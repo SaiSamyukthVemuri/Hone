@@ -39,7 +39,7 @@
 -- `SET LOCAL` would emit 25P01 and never arm. This file opens its own
 -- transaction and sets `lock_timeout` inside it. (`statement_timeout` is
 -- deliberately not set: no migration in this repository sets it, and these are
--- two function definitions with no table rewrite.)
+-- five function definitions with no table rewrite.)
 --
 -- WHY A DEDICATED PUBLIC VALIDATOR, AND NOT THE SHARED ONE
 --
@@ -470,6 +470,21 @@ begin
     return 'invalid_time';
   end if;
 
+  -- EXACT MILLISECOND PRECISION IS REQUIRED — sub-millisecond input is REJECTED,
+  -- not truncated.
+  --
+  -- Public booking is a browser surface and a JS ISO timestamp is always
+  -- millisecond-precise, so there is no legitimate microsecond input here.
+  -- Truncating for the comparison alone would let a direct service-role caller
+  -- match a legitimate candidate with a value that is NOT that candidate — and
+  -- this function is independently grantable, so it must not claim a
+  -- sub-millisecond interval is a valid public interval.
+  if p_starts_at is distinct from date_trunc('milliseconds', p_starts_at)
+     or p_ends_at is distinct from date_trunc('milliseconds', p_ends_at)
+  then
+    return 'invalid_time';
+  end if;
+
   -- UTC -> local wall clock. This direction only (see header note 2).
   v_local_start := p_starts_at at time zone v_tz;
   v_local_end   := p_ends_at   at time zone v_tz;
@@ -588,11 +603,13 @@ begin
              v_local_date,
              (extract(epoch from (p_ends_at - p_starts_at)) / 60)::integer
            ) c
-     -- Both sides in the millisecond domain (see the generator's note). The
-     -- candidates are already normalised; p_starts_at arrives from a JS ISO
-     -- string and so is already millisecond-precise, but it is truncated here
-     -- too so a direct caller cannot smuggle microseconds past the comparison.
-     where c = date_trunc('milliseconds', p_starts_at)
+     -- Both sides are already in the millisecond domain: the candidates are
+     -- generated normalised, and p_starts_at was REJECTED above if it carried a
+     -- sub-millisecond remainder. A plain equality is therefore exact — this is
+     -- deliberately NOT a truncating comparison, because truncating here while
+     -- persisting the raw value elsewhere is precisely the gap that let a
+     -- microsecond-bearing input match a candidate it was not equal to.
+     where c = p_starts_at
   ) then
     return 'not_a_public_slot';
   end if;
@@ -644,6 +661,7 @@ declare
   v_horizon     integer;
   v_now         timestamptz := now();
   v_service_dur integer;
+  v_starts_at   timestamptz;
   v_ends_at     timestamptz;
   v_owner_id    uuid;
   v_avail       text;
@@ -652,7 +670,6 @@ declare
   v_local_date  date;
   v_today       date;
   v_created_at  timestamptz;
-  v_owner_count integer;
   v_win_start   timestamptz;
   v_win_end     timestamptz;
 begin
@@ -693,9 +710,32 @@ begin
     return;
   end if;
 
+  -- ONE AUTHORITATIVE START VALUE, ESTABLISHED HERE AND USED END TO END.
+  --
+  -- Public booking accepts ONLY JavaScript-millisecond timestamps. A browser ISO
+  -- string is always millisecond-precise, so a sub-millisecond remainder can
+  -- only come from a direct service-role caller — and it is REJECTED, never
+  -- silently truncated.
+  --
+  -- An earlier revision truncated inside the membership comparison but then
+  -- derived, persisted and returned the RAW p_starts_at. That split validation
+  -- and persistence into two precision domains: `...123999Z` matched the
+  -- legitimate `...123000Z` candidate and was then stored as `...123999Z` — an
+  -- instant the browser never offered. Rejecting up front makes the value that
+  -- passed membership the exact value that is derived from, persisted and
+  -- returned.
+  if p_starts_at is null
+     or p_starts_at is distinct from date_trunc('milliseconds', p_starts_at)
+  then
+    return query select 'invalid_time'::text, null::uuid, null::timestamptz,
+                        null::timestamptz, null::integer, null::uuid, null::timestamptz;
+    return;
+  end if;
+  v_starts_at := p_starts_at;
+
   -- Future instant. The loader's past-time filter lives in its CALLERS
   -- (lib/booking/slots.ts:34-53), so the command carries its own.
-  if p_starts_at is null or p_starts_at <= v_now then
+  if v_starts_at <= v_now then
     return query select 'invalid_time'::text, null::uuid, null::timestamptz,
                         null::timestamptz, null::integer, null::uuid, null::timestamptz;
     return;
@@ -704,7 +744,7 @@ begin
   -- Booking horizon, in the studio's local calendar. DAYS_PER_HORIZON_MONTH is
   -- 31 in lib/booking/horizon.ts:28; both bounds are inclusive there.
   v_today      := (v_now at time zone v_tz)::date;
-  v_local_date := (p_starts_at at time zone v_tz)::date;
+  v_local_date := (v_starts_at at time zone v_tz)::date;
   if v_local_date < v_today or v_local_date > (v_today + (v_horizon * 31)) then
     return query select 'outside_horizon'::text, null::uuid, null::timestamptz,
                         null::timestamptz, null::integer, null::uuid, null::timestamptz;
@@ -743,7 +783,9 @@ begin
     return;
   end if;
 
-  v_ends_at := p_starts_at + make_interval(mins => v_service_dur);
+  -- Derived from the AUTHORITATIVE start, so the end inherits its exact
+  -- millisecond precision.
+  v_ends_at := v_starts_at + make_interval(mins => v_service_dur);
 
   -- Practitioner assignment is SERVER-DERIVED. The public surface offers no
   -- practitioner selection and this command takes no practitioner parameter, so
@@ -763,20 +805,32 @@ begin
   --   0 active owners -> NULL   (unchanged; a studio with no owner still books)
   --   1 active owner  -> that owner
   --   2+ active owners -> NULL  (ambiguous; no arbitrary winner is invented)
-  select count(*) into v_owner_count
-    from public.practitioners pr
-   where pr.studio_id = p_studio_id
-     and pr.active = true
-     and pr.role = 'owner';
-  if v_owner_count = 1 then
-    select pr.id into v_owner_id
+  --
+  -- ONE STATEMENT, ONE SNAPSHOT. A previous revision counted the active owners
+  -- and then re-selected the id in a SECOND statement. Under READ COMMITTED each
+  -- statement takes a fresh snapshot, so a concurrent activation/insert/promotion
+  -- committing between them could leave the count seeing 1 while the lookup saw
+  -- 2 — and a non-STRICT `select ... into` then assigns one unspecified row,
+  -- recreating exactly the arbitrary assignment this rule exists to prevent.
+  --
+  -- `limit 2` is sufficient: the decision only distinguishes zero, one and
+  -- more-than-one. The `order by pr.id` is for deterministic materialisation
+  -- ONLY — it never picks a winner, because two rows always resolve to NULL.
+  with active_owners as materialized (
+    select pr.id
       from public.practitioners pr
      where pr.studio_id = p_studio_id
        and pr.active = true
-       and pr.role = 'owner';
-  else
-    v_owner_id := null;
-  end if;
+       and pr.role = 'owner'
+     order by pr.id
+     limit 2
+  )
+  -- `(array_agg(id))[1]` rather than `min(id)`: uuid has no min/max aggregate in
+  -- Postgres. It is only ever read when count(*) = 1, so the array holds exactly
+  -- one element and no ordering decides anything.
+  select case when count(*) = 1 then (array_agg(id))[1] else null end
+    into v_owner_id
+    from active_owners;
 
   -- SERIALIZE AGAINST APPOINTMENT-SOURCE MUTATION (the candidate-set race).
   --
@@ -819,7 +873,7 @@ begin
       for update;
 
   v_avail := public.validate_public_booking_slot(
-    p_studio_id, v_owner_id, p_service_id, p_starts_at, v_ends_at
+    p_studio_id, v_owner_id, p_service_id, v_starts_at, v_ends_at
   );
   if v_avail <> 'ok' then
     return query select v_avail, null::uuid, null::timestamptz,
@@ -841,7 +895,7 @@ begin
      notes, cancellation_token_hash, referral_source)
   values
     (p_studio_id, v_owner_id, p_client_id, p_service_id,
-     p_starts_at, v_ends_at, v_service_dur, 'confirmed',
+     v_starts_at, v_ends_at, v_service_dur, 'confirmed',
      p_notes, p_cancellation_token_hash, p_referral_source)
   returning a.id, a.created_at into v_appt_id, v_created_at;
 
@@ -859,14 +913,14 @@ begin
        'notes',  p_notes
      ));
 
-  return query select 'created'::text, v_appt_id, p_starts_at, v_ends_at,
+  return query select 'created'::text, v_appt_id, v_starts_at, v_ends_at,
                       v_service_dur, v_owner_id, v_created_at;
   return;
 end;
 $$;
 
 comment on function public.create_public_appointment(uuid, uuid, uuid, timestamptz, text, text, text) is
-  'Atomic public booking: creates the appointment AND its mandatory appointment_audit row in one transaction. Derives duration, end time, status, practitioner (the active owner), capacity and buffer fields from database state; the caller cannot request a custom duration, an outside-hours override, a status, or arbitrary audit details. Service-role only.';
+  'Atomic public booking: creates the appointment AND its mandatory appointment_audit row in one transaction. Derives duration, end time, status, practitioner (the SOLE active owner, otherwise null), capacity and buffer fields from database state; the caller cannot request a custom duration, an outside-hours override, a status, or arbitrary audit details. Service-role only.';
 
 -- ---------------------------------------------------------------------------
 -- 5. PRIVILEGES
