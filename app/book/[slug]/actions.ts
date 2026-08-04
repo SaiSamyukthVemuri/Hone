@@ -757,15 +757,6 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     }
   }
 
-  // Find the owner practitioner to attribute the appointment to + notify.
-  const { data: owner } = await admin
-    .from("practitioners")
-    .select("id, display_name, email")
-    .eq("studio_id", studio.id)
-    .eq("active", true)
-    .eq("role", "owner")
-    .maybeSingle();
-
   const appointmentToken = generateAppointmentToken();
   // Migration 0170. The appointment and its MANDATORY appointment_audit row are
   // created by one command, in one transaction. Previously this route inserted
@@ -810,11 +801,19 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // Exactly the codes the command can emit for an unavailable time. It
     // reports every collision (overlap, buffer, block, break) as
     // `time_unavailable`, so there is no separate `buffer_conflict` to map.
+    //
+    // `not_a_public_slot` belongs HERE, not in the operator bucket below. It
+    // means the submitted instant is no longer an offered slot — which is
+    // exactly what a visitor sees when a conflict is cancelled between this
+    // action's slot re-check and the command taking the studio lock, removing an
+    // after-conflict anchor. That visitor should be told to pick another time,
+    // not handed a generic "contact the studio" dead end.
     const SLOT_TAKEN_CODES = new Set([
       "time_unavailable",
       "outside_availability",
       "studio_closed",
       "invalid_time",
+      "not_a_public_slot",
     ]);
     if (SLOT_TAKEN_CODES.has(commandResult)) {
       console.error(
@@ -912,6 +911,55 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     created_at: createdAtIso as string,
   } as unknown as import("@/lib/types/database").Appointment;
 
+  // AUTHORITATIVE PRACTITIONER. `commandRow.practitioner_id` is the practitioner
+  // the appointment was actually assigned to, resolved inside the transaction
+  // under the studio lock. It is the ONLY source downstream may use.
+  //
+  // This route used to pre-fetch "the current active owner" BEFORE the RPC and
+  // then use that object for the notification row, the practitioner email
+  // recipient and the practitioner name shown to the client. Those could
+  // diverge: if ownership changed, or the owner was deactivated, between the
+  // pre-fetch and the command's own lookup, the appointment committed to
+  // practitioner B while every notification still named and emailed A. That is
+  // an attribution and privacy defect, so the pre-fetch is gone.
+  //
+  // Metadata is re-read by EXACT (id, studio_id) — never by "current active
+  // owner", which could resolve to someone else if activity changed again right
+  // after commit. This read is best-effort: the appointment is already
+  // committed and nothing here may fail the booking.
+  const assignedPractitionerId =
+    (commandRow?.practitioner_id as string | null | undefined) ?? null;
+  let assignedPractitioner: {
+    id: string;
+    display_name: string | null;
+    email: string | null;
+  } | null = null;
+  if (assignedPractitionerId) {
+    const { data: pr, error: prErr } = await admin
+      .from("practitioners")
+      .select("id, display_name, email")
+      .eq("id", assignedPractitionerId)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (prErr || !pr) {
+      // Safe, non-PII operational signal. Downstream degrades to the studio-name
+      // fallback and skips the practitioner-specific email rather than risking a
+      // stale recipient.
+      logInternalBookingError("public_booking_practitioner_lookup_failed", {
+        code: prErr?.code,
+        studioId: studio.id,
+      });
+    } else {
+      assignedPractitioner = pr;
+    }
+  }
+  // Client-facing practitioner label. Falls back to the studio name exactly as
+  // before when there is no assigned practitioner or the metadata read failed.
+  const practitionerDisplayName =
+    assignedPractitioner?.display_name?.trim() ||
+    assignedPractitioner?.email ||
+    studio.name;
+
   // PR #164. Fire-and-forget practitioner notification. The
   // appointment row is committed at this point; a failure inside
   // the helper logs to ops_alerts but does NOT roll back the
@@ -921,7 +969,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // appointment detail page already exposes to studio members.
   recordPractitionerNotification({
     studioId: studio.id,
-    practitionerId: owner?.id ?? null,
+    practitionerId: assignedPractitionerId,
     eventType: "new_booking",
     title: "New booking",
     body: `${clientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
@@ -1032,8 +1080,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       appointment: created,
       service,
       studio,
-      practitionerDisplayName:
-        owner?.display_name?.trim() || owner?.email || studio.name,
+      practitionerDisplayName,
       clientName,
       clientEmail: email,
       cancellationUrl,
@@ -1081,14 +1128,21 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // new-booking notification. Default true preserves existing
   // behavior. Client confirmation email above is gated separately
   // via send_confirmation_emails and is NOT affected by this toggle.
-  if (owner?.email && studio.notify_practitioner_on_new_booking !== false) {
+  // Only the AUTHORITATIVE assigned practitioner may receive this. A null
+  // practitioner, or a failed metadata read, sends nothing — never a stale owner.
+  if (
+    assignedPractitioner?.email &&
+    studio.notify_practitioner_on_new_booking !== false
+  ) {
     await sendBookingNotificationToPractitioner({
       appointment: created,
       service,
       studio,
       practitionerName:
-        owner.display_name?.trim() || owner.email || "Practitioner",
-      practitionerEmail: owner.email,
+        assignedPractitioner.display_name?.trim() ||
+        assignedPractitioner.email ||
+        "Practitioner",
+      practitionerEmail: assignedPractitioner.email,
       clientName,
       clientEmail: email,
       clientPhone,

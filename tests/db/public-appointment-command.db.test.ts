@@ -596,3 +596,49 @@ describe("regressions from adversarial review", () => {
     expect(r.result).toBe("created");
   });
 });
+
+describe("practitioner attribution is resolved by the command, under the lock", () => {
+  it("returns the owner active AT COMMAND TIME, not one resolved earlier", async () => {
+    // The route used to pre-fetch "the current active owner" before the RPC and
+    // then use that object for every notification. This proves the command's own
+    // resolution is the authoritative one: change ownership after the point a
+    // caller would have pre-fetched, and the command must still return the
+    // practitioner it actually assigned.
+    const s = await seedPublicStudio("owner-swap");
+    const ownerA = s.ownerId;
+
+    // Introduce owner B and retire owner A — exactly the window that produced
+    // the stale-attribution defect.
+    const bUser = randomUUID();
+    const ownerB = randomUUID();
+    const bEmail = `ownerb-${ownerB.slice(0, 8)}@harness.local`;
+    await adminQuery(`insert into auth.users (id,email) values ($1,$2)`, [bUser, bEmail]);
+    await adminQuery(
+      `insert into public.practitioners (id,studio_id,user_id,display_name,email,role,active)
+       values ($1,$2,$3,'Owner B',$4,'owner',true)`,
+      [ownerB, s.studioId, bUser, bEmail],
+    );
+    await adminQuery(`update public.practitioners set active=false where id=$1`, [ownerA]);
+
+    const r = await book(s, at(11, 10));
+    expect(r.result).toBe("created");
+    expect(r.practitioner_id, "must be the owner active at command time").toBe(ownerB);
+    expect(r.practitioner_id).not.toBe(ownerA);
+
+    const a = await adminQuery(
+      `select practitioner_id from public.appointments where id=$1`,
+      [r.appointment_id],
+    );
+    expect(a.rows[0].practitioner_id).toBe(ownerB);
+  });
+
+  it("returns a NULL practitioner when no active owner remains, and still books", async () => {
+    const s = await seedPublicStudio("owner-gone");
+    await adminQuery(`update public.practitioners set active=false where studio_id=$1`, [
+      s.studioId,
+    ]);
+    const r = await book(s, at(12, 10));
+    expect(r.result).toBe("created");
+    expect(r.practitioner_id).toBeNull();
+  });
+});

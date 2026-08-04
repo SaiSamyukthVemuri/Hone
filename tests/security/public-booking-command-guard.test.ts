@@ -86,3 +86,79 @@ describe("public booking route — no direct appointment creation", () => {
     expect(CODE).not.toMatch(/error:\s*commandResult/);
   });
 });
+
+describe("authoritative practitioner — no stale pre-command owner", () => {
+  it("does NOT fetch a practitioner before the command", () => {
+    // The pre-RPC "current active owner" lookup is gone. If it returns, an
+    // ownership or activity change between the pre-fetch and the command's own
+    // resolution would email and name the WRONG practitioner for an appointment
+    // that committed to someone else.
+    const beforeRpc = CODE.slice(0, CODE.indexOf('"create_public_appointment"'));
+    expect(
+      beforeRpc,
+      "no practitioners lookup may precede the command",
+    ).not.toMatch(/\.from\(\s*["']practitioners["']\s*\)/);
+  });
+
+  it("resolves the practitioner from the command's returned id, scoped to the studio", () => {
+    expect(CODE).toMatch(/commandRow\?\.practitioner_id/);
+    const after = CODE.slice(CODE.indexOf("assignedPractitionerId"));
+    expect(after).toMatch(/\.from\(\s*["']practitioners["']\s*\)/);
+    expect(after).toMatch(/\.eq\("id", assignedPractitionerId\)/);
+    expect(after).toMatch(/\.eq\("studio_id", studio\.id\)/);
+    // Must NOT re-derive "the current active owner" as a substitute.
+    const lookup = after.slice(0, after.indexOf("maybeSingle()"));
+    expect(lookup).not.toContain('.eq("role", "owner")');
+    expect(lookup).not.toContain('.eq("active", true)');
+  });
+
+  it("every practitioner-specific side effect uses the authoritative record", () => {
+    expect(CODE).toMatch(/practitionerId: assignedPractitionerId/);
+    expect(CODE).toMatch(/practitionerEmail: assignedPractitioner\.email/);
+    expect(CODE).toMatch(/assignedPractitioner\?\.email &&/);
+    // No `owner` identifier survives as a value anywhere.
+    const codeNoComments = CODE.split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(codeNoComments).not.toMatch(/\bowner\?\./);
+    expect(codeNoComments).not.toMatch(/\bowner\.\w/);
+  });
+
+  it("a null or unresolved practitioner falls back to the studio name, not a stale record", () => {
+    expect(CODE).toMatch(
+      /assignedPractitioner\?\.display_name\?\.trim\(\)[\s\S]{0,80}studio\.name/,
+    );
+    // The metadata failure is logged with a PII-safe payload and does not throw.
+    expect(CODE).toMatch(/public_booking_practitioner_lookup_failed/);
+  });
+
+  it("the client confirmation is NOT gated on the practitioner lookup succeeding", () => {
+    // Losing the confirmation email loses the only copy of the raw cancellation
+    // token, so it must not depend on any post-commit read.
+    const conf = CODE.indexOf("if (studio.send_confirmation_emails)");
+    expect(conf).toBeGreaterThan(-1);
+    const guard = CODE.slice(conf, conf + 60);
+    expect(guard).not.toContain("assignedPractitioner");
+    expect(guard).not.toContain("created &&");
+  });
+});
+
+describe("policy split — what the command does NOT enforce", () => {
+  it("the new-client consultation restriction stays in the action, BEFORE the command", () => {
+    // The command never receives client_type, and the consultation rule is a
+    // public-flow product policy rather than an appointment-table lineage fact.
+    // It must therefore run before the RPC and must not be claimed as a DB
+    // guarantee.
+    const gate = CODE.indexOf("isConsultationService");
+    const rpc = CODE.indexOf('"create_public_appointment"');
+    expect(gate, "the consultation gate must exist").toBeGreaterThan(-1);
+    expect(gate, "and must precede the command").toBeLessThan(rpc);
+  });
+
+  it("does not pass client_type to the command", () => {
+    const call = CODE.slice(CODE.indexOf('"create_public_appointment"'));
+    const args = call.slice(0, call.indexOf("},") + 1);
+    expect(args).not.toContain("client_type");
+    expect(args).not.toContain("clientType");
+  });
+});

@@ -20,7 +20,21 @@ const PROSE = SQL.split("\n")
   .filter((l) => l.trim().startsWith("--"))
   .join("\n");
 
-const FUNCTIONS = ["validate_public_booking_slot", "create_public_appointment"] as const;
+const FUNCTIONS = [
+  "public_booking_tz_offset_minutes",
+  "public_booking_local_to_utc",
+  "public_booking_slot_candidates",
+  "validate_public_booking_slot",
+  "create_public_appointment",
+] as const;
+
+const SIGS: Record<string, string> = {
+  public_booking_tz_offset_minutes: "(timestamptz, text)",
+  public_booking_local_to_utc: "(date, time, text)",
+  public_booking_slot_candidates: "(uuid, date, integer)",
+  validate_public_booking_slot: "(uuid, uuid, uuid, timestamptz, timestamptz)",
+  create_public_appointment: "(uuid, uuid, uuid, timestamptz, text, text, text)",
+};
 
 const CREATE_SIG = "(uuid, uuid, uuid, timestamptz, text, text, text)";
 const VALIDATE_SIG = "(uuid, uuid, uuid, timestamptz, timestamptz)";
@@ -154,6 +168,18 @@ describe("0170 — result-code family, not exceptions", () => {
     ]) {
       expect(FLAT, `${code} must be a returnable result`).toContain(`'${code}'::text`);
     }
+    // validate_public_booking_slot returns plain `text`, so its codes are not cast.
+    for (const code of [
+      "invalid_studio",
+      "invalid_practitioner",
+      "not_eligible",
+      "studio_closed",
+      "outside_availability",
+      "time_unavailable",
+      "not_a_public_slot",
+    ]) {
+      expect(FLAT, `${code} must be a returnable result`).toContain(`return '${code}'`);
+    }
   });
 
   it("does NOT catch 23P01 or the HB001 buffer trigger — they must roll back", () => {
@@ -163,15 +189,71 @@ describe("0170 — result-code family, not exceptions", () => {
   });
 });
 
+describe("0170 — exact public-slot membership", () => {
+  it("the validator requires membership in the generated candidate set", () => {
+    expect(FLAT).toContain("public.public_booking_slot_candidates(");
+    expect(FLAT).toContain("return 'not_a_public_slot'");
+  });
+
+  it("takes NO caller-supplied slot-verification escape hatch", () => {
+    for (const forbidden of [
+      "p_slot_verified",
+      "p_is_public_slot",
+      "p_allow_arbitrary_start",
+      "p_skip_slot_check",
+    ]) {
+      expect(CODE, `must not accept ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  it("pins the hourly fallback granularity, not 15 minutes", () => {
+    // FALLBACK_GRANULARITY_MINUTES = 60 in lib/booking/slots.ts:115.
+    expect(FLAT).toContain("v_m := v_m + 60;");
+    expect(PROSE).toMatch(/FALLBACK_GRANULARITY_MINUTES = 60/);
+  });
+
+  it("ports local->UTC rather than delegating to AT TIME ZONE for that direction", () => {
+    expect(CODE).toContain("public.public_booking_local_to_utc(");
+    // The candidate walk must use the ported helper, never the native operator.
+    const cands = CODE.slice(CODE.indexOf("public_booking_slot_candidates("));
+    const walk = cands.slice(cands.indexOf("while v_m"), cands.indexOf("end loop;"));
+    expect(walk).toContain("public.public_booking_local_to_utc");
+    expect(walk).not.toMatch(/at time zone/);
+  });
+
+  it("generates all three anchor families", () => {
+    const cands = CODE.slice(CODE.indexOf("public_booking_slot_candidates("));
+    expect(cands, "opening + hourly fallback").toContain("make_time(v_m / 60, v_m % 60, 0)");
+    expect(cands, "source-aware protected end").toContain("r.protected_end");
+    expect(cands, "backward-packed pre-conflict anchor").toContain(
+      "r.starts_at - make_interval(mins => p_duration_minutes + v_buffer)",
+    );
+  });
+
+  it("keeps the trailing buffer allowed to spill past close", () => {
+    const cands = CODE.slice(CODE.indexOf("public_booking_slot_candidates("));
+    // The close filter is on the SERVICE end only.
+    expect(cands).toContain(
+      "c + make_interval(mins => p_duration_minutes) <= v_close_utc",
+    );
+    expect(cands).not.toContain(
+      "c + make_interval(mins => p_duration_minutes + v_buffer) <= v_close_utc",
+    );
+  });
+
+  it("reads availability studio-wide only, in both the validator and the candidates", () => {
+    const scoped = CODE.match(/order by \(.*practitioner_id is not null\) desc/g) ?? [];
+    expect(scoped, "no practitioner-scoped precedence anywhere").toEqual([]);
+    expect((CODE.match(/practitioner_id is null/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
 describe("0170 — privileges", () => {
   it("revokes EXECUTE from public, anon, authenticated AND service_role by name", () => {
-    for (const [fn, sig] of [
-      ["validate_public_booking_slot", VALIDATE_SIG],
-      ["create_public_appointment", CREATE_SIG],
-    ] as const) {
+    for (const fn of FUNCTIONS) {
       for (const role of ["public", "anon", "authenticated", "service_role"]) {
         expect(SQL).toContain(
-          `revoke execute on function public.${fn}${sig} from ${role};`,
+          `revoke execute on function public.${fn}${SIGS[fn]} from ${role};`,
         );
       }
     }
@@ -184,14 +266,19 @@ describe("0170 — privileges", () => {
     expect(SQL).toContain(
       `grant execute on function public.create_public_appointment${CREATE_SIG} to service_role;`,
     );
+    for (const fn of FUNCTIONS) {
+      expect(SQL).toContain(
+        `grant execute on function public.${fn}${SIGS[fn]} to service_role;`,
+      );
+    }
     const grants = SQL.match(/^grant execute on function/gm) ?? [];
-    expect(grants).toHaveLength(2);
+    expect(grants).toHaveLength(5);
     expect(SQL).not.toMatch(/to (anon|authenticated|public)\s*;/);
   });
 
-  it("has exactly eight revokes — four roles times two functions", () => {
+  it("has exactly twenty revokes — four roles times five functions", () => {
     const revokes = SQL.match(/^revoke execute on function/gm) ?? [];
-    expect(revokes).toHaveLength(8);
+    expect(revokes).toHaveLength(20);
   });
 
   it("writes privilege statements literally, never through a DO block", () => {
@@ -249,8 +336,8 @@ describe("0170 — prose records the decisions a reviewer must be able to check"
   });
 
   it("records the parity rules that constrain the implementation", () => {
-    expect(PROSE).toMatch(/NEVER RE-DERIVE THE OFFER GRID/i);
-    expect(PROSE).toMatch(/UTC -> LOCAL/i);
+    expect(PROSE).toMatch(/RE-DERIVES THE OFFER GRID AND REQUIRES EXACT MEMBERSHIP/i);
+    expect(PROSE).toMatch(/LOCAL -> UTC IS PORTED/i);
     expect(PROSE).toMatch(/SERVICE END, NOT THE BUFFERED END/i);
   });
 

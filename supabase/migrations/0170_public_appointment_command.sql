@@ -23,7 +23,7 @@
 --   before: 1 direct INSERT (appointments) + 1 detached INSERT (appointment_audit)
 --   after:  0 direct writers; public.create_public_appointment owns both
 --
--- SCOPE — ADDITIVE ONLY. This migration creates two functions and nothing else.
+-- SCOPE — ADDITIVE ONLY. This migration creates five functions and nothing else.
 -- It does NOT revoke any table grant, drop or create a policy, table, trigger or
 -- index, backfill any row, or change any studio flag. `authenticated` keeps its
 -- existing appointment DML for now; that revocation is a LATER PR and only after
@@ -58,23 +58,36 @@
 --
 -- PARITY WITH THE TYPESCRIPT SLOT ENGINE — the rules that matter
 --
--- 1. VALIDATE THE SUBMITTED INSTANT; NEVER RE-DERIVE THE OFFER GRID.
---    The offered set is not a lattice. It is {open} ∪ {open + 60m steps} ∪ {the
---    protected end of every conflict} ∪ {conflict.start − duration − buffer}
---    (lib/booking/slots.ts:115, 300-302, 310, 319), and the submit path demands
---    exact millisecond identity. Re-deriving that in SQL would reject legitimate
---    submissions. This command instead checks the submitted instant against the
---    same rule set, which is a strict tightening: every rule it applies is one
---    the loader already honours.
+-- 1. THE COMMAND RE-DERIVES THE OFFER GRID AND REQUIRES EXACT MEMBERSHIP.
+--    The offered set is NOT a lattice. It is {open} ∪ {open + 60m steps} ∪ {the
+--    SOURCE-AWARE protected end of every conflict} ∪ {conflict.start − duration
+--    − buffer} (lib/booking/slots.ts:115, 300-302, 310, 319).
 --
--- 2. ONLY PROJECT UTC -> LOCAL, NEVER LOCAL -> UTC.
+--    An earlier revision of this migration validated only the broad rules —
+--    horizon, hours, blockouts, overlap, buffer. That is NOT sufficient as the
+--    authoritative boundary: a direct service-role call could submit 10:17 on an
+--    open, conflict-free day and be accepted, even though the public page would
+--    never offer 10:17. The application's own getAvailableSlots() re-check is
+--    not the final authority and cannot be, because it runs before the studio
+--    lock is taken.
+--
+--    public_booking_slot_candidates below therefore reproduces all three anchor
+--    families and both filters, under the SAME studio lock the command holds, and
+--    membership is required to millisecond precision. There is no
+--    caller-supplied `p_slot_verified` escape hatch — the caller cannot assert
+--    its own slot is valid.
+--
+-- 2. LOCAL -> UTC IS PORTED, NOT DELEGATED TO `AT TIME ZONE`.
+--    Re-deriving the grid means generating candidates from LOCAL wall-clock
+--    minutes, which is precisely the direction where the two engines diverge.
 --    `utcInstantFromLocal` (lib/booking/tz.ts:42-68) and Postgres `AT TIME ZONE`
 --    disagree by one hour on both DST edges: for a nonexistent local time TS
 --    picks the earlier instant and Postgres shifts forward; for an ambiguous
 --    local time TS picks the FIRST occurrence and Postgres picks the second.
---    Every projection below is `timestamptz AT TIME ZONE tz` (UTC -> local wall
---    clock), which is unambiguous in both engines, so the divergence cannot
---    arise here.
+--    public_booking_local_to_utc is a faithful port of the TS double-sampling
+--    algorithm so the generated candidates match the offered ones on DST days.
+--    Every UTC -> LOCAL projection (which IS unambiguous) still uses the native
+--    `timestamptz AT TIME ZONE tz`.
 --
 -- 3. THE WINDOW IS CHECKED ON THE SERVICE END, NOT THE BUFFERED END.
 --    lib/booking/slots.ts:324-327 fits `start + duration <= close` and states
@@ -112,7 +125,248 @@ begin;
 set local lock_timeout = '5s';
 
 -- ---------------------------------------------------------------------------
--- 1. public.validate_public_booking_slot
+-- 1. public.public_booking_tz_offset_minutes / public_booking_local_to_utc
+--
+-- A FAITHFUL PORT of lib/booking/tz.ts:42-68 `utcInstantFromLocal`.
+--
+-- Postgres's native `timestamp AT TIME ZONE tz` cannot be used for the
+-- LOCAL -> UTC direction here, because the two engines resolve DST edges
+-- differently and the candidate grid below is generated in LOCAL wall-clock
+-- minutes. Measured on this schema for America/Toronto:
+--
+--   nonexistent 2026-03-08 02:30 : Postgres -> 07:30Z (shifts forward)
+--                                  TS       -> 06:30Z (one hour BEFORE)
+--   ambiguous   2026-11-01 01:30 : Postgres -> 06:30Z (SECOND occurrence)
+--                                  TS       -> 05:30Z (FIRST occurrence)
+--
+-- Using the native operator would therefore generate candidate instants an hour
+-- away from the ones the page offered, and every submission on a DST boundary
+-- day would be refused. This reproduces the TS double-sampling algorithm
+-- exactly: treat the local string as UTC, correct by the offset sampled at that
+-- naive instant, then RE-SAMPLE at the corrected instant and re-apply when the
+-- two differ.
+--
+-- STABLE, not IMMUTABLE: `AT TIME ZONE <text>` depends on the tz database.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.public_booking_tz_offset_minutes(
+  p_instant timestamptz,
+  p_tz      text
+)
+returns integer
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select (extract(epoch from
+            ((p_instant at time zone p_tz) - (p_instant at time zone 'UTC'))
+          ) / 60)::integer;
+$$;
+
+comment on function public.public_booking_tz_offset_minutes(timestamptz, text) is
+  'Signed UTC offset in minutes for an instant in a timezone. Port of tzOffsetMinutes (lib/booking/tz.ts).';
+
+create or replace function public.public_booking_local_to_utc(
+  p_local_date date,
+  p_local_time time,
+  p_tz         text
+)
+returns timestamptz
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_naive_utc timestamptz;
+  v_off1      integer;
+  v_off2      integer;
+  v_corrected timestamptz;
+begin
+  -- First read: pretend the local wall clock is UTC.
+  v_naive_utc := (p_local_date + p_local_time) at time zone 'UTC';
+  v_off1      := public.public_booking_tz_offset_minutes(v_naive_utc, p_tz);
+  v_corrected := v_naive_utc - make_interval(mins => v_off1);
+  -- Re-sample: a single pass is wrong when the naive and corrected instants
+  -- straddle a transition (the TS comment at tz.ts:49-59 documents exactly this).
+  v_off2 := public.public_booking_tz_offset_minutes(v_corrected, p_tz);
+  if v_off2 <> v_off1 then
+    v_corrected := v_naive_utc - make_interval(mins => v_off2);
+  end if;
+  return v_corrected;
+end;
+$$;
+
+comment on function public.public_booking_local_to_utc(date, time, text) is
+  'Local wall clock -> UTC instant, matching lib/booking/tz.ts utcInstantFromLocal INCLUDING its DST edge conventions. Postgres AT TIME ZONE resolves those edges differently and must not be substituted.';
+
+-- ---------------------------------------------------------------------------
+-- 2. public.public_booking_slot_candidates
+--
+-- The exact candidate set the public slot loader would offer for a local date,
+-- ported from lib/booking/slots.ts:236-340. The offered set is NOT a lattice —
+-- re-deriving it is only safe because this reproduces all three anchor families
+-- and both filters verbatim:
+--
+--   (A) the opening anchor plus an hourly fallback walk in LOCAL minutes.
+--       FALLBACK_GRANULARITY_MINUTES = 60 (lib/booking/slots.ts:115) — NOT 15.
+--       Generated per-step through public_booking_local_to_utc so a DST day
+--       steps on the local clock exactly as the loader does.
+--   (B) the SOURCE-AWARE protected end of every conflict: an appointment is
+--       protected to ends_at + the CURRENT studio buffer; a timed block,
+--       recurring-break occurrence or full-day blockout to its RAW ends_at.
+--   (C) conflict.starts_at - duration - buffer, the backward-packed anchor.
+--
+-- Filters, matching slots.ts:326-335: start >= open, start + duration <= close
+-- (the TRAILING BUFFER MAY SPILL PAST CLOSE), and the candidate's protected
+-- interval [start, start + duration + buffer) must not overlap any conflict's
+-- protected interval. Half-open on both sides; touching is allowed.
+--
+-- Reservations are loaded over the same [local-midnight, +36h) window and the
+-- same studio-wide `studio_id` filter the public loader uses (slots.ts:239-251)
+-- — the public surface is unconditionally capacity-OFF.
+--
+-- Returns the empty set for a closed day or a full-day blockout, exactly as the
+-- loader returns [].
+-- ---------------------------------------------------------------------------
+
+create or replace function public.public_booking_slot_candidates(
+  p_studio_id        uuid,
+  p_local_date       date,
+  p_duration_minutes integer
+)
+returns setof timestamptz
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_tz        text;
+  v_buffer    integer;
+  v_is_open   boolean;
+  v_open      time;
+  v_close     time;
+  v_open_min  integer;
+  v_close_min integer;
+  v_open_utc  timestamptz;
+  v_close_utc timestamptz;
+  v_win_start timestamptz;
+  v_win_end   timestamptz;
+  v_m         integer;
+  v_cands     timestamptz[] := '{}';
+  r           record;
+begin
+  select s.timezone, greatest(coalesce(s.buffer_minutes, 0), 0)
+    into v_tz, v_buffer
+    from public.studios s
+   where s.id = p_studio_id;
+  if not found then return; end if;
+  if p_duration_minutes is null or p_duration_minutes <= 0 then return; end if;
+
+  -- Window: a date override beats the weekly default; STUDIO-WIDE rows only.
+  select o.is_open, o.open_time, o.close_time
+    into v_is_open, v_open, v_close
+    from public.studio_availability_overrides o
+   where o.studio_id = p_studio_id
+     and o.effective_date = p_local_date
+     and o.practitioner_id is null
+   limit 1;
+  if not found then
+    select d.is_open, d.open_time, d.close_time
+      into v_is_open, v_open, v_close
+      from public.studio_availability_default d
+     where d.studio_id = p_studio_id
+       and d.day_of_week = extract(dow from p_local_date)::integer
+       and d.practitioner_id is null
+     limit 1;
+    if not found then return; end if;
+  end if;
+  if not coalesce(v_is_open, false) or v_open is null or v_close is null then
+    return;
+  end if;
+
+  -- A full-day blockout suppresses the entire day (slots.ts:147-155 returns []).
+  if exists (
+    select 1 from public.studio_blockouts b
+     where b.studio_id = p_studio_id
+       and b.starts_on <= p_local_date
+       and b.ends_on   >= p_local_date
+  ) then
+    return;
+  end if;
+
+  -- TRUNCATE TO HH:MM FIRST. lib/booking/slots.ts strips seconds from both
+  -- window bounds via trimTime() (slots.ts:118-121, applied at :164-165), so the
+  -- SQL must too — and it must apply the SAME truncated value to BOTH the
+  -- local-minute walk bounds AND the UTC filter bounds. Deriving the minute
+  -- bounds from hour+minute while deriving the UTC bounds from the full `time`
+  -- made the two disagree whenever a window carried seconds: a close_time of
+  -- 17:00:45 accepted a start whose service end was 17:00:30, which the page
+  -- never offers; an open_time of 09:00:30 dropped the entire opening-anchor
+  -- family. The app's own writers enforce HH:MM
+  -- (app/(app)/settings/availability/actions.ts:221), so this is reachable only
+  -- by a direct database write — but the port must not depend on that.
+  v_open      := date_trunc('minute', v_open);
+  v_close     := date_trunc('minute', v_close);
+  v_open_min  := extract(hour from v_open)::integer * 60 + extract(minute from v_open)::integer;
+  v_close_min := extract(hour from v_close)::integer * 60 + extract(minute from v_close)::integer;
+  v_open_utc  := public.public_booking_local_to_utc(p_local_date, v_open, v_tz);
+  v_close_utc := public.public_booking_local_to_utc(p_local_date, v_close, v_tz);
+  v_win_start := public.public_booking_local_to_utc(p_local_date, '00:00'::time, v_tz);
+  v_win_end   := v_win_start + interval '36 hours';
+
+  -- (A) opening anchor + hourly fallback, walked in LOCAL minutes.
+  v_m := v_open_min;
+  while v_m + p_duration_minutes <= v_close_min loop
+    v_cands := v_cands || public.public_booking_local_to_utc(
+      p_local_date, make_time(v_m / 60, v_m % 60, 0), v_tz
+    );
+    v_m := v_m + 60;
+  end loop;
+
+  -- (B) + (C) conflict-derived anchors.
+  for r in
+    select cr.starts_at,
+           case when cr.source_kind = 'appointment'
+                then cr.ends_at + make_interval(mins => v_buffer)
+                else cr.ends_at
+           end as protected_end
+      from public.studio_calendar_reservations cr
+     where cr.studio_id = p_studio_id
+       and cr.starts_at < v_win_end
+       and cr.ends_at   > v_win_start
+  loop
+    v_cands := v_cands || r.protected_end;
+    v_cands := v_cands || (r.starts_at - make_interval(mins => p_duration_minutes + v_buffer));
+  end loop;
+
+  return query
+    select distinct c
+      from unnest(v_cands) c
+     where c >= v_open_utc
+       and c + make_interval(mins => p_duration_minutes) <= v_close_utc
+       and not exists (
+         select 1
+           from public.studio_calendar_reservations cr2
+          where cr2.studio_id = p_studio_id
+            and cr2.starts_at < v_win_end
+            and cr2.ends_at   > v_win_start
+            and c < (case when cr2.source_kind = 'appointment'
+                          then cr2.ends_at + make_interval(mins => v_buffer)
+                          else cr2.ends_at end)
+            and (c + make_interval(mins => p_duration_minutes + v_buffer)) > cr2.starts_at
+       );
+end;
+$$;
+
+comment on function public.public_booking_slot_candidates(uuid, date, integer) is
+  'The exact set of public slot starts for a local date, ported from lib/booking/slots.ts (opening + hourly fallback anchors, source-aware post-conflict anchors, backward-packed pre-conflict anchors, window and overlap filters). Service-role only.';
+
+-- ---------------------------------------------------------------------------
+-- 3. public.validate_public_booking_slot
+
 --
 -- The public-surface availability contract, enforced identically in BOTH
 -- capacity modes. Returns a closed result code; never raises, never leaks a row
@@ -192,6 +446,14 @@ begin
     end if;
   end if;
 
+  -- Defensive: the command always passes ends_at > starts_at, but this function
+  -- is independently grantable and its contract says it never raises. A
+  -- non-positive interval would otherwise reach make_interval(mins => negative)
+  -- in the membership check and raise 22000.
+  if p_starts_at is null or p_ends_at is null or p_ends_at <= p_starts_at then
+    return 'invalid_time';
+  end if;
+
   -- UTC -> local wall clock. This direction only (see header note 2).
   v_local_start := p_starts_at at time zone v_tz;
   v_local_end   := p_ends_at   at time zone v_tz;
@@ -260,6 +522,10 @@ begin
   end if;
 
   -- NOTE: the SERVICE end, not the buffered end (see header note 3).
+  -- Same HH:MM truncation as the candidate generator (see its note): the window
+  -- comparison must not be sensitive to seconds the loader never sees.
+  v_open  := date_trunc('minute', v_open);
+  v_close := date_trunc('minute', v_close);
   if v_start_time < v_open or v_end_time > v_close then
     return 'outside_availability';
   end if;
@@ -289,6 +555,22 @@ begin
     return 'time_unavailable';
   end if;
 
+  -- EXACT PUBLIC-SLOT MEMBERSHIP (see header rule 1). Everything above proves
+  -- the interval is legal; this proves it is one the public page would actually
+  -- OFFER. Without it a direct service-role call could book 10:17 on an open,
+  -- conflict-free day. Millisecond precision, under the caller's studio lock.
+  if not exists (
+    select 1
+      from public.public_booking_slot_candidates(
+             p_studio_id,
+             v_local_date,
+             (extract(epoch from (p_ends_at - p_starts_at)) / 60)::integer
+           ) c
+     where c = p_starts_at
+  ) then
+    return 'not_a_public_slot';
+  end if;
+
   return 'ok';
 end;
 $$;
@@ -297,7 +579,7 @@ comment on function public.validate_public_booking_slot(uuid, uuid, uuid, timest
   'Public-surface availability contract. Enforces practitioner membership, service eligibility, full-day blockouts, the working-hours window and shadow-row collisions in BOTH capacity modes, unlike validate_appointment_availability which fences those checks behind practitioner capacity. Validates a submitted instant; never re-derives the offer grid. Service-role only.';
 
 -- ---------------------------------------------------------------------------
--- 2. public.create_public_appointment
+-- 4. public.create_public_appointment
 --
 -- The single authoritative creator for unauthenticated public bookings. Writes
 -- the appointment AND its mandatory appointment_audit row in one transaction.
@@ -500,7 +782,7 @@ comment on function public.create_public_appointment(uuid, uuid, uuid, timestamp
   'Atomic public booking: creates the appointment AND its mandatory appointment_audit row in one transaction. Derives duration, end time, status, practitioner (the active owner), capacity and buffer fields from database state; the caller cannot request a custom duration, an outside-hours override, a status, or arbitrary audit details. Service-role only.';
 
 -- ---------------------------------------------------------------------------
--- 3. PRIVILEGES
+-- 5. PRIVILEGES
 --
 -- Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon, authenticated AND
 -- service_role at function-create time, so all three are revoked BY NAME (plus
@@ -508,6 +790,21 @@ comment on function public.create_public_appointment(uuid, uuid, uuid, timestamp
 -- and 0164 each shipped a hole. Written as literal per-signature statements —
 -- never a DO-block with format() — because the grant guards read them textually.
 -- ---------------------------------------------------------------------------
+
+revoke execute on function public.public_booking_tz_offset_minutes(timestamptz, text) from public;
+revoke execute on function public.public_booking_tz_offset_minutes(timestamptz, text) from anon;
+revoke execute on function public.public_booking_tz_offset_minutes(timestamptz, text) from authenticated;
+revoke execute on function public.public_booking_tz_offset_minutes(timestamptz, text) from service_role;
+
+revoke execute on function public.public_booking_local_to_utc(date, time, text) from public;
+revoke execute on function public.public_booking_local_to_utc(date, time, text) from anon;
+revoke execute on function public.public_booking_local_to_utc(date, time, text) from authenticated;
+revoke execute on function public.public_booking_local_to_utc(date, time, text) from service_role;
+
+revoke execute on function public.public_booking_slot_candidates(uuid, date, integer) from public;
+revoke execute on function public.public_booking_slot_candidates(uuid, date, integer) from anon;
+revoke execute on function public.public_booking_slot_candidates(uuid, date, integer) from authenticated;
+revoke execute on function public.public_booking_slot_candidates(uuid, date, integer) from service_role;
 
 revoke execute on function public.validate_public_booking_slot(uuid, uuid, uuid, timestamptz, timestamptz) from public;
 revoke execute on function public.validate_public_booking_slot(uuid, uuid, uuid, timestamptz, timestamptz) from anon;
@@ -519,6 +816,9 @@ revoke execute on function public.create_public_appointment(uuid, uuid, uuid, ti
 revoke execute on function public.create_public_appointment(uuid, uuid, uuid, timestamptz, text, text, text) from authenticated;
 revoke execute on function public.create_public_appointment(uuid, uuid, uuid, timestamptz, text, text, text) from service_role;
 
+grant execute on function public.public_booking_tz_offset_minutes(timestamptz, text) to service_role;
+grant execute on function public.public_booking_local_to_utc(date, time, text) to service_role;
+grant execute on function public.public_booking_slot_candidates(uuid, date, integer) to service_role;
 grant execute on function public.validate_public_booking_slot(uuid, uuid, uuid, timestamptz, timestamptz) to service_role;
 grant execute on function public.create_public_appointment(uuid, uuid, uuid, timestamptz, text, text, text) to service_role;
 
