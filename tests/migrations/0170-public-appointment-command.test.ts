@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // 0170 — public appointment command, migration source contract.
@@ -39,12 +38,12 @@ const SIGS: Record<string, string> = {
 const CREATE_SIG = "(uuid, uuid, uuid, timestamptz, text, text, text)";
 const VALIDATE_SIG = "(uuid, uuid, uuid, timestamptz, timestamptz)";
 
-describe("0170 — migration state", () => {
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0170")).toBe(true);
-    expect(versionsAbove("0170")).toEqual([]);
-  });
-});
+// 0171 superseded 0170 as the repository maximum. Per CLAUDE.md §2, ONLY the
+// current maximum migration's own test may assert isRepoMax — an older
+// per-migration test that keeps the pin turns every subsequent migration into a
+// mechanical sweep, which is exactly how 0163/0164/0165 each went red after
+// push. The "nothing above me" tripwire is served centrally by the current
+// maximum's test (tests/migrations/0171-public-reschedule-command.test.ts).
 
 describe("0170 — declares exactly the two intended functions", () => {
   it("creates only validate_public_booking_slot and create_public_appointment", () => {

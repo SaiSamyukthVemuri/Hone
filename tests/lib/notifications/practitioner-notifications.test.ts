@@ -299,12 +299,22 @@ describe("public reschedule action calls the helper after the reschedule RPC suc
     expect(ACTIONS).toMatch(/eventType:\s*"appointment_rescheduled"/);
   });
 
-  it("the call appears AFTER the reschedule_appointment RPC", () => {
-    const rpcIdx = ACTIONS.indexOf('"reschedule_appointment"');
+  // Migration 0171 replaced the legacy reschedule_appointment RPC with the
+  // atomic reschedule_appointment_v2 command. The invariant is unchanged: the
+  // notification is a POST-COMMIT side effect and must follow the mutation.
+  it("the call appears AFTER the reschedule_appointment_v2 command", () => {
+    const rpcIdx = ACTIONS.indexOf('"reschedule_appointment_v2"');
     const helperIdx = ACTIONS.indexOf("recordPractitionerNotification({");
     expect(rpcIdx).toBeGreaterThan(-1);
     expect(helperIdx).toBeGreaterThan(-1);
     expect(helperIdx).toBeGreaterThan(rpcIdx);
+  });
+
+  // 0171: the practitioner the notification lands on is the one the COMMAND
+  // preserved, never a "current active owner" lookup.
+  it("uses the practitioner id returned by the command", () => {
+    expect(ACTIONS).toMatch(/practitionerId:\s*assignedPractitionerId/);
+    expect(ACTIONS).toContain("row.practitioner_id");
   });
 
   it("the call is NOT awaited", () => {

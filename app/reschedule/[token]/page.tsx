@@ -123,6 +123,12 @@ export default async function ReschedulePage({
                     result.summary.cancellationPolicyText,
                   noShowPolicyText: result.summary.noShowPolicyText,
                 })}
+                // 0171. The hash of the policy text rendered by the
+                // PublicPolicyReminderCard immediately above. Computed
+                // server-side in fetchAppointmentForRescheduleAction from the
+                // same studio row this page displays, so it is a genuine
+                // proof of what the visitor saw.
+                presentedPolicyHash={result.summary.presentedPolicyHash}
               />
             </>
           ) : (

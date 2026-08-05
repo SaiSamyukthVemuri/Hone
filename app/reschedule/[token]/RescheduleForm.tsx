@@ -58,6 +58,12 @@ type Props = {
   // server-side action mirrors the same predicate against the
   // resolved studio row.
   requiresAcknowledgement: boolean;
+  // 0171. SERVER-GENERATED hash of the exact policy text rendered above this
+  // form. Posted back verbatim with the checkbox so the command can prove the
+  // visitor acknowledged what they were actually shown. This component never
+  // computes it, never inspects it, and never sees the policy text itself —
+  // it is an opaque proof-of-display string. null when no policy is on file.
+  presentedPolicyHash: string | null;
 };
 
 // Today in the studio's local calendar, not the visitor's UTC date.
@@ -95,6 +101,7 @@ export function RescheduleForm({
   studioTimezone,
   studioPublicBookingHorizonMonths,
   requiresAcknowledgement,
+  presentedPolicyHash,
 }: Props) {
   const horizon = horizonInStudio(
     studioTimezone,
@@ -104,7 +111,15 @@ export function RescheduleForm({
   const [slots, setSlots] = useState<Slot[]>([]);
   const [picked, setPicked] = useState<Slot | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ when: string } | null>(null);
+  // 0171 amendment. The success state carries the successor's MANAGEMENT URL
+  // and the TRUE email outcome, so the page never claims a confirmation is on
+  // its way that the provider refused — and the client always leaves with a
+  // usable path to the new appointment.
+  const [done, setDone] = useState<{
+    when: string;
+    manageUrl: string;
+    emailStatus: "sent" | "failed" | "disabled";
+  } | null>(null);
   const [loadingSlots, startLoading] = useTransition();
   const [submitting, startSubmitting] = useTransition();
   // PR #132. Required policy acknowledgement. Submit is disabled
@@ -189,6 +204,13 @@ export function RescheduleForm({
       // no policy on file accepts the submit without this field
       // entirely; sending an unsolicited 'true' would be misleading.
       fd.set("acknowledged_policy", "true");
+      // 0171. Posted back exactly as the server issued it. If the studio edited
+      // its policies since this page rendered, the command sees the mismatch
+      // and returns policy_changed rather than recording acceptance of text
+      // this visitor never saw.
+      if (presentedPolicyHash) {
+        fd.set("presented_policy_hash", presentedPolicyHash);
+      }
     }
     startSubmitting(async () => {
       const r = await rescheduleAppointmentViaTokenAction(fd);
@@ -196,11 +218,28 @@ export function RescheduleForm({
         setError(r.error);
         return;
       }
-      setDone({ when: picked.startLabel });
+      setDone({
+        when: picked.startLabel,
+        manageUrl: r.manageUrl,
+        emailStatus: r.confirmationEmailStatus,
+      });
     });
   }
 
   if (done) {
+    // Copy is chosen by the ACTUAL email outcome. "A confirmation email is on
+    // its way" used to render unconditionally — including when the studio had
+    // confirmations switched off entirely, and when the provider had just
+    // failed. The management link renders in ALL THREE states, because it is
+    // the client's guaranteed path to the successor and does not depend on any
+    // provider.
+    const body =
+      done.emailStatus === "sent"
+        ? "Your new appointment is set, and a confirmation email has been sent."
+        : done.emailStatus === "failed"
+          ? "Your appointment moved successfully, but we couldn't send the confirmation email. Use the link below to manage your new appointment."
+          : "Your appointment moved successfully. Use the link below to manage your new appointment.";
+
     return (
       <div className="flex flex-col gap-4">
         <h2
@@ -209,14 +248,25 @@ export function RescheduleForm({
         >
           You&rsquo;re rescheduled.
         </h2>
-        <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
-          Your new appointment is set. A confirmation email is on its way.
-        </p>
-        {/* Back-to-portal exit. /portal handles its own session
-            check: if the visitor has a live portal session they land
-            on their home; if not, the portal page redirects to
-            /portal/login. We do not promise they are already signed
-            in. */}
+        <p className="text-[16px] leading-relaxed text-[#0A0A0A]">{body}</p>
+
+        {/* PRIMARY exit. Always present, whatever the email did. */}
+        <a
+          href={done.manageUrl}
+          className="self-start px-6 py-3 text-[13px] font-medium uppercase"
+          style={{
+            backgroundColor: "#0A0A0A",
+            color: "#FFFFFF",
+            letterSpacing: "0.1em",
+          }}
+        >
+          Manage new appointment
+        </a>
+
+        {/* Secondary exit. /portal handles its own session check: if the
+            visitor has a live portal session they land on their home; if not,
+            the portal page redirects to /portal/login. We do not promise they
+            are already signed in. */}
         <a
           href="/portal"
           className="self-start px-6 py-3 text-[13px] font-medium uppercase"

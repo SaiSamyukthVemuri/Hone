@@ -100,13 +100,97 @@ Both functions are `SECURITY DEFINER`, `search_path = ''`, and **service_role on
 **What this does NOT do.** `authenticated` still holds direct `INSERT`/`UPDATE`/`DELETE` on
 `appointments`; that revocation is a later PR and only after every remaining writer has migrated.
 Other narrow appointment writers still exist (postcare email-state columns on the practitioner
-surface). **Public reschedule is the next appointment-boundary gap**: `reschedule_appointment`
-performs no availability validation of its own and does not populate the reschedule lineage
-columns. The appointment DML boundary is **not** closed.
+surface). The appointment DML boundary is **not** closed.
 
 > Migration 0170 is **repo-only and unapplied** at the time of writing — hosted max remains 0169
 > (`docs/production/migration-state.json` is the canonical record). Merging the code alone enables
 > no production capability; the command must be applied during an authorized window first.
+
+## Public reschedule v2 — migration 0171
+
+The public reschedule route is now command-bound in the same way. `reschedule_appointment_v2`
+owns the whole mutation in **one transaction**:
+
+```
+verified original token
+  → locked original booking contract
+  → exact current public replacement slot
+  → current displayed-policy proof
+  → cancel original (cancellation_kind = 'rescheduled')
+  → create successor (rescheduled_from_appointment_id)
+  → complete reverse lineage (rescheduled_to_appointment_id)
+  → both audit rows
+  → the required policy acknowledgement
+  → return authoritative successor fields
+```
+
+**The booked contract is preserved, not re-derived.** Duration comes from the LOCKED ORIGINAL
+appointment, never from the service's current default — a studio that lengthens a service after a
+client books must not silently relength that booking. The service, the practitioner, the notes and
+the referral source are copied from the original; the legacy RPC silently dropped
+`referral_source`. There is no public practitioner selection and no reassignment.
+
+**Practitioner continuity is scoped to the capacity mode, and this is deliberate:**
+
+| Mode | Rule |
+|---|---|
+| **Capacity OFF** | The practitioner is preserved **exactly as booked** — active, **inactive**, or null. Current roster state and current service eligibility are **not** conditions of a self-service reschedule, because they are not conditions of the slots being offered either: the capacity-OFF loader generates from studio-wide availability and studio-wide reservations and never consults `practitioners.active` or `service_practitioners`. Refusing here would refuse every slot the page had just offered, permanently and unsatisfiably. |
+| **Capacity ON** | The preserved practitioner is load-bearing (it selects the availability rows and the `resource_key` timeline, and `appointments_capacity_requires_practitioner` makes it mandatory on a confirmed row), so it must still belong to the studio, still be active, and still satisfy service eligibility where a list exists — otherwise `practitioner_unavailable`, original left confirmed. Never a different practitioner. |
+
+Both `validate_public_reschedule_slot` and the command fence this behind the same
+`v_cap_on = studio flag AND non-null practitioner` predicate the TypeScript loader computes, so the two
+halves cannot disagree. Do **not** claim inactive practitioners are refused in all modes — they are
+refused under capacity ON only.
+
+**Exact replacement-slot semantics.** `public_reschedule_slot_candidates` is a sibling of 0170's
+booking helper that differs in exactly two ways: it excludes the original appointment's OWN shadow
+reservation (`source_kind='appointment'`, `source_id=original`), and it honours the studio's current
+capacity mode (practitioner-scoped availability precedence and `resource_key` reservations when ON).
+The same exclusion is now passed by the TypeScript read surfaces, so the offered set and the accepted
+set cannot diverge. It reuses 0170's `public_booking_local_to_utc` rather than adding a third DST
+implementation. Rescheduling to the appointment's current start is refused as `same_time`.
+
+**Policy freshness.** `acknowledged_policy=true` alone proves only that a box was ticked, not what
+was ticked. The page hashes the policy snapshot it actually rendered and posts that server-generated
+hash back; the command re-derives the current hash from the studio row and compares. A mismatch, or
+a missing hash, is `policy_changed` and mutates nothing. Policy TEXT is never accepted as mutation
+input. The SQL hash is byte-identical to `buildPolicySnapshot()` — including the requirement
+predicate, which must match JavaScript `String.prototype.trim()` rather than Postgres `btrim()`
+(the latter strips only spaces, so a whitespace-only policy would demand an acknowledgement the page
+never rendered a checkbox for).
+
+**Google.** The already-deployed dormant transition logic becomes reachable for the first time.
+`enqueue_calendar_outbound` returns early on a cancellation whose `cancellation_kind='rescheduled'`,
+and REBINDS the predecessor's `calendar_event_links` row to a successor carrying
+`rescheduled_from_appointment_id`. The legacy RPC wrote neither column, so with outbound intent ON a
+reschedule would have produced a delete-plus-create pair. **No Google flag, connection, worker
+control or scope is changed by this PR.**
+
+**Financial safety fails closed.** `appointment_payments`, `payment_charge_attempts` and
+`manual_fee_charge_attempts` are all `ON DELETE RESTRICT` against an appointment and have no defined
+reschedule semantics. Rather than move, duplicate or orphan money, the command returns
+`payment_state_requires_studio`, leaves the original confirmed, and the visitor is asked to contact
+the studio. Terminal-dead attempts (`cancelled`, `failed`) are excluded so a failed charge cannot
+strand a client forever.
+
+**No post-commit read can fail a committed reschedule.** The command returns the successor's
+`starts_at`, `ends_at`, `duration_minutes`, `practitioner_id` and `created_at`, so the route builds
+its confirmation payload from the return rather than re-selecting the row. The old code returned
+`{ok:false}` when that re-read failed — which both lied to the visitor and destroyed the only copy
+of the raw successor token, since only its SHA-256 is persisted and the confirmation email is the
+sole carrier. Email, SMS, notification and metadata failures are now all fail-soft.
+
+**Practitioner attribution.** The notification and the client-facing practitioner name resolve from
+the command's returned `practitioner_id` by exact `(id, studio_id)`. The route previously selected
+"the current active owner with `role='owner'`", which is not the appointment's practitioner.
+
+> Migration 0171 is **repo-only and unapplied** — hosted max remains 0170
+> (`docs/production/migration-state.json` is the canonical record).
+>
+> **The legacy `public.reschedule_appointment` is deliberately retained**, unsigned and
+> unrevoked, so 0171 can be applied while the currently deployed application is still calling it.
+> Retirement of that service-role-only RPC is a **later cleanup migration**, after the production
+> deployment of this PR is proven. It is NOT retired today.
 
 ## Cancel / reschedule / manage
 
@@ -114,7 +198,7 @@ columns. The appointment DML boundary is **not** closed.
 |---|---|
 | `/manage/<token>` | Single neutral entry point added in newer email/SMS templates. Renders a summary, both policies, and two buttons: "Reschedule" and "Cancel". Lets the client choose without committing. |
 | `/cancel/<token>` | Cancel surface. Policy reminder card, optional cancellation insight section (PR #144: reason dropdown / note / follow-up checkbox), reschedule nudge for schedule-shaped reasons, required policy acknowledgement before cancel. |
-| `/reschedule/<token>` | Reschedule surface. Pick a new slot from the same studio's availability. Issues a new column-based token; the old appointment is cancelled with `reason='Rescheduled via email link'`, a new appointment is created via the same RPC chain. **Reschedule safety (PR #149):** every read + submit path refuses the token unless the original appointment is `status='confirmed'` AND `starts_at > now()`. The slot list hides same-day past slots via the shared `filterFutureSlots` helper. The submit action rejects `newStartsAt <= now()` before any RPC call. The `reschedule_appointment` RPC (migration 0066) independently rejects past originals and past `p_new_starts_at` as defence in depth. Public reschedule actions never return raw DB or RPC error text; failures collapse to the generic "This reschedule link can't be used right now." copy while a structured `logInternal` line records the detail server-side. |
+| `/reschedule/<token>` | Reschedule surface. Pick a new slot from the same studio's availability **at the ORIGINAL appointment's duration, with the original's own reservation excluded**. Issues a new hash-only token; `reschedule_appointment_v2` (migration 0171) cancels the original with `reason='Rescheduled via email link'` and `cancellation_kind='rescheduled'`, inserts the successor with `rescheduled_from_appointment_id`, completes the reverse lineage, writes both audits and the policy acknowledgement — all in one transaction. See "Public reschedule v2" above. **Reschedule safety (PR #149):** every read + submit path refuses the token unless the original appointment is `status='confirmed'` AND `starts_at > now()`; the slot list hides same-day past slots via the shared `filterFutureSlots` helper; the command independently re-verifies identity, token, state, horizon, availability and exact slot membership under the studio lock. Public reschedule actions never return raw DB or RPC error text; token-state and appointment-state failures collapse to the generic "This reschedule link can't be used right now." copy while a structured `logInternal` line records the detail server-side. |
 
 ### Cancellation reason capture (PR #144)
 
