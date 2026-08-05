@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import {
   COMMON_ALLERGIES,
-  COMMON_SKIN_CONDITIONS,
   FITZPATRICK_TYPES,
 } from "@/lib/constants";
 import { appendComment } from "@/lib/comments";
@@ -17,7 +16,6 @@ export type ClientFormValues = {
   email: string;
   address: string;
   fitzpatrick_type: string;
-  skin_notes: string;
   allergies: string;
   emergency_contact_name: string;
   emergency_contact_phone: string;
@@ -31,7 +29,6 @@ export const EMPTY_CLIENT_FORM: ClientFormValues = {
   email: "",
   address: "",
   fitzpatrick_type: "",
-  skin_notes: "",
   allergies: "",
   emergency_contact_name: "",
   emergency_contact_phone: "",
@@ -198,22 +195,24 @@ export function ClientForm({
         </select>
       </label>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Skin notes</span>
-        <ChipRow
-          options={COMMON_SKIN_CONDITIONS}
-          onAppend={(chip) =>
-            update("skin_notes", appendComment(values.skin_notes, chip))
-          }
-        />
-        <textarea
-          value={values.skin_notes}
-          onChange={(e) => update("skin_notes", e.target.value)}
-          rows={4}
-          placeholder="Tap a chip or type a note"
-          className="rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-        />
-      </div>
+      {/* RETIRED EDITOR (Chloe Session 1A). `clients.skin_notes` used to be an
+          editable textarea with quick-tap condition chips, and it visually
+          outranked the real clinical record — it sat on the profile Overview
+          well above the append-only "Consultation & skin/hair" card and on the
+          appointment detail page, which showed no clinical notes at all.
+          Production reflected that hierarchy exactly: legacy skin_notes carried
+          text for several clients while ZERO skin/hair-analysis notes existed.
+
+          Every edit to that column destroyed the prior clinical text with no
+          author, no date and no revision lineage. The canonical record —
+          client_clinical_notes kind='skin_hair_analysis' — is append-only,
+          attributed and dated, so the editor is removed here and new skin/hair
+          observations are recorded through "Add skin & hair analysis".
+
+          The COLUMN is untouched: historical values are preserved, still
+          rendered read-only under a "Legacy skin notes" heading on the profile,
+          and still exported. Nothing is dropped, nulled, backfilled or copied
+          into the append-only record. */}
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Allergies</span>

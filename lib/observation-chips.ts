@@ -248,10 +248,25 @@ export function hydrateLegacyChips(comments: string | null | undefined): {
     if (tok.length === 0) continue;
     const canon = canonicalFor(tok);
     // Promote a legacy comment token to a chip ONLY if it is a canonical
-    // OBSERVATION chip. Reaction labels are intentionally NOT promoted here: a
+    // OBSERVATION chip. CODED REACTION labels are intentionally NOT promoted: a
     // free-text comment that happens to equal a reaction word must not be
     // string-guessed into a coded reaction (which would spuriously flag safety
     // surfaces). It stays as free-text, exactly as before unification.
+    //
+    // Chloe Session 1A — DELIBERATELY STILL `isReactionChipLabel`, NOT the wider
+    // `isClinicalResponseLabel`. The distinction is about PROVENANCE, not about
+    // which labels are safety-relevant:
+    //   * the seven CODED labels had their own single-select column
+    //     (session_blocks.reaction_type), so a matching comment token is more
+    //     likely incidental prose than a recorded selection — do not promote;
+    //   * the three SAFETY-RELEVANT labels ("Redness (erythema)",
+    //     "Slight swelling (edema)", "Sensitive skin") only ever existed as
+    //     COMMON_COMMENTS chips written by the old picker via appendComment, so
+    //     an exact whole-token match IS the practitioner's own selection. This
+    //     is the documented non-destructive per-record migration path, and
+    //     demoting them to free text would visibly lose historical pills.
+    // Matching is exact whole-token after a comma split — never substring — so
+    // prose like "some redness after" is not affected either way.
     if (canon && !isReactionChipLabel(canon)) {
       if (!seen.has(canon)) {
         seen.add(canon);

@@ -945,9 +945,14 @@ function ClientBriefingCard({
               {fitzpatrick}
             </p>
           )}
+          {/* LEGACY label (Chloe Session 1A). This is the retired, in-place
+              overwriteable clients.skin_notes column, not the append-only
+              skin/hair-analysis clinical record. Labelling it prevents this
+              appointment-prep surface from presenting unattributed historical
+              profile text as the authoritative current analysis. */}
           {client.skin_notes && (
             <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
-              <span className="text-neutral-500">Skin notes:</span>{" "}
+              <span className="text-neutral-500">Legacy skin notes:</span>{" "}
               {client.skin_notes}
             </p>
           )}

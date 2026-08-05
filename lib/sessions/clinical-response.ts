@@ -60,15 +60,142 @@ export function reactionTypeForLabel(label: string): ReactionType | null {
   return LABEL_TO_REACTION.get(label.trim().toLowerCase()) ?? null;
 }
 
-// The clinically NOTABLE reactions, as chip LABELS (mirrors the enum set used by
-// the "Clients needing attention" dashboard). "none"/"mild_redness"/"other" are
-// intentionally not notable.
-export const NOTABLE_REACTION_LABELS: ReadonlyArray<string> = [
+// ---------------------------------------------------------------------------
+// SAFETY-RELEVANT RESPONSE LABELS (Chloe Session 1A)
+// ---------------------------------------------------------------------------
+//
+// THE DEFECT THIS CLOSES. Charting unification merged "Treatment observations"
+// and "Client / skin response" into ONE box, and everything now lands in
+// electrolysis_entries.observation_chips. But the CLASSIFIER
+// (isReactionChipLabel, below) still recognises only the seven coded
+// REACTION_TYPES labels. Three chips in that same box describe a real skin
+// response and were silently classified as ordinary observations:
+//
+//     Redness (erythema)   ·   Slight swelling (edema)   ·   Sensitive skin
+//
+// They therefore never reached "Clients needing attention", the prior-visit
+// response line, treatment intelligence, or the onboarding completeness check.
+// Measured in production at the time of writing: 12 live entries carry one of
+// the three, and 10 of those carry NO coded reaction chip at all — so for a
+// large share of chip-bearing clinical records the recorded skin response
+// reached the chart and no safety surface. The practitioner had no way to know:
+// the three render as visually identical pills beside the coded ones.
+//
+// WHY A SECOND SET RATHER THAN NEW ENUM VALUES. `session_blocks.reaction_type`
+// is constrained by session_blocks_reaction_type_check (migration 0082). Adding
+// enum members would need a migration and would imply these three are storable
+// in that legacy column — they are not, and never will be: new charting stores
+// findings as chips. This layer is a pure classification of chip LABELS, needs
+// no schema change, and rewrites no row.
+//
+// EXACT-TOKEN, NEVER SUBSTRING. Membership is by canonical label identity, the
+// same discipline lib/observation-chips.ts uses for its alias map. The laser
+// list's clinically distinct "Follicular erythema" / "Follicular edema" are NOT
+// members and must never be folded in by a `includes("erythema")`-style test.
+// Legacy spellings ("Erythema", "Slight edema", …) already resolve to these
+// canonical labels through OBSERVATION_CHIP_ALIASES before classification runs,
+// so they are covered without a second alias table.
+export const SAFETY_RESPONSE_LABELS: ReadonlyArray<string> = [
+  "Redness (erythema)",
+  "Slight swelling (edema)",
+  "Sensitive skin",
+];
+
+const SAFETY_RESPONSE_SET = new Set(
+  SAFETY_RESPONSE_LABELS.map((l) => l.toLowerCase()),
+);
+
+// True iff a chip label is one of the safety-relevant response labels above.
+// Exact canonical-label match, casing/whitespace-insensitive. Never substring.
+export function isSafetyResponseLabel(label: string): boolean {
+  return SAFETY_RESPONSE_SET.has(label.trim().toLowerCase());
+}
+
+// True iff a chip label carries CLINICAL RESPONSE meaning at all — either a
+// coded reaction label or one of the safety-relevant response labels. This is
+// the single predicate every response-driven surface should ask.
+export function isClinicalResponseLabel(label: string): boolean {
+  return isReactionChipLabel(label) || isSafetyResponseLabel(label);
+}
+
+// SEVERITY, expressed in the EXISTING vocabulary and ordering.
+//
+// The severity model already in use is `REACTION_TYPES.indexOf(...)` — the enum
+// declaration order, low to high:
+//     none(0) · mild_redness(1) · moderate_redness(2) · swelling(3) ·
+//     sensitivity(4) · irritation(5)          ("other" is ranked -1, not notable)
+//
+// Each of the three is mapped to the EXISTING coded peer that describes the
+// same clinical finding at the same intensity. No new severity vocabulary, no
+// new ordering, and deliberately no medical advice or diagnosis:
+//
+//   Redness (erythema)      -> mild_redness (rank 1)
+//       Plain redness with no qualifier. The coded vocabulary already
+//       distinguishes mild from moderate redness; an unqualified chip must take
+//       the LOWER of the two, because promoting it to moderate would assert an
+//       intensity the practitioner did not record. Consequence: it is a
+//       response (it reaches the prior-visit line, treatment intelligence and
+//       the onboarding check) but it is NOT "notable", so it does not raise a
+//       dashboard alert — matching how the coded "Mild redness" chip already
+//       behaves. This is the conservative reading and it is deliberate.
+//
+//   Slight swelling (edema) -> swelling (rank 3)
+//       Swelling is swelling. The coded vocabulary has exactly one swelling
+//       member and it IS notable, so this chip raises attention. "Slight" is a
+//       qualifier the coded set cannot express; down-ranking on the strength of
+//       an adjective would suppress a real oedema signal, which is the wrong
+//       direction to err for a tissue response.
+//
+//   Sensitive skin          -> sensitivity (rank 4)
+//       Direct one-to-one with the coded `sensitivity` member, which is
+//       notable. Surfacing it is a factual restatement of what the practitioner
+//       recorded; nothing here advises on treatment.
+//
+// Net effect on the dashboard: swelling and sensitivity become notable (they
+// describe tissue response and were being dropped); plain redness stays
+// non-notable but becomes VISIBLE on the response surfaces it was missing from.
+const SAFETY_RESPONSE_SEVERITY_PEER: Readonly<Record<string, ReactionType>> = {
+  "redness (erythema)": "mild_redness",
+  "slight swelling (edema)": "swelling",
+  "sensitive skin": "sensitivity",
+};
+
+// The coded reaction whose severity a safety-response label inherits, or null
+// when the label is not a safety-response label.
+export function safetyResponseSeverityPeer(label: string): ReactionType | null {
+  return SAFETY_RESPONSE_SEVERITY_PEER[label.trim().toLowerCase()] ?? null;
+}
+
+// The clinically NOTABLE responses, as chip LABELS — the set that drives
+// "Clients needing attention".
+//
+// Coded members: "none"/"mild_redness"/"other" are intentionally not notable.
+// Safety-response members are included when their severity PEER is notable, so
+// the two halves cannot drift: "Slight swelling (edema)" and "Sensitive skin"
+// qualify (peers `swelling`/`sensitivity`), "Redness (erythema)" does not (peer
+// `mild_redness`), exactly as the mapping above documents.
+// The coded reaction ENUM members that are notable. Exported so no consumer has
+// to re-declare it: lib/dashboard/clients-needing-attention.ts used to carry its
+// own hard-coded copy, which is exactly how the notable set and the response set
+// would drift apart again.
+export const NOTABLE_CODED_REACTION_TYPES: ReadonlyArray<ReactionType> = [
   "moderate_redness",
   "swelling",
   "sensitivity",
   "irritation",
-].map((t) => REACTION_LABELS[t as ReactionType]);
+];
+
+const NOTABLE_CODED_TYPES = NOTABLE_CODED_REACTION_TYPES;
+
+const NOTABLE_CODED_SET = new Set<ReactionType>(NOTABLE_CODED_TYPES);
+
+export const NOTABLE_REACTION_LABELS: ReadonlyArray<string> = [
+  ...NOTABLE_CODED_TYPES.map((t) => REACTION_LABELS[t]),
+  ...SAFETY_RESPONSE_LABELS.filter((l) => {
+    const peer = safetyResponseSeverityPeer(l);
+    return peer !== null && NOTABLE_CODED_SET.has(peer);
+  }),
+];
 
 export const TOLERANCE_MIN = 1;
 export const TOLERANCE_MAX = 5;

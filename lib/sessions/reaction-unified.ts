@@ -12,32 +12,46 @@
 import { normalizeChips } from "@/lib/observation-chips";
 import {
   REACTION_TYPES,
-  isReactionChipLabel,
+  isClinicalResponseLabel,
   isReactionType,
   reactionTypeForLabel,
   reactionTypeLabel,
+  safetyResponseSeverityPeer,
   NOTABLE_REACTION_LABELS,
   type ReactionType,
 } from "@/lib/sessions/clinical-response";
 
 // Explicit severity rank from the reaction enum order (higher = more severe).
 // "other" is treated as least-notable (not in the attention set).
+//
+// A SAFETY-RESPONSE label (Redness (erythema) / Slight swelling (edema) /
+// Sensitive skin) has no enum member of its own, so it ranks through the coded
+// PEER declared in clinical-response.ts. That keeps ONE severity vocabulary and
+// ONE ordering — this function never invents a rank.
 function severityRank(label: string): number {
-  const t = reactionTypeForLabel(label);
+  const t = reactionTypeForLabel(label) ?? safetyResponseSeverityPeer(label);
   if (!t || t === "other") return -1;
   return REACTION_TYPES.indexOf(t);
 }
 
-// The reaction chip LABELS present in a stored observation_chips value (ordinary
-// observation chips are ignored). Canonical casing, order-preserved.
+// The CLINICAL RESPONSE chip labels present in a stored observation_chips value
+// — coded reaction labels AND the safety-relevant response labels. Ordinary
+// observation chips (Coarse hair, Lots of anagen, …) are ignored. Canonical
+// casing, order-preserved.
+//
+// Widened from reaction-only in Chloe Session 1A: the three safety-relevant
+// labels live in the same merged box and describe a real skin response, so a
+// classifier that ignored them left them invisible to every surface below.
 export function reactionLabelsFromChips(observationChips: unknown): string[] {
-  return normalizeChips(observationChips).filter((c) => isReactionChipLabel(c));
+  return normalizeChips(observationChips).filter((c) =>
+    isClinicalResponseLabel(c),
+  );
 }
 
-// ALL reaction labels for a block under the unified model — the union of the
-// legacy reaction_type's label and every reaction chip across the block's live
-// entries, deduped case-insensitively (reaction_type first, then chip order).
-// Retains every real reaction (never collapsed to one).
+// ALL clinical-response labels for a block under the unified model — the union
+// of the legacy reaction_type's label and every response chip across the block's
+// live entries, deduped case-insensitively (reaction_type first, then chip
+// order). Retains every real response (never collapsed to one).
 export function unifiedReactionLabels(
   reactionType: string | null | undefined,
   observationChipsList: ReadonlyArray<unknown>,
@@ -60,13 +74,29 @@ export function unifiedReactionLabels(
   return out;
 }
 
-// The single EFFECTIVE reaction label (legacy single-reaction shape): the
-// reaction_type's label if set, else the first reaction chip. null when none.
+// The single EFFECTIVE response label (legacy single-reaction shape).
+//
+// A REAL response always wins over "No visible reaction". Historical rows can be
+// internally contradictory — `reaction_type = 'none'` on the block while an
+// entry chip records "Redness (erythema)" — because the two were captured by
+// different UIs at different times, and `unifiedReactionLabels` deliberately
+// lists reaction_type FIRST to preserve provenance order. Taking element [0]
+// blindly would let a stale "none" mask a real recorded response on any surface
+// that renders a single label.
+//
+// The forward path can no longer create that contradiction (toggleFindingChip in
+// lib/observation-chips.ts makes "No visible reaction" mutually exclusive with
+// every real response chip), so this rule exists purely for historical data —
+// which is exactly where it matters, because nothing is being backfilled.
 export function effectiveReactionLabel(
   reactionType: string | null | undefined,
   observationChipsList: ReadonlyArray<unknown>,
 ): string | null {
-  return unifiedReactionLabels(reactionType, observationChipsList)[0] ?? null;
+  const labels = unifiedReactionLabels(reactionType, observationChipsList);
+  if (labels.length === 0) return null;
+  const noneLabel = reactionTypeLabel("none").toLowerCase();
+  const real = labels.find((l) => l.toLowerCase() !== noneLabel);
+  return real ?? labels[0];
 }
 
 // The NOTABLE reaction that drives "Clients needing attention": the

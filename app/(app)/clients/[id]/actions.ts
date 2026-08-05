@@ -220,7 +220,12 @@ export async function updateClientAction(
       address: nullableString(formData.get("address")),
       date_of_birth: nullableString(formData.get("date_of_birth")),
       fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
-      skin_notes: nullableString(formData.get("skin_notes")),
+      // Chloe Session 1A: `clients.skin_notes` is RETIRED as a practitioner
+      // editor. It is no longer submitted by the client form and is no longer
+      // written here, so an ordinary client edit can never overwrite historical
+      // clinical text that carries no author, date or revision lineage. The
+      // column and its data are untouched; new skin/hair observations are
+      // recorded as append-only client_clinical_notes (kind=skin_hair_analysis).
       allergies: nullableString(formData.get("allergies")),
       emergency_contact_name: nullableString(
         formData.get("emergency_contact_name"),

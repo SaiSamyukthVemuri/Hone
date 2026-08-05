@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  adminModuleImports,
+  clientFactoryProof,
+  insertReceiverProof,
+} from "./helpers/supabase-write-census";
 import { join } from "node:path";
 
 // ===========================================================================
@@ -724,5 +729,141 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
     for (const r of REVIEWED_VARIABLE_TABLE_WRITERS) {
       expect(r.why.length, `${key(r)} needs a real justification`).toBeGreaterThan(80);
     }
+  });
+});
+
+// ===========================================================================
+// APPEND-ONLY TABLE CLASS — `client_clinical_notes` (Chloe Session 1A)
+// ===========================================================================
+//
+// WHY THIS IS A SEPARATE CLASS AND NOT A TABLES ENTRY.
+//
+// The six tables above are COMMAND-BOUND: 0164-0169 revoked authenticated DML
+// entirely, so their correct writer count is zero and any direct write is a
+// defect. `client_clinical_notes` is deliberately different and was never in
+// 0169's scope: authenticated retains INSERT, RLS scopes it, a BEFORE INSERT
+// trigger derives studio_id from the parent client, and there is no UPDATE or
+// DELETE policy at all — the table is append-only BY GRANT AND POLICY, and
+// correction happens by inserting a superseding row.
+//
+// So the right contract is not "zero writers". It is "EXACTLY ONE user-scoped
+// INSERT, and nothing else, ever". Forcing this behind a SECURITY DEFINER
+// command purely to make a count read zero would add a privileged surface for
+// no safety gain.
+//
+// The gap this closes: the table appeared in NO census. A second INSERT, a
+// switch to the admin client, or an UPDATE/DELETE would have failed no guard.
+const APPEND_ONLY_TABLE = "client_clinical_notes";
+
+// Modules that hand out a service-role / admin Supabase client. An import from
+// ANY of these into the append-only notes module is a failure regardless of the
+// local name it is given.
+const ADMIN_CLIENT_MODULES = [
+  "@/lib/supabase/admin-server",
+  "@/lib/supabase/admin",
+  "@/lib/supabase/service-role",
+];
+
+const APPEND_ONLY_WRITER = {
+  file: "app/(app)/clients/[id]/clinical-notes-actions.ts",
+  fn: "insertClinicalNote",
+  op: "insert",
+} as const;
+
+describe("append-only clinical notes — exactly one reviewed INSERT writer", () => {
+  const sites = directWriteSitesFor(APPEND_ONLY_TABLE);
+  const siteKey = (s: { file: string; fn: string; op: string }) =>
+    `${s.file}#${s.fn}.${s.op}`;
+
+  it("H1. exactly ONE runtime write site exists, at the reviewed identity", () => {
+    expect(
+      sites.map(siteKey).sort(),
+      `client_clinical_notes writers changed:\n${sites.map(siteKey).join("\n")}`,
+    ).toEqual([siteKey(APPEND_ONLY_WRITER)]);
+  });
+
+  it("H2. that writer is an INSERT — never update, delete or upsert", () => {
+    for (const s of sites) {
+      expect(s.op, `${siteKey(s)} must be an insert`).toBe("insert");
+    }
+    // Belt and braces: no other op appears anywhere against this table.
+    for (const op of ["update", "delete", "upsert"]) {
+      expect(
+        sites.filter((s) => s.op === op),
+        `${op} on ${APPEND_ONLY_TABLE} would break append-only`,
+      ).toEqual([]);
+    }
+  });
+
+  // AMENDED: the previous version proved only that the literal string
+  // "createAdminClient" is absent and "createClient()" is present. That says
+  // nothing about WHERE the factory came from, so this would have evaded it:
+  //
+  //     import { createAdminClient as createClient } from "@/lib/supabase/admin-server";
+  //
+  // The runtime code was, and is, correct. The EVIDENCE was not. These read the
+  // real import graph instead of the file's characters.
+  it("H3. the client factory is imported from the AUTHENTICATED module, by source not by name", () => {
+    const proof = clientFactoryProof(APPEND_ONLY_WRITER.file);
+    expect(proof.localName, JSON.stringify(proof, null, 2)).toBe("createClient");
+    expect(proof.moduleSpecifier).toBe("@/lib/supabase/server");
+    // The imported symbol is the authenticated factory itself — not an admin
+    // factory renamed to look like one.
+    expect(proof.importedName).toBe("createClient");
+  });
+
+  it("H3b. NO admin/service-role module is imported under ANY form", () => {
+    // Named, aliased, default, namespace and dynamic imports all counted.
+    const admin = adminModuleImports(APPEND_ONLY_WRITER.file);
+    expect(
+      admin,
+      `the append-only notes module must not import a service-role client:\n${JSON.stringify(admin, null, 2)}`,
+    ).toEqual([]);
+  });
+
+  it("H3c. the INSERT receiver is the value that factory produced, unreassigned", () => {
+    const flow = insertReceiverProof(
+      APPEND_ONLY_WRITER.file,
+      APPEND_ONLY_TABLE,
+    );
+    expect(flow.receiver, JSON.stringify(flow, null, 2)).toBe("supabase");
+    // Its initializer is `await createClient()` — the authenticated factory.
+    expect(flow.initializerCallee).toBe("createClient");
+    // Nothing rebinds it between creation and the INSERT.
+    expect(flow.reassigned).toBe(false);
+    // And there is exactly ONE Supabase client in the module, so the write
+    // cannot be hanging off a second one.
+    expect(flow.distinctClientFactories).toEqual(["createClient"]);
+  });
+
+  it("H4. no OTHER file writes the table, and reads elsewhere stay reads", () => {
+    const writers = new Set(sites.map((s) => s.file));
+    expect([...writers]).toEqual([APPEND_ONLY_WRITER.file]);
+  });
+
+  it("H5. the table is not silently absent — the census can actually see it", () => {
+    // ANTI-VACUITY. If the scanner stopped matching (a refactor to a variable
+    // table expression, a chained factory, a renamed helper), H1-H4 would all
+    // pass on an empty set and prove nothing. At least one site must be found.
+    expect(
+      sites.length,
+      "the append-only census found ZERO sites — the scanner has gone blind, " +
+        "not the writer away. Check for a variable/computed .from() shape.",
+    ).toBeGreaterThan(0);
+  });
+
+  it("H6. no unanalyzable DML shape hides a writer in the notes module", () => {
+    // The file-level unanalyzable census already hard-fails repo-wide; this
+    // pins it for the module that owns the append-only table specifically.
+    const unanalyzable = unanalyzableFromSites().filter(
+      (u) => u.file === APPEND_ONLY_WRITER.file,
+    );
+    expect(unanalyzable, JSON.stringify(unanalyzable, null, 2)).toEqual([]);
+  });
+
+  it("H7. the append-only table is NOT in the command-bound TABLES class", () => {
+    // Documents the deliberate split so a future change cannot quietly fold it
+    // into the zero-writer class and "fix" the count by deleting the writer.
+    expect(TABLES as readonly string[]).not.toContain(APPEND_ONLY_TABLE);
   });
 });

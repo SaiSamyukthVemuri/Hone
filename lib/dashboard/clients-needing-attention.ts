@@ -1,5 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
-import { type ReactionType } from "@/lib/sessions/clinical-response";
+import {
+  NOTABLE_CODED_REACTION_TYPES,
+  type ReactionType,
+} from "@/lib/sessions/clinical-response";
 import { notableReactionLabel } from "@/lib/sessions/reaction-unified";
 
 // PR #214: "Clients needing attention" for the Dashboard's Action
@@ -27,12 +30,14 @@ import { notableReactionLabel } from "@/lib/sessions/reaction-unified";
 // sessions, capped at 200, plus their treatment areas), grouped in
 // memory; never one query per client.
 
-export const NOTABLE_REACTIONS: ReadonlyArray<ReactionType> = [
-  "moderate_redness",
-  "swelling",
-  "sensitivity",
-  "irritation",
-];
+// DERIVED from the central clinical-response contract, never re-declared here.
+// This used to be a hard-coded copy of the four notable enum members — a second
+// source of truth that would silently miss any future change to the notable set
+// (and did not know about the safety-relevant response LABELS at all). The
+// runtime path below goes through `notableReactionLabel`, which reads the same
+// contract; this export is retained only for type-level consumers.
+export const NOTABLE_REACTIONS: ReadonlyArray<ReactionType> =
+  NOTABLE_CODED_REACTION_TYPES;
 
 export type AttentionSessionInput = {
   id: string;
