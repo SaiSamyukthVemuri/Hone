@@ -143,6 +143,23 @@ test("legacy skin notes are read-only and the canonical record outranks them", a
   // It is prose, not a form control — nothing on this page can edit it.
   await expect(page.locator(`textarea:has-text("${legacyText}")`)).toHaveCount(0);
 
+  // 2b. The helper copy must describe where the canonical form ACTUALLY is.
+  //     It used to say the append-only section was "below" — it is not on this
+  //     tab at all; it lives behind Consultation. A practitioner reading that
+  //     scrolls, finds nothing, and edits the legacy text instead, which is the
+  //     precise behaviour this retirement exists to stop. Pinned in the browser
+  //     because that is the only layer that sees what is really on the page.
+  const helper = page.getByText(/Historical profile text, kept for reference/i);
+  await expect(helper).toBeVisible();
+  await expect(helper).toContainText(/Consultation tab/i);
+  await expect(helper).not.toContainText(/\bbelow\b/i);
+  // ...and the destination it names is genuinely absent from this tab, which is
+  // what made "below" false. (Anti-vacuity for the assertion above: if the form
+  // were in fact here, pinning "Consultation tab" would be the untrue copy.)
+  await expect(
+    page.getByPlaceholder(/hair type|growth pattern|area-specific/i),
+  ).toHaveCount(0);
+
   // 3. Ordinary client editing offers NO editable legacy field.
   await page.goto(`/clients/${clientId}/edit`);
   await expect(page.getByText("Skin notes", { exact: true })).toHaveCount(0);

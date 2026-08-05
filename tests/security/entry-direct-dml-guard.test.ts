@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  adminModuleImports,
+  clientFactoryProof,
+  insertReceiverProof,
+} from "./helpers/supabase-write-census";
 import { join } from "node:path";
 
 // ===========================================================================
@@ -750,6 +755,15 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
 // switch to the admin client, or an UPDATE/DELETE would have failed no guard.
 const APPEND_ONLY_TABLE = "client_clinical_notes";
 
+// Modules that hand out a service-role / admin Supabase client. An import from
+// ANY of these into the append-only notes module is a failure regardless of the
+// local name it is given.
+const ADMIN_CLIENT_MODULES = [
+  "@/lib/supabase/admin-server",
+  "@/lib/supabase/admin",
+  "@/lib/supabase/service-role",
+];
+
 const APPEND_ONLY_WRITER = {
   file: "app/(app)/clients/[id]/clinical-notes-actions.ts",
   fn: "insertClinicalNote",
@@ -781,21 +795,45 @@ describe("append-only clinical notes — exactly one reviewed INSERT writer", ()
     }
   });
 
-  it("H3. the writer uses the AUTHENTICATED, user-scoped client — never admin", () => {
-    const raw = readFileSync(APPEND_ONLY_WRITER.file, "utf8");
-    // Comments stripped first: the module's own header documents the rule
-    // ("No createAdminClient / service role."), and prose describing a banned
-    // pattern must never be mistaken for the pattern.
-    const src = raw
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .split("\n")
-      .filter((l) => !l.trim().startsWith("//"))
-      .join("\n");
-    // The action module must not reach for the service-role client at all.
-    expect(src).not.toContain("createAdminClient");
-    // ...and the client it does use is the RLS-scoped server client.
-    expect(src).toMatch(/createClient\s*\(\s*\)/);
-    expect(src).toMatch(/from\("client_clinical_notes"\)/);
+  // AMENDED: the previous version proved only that the literal string
+  // "createAdminClient" is absent and "createClient()" is present. That says
+  // nothing about WHERE the factory came from, so this would have evaded it:
+  //
+  //     import { createAdminClient as createClient } from "@/lib/supabase/admin-server";
+  //
+  // The runtime code was, and is, correct. The EVIDENCE was not. These read the
+  // real import graph instead of the file's characters.
+  it("H3. the client factory is imported from the AUTHENTICATED module, by source not by name", () => {
+    const proof = clientFactoryProof(APPEND_ONLY_WRITER.file);
+    expect(proof.localName, JSON.stringify(proof, null, 2)).toBe("createClient");
+    expect(proof.moduleSpecifier).toBe("@/lib/supabase/server");
+    // The imported symbol is the authenticated factory itself — not an admin
+    // factory renamed to look like one.
+    expect(proof.importedName).toBe("createClient");
+  });
+
+  it("H3b. NO admin/service-role module is imported under ANY form", () => {
+    // Named, aliased, default, namespace and dynamic imports all counted.
+    const admin = adminModuleImports(APPEND_ONLY_WRITER.file);
+    expect(
+      admin,
+      `the append-only notes module must not import a service-role client:\n${JSON.stringify(admin, null, 2)}`,
+    ).toEqual([]);
+  });
+
+  it("H3c. the INSERT receiver is the value that factory produced, unreassigned", () => {
+    const flow = insertReceiverProof(
+      APPEND_ONLY_WRITER.file,
+      APPEND_ONLY_TABLE,
+    );
+    expect(flow.receiver, JSON.stringify(flow, null, 2)).toBe("supabase");
+    // Its initializer is `await createClient()` — the authenticated factory.
+    expect(flow.initializerCallee).toBe("createClient");
+    // Nothing rebinds it between creation and the INSERT.
+    expect(flow.reassigned).toBe(false);
+    // And there is exactly ONE Supabase client in the module, so the write
+    // cannot be hanging off a second one.
+    expect(flow.distinctClientFactories).toEqual(["createClient"]);
   });
 
   it("H4. no OTHER file writes the table, and reads elsewhere stay reads", () => {

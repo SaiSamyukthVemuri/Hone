@@ -685,7 +685,11 @@ export default async function ClientCheatSheetPage({
                 hidden, but it is explicitly labelled as legacy profile text and
                 is no longer the place to record a skin/hair observation. The
                 canonical, attributed record is the "Consultation & skin/hair"
-                section below. */}
+                section, which is NOT on this tab — it renders behind the
+                Consultation tab. Saying "below" (as this comment and the
+                helper copy both once did) sends a practitioner scrolling for
+                a form that is not here, and the legacy text is then the
+                nearest editable thing. */}
             {client.skin_notes && (
               <div className="mt-4 border-t border-neutral-200 pt-3 dark:border-neutral-800">
                 <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
@@ -694,10 +698,15 @@ export default async function ClientCheatSheetPage({
                 <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
                   {client.skin_notes}
                 </p>
+                {/* The canonical form is NOT on this tab — it lives behind
+                    Consultation — so "below" was untrue. The action rendered
+                    directly ABOVE this block is the real path, and the tab is
+                    named as the fallback. */}
                 <p className="mt-2 text-xs text-neutral-500">
                   Historical profile text, kept for reference. It has no author
-                  or date. Record new observations in Skin &amp; hair analysis
-                  below.
+                  or date. Use <strong>Add skin &amp; hair analysis</strong>{" "}
+                  above, or open the Consultation tab, to record new
+                  observations in the append-only clinical record.
                 </p>
               </div>
             )}

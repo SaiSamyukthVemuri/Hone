@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  describeSites,
+  supabaseWriteSites,
+  writesToColumn,
+} from "../../security/helpers/supabase-write-census";
 
 // ===========================================================================
 // Chloe Session 1A — `clients.skin_notes` is RETIRED as a practitioner editor.
@@ -88,22 +93,59 @@ describe("no runtime writer persists clients.skin_notes", () => {
     expect(c).not.toMatch(/skin_notes\s*:/);
   });
 
-  it("the whole app tree has ZERO skin_notes write expressions", () => {
-    // Census across every surface that could persist it, including the ones the
-    // audit named: create, edit, imports and onboarding helpers.
-    for (const [label, src] of [
-      ["new", NEW_ACTION],
-      ["edit", EDIT_ACTION],
-      ["form", FORM],
-      ["profile", PROFILE],
-      ["appointment", APPT],
-    ] as const) {
-      const c = code(src);
-      expect(
-        /skin_notes\s*:/.test(c),
-        `${label} still assigns skin_notes`,
-      ).toBe(false);
-    }
+  // =========================================================================
+  // GENUINE RUNTIME-TREE CENSUS (amendment)
+  // =========================================================================
+  //
+  // The previous version of this test was named "the whole app tree has ZERO
+  // skin_notes write expressions" and looped over FIVE hand-listed files. The
+  // name was false. A writer added to any other server action, an onboarding
+  // helper, an import path, a script, middleware, or behind a variable table
+  // expression would have survived while this stayed green — the exact failure
+  // mode a static guard in this repo has already been believed on twice.
+  //
+  // It now walks app/ lib/ components/ scripts/ + middleware.ts with the
+  // TypeScript compiler API, resolves the table AND the payload through
+  // same-scope bindings, and FAILS CLOSED on anything it cannot follow.
+  it("the runtime tree contains ZERO writers of clients.skin_notes", () => {
+    const { definite } = writesToColumn("clients", "skin_notes");
+    expect(
+      definite,
+      `clients.skin_notes is written at:\n${describeSites(definite)}`,
+    ).toEqual([]);
+  });
+
+  it("no UNRESOLVABLE write could be hiding one", () => {
+    // Silence is not absence. A computed table, an opaque spread, a chained
+    // factory receiver, a conditional target or a helper-returned patch object
+    // means the analyzer cannot prove the column is untouched — so it fails.
+    const { unresolved } = writesToColumn("clients", "skin_notes");
+    expect(
+      unresolved,
+      "the census could not analyse these write sites, so it cannot prove " +
+        `clients.skin_notes is unwritten:\n${describeSites(unresolved)}`,
+    ).toEqual([]);
+  });
+
+  it("ANTI-VACUITY: the census really does see writers in this tree", () => {
+    // If the walker silently stopped matching, both assertions above would pass
+    // on an empty set and prove nothing. The runtime tree contains plenty of
+    // legitimate Supabase writes; at least one must be visible, and the
+    // `clients` table specifically must still be reachable for OTHER columns.
+    const all = supabaseWriteSites();
+    expect(all.length).toBeGreaterThan(20);
+    const clientWrites = all.filter((s) => s.table === "clients");
+    expect(
+      clientWrites.length,
+      "no writes to `clients` were found at all — the analyzer has gone blind, " +
+        "not the writers away",
+    ).toBeGreaterThan(0);
+    // ...and those surviving client writes carry OTHER columns, proving the
+    // column filter is what excludes skin_notes rather than a broken payload
+    // resolver.
+    const columns = new Set(clientWrites.flatMap((s) => s.columns));
+    expect(columns.size).toBeGreaterThan(3);
+    expect(columns.has("skin_notes")).toBe(false);
   });
 });
 
@@ -124,9 +166,43 @@ describe("legacy data is preserved and clearly labelled", () => {
 
   it("does NOT imply the legacy text has append-only provenance", () => {
     const idx = PROFILE.indexOf("Legacy skin notes");
-    const block = PROFILE.slice(idx, idx + 900);
-    expect(block).not.toMatch(/append-only/i);
+    const block = PROFILE.slice(idx, idx + 1200);
+    // The block must state the legacy text has NO author or date...
+    expect(block).toMatch(/no author\s*\n?\s*or date|no author or date/i);
+    // ...and must never attribute revision/supersession lineage to it.
     expect(block).not.toMatch(/revision|superseded/i);
+    // "append-only" may appear ONLY as a description of the CANONICAL record
+    // the copy points at ("...the append-only clinical record"), never as a
+    // property of the legacy text itself.
+    for (const m of block.matchAll(/append-only([\s\S]{0,40})/gi)) {
+      expect(
+        m[1],
+        `"append-only" must qualify the canonical record, not the legacy text: ${m[0]}`,
+      ).toMatch(/clinical record/i);
+    }
+  });
+
+  it("the helper copy points at where the canonical form ACTUALLY is", () => {
+    // It used to say the append-only section was "below". It is not on this tab
+    // — it is behind Consultation — so the sentence sent practitioners looking
+    // for something that was not there, and the legacy textarea was the nearest
+    // editable thing. The copy now names the action rendered directly above and
+    // the tab, and "below" is banned outright inside the block.
+    const idx = PROFILE.indexOf("Legacy skin notes");
+    const block = PROFILE.slice(idx, idx + 1200);
+    expect(block).toMatch(/Consultation tab/i);
+    expect(block).toMatch(/Add skin &amp; hair analysis/);
+    // The ban applies to what a practitioner READS. Scanning the raw source
+    // instead would trip on the neighbouring code comments, which legitimately
+    // use "below" to describe render ORDER ("rendered BEFORE the legacy block
+    // below") — true of the layout, and not copy anyone sees.
+    const rendered = code(PROFILE);
+    const rIdx = rendered.indexOf("Legacy skin notes");
+    expect(rIdx).toBeGreaterThan(-1);
+    expect(
+      rendered.slice(rIdx, rIdx + 1200),
+      'the canonical form is not on this tab, so "below" is untrue',
+    ).not.toMatch(/\bbelow\b/i);
   });
 
   it("the appointment-prep surface labels it legacy too", () => {
