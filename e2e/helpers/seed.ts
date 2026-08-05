@@ -31,7 +31,10 @@ export type E2eSeed = {
   clientEmail: string;
 };
 
-async function sql<T = Record<string, unknown>>(
+// 0171: exported so the public-reschedule-v2 spec can assert the DATABASE
+// boundary (lineage, audits, acknowledgement, reservations) after driving the
+// real form, rather than inferring it from UI copy alone.
+export async function sql<T = Record<string, unknown>>(
   text: string,
   params: unknown[] = [],
 ): Promise<T[]> {

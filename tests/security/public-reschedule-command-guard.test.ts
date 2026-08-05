@@ -79,10 +79,179 @@ describe("public reschedule route — the command owns persistence", () => {
     expect(ACTIONS_CODE).not.toMatch(/select\(\s*["']\*["']\s*\)[\s\S]{0,80}newAppointmentId/);
   });
 
-  it("builds the successor payload from the command return, not from a re-read", () => {
-    expect(ACTIONS_CODE).toContain("starts_at: row.starts_at");
-    expect(ACTIONS_CODE).toContain("ends_at: row.ends_at");
-    expect(ACTIONS_CODE).toContain("duration_minutes: row.duration_minutes");
+  it("builds the successor payload from the parsed command return, not from a re-read", () => {
+    expect(ACTIONS_CODE).toContain("starts_at: parsed.startsAt");
+    expect(ACTIONS_CODE).toContain("ends_at: parsed.endsAt");
+    expect(ACTIONS_CODE).toContain("duration_minutes: parsed.durationMinutes");
+    expect(ACTIONS_CODE).toContain("created_at: parsed.createdAt");
+  });
+
+  // 0171 amendment. `row.new_appointment_id as string` would silently thread a
+  // null into a management URL, an email payload and a notification href.
+  // The casts are legitimate in exactly ONE place — inside
+  // parseRescheduleSuccessRow, AFTER missingSuccessFields() has validated the
+  // row — so the guard is scoped to the ACTION body, which is where an
+  // unvalidated cast would actually be dangerous.
+  it("the action body never casts a raw command-row field straight to a type", () => {
+    const actionBody = ACTIONS_CODE.slice(
+      ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
+      ACTIONS_CODE.indexOf("function missingSuccessFields"),
+    );
+    expect(actionBody).not.toMatch(/row\.new_appointment_id\s+as\s+string/);
+    expect(actionBody).not.toMatch(/row\.starts_at\s+as\s+string/);
+    expect(actionBody).not.toMatch(/row\.ends_at\s+as\s+string/);
+    expect(actionBody).not.toMatch(/row\.duration_minutes\s+as\s+number/);
+    expect(actionBody).not.toMatch(/row\.original_starts_at\s+as\s+string/);
+    expect(actionBody).not.toMatch(/row\.practitioner_id\s+as\s+string/);
+  });
+
+  it("routes every success row through the parser", () => {
+    expect(ACTIONS_CODE).toContain("parseRescheduleSuccessRow(row)");
+    expect(ACTIONS_CODE).toContain("REQUIRED_SUCCESS_FIELDS");
+  });
+
+  it("logs only FIELD NAMES for a malformed success row, never the payload", () => {
+    const idx = ACTIONS_CODE.indexOf("public_reschedule_malformed_success_row");
+    expect(idx).toBeGreaterThan(-1);
+    const window = ACTIONS_CODE.slice(idx, idx + 400);
+    expect(window).toContain("missingSuccessFields(row)");
+    expect(window).not.toMatch(/JSON\.stringify\(\s*row\s*\)/);
+    expect(window).not.toMatch(/\brow\b\s*,/);
+  });
+});
+
+// ===========================================================================
+// 0171 AMENDMENT — the raw successor token must never be lost.
+// ===========================================================================
+//
+// The successor's raw management token is a one-time in-memory secret: only its
+// SHA-256 is persisted, the old token is not reused, and nothing can regenerate
+// it after the commit. So the confirmation email is the ONLY carrier of the
+// credential the client needs to manage the successor.
+//
+// The command independently re-verifies the client, so a failed application-side
+// client lookup does NOT stop the mutation — which is exactly the hazard these
+// guards close: commit, skip the email (gated on the client's address), drop the
+// token on return.
+describe("public reschedule route — token-delivery gate", () => {
+  const SUBMIT = ACTIONS_CODE.slice(
+    ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
+  );
+
+  it("captures the client lookup's error rather than discarding it", () => {
+    expect(SUBMIT).toMatch(/const\s*\{\s*data:\s*clientRow,\s*error:\s*clientErr\s*\}/);
+  });
+
+  it("refuses before the mutation on lookup error, missing row OR missing email", () => {
+    expect(SUBMIT).toMatch(
+      /if\s*\(\s*clientErr\s*\|\|\s*!clientRow\s*\|\|\s*!clientRow\.email/,
+    );
+  });
+
+  it("scopes the client lookup by studio as well as id (no cross-tenant satisfaction)", () => {
+    const idx = SUBMIT.indexOf("clientRow, error: clientErr");
+    const window = SUBMIT.slice(idx, idx + 500);
+    expect(window).toMatch(/eq\(\s*["']studio_id["']/);
+  });
+
+  it("mints the raw token only AFTER the delivery gate", () => {
+    const gate = SUBMIT.indexOf("clientErr || !clientRow");
+    const mint = SUBMIT.indexOf("generateAppointmentToken()");
+    expect(gate).toBeGreaterThan(-1);
+    expect(mint).toBeGreaterThan(gate);
+  });
+
+  it("calls the command only AFTER the raw token is minted", () => {
+    const mint = SUBMIT.indexOf("generateAppointmentToken()");
+    const rpc = SUBMIT.indexOf('"reschedule_appointment_v2"');
+    expect(rpc).toBeGreaterThan(mint);
+  });
+
+  it("logs no client PII on the refusal path", () => {
+    const idx = SUBMIT.indexOf("public_reschedule_client_metadata_unavailable");
+    expect(idx).toBeGreaterThan(-1);
+    // Exactly the logged object literal — not a fixed character window, which
+    // previously swept up the following `const newToken = ...` declaration and
+    // failed on a token that is merely DECLARED nearby, not logged.
+    const call = SUBMIT.slice(idx, SUBMIT.indexOf("});", idx));
+    for (const pii of [
+      "clientRow.email",
+      "clientRow.name",
+      "clientRow.phone",
+      "newToken",
+      "clientErr.message",
+      "clientErr.details",
+      "clientErr.hint",
+    ]) {
+      expect(call, `${pii} must not be logged`).not.toContain(pii);
+    }
+  });
+
+  it("also captures and gates the studio lookup error", () => {
+    expect(SUBMIT).toMatch(/const\s*\{\s*data:\s*studioRow,\s*error:\s*studioErr\s*\}/);
+    expect(SUBMIT).toMatch(/if\s*\(\s*studioErr\s*\|\|\s*!studioRow\s*\)/);
+  });
+});
+
+describe("public reschedule route — post-commit exception containment", () => {
+  const SUBMIT = ACTIONS_CODE.slice(
+    ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
+  );
+  // The region between the success branch and the final committed return.
+  const POST_COMMIT_START = SUBMIT.indexOf("parseRescheduleSuccessRow(row)");
+  const FINAL_RETURN = SUBMIT.indexOf("return { ok: true, newAppointmentId };");
+  const POST_COMMIT = SUBMIT.slice(POST_COMMIT_START, FINAL_RETURN);
+
+  it("has a post-commit region and a committed-success return", () => {
+    expect(POST_COMMIT_START).toBeGreaterThan(-1);
+    expect(FINAL_RETURN).toBeGreaterThan(POST_COMMIT_START);
+  });
+
+  it("opens the fail-soft try BEFORE any post-commit read or side effect", () => {
+    const tryIdx = POST_COMMIT.indexOf("try {");
+    expect(tryIdx).toBeGreaterThan(-1);
+    for (const op of [
+      'from("practitioners")',
+      'from("services")',
+      "recordPractitionerNotification({",
+      "getRequiredAppOrigin()",
+      "ensureIntakeForClient(",
+      "getTreatmentTimeContextForEmail(",
+      "sendBookingConfirmationToClient(",
+      "recordEmailAttempt(",
+      "sendBookingConfirmationSmsToClient(",
+    ]) {
+      const at = POST_COMMIT.indexOf(op);
+      expect(at, `${op} must appear post-commit`).toBeGreaterThan(-1);
+      expect(at, `${op} must be INSIDE the fail-soft try`).toBeGreaterThan(tryIdx);
+    }
+  });
+
+  it("has exactly ONE try in the post-commit region", () => {
+    expect(POST_COMMIT.match(/\btry\s*\{/g) ?? []).toHaveLength(1);
+  });
+
+  it("no post-commit branch returns ok:false", () => {
+    const tryIdx = POST_COMMIT.indexOf("try {");
+    expect(POST_COMMIT.slice(tryIdx)).not.toContain("ok: false");
+  });
+
+  it("the catch swallows and logs safely, and never rethrows", () => {
+    const catchIdx = POST_COMMIT.indexOf("} catch (err)");
+    expect(catchIdx).toBeGreaterThan(-1);
+    const body = POST_COMMIT.slice(catchIdx);
+    expect(body).toContain("public_reschedule_post_commit_side_effect_failed");
+    expect(body).not.toMatch(/\bthrow\b/);
+    for (const pii of ["clientRow.email", "clientRow.name", "clientRow.phone", "newToken"]) {
+      expect(body).not.toContain(pii);
+    }
+  });
+
+  it("the committed-success return is the last statement of the action", () => {
+    // Nothing between the catch block and the return may be able to throw.
+    const catchEnd = POST_COMMIT.lastIndexOf("}");
+    const tail = POST_COMMIT.slice(catchEnd).trim();
+    expect(tail.replace(/[}\s]/g, "")).toBe("");
   });
 });
 

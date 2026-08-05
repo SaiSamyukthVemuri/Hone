@@ -128,9 +128,19 @@ verified original token
 appointment, never from the service's current default — a studio that lengthens a service after a
 client books must not silently relength that booking. The service, the practitioner, the notes and
 the referral source are copied from the original; the legacy RPC silently dropped
-`referral_source`. There is no public practitioner selection and no reassignment: under practitioner
-capacity the preserved practitioner must still be active and eligible, otherwise the command
-returns `practitioner_unavailable` and the original stays confirmed.
+`referral_source`. There is no public practitioner selection and no reassignment.
+
+**Practitioner continuity is scoped to the capacity mode, and this is deliberate:**
+
+| Mode | Rule |
+|---|---|
+| **Capacity OFF** | The practitioner is preserved **exactly as booked** — active, **inactive**, or null. Current roster state and current service eligibility are **not** conditions of a self-service reschedule, because they are not conditions of the slots being offered either: the capacity-OFF loader generates from studio-wide availability and studio-wide reservations and never consults `practitioners.active` or `service_practitioners`. Refusing here would refuse every slot the page had just offered, permanently and unsatisfiably. |
+| **Capacity ON** | The preserved practitioner is load-bearing (it selects the availability rows and the `resource_key` timeline, and `appointments_capacity_requires_practitioner` makes it mandatory on a confirmed row), so it must still belong to the studio, still be active, and still satisfy service eligibility where a list exists — otherwise `practitioner_unavailable`, original left confirmed. Never a different practitioner. |
+
+Both `validate_public_reschedule_slot` and the command fence this behind the same
+`v_cap_on = studio flag AND non-null practitioner` predicate the TypeScript loader computes, so the two
+halves cannot disagree. Do **not** claim inactive practitioners are refused in all modes — they are
+refused under capacity ON only.
 
 **Exact replacement-slot semantics.** `public_reschedule_slot_candidates` is a sibling of 0170's
 booking helper that differs in exactly two ways: it excludes the original appointment's OWN shadow

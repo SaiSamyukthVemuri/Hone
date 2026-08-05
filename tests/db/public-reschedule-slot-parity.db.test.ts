@@ -355,6 +355,85 @@ describe("0171 reschedule slot parity — capacity ON", () => {
   });
 });
 
+// ===========================================================================
+// CAPACITY-OFF HISTORICAL ASSIGNMENT — end-to-end parity.
+// ===========================================================================
+//
+// This is the amendment's load-bearing parity case. The capacity-OFF loader
+// never consults practitioner activity or service_practitioners, so the SQL
+// validator must not either. If it does, the page offers a slot the command
+// refuses — permanently, for every slot, with no action the visitor can take.
+describe("0171 reschedule slot parity — capacity OFF ignores current roster state", () => {
+  it("offers the same slots when the preserved practitioner is INACTIVE, and the validator clears one", async () => {
+    const f = await seed("offinactive-parity"); // capacity OFF
+    const day = localDay(34, f.tz);
+    const r = await adminQuery(
+      `select public.public_booking_local_to_utc($1::date, '11:00'::time, $2) as t`,
+      [day, f.tz],
+    );
+    const originalStart = new Date(r.rows[0].t).toISOString();
+    await appointment(f, f.originalId, originalStart, f.duration);
+
+    // Deactivate AFTER the appointment was booked — the historical case.
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [f.ownerId]);
+
+    // TS and SQL still agree on the offered set.
+    const set = await expectParity(f, day);
+    expect(set.length).toBeGreaterThan(0);
+
+    // And the validator accepts one of those offered slots rather than
+    // refusing it as invalid_practitioner.
+    const offered = set[0];
+    const verdict = await adminQuery(
+      `select public.validate_public_reschedule_slot($1,$2,$3,$4::timestamptz,
+                $4::timestamptz + make_interval(mins => $5), $6) as v`,
+      [f.studioId, f.ownerId, f.serviceId, offered, f.duration, f.originalId],
+    );
+    expect(verdict.rows[0].v).toBe("ok");
+  });
+
+  it("offers the same slots when the preserved practitioner is INELIGIBLE for the service", async () => {
+    const f = await seed("offineligible-parity"); // capacity OFF
+    const day = localDay(35, f.tz);
+
+    // A non-empty eligibility list that excludes the original practitioner.
+    await adminQuery(
+      `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+       values ($1,$2,$3) on conflict do nothing`,
+      [f.studioId, f.serviceId, f.otherPractId],
+    );
+    await adminQuery(
+      `delete from public.service_practitioners where service_id = $1 and practitioner_id = $2`,
+      [f.serviceId, f.ownerId],
+    );
+
+    const set = await expectParity(f, day);
+    expect(set.length).toBeGreaterThan(0);
+
+    const verdict = await adminQuery(
+      `select public.validate_public_reschedule_slot($1,$2,$3,$4::timestamptz,
+                $4::timestamptz + make_interval(mins => $5), $6) as v`,
+      [f.studioId, f.ownerId, f.serviceId, set[0], f.duration, f.originalId],
+    );
+    expect(verdict.rows[0].v).toBe("ok");
+  });
+
+  it("capacity ON still refuses the same inactive practitioner (contrast)", async () => {
+    const f = await seed("oninactive-parity", { capacity: true });
+    const day = localDay(36, f.tz);
+    const set = await expectParity(f, day);
+    expect(set.length).toBeGreaterThan(0);
+
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [f.ownerId]);
+    const verdict = await adminQuery(
+      `select public.validate_public_reschedule_slot($1,$2,$3,$4::timestamptz,
+                $4::timestamptz + make_interval(mins => $5), $6) as v`,
+      [f.studioId, f.ownerId, f.serviceId, set[0], f.duration, f.originalId],
+    );
+    expect(verdict.rows[0].v).toBe("invalid_practitioner");
+  });
+});
+
 describe("0171 reschedule slot parity — closed days and blockouts", () => {
   it("agrees on a closed weekday (both empty)", async () => {
     const f = await seed("closed");

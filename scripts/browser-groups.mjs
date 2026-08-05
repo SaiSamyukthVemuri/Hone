@@ -65,6 +65,9 @@ export const BROWSER_GROUPS = {
     description: "public booking and appointment lifecycle",
     specs: [
       "client-booking-outside-hours.spec.ts",
+      // 0171: the public reschedule v2 contract (policy hash, exclusion,
+      // duration authority, same-time, duplicate submit, post-commit success).
+      "public-reschedule-v2.spec.ts",
       "manual-override-buffer-booking.spec.ts",
       "move-appointment-custom-time.spec.ts",
       "move-appointment-mobile-submit.spec.ts",

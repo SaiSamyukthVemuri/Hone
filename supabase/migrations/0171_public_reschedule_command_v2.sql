@@ -498,10 +498,19 @@ comment on function public.public_reschedule_slot_candidates(uuid, date, integer
 --   * the MEMBERSHIP test uses the BOOKING candidate set, which knows nothing
 --     about the exclusion or about capacity mode.
 --
--- Everything else is deliberately identical to 0170: practitioner membership and
--- service eligibility, the full-day blockout, the millisecond-precision
--- rejection, the local-midnight rule, the SERVICE-end-before-close rule (the
--- trailing buffer MAY spill past close), and the half-open overlap rule.
+--   * PRACTITIONER MEMBERSHIP AND SERVICE ELIGIBILITY are gated on the CAPACITY
+--     MODE, not merely on the practitioner being non-null. 0170's non-null form
+--     is correct for booking (unconditionally capacity-OFF, practitioner is an
+--     attribution hint) but wrong for reschedule, which preserves a HISTORICAL
+--     assignment: a capacity-OFF studio whose original practitioner has since
+--     been deactivated or dropped from the service's eligibility list would have
+--     the page offer slots the validator refused every one of. See the gate's
+--     own comment for the full contract.
+--
+-- Everything else is deliberately identical to 0170: the full-day blockout, the
+-- millisecond-precision rejection, the local-midnight rule, the
+-- SERVICE-end-before-close rule (the trailing buffer MAY spill past close), and
+-- the half-open overlap rule.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.validate_public_reschedule_slot(
@@ -547,11 +556,44 @@ begin
 
   v_cap_on := v_cap_flag and p_practitioner_id is not null;
 
-  -- Practitioner membership + service eligibility, identical to 0170. A NULL
-  -- practitioner is legitimate for a capacity-OFF studio whose original was
-  -- booked without one; the command enforces the capacity-ON requirement
-  -- separately, before this is ever called.
-  if p_practitioner_id is not null then
+  -- PRACTITIONER MEMBERSHIP + SERVICE ELIGIBILITY ARE CAPACITY-ON ONLY.
+  --
+  -- This gate is `if v_cap_on`, NOT `if p_practitioner_id is not null`, and the
+  -- difference is load-bearing. 0170's booking validator uses the non-null form
+  -- and is correct there, because public BOOKING is unconditionally capacity-OFF
+  -- and passes the practitioner purely as an attribution hint. Public RESCHEDULE
+  -- preserves a HISTORICAL assignment, so the non-null form breaks parity:
+  --
+  --   * the TypeScript loader computes capacityOn = studio flag AND non-null
+  --     practitioner (lib/booking/slots.ts:137-140). With the flag OFF it
+  --     generates slots from STUDIO-WIDE availability and STUDIO-WIDE
+  --     reservations, and never consults practitioner activity or
+  --     service_practitioners at all;
+  --   * so at a capacity-OFF studio whose original was booked with a
+  --     practitioner who has since been deactivated — or who has since been
+  --     dropped from that service's eligibility list — the page would happily
+  --     offer replacement slots while this validator refused EVERY one of them
+  --     as invalid_practitioner / not_eligible. Public rescheduling would be
+  --     permanently broken for that client, unsatisfiable by any choice they
+  --     could make, and the refusal would name a condition they cannot fix.
+  --
+  -- THE CONTRACT, stated once and enforced identically here and in the command:
+  --
+  --   CAPACITY OFF — preserve appointments.practitioner_id exactly as booked,
+  --     whether that is an active practitioner, an INACTIVE historical
+  --     practitioner, or NULL. Never reassign. Current roster state and current
+  --     service eligibility are NOT conditions of a self-service reschedule,
+  --     because they are not conditions of the slots being offered either. The
+  --     appointment keeps the person it was booked with; a studio that wants to
+  --     move it to somebody else does that from the practitioner UI.
+  --
+  --   CAPACITY ON — the preserved practitioner is load-bearing (it selects the
+  --     availability rows and the resource_key timeline, and
+  --     appointments_capacity_requires_practitioner makes it mandatory on a
+  --     confirmed row), so it must still belong to the studio, still be active,
+  --     and still satisfy service eligibility where a list exists. Otherwise
+  --     refuse. Never choose a different practitioner.
+  if v_cap_on then
     if not exists (
       select 1 from public.practitioners pr
        where pr.id = p_practitioner_id
@@ -561,6 +603,8 @@ begin
       return 'invalid_practitioner';
     end if;
 
+    -- Eligibility is enforced only when the service HAS a list, so a studio that
+    -- never configured service_practitioners is unaffected.
     if p_service_id is not null
        and exists (
          select 1 from public.service_practitioners sp
@@ -1146,11 +1190,22 @@ begin
   -- another practitioner: a client who booked with one person must not be moved
   -- to another by a self-service reschedule.
   --
-  -- Under capacity ON the schema REQUIRES a practitioner on a confirmed row
-  -- (appointments_capacity_requires_practitioner), and the preserved one must
-  -- still be a valid, active member of this studio. When it is not, the command
-  -- refuses — it does not pick a replacement. Under capacity OFF a null
-  -- practitioner is preserved as null, exactly as the original was booked.
+  -- CAPACITY ON — the preserved practitioner is load-bearing (it selects the
+  -- availability rows and the resource_key timeline, and
+  -- appointments_capacity_requires_practitioner makes it mandatory on a
+  -- confirmed row), so it must still belong to the studio, still be active, and
+  -- still satisfy service eligibility. When it does not, the command refuses; it
+  -- does not pick a replacement.
+  --
+  -- CAPACITY OFF — the practitioner is preserved EXACTLY as booked and nothing
+  -- about its current state is a condition of the reschedule: an active
+  -- practitioner, an INACTIVE historical practitioner, and NULL are all carried
+  -- through unchanged. This is not leniency, it is parity: the capacity-OFF slot
+  -- loader generates from studio-wide availability and studio-wide reservations
+  -- and never consults practitioner activity or service_practitioners, so
+  -- refusing here would refuse every slot the page had just offered. The
+  -- validator's own membership/eligibility gate is fenced behind the same
+  -- capacity predicate for exactly this reason.
   if v_cap_flag then
     if v_orig.practitioner_id is null
        or not exists (

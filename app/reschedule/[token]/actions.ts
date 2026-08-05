@@ -651,23 +651,67 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // The old code loaded these AFTER the RPC and had a branch that returned
   // {ok:false} when the post-commit successor SELECT failed; that branch both
   // lied to the visitor and destroyed the only copy of the raw successor token.
-  const { data: studioRow } = await admin
+  const { data: studioRow, error: studioErr } = await admin
     .from("studios")
     .select("*")
     .eq("id", asserted.original.studio_id)
     .maybeSingle();
-  if (!studioRow) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  if (studioErr || !studioRow) {
+    logInternal("public_reschedule_studio_lookup_failed", {
+      code: studioErr?.code,
+      studioId: asserted.original.studio_id,
+      appointmentId: asserted.original.appointment_id,
+    });
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
 
-  const { data: clientRow } = await admin
+  // =========================================================================
+  // THE TOKEN-DELIVERY GATE. This MUST run before the token is minted and
+  // before the command is called.
+  // =========================================================================
+  //
+  // The successor's raw management token is a ONE-TIME IN-MEMORY SECRET. Only
+  // its SHA-256 is persisted (`cancellation_token_hash`), the old token is not
+  // reused, and no token can be regenerated after the commit — so the
+  // confirmation email is the ONLY carrier of the credential the client needs
+  // to cancel or reschedule the successor.
+  //
+  // The command independently re-verifies that the client exists and is active,
+  // so a transient failure of THIS read does not stop the mutation. That is
+  // precisely the hazard: an errored or empty client lookup would let the
+  // command commit, skip the email path (which is gated on `clientRow?.email`),
+  // and drop the raw token when this function returns. The reschedule would
+  // succeed while the client was left holding links they can never use — the
+  // exact token-loss failure this PR exists to close, reintroduced one layer up.
+  //
+  // So the rule is: HONE DOES NOT COMMIT A PUBLIC RESCHEDULE IT CANNOT DELIVER
+  // THE REPLACEMENT CREDENTIAL FOR. A failed read, a missing row, or a missing
+  // email all refuse BEFORE any mutation, while refusing is still honest.
+  //
+  // Scoped by (id, studio_id): the client must belong to the SAME studio as the
+  // appointment, so a cross-tenant id cannot satisfy the gate.
+  const { data: clientRow, error: clientErr } = await admin
     .from("clients")
     .select("name, email, phone, sms_consent_at, sms_opted_out_at")
     .eq("id", asserted.original.client_id)
+    .eq("studio_id", asserted.original.studio_id)
     .maybeSingle();
+  if (clientErr || !clientRow || !clientRow.email || clientRow.email.trim() === "") {
+    // Safe operator signal only: no name, no email, no phone, no token, no raw
+    // Postgres message (which can echo row values on a public surface).
+    logInternal("public_reschedule_client_metadata_unavailable", {
+      code: clientErr?.code,
+      studioId: asserted.original.studio_id,
+      appointmentId: asserted.original.appointment_id,
+      reason: clientErr ? "lookup_failed" : !clientRow ? "missing_row" : "missing_email",
+    });
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
 
-  // The raw successor token is minted immediately before the command and only
-  // its SHA-256 crosses the boundary. The raw value lives in this closure and
-  // nowhere else — it is never stored, never logged, and is the ONLY thing that
-  // can build the client's cancel/reschedule/manage links.
+  // The raw successor token is minted only AFTER the delivery gate passes, and
+  // only its SHA-256 crosses the boundary. The raw value lives in this closure
+  // and nowhere else — never stored, never logged, and the ONLY thing that can
+  // build the client's cancel/reschedule/manage links.
   const newToken = generateAppointmentToken();
 
   // ONE AUTHORITATIVE MUTATION. The command owns the cancellation, the
@@ -765,91 +809,126 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   }
 
   // =========================================================================
-  // COMMITTED. Everything below is a post-commit, fail-soft side effect and
-  // MUST NOT be able to report failure.
+  // COMMITTED. THE RESCHEDULE HAS HAPPENED.
   // =========================================================================
-
-  const newAppointmentId = row.new_appointment_id as string;
-
-  // The successor payload is built from the COMMAND'S OWN RETURN, not from a
-  // re-read. The confirmation/notification senders read only id / starts_at /
-  // ends_at / duration_minutes / created_at, and every one of those comes back
-  // authoritative. No post-commit SELECT can fail the booking any more.
-  const created = {
-    id: newAppointmentId,
-    starts_at: row.starts_at as string,
-    ends_at: row.ends_at as string,
-    duration_minutes: row.duration_minutes as number,
-    created_at: row.created_at as string,
-  } as unknown as import("@/lib/types/database").Appointment;
-
-  // AUTHORITATIVE PRACTITIONER — the one the command preserved, resolved by
-  // EXACT (id, studio_id).
   //
-  // This route used to select "the current active owner with role = 'owner'"
-  // for the practitioner name shown to the client and for the practitioner
-  // email. That is not the appointment's practitioner: at a studio with a
-  // different assignee, or one whose ownership changed, the client was told a
-  // name that had nothing to do with their booking. Public reschedule never
-  // reassigns, so the only correct source is the command's return.
-  const assignedPractitionerId =
-    (row.practitioner_id as string | null | undefined) ?? null;
-  let assignedPractitioner: { display_name: string | null; email: string | null } | null =
-    null;
-  if (assignedPractitionerId) {
-    const { data: pr, error: prErr } = await admin
-      .from("practitioners")
-      .select("display_name, email")
-      .eq("id", assignedPractitionerId)
-      .eq("studio_id", asserted.original.studio_id)
-      .maybeSingle();
-    if (prErr || !pr) {
-      // Safe, non-PII operational signal. Downstream degrades to the
-      // studio-name fallback rather than naming a stale practitioner.
-      logInternal("public_reschedule_practitioner_lookup_failed", {
-        code: prErr?.code,
-        studioId: asserted.original.studio_id,
-      });
-    } else {
-      assignedPractitioner = pr;
+  // From here to the final `return`, NOTHING may report failure and NOTHING may
+  // throw past this function. Everything below is a post-commit side effect: a
+  // read, a provider call or a bookkeeping write. The database transaction is
+  // already durable, so an exception escaping to the framework here would
+  // surface to the visitor as a failed reschedule that actually succeeded —
+  // and would take the raw successor token with it.
+  //
+  // Structural rule pinned by tests/security/public-reschedule-command-guard:
+  // every post-commit statement lives inside the ONE try below. An earlier
+  // revision opened its try only after the practitioner lookup, the service
+  // lookup and the notification call, all of which can reject.
+  const parsed = parseRescheduleSuccessRow(row);
+  if (!parsed) {
+    // The command said `success`, so the mutation IS committed — this is an
+    // internal command-contract violation, not a visitor-facing failure, and it
+    // must NOT be reported as a failed reschedule. The SQL return is
+    // structurally non-null for `success` (pinned by
+    // tests/migrations/0171-* and tests/db/public-reschedule-command.db), so
+    // reaching here means the contract broke and an operator needs to know.
+    logInternal("public_reschedule_malformed_success_row", {
+      studioId: asserted.original.studio_id,
+      appointmentId: asserted.original.appointment_id,
+      // Field PRESENCE only — never the payload, which carries ids and times.
+      missing: missingSuccessFields(row).join(","),
+    });
+    const salvagedId =
+      typeof row.new_appointment_id === "string" ? row.new_appointment_id : null;
+    if (!salvagedId) {
+      // Without an id there is nothing truthful to return; the reschedule is
+      // still committed, so this stays a generic failure with an operator log
+      // rather than a claim that nothing happened.
+      return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
     }
+    return { ok: true, newAppointmentId: salvagedId };
   }
 
-  const { data: serviceRow } = row.service_id
-    ? await admin
-        .from("services")
-        .select("name, default_duration_minutes, pre_care_instructions")
-        .eq("id", row.service_id as string)
-        .maybeSingle()
-    : { data: null };
+  const newAppointmentId = parsed.newAppointmentId;
 
-  // Client-facing practitioner label. Falls back to the studio name exactly as
-  // before when there is no assigned practitioner or the metadata read failed.
-  const practitionerDisplayName =
-    assignedPractitioner?.display_name?.trim() ||
-    assignedPractitioner?.email ||
-    studioRow.name;
-
-  // PR #164. Fire-and-forget practitioner notification. The command already
-  // committed atomically by this point; this helper never throws to the
-  // caller. The practitioner id is the COMMAND'S, so the notification lands on
-  // the appointment's real assignee and never on an arbitrary current owner.
-  recordPractitionerNotification({
-    studioId: asserted.original.studio_id,
-    practitionerId: assignedPractitionerId,
-    eventType: "appointment_rescheduled",
-    title: "Appointment rescheduled",
-    body: `${clientRow?.name ?? "A client"} rescheduled from ${formatDayTime(new Date(row.original_starts_at as string), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
-    appointmentId: created.id,
-    clientId: asserted.original.client_id,
-    href: `/calendar/${created.id}`,
-  });
-
-  // Everything from here is best-effort. The whole block is wrapped so that no
-  // provider outage, template error or transient read can escape and change the
-  // already-committed outcome: this function returns ok:true below regardless.
   try {
-    if (clientRow?.email && studioRow.send_confirmation_emails) {
+    // The successor payload is built from the COMMAND'S OWN RETURN, not from a
+    // re-read. The confirmation/notification senders read only id / starts_at /
+    // ends_at / duration_minutes / created_at, and every one of those comes
+    // back authoritative and non-null. No post-commit SELECT can fail the
+    // reschedule any more.
+    const created = {
+      id: parsed.newAppointmentId,
+      starts_at: parsed.startsAt,
+      ends_at: parsed.endsAt,
+      duration_minutes: parsed.durationMinutes,
+      created_at: parsed.createdAt,
+    } as unknown as import("@/lib/types/database").Appointment;
+
+    // AUTHORITATIVE PRACTITIONER — the one the command preserved, resolved by
+    // EXACT (id, studio_id).
+    //
+    // This route used to select "the current active owner with role = 'owner'"
+    // for the practitioner name shown to the client and for the practitioner
+    // email. That is not the appointment's practitioner: at a studio with a
+    // different assignee, or one whose ownership changed, the client was told a
+    // name that had nothing to do with their booking. Public reschedule never
+    // reassigns, so the only correct source is the command's return.
+    const assignedPractitionerId = parsed.practitionerId;
+    let assignedPractitioner: {
+      display_name: string | null;
+      email: string | null;
+    } | null = null;
+    if (assignedPractitionerId) {
+      const { data: pr, error: prErr } = await admin
+        .from("practitioners")
+        .select("display_name, email")
+        .eq("id", assignedPractitionerId)
+        .eq("studio_id", asserted.original.studio_id)
+        .maybeSingle();
+      if (prErr || !pr) {
+        // Safe, non-PII operational signal. Downstream degrades to the
+        // studio-name fallback rather than naming a stale practitioner.
+        logInternal("public_reschedule_practitioner_lookup_failed", {
+          code: prErr?.code,
+          studioId: asserted.original.studio_id,
+        });
+      } else {
+        assignedPractitioner = pr;
+      }
+    }
+
+    const { data: serviceRow } = parsed.serviceId
+      ? await admin
+          .from("services")
+          .select("name, default_duration_minutes, pre_care_instructions")
+          .eq("id", parsed.serviceId)
+          .maybeSingle()
+      : { data: null };
+
+    // Client-facing practitioner label. Falls back to the studio name exactly
+    // as before when there is no assigned practitioner or the metadata read
+    // failed.
+    const practitionerDisplayName =
+      assignedPractitioner?.display_name?.trim() ||
+      assignedPractitioner?.email ||
+      studioRow.name;
+
+    // PR #164. Fire-and-forget practitioner notification. The command already
+    // committed atomically by this point. The practitioner id is the COMMAND'S,
+    // so the notification lands on the appointment's real assignee and never on
+    // an arbitrary current owner.
+    recordPractitionerNotification({
+      studioId: asserted.original.studio_id,
+      practitionerId: assignedPractitionerId,
+      eventType: "appointment_rescheduled",
+      title: "Appointment rescheduled",
+      body: `${clientRow.name} rescheduled from ${formatDayTime(new Date(parsed.originalStartsAt), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
+      appointmentId: created.id,
+      clientId: asserted.original.client_id,
+      href: `/calendar/${created.id}`,
+    });
+
+    if (studioRow.send_confirmation_emails) {
       // Single helper call up front; downstream lines share the same origin.
       const appOrigin = getRequiredAppOrigin();
       const cancellationUrl = `${appOrigin}/cancel/${newToken}`;
@@ -921,20 +1000,101 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       });
     }
   } catch (err) {
-    console.error(
-      JSON.stringify({
-        event: "reschedule_confirmation_unexpected_error",
-        appointmentId: created.id,
-        error: err instanceof Error ? err.message : String(err),
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    // The ONLY catch for the whole post-commit region. It swallows by design:
+    // a practitioner-lookup rejection, a service-lookup rejection, an origin
+    // resolver throw, an intake or treatment-time failure, a provider outage,
+    // an email-attempt write failure, or an SMS helper that throws despite its
+    // documented never-throw contract — none of them may change a committed
+    // reschedule into a reported failure.
+    //
+    // Non-PII only: the successor id and a message. No client name/email/phone,
+    // no token, no token hash.
+    logInternal("public_reschedule_post_commit_side_effect_failed", {
+      appointmentId: newAppointmentId,
+      studioId: asserted.original.studio_id,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   // THE RESCHEDULE SUCCEEDED. A failed email, a failed SMS, a failed
   // notification or a failed metadata read cannot change that — the database
   // transaction committed and the visitor's appointment has moved.
-  return { ok: true, newAppointmentId: created.id };
+  return { ok: true, newAppointmentId };
+}
+
+// ---------------------------------------------------------------------------
+// Command result-row parsing (0171 amendment)
+// ---------------------------------------------------------------------------
+//
+// `reschedule_appointment_v2` returns a nullable RETURNS TABLE because refusal
+// rows carry nulls in every field but `result`. For `result = 'success'` the
+// command populates all of them by construction, and both the migration
+// structural test and a DB test pin that.
+//
+// This parser converts that guarantee into a runtime one so the action never
+// does `row.new_appointment_id as string` and silently threads `null` into a
+// URL, an email payload or a notification href. It NEVER throws and NEVER
+// echoes the payload — a malformed row becomes `null` plus a field-name list.
+
+/** Fields that must be non-null on a `success` row. */
+const REQUIRED_SUCCESS_FIELDS = [
+  "new_appointment_id",
+  "studio_id",
+  "client_id",
+  "starts_at",
+  "ends_at",
+  "duration_minutes",
+  "created_at",
+  "original_starts_at",
+] as const;
+
+type RescheduleSuccess = {
+  newAppointmentId: string;
+  studioId: string;
+  clientId: string;
+  serviceId: string | null;
+  practitionerId: string | null;
+  originalStartsAt: string;
+  startsAt: string;
+  endsAt: string;
+  durationMinutes: number;
+  createdAt: string;
+};
+
+/** Names of the required fields that are missing/blank. Never the values. */
+function missingSuccessFields(row: Record<string, unknown>): string[] {
+  return REQUIRED_SUCCESS_FIELDS.filter((f) => {
+    const v = row?.[f];
+    if (v === null || v === undefined) return true;
+    if (f === "duration_minutes") {
+      return typeof v !== "number" || !Number.isFinite(v) || v <= 0;
+    }
+    return typeof v !== "string" || v.trim() === "";
+  });
+}
+
+/**
+ * Returns the fully-typed success payload, or `null` when the row violates the
+ * command contract. `service_id` and `practitioner_id` stay nullable: a studio
+ * with no service on the original, or a capacity-OFF booking with no
+ * practitioner, are both legitimate.
+ */
+function parseRescheduleSuccessRow(
+  row: Record<string, unknown>,
+): RescheduleSuccess | null {
+  if (missingSuccessFields(row).length > 0) return null;
+  return {
+    newAppointmentId: row.new_appointment_id as string,
+    studioId: row.studio_id as string,
+    clientId: row.client_id as string,
+    serviceId: (row.service_id as string | null) ?? null,
+    practitionerId: (row.practitioner_id as string | null) ?? null,
+    originalStartsAt: row.original_starts_at as string,
+    startsAt: row.starts_at as string,
+    endsAt: row.ends_at as string,
+    durationMinutes: row.duration_minutes as number,
+    createdAt: row.created_at as string,
+  };
 }
 
 function stringOrEmpty(v: FormDataEntryValue | null): string {

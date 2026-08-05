@@ -746,63 +746,292 @@ describe("0171 — token and lifecycle refusals", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 — financial safety fails closed", () => {
-  it("refuses when the original carries an appointment_payments row", async () => {
-    const f = await seed("paid");
-    // Minimal payment surface: the gate only tests for existence.
-    await adminQuery(
-      `insert into public.appointment_payments
-         (appointment_id, studio_id, client_id, pending_booking_payment_session_id,
-          payment_consent_id, stripe_account_id, stripe_livemode, stripe_customer_id,
-          stripe_setup_intent_id, stripe_payment_method_id, payment_status)
-       values ($1,$2,$3,$4,$5,'acct_test',false,'cus_test','seti_test','pm_test','method_saved')`,
-      [f.originalId, f.studioId, f.clientId, randomUUID(), randomUUID()],
-    ).catch(async () => {
-      // The table carries FKs to sessions/consents that this fixture does not
-      // seed. If the insert is refused, prove the gate a different way: with no
-      // payment row the SAME reschedule must succeed, so a failure here would
-      // be a fixture problem, not a silent pass.
-      const ok = await reschedule(f, at(11, 10, 0));
-      expect(ok.result).toBe("success");
-      return null;
-    });
+// ===========================================================================
+// FINANCIAL SAFETY — the gate must FAIL CLOSED, and these tests must be able
+// to fail.
+// ===========================================================================
+//
+// An earlier revision of the appointment_payments test wrapped its fixture in a
+// `.catch()` that fell back to asserting an ORDINARY successful reschedule, and
+// then returned early when the payment row was absent. That test could pass
+// without the `exists (select 1 from appointment_payments ...)` arm ever being
+// evaluated — a vacuous pass dressed as coverage. A fixture failure must FAIL
+// the test, never convert it into a passing alternate path.
+//
+// So `seedAppointmentPayment` seeds the real FK lineage, with no catch:
+//   studio_payment_settings(studio_id, stripe_account_id, stripe_livemode)
+//     <- pending_booking_payment_sessions(id, client_id, studio_id,
+//          stripe_account_id, stripe_livemode, stripe_customer_id)
+//     <- payment_consents(id, pending_booking_payment_session_id, client_id,
+//          studio_id)
+//     <- appointment_payments
+// and every test asserts the row EXISTS before invoking the command.
 
+/**
+ * Seeds the Stripe account + customer lineage every payment table hangs off:
+ *   studio_payment_settings(studio_id, stripe_account_id, stripe_livemode)
+ *   client_stripe_customers(client_id, studio_id, account, mode, customer)
+ * Returns the identifiers so callers can build on it. Throws on any FK failure.
+ */
+async function seedStripeLineage(
+  f: Fixture,
+): Promise<{ acct: string; cus: string }> {
+  const acct = `acct_${randomUUID().slice(0, 8)}`;
+  const cus = `cus_${randomUUID().slice(0, 8)}`;
+  await adminQuery(
+    `insert into public.studio_payment_settings
+       (studio_id, stripe_account_id, stripe_livemode, stripe_charges_enabled,
+        stripe_payouts_enabled, require_card_on_file, default_charge_currency)
+     values ($1,$2,false,true,true,true,'cad')`,
+    [f.studioId, acct],
+  );
+  await adminQuery(
+    `insert into public.client_stripe_customers
+       (client_id, studio_id, stripe_account_id, stripe_livemode, stripe_customer_id)
+     values ($1,$2,$3,false,$4)`,
+    [f.clientId, f.studioId, acct, cus],
+  );
+  return { acct, cus };
+}
+
+/** Seeds a genuinely valid appointment_payments row. Throws on any FK failure. */
+async function seedAppointmentPayment(
+  f: Fixture,
+  paymentStatus = "method_saved",
+): Promise<void> {
+  const { acct, cus } = await seedStripeLineage(f);
+  const sessionId = randomUUID();
+  const consentId = randomUUID();
+
+  await adminQuery(
+    `insert into public.pending_booking_payment_sessions
+       (id, token_hash, studio_id, service_id, client_id, requested_starts_at,
+        requested_ends_at, requested_duration_minutes, stripe_account_id,
+        stripe_livemode, stripe_customer_id, status)
+     values ($1,$2,$3,$4,$5, now() + interval '10 days',
+             now() + interval '10 days' + interval '45 minutes', 45, $6, false, $7, 'pending')`,
+    [sessionId, hash64(), f.studioId, f.serviceId, f.clientId, acct, cus],
+  );
+  await adminQuery(
+    `insert into public.payment_consents
+       (id, pending_booking_payment_session_id, studio_id, client_id, consent_type,
+        policy_version, rendered_consent_text_hash, studio_name_snapshot, accepted_at)
+     values ($1,$2,$3,$4,'card_on_file_and_treatment_charge','v1',$5,'Harness Studio', now())`,
+    [consentId, sessionId, f.studioId, f.clientId, hash64()],
+  );
+  await adminQuery(
+    `insert into public.appointment_payments
+       (appointment_id, studio_id, client_id, pending_booking_payment_session_id,
+        payment_consent_id, stripe_account_id, stripe_livemode, stripe_customer_id,
+        stripe_setup_intent_id, stripe_payment_method_id, payment_status)
+     values ($1,$2,$3,$4,$5,$6,false,$7,$8,$9,$10)`,
+    [
+      f.originalId,
+      f.studioId,
+      f.clientId,
+      sessionId,
+      consentId,
+      acct,
+      cus,
+      `seti_${randomUUID().slice(0, 12)}`,
+      `pm_${randomUUID().slice(0, 12)}`,
+      paymentStatus,
+    ],
+  );
+}
+
+describe("0171 — financial safety fails closed (appointment_payments)", () => {
+  it.each([
+    "method_saved",
+    "charged",
+    "authentication_required",
+    "refunded",
+    "disputed",
+  ])("refuses when a VALID appointment_payments row exists with status %s", async (status) => {
+    const f = await seed(`paid-${status}`);
+    // No .catch(): a fixture failure fails the test.
+    await seedAppointmentPayment(f, status);
+
+    // The gate cannot be vacuous — the row is proven present first.
     const exists = await adminQuery(
       `select count(*)::int n from public.appointment_payments where appointment_id = $1`,
       [f.originalId],
     );
-    if (exists.rows[0].n === 0) return; // fixture could not seed; covered above
+    expect(exists.rows[0].n).toBe(1);
 
     const out = await reschedule(f, at(11, 10, 0));
     expect(out.result).toBe("payment_state_requires_studio");
     await expectUnchanged(f);
+
+    // And no evidence of a partial mutation.
+    const audits = await adminQuery(
+      `select count(*)::int n from public.appointment_audit where appointment_id = $1`,
+      [f.originalId],
+    );
+    expect(audits.rows[0].n).toBe(0);
+    const acks = await adminQuery(
+      `select count(*)::int n from public.appointment_policy_acknowledgements where studio_id = $1`,
+      [f.studioId],
+    );
+    expect(acks.rows[0].n).toBe(0);
   });
 
-  it("ignores a terminally dead charge attempt (cancelled/failed) and still reschedules", async () => {
-    const f = await seed("deadcharge");
-    await adminQuery(
-      `insert into public.payment_charge_attempts
-         (studio_id, charge_reason, client_id, appointment_id, created_by_practitioner_id,
-          amount_cents, currency, status, stripe_livemode)
-       values ($1,'no_show_fee',$2,$3,$4,5000,'cad','cancelled',false)`,
-      [f.studioId, f.clientId, f.originalId, f.ownerId],
-    );
+  it("the SAME studio reschedules fine once no payment row is attached (control)", async () => {
+    const f = await seed("paid-control");
     const out = await reschedule(f, at(11, 10, 0));
     expect(out.result).toBe("success");
   });
+});
 
-  it("refuses when a LIVE charge attempt is attached", async () => {
-    const f = await seed("livecharge");
+describe("0171 — financial safety fails closed (payment_charge_attempts)", () => {
+  async function seedChargeAttempt(f: Fixture, status: string, reason = "no_show_fee") {
     await adminQuery(
       `insert into public.payment_charge_attempts
          (studio_id, charge_reason, client_id, appointment_id, created_by_practitioner_id,
           amount_cents, currency, status, stripe_livemode)
-       values ($1,'late_cancellation_fee',$2,$3,$4,5000,'cad','succeeded',false)`,
-      [f.studioId, f.clientId, f.originalId, f.ownerId],
+       values ($1,$2,$3,$4,$5,5000,'cad',$6,false)`,
+      [f.studioId, reason, f.clientId, f.originalId, f.ownerId, status],
     );
-    const out = await reschedule(f, at(11, 10, 0));
-    expect(out.result).toBe("payment_state_requires_studio");
-    await expectUnchanged(f);
+    const n = await adminQuery(
+      `select count(*)::int n from public.payment_charge_attempts where appointment_id = $1`,
+      [f.originalId],
+    );
+    expect(n.rows[0].n).toBe(1);
+  }
+
+  it.each(["ready", "blocked", "pending_stripe", "succeeded"])(
+    "REFUSES on a live charge attempt in status %s",
+    async (status) => {
+      const f = await seed(`charge-live-${status}`);
+      await seedChargeAttempt(f, status);
+      const out = await reschedule(f, at(11, 10, 0));
+      expect(out.result).toBe("payment_state_requires_studio");
+      await expectUnchanged(f);
+    },
+  );
+
+  it.each(["cancelled", "failed"])(
+    "does NOT block on a terminally dead attempt in status %s",
+    async (status) => {
+      const f = await seed(`charge-dead-${status}`);
+      await seedChargeAttempt(f, status);
+      const out = await reschedule(f, at(11, 10, 0));
+      expect(out.result).toBe("success");
+    },
+  );
+});
+
+describe("0171 — financial safety fails closed (manual_fee_charge_attempts)", () => {
+  // The full lineage this table demands, seeded for real:
+  //   studio_payment_settings + client_stripe_customers (via seedStripeLineage)
+  //     <- client_consent_signatures      (card authorization)
+  //     <- client_payment_methods         (customer lineage FK)
+  //     <- appointment_policy_acknowledgements
+  //     <- manual_fee_charge_attempts
+  // No .catch() anywhere: a fixture failure fails the test.
+  async function seedManualFee(f: Fixture, status: string) {
+    const { acct, cus } = await seedStripeLineage(f);
+    const sigId = randomUUID();
+    const pmId = randomUUID();
+    const ackId = randomUUID();
+
+    const templateId = randomUUID();
+    await adminQuery(
+      `insert into public.consent_form_templates
+         (id, studio_id, title, body, form_type, version, status, is_live)
+       values ($1,$2,'Card authorization','Body','card_authorization',1,'active',true)`,
+      [templateId, f.studioId],
+    );
+    await adminQuery(
+      `insert into public.client_consent_signatures
+         (id, studio_id, client_id, template_id, template_title_snapshot,
+          template_body_snapshot, template_version, template_hash, signature_name,
+          signed_at, response)
+       values ($1,$2,$3,$4,'Card authorization','Body',1,$5,'Test Client', now(),'accepted')`,
+      [sigId, f.studioId, f.clientId, templateId, hash64()],
+    );
+    await adminQuery(
+      `insert into public.client_payment_methods
+         (id, studio_id, client_id, stripe_account_id, stripe_livemode, stripe_customer_id,
+          stripe_payment_method_id, stripe_setup_intent_id, card_authorization_signature_id,
+          brand, last4, exp_month, exp_year)
+       values ($1,$2,$3,$4,false,$5,$6,$7,$8,'visa','4242',12,2030)`,
+      [pmId, f.studioId, f.clientId, acct, cus, `pm_${randomUUID().slice(0, 10)}`,
+       `seti_${randomUUID().slice(0, 10)}`, sigId],
+    );
+    await adminQuery(
+      `insert into public.appointment_policy_acknowledgements
+         (id, studio_id, appointment_id, client_id, action,
+          cancellation_policy_text_snapshot, no_show_policy_text_snapshot, policy_snapshot_hash)
+       values ($1,$2,$3,$4,'cancel','p','q',$5)`,
+      [ackId, f.studioId, f.originalId, f.clientId, hash64()],
+    );
+    await adminQuery(
+      `insert into public.manual_fee_charge_attempts
+         (studio_id, appointment_id, client_id, confirmed_by_practitioner_id, charge_type,
+          amount_cents, currency, status, client_payment_method_id,
+          card_authorization_signature_id, appointment_policy_acknowledgement_id,
+          policy_snapshot_hash, internal_note, timing_classification, stripe_livemode)
+       values ($1,$2,$3,$4,'no_show',5000,'cad',$5,$6,$7,$8,$9,'note','practitioner_asserted',false)`,
+      [f.studioId, f.originalId, f.clientId, f.ownerId, status, pmId, sigId, ackId, hash64()],
+    );
+    const n = await adminQuery(
+      `select count(*)::int n from public.manual_fee_charge_attempts where appointment_id = $1`,
+      [f.originalId],
+    );
+    expect(n.rows[0].n).toBe(1);
+  }
+
+  it.each(["ready", "blocked", "pending_stripe", "succeeded"])(
+    "REFUSES on a live manual fee attempt in status %s",
+    async (status) => {
+      const f = await seed(`fee-live-${status}`);
+      await seedManualFee(f, status);
+      const out = await reschedule(f, at(11, 10, 0));
+      expect(out.result).toBe("payment_state_requires_studio");
+      await expectUnchanged(f);
+    },
+  );
+
+  it.each(["cancelled", "failed"])(
+    "does NOT block on a terminally dead manual fee attempt in status %s",
+    async (status) => {
+      const f = await seed(`fee-dead-${status}`);
+      await seedManualFee(f, status);
+      const out = await reschedule(f, at(11, 10, 0));
+      expect(out.result).toBe("success");
+    },
+  );
+});
+
+describe("0171 — the financial census is complete", () => {
+  it("no OTHER table carrying live appointment-bound money is missing from the gate", async () => {
+    // Every table with an appointment_id FK, minus the ones the gate covers and
+    // the ones that are provably not payment state. If this list grows, the
+    // gate (or this justification) must be revisited.
+    const r = await adminQuery(
+      `select distinct c.conrelid::regclass::text as t
+         from pg_constraint c
+        where c.contype = 'f'
+          and c.confrelid = 'public.appointments'::regclass`,
+    );
+    const referencing = r.rows.map((x: { t: string }) => x.t).sort();
+    expect(referencing).toEqual(
+      [
+        // Covered BY THE GATE:
+        "appointment_payments",
+        "manual_fee_charge_attempts",
+        "payment_charge_attempts",
+        // Not payment state:
+        "appointment_audit", //            evidence, stays on the original
+        "appointment_policy_acknowledgements", // evidence, stays on the original
+        "appointments", //                 the lineage self-reference
+        "booking_tracking_consents", //    marketing consent, ON DELETE SET NULL
+        "ops_alerts", //                   operator signal, ON DELETE SET NULL
+        "practitioner_notifications", //   in-app notice, ON DELETE SET NULL
+        "sessions", //                     clinical record, ON DELETE SET NULL
+      ].sort(),
+    );
   });
 });
 
@@ -845,6 +1074,92 @@ describe("0171 — practitioner continuity", () => {
     expect(out.result).toBe("success");
     expect(out.practitioner_id).toBe(f.ownerId);
     expect(out.practitioner_id).not.toBe(otherPract);
+  });
+
+  // ==========================================================================
+  // CAPACITY-OFF HISTORICAL ASSIGNMENT — the parity contract.
+  // ==========================================================================
+  //
+  // The capacity-OFF slot loader generates from STUDIO-WIDE availability and
+  // STUDIO-WIDE reservations and never consults practitioner activity or
+  // service_practitioners. An earlier revision of validate_public_reschedule_slot
+  // gated membership/eligibility on `p_practitioner_id is not null` (0170's form,
+  // correct for booking), which meant a capacity-OFF studio whose original
+  // practitioner had since been deactivated — or dropped from the service's
+  // eligibility list — had the page offer slots the validator refused EVERY one
+  // of. Public rescheduling was permanently unsatisfiable for that client.
+  it("capacity OFF: preserves an INACTIVE historical practitioner and still reschedules", async () => {
+    const f = await seed("offinactive");
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [f.ownerId]);
+
+    const target = at(11, 10, 0);
+
+    // The validator must clear the slot the page would offer.
+    const verdict = await adminQuery(
+      `select public.validate_public_reschedule_slot($1,$2,$3,$4::timestamptz,
+                $4::timestamptz + make_interval(mins => 45), $5) as v`,
+      [f.studioId, f.ownerId, f.serviceId, target, f.originalId],
+    );
+    expect(verdict.rows[0].v).toBe("ok");
+
+    const out = await reschedule(f, target);
+    expect(out.result).toBe("success");
+    // The inactive practitioner is CARRIED THROUGH, not dropped and not swapped.
+    expect(out.practitioner_id).toBe(f.ownerId);
+    const succ = (
+      await adminQuery(`select practitioner_id from public.appointments where id = $1`, [
+        out.new_appointment_id,
+      ])
+    ).rows[0];
+    expect(succ.practitioner_id).toBe(f.ownerId);
+  });
+
+  it("capacity OFF: preserves a practitioner dropped from the service eligibility list", async () => {
+    const f = await seed("offineligible");
+    const otherUser = randomUUID();
+    const otherPract = randomUUID();
+    await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [
+      otherUser,
+      `offelig-${otherPract.slice(0, 8)}@harness.local`,
+    ]);
+    await adminQuery(
+      `insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active)
+       values ($1,$2,$3,'Other','oe@harness.local','practitioner',true)`,
+      [otherPract, f.studioId, otherUser],
+    );
+    // Non-empty eligibility list that EXCLUDES the original practitioner.
+    await adminQuery(
+      `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+       values ($1,$2,$3) on conflict do nothing`,
+      [f.studioId, f.serviceId, otherPract],
+    );
+    await adminQuery(
+      `delete from public.service_practitioners where service_id = $1 and practitioner_id = $2`,
+      [f.serviceId, f.ownerId],
+    );
+
+    const target = at(11, 10, 0);
+    const verdict = await adminQuery(
+      `select public.validate_public_reschedule_slot($1,$2,$3,$4::timestamptz,
+                $4::timestamptz + make_interval(mins => 45), $5) as v`,
+      [f.studioId, f.ownerId, f.serviceId, target, f.originalId],
+    );
+    expect(verdict.rows[0].v).toBe("ok");
+
+    const out = await reschedule(f, target);
+    expect(out.result).toBe("success");
+    expect(out.practitioner_id).toBe(f.ownerId);
+  });
+
+  it("capacity ON: the SAME inactive practitioner IS refused (the gate is mode-scoped, not removed)", async () => {
+    const f = await seed("oninactive-contrast", { capacity: true });
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [f.ownerId]);
+    const verdict = await adminQuery(
+      `select public.validate_public_reschedule_slot($1,$2,$3,$4::timestamptz,
+                $4::timestamptz + make_interval(mins => 45), $5) as v`,
+      [f.studioId, f.ownerId, f.serviceId, at(11, 10, 0), f.originalId],
+    );
+    expect(verdict.rows[0].v).toBe("invalid_practitioner");
   });
 
   it("refuses under capacity ON when the preserved practitioner is inactive", async () => {
@@ -959,6 +1274,108 @@ describe("0171 — Google Calendar invariants", () => {
 });
 
 // ---------------------------------------------------------------------------
+
+// ===========================================================================
+// SUCCESSOR TOKEN HASH COLLISION
+// ===========================================================================
+//
+// appointments.cancellation_token_hash carries a partial unique index. The
+// generated token is high entropy so a real collision is vanishingly unlikely,
+// but the FAILURE CONTRACT still has to be explicit rather than accidental:
+// there is deliberately NO automatic retry (a retry would have to prove the
+// original was not already mutated, which is a design this PR does not add).
+describe("0171 — successor token hash collision", () => {
+  it("rolls the whole command back and leaves the original untouched", async () => {
+    const f = await seed("collision");
+    // Park the hash on another appointment so the successor INSERT collides.
+    const takenHash = hash64();
+    await adminQuery(
+      `insert into public.appointments
+         (studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
+          duration_minutes, status, cancellation_token_hash)
+       values ($1,$2,$3,$4,$5, $5::timestamptz + make_interval(mins => 45), 45,
+               'confirmed', $6)`,
+      [f.studioId, f.ownerId, f.clientId, f.serviceId, at(30, 9, 0), takenHash],
+    );
+
+    // The unique violation must surface as a RAISED error (23505) that rolls
+    // back, not as a closed result code that pretends the reschedule happened.
+    await expect(
+      reschedule(f, at(11, 10, 0), { newHash: takenHash }),
+    ).rejects.toThrow(/duplicate key|unique/i);
+
+    await expectUnchanged(f);
+
+    // No audit, no acknowledgement, no successor.
+    const audits = await adminQuery(
+      `select count(*)::int n from public.appointment_audit where appointment_id = $1`,
+      [f.originalId],
+    );
+    expect(audits.rows[0].n).toBe(0);
+
+    // The colliding hash still belongs to exactly ONE appointment — the other
+    // one — so nothing was overwritten.
+    const owners = await adminQuery(
+      `select count(*)::int n from public.appointments where cancellation_token_hash = $1`,
+      [takenHash],
+    );
+    expect(owners.rows[0].n).toBe(1);
+  });
+
+  it("a FRESH hash on the same fixture succeeds (control)", async () => {
+    const f = await seed("collision-control");
+    const out = await reschedule(f, at(11, 10, 0), { newHash: hash64() });
+    expect(out.result).toBe("success");
+  });
+});
+
+// ===========================================================================
+// SUCCESS-ROW INTEGRITY — the contract the application's parser relies on.
+// ===========================================================================
+describe("0171 — a success row is structurally non-null", () => {
+  it("populates every field the application requires", async () => {
+    const f = await seed("successshape");
+    const out = await reschedule(f, at(11, 10, 0));
+    expect(out.result).toBe("success");
+    for (const field of [
+      "original_appointment_id",
+      "new_appointment_id",
+      "studio_id",
+      "client_id",
+      "original_starts_at",
+      "starts_at",
+      "ends_at",
+      "duration_minutes",
+      "created_at",
+    ] as const) {
+      expect(out[field], `${field} must be non-null on success`).not.toBeNull();
+      expect(out[field]).not.toBeUndefined();
+    }
+    expect(out.duration_minutes as number).toBeGreaterThan(0);
+  });
+
+  it("a REFUSAL row carries nulls in every field but result", async () => {
+    const f = await seed("refusalshape");
+    const out = await reschedule(f, f.originalStart); // same_time
+    expect(out.result).toBe("same_time");
+    for (const field of [
+      "original_appointment_id",
+      "new_appointment_id",
+      "studio_id",
+      "client_id",
+      "service_id",
+      "practitioner_id",
+      "original_starts_at",
+      "starts_at",
+      "ends_at",
+      "duration_minutes",
+      "created_at",
+      "policy_acknowledgement_id",
+    ] as const) {
+      expect(out[field], `${field} must be null on a refusal`).toBeNull();
+    }
+  });
+});
 
 describe("0171 — privilege boundary", () => {
   it.each(["anon", "authenticated"] as const)("denies EXECUTE to %s", async (role) => {
