@@ -97,7 +97,15 @@ export function TreatmentTimeCard({
 function AreaRow({ row }: { row: AreaBreakdownRow }) {
   return (
     <div className="flex items-center gap-3 text-sm">
-      <span className="w-28 shrink-0 truncate text-neutral-700 dark:text-neutral-300">
+      {/* A multi-area block buckets under a COMBINED label ("Cheek · Sideburn",
+          lib/treatment-time/area-bucket.ts). `truncate` would cut that at the
+          column edge and hide the very secondary area this breakdown exists to
+          stop losing, so the label wraps instead and carries a title for the
+          full string. */}
+      <span
+        title={row.area}
+        className="w-32 shrink-0 break-words text-neutral-700 dark:text-neutral-300"
+      >
         {row.area}
       </span>
       <span className="w-20 shrink-0 tabular-nums text-neutral-700 dark:text-neutral-300">

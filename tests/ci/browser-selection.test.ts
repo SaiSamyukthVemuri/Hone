@@ -61,13 +61,13 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps all 54 specs, and the targeted lane still selects 25", () => {
+  it("the manifest still maps all 55 specs, and the targeted lane still selects 26", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
-    expect(mapped).toHaveLength(54);
+    expect(mapped).toHaveLength(55);
     // The exact selection that was cancelled twice at the old 10-minute ceiling.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(25);
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(26);
   });
 
   it("targeted coverage is still ONE shard and extended still FOUR", () => {
