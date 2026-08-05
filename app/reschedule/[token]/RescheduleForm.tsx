@@ -58,6 +58,12 @@ type Props = {
   // server-side action mirrors the same predicate against the
   // resolved studio row.
   requiresAcknowledgement: boolean;
+  // 0171. SERVER-GENERATED hash of the exact policy text rendered above this
+  // form. Posted back verbatim with the checkbox so the command can prove the
+  // visitor acknowledged what they were actually shown. This component never
+  // computes it, never inspects it, and never sees the policy text itself —
+  // it is an opaque proof-of-display string. null when no policy is on file.
+  presentedPolicyHash: string | null;
 };
 
 // Today in the studio's local calendar, not the visitor's UTC date.
@@ -95,6 +101,7 @@ export function RescheduleForm({
   studioTimezone,
   studioPublicBookingHorizonMonths,
   requiresAcknowledgement,
+  presentedPolicyHash,
 }: Props) {
   const horizon = horizonInStudio(
     studioTimezone,
@@ -189,6 +196,13 @@ export function RescheduleForm({
       // no policy on file accepts the submit without this field
       // entirely; sending an unsolicited 'true' would be misleading.
       fd.set("acknowledged_policy", "true");
+      // 0171. Posted back exactly as the server issued it. If the studio edited
+      // its policies since this page rendered, the command sees the mismatch
+      // and returns policy_changed rather than recording acceptance of text
+      // this visitor never saw.
+      if (presentedPolicyHash) {
+        fd.set("presented_policy_hash", presentedPolicyHash);
+      }
     }
     startSubmitting(async () => {
       const r = await rescheduleAppointmentViaTokenAction(fd);

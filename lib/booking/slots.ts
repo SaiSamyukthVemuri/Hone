@@ -88,13 +88,22 @@ type ReservationRow = {
   source_id?: string;
 };
 
-// One optional, SERVER-CONTROLLED reservation exclusion. Used only by the
-// authenticated practitioner move-slot path so an appointment being moved does not
-// count its OWN shadow reservation as a conflict against its new candidate times.
-// Public booking / public reschedule never pass this (see the move-slot server
-// action, which derives the appointment id server-side). Every OTHER reservation —
-// other appointments, timed blocks, recurring-break occurrences, full-day blockouts
-// — remains a conflict.
+// One optional, SERVER-CONTROLLED reservation exclusion, so an appointment being
+// MOVED does not count its OWN shadow reservation as a conflict against its new
+// candidate times. Every OTHER reservation — other appointments, timed blocks,
+// recurring-break occurrences, full-day blockouts — remains a conflict.
+//
+// Two callers pass it, and in BOTH the id is derived server-side; the browser
+// never supplies it:
+//   * the authenticated practitioner move-slot server action;
+//   * the PUBLIC RESCHEDULE read surfaces (migration 0171). Counting the
+//     original's own reservation hid every slot adjacent to it, and did not
+//     model the final transaction — reschedule_appointment_v2 cancels the
+//     original, which deletes that reservation, BEFORE inserting the successor.
+//     public.public_reschedule_slot_candidates applies the identical exclusion
+//     in SQL so the offered set and the accepted set cannot diverge.
+//
+// PUBLIC BOOKING never passes it: there is no appointment being moved.
 export type ReservationExclusion = {
   sourceKind: "appointment";
   sourceId: string;

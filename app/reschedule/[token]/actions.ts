@@ -11,13 +11,20 @@ import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import {
   filterFutureSlots,
   getAvailableSlots,
+  type ReservationExclusion,
   type Slot,
 } from "@/lib/booking/slots";
-import { addDays, localDateString, localTimeString12h, todayInTz } from "@/lib/booking/tz";
+import { addDays, localTimeString12h, todayInTz } from "@/lib/booking/tz";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+// 0171: `isWithinPublicBookingHorizon` and `localDateString` are deliberately
+// NOT imported any more. The submit path used them to pre-check the horizon and
+// to build a date string for its own getAvailableSlots re-verification — both of
+// which are now owned by reschedule_appointment_v2, under the studio lock. A
+// second, unlocked implementation of either could only drift from the
+// authoritative one. `horizonRangeInStudioTz` remains for the READ surfaces,
+// which still bound the date picker.
 import {
   horizonRangeInStudioTz,
-  isWithinPublicBookingHorizon,
   maxPublicBookingHorizonDays,
 } from "@/lib/booking/horizon";
 import {
@@ -32,6 +39,34 @@ import {
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before rescheduling.";
+
+// 0171. The studio edited its cancellation/no-show policy between this page
+// render and the submit, so the box the visitor ticked no longer describes what
+// is on file. The command refuses rather than record acceptance of text that
+// was never displayed; the visitor is told to look again, not that something
+// went wrong.
+const POLICY_CHANGED_ERROR =
+  "The studio's appointment policies changed while you were on this page. Please refresh, review them again, and confirm.";
+
+// 0171. Rescheduling to the appointment's CURRENT time is a no-op. Excluding
+// the original's own reservation makes its start technically free again, so
+// without this the command would cancel and recreate the booking purely to
+// rotate its token.
+const SAME_TIME_ERROR =
+  "That's the time this appointment is already booked for. Pick a different time.";
+
+// 0171. The original appointment carries payment state whose reschedule
+// semantics are not defined anywhere in the product. The command refuses rather
+// than silently move, duplicate or orphan money; the original stays confirmed.
+const PAYMENT_STATE_ERROR =
+  "This appointment can't be changed online. Please contact the studio and they'll help you reschedule.";
+
+// 0171. The studio runs practitioner capacity and the practitioner this
+// appointment was booked with can no longer take it. Public reschedule never
+// silently reassigns a client to somebody else, so this is a studio
+// conversation.
+const PRACTITIONER_UNAVAILABLE_ERROR =
+  "This appointment can't be changed online right now. Please contact the studio and they'll help you reschedule.";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
@@ -136,12 +171,25 @@ type ReschedulableOriginal = {
   appointment_id: string;
   studio_id: string;
   client_id: string;
-  // PR #260: the hash to pass to reschedule_appointment as
-  // p_current_cancellation_token. The RPC matches by hash; this is the
-  // hash of the raw URL token (column path) or the row's stored hash
-  // (HMAC path), so the RPC's locked re-verification always resolves the
+  // PR #260: the hash to pass to reschedule_appointment_v2 as
+  // p_current_cancellation_token_hash. The command matches by hash; this is
+  // the hash of the raw URL token (column path) or the row's stored hash
+  // (HMAC path), so the command's locked re-verification always resolves the
   // same row the resolver already authenticated.
   rpc_token_hash: string;
+  // 0171. THE BOOKED CONTRACT, carried to every slot surface.
+  //
+  // duration_minutes is the ORIGINAL appointment's stored duration, never the
+  // service's current default. A studio that lengthens a service after a
+  // client books must not silently relength that client's booking, and the
+  // page must not offer 60-minute slots for a 45-minute appointment while the
+  // command creates a 45-minute successor. Every reschedule read surface and
+  // the command itself now use this one value.
+  duration_minutes: number;
+  // The preserved practitioner. Public reschedule never reassigns, so this is
+  // both the capacity-mode key for slot generation and the assignee the
+  // command will keep.
+  practitioner_id: string | null;
 };
 async function assertReschedulableOriginal(
   token: string,
@@ -155,7 +203,9 @@ async function assertReschedulableOriginal(
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("appointments")
-    .select("id, studio_id, client_id, status, starts_at")
+    .select(
+      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes",
+    )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
   if (error) {
@@ -182,6 +232,72 @@ async function assertReschedulableOriginal(
       studio_id: data.studio_id,
       client_id: data.client_id,
       rpc_token_hash: resolved.rpc_token_hash,
+      duration_minutes: data.duration_minutes,
+      practitioner_id: data.practitioner_id ?? null,
+    },
+  };
+}
+
+// 0171. The one place the reschedule read surfaces build their slot-engine
+// arguments, so `fetchRescheduleSlotsAction` and
+// `fetchNextAvailableDateForRescheduleAction` cannot drift apart — and cannot
+// drift from what the command will accept.
+//
+// Three things every reschedule slot query needs and none of them used to pass:
+//
+//   * ORIGINAL-RESERVATION EXCLUSION. The appointment being moved owns a
+//     studio_calendar_reservations row. Counting it as a conflict hides
+//     otherwise valid moves (every slot adjacent to the original, and the
+//     original's own time) and does not model the final transaction, in which
+//     the original is cancelled — and its reservation deleted — before the
+//     successor is inserted. The exclusion id is derived SERVER-side from the
+//     resolved token; the browser never supplies it.
+//   * THE PRESERVED PRACTITIONER + the studio's current capacity flag, so a
+//     capacity-ON studio generates the practitioner's own timeline exactly as
+//     lib/booking/slots.ts does.
+//   * THE ORIGINAL DURATION (see ReschedulableOriginal.duration_minutes).
+type RescheduleSlotContext = {
+  studio: {
+    id: string;
+    timezone: string;
+    default_appointment_duration_minutes: number;
+    buffer_minutes: number;
+    practitioner_capacity_enabled: boolean;
+    public_booking_horizon_months: number;
+  };
+  durationMinutes: number;
+  practitionerId: string | null;
+  excludeReservation: ReservationExclusion;
+};
+
+async function loadRescheduleSlotContext(
+  admin: ReturnType<typeof createAdminClient>,
+  original: ReschedulableOriginal,
+): Promise<RescheduleSlotContext | null> {
+  const { data: studio } = await admin
+    .from("studios")
+    .select(
+      "id, timezone, default_appointment_duration_minutes, buffer_minutes, practitioner_capacity_enabled, public_booking_horizon_months",
+    )
+    .eq("id", original.studio_id)
+    .maybeSingle();
+  if (!studio) return null;
+  return {
+    studio: {
+      id: studio.id,
+      timezone: studio.timezone,
+      default_appointment_duration_minutes:
+        studio.default_appointment_duration_minutes,
+      buffer_minutes: studio.buffer_minutes,
+      practitioner_capacity_enabled:
+        studio.practitioner_capacity_enabled === true,
+      public_booking_horizon_months: studio.public_booking_horizon_months,
+    },
+    durationMinutes: original.duration_minutes,
+    practitionerId: original.practitioner_id,
+    excludeReservation: {
+      sourceKind: "appointment",
+      sourceId: original.appointment_id,
     },
   };
 }
@@ -202,10 +318,20 @@ export type RescheduleSummary = {
   status: "confirmed" | "cancelled" | "completed" | "no_show";
   // Studio-authored policies shown on the reschedule page so the
   // client sees the cancellation/no-show rules before committing to a
-  // change. Reminder/display only; the reschedule mutation does not
-  // consult these fields and is not blocked when either is empty.
+  // change.
   cancellationPolicyText: string | null;
   noShowPolicyText: string | null;
+  // 0171. THE HASH OF THE POLICY TEXT THIS RENDER ACTUALLY SHOWED.
+  //
+  // Server-generated, never round-tripped as text. The form posts it back
+  // unchanged alongside the checkbox and reschedule_appointment_v2 re-derives
+  // the CURRENT hash from the studio row and compares: a studio that edits its
+  // policy between this render and the submit gets `policy_changed`, and no
+  // acknowledgement of unseen text is ever recorded.
+  //
+  // null when the studio has no policy on file — there is nothing to
+  // acknowledge, so the command requires neither the checkbox nor the hash.
+  presentedPolicyHash: string | null;
 };
 
 export type FetchRescheduleResult =
@@ -288,12 +414,28 @@ export async function fetchAppointmentForRescheduleAction(
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
+  // 0171. Hash exactly what this render is about to display. buildPolicySnapshot
+  // is the same canonical function the command's SQL reproduces byte-for-byte
+  // (coalesce each side to '', join with "\n---\n", SHA-256 hex, NO trim).
+  const requiresAck = hasAnyPolicy({
+    cancellationPolicyText: studio.cancellation_policy_text,
+    noShowPolicyText: studio.no_show_policy_text,
+  });
+  const presentedPolicyHash = requiresAck
+    ? buildPolicySnapshot({
+        cancellationPolicyText: studio.cancellation_policy_text,
+        noShowPolicyText: studio.no_show_policy_text,
+      }).policySnapshotHash
+    : null;
+
   return {
     ok: true,
     summary: {
       appointmentId: row.id,
       serviceId: service.id,
       serviceName: service.name,
+      // The ORIGINAL appointment's stored duration — what the client booked —
+      // not service.default_duration_minutes.
       durationMinutes: row.duration_minutes,
       studioId: studio.id,
       studioName: studio.name,
@@ -303,6 +445,7 @@ export async function fetchAppointmentForRescheduleAction(
       status: row.status,
       cancellationPolicyText: studio.cancellation_policy_text,
       noShowPolicyText: studio.no_show_policy_text,
+      presentedPolicyHash,
     },
   };
 }
@@ -328,65 +471,29 @@ export async function fetchRescheduleSlotsAction(params: {
     return { ok: false, error: asserted.error };
   }
   const admin = createAdminClient();
-  const { data: appt } = await admin
-    .from("appointments")
-    .select(
-      "id, duration_minutes, service:services(default_duration_minutes), studio:studios(id, timezone, default_appointment_duration_minutes, buffer_minutes, public_booking_horizon_months)",
-    )
-    .eq("id", asserted.original.appointment_id)
-    .maybeSingle();
-  if (!appt) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
-
-  type J = {
-    id: string;
-    duration_minutes: number;
-    service:
-      | { default_duration_minutes: number }
-      | { default_duration_minutes: number }[]
-      | null;
-    studio:
-      | {
-          id: string;
-          timezone: string;
-          default_appointment_duration_minutes: number;
-          buffer_minutes: number;
-          public_booking_horizon_months: number;
-        }
-      | {
-          id: string;
-          timezone: string;
-          default_appointment_duration_minutes: number;
-          buffer_minutes: number;
-          public_booking_horizon_months: number;
-        }[]
-      | null;
-  };
-  const r = appt as unknown as J;
-  const pick = <T>(v: T | T[] | null): T | null =>
-    Array.isArray(v) ? (v[0] ?? null) : v;
-  const svc = pick(r.service);
-  const stu = pick(r.studio);
-  if (!stu) return { ok: false, error: "Studio missing." };
+  const ctx = await loadRescheduleSlotContext(admin, asserted.original);
+  if (!ctx) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
 
   const horizon = horizonRangeInStudioTz(
-    stu.timezone,
-    stu.public_booking_horizon_months,
+    ctx.studio.timezone,
+    ctx.studio.public_booking_horizon_months,
   );
   if (params.date < horizon.minDateStr || params.date > horizon.maxDateStr) {
     return { ok: false, error: "Date is outside the booking window." };
   }
 
+  // 0171. Duration is the ORIGINAL appointment's, never the service's current
+  // default — this call used to pass `svc?.default_duration_minutes ??
+  // r.duration_minutes`, so a studio that edited the service after the booking
+  // made the page offer slots at one length while the submit path used another.
+  // The exclusion and the practitioner are passed for the first time here.
   const slots = await getAvailableSlots(
     admin,
-    {
-      id: stu.id,
-      timezone: stu.timezone,
-      default_appointment_duration_minutes:
-        stu.default_appointment_duration_minutes,
-      buffer_minutes: stu.buffer_minutes,
-    },
+    ctx.studio,
     params.date,
-    svc?.default_duration_minutes ?? r.duration_minutes,
+    ctx.durationMinutes,
+    ctx.excludeReservation,
+    ctx.practitionerId,
   );
   // PR #149: hide same-day past slots. Shared filterFutureSlots
   // helper is the single source of truth for public booking and
@@ -438,50 +545,13 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
     return { ok: false, error: asserted.error };
   }
   const admin = createAdminClient();
-  const { data: appt } = await admin
-    .from("appointments")
-    .select(
-      "id, duration_minutes, service:services(default_duration_minutes), studio:studios(id, timezone, default_appointment_duration_minutes, buffer_minutes, public_booking_horizon_months)",
-    )
-    .eq("id", asserted.original.appointment_id)
-    .maybeSingle();
-  if (!appt) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  const ctx = await loadRescheduleSlotContext(admin, asserted.original);
+  if (!ctx) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
 
-  type J = {
-    id: string;
-    duration_minutes: number;
-    service:
-      | { default_duration_minutes: number }
-      | { default_duration_minutes: number }[]
-      | null;
-    studio:
-      | {
-          id: string;
-          timezone: string;
-          default_appointment_duration_minutes: number;
-          buffer_minutes: number;
-          public_booking_horizon_months: number;
-        }
-      | {
-          id: string;
-          timezone: string;
-          default_appointment_duration_minutes: number;
-          buffer_minutes: number;
-          public_booking_horizon_months: number;
-        }[]
-      | null;
-  };
-  const r = appt as unknown as J;
-  const pick = <T>(v: T | T[] | null): T | null =>
-    Array.isArray(v) ? (v[0] ?? null) : v;
-  const svc = pick(r.service);
-  const stu = pick(r.studio);
-  if (!stu) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
-
-  const today = todayInTz(stu.timezone);
+  const today = todayInTz(ctx.studio.timezone);
   const horizon = horizonRangeInStudioTz(
-    stu.timezone,
-    stu.public_booking_horizon_months,
+    ctx.studio.timezone,
+    ctx.studio.public_booking_horizon_months,
   );
 
   // Start at max(fromDate, today). A past fromDate from a stale client
@@ -491,7 +561,6 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
     return { ok: true, date: null };
   }
 
-  const durationMinutes = svc?.default_duration_minutes ?? r.duration_minutes;
   // PR #149: single clock reading shared across every scan iteration
   // so filterFutureSlots sees a consistent "now" through the loop.
   const nowRef = new Date();
@@ -499,17 +568,16 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
   let scans = 0;
   while (cursor <= horizon.maxDateStr && scans < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
     scans += 1;
+    // 0171: same original duration, same exclusion, same practitioner as
+    // fetchRescheduleSlotsAction. A scan that used different arguments would
+    // land the visitor on a date whose slot list then came back empty.
     const slots = await getAvailableSlots(
       admin,
-      {
-        id: stu.id,
-        timezone: stu.timezone,
-        default_appointment_duration_minutes:
-          stu.default_appointment_duration_minutes,
-        buffer_minutes: stu.buffer_minutes,
-      },
+      ctx.studio,
       cursor,
-      durationMinutes,
+      ctx.durationMinutes,
+      ctx.excludeReservation,
+      ctx.practitionerId,
     );
     const futureSlots = filterFutureSlots(slots, nowRef);
     if (futureSlots.length > 0) {
@@ -536,6 +604,15 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // without the field. The server-side decision is the source of
   // truth; the page hint just keeps the UI honest.
   const acknowledged = stringOrEmpty(formData.get("acknowledged_policy"));
+  // 0171. The hash of the policy text the PAGE ACTUALLY RENDERED, generated by
+  // the server in fetchAppointmentForRescheduleAction and posted back
+  // unchanged. It is a proof-of-display token, not policy content: the command
+  // re-derives the current hash from the studio row itself, so a tampered or
+  // stale value can only ever cause a refusal, never a false acknowledgement.
+  // Policy TEXT is never accepted from the form.
+  const presentedPolicyHash = stringOrEmpty(
+    formData.get("presented_policy_hash"),
+  );
   if (!token) return { ok: false, error: "Missing token." };
   if (!newStartsAt) return { ok: false, error: "Pick a time." };
 
@@ -560,135 +637,53 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   }
 
   const admin = createAdminClient();
-  const { data: existing, error: lookupErr } = await admin
-    .from("appointments")
-    .select(
-      "id, studio_id, practitioner_id, client_id, service_id, status, starts_at, duration_minutes",
-    )
-    .eq("id", asserted.original.appointment_id)
-    .maybeSingle();
-  if (lookupErr) {
-    // PR #149: never surface raw DB error text. The structured log
-    // keeps the operator's debugging power without leaking
-    // table/function names to the public client.
-    logInternal("public_reschedule_submit_lookup_failed", {
-      code: lookupErr.code,
-      message: lookupErr.message,
-      appointmentId: asserted.original.appointment_id,
-    });
-    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
-  }
-  if (!existing) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
-  // Belt-and-braces: the helper already enforced confirmed + future,
-  // but a tiny race window between the helper and this lookup could
-  // in theory show a flipped row. The action re-checks here so the
-  // RPC call never runs against a stale "confirmed + future" snapshot
-  // and the DB CHECK in migration 0066 still enforces it last.
-  if (existing.status !== "confirmed") {
-    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
-  }
-  if (new Date(existing.starts_at).getTime() <= Date.now()) {
-    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
-  }
 
   const start = new Date(newStartsAt);
   if (Number.isNaN(start.getTime())) {
     return { ok: false, error: "Invalid time." };
   }
-  // PR #149: the submitted new start must be strictly in the future.
-  // The slot list is already past-filtered, but a forged form (or a
-  // visitor who submitted a stale slot) cannot bypass that filter to
-  // cancel-and-recreate an appointment in the past. The DB RPC
-  // (migration 0066) enforces the same invariant.
-  if (start.getTime() <= Date.now()) {
-    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
-  }
-  const end = new Date(start.getTime() + existing.duration_minutes * 60_000);
 
-  // Re-verify the new slot is still free.
+  // 0171. METADATA IS LOADED BEFORE THE COMMAND, NEVER AFTER IT.
   //
-  // PR #132. cancellation_policy_text and no_show_policy_text are
-  // added to the select so the policy snapshot row below can be
-  // computed from the same studio row the rest of this action uses.
-  // Server-resolved; never trusts a client-supplied snapshot.
+  // Everything needed to send the confirmation is read here, while a failure
+  // can still be reported honestly — because once the command commits, the
+  // reschedule HAS happened and no later read may turn that into a failure.
+  // The old code loaded these AFTER the RPC and had a branch that returned
+  // {ok:false} when the post-commit successor SELECT failed; that branch both
+  // lied to the visitor and destroyed the only copy of the raw successor token.
   const { data: studioRow } = await admin
     .from("studios")
-    .select(
-      "id, timezone, default_appointment_duration_minutes, buffer_minutes, name, send_confirmation_emails, public_booking_horizon_months, cancellation_policy_text, no_show_policy_text",
-    )
-    .eq("id", existing.studio_id)
+    .select("*")
+    .eq("id", asserted.original.studio_id)
     .maybeSingle();
-  if (!studioRow) return { ok: false, error: "Studio missing." };
+  if (!studioRow) return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
 
-  // PR #133. Decide acknowledgement requirement from the resolved
-  // studio row. A studio with no policy text on file accepts the
-  // reschedule without the field; one with at least one of
-  // cancellation_policy_text or no_show_policy_text requires the
-  // visitor to have ticked the box. The acknowledgement insert
-  // below is gated on the same flag so the table only carries
-  // meaningful rows.
-  const requiresAck = hasAnyPolicy({
-    cancellationPolicyText: studioRow.cancellation_policy_text,
-    noShowPolicyText: studioRow.no_show_policy_text,
-  });
-  if (requiresAck && acknowledged !== "true") {
-    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
-  }
+  const { data: clientRow } = await admin
+    .from("clients")
+    .select("name, email, phone, sms_consent_at, sms_opted_out_at")
+    .eq("id", asserted.original.client_id)
+    .maybeSingle();
 
-  if (
-    !isWithinPublicBookingHorizon(
-      start,
-      studioRow.timezone,
-      studioRow.public_booking_horizon_months,
-    )
-  ) {
-    return { ok: false, error: "That date is outside the booking window." };
-  }
-
-  const dateStr = localDateString(start, studioRow.timezone);
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studioRow.id,
-      timezone: studioRow.timezone,
-      default_appointment_duration_minutes:
-        studioRow.default_appointment_duration_minutes,
-      buffer_minutes: studioRow.buffer_minutes,
-    },
-    dateStr,
-    existing.duration_minutes,
-  );
-  const free = slots.some(
-    (s) => new Date(s.start).getTime() === start.getTime(),
-  );
-  if (!free) {
-    return {
-      ok: false,
-      error: "That time is no longer available. Please choose another time.",
-    };
-  }
-
-  // Single-transaction reschedule via the reschedule_appointment RPC
-  // (migration 0029). Cancels the original row, inserts the
-  // replacement, and writes both audit rows atomically. If anything
-  // fails, including the exclusion constraint catching a slot race,
-  // Postgres rolls back the entire transaction and the original
-  // appointment stays confirmed.
+  // The raw successor token is minted immediately before the command and only
+  // its SHA-256 crosses the boundary. The raw value lives in this closure and
+  // nowhere else — it is never stored, never logged, and is the ONLY thing that
+  // can build the client's cancel/reschedule/manage links.
   const newToken = generateAppointmentToken();
-  // PR #260: the RPC matches/stores hashes. p_current is the hash the
-  // resolver authenticated this request with (hash of the URL token, or
-  // the row's stored hash for an HMAC link). p_new is the hash of the
-  // freshly-generated raw token; the new row is stored hash-only and the
-  // raw newToken is used in-memory below to build the confirmation links.
+
+  // ONE AUTHORITATIVE MUTATION. The command owns the cancellation, the
+  // successor, both lineage directions, both audits and the policy
+  // acknowledgement. It takes no end time, no duration, no studio/client/
+  // service/practitioner, no status and no lineage id — every one of those is
+  // derived from the LOCKED original inside the transaction.
   const { data: rpcData, error: rpcErr } = await admin.rpc(
-    "reschedule_appointment",
+    "reschedule_appointment_v2",
     {
-      p_original_appointment_id: existing.id,
-      p_current_cancellation_token: asserted.original.rpc_token_hash,
+      p_original_appointment_id: asserted.original.appointment_id,
+      p_current_cancellation_token_hash: asserted.original.rpc_token_hash,
       p_new_starts_at: start.toISOString(),
-      p_new_ends_at: end.toISOString(),
-      p_new_duration_minutes: existing.duration_minutes,
-      p_new_cancellation_token: hashAppointmentToken(newToken),
+      p_new_cancellation_token_hash: hashAppointmentToken(newToken),
+      p_acknowledged_policy: acknowledged === "true",
+      p_presented_policy_snapshot_hash: presentedPolicyHash || null,
     },
   );
 
@@ -697,9 +692,8 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       console.error(
         JSON.stringify({
           event: "booking_slot_collision",
-          studioId: existing.studio_id,
+          studioId: asserted.original.studio_id,
           startsAt: start.toISOString(),
-          endsAt: end.toISOString(),
           source: "reschedule",
           timestamp: new Date().toISOString(),
         }),
@@ -717,242 +711,229 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     logInternal("public_reschedule_rpc_failed", {
       code: rpcErr.code,
       message: rpcErr.message,
-      studioId: existing.studio_id,
-      appointmentId: existing.id,
+      studioId: asserted.original.studio_id,
+      appointmentId: asserted.original.appointment_id,
     });
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
   const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
   if (!row || typeof row.result !== "string") {
-    return { ok: false, error: "Unexpected response from server." };
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
   if (row.result !== "success") {
     switch (row.result) {
+      // Token state and appointment state collapse to ONE string so a probing
+      // caller cannot distinguish "unknown token" from "valid token, wrong
+      // state" — this is the same collapse every read surface applies.
       case "appointment_not_found":
-        return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
       case "appointment_not_reschedulable":
         return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
-      case "invalid_time_range":
+      case "policy_ack_required":
+        return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
+      case "policy_changed":
+        return { ok: false, error: POLICY_CHANGED_ERROR };
+      case "same_time":
+        return { ok: false, error: SAME_TIME_ERROR };
+      case "outside_horizon":
+        return { ok: false, error: "That date is outside the booking window." };
+      case "invalid_time":
         return { ok: false, error: "Invalid time." };
+      // Every "that time will not work" verdict maps to the one actionable
+      // string, exactly as the public booking route does.
+      case "studio_closed":
+      case "outside_availability":
+      case "time_unavailable":
+      case "not_a_public_slot":
+        return {
+          ok: false,
+          error: "That time is no longer available. Please choose another time.",
+          code: "slot_taken",
+        };
+      case "payment_state_requires_studio":
+        return { ok: false, error: PAYMENT_STATE_ERROR };
+      case "practitioner_unavailable":
+        return { ok: false, error: PRACTITIONER_UNAVAILABLE_ERROR };
       default:
-        return { ok: false, error: "Unexpected error." };
+        logInternal("public_reschedule_command_unmapped_code", {
+          code: row.result,
+          studioId: asserted.original.studio_id,
+        });
+        return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
     }
   }
+
+  // =========================================================================
+  // COMMITTED. Everything below is a post-commit, fail-soft side effect and
+  // MUST NOT be able to report failure.
+  // =========================================================================
 
   const newAppointmentId = row.new_appointment_id as string;
 
-  // PR #132. Write the policy acknowledgement row scoped to the
-  // server-resolved (studio_id, client_id, appointment_id=ORIGINAL).
-  // We link to the ORIGINAL existing.id (the appointment the token
-  // resolved to) rather than the new appointment id because the
-  // acknowledgement is "client accepted policies before they
-  // rescheduled appointment X", and X is what the token referenced.
-  // The audit_logs row the RPC stamps already ties the new
-  // appointment back to the original.
+  // The successor payload is built from the COMMAND'S OWN RETURN, not from a
+  // re-read. The confirmation/notification senders read only id / starts_at /
+  // ends_at / duration_minutes / created_at, and every one of those comes back
+  // authoritative. No post-commit SELECT can fail the booking any more.
+  const created = {
+    id: newAppointmentId,
+    starts_at: row.starts_at as string,
+    ends_at: row.ends_at as string,
+    duration_minutes: row.duration_minutes as number,
+    created_at: row.created_at as string,
+  } as unknown as import("@/lib/types/database").Appointment;
+
+  // AUTHORITATIVE PRACTITIONER — the one the command preserved, resolved by
+  // EXACT (id, studio_id).
   //
-  // Failure to write this row does NOT roll back the reschedule: the
-  // RPC committed atomically. We log server-side and proceed.
-  //
-  // PR #133. Acknowledgement is only written when the studio has
-  // policy text on file. A studio with no policy never produced an
-  // acknowledgement on the UI side either; we mirror that here so
-  // the table only carries meaningful rows.
-  if (requiresAck) {
-    const snapshot = buildPolicySnapshot({
-      cancellationPolicyText: studioRow.cancellation_policy_text,
-      noShowPolicyText: studioRow.no_show_policy_text,
-    });
-    const { error: ackErr } = await admin
-      .from("appointment_policy_acknowledgements")
-      .insert({
-        studio_id: existing.studio_id,
-        appointment_id: existing.id,
-        client_id: existing.client_id,
-        action: "reschedule",
-        cancellation_policy_text_snapshot:
-          snapshot.cancellationPolicyTextSnapshot,
-        no_show_policy_text_snapshot: snapshot.noShowPolicyTextSnapshot,
-        policy_snapshot_hash: snapshot.policySnapshotHash,
+  // This route used to select "the current active owner with role = 'owner'"
+  // for the practitioner name shown to the client and for the practitioner
+  // email. That is not the appointment's practitioner: at a studio with a
+  // different assignee, or one whose ownership changed, the client was told a
+  // name that had nothing to do with their booking. Public reschedule never
+  // reassigns, so the only correct source is the command's return.
+  const assignedPractitionerId =
+    (row.practitioner_id as string | null | undefined) ?? null;
+  let assignedPractitioner: { display_name: string | null; email: string | null } | null =
+    null;
+  if (assignedPractitionerId) {
+    const { data: pr, error: prErr } = await admin
+      .from("practitioners")
+      .select("display_name, email")
+      .eq("id", assignedPractitionerId)
+      .eq("studio_id", asserted.original.studio_id)
+      .maybeSingle();
+    if (prErr || !pr) {
+      // Safe, non-PII operational signal. Downstream degrades to the
+      // studio-name fallback rather than naming a stale practitioner.
+      logInternal("public_reschedule_practitioner_lookup_failed", {
+        code: prErr?.code,
+        studioId: asserted.original.studio_id,
       });
-    if (ackErr) {
-      console.error(
-        JSON.stringify({
-          event: "public_reschedule_policy_ack_insert_failed",
-          code: ackErr.code,
-          message: ackErr.message,
-          originalAppointmentId: existing.id,
-          newAppointmentId,
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    } else {
+      assignedPractitioner = pr;
     }
   }
 
-  // Re-fetch the newly inserted row so the email-builder has the
-  // complete appointment shape. The RPC returns only the id.
-  const { data: created, error: fetchErr } = await admin
-    .from("appointments")
-    .select("*")
-    .eq("id", newAppointmentId)
-    .single();
-  if (fetchErr || !created) {
-    // PR #155: this branch previously leaked the raw DB error text
-    // via `error: fetchErr?.message ?? "..."`. Optional-chaining
-    // tricked the PR #149 regex which only caught `fetchErr.message`.
-    // The reschedule RPC has already committed atomically at this
-    // point; the post-create fetch failure means the email/SMS
-    // confirmation step cannot run, but the appointment itself is
-    // confirmed in the database. Collapse to the generic public copy
-    // so a probing caller does not see "row not found" vs raw Postgres
-    // error text; keep structured server-side detail for the operator.
-    logInternal("public_reschedule_post_create_fetch_failed", {
-      code: fetchErr?.code,
-      message: fetchErr?.message ?? "created appointment not found",
-      newAppointmentId,
-    });
-    return {
-      ok: false,
-      error: PUBLIC_RESCHEDULE_GENERIC_ERROR,
-    };
-  }
-
-  // Send a fresh confirmation email for the new appointment. Phone +
-  // SMS consent fields are selected so the SMS attempt below has the
-  // data it needs without a second roundtrip; the SMS path does not
-  // modify either field.
-  const { data: clientRow } = await admin
-    .from("clients")
-    .select("name, email, phone, sms_consent_at, sms_opted_out_at")
-    .eq("id", existing.client_id)
-    .maybeSingle();
-  const { data: serviceRow } = existing.service_id
+  const { data: serviceRow } = row.service_id
     ? await admin
         .from("services")
         .select("name, default_duration_minutes, pre_care_instructions")
-        .eq("id", existing.service_id)
+        .eq("id", row.service_id as string)
         .maybeSingle()
     : { data: null };
-  const { data: ownerRow } = await admin
-    .from("practitioners")
-    .select("display_name, email")
-    .eq("studio_id", existing.studio_id)
-    .eq("active", true)
-    .eq("role", "owner")
-    .maybeSingle();
 
-  // PR #164. Fire-and-forget practitioner notification. The
-  // reschedule RPC already committed atomically by this point; this
-  // helper never throws to the caller. Body composes the client
-  // name (fallback to "A client" if the lookup above missed) and
-  // both the old and new times in 12h AM/PM format so the
-  // practitioner can read the shift at a glance. href links to the
-  // appointment detail page for the NEW appointment id.
+  // Client-facing practitioner label. Falls back to the studio name exactly as
+  // before when there is no assigned practitioner or the metadata read failed.
+  const practitionerDisplayName =
+    assignedPractitioner?.display_name?.trim() ||
+    assignedPractitioner?.email ||
+    studioRow.name;
+
+  // PR #164. Fire-and-forget practitioner notification. The command already
+  // committed atomically by this point; this helper never throws to the
+  // caller. The practitioner id is the COMMAND'S, so the notification lands on
+  // the appointment's real assignee and never on an arbitrary current owner.
   recordPractitionerNotification({
-    studioId: existing.studio_id,
-    practitionerId: existing.practitioner_id ?? null,
+    studioId: asserted.original.studio_id,
+    practitionerId: assignedPractitionerId,
     eventType: "appointment_rescheduled",
     title: "Appointment rescheduled",
-    body: `${clientRow?.name ?? "A client"} rescheduled from ${formatDayTime(new Date(existing.starts_at), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
+    body: `${clientRow?.name ?? "A client"} rescheduled from ${formatDayTime(new Date(row.original_starts_at as string), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
     appointmentId: created.id,
-    clientId: existing.client_id,
+    clientId: asserted.original.client_id,
     href: `/calendar/${created.id}`,
   });
 
-  if (clientRow?.email && studioRow.send_confirmation_emails) {
-    // Single helper call up front; downstream lines share the same origin.
-    const appOrigin = getRequiredAppOrigin();
-    const cancellationUrl = `${appOrigin}/cancel/${newToken}`;
-    const rescheduleUrl = `${appOrigin}/reschedule/${newToken}`;
-    // SMS uses the single neutral manage entry point. The email
-    // path above keeps the explicit cancel + reschedule URLs because
-    // email has the room for both labelled links; SMS does not, and
-    // the pilot direction is to keep SMS from actively inviting
-    // cancel/reschedule.
-    const manageUrl = `${appOrigin}/manage/${newToken}`;
-    const intake = await ensureIntakeForClient({
-      studioId: existing.studio_id,
-      clientId: existing.client_id,
-      appOrigin,
-    });
-    try {
-      const { data: studioFull } = await admin
-        .from("studios")
-        .select("*")
-        .eq("id", existing.studio_id)
-        .single();
-      if (studioFull) {
-        const treatmentTimeLine = studioFull.show_treatment_time_to_clients
-          ? buildTreatmentTimeLine({
-              enabled: true,
-              clientFirstName:
-                clientRow.name.split(/\s+/)[0] || clientRow.name,
-              context: await getTreatmentTimeContextForEmail(
-                existing.studio_id,
-                existing.client_id,
-              ),
-            })
-          : null;
-        // Truthful reporting: stamp confirmation_sent_at only when Resend
-        // actually delivered, not just when we called it.
-        const result = await sendBookingConfirmationToClient({
-          appointment: created,
-          service: serviceRow,
-          studio: studioFull,
-          practitionerDisplayName:
-            ownerRow?.display_name?.trim() || ownerRow?.email || studioFull.name,
-          clientName: clientRow.name,
-          clientEmail: clientRow.email,
-          cancellationUrl,
-          rescheduleUrl,
-          intakeUrl: intake?.url ?? null,
-          treatmentTimeLine,
-          appBaseUrl: appOrigin,
-        });
-        await recordEmailAttempt(admin, created.id, "confirmation", result.ok);
-        if (!result.ok) {
-          logEmailFailure({
-            appointmentId: created.id,
-            emailType: "confirmation",
-            error: result.error,
-            retryable: result.retryable,
-            attemptNumber: 1,
-          });
-        }
-
-        // SMS confirmation for the rescheduled appointment. The new
-        // appointment row is a fresh appointments.id so the SMS claim
-        // and tracking columns are clean (no carry-over from the
-        // cancelled prior row). All gates and timeouts live inside
-        // the helper; failure here cannot break reschedule.
-        await sendBookingConfirmationSmsToClient({
-          admin,
+  // Everything from here is best-effort. The whole block is wrapped so that no
+  // provider outage, template error or transient read can escape and change the
+  // already-committed outcome: this function returns ok:true below regardless.
+  try {
+    if (clientRow?.email && studioRow.send_confirmation_emails) {
+      // Single helper call up front; downstream lines share the same origin.
+      const appOrigin = getRequiredAppOrigin();
+      const cancellationUrl = `${appOrigin}/cancel/${newToken}`;
+      const rescheduleUrl = `${appOrigin}/reschedule/${newToken}`;
+      // SMS uses the single neutral manage entry point. The email path keeps
+      // the explicit cancel + reschedule URLs because email has room for both
+      // labelled links; SMS does not, and the pilot direction is to keep SMS
+      // from actively inviting cancel/reschedule.
+      const manageUrl = `${appOrigin}/manage/${newToken}`;
+      const intake = await ensureIntakeForClient({
+        studioId: asserted.original.studio_id,
+        clientId: asserted.original.client_id,
+        appOrigin,
+      });
+      const treatmentTimeLine = studioRow.show_treatment_time_to_clients
+        ? buildTreatmentTimeLine({
+            enabled: true,
+            clientFirstName: clientRow.name.split(/\s+/)[0] || clientRow.name,
+            context: await getTreatmentTimeContextForEmail(
+              asserted.original.studio_id,
+              asserted.original.client_id,
+            ),
+          })
+        : null;
+      // Truthful reporting: stamp confirmation_sent_at only when Resend
+      // actually delivered, not just when we called it.
+      const result = await sendBookingConfirmationToClient({
+        appointment: created,
+        service: serviceRow,
+        studio: studioRow,
+        practitionerDisplayName,
+        clientName: clientRow.name,
+        clientEmail: clientRow.email,
+        cancellationUrl,
+        rescheduleUrl,
+        intakeUrl: intake?.url ?? null,
+        treatmentTimeLine,
+        appBaseUrl: appOrigin,
+      });
+      await recordEmailAttempt(admin, created.id, "confirmation", result.ok);
+      if (!result.ok) {
+        logEmailFailure({
           appointmentId: created.id,
-          startsAt: new Date(created.starts_at),
-          timezone: studioFull.timezone,
-          studio: studioFull,
-          client: {
-            phone: clientRow.phone,
-            sms_consent_at: clientRow.sms_consent_at ?? null,
-            sms_opted_out_at: clientRow.sms_opted_out_at ?? null,
-          },
-          intakeUrl: intake?.url ?? null,
-          manageUrl,
+          emailType: "confirmation",
+          error: result.error,
+          retryable: result.retryable,
+          attemptNumber: 1,
         });
       }
-    } catch (err) {
-      console.error(
-        JSON.stringify({
-          event: "reschedule_confirmation_unexpected_error",
-          appointmentId: created.id,
-          error: err instanceof Error ? err.message : String(err),
-          timestamp: new Date().toISOString(),
-        }),
-      );
+
+      // SMS confirmation for the rescheduled appointment. The successor is a
+      // fresh appointments.id so the SMS claim and tracking columns are clean
+      // (no carry-over from the cancelled prior row). All gates — studio
+      // toggle, consent_at, opted_out_at, phone normalisation, the claim race
+      // guard — live inside the helper, which never throws.
+      await sendBookingConfirmationSmsToClient({
+        admin,
+        appointmentId: created.id,
+        startsAt: new Date(created.starts_at),
+        timezone: studioRow.timezone,
+        studio: studioRow,
+        client: {
+          phone: clientRow.phone,
+          sms_consent_at: clientRow.sms_consent_at ?? null,
+          sms_opted_out_at: clientRow.sms_opted_out_at ?? null,
+        },
+        intakeUrl: intake?.url ?? null,
+        manageUrl,
+      });
     }
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "reschedule_confirmation_unexpected_error",
+        appointmentId: created.id,
+        error: err instanceof Error ? err.message : String(err),
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
 
+  // THE RESCHEDULE SUCCEEDED. A failed email, a failed SMS, a failed
+  // notification or a failed metadata read cannot change that — the database
+  // transaction committed and the visitor's appointment has moved.
   return { ok: true, newAppointmentId: created.id };
 }
 
