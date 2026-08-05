@@ -726,3 +726,106 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
     }
   });
 });
+
+// ===========================================================================
+// APPEND-ONLY TABLE CLASS — `client_clinical_notes` (Chloe Session 1A)
+// ===========================================================================
+//
+// WHY THIS IS A SEPARATE CLASS AND NOT A TABLES ENTRY.
+//
+// The six tables above are COMMAND-BOUND: 0164-0169 revoked authenticated DML
+// entirely, so their correct writer count is zero and any direct write is a
+// defect. `client_clinical_notes` is deliberately different and was never in
+// 0169's scope: authenticated retains INSERT, RLS scopes it, a BEFORE INSERT
+// trigger derives studio_id from the parent client, and there is no UPDATE or
+// DELETE policy at all — the table is append-only BY GRANT AND POLICY, and
+// correction happens by inserting a superseding row.
+//
+// So the right contract is not "zero writers". It is "EXACTLY ONE user-scoped
+// INSERT, and nothing else, ever". Forcing this behind a SECURITY DEFINER
+// command purely to make a count read zero would add a privileged surface for
+// no safety gain.
+//
+// The gap this closes: the table appeared in NO census. A second INSERT, a
+// switch to the admin client, or an UPDATE/DELETE would have failed no guard.
+const APPEND_ONLY_TABLE = "client_clinical_notes";
+
+const APPEND_ONLY_WRITER = {
+  file: "app/(app)/clients/[id]/clinical-notes-actions.ts",
+  fn: "insertClinicalNote",
+  op: "insert",
+} as const;
+
+describe("append-only clinical notes — exactly one reviewed INSERT writer", () => {
+  const sites = directWriteSitesFor(APPEND_ONLY_TABLE);
+  const siteKey = (s: { file: string; fn: string; op: string }) =>
+    `${s.file}#${s.fn}.${s.op}`;
+
+  it("H1. exactly ONE runtime write site exists, at the reviewed identity", () => {
+    expect(
+      sites.map(siteKey).sort(),
+      `client_clinical_notes writers changed:\n${sites.map(siteKey).join("\n")}`,
+    ).toEqual([siteKey(APPEND_ONLY_WRITER)]);
+  });
+
+  it("H2. that writer is an INSERT — never update, delete or upsert", () => {
+    for (const s of sites) {
+      expect(s.op, `${siteKey(s)} must be an insert`).toBe("insert");
+    }
+    // Belt and braces: no other op appears anywhere against this table.
+    for (const op of ["update", "delete", "upsert"]) {
+      expect(
+        sites.filter((s) => s.op === op),
+        `${op} on ${APPEND_ONLY_TABLE} would break append-only`,
+      ).toEqual([]);
+    }
+  });
+
+  it("H3. the writer uses the AUTHENTICATED, user-scoped client — never admin", () => {
+    const raw = readFileSync(APPEND_ONLY_WRITER.file, "utf8");
+    // Comments stripped first: the module's own header documents the rule
+    // ("No createAdminClient / service role."), and prose describing a banned
+    // pattern must never be mistaken for the pattern.
+    const src = raw
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // The action module must not reach for the service-role client at all.
+    expect(src).not.toContain("createAdminClient");
+    // ...and the client it does use is the RLS-scoped server client.
+    expect(src).toMatch(/createClient\s*\(\s*\)/);
+    expect(src).toMatch(/from\("client_clinical_notes"\)/);
+  });
+
+  it("H4. no OTHER file writes the table, and reads elsewhere stay reads", () => {
+    const writers = new Set(sites.map((s) => s.file));
+    expect([...writers]).toEqual([APPEND_ONLY_WRITER.file]);
+  });
+
+  it("H5. the table is not silently absent — the census can actually see it", () => {
+    // ANTI-VACUITY. If the scanner stopped matching (a refactor to a variable
+    // table expression, a chained factory, a renamed helper), H1-H4 would all
+    // pass on an empty set and prove nothing. At least one site must be found.
+    expect(
+      sites.length,
+      "the append-only census found ZERO sites — the scanner has gone blind, " +
+        "not the writer away. Check for a variable/computed .from() shape.",
+    ).toBeGreaterThan(0);
+  });
+
+  it("H6. no unanalyzable DML shape hides a writer in the notes module", () => {
+    // The file-level unanalyzable census already hard-fails repo-wide; this
+    // pins it for the module that owns the append-only table specifically.
+    const unanalyzable = unanalyzableFromSites().filter(
+      (u) => u.file === APPEND_ONLY_WRITER.file,
+    );
+    expect(unanalyzable, JSON.stringify(unanalyzable, null, 2)).toEqual([]);
+  });
+
+  it("H7. the append-only table is NOT in the command-bound TABLES class", () => {
+    // Documents the deliberate split so a future change cannot quietly fold it
+    // into the zero-writer class and "fix" the count by deleting the writer.
+    expect(TABLES as readonly string[]).not.toContain(APPEND_ONLY_TABLE);
+  });
+});

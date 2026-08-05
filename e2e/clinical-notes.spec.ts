@@ -4,6 +4,7 @@ import {
   seedE2eClient,
   getClinicalNoteCount,
   getLatestClinicalNoteBody,
+  seedLegacyClientSkinNotes,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -113,4 +114,72 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
     await expect(page.getByText(revisedBody)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(skinBody)).toBeVisible();
   });
+});
+
+// ===========================================================================
+// Chloe Session 1A — legacy `clients.skin_notes` is RETIRED as an editor, and
+// the append-only skin/hair record is the canonical path.
+// ===========================================================================
+//
+// Drives the real UI: historical legacy text must still be visible (labelled as
+// legacy, read-only), the ordinary client edit form must offer no editable
+// legacy field, and the canonical "Add skin & hair analysis" action must lead to
+// the append-only record — which then outranks the legacy text.
+test("legacy skin notes are read-only and the canonical record outranks them", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  const legacyText = `LEGACY skin text ${seed.runId}`;
+  const canonicalBody = `Canonical skin/hair analysis ${seed.runId}`;
+
+  await seedLegacyClientSkinNotes(clientId, legacyText);
+  await loginAsOwner(page, seed);
+
+  // 1-2. The legacy value is visible on the profile, under a LEGACY heading.
+  await page.goto(`/clients/${clientId}`);
+  await expect(page.getByText("Legacy skin notes")).toBeVisible();
+  await expect(page.getByText(legacyText)).toBeVisible();
+  // It is prose, not a form control — nothing on this page can edit it.
+  await expect(page.locator(`textarea:has-text("${legacyText}")`)).toHaveCount(0);
+
+  // 3. Ordinary client editing offers NO editable legacy field.
+  await page.goto(`/clients/${clientId}/edit`);
+  await expect(page.getByText("Skin notes", { exact: true })).toHaveCount(0);
+  await expect(page.locator('textarea[name="skin_notes"]')).toHaveCount(0);
+  // The form still works for the fields it does own.
+  await expect(page.getByText("Allergies")).toBeVisible();
+
+  // 4. The canonical action is reachable from the profile and leads to the
+  //    append-only clinical-notes surface.
+  await page.goto(`/clients/${clientId}`);
+  const canonical = page.getByRole("link", { name: /add skin & hair analysis/i });
+  await expect(canonical).toBeVisible();
+  await canonical.click();
+  await expect(page).toHaveURL(/tab=consultation/);
+
+  // 5. Add a real skin/hair analysis note through the canonical flow.
+  const before = await getClinicalNoteCount(clientId, "skin_hair_analysis");
+  // Same real-UI interaction the suite above uses: the SECOND "Add note" button
+  // belongs to the Skin & hair card.
+  await page.getByRole("button", { name: /add note/i }).nth(1).click();
+  await page
+    .getByPlaceholder(/hair type|growth pattern|area-specific/i)
+    .fill(canonicalBody);
+  await page.getByRole("button", { name: /save note/i }).click();
+  await expect(page.getByText(canonicalBody)).toBeVisible({ timeout: 20_000 });
+
+  // 6. Reload: the append-only note persisted; the legacy text is untouched.
+  await page.reload();
+  await expect(page.getByText(canonicalBody)).toBeVisible();
+  expect(await getClinicalNoteCount(clientId, "skin_hair_analysis")).toBe(
+    before + 1,
+  );
+  expect(await getLatestClinicalNoteBody(clientId, "skin_hair_analysis")).toBe(
+    canonicalBody,
+  );
+
+  // The legacy text survived the whole flow — nothing overwrote or copied it.
+  await page.goto(`/clients/${clientId}`);
+  await expect(page.getByText(legacyText)).toBeVisible();
 });

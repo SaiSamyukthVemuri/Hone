@@ -663,10 +663,43 @@ export default async function ClientCheatSheetPage({
                 the canonical record.
               </p>
             )}
+            {/* CANONICAL ACTION, ABOVE THE LEGACY TEXT (Chloe Session 1A).
+                The append-only skin/hair-analysis record lives on the
+                Consultation tab, while the retired legacy column renders here
+                on the default Overview tab — so without this the legacy text
+                was the only skin surface a practitioner ever saw, and it
+                visually outranked the real clinical record. This link makes the
+                canonical path the obvious one and is deliberately rendered
+                BEFORE the legacy block below. */}
+            <a
+              href={`/clients/${client.id}?tab=consultation`}
+              className="mt-4 inline-flex items-center rounded-md border border-neutral-900 px-3 py-2 text-xs font-medium uppercase tracking-wider text-neutral-900 hover:bg-neutral-50 dark:border-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-900"
+            >
+              Add skin &amp; hair analysis
+            </a>
+
+            {/* LEGACY, READ-ONLY (Chloe Session 1A). This column predates the
+                append-only clinical record and was editable in place: every
+                save destroyed the prior text with no author, date or revision
+                lineage. It is retained and displayed so nothing historical is
+                hidden, but it is explicitly labelled as legacy profile text and
+                is no longer the place to record a skin/hair observation. The
+                canonical, attributed record is the "Consultation & skin/hair"
+                section below. */}
             {client.skin_notes && (
-              <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
-                {client.skin_notes}
-              </p>
+              <div className="mt-4 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+                <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                  Legacy skin notes
+                </h3>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
+                  {client.skin_notes}
+                </p>
+                <p className="mt-2 text-xs text-neutral-500">
+                  Historical profile text, kept for reference. It has no author
+                  or date. Record new observations in Skin &amp; hair analysis
+                  below.
+                </p>
+              </div>
             )}
           </section>
 

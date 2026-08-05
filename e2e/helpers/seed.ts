@@ -2184,6 +2184,20 @@ export async function getTreatmentPlanCount(clientId: string): Promise<number> {
 // Seed / read a client's personal_notes (plain text) for the bullets e2e.
 // personal_notes lives on client_personal_notes (migration 0035, unique client_id);
 // the BEFORE trigger keeps studio_id synced to the parent client.
+// Chloe Session 1A: seed the RETIRED legacy `clients.skin_notes` column so a
+// browser test can prove historical text is still displayed read-only under the
+// "Legacy skin notes" heading. This writes the column directly on purpose — the
+// application no longer has any writer for it, which is the point.
+export async function seedLegacyClientSkinNotes(
+  clientId: string,
+  text: string,
+): Promise<void> {
+  await sql(`update public.clients set skin_notes = $2 where id = $1`, [
+    clientId,
+    text,
+  ]);
+}
+
 export async function seedClientPersonalNotes(clientId: string, text: string): Promise<void> {
   await sql(
     `insert into public.client_personal_notes (client_id, studio_id, personal_notes)

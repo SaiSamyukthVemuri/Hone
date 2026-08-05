@@ -98,6 +98,45 @@ function readAreas(value: FormDataEntryValue | null): string[] | null {
 const SELECT_COLS =
   "id, client_id, studio_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id, created_at";
 
+// FIXED practitioner-facing copy. A clinical-note action NEVER returns a raw
+// Postgres/PostgREST message.
+//
+// The failure mode this closes: these results are RETURNED as data, not thrown,
+// so Next.js server-action error redaction does not apply to them — and
+// ClinicalNotesSection renders `state.message` verbatim. An RLS denial or a
+// constraint violation would therefore print table, policy and constraint names
+// (and, in a constraint detail, row values) straight onto Chloe's screen.
+const SAVE_FAILED_COPY =
+  "We couldn't save this clinical note. Please try again.";
+const VERIFY_FAILED_COPY =
+  "Saved note could not be confirmed. Please reload and check before re-entering.";
+const CLIENT_LOOKUP_FAILED_COPY =
+  "We couldn't open this client's record. Please reload and try again.";
+
+// Operator-side signal. Structured, non-PHI: the event, a safe SQLSTATE/code,
+// the note KIND, and the ids we already own. Never the note body, never the
+// areas (which can carry clinical detail), never the raw database message —
+// a constraint detail can echo row values.
+function logNoteFailure(
+  event: string,
+  detail: {
+    code?: string;
+    kind: ClinicalNoteKind;
+    clientId: string;
+    studioId: string;
+    practitionerId: string;
+    isRevision: boolean;
+  },
+): void {
+  try {
+    console.error(
+      JSON.stringify({ event, ...detail, timestamp: new Date().toISOString() }),
+    );
+  } catch {
+    console.error(event, detail.code ?? "unknown");
+  }
+}
+
 // Shared insert + separate persisted-row verification. `supersedesNoteId` is
 // null for a fresh note, or the id of the note being revised.
 async function insertClinicalNote(params: {
@@ -132,7 +171,17 @@ async function insertClinicalNote(params: {
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) return { ok: false, code: "error", error: clientErr.message };
+  if (clientErr) {
+    logNoteFailure("clinical_note_client_lookup_failed", {
+      code: clientErr.code,
+      kind,
+      clientId,
+      studioId: studio.id,
+      practitionerId: practitioner.id,
+      isRevision: supersedesNoteId !== null,
+    });
+    return { ok: false, code: "error", error: CLIENT_LOOKUP_FAILED_COPY };
+  }
   if (!client) return { ok: false, code: "not_found", error: "Client not found." };
 
   // studio_id passed for documentation; the BEFORE INSERT trigger overwrites it
@@ -164,7 +213,15 @@ async function insertClinicalNote(params: {
           "This note was already revised elsewhere. Reload to see the latest version before revising again.",
       };
     }
-    return { ok: false, code: "error", error: `Failed to save note: ${error.message}` };
+    logNoteFailure("clinical_note_insert_failed", {
+      code: error.code,
+      kind,
+      clientId,
+      studioId: studio.id,
+      practitionerId: practitioner.id,
+      isRevision: supersedesNoteId !== null,
+    });
+    return { ok: false, code: "error", error: SAVE_FAILED_COPY };
   }
   if (!inserted?.id) {
     return { ok: false, code: "error", error: "Save did not return a stored note." };
@@ -179,7 +236,15 @@ async function insertClinicalNote(params: {
     .eq("id", inserted.id)
     .maybeSingle();
   if (verifyErr) {
-    return { ok: false, code: "error", error: `Could not verify saved note: ${verifyErr.message}` };
+    logNoteFailure("clinical_note_readback_failed", {
+      code: verifyErr.code,
+      kind,
+      clientId,
+      studioId: studio.id,
+      practitionerId: practitioner.id,
+      isRevision: supersedesNoteId !== null,
+    });
+    return { ok: false, code: "error", error: VERIFY_FAILED_COPY };
   }
   const row = verified as ClientClinicalNote | null;
   if (
@@ -192,7 +257,7 @@ async function insertClinicalNote(params: {
     return {
       ok: false,
       code: "error",
-      error: "Saved note could not be confirmed. Please reload and check before re-entering.",
+      error: VERIFY_FAILED_COPY,
     };
   }
 
