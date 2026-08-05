@@ -588,8 +588,32 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
   return { ok: true, date: null };
 }
 
+// 0171 amendment. THE SUCCESSFUL RESULT CARRIES A USABLE MANAGEMENT PATH.
+//
+// The email is not a reliable carrier. Three ways a committed reschedule left
+// the client with no way to manage the successor:
+//   * `send_confirmation_emails = false` — no email at all, and SMS used to be
+//     nested inside that same block so it was skipped too;
+//   * an optional post-commit failure (practitioner lookup, service lookup,
+//     intake, treatment-time) aborted the shared try BEFORE the email call;
+//   * the provider failed, the action still returned success, and the UI said
+//     a confirmation was "on its way".
+//
+// The action already holds the raw successor token in memory, and the browser
+// asking for this is already authorised by the ORIGINAL appointment token. So
+// the successful response itself carries the management URL. `manageUrl` is
+// returned ONLY to that authorised browser: it is never stored (hash-at-rest is
+// unchanged), never logged, never put in an error, an ops alert, an analytics
+// event, a doc or a test snapshot.
+export type ConfirmationEmailStatus = "sent" | "failed" | "disabled";
+
 export type RescheduleResult =
-  | { ok: true; newAppointmentId: string }
+  | {
+      ok: true;
+      newAppointmentId: string;
+      manageUrl: string;
+      confirmationEmailStatus: ConfirmationEmailStatus;
+    }
   | { ok: false; error: string; code?: "slot_taken" };
 
 export async function rescheduleAppointmentViaTokenAction(formData: FormData): Promise<
@@ -708,11 +732,38 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
 
-  // The raw successor token is minted only AFTER the delivery gate passes, and
+  // APPLICATION ORIGIN, RESOLVED BEFORE THE MUTATION.
+  //
+  // Every management link is built from it, so a reschedule that commits
+  // without one leaves the client with no usable path to the successor — the
+  // same class of failure as a missing recipient. `getRequiredAppOrigin()`
+  // THROWS when the origin is unset, and it used to be called inside the
+  // post-commit block where that throw would have aborted the confirmation
+  // silently. Resolving it here makes it a pre-command gate that can still
+  // refuse honestly.
+  let appOrigin: string;
+  try {
+    appOrigin = getRequiredAppOrigin();
+  } catch (err) {
+    logInternal("public_reschedule_app_origin_unresolved", {
+      studioId: asserted.original.studio_id,
+      appointmentId: asserted.original.appointment_id,
+      errorName: err instanceof Error ? err.name : "unknown",
+    });
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+
+  // The raw successor token is minted only AFTER the delivery gates pass, and
   // only its SHA-256 crosses the boundary. The raw value lives in this closure
   // and nowhere else — never stored, never logged, and the ONLY thing that can
   // build the client's cancel/reschedule/manage links.
   const newToken = generateAppointmentToken();
+
+  // Built in memory BEFORE the command so the success path cannot fail to
+  // produce it. It is RETURNED only after the command reports success.
+  const cancellationUrl = `${appOrigin}/cancel/${newToken}`;
+  const rescheduleUrl = `${appOrigin}/reschedule/${newToken}`;
+  const manageUrl = `${appOrigin}/manage/${newToken}`;
 
   // ONE AUTHORITATIVE MUTATION. The command owns the cancellation, the
   // successor, both lineage directions, both audits and the policy
@@ -813,16 +864,19 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // =========================================================================
   //
   // From here to the final `return`, NOTHING may report failure and NOTHING may
-  // throw past this function. Everything below is a post-commit side effect: a
-  // read, a provider call or a bookkeeping write. The database transaction is
-  // already durable, so an exception escaping to the framework here would
-  // surface to the visitor as a failed reschedule that actually succeeded —
-  // and would take the raw successor token with it.
+  // throw past this function.
   //
-  // Structural rule pinned by tests/security/public-reschedule-command-guard:
-  // every post-commit statement lives inside the ONE try below. An earlier
-  // revision opened its try only after the practitioner lookup, the service
-  // lookup and the notification call, all of which can reject.
+  // AND NOTHING MAY SHORT-CIRCUIT ITS SIBLINGS. An earlier revision wrapped the
+  // whole region in ONE try, which contained exceptions correctly but chained
+  // the effects: a rejected practitioner lookup — an OPTIONAL enrichment used
+  // only for a display name — jumped straight to the catch and the client's
+  // confirmation email was never attempted at all. The email is the carrier of
+  // the successor's management credential, so an optional lookup must never be
+  // able to suppress it.
+  //
+  // Each optional dependency is therefore isolated in `attempt()`, degrades to a
+  // documented fallback, and the independent effects run regardless of each
+  // other's outcome.
   const parsed = parseRescheduleSuccessRow(row);
   if (!parsed) {
     // The command said `success`, so the mutation IS committed — this is an
@@ -845,78 +899,218 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       // rather than a claim that nothing happened.
       return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
     }
-    return { ok: true, newAppointmentId: salvagedId };
+    // The management URL is still valid — it was built from the token this
+    // request minted, and the command stored that token's hash — so the client
+    // is not stranded even when the return shape is broken.
+    return {
+      ok: true,
+      newAppointmentId: salvagedId,
+      manageUrl,
+      confirmationEmailStatus: "failed",
+    };
   }
 
   const newAppointmentId = parsed.newAppointmentId;
+  // Captured BEFORE `attempt` so the closure does not depend on TypeScript
+  // narrowing `asserted` across a function declaration boundary.
+  const studioId = asserted.original.studio_id;
 
-  try {
-    // The successor payload is built from the COMMAND'S OWN RETURN, not from a
-    // re-read. The confirmation/notification senders read only id / starts_at /
-    // ends_at / duration_minutes / created_at, and every one of those comes
-    // back authoritative and non-null. No post-commit SELECT can fail the
-    // reschedule any more.
-    const created = {
-      id: parsed.newAppointmentId,
-      starts_at: parsed.startsAt,
-      ends_at: parsed.endsAt,
-      duration_minutes: parsed.durationMinutes,
-      created_at: parsed.createdAt,
-    } as unknown as import("@/lib/types/database").Appointment;
-
-    // AUTHORITATIVE PRACTITIONER — the one the command preserved, resolved by
-    // EXACT (id, studio_id).
-    //
-    // This route used to select "the current active owner with role = 'owner'"
-    // for the practitioner name shown to the client and for the practitioner
-    // email. That is not the appointment's practitioner: at a studio with a
-    // different assignee, or one whose ownership changed, the client was told a
-    // name that had nothing to do with their booking. Public reschedule never
-    // reassigns, so the only correct source is the command's return.
-    const assignedPractitionerId = parsed.practitionerId;
-    let assignedPractitioner: {
-      display_name: string | null;
-      email: string | null;
-    } | null = null;
-    if (assignedPractitionerId) {
-      const { data: pr, error: prErr } = await admin
-        .from("practitioners")
-        .select("display_name, email")
-        .eq("id", assignedPractitionerId)
-        .eq("studio_id", asserted.original.studio_id)
-        .maybeSingle();
-      if (prErr || !pr) {
-        // Safe, non-PII operational signal. Downstream degrades to the
-        // studio-name fallback rather than naming a stale practitioner.
-        logInternal("public_reschedule_practitioner_lookup_failed", {
-          code: prErr?.code,
-          studioId: asserted.original.studio_id,
-        });
-      } else {
-        assignedPractitioner = pr;
-      }
+  /**
+   * Runs one optional post-commit dependency in isolation.
+   *
+   * Returns `fallback` when it throws, so a failure degrades this ONE
+   * enrichment instead of cancelling every effect after it. Logs a SAFE
+   * classification only — see the logging note below.
+   */
+  async function attempt<T>(
+    event: string,
+    fallback: T,
+    fn: () => Promise<T> | T,
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      // NEVER `err.message`. A provider or template error can carry the
+      // recipient address, a generated management URL (which embeds the RAW
+      // successor token), a bearer credential or request payload details. Only
+      // the error's NAME — a fixed class like "TypeError" or "AbortError" — and
+      // the ids we already own are safe to record.
+      logInternal(event, {
+        appointmentId: newAppointmentId,
+        studioId,
+        errorName: err instanceof Error ? err.name : "unknown",
+      });
+      return fallback;
     }
+  }
 
-    const { data: serviceRow } = parsed.serviceId
-      ? await admin
-          .from("services")
-          .select("name, default_duration_minutes, pre_care_instructions")
-          .eq("id", parsed.serviceId)
-          .maybeSingle()
-      : { data: null };
+  // The successor payload is built from the COMMAND'S OWN RETURN, not from a
+  // re-read. Every field is authoritative and non-null.
+  const created = {
+    id: parsed.newAppointmentId,
+    starts_at: parsed.startsAt,
+    ends_at: parsed.endsAt,
+    duration_minutes: parsed.durationMinutes,
+    created_at: parsed.createdAt,
+  } as unknown as import("@/lib/types/database").Appointment;
 
-    // Client-facing practitioner label. Falls back to the studio name exactly
-    // as before when there is no assigned practitioner or the metadata read
-    // failed.
-    const practitionerDisplayName =
-      assignedPractitioner?.display_name?.trim() ||
-      assignedPractitioner?.email ||
-      studioRow.name;
+  // --- OPTIONAL ENRICHMENT 1: the authoritative practitioner ---------------
+  //
+  // Resolved by EXACT (id, studio_id) from the command's return. This route
+  // used to select "the current active owner with role = 'owner'", which is not
+  // the appointment's practitioner. A failure here degrades to the studio-name
+  // fallback and MUST NOT stop the confirmation.
+  const assignedPractitionerId = parsed.practitionerId;
+  const assignedPractitioner = assignedPractitionerId
+    ? await attempt<{ display_name: string | null; email: string | null } | null>(
+        "public_reschedule_practitioner_lookup_failed",
+        null,
+        async () => {
+          const { data: pr, error: prErr } = await admin
+            .from("practitioners")
+            .select("display_name, email")
+            .eq("id", assignedPractitionerId)
+            .eq("studio_id", asserted.original.studio_id)
+            .maybeSingle();
+          if (prErr || !pr) {
+            logInternal("public_reschedule_practitioner_lookup_failed", {
+              code: prErr?.code,
+              studioId: asserted.original.studio_id,
+            });
+            return null;
+          }
+          return pr;
+        },
+      )
+    : null;
 
-    // PR #164. Fire-and-forget practitioner notification. The command already
-    // committed atomically by this point. The practitioner id is the COMMAND'S,
-    // so the notification lands on the appointment's real assignee and never on
-    // an arbitrary current owner.
+  const practitionerDisplayName =
+    assignedPractitioner?.display_name?.trim() ||
+    assignedPractitioner?.email ||
+    studioRow.name;
+
+  // --- OPTIONAL ENRICHMENT 2: the service ---------------------------------
+  // A failure passes `null`, which the email builder already tolerates.
+  type ServiceForEmail = Pick<
+    import("@/lib/types/database").Service,
+    "name" | "default_duration_minutes" | "pre_care_instructions"
+  >;
+  const serviceRow = parsed.serviceId
+    ? await attempt<ServiceForEmail | null>(
+        "public_reschedule_service_lookup_failed",
+        null,
+        async () => {
+          const { data } = await admin
+            .from("services")
+            .select("name, default_duration_minutes, pre_care_instructions")
+            .eq("id", parsed.serviceId as string)
+            .maybeSingle();
+          return (data as ServiceForEmail | null) ?? null;
+        },
+      )
+    : null;
+
+  // --- OPTIONAL ENRICHMENT 3 + 4: intake and treatment time ---------------
+  // Both are additive email content. Omitting them costs a section; letting
+  // them abort the send costs the client their management credential.
+  const intake = await attempt<{ url: string } | null>(
+    "public_reschedule_intake_failed",
+    null,
+    async () =>
+      (await ensureIntakeForClient({
+        studioId: asserted.original.studio_id,
+        clientId: asserted.original.client_id,
+        appOrigin,
+      })) as { url: string } | null,
+  );
+
+  const treatmentTimeLine = studioRow.show_treatment_time_to_clients
+    ? await attempt<string | null>(
+        "public_reschedule_treatment_time_failed",
+        null,
+        async () =>
+          buildTreatmentTimeLine({
+            enabled: true,
+            clientFirstName: clientRow.name.split(/\s+/)[0] || clientRow.name,
+            context: await getTreatmentTimeContextForEmail(
+              asserted.original.studio_id,
+              asserted.original.client_id,
+            ),
+          }),
+      )
+    : null;
+
+  // --- INDEPENDENT EFFECT A: the client confirmation email ----------------
+  //
+  // Truthful by construction: `sent` ONLY when the provider reported success.
+  // `disabled` when the studio turned confirmations off — which is a
+  // configuration, not a failure, and still returns the management URL.
+  let confirmationEmailStatus: ConfirmationEmailStatus = "disabled";
+  if (studioRow.send_confirmation_emails) {
+    const result = await attempt<{ ok: boolean; error?: string; retryable?: boolean }>(
+      "public_reschedule_confirmation_email_threw",
+      { ok: false, error: "confirmation sender threw", retryable: false },
+      async () =>
+        sendBookingConfirmationToClient({
+          appointment: created,
+          service: serviceRow,
+          studio: studioRow,
+          practitionerDisplayName,
+          clientName: clientRow.name,
+          clientEmail: clientRow.email,
+          cancellationUrl,
+          rescheduleUrl,
+          intakeUrl: intake?.url ?? null,
+          treatmentTimeLine,
+          appBaseUrl: appOrigin,
+        }),
+    );
+    confirmationEmailStatus = result.ok ? "sent" : "failed";
+
+    // Bookkeeping is INDEPENDENT of the delivery verdict: if recording the
+    // attempt fails, the client still got (or did not get) the email, and the
+    // status we report must reflect the PROVIDER, not the write.
+    await attempt("public_reschedule_email_attempt_write_failed", undefined, () =>
+      recordEmailAttempt(admin, created.id, "confirmation", result.ok),
+    );
+    if (!result.ok) {
+      logEmailFailure({
+        appointmentId: created.id,
+        emailType: "confirmation",
+        error: result.error ?? "unknown",
+        retryable: result.retryable ?? false,
+        attemptNumber: 1,
+      });
+    }
+  }
+
+  // --- INDEPENDENT EFFECT B: the confirmation SMS -------------------------
+  //
+  // NOT nested under `send_confirmation_emails`. It used to be, so a studio
+  // that turned email confirmations off silently lost SMS too — including the
+  // /manage link SMS carries. Its own gates (studio SMS toggle, consent_at,
+  // opted_out_at, phone normalisation, claim race guard) all live inside the
+  // helper, which owns the decision.
+  await attempt("public_reschedule_sms_failed", undefined, () =>
+    sendBookingConfirmationSmsToClient({
+      admin,
+      appointmentId: created.id,
+      startsAt: new Date(created.starts_at),
+      timezone: studioRow.timezone,
+      studio: studioRow,
+      client: {
+        phone: clientRow.phone,
+        sms_consent_at: clientRow.sms_consent_at ?? null,
+        sms_opted_out_at: clientRow.sms_opted_out_at ?? null,
+      },
+      intakeUrl: intake?.url ?? null,
+      manageUrl,
+    }),
+  );
+
+  // --- INDEPENDENT EFFECT C: the practitioner notification ----------------
+  // Last, because it is the only effect the CLIENT never sees.
+  await attempt("public_reschedule_notification_failed", undefined, () =>
     recordPractitionerNotification({
       studioId: asserted.original.studio_id,
       practitionerId: assignedPractitionerId,
@@ -926,100 +1120,18 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       appointmentId: created.id,
       clientId: asserted.original.client_id,
       href: `/calendar/${created.id}`,
-    });
+    }),
+  );
 
-    if (studioRow.send_confirmation_emails) {
-      // Single helper call up front; downstream lines share the same origin.
-      const appOrigin = getRequiredAppOrigin();
-      const cancellationUrl = `${appOrigin}/cancel/${newToken}`;
-      const rescheduleUrl = `${appOrigin}/reschedule/${newToken}`;
-      // SMS uses the single neutral manage entry point. The email path keeps
-      // the explicit cancel + reschedule URLs because email has room for both
-      // labelled links; SMS does not, and the pilot direction is to keep SMS
-      // from actively inviting cancel/reschedule.
-      const manageUrl = `${appOrigin}/manage/${newToken}`;
-      const intake = await ensureIntakeForClient({
-        studioId: asserted.original.studio_id,
-        clientId: asserted.original.client_id,
-        appOrigin,
-      });
-      const treatmentTimeLine = studioRow.show_treatment_time_to_clients
-        ? buildTreatmentTimeLine({
-            enabled: true,
-            clientFirstName: clientRow.name.split(/\s+/)[0] || clientRow.name,
-            context: await getTreatmentTimeContextForEmail(
-              asserted.original.studio_id,
-              asserted.original.client_id,
-            ),
-          })
-        : null;
-      // Truthful reporting: stamp confirmation_sent_at only when Resend
-      // actually delivered, not just when we called it.
-      const result = await sendBookingConfirmationToClient({
-        appointment: created,
-        service: serviceRow,
-        studio: studioRow,
-        practitionerDisplayName,
-        clientName: clientRow.name,
-        clientEmail: clientRow.email,
-        cancellationUrl,
-        rescheduleUrl,
-        intakeUrl: intake?.url ?? null,
-        treatmentTimeLine,
-        appBaseUrl: appOrigin,
-      });
-      await recordEmailAttempt(admin, created.id, "confirmation", result.ok);
-      if (!result.ok) {
-        logEmailFailure({
-          appointmentId: created.id,
-          emailType: "confirmation",
-          error: result.error,
-          retryable: result.retryable,
-          attemptNumber: 1,
-        });
-      }
-
-      // SMS confirmation for the rescheduled appointment. The successor is a
-      // fresh appointments.id so the SMS claim and tracking columns are clean
-      // (no carry-over from the cancelled prior row). All gates — studio
-      // toggle, consent_at, opted_out_at, phone normalisation, the claim race
-      // guard — live inside the helper, which never throws.
-      await sendBookingConfirmationSmsToClient({
-        admin,
-        appointmentId: created.id,
-        startsAt: new Date(created.starts_at),
-        timezone: studioRow.timezone,
-        studio: studioRow,
-        client: {
-          phone: clientRow.phone,
-          sms_consent_at: clientRow.sms_consent_at ?? null,
-          sms_opted_out_at: clientRow.sms_opted_out_at ?? null,
-        },
-        intakeUrl: intake?.url ?? null,
-        manageUrl,
-      });
-    }
-  } catch (err) {
-    // The ONLY catch for the whole post-commit region. It swallows by design:
-    // a practitioner-lookup rejection, a service-lookup rejection, an origin
-    // resolver throw, an intake or treatment-time failure, a provider outage,
-    // an email-attempt write failure, or an SMS helper that throws despite its
-    // documented never-throw contract — none of them may change a committed
-    // reschedule into a reported failure.
-    //
-    // Non-PII only: the successor id and a message. No client name/email/phone,
-    // no token, no token hash.
-    logInternal("public_reschedule_post_commit_side_effect_failed", {
-      appointmentId: newAppointmentId,
-      studioId: asserted.original.studio_id,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  // THE RESCHEDULE SUCCEEDED. A failed email, a failed SMS, a failed
-  // notification or a failed metadata read cannot change that — the database
-  // transaction committed and the visitor's appointment has moved.
-  return { ok: true, newAppointmentId };
+  // THE RESCHEDULE SUCCEEDED, and the client leaves with a usable path to the
+  // successor whatever the email did. `manageUrl` goes ONLY to this authorised
+  // browser — it is never persisted, logged or reported.
+  return {
+    ok: true,
+    newAppointmentId,
+    manageUrl,
+    confirmationEmailStatus,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -193,13 +193,19 @@ describe("public reschedule route — token-delivery gate", () => {
   });
 });
 
+// SUPERSEDED STRUCTURE, KEPT AS A CONTRACT. The previous amendment wrapped the
+// whole post-commit region in ONE try. That contained exceptions correctly but
+// CHAINED the effects: a rejected practitioner lookup — an optional enrichment
+// used only for a display name — jumped straight to the catch and the client's
+// confirmation email was never attempted. The email carries the successor's
+// management credential, so the region is now a sequence of INDEPENDENTLY
+// isolated effects. These guards assert that shape.
 describe("public reschedule route — post-commit exception containment", () => {
   const SUBMIT = ACTIONS_CODE.slice(
     ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
   );
-  // The region between the success branch and the final committed return.
   const POST_COMMIT_START = SUBMIT.indexOf("parseRescheduleSuccessRow(row)");
-  const FINAL_RETURN = SUBMIT.indexOf("return { ok: true, newAppointmentId };");
+  const FINAL_RETURN = SUBMIT.indexOf("return {\n    ok: true,\n    newAppointmentId,");
   const POST_COMMIT = SUBMIT.slice(POST_COMMIT_START, FINAL_RETURN);
 
   it("has a post-commit region and a committed-success return", () => {
@@ -207,51 +213,72 @@ describe("public reschedule route — post-commit exception containment", () => 
     expect(FINAL_RETURN).toBeGreaterThan(POST_COMMIT_START);
   });
 
-  it("opens the fail-soft try BEFORE any post-commit read or side effect", () => {
-    const tryIdx = POST_COMMIT.indexOf("try {");
-    expect(tryIdx).toBeGreaterThan(-1);
+  it("every post-commit read and side effect is inside an isolator", () => {
+    // Each of these must appear, and each must be reached through `attempt(...)`
+    // so its failure degrades ONLY itself.
     for (const op of [
       'from("practitioners")',
       'from("services")',
       "recordPractitionerNotification({",
-      "getRequiredAppOrigin()",
       "ensureIntakeForClient(",
       "getTreatmentTimeContextForEmail(",
       "sendBookingConfirmationToClient(",
       "recordEmailAttempt(",
       "sendBookingConfirmationSmsToClient(",
     ]) {
-      const at = POST_COMMIT.indexOf(op);
-      expect(at, `${op} must appear post-commit`).toBeGreaterThan(-1);
-      expect(at, `${op} must be INSIDE the fail-soft try`).toBeGreaterThan(tryIdx);
+      expect(POST_COMMIT.indexOf(op), `${op} must appear post-commit`).toBeGreaterThan(-1);
     }
+    // The isolator itself, and no bare shared try wrapping the whole region.
+    expect(POST_COMMIT).toContain("await attempt");
   });
 
-  it("has exactly ONE try in the post-commit region", () => {
-    expect(POST_COMMIT.match(/\btry\s*\{/g) ?? []).toHaveLength(1);
+  it("the ONLY try/catch in the post-commit region is the isolator's", () => {
+    const tries = POST_COMMIT.match(/\btry\s*\{/g) ?? [];
+    expect(tries).toHaveLength(1);
+    // ...and it lives inside `attempt`, not around the effects.
+    const attemptIdx = POST_COMMIT.indexOf("async function attempt<T>");
+    expect(attemptIdx).toBeGreaterThan(-1);
+    expect(POST_COMMIT.indexOf("try {")).toBeGreaterThan(attemptIdx);
   });
 
-  it("no post-commit branch returns ok:false", () => {
-    const tryIdx = POST_COMMIT.indexOf("try {");
-    expect(POST_COMMIT.slice(tryIdx)).not.toContain("ok: false");
+  it("no post-commit SIDE EFFECT can return ok:false", () => {
+    // Measured from after the malformed-success-row handling. That ONE branch
+    // may return ok:false, and only when the command's return carries no
+    // salvageable appointment id — there is then nothing truthful to report.
+    // Every other case returns the committed success WITH the management URL.
+    const effects = POST_COMMIT.slice(POST_COMMIT.indexOf("const newAppointmentId ="));
+    // Match an actual RETURN of a failure, not the string "ok: false" — the
+    // confirmation sender's fallback result object legitimately carries
+    // `{ ok: false }` because that is the PROVIDER's shape, not the action's.
+    expect(effects).not.toMatch(/return\s*\{[^}]*ok:\s*false/);
   });
 
-  it("the catch swallows and logs safely, and never rethrows", () => {
-    const catchIdx = POST_COMMIT.indexOf("} catch (err)");
-    expect(catchIdx).toBeGreaterThan(-1);
-    const body = POST_COMMIT.slice(catchIdx);
-    expect(body).toContain("public_reschedule_post_commit_side_effect_failed");
-    expect(body).not.toMatch(/\bthrow\b/);
-    for (const pii of ["clientRow.email", "clientRow.name", "clientRow.phone", "newToken"]) {
-      expect(body).not.toContain(pii);
+  it("even a malformed success row still hands back the management URL when it can", () => {
+    const malformed = POST_COMMIT.slice(
+      POST_COMMIT.indexOf("public_reschedule_malformed_success_row"),
+      POST_COMMIT.indexOf("const newAppointmentId ="),
+    );
+    expect(malformed).toContain("manageUrl");
+    expect(malformed).toContain('confirmationEmailStatus: "failed"');
+  });
+
+  it("the isolator swallows, logs a SAFE classification, and never rethrows", () => {
+    const attemptBody = POST_COMMIT.slice(
+      POST_COMMIT.indexOf("async function attempt<T>"),
+      POST_COMMIT.indexOf("const created = {"),
+    );
+    expect(attemptBody).toContain("errorName");
+    expect(attemptBody).not.toMatch(/\bthrow\b/);
+    for (const leak of ["clientRow", "newToken", "manageUrl", "err.message"]) {
+      expect(attemptBody, `${leak} must not be logged`).not.toContain(leak);
     }
   });
 
   it("the committed-success return is the last statement of the action", () => {
-    // Nothing between the catch block and the return may be able to throw.
-    const catchEnd = POST_COMMIT.lastIndexOf("}");
-    const tail = POST_COMMIT.slice(catchEnd).trim();
-    expect(tail.replace(/[}\s]/g, "")).toBe("");
+    const tail = SUBMIT.slice(FINAL_RETURN);
+    // Only the return object and the closing brace may follow.
+    expect(tail).not.toContain("await ");
+    expect(tail).not.toContain("ok: false");
   });
 });
 
@@ -504,5 +531,155 @@ describe("migration 0171 — structural contract", () => {
 
   it("locks the ORIGINAL even when its current start is outside the replacement window", () => {
     expect(MIGRATION_CODE).toContain("a.id = p_original_appointment_id");
+  });
+});
+
+// ===========================================================================
+// 0171 AMENDMENT — the successful result must carry a usable management path,
+// and the UI must describe the email truthfully.
+// ===========================================================================
+
+describe("public reschedule — the success result carries a management path", () => {
+  const SUBMIT = ACTIONS_CODE.slice(
+    ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
+  );
+
+  it("the result type declares manageUrl and a CLOSED email-status vocabulary", () => {
+    expect(ACTIONS_CODE).toContain("manageUrl: string");
+    expect(ACTIONS_CODE).toContain("confirmationEmailStatus: ConfirmationEmailStatus");
+    expect(ACTIONS_CODE).toMatch(
+      /ConfirmationEmailStatus\s*=\s*"sent"\s*\|\s*"failed"\s*\|\s*"disabled"/,
+    );
+  });
+
+  it("the committed-success return includes both fields", () => {
+    const ret = SUBMIT.slice(SUBMIT.lastIndexOf("return {\n    ok: true,"));
+    expect(ret).toContain("manageUrl");
+    expect(ret).toContain("confirmationEmailStatus");
+  });
+
+  it("resolves the app origin BEFORE the command, and refuses when it cannot", () => {
+    const origin = SUBMIT.indexOf("getRequiredAppOrigin()");
+    const rpc = SUBMIT.indexOf('"reschedule_appointment_v2"');
+    expect(origin).toBeGreaterThan(-1);
+    expect(rpc).toBeGreaterThan(origin);
+    expect(SUBMIT).toContain("public_reschedule_app_origin_unresolved");
+  });
+
+  it("builds the manage URL before the command so success can never lack one", () => {
+    const built = SUBMIT.indexOf("const manageUrl =");
+    const rpc = SUBMIT.indexOf('"reschedule_appointment_v2"');
+    expect(built).toBeGreaterThan(-1);
+    expect(rpc).toBeGreaterThan(built);
+  });
+});
+
+describe("public reschedule — post-commit effects are ISOLATED, not chained", () => {
+  const SUBMIT = ACTIONS_CODE.slice(
+    ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
+  );
+
+  it("each optional dependency runs through the per-effect isolator", () => {
+    // One shared try would let an optional practitioner lookup jump past the
+    // client's confirmation email — the carrier of the management credential.
+    for (const event of [
+      "public_reschedule_practitioner_lookup_failed",
+      "public_reschedule_service_lookup_failed",
+      "public_reschedule_intake_failed",
+      "public_reschedule_treatment_time_failed",
+      "public_reschedule_confirmation_email_threw",
+      "public_reschedule_email_attempt_write_failed",
+      "public_reschedule_sms_failed",
+      "public_reschedule_notification_failed",
+    ]) {
+      expect(SUBMIT, `${event} must be an isolated attempt`).toContain(event);
+    }
+    expect(SUBMIT).toContain("async function attempt<T>");
+  });
+
+  it("the confirmation email is NOT downstream of the optional enrichments", () => {
+    // The email call must not sit inside any of their failure paths.
+    const email = SUBMIT.indexOf("sendBookingConfirmationToClient({");
+    for (const enrichment of [
+      "public_reschedule_practitioner_lookup_failed",
+      "public_reschedule_service_lookup_failed",
+      "public_reschedule_intake_failed",
+    ]) {
+      expect(SUBMIT.indexOf(enrichment)).toBeLessThan(email);
+    }
+    expect(email).toBeGreaterThan(-1);
+  });
+
+  it("SMS is NOT nested under send_confirmation_emails", () => {
+    const emailGate = SUBMIT.indexOf("if (studioRow.send_confirmation_emails)");
+    const emailBlockEnd = SUBMIT.indexOf("INDEPENDENT EFFECT B");
+    const sms = SUBMIT.indexOf("sendBookingConfirmationSmsToClient({");
+    expect(emailGate).toBeGreaterThan(-1);
+    expect(sms).toBeGreaterThan(emailBlockEnd);
+  });
+
+  it("the email status is derived from the PROVIDER result, never assumed", () => {
+    expect(SUBMIT).toMatch(/confirmationEmailStatus\s*=\s*result\.ok\s*\?\s*"sent"\s*:\s*"failed"/);
+    expect(SUBMIT).toMatch(/confirmationEmailStatus:\s*ConfirmationEmailStatus\s*=\s*"disabled"/);
+  });
+});
+
+describe("public reschedule — post-commit logging is classification only", () => {
+  const SUBMIT = ACTIONS_CODE.slice(
+    ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
+  );
+
+  it("never logs an arbitrary thrown message", () => {
+    // A provider or template error can carry the recipient address, a generated
+    // management URL (which embeds the RAW successor token) or a credential.
+    expect(SUBMIT).not.toMatch(/err\s+instanceof\s+Error\s*\?\s*err\.message/);
+    expect(SUBMIT).not.toContain("error: err.message");
+    expect(SUBMIT).not.toContain("String(err)");
+  });
+
+  it("logs the error NAME instead", () => {
+    expect(SUBMIT).toMatch(/errorName:\s*err instanceof Error \? err\.name/);
+  });
+
+  it("no logging call references the raw token or a manage URL", () => {
+    for (const m of SUBMIT.matchAll(/logInternal\([^;]*?\}\);/gs)) {
+      expect(m[0]).not.toContain("newToken");
+      expect(m[0]).not.toContain("manageUrl");
+      expect(m[0]).not.toContain("cancellationUrl");
+      expect(m[0]).not.toContain("rescheduleUrl");
+    }
+  });
+});
+
+describe("public reschedule — the success UI is truthful", () => {
+  const FORM_CODE = code(FORM);
+
+  it("never claims a confirmation email is on its way", () => {
+    expect(FORM).not.toMatch(/on its way/i);
+  });
+
+  it("renders the management link in the success state", () => {
+    expect(FORM_CODE).toContain("Manage new appointment");
+    expect(FORM_CODE).toContain("href={done.manageUrl}");
+  });
+
+  it("stores the management URL and the email status in the success state", () => {
+    expect(FORM_CODE).toContain("manageUrl: r.manageUrl");
+    expect(FORM_CODE).toContain("emailStatus: r.confirmationEmailStatus");
+  });
+
+  it("selects copy from the ACTUAL email status, with all three branches", () => {
+    expect(FORM_CODE).toContain('done.emailStatus === "sent"');
+    expect(FORM_CODE).toContain('done.emailStatus === "failed"');
+    expect(FORM_CODE).toMatch(/a confirmation email has been sent/);
+    expect(FORM_CODE).toMatch(/couldn.t send the confirmation email/);
+    expect(FORM_CODE).toMatch(/Use the link below to manage your new appointment/);
+  });
+
+  it("keeps the client-portal link as a SECONDARY exit", () => {
+    const manage = FORM_CODE.indexOf("Manage new appointment");
+    const portal = FORM_CODE.indexOf("Back to client portal");
+    expect(manage).toBeGreaterThan(-1);
+    expect(portal).toBeGreaterThan(manage);
   });
 });

@@ -137,6 +137,17 @@ test.describe("public reschedule v2", () => {
 
     await expect(page.getByText(/You.re rescheduled\./i)).toBeVisible({ timeout: 20_000 });
 
+    // B7 — PROVIDER FAILURE AFTER COMMIT, in the browser. The local stack has
+    // no valid Resend key, so the confirmation genuinely FAILS. The page must
+    // say so rather than claiming an email is on its way, and must still hand
+    // the client a working management link.
+    await expect(page.getByText(/couldn.t send the confirmation email/i)).toBeVisible();
+    await expect(page.getByText(/on its way/i)).toHaveCount(0);
+    const manage = page.getByRole("link", { name: /manage new appointment/i });
+    await expect(manage).toBeVisible();
+    const manageHref = await manage.getAttribute("href");
+    expect(manageHref).toMatch(/\/manage\/.+/);
+
     // --- database boundary ---
     const orig = await appointmentRow(appointmentId);
     expect(orig.status).toBe("cancelled");
@@ -199,6 +210,60 @@ test.describe("public reschedule v2", () => {
       [seed.studioId],
     );
     expect(res.map((r) => r.source_id)).toEqual([succ.id]);
+
+    // The management link RESOLVES — to the successor, not the cancelled
+    // original. /manage renders the appointment it resolves.
+    await page.goto(manageHref!);
+    await expect(page.getByText(/can.t be used right now/i)).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: /manage appointment/i }),
+    ).toBeVisible();
+  });
+
+  // B11 ---------------------------------------------------------------------
+  test("B11 confirmation emails DISABLED still yields a working management link", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const { appointmentId, token } = await bookAndTokenise(page, seed);
+    // Turn the studio's confirmation emails off AFTER booking.
+    await sql(`update public.studios set send_confirmation_emails = false where id = $1`, [
+      seed.studioId,
+    ]);
+
+    await openReschedule(page, token);
+    await pickAnyOfferedSlot(page);
+    await page.getByRole("button", { name: /confirm new time/i }).click();
+
+    await expect(page.getByText(/You.re rescheduled\./i)).toBeVisible({ timeout: 20_000 });
+    // No false email claim of ANY kind — neither "on its way" nor "has been sent".
+    await expect(page.getByText(/on its way/i)).toHaveCount(0);
+    await expect(page.getByText(/confirmation email has been sent/i)).toHaveCount(0);
+    await expect(page.getByText(/couldn.t send the confirmation email/i)).toHaveCount(0);
+    await expect(
+      page.getByText(/Use the link below to manage your new appointment/i),
+    ).toBeVisible();
+
+    const manage = page.getByRole("link", { name: /manage new appointment/i });
+    await expect(manage).toBeVisible();
+    const href = await manage.getAttribute("href");
+
+    const successors = await successorOf(appointmentId);
+    expect(successors).toHaveLength(1);
+
+    // No confirmation attempt was recorded, because none was made.
+    const send = await sql<{ attempts: number }>(
+      `select confirmation_send_attempts as attempts from public.appointments where id = $1`,
+      [successors[0].id],
+    );
+    expect(Number(send[0].attempts)).toBe(0);
+
+    // ...and the link still resolves to the successor.
+    await page.goto(href!);
+    await expect(page.getByText(/can.t be used right now/i)).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: /manage appointment/i }),
+    ).toBeVisible();
   });
 
   // B2 ---------------------------------------------------------------------

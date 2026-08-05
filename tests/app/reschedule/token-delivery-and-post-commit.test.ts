@@ -45,6 +45,7 @@ const scenario = {
   emailFailsNormally: false,
   emailAttemptThrows: false,
   smsThrows: false,
+  sendConfirmationEmails: true,
 };
 
 const ORIGINAL = {
@@ -166,6 +167,7 @@ vi.mock("@/lib/app-origin", () => ({
     return "https://hone.test";
   },
 }));
+
 vi.mock("@/lib/intake/queries", () => ({
   ensureIntakeForClient: async () => {
     if (scenario.intakeThrows) throw new Error("intake exploded");
@@ -246,6 +248,7 @@ beforeEach(() => {
     emailFailsNormally: false,
     emailAttemptThrows: false,
     smsThrows: false,
+    sendConfirmationEmails: true,
   });
 });
 
@@ -324,7 +327,6 @@ describe("0171 — once committed, no post-commit failure may report failure", (
     ["practitioner metadata lookup throws", "practitionerThrows"],
     ["service metadata lookup throws", "serviceThrows"],
     ["practitioner notification throws synchronously", "notificationThrows"],
-    ["origin resolver throws", "originThrows"],
     ["intake helper throws", "intakeThrows"],
     ["treatment-time helper throws", "treatmentTimeThrows"],
     ["confirmation email helper throws", "emailThrows"],
@@ -339,14 +341,16 @@ describe("0171 — once committed, no post-commit failure may report failure", (
     expect(rpcCalls).toHaveLength(1);
   });
 
-  it("uses the studio-name fallback when the practitioner lookup throws", async () => {
+  // AMENDED: a practitioner-lookup throw used to abort the shared try, so the
+  // email never went out at all. It is now an ISOLATED optional enrichment: the
+  // display name degrades to the studio name and the confirmation still sends.
+  it("uses the studio-name fallback when the practitioner lookup throws, and STILL emails", async () => {
     scenario.practitionerThrows = true;
     const r = await rescheduleAppointmentViaTokenAction(form());
     expect(r.ok).toBe(true);
-    // The email never went out (the throw aborted the block), so the important
-    // assertion is that no STALE practitioner was emailed and no failure was
-    // reported.
-    expect(sentEmails).toHaveLength(0);
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0].practitionerDisplayName).toBe("Studio");
+    if (r.ok) expect(r.confirmationEmailStatus).toBe("sent");
   });
 
   it("records the failed attempt and still returns success when the provider fails normally", async () => {
@@ -427,5 +431,183 @@ describe("0171 — refusal codes still map before any side effect", () => {
     expect(sentEmails).toHaveLength(0);
     expect(notifications).toHaveLength(0);
     expect(smsCalls).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// 0171 AMENDMENT — the successful result must carry a usable management path.
+// ===========================================================================
+//
+// The email is not a reliable carrier: it can be switched off, it can be
+// skipped by an unrelated optional failure, or the provider can simply refuse.
+// The action holds the raw successor token and the browser is already
+// authorised by the ORIGINAL token, so the success response itself carries the
+// URL.
+
+describe("0171 — the success result always carries a management path", () => {
+  it("provider succeeds: status 'sent', manage URL returned, email uses the same token", async () => {
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expect(r.manageUrl).toBe("https://hone.test/manage/RAW-SUCCESSOR-TOKEN");
+    expect(sentEmails).toHaveLength(1);
+    // The email's links and the returned URL are the SAME successor token.
+    expect(sentEmails[0].cancellationUrl).toContain("RAW-SUCCESSOR-TOKEN");
+    expect(sentEmails[0].rescheduleUrl).toContain("RAW-SUCCESSOR-TOKEN");
+  });
+
+  it("confirmation emails DISABLED: no email call, status 'disabled', URL still returned", async () => {
+    scenario.studioRow = { ...scenario.studioRow, send_confirmation_emails: false };
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(sentEmails).toHaveLength(0);
+    expect(emailAttempts).toHaveLength(0);
+    expect(r.confirmationEmailStatus).toBe("disabled");
+    expect(r.manageUrl).toBe("https://hone.test/manage/RAW-SUCCESSOR-TOKEN");
+    // The reschedule itself still happened exactly once.
+    expect(rpcCalls).toHaveLength(1);
+  });
+
+  it("provider returns a normal failure: status 'failed', URL returned, action succeeds", async () => {
+    scenario.emailFailsNormally = true;
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.confirmationEmailStatus).toBe("failed");
+    expect(r.manageUrl).toContain("/manage/RAW-SUCCESSOR-TOKEN");
+    expect(emailAttempts).toEqual([{ appointmentId: SUCCESSOR_ID, ok: false }]);
+  });
+
+  it("provider THROWS: status 'failed', URL returned, action succeeds", async () => {
+    scenario.emailThrows = true;
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.confirmationEmailStatus).toBe("failed");
+    expect(r.manageUrl).toContain("/manage/RAW-SUCCESSOR-TOKEN");
+  });
+
+  it("email-attempt bookkeeping failure does not corrupt the reported delivery status", async () => {
+    scenario.emailAttemptThrows = true;
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // The PROVIDER succeeded, so the truthful status is 'sent' even though the
+    // bookkeeping write blew up.
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expect(r.manageUrl).toContain("/manage/");
+  });
+});
+
+describe("0171 — optional failures cannot suppress the confirmation", () => {
+  // The regression these close: ONE shared try meant an optional practitioner
+  // lookup jumped straight to the catch and the client's email — the carrier of
+  // their management credential — was never attempted at all.
+  it.each([
+    ["practitioner lookup", "practitionerThrows"],
+    ["service lookup", "serviceThrows"],
+    ["intake helper", "intakeThrows"],
+    ["treatment-time helper", "treatmentTimeThrows"],
+    ["practitioner notification", "notificationThrows"],
+  ])("the %s throwing STILL attempts the client email", async (_label, flag) => {
+    (scenario as Record<string, unknown>)[flag] = true;
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(true);
+    // Not merely ok:true with zero email attempts — the email really ran.
+    expect(sentEmails).toHaveLength(1);
+    if (!r.ok) return;
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expect(r.manageUrl).toContain("/manage/RAW-SUCCESSOR-TOKEN");
+  });
+
+  it("a failed practitioner lookup falls back to the STUDIO NAME and still emails", async () => {
+    scenario.practitionerThrows = true;
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(true);
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0].practitionerDisplayName).toBe("Studio");
+  });
+
+  it("a failed service lookup passes a null service and still emails", async () => {
+    scenario.serviceThrows = true;
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(true);
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0].service).toBeNull();
+  });
+
+  it("a failed intake omits the intake link and still emails", async () => {
+    scenario.intakeThrows = true;
+    await rescheduleAppointmentViaTokenAction(form());
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0].intakeUrl).toBeNull();
+  });
+});
+
+describe("0171 — SMS is independent of the email toggle", () => {
+  it("SMS is still attempted when confirmation emails are DISABLED", async () => {
+    scenario.studioRow = { ...scenario.studioRow, send_confirmation_emails: false };
+    await rescheduleAppointmentViaTokenAction(form());
+    expect(sentEmails).toHaveLength(0);
+    // The SMS helper owns its own toggle/consent/opt-out gates, so it must be
+    // CALLED and allowed to decide — it used to be nested under the email
+    // block and skipped entirely.
+    expect(smsCalls).toHaveLength(1);
+    expect(smsCalls[0].manageUrl).toBe("https://hone.test/manage/RAW-SUCCESSOR-TOKEN");
+  });
+
+  it("SMS is still attempted when the email provider fails", async () => {
+    scenario.emailThrows = true;
+    await rescheduleAppointmentViaTokenAction(form());
+    expect(smsCalls).toHaveLength(1);
+  });
+});
+
+describe("0171 — origin resolution is a PRE-command gate", () => {
+  it("refuses before the RPC when the app origin cannot be resolved", async () => {
+    scenario.originThrows = true;
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(false);
+    // No mutation: a reschedule that commits without an origin leaves the
+    // client with no link at all.
+    expect(rpcCalls).toHaveLength(0);
+    expect(sentEmails).toHaveLength(0);
+    expect(smsCalls).toHaveLength(0);
+  });
+});
+
+describe("0171 — the raw token never reaches a log", () => {
+  it("no logged line contains the raw successor token, in any failure mode", async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      logged.push(args.map(String).join(" "));
+    });
+    try {
+      for (const flag of [
+        "practitionerThrows",
+        "serviceThrows",
+        "intakeThrows",
+        "treatmentTimeThrows",
+        "notificationThrows",
+        "emailThrows",
+        "emailAttemptThrows",
+        "smsThrows",
+      ]) {
+        (scenario as Record<string, unknown>)[flag] = true;
+        await rescheduleAppointmentViaTokenAction(form());
+        (scenario as Record<string, unknown>)[flag] = false;
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    expect(logged.length).toBeGreaterThan(0);
+    for (const line of logged) {
+      expect(line).not.toContain("RAW-SUCCESSOR-TOKEN");
+      expect(line).not.toContain("/manage/");
+      // And no arbitrary thrown message, which could carry a URL or address.
+      expect(line).not.toContain("exploded");
+    }
   });
 });
