@@ -3338,6 +3338,19 @@ or `DELETE` policy, so those are denied by default-deny — the forged row is pe
 **agree**: forged rows can be inserted and cannot afterwards be edited or removed, and the only erasure
 path is the parent appointment's `ON DELETE CASCADE` (`P1-2`).
 
+> ⚠️ **One thing `A-P1-03` gets wrong, and this section originally repeated.** PR #520 carries a
+> "correction" asserting that a forged audit row *"does not change what the appointment detail page
+> displays"* because the on-screen `by {cancelled_by}` line reads the appointments column. The first half
+> is right; the conclusion is **false**, and re-verification here escalates `P1-3` rather than softening
+> it. `app/(app)/calendar/[id]/page.tsx:131-139` selects `details` from `appointment_audit`
+> (`.eq("action","cancelled").order("created_at", { ascending: false }).limit(1)`) into
+> `cancellationInsight`, which is rendered at `:566`, `:580-584` (`reason_label`), `:588-591` (`note`) and
+> `:599` (`follow_up_allowed`). Because `P1-3` establishes that **`created_at` is caller-chosen**, a forged
+> row with a future timestamp deterministically wins that `order by … limit 1` and takes over the
+> cancellation panel — the displayed cancellation reason, the client's quoted note and the follow-up flag.
+> So the forgery is **UI-reachable content control**, not merely a durable-record defect. Recorded as
+> disagreement #7 in §16.8.
+
 ### 16.3 The cross-audit dependency neither audit could see on its own
 
 This is the substantive result of the merge, and it is new to both documents.
@@ -3394,7 +3407,7 @@ Each is accepted, rejected or amended against source, and mapped onto the `B1`�
 
 | Req | PR #520's requirement | Verdict | Where it lands |
 |---|---|---|---|
-| **`D1`** | Revoke `insert, update, delete, truncate` on `public.appointments` from `anon, authenticated`; retain `SELECT`; replace `appointments_member_all` with a `SELECT`-only member policy | **ACCEPTED, with one amendment.** `TRUNCATE` is correctly included as hygiene but is **not** browser-reachable — PostgREST does not expose it — so it must not be presented as part of the P1 closure | **`B3`** (`0172`), already scoped |
+| **`D1`** | Revoke `insert, update, delete, truncate` on `public.appointments` from `anon, authenticated`; retain `SELECT`; replace `appointments_member_all` with a `SELECT`-only member policy | **ACCEPTED, with two amendments.** (a) `TRUNCATE` is correctly included as hygiene but is **not** browser-reachable — PostgREST does not expose it — so it must not be presented as part of the P1 closure. (b) PR #520's supporting citation for *"`validate_appointment_availability` exists only inside the commands"* is wrong at one end: `0170:875` is a call to a **different** function, `public.validate_public_booking_slot(`. The claim itself is true and the **stronger** evidence PR #520 omits is `0146:340-343` — `revoke execute on function public.validate_appointment_availability(...) from public; … from anon; … from authenticated;` then `grant … to service_role`. The validator is not merely un-called by the app; it is un-callable by a browser role | **`B3`**, already scoped |
 | **`D2`** | Revoke DML on `appointment_audit`; drop the vestigial member `INSERT` policy; add a composite `actor_practitioner_id`; change the parent FK from `CASCADE` to `RESTRICT` | **ACCEPTED — and it is already this program's `B3` + `B5`,** independently derived. `B3` revokes; `B5` adds `studio_id`, re-points the FK and makes the table append-only. PR #520 adds the `actor_practitioner_id` **composite same-studio FK with `ON DELETE RESTRICT`**, which `B5` should adopt: `actor_id` today is a bare `uuid` with no FK (`0010:221`) | **`B3`** + **`B5`** (`0174`) |
 | **`D3`** | Make `booked_outside_availability` write-once-by-command via a `BEFORE INSERT OR UPDATE` trigger refusing a `true` value from a non-definer writer; persist the authorising actor and their role | **PARTLY REDUNDANT, PARTLY ACCEPTED.** The forge-the-flag path is closed by `D1`/`B3` outright, so the trigger is defence-in-depth, not a requirement. The *second* half — persisting **who** authorised the override and their role at the time — is **not** covered anywhere in this document and is a genuine gap. §12 already names `P2-1` and `P2-13` as override defects; add the actor to that work | override actor → **`B5`**; the trigger → optional, **`B6`** |
 | **`D4`** | Add `created_by_practitioner_id` (composite same-studio FK, `ON DELETE RESTRICT`) to `public.appointments`, written by `create_internal_appointment_v2` / `create_public_appointment` (null + `actor_type='client'` for public bookings) | **ACCEPTED — and this is the single largest gap PR #520 contributes.** Re-verified: `public.appointments` (`0010:174-190`) has **no creator column**, and no later `ALTER TABLE … ADD COLUMN` adds one. Today the creator exists **only** in an `appointment_audit` row that `P1-2` shows is `CASCADE`-deletable and `P1-3` shows is forgeable | **new additive migration, phase 2** (see §16.6) |
@@ -3460,6 +3473,14 @@ refactoring changes that.
   insert sites. The model to adopt: `actor_type='client'` with a durable reference to the token subject
   (the appointment's `client_id`, plus the token hash already stored on the row), and `actor_type='system'`
   with a process identifier for cron and webhook writers.
+
+  **Concretely, and available today without any session:** write `actor_id = <client_id>` at the four
+  public audit-insert sites — `0170:909`, `0171:1366`, `0171:1376` and `0091:133` — all of which already
+  have the client in scope (`p_client_id` per the `0170:638` signature; `v_orig.client_id` in `0171`;
+  `v_appt.client_id` from the locked `%rowtype` at `0091:98-101`). `appointment_audit.actor_id` is a bare
+  `uuid` with no FK and no `NOT NULL` (`0010:221`), and `actor_type='client'` already disambiguates the
+  namespace, so this is schema-legal at `03e7dea` and converts *"some client did this"* into *"**this**
+  client did this"*.
 
 **The strongest argument against the split**, stated so it is not lost: two styles in one command family
 is exactly the inconsistency PR #520 §1 criticises, and a future maintainer may copy the wrong one. The
@@ -3542,9 +3563,22 @@ today**, which is the point.
 | 5 | **Sequencing.** §12 ships the revocation third; PR #520 §8 and the reconciliation brief require additive attribution before revocation | **Resolved in favour of application-first (§16.6)**, on the ground that `D4`/`D5` show the commands do not yet record the creator, so revoking first freezes an incomplete ledger. §12's argument for speed is recorded, not discarded, and the cost of the delay is stated | Re-phases the program; `0172` moves to the additive migration |
 | 6 | **Scope of `A-P1-01`.** PR #520 treats `public.practitioners` as an independent finding; this program could be read as closing appointment attribution without it | **Both scopings are right; the dependency was invisible to each audit alone.** `A-P1-01` stays in PR #520's queue as `PR-A1`. This document must stop short of claiming `0172` establishes trustworthy attribution — §16.3 | Adds `PR-A1` as a **co-requisite** of `B3`, not a blocker |
 
+| 7 | **Whether a forged audit row is visible in the product.** PR #520 `A-P1-03` carries a correction asserting it is not, because the `by {cancelled_by}` line reads the appointments column. This section originally endorsed that correction | **PR #520 is wrong, and the error is in the direction that *understates* the finding.** `app/(app)/calendar/[id]/page.tsx:131-139` selects `appointment_audit.details` into `cancellationInsight` under `order by created_at desc limit 1`, and renders it at `:566`, `:580-584`, `:588-591`, `:599`. Combined with `P1-3`'s finding that `created_at` is caller-chosen, a forged row wins that ordering deterministically | **Escalates `P1-3`** from durable-record forgery to UI-reachable content control. Anything PR #520 absorbed under `A-P1-03` inherits the corrected statement. No change to the remediation — `B3` + `B5` close it — but the finding's description must be updated |
+
 **No finding in either audit was refuted by the other.** The disagreements are of precision, scope and
-sequencing. The only substantive reversal is #2 — PR #520's Style-A recommendation, which this
-reconciliation replaces with the split in §16.5 on structural evidence.
+sequencing. Two are substantive: **#2**, PR #520's Style-A recommendation, replaced by the split in §16.5
+on structural evidence; and **#7**, where PR #520 understated its own finding and re-verification
+escalated it.
+
+**A note on #5 (sequencing), in fairness to the alternative.** An independent reviewer of the `D6`
+question, working only from source, also concluded the revocation should ship **first** — on the ground
+that it is what actually makes the commands the sole writers, and that converting them to Style A while a
+direct-DML bypass remains open secures a door that is not the one being used. That is the same argument
+§12 makes, now made twice from different starting points. This section still resolves in favour of
+application-first because the reconciliation brief requires it **and** because `D4`/`D5` show the ledger
+is incomplete until the additive columns land — but the owner should know the counter-argument has
+independent support, and that choosing §12's original ordering costs only the creator column on the first
+post-revoke appointments.
 
 ---
 
