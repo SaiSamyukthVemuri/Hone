@@ -1113,14 +1113,19 @@ export async function seedE2eChartedThermolysisBlock(
     thermolysisIntensityPercent: number;
     thermolysisDurationSeconds: number;
     pulseCount: number;
+    // Minutes performed on the SOURCE block. Optional and defaulted so existing
+    // callers are unchanged; a copy-settings test sets it to a distinctive value
+    // so "the destination kept its own minutes" cannot pass by coincidence.
+    minutesPerformed?: number;
   },
 ): Promise<{ blockId: string }> {
   const blockId = randomUUID();
+  const minutes = opts.minutesPerformed ?? 12;
   await sql(
     `insert into public.session_blocks
        (id, studio_id, session_id, sort_order, primary_area, mode, energy_level,
         minutes_performed, machine_frequency, probe_key)
-     values ($1,$2,$3,1,$4,'thermo',$5,12,$6,'sterex-stainless-steel-two-piece-f2-short')`,
+     values ($1,$2,$3,1,$4,'thermo',$5,$7,$6,'sterex-stainless-steel-two-piece-f2-short')`,
     [
       blockId,
       seed.studioId,
@@ -1128,6 +1133,7 @@ export async function seedE2eChartedThermolysisBlock(
       opts.primaryArea,
       opts.energyLevel,
       opts.machineFrequency,
+      minutes,
     ],
   );
   await sql(
@@ -1135,7 +1141,7 @@ export async function seedE2eChartedThermolysisBlock(
        (id, session_id, block_id, area, mode, energy_level, minutes_performed,
         machine_frequency, thermolysis_intensity_percent, thermolysis_duration_seconds,
         pulse_count, pulse_delay_seconds)
-     values ($1,$2,$3,$4,'thermo',$5,12,$6,$7,$8,$9,$10)`,
+     values ($1,$2,$3,$4,'thermo',$5,$11,$6,$7,$8,$9,$10)`,
     [
       randomUUID(),
       sessionId,
@@ -1147,6 +1153,7 @@ export async function seedE2eChartedThermolysisBlock(
       opts.thermolysisDurationSeconds,
       opts.pulseCount,
       opts.pulseCount > 1 ? 0.4 : null,
+      minutes,
     ],
   );
   return { blockId };
@@ -1378,6 +1385,55 @@ export async function getDisinfectantDateDiscarded(
     [recordId],
   );
   return rows[0]?.date_discarded ?? null;
+}
+
+// The LEGACY parent projection of a session's first live block. Global Search
+// recall tests read this to prove a hit came from the structured child rows and
+// not from the parent column happening to contain the query.
+export async function getBlockPrimaryArea(
+  sessionId: string,
+): Promise<string | null> {
+  const rows = await sql<{ primary_area: string | null }>(
+    `select primary_area from public.session_blocks
+      where session_id = $1 and deleted_at is null
+      order by sort_order, created_at limit 1`,
+    [sessionId],
+  );
+  return rows[0]?.primary_area ?? null;
+}
+
+// Seed a saved block WITH structured treatment areas (migration 0128), so a
+// test can construct the exact shape Global Search recall depends on: a legacy
+// `primary_area` that names only the FIRST area, plus child rows carrying the
+// rest. Used for the cross-studio negative control, where the block must exist
+// and be perfectly findable by its own studio — otherwise "no result" would
+// prove nothing.
+export async function seedE2eBlockWithStructuredAreas(
+  seed: E2eSeed,
+  sessionId: string,
+  opts: {
+    primaryArea: string;
+    areas: Array<{ area: string; laterality: string }>;
+    sortOrder?: number;
+  },
+): Promise<{ blockId: string }> {
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, primary_area, sort_order)
+     values ($1,$2,$3,$4,$5)`,
+    [blockId, seed.studioId, sessionId, opts.primaryArea, opts.sortOrder ?? 0],
+  );
+  let order = 0;
+  for (const a of opts.areas) {
+    await sql(
+      `insert into public.session_block_areas
+         (id, session_block_id, studio_id, area, laterality, display_order)
+       values ($1,$2,$3,$4,$5,$6)`,
+      [randomUUID(), blockId, seed.studioId, a.area, a.laterality, order++],
+    );
+  }
+  return { blockId };
 }
 
 // Seed a LEGACY single-area block (primary_area + block-level side, no child

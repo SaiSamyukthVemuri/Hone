@@ -492,10 +492,12 @@ export function BlockSetupForm({
   // the area also clears side + specifics (no orphan side).
 
   // "Copy settings from another area in this session" (PR #191 rework after
-  // Chloe's smoke). Copies the FULL treatment configuration a
-  // practitioner expects: mode, modality, energy, machine frequency,
-  // probe, and minutes. Never the area identity (the practitioner
-  // chooses the new area fresh) and never the client response
+  // Chloe's smoke). Copies the reusable MACHINE SETUP a practitioner
+  // expects: mode, modality, energy, machine frequency and probe.
+  // Never the area identity (the practitioner chooses the new area
+  // fresh), never MINUTES PERFORMED (an outcome of the treatment that
+  // already happened — copying it silently overwrote destination
+  // minutes already typed by hand), and never the client response
   // (tolerance / reaction / caution belong to the treatment that
   // already happened, not the one being set up). Area-aware: when a
   // treatment area is already selected and this session has a saved
@@ -521,9 +523,10 @@ export function BlockSetupForm({
     const source = areaMatch ?? candidates[candidates.length - 1];
     // Full reusable setup via the shared snapshot contract: block machine
     // settings PLUS the primary (earliest live) entry's mode-gated machine
-    // readings (thermolysis/galvanic/units-of-lye/pulse). Destination areas, a
-    // manually entered probe lot, and every outcome/response field are
-    // preserved — the patch carries ONLY reusable setup keys.
+    // readings (thermolysis/galvanic/units-of-lye/pulse). Destination areas,
+    // destination MINUTES, a manually entered probe lot, and every outcome/
+    // response field are preserved — the patch carries ONLY reusable setup keys,
+    // and a key it does not own cannot be overwritten by the spread below.
     const firstEntry = firstLiveEntry(source.electrolysis_entries);
     // The lot travels with the probe. Its inventory LINK is carried only when
     // the source's item is still an ACTIVE lot for the copied probe — so a copy

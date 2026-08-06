@@ -57,6 +57,43 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
       expect(body).not.toContain(forbidden);
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Session 1C: minutes performed is an OUTCOME, not reusable setup.
+  // -------------------------------------------------------------------------
+  it("the form's Copy settings comment no longer claims minutes are copied", () => {
+    const start = FORM.indexOf(
+      '// "Copy settings from another area in this session"',
+    );
+    expect(start).toBeGreaterThan(-1);
+    const comment = FORM.slice(start, FORM.indexOf("function copySettings()", start));
+    // The old comment read "...machine frequency, probe, and minutes."
+    expect(comment).not.toMatch(/probe,\s*(\/\/\s*)?and minutes/);
+    // and it must positively say minutes are NOT copied, so the reason survives
+    // the next person who reads it.
+    expect(comment).toMatch(/never MINUTES PERFORMED/);
+  });
+
+  it("copySettings never reads a minutes key off the patch", () => {
+    const start = FORM.indexOf("function copySettings()");
+    const body = FORM.slice(start, FORM.indexOf("\n  }", start));
+    expect(body).not.toContain("patch.minutes");
+    expect(body).not.toContain("minutes:");
+    expect(body).not.toContain("minutes_performed");
+    // The application mechanism is still a spread — which is exactly why
+    // omitting the key preserves the destination's own value.
+    expect(body).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.patch \}\)\)/);
+  });
+
+  it("ORDINARY charting still reads, validates and saves draft.minutes", () => {
+    // Removing minutes from the COPY contract must not remove the field from
+    // charting. Without this, the copy fix could be "achieved" by deleting the
+    // Minutes input altogether and every other assertion here would still pass.
+    expect(FORM).toMatch(/value=\{draft\.minutes\}/);
+    expect(FORM).toMatch(/update\("minutes", e\.target\.value\)/);
+    expect(FORM).toMatch(/const min = draft\.minutes\.trim\(\)/);
+    expect(FORM).toMatch(/minutesPerformed: minutesNum/);
+  });
 });
 
 describe("the shared contract itself excludes outcomes + gates by mode", () => {
@@ -88,5 +125,21 @@ describe("the shared contract itself excludes outcomes + gates by mode", () => {
     expect(CONTRACT).toMatch(/pulseCount != null && pulseCount <= 1 \? "" :/);
     // Galvanic carries no apilus modality / energy level.
     expect(CONTRACT).toMatch(/isGalv \? "" : \(block\.apilus_modality \?\? ""\)/);
+  });
+
+  it("carries no minutes key and never reads the source minutes column", () => {
+    const code = CONTRACT.split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+    // No patch key, no source read, and gone from the field allow-list too —
+    // all three, because removing any one alone leaves the defect reachable.
+    expect(code).not.toMatch(/\bminutes:/);
+    expect(code).not.toContain("block.minutes_performed");
+    expect(code).not.toContain("minutes_performed");
+    // The rest of the block-level allow-list is untouched, so this fails
+    // because minutes left — not because the contract was gutted.
+    expect(code).toContain('"machine_frequency"');
+    expect(code).toContain('"probe_key"');
+    expect(code).toContain('"probe_lot_number"');
   });
 });

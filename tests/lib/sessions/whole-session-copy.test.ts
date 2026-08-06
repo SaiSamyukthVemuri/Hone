@@ -21,7 +21,8 @@ function sourceBlock(over: Partial<CopySourceBlock> = {}): CopySourceBlock {
       mode: "blend",
       apilus_modality: "Omniblend",
       energy_level: 12,
-      minutes_performed: 20,
+      // minutes_performed is deliberately absent: it left the reusable-setup
+      // source contract when minutes were reclassified as an outcome.
       machine_frequency: "13.56 MHz",
       probe_key: "sterex-gold-two-piece-f3-short",
     },

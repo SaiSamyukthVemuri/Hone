@@ -78,7 +78,6 @@ describe("2. copy settings: full, area-aware, never the response", () => {
       "energyLevel",
       "probeKey",
       "machineFrequency",
-      "minutes",
       // primary-entry machine readings, now carried too:
       "thermolysisIntensityPercent",
       "thermolysisDurationSeconds",
@@ -93,6 +92,18 @@ describe("2. copy settings: full, area-aware, never the response", () => {
     // Final amendment: galvanic intensity is a RETIRED reading — it is NOT a
     // copyable setup key, so the snapshot must not emit it as a patch field.
     expect(SNAPSHOT).not.toMatch(/galvanicIntensityPercent:/);
+    // Session 1C: minutes performed is an OUTCOME. The contract must emit no
+    // minutes patch key AND must not read the source column. A partial removal
+    // (type key deleted, builder assignment left behind, or vice versa) fails
+    // here — the `toContain` loop above would have passed on either half alone.
+    // Comments are stripped first: the header deliberately NAMES the rejected
+    // `minutes: ""` shape as documentation, and documenting a mistake must not
+    // read as committing it.
+    const snapshotCode = SNAPSHOT.split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+    expect(snapshotCode).not.toMatch(/\bminutes:/);
+    expect(snapshotCode).not.toMatch(/block\.minutes_performed/);
   });
 
   it("does NOT copy the area identity or any response field", () => {

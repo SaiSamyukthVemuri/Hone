@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BLOCK_SETUP_FIELDS,
   buildTreatmentSetupDraftPatch,
   firstLiveEntry,
   type SetupSourceBlock,
@@ -10,11 +11,18 @@ const block = (over: Partial<SetupSourceBlock> = {}): SetupSourceBlock => ({
   mode: "thermo",
   apilus_modality: "OmniBlend",
   energy_level: 42,
-  minutes_performed: 15,
   machine_frequency: "13.56 MHz",
   probe_key: "ballet-f3",
   ...over,
 });
+
+// A source row as it actually arrives from the database: it still CARRIES
+// minutes_performed (ordinary charting reads and writes that column). The point
+// of the contract is that the copy builder never reads it, so every "minutes are
+// not copied" test below must use a source that genuinely has minutes to copy —
+// otherwise it would pass vacuously.
+const blockWithMinutes = (minutes: number | null = 37) =>
+  ({ ...block(), minutes_performed: minutes }) as SetupSourceBlock;
 
 const entry = (over: Partial<SetupSourceEntry> = {}): SetupSourceEntry => ({
   created_at: "2026-01-01T00:00:00Z",
@@ -55,13 +63,12 @@ describe("firstLiveEntry — canonical earliest non-deleted", () => {
 
 describe("thermolysis source", () => {
   const p = buildTreatmentSetupDraftPatch(block({ mode: "thermo" }), entry({ mode: "thermo" }));
-  it("copies block setup + thermolysis readings + pulse + probe + freq + minutes", () => {
+  it("copies block setup + thermolysis readings + pulse + probe + freq", () => {
     expect(p.mode).toBe("thermo");
     expect(p.apilusModality).toBe("OmniBlend");
     expect(p.energyLevel).toBe("42");
     expect(p.machineFrequency).toBe("13.56 MHz");
     expect(p.probeKey).toBe("ballet-f3");
-    expect(p.minutes).toBe("15");
     expect(p.thermolysisIntensityPercent).toBe("30");
     expect(p.thermolysisDurationSeconds).toBe("0.12");
     expect(p.pulseCount).toBe("3");
@@ -126,11 +133,107 @@ describe("single-pulse setup must not carry pulse delay", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Minutes performed is an OUTCOME, not reusable setup (Chloe, Session 1C).
+//
+// The old contract copied it, which silently overwrote destination-specific
+// minutes a practitioner had already typed. The fix is STRUCTURAL: the patch
+// does not own the key at all. Emitting `minutes: ""` instead would have been
+// just as destructive — it would erase her entry rather than replace it.
+// ---------------------------------------------------------------------------
+describe("minutes performed is never part of the reusable setup patch", () => {
+  it("the patch has NO minutes property, even from a source with minutes", () => {
+    const p = buildTreatmentSetupDraftPatch(blockWithMinutes(37), entry());
+    expect("minutes" in p).toBe(false);
+    expect(Object.keys(p)).not.toContain("minutes");
+    expect((p as Record<string, unknown>).minutes).toBeUndefined();
+  });
+
+  it("BLOCK_SETUP_FIELDS excludes minutes_performed", () => {
+    expect(BLOCK_SETUP_FIELDS).not.toContain("minutes_performed");
+    // The rest of the block-level setup contract is intact — this must fail
+    // because minutes left, not because the list was emptied.
+    expect(BLOCK_SETUP_FIELDS).toContain("machine_frequency");
+    expect(BLOCK_SETUP_FIELDS).toContain("probe_key");
+    expect(BLOCK_SETUP_FIELDS).toContain("mode");
+  });
+
+  it("source minutes cannot enter the patch by ANY key spelling", () => {
+    const p = buildTreatmentSetupDraftPatch(blockWithMinutes(37), entry());
+    const serialized = JSON.stringify(p);
+    expect(serialized).not.toContain("37");
+    expect(serialized).not.toContain("minutes");
+    expect(serialized).not.toContain("minutes_performed");
+  });
+
+  it("applying the patch LEAVES destination minutes exactly as typed", () => {
+    // This is the form's real mechanism: setDraft((d) => ({ ...d, ...patch })).
+    const destinationDraft = { minutes: "12", machineFrequency: "", probeKey: "" };
+    const p = buildTreatmentSetupDraftPatch(blockWithMinutes(37), entry());
+    const applied = { ...destinationDraft, ...p };
+    expect(applied.minutes).toBe("12"); // not 37, and not cleared
+    expect(applied.machineFrequency).toBe("13.56 MHz"); // setup still copied
+  });
+
+  it("a fresh blank destination stays blank — the patch never writes a value", () => {
+    const freshDraft = { minutes: "" };
+    const applied = {
+      ...freshDraft,
+      ...buildTreatmentSetupDraftPatch(blockWithMinutes(37), entry()),
+    };
+    expect(applied.minutes).toBe("");
+  });
+
+  it("a source with NULL minutes behaves identically (no key either way)", () => {
+    const p = buildTreatmentSetupDraftPatch(blockWithMinutes(null), entry());
+    expect("minutes" in p).toBe(false);
+    expect({ ...{ minutes: "12" }, ...p }.minutes).toBe("12");
+  });
+});
+
+describe("the reusable patch key set is EXACT", () => {
+  // An exact-key assertion, not a subset check: a future outcome field added to
+  // the copy builder cannot slip in quietly the way minutes did. Adding a
+  // genuinely reusable setup key is a deliberate act that updates this list.
+  const EXPECTED_PATCH_KEYS = [
+    "apilusModality",
+    "energyLevel",
+    "galvanicDurationSeconds",
+    "galvanicMa",
+    "machineFrequency",
+    "mode",
+    "probeInventoryItemId",
+    "probeKey",
+    "probeLotConfirmed",
+    "probeLotNumber",
+    "pulseCount",
+    "pulseDelay",
+    "thermolysisDurationSeconds",
+    "thermolysisIntensityPercent",
+    "unitsOfLye",
+  ];
+
+  for (const mode of ["thermo", "galv", "blend"] as const) {
+    it(`${mode} source produces exactly the reusable setup keys`, () => {
+      const p = buildTreatmentSetupDraftPatch(
+        { ...blockWithMinutes(37), mode },
+        entry({ mode }),
+        new Set(["item-1"]),
+      );
+      expect(Object.keys(p).sort()).toEqual(EXPECTED_PATCH_KEYS);
+    });
+  }
+});
+
 describe("outcome fields are structurally absent from the patch", () => {
   it("the patch object contains only reusable setup keys — no outcome keys", () => {
-    const p = buildTreatmentSetupDraftPatch(block(), entry());
+    const p = buildTreatmentSetupDraftPatch(blockWithMinutes(37), entry());
     const keys = Object.keys(p);
     for (const forbidden of [
+      // Minutes performed describes the treatment that already happened.
+      "minutes",
+      "minutesPerformed",
+      "minutes_performed",
       // Retired reading: never a copyable setup key.
       "galvanicIntensityPercent",
       "hairsTreated",
