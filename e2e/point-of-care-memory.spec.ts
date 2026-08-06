@@ -690,22 +690,59 @@ test.describe("iPad — 820px, Chloe's device", () => {
 test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => {
   test.use({ locale: "fr-CA", timezoneId: "America/Toronto" });
 
-  // Console noise this app emits for reasons unrelated to hydration. Narrow on
-  // purpose: a broad filter would swallow the very errors under test.
+  // A hydration mismatch in a Next PRODUCTION build (which this lane runs)
+  // surfaces as a console ERROR — "Hydration failed…", "Text content does not
+  // match server-rendered HTML". So errors are the signal.
+  //
+  // Chromium WARNINGS are environment chatter that varies by browser build and
+  // by runner (the CI runner, for instance, warns that the app's own
+  // Permissions-Policy header names a feature it does not recognise). Asserting
+  // an empty warning list would make this spec fail for reasons that have
+  // nothing to do with the contract under test — so warnings are only inspected
+  // for hydration content, never required to be empty.
+  const HYDRATION_RE =
+    /hydrat|did not match|Text content does not match|server-rendered/i;
+
+  // ERROR-level noise this app emits for reasons unrelated to hydration. Each
+  // one is named: a broad filter would swallow the very errors under test.
   const IRRELEVANT = [
     /Download the React DevTools/i,
     /Failed to load resource/i,
     /favicon/i,
     /\[Fast Refresh\]/i,
     // The e2e stack configures no PostHog token on purpose; the SDK complains
-    // once per page. Named explicitly rather than filtered by a broad pattern.
+    // once per page.
     /\[PostHog\.js\] PostHog was initialized without a token/i,
     // Vercel Analytics / Speed Insights are served by the Vercel edge in
     // production; locally the path 404s to HTML and the browser refuses the
     // script. Named explicitly — not a broad "MIME type" filter.
     /_vercel\/(insights|speed-insights)/i,
+    // Chromium build-specific header parsing chatter.
+    /Permissions-Policy header/i,
   ];
   const isIrrelevant = (text: string) => IRRELEVANT.some((re) => re.test(text));
+
+  // Arms console capture on a page BEFORE navigation. Returns both buckets:
+  // `errors` (strictly asserted, minus the named artifacts) and
+  // `hydration` (asserted across errors AND warnings — a hydration complaint
+  // fails this spec whichever level it arrives at).
+  function captureConsole(page: import("@playwright/test").Page) {
+    const errors: string[] = [];
+    const hydration: string[] = [];
+    page.on("console", (msg) => {
+      const type = msg.type();
+      if (type !== "error" && type !== "warning") return;
+      const text = msg.text();
+      if (HYDRATION_RE.test(text)) hydration.push(`${type}: ${text}`);
+      if (type === "error" && !isIrrelevant(text)) errors.push(`error: ${text}`);
+    });
+    page.on("pageerror", (err) => {
+      const text = err.message;
+      if (HYDRATION_RE.test(text)) hydration.push(`pageerror: ${text}`);
+      if (!isIrrelevant(text)) errors.push(`pageerror: ${text}`);
+    });
+    return { errors, hydration };
+  }
 
   test("the note date is stable, correct and hydration-clean at fr-CA / Toronto", async ({
     page,
@@ -733,14 +770,8 @@ test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => 
       ],
     );
 
-    // Capture console BEFORE navigation so the hydration pass is covered.
-    const errors: string[] = [];
-    page.on("console", (msg) => {
-      if (msg.type() !== "error" && msg.type() !== "warning") return;
-      const text = msg.text();
-      if (!isIrrelevant(text)) errors.push(`${msg.type()}: ${text}`);
-    });
-    page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+    // Armed BEFORE navigation so the hydration pass is covered.
+    const { errors, hydration } = captureConsole(page);
 
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${fx.clientId}?tab=consultation`);
@@ -776,10 +807,9 @@ test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => 
     });
 
     await test.step("no React hydration mismatch was reported", async () => {
-      const hydration = errors.filter((e) =>
-        /hydrat|did not match|Text content does not match|server-rendered/i.test(e),
-      );
+      // THE contract: nothing complained about hydration, at any level.
       expect(hydration, hydration.join("\n")).toEqual([]);
+      // And no unexplained console ERROR either.
       expect(errors, errors.join("\n")).toEqual([]);
     });
   });
@@ -789,13 +819,7 @@ test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => 
   }) => {
     const seed = await seedE2eStudio();
     const fx = await seedMemoryFixture(seed);
-    const errors: string[] = [];
-    page.on("console", (msg) => {
-      if (msg.type() !== "error" && msg.type() !== "warning") return;
-      const text = msg.text();
-      if (!isIrrelevant(text)) errors.push(`${msg.type()}: ${text}`);
-    });
-    page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+    const { errors, hydration } = captureConsole(page);
 
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${fx.clientId}/sessions/${fx.currentSessionId}`);
@@ -826,9 +850,7 @@ test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => 
     expect(await noteDates.first().textContent()).toBe(noteBefore);
     await expect(noteDates.first()).toContainText("Jan 1, 2026");
 
-    const hydration = errors.filter((e) =>
-      /hydrat|did not match|Text content does not match|server-rendered/i.test(e),
-    );
     expect(hydration, hydration.join("\n")).toEqual([]);
+    expect(errors, errors.join("\n")).toEqual([]);
   });
 });
