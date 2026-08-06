@@ -199,6 +199,32 @@ describe("parsing and round-tripping", () => {
     expect(civilDateParts(withTime)).toEqual({ year: 2026, month: 7, day: 21 });
   });
 
+  it("a NON-UTC stored offset still renders the stored day — the UTC pin alone cannot save this", () => {
+    // The test above uses a +00:00 offset, where reading the civil date
+    // textually and parsing the string as an instant happen to AGREE. That
+    // makes it blind to the parsing half of the contract: swap
+    // `Date.UTC(parts…)` back for a naive `new Date(iso)` and it still passes,
+    // because `timeZone: "UTC"` rescues the result.
+    //
+    // A NEGATIVE offset late in the day separates them. occurred_at is
+    // `timestamptz` (migration 0126), so the wire value carries whatever offset
+    // the emitting connection used; only the +00:00 case is self-correcting.
+    //   naive  new Date("2026-07-21T23:30:00-04:00") -> 2026-07-22T03:30Z -> "Jul 22"
+    //   civil  parts {2026,7,21}                                          -> "Jul 21"
+    // So this is the assertion that pins the EXTRACTION, independently of the
+    // zone pin — and it is what makes the "restore the old instant conversion"
+    // negative control go red.
+    const negativeOffset = "2026-07-21T23:30:00-04:00";
+    expect(civilDateParts(negativeOffset)).toEqual({ year: 2026, month: 7, day: 21 });
+    for (const tz of ZONES) {
+      const out = inZone(tz, () => formatClinicalDate(negativeOffset));
+      expect(out, tz).toContain("21");
+      expect(out, tz).not.toContain("22");
+    }
+    // And the date-input round trip agrees with it.
+    expect(clinicalDateInputValue(negativeOffset)).toBe("2026-07-21");
+  });
+
   it("round-trips to the date-input shape, zero-padded", () => {
     expect(clinicalDateInputValue("2026-07-21T00:00:00+00:00")).toBe("2026-07-21");
     expect(clinicalDateInputValue("2026-01-05T00:00:00+00:00")).toBe("2026-01-05");
