@@ -60,6 +60,18 @@ describe("the memory card is mounted ON the live charting page", () => {
     expect(SESSION_PAGE).toMatch(/\{pointOfCareMemory && \(/);
   });
 
+  it("a charted visit with NO settings blocks says so, instead of \"Area not recorded\"", () => {
+    // A LASER prior visit (or pre-block legacy electrolysis) qualifies as
+    // charted but produces zero blocks. Found by adversarial review: the card
+    // used to render "Area not recorded" + "Not recorded" over a visit that
+    // really happened.
+    expect(CARD).toMatch(/const hasBlockDetail = memory\.areas\.length > 0/);
+    expect(CARD).toMatch(/\{!hasBlockDetail \? \(/);
+    expect(CARD).toMatch(/data-testid="last-treatment-no-blocks"/);
+    expect(CARD).toMatch(/charted as laser passes/i);
+    expect(CARD).toMatch(/open the full chart/i);
+  });
+
   it("the card carries a test handle so the browser spec is not selector-fragile", () => {
     expect(CARD).toMatch(/data-testid="last-treatment-memory"/);
   });
@@ -199,6 +211,14 @@ describe("no forked display vocabulary", () => {
 });
 
 describe("multi-area treatment-time attribution", () => {
+  it("the bucket key is canonicalized so tap order cannot fragment a combination", () => {
+    // display_order is the practitioner's tap order, so the combined key must
+    // depend on the SET of areas, not the order they were entered in.
+    const code = codeOnly(AREA_BUCKET);
+    expect(code).toMatch(/const canonical = \[\.\.\.names\]\.sort\(/);
+    expect(code).toMatch(/return canonical\.join\(AREA_BUCKET_SEPARATOR\)/);
+  });
+
   it("the breakdown resolves its bucket through the shared, pure area resolver", () => {
     expect(TREATMENT_TIME).toMatch(
       /import \{ buildAreaMinutesBreakdown \} from "\.\/area-bucket"/,

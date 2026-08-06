@@ -54,7 +54,7 @@ describe("the memory fields that were missing", () => {
       numbing_notes: "Emla 30 min before",
       minutes_performed: 15,
       mode: "blend",
-      apilus_modality: "picoblend",
+      apilus_modality: "Picoblend",
       energy_level: 14,
       entries: [entry({ mode: "blend", hairs_treated: 40 })],
     }),
@@ -105,9 +105,11 @@ describe("the memory fields that were missing", () => {
     expect(full.totalMinutes).toBe(15);
   });
 
-  it("carries mode and Apilus modality", () => {
+  it("carries mode and the CANONICAL Apilus modality label", () => {
     expect(full.areas[0].modeLabel).toBe("Blend");
-    expect(full.areas[0].modalityLabel).toBeTruthy();
+    // The shared label map, not the raw storage key — toBeTruthy() here would
+    // have passed on an unmapped value falling through apilusModalityLabel.
+    expect(full.areas[0].modalityLabel).toBe("PicoBlend");
   });
 
   it("carries tolerance in the same format as the compact summary", () => {
@@ -231,7 +233,7 @@ describe("mode gating — the first read surface in the app to apply it", () => 
       block({
         mode: "galv",
         energy_level: 12,
-        apilus_modality: "picoblend",
+        apilus_modality: "Picoblend",
         entries: [
           entry({
             mode: "galv",
@@ -294,7 +296,20 @@ describe("mode gating — the first read surface in the app to apply it", () => 
     );
   });
 
-  it("shows no readings at all when the mode is unknown — never a guess", () => {
+  it("still shows the BLOCK-level energy level when the mode is unknown", () => {
+    // A block can be saved with no mode (the form's mode chip toggles off and
+    // the action coerces the empty value to null). Energy level is block-level
+    // and valid in every non-galvanic mode, so suppressing it rendered
+    // "Setup not recorded" over a block that plainly had one.
+    const m = build([
+      block({ mode: null, energy_level: 14, entries: [entry({ mode: null })] }),
+    ]);
+    const fields = m.areas[0].readings.map((r) => r.field);
+    expect(fields).toEqual(["energyLevel"]);
+    expect(m.areas[0].readings[0].value).toBe("EL 14");
+  });
+
+  it("shows no ENTRY readings when the mode is unknown — never a guess", () => {
     const m = build([
       block({ mode: null, entries: [entry({ thermolysis_intensity_percent: 40 })] }),
     ]);
@@ -509,6 +524,57 @@ describe("the plan is never shown twice", () => {
       },
     });
     expect(m.plan).toBe("Try a lower EL");
+  });
+});
+
+describe("a charted visit with NO settings blocks (laser / pre-block legacy)", () => {
+  // A LASER visit charts into laser_entries and never creates a session_block;
+  // pre-0019 electrolysis charted straight into entries. Both qualify as
+  // "charted", so the card must not present them as "nothing was recorded".
+  const laser = buildPointOfCareMemory({
+    session: {
+      id: "s-laser",
+      started_at: "2026-01-01T10:00:00Z",
+      modality: "laser",
+      next_session_note: "Recheck the patch test",
+    },
+    blocks: [],
+  });
+
+  it("produces no areas and no headline — the card branches on this", () => {
+    expect(laser.areas).toEqual([]);
+    expect(laser.areaHeadline).toBeNull();
+  });
+
+  it("still carries the session-level memory that DOES exist", () => {
+    expect(laser.modality).toBe("laser");
+    expect(laser.sessionId).toBe("s-laser");
+    expect(laser.plan).toBe("Recheck the patch test");
+  });
+
+  it("reports nothing rather than zero for the block-derived totals", () => {
+    expect(laser.totalMinutes).toBeNull();
+    expect(laser.totalHairs).toBeNull();
+    expect(laser.watchLines).toEqual([]);
+  });
+});
+
+describe("supersededByEmptySession", () => {
+  it("is FALSE when the selected treatment IS the newest candidate", () => {
+    const m = build([block({})]);
+    expect(m.supersededByEmptySession).toBe(false);
+  });
+
+  it("is TRUE only when the caller says a newer uncharted session exists", () => {
+    const m = build([block({})], { supersededByEmptySession: true });
+    expect(m.supersededByEmptySession).toBe(true);
+  });
+
+  it("never invents the flag from a truthy non-boolean", () => {
+    const m = build([block({})], {
+      supersededByEmptySession: "yes" as unknown as boolean,
+    });
+    expect(m.supersededByEmptySession).toBe(false);
   });
 });
 

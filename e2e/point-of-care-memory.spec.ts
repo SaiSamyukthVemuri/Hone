@@ -288,6 +288,80 @@ test.describe("point-of-care treatment memory", () => {
     });
   });
 
+  test("with NO newer empty session, the card does not claim one exists", async ({
+    page,
+  }) => {
+    // The TRUE branch of supersededByEmptySession is asserted above. Without
+    // this, hard-coding the flag true would survive the whole suite.
+    const seed = await seedE2eStudio();
+    const fx = await seedMemoryFixture(seed);
+    // Remove the newer empty session, so the charted visit IS the newest
+    // candidate. Hard delete is fine: this row is e2e scaffolding that was
+    // never charted on.
+    await sql(`delete from public.sessions where id = $1`, [
+      fx.newerEmptySessionId,
+    ]);
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${fx.clientId}/sessions/${fx.currentSessionId}`);
+
+    const card = memoryCard(page);
+    await expect(card).toBeVisible({ timeout: T });
+    // Still the same charted session…
+    await expect(
+      card.getByRole("link", { name: /Open full chart/i }),
+    ).toHaveAttribute(
+      "href",
+      `/clients/${fx.clientId}/sessions/${fx.previousSessionId}`,
+    );
+    // …but the "a newer session has no treatment details yet" line is GONE.
+    await expect(
+      card.getByText(/newer session has no treatment details yet/i),
+    ).toHaveCount(0);
+  });
+
+  test("a LASER prior visit says what it is instead of claiming nothing was recorded", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const fx = await seedMemoryFixture(seed);
+    const prac = (
+      await sql<{ id: string }>(
+        `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+        [seed.studioId],
+      )
+    )[0];
+    // A laser visit AFTER the electrolysis one. Laser charts into
+    // laser_entries and never creates a session_block, so it is genuinely
+    // charted but carries no treatment areas.
+    const laserId = randomUUID();
+    await sql(
+      `insert into public.sessions
+         (id, studio_id, client_id, practitioner_id, modality, started_at)
+       values ($1,$2,$3,$4,'laser','2026-05-15T10:00:00Z')`,
+      [laserId, seed.studioId, fx.clientId, prac.id],
+    );
+    await sql(
+      `insert into public.laser_entries (id, session_id, zone) values ($1,$2,'Chin')`,
+      [randomUUID(), laserId],
+    );
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${fx.clientId}/sessions/${fx.currentSessionId}`);
+
+    const card = memoryCard(page);
+    await expect(card).toBeVisible({ timeout: T });
+    // The laser visit is the newest charted treatment.
+    await expect(
+      card.getByRole("link", { name: /Open full chart/i }),
+    ).toHaveAttribute("href", `/clients/${fx.clientId}/sessions/${laserId}`);
+    // It says what it is, rather than "Area not recorded / Not recorded".
+    await expect(card.getByTestId("last-treatment-no-blocks")).toContainText(
+      /charted as laser passes/i,
+    );
+    await expect(card.getByTestId("last-treatment-areas")).toHaveCount(0);
+    await expect(card.getByText("Area not recorded")).toHaveCount(0);
+  });
+
   test("the new-session context also uses the charted session, not the newest row", async ({
     page,
   }) => {

@@ -275,7 +275,13 @@ function buildReadings(
   canonical: PointOfCareEntry | null,
   mode: string,
 ): PointOfCareReading[] {
-  if (!mode) return [];
+  // No early return for an unknown mode. readingFieldOrder("") already yields
+  // exactly ["energyLevel"] — the one BLOCK-level reading that is valid in
+  // every non-galvanic mode — and excludes every entry-level reading. Short-
+  // circuiting here instead dropped a recorded energy level from a block saved
+  // without a mode (reachable: the form's mode chip toggles back off and the
+  // action coerces the empty value to null), which then rendered "Setup not
+  // recorded" over a block that plainly had one.
   const pulseCount = num(canonical?.pulse_count);
   const out: PointOfCareReading[] = [];
 

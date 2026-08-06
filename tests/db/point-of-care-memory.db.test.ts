@@ -87,17 +87,30 @@ const ENTRY_SQL = `
     from public.electrolysis_entries
    where session_id = any($1::uuid[]) and deleted_at is null`;
 
-type Counted = { query: UserQuery; count: () => number };
+type Counted = {
+  query: UserQuery;
+  count: () => number;
+  blockReads: () => number;
+};
 
 // Wraps a harness query fn so a test can prove the read is bounded.
+//
+// `count` alone would be vacuous — loadMemory contains three literal calls, so
+// it can only ever return 3 no matter how the data grows. `blockReads` is the
+// assertion that means something: it counts executions of the BATCHED block
+// statement, which is where an N+1 (one read per session, per block or per
+// area) would actually show up.
 function counting(query: UserQuery): Counted {
   let n = 0;
+  let blocks = 0;
   return {
     query: (text, params) => {
       n += 1;
+      if (text === BLOCK_SQL) blocks += 1;
       return query(text, params);
     },
     count: () => n,
+    blockReads: () => blocks,
   };
 }
 
@@ -256,7 +269,13 @@ async function loadMemory(opts: {
       excludeSessionId: opts.excludeSessionId,
     });
     if (candidates.length === 0) {
-      return { memory: null, queries: c.count(), breakdown: [], selected: null };
+      return {
+        memory: null,
+        queries: c.count(),
+        blockReads: c.blockReads(),
+        breakdown: [],
+        selected: null,
+      };
     }
 
     const blockRows = (
@@ -274,7 +293,13 @@ async function loadMemory(opts: {
       excludeSessionId: opts.excludeSessionId,
     });
     if (!selected) {
-      return { memory: null, queries: c.count(), breakdown: [], selected: null };
+      return {
+        memory: null,
+        queries: c.count(),
+        blockReads: c.blockReads(),
+        breakdown: [],
+        selected: null,
+      };
     }
 
     // On the real page these arrive with the sessions read; here they are a
@@ -295,6 +320,7 @@ async function loadMemory(opts: {
     return {
       selected,
       queries: c.count(),
+      blockReads: c.blockReads(),
       breakdown: buildAreaMinutesBreakdown(
         blockRows.map((b) => ({
           ...b,
@@ -566,12 +592,15 @@ describe("9. the read is bounded — no N+1 per session, per block or per area",
       before: CURRENT_AT,
       excludeSessionId: currentSessionId,
     });
-    // sessions + blocks(+areas, joined) + entries = 3. Two blocks, three
-    // structured areas and three passes were seeded; none of them adds a
-    // statement. On the real page the sessions and entries arrive with
-    // getClientById, so the memory panel costs ONE query.
-    expect(r.queries).toBe(3);
+    // THE meaningful assertion: the batched block statement executes exactly
+    // ONCE for the whole candidate window, with its structured areas joined in.
+    // Two blocks, three structured areas and three passes were seeded; an N+1
+    // per session / per block / per area would push this above 1.
+    expect(r.blockReads).toBe(1);
     expect(r.memory?.areas).toHaveLength(2);
+    // sessions + blocks(+areas) + entries. On the real page the sessions and
+    // entries arrive with getClientById, so the panel costs ONE query.
+    expect(r.queries).toBe(3);
   });
 
   it("stays at the same statement count when the history grows", async () => {
@@ -599,6 +628,8 @@ describe("9. the read is bounded — no N+1 per session, per block or per area",
       studioId: isolated.studioId,
       clientId: isolated.clientId,
     });
+    // 8 sessions, 8 blocks, 16 structured areas — still ONE block read.
+    expect(r.blockReads).toBe(1);
     expect(r.queries).toBe(3);
   });
 });

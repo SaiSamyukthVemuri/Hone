@@ -59,6 +59,8 @@ export function LastTreatmentMemoryCard({
     (a) => a.responseLine || a.toleranceLine || a.responseNote,
   );
   const hasNotes = !!memory.consultationNote || !!memory.skinHairNote;
+  // A charted visit with no settings blocks (laser, or pre-block legacy).
+  const hasBlockDetail = memory.areas.length > 0;
 
   return (
     <section
@@ -93,6 +95,23 @@ export function LastTreatmentMemoryCard({
         )}
       </header>
 
+      {/* A prior visit can be genuinely charted and still carry no settings
+          blocks — a LASER visit charts into laser_entries, and pre-0019 legacy
+          electrolysis charted straight into entries. Saying "Area not
+          recorded / Not recorded" there would be a false negative about a
+          visit that really did happen, so the card says what it actually
+          knows and points at the full chart instead. */}
+      {!hasBlockDetail ? (
+        <p
+          data-testid="last-treatment-no-blocks"
+          className="text-sm text-neutral-600 dark:text-neutral-400"
+        >
+          {memory.modality === "laser"
+            ? "This visit was charted as laser passes — open the full chart for what was recorded."
+            : "This visit has no charted treatment areas — open the full chart for what was recorded."}
+        </p>
+      ) : (
+        <>
       {/* ---- AREAS TREATED, with laterality ---- */}
       <div>
         <SectionLabel>Areas treated</SectionLabel>
@@ -137,6 +156,8 @@ export function LastTreatmentMemoryCard({
           <p className="mt-1 text-sm text-neutral-400">Not recorded</p>
         )}
       </div>
+        </>
+      )}
 
       {/* ---- WATCH / PLAN. Blue is the established treatment-memory colour. ---- */}
       {hasWatchOrPlan && (

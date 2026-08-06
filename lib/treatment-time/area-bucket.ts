@@ -140,6 +140,18 @@ export function buildAreaMinutesBreakdown(
 // spelling kept, so a block charted as [Cheek/left, Cheek/right] is one real
 // area and buckets as "Cheek" — not as two areas and not as a combined label
 // repeating itself.
+//
+// The names are then sorted, because this label is an AGGREGATION KEY, not a
+// description of one block. `display_order` is the practitioner's tap order
+// (multi-area-editor appends each committed area to the end of the list, and
+// the writer stores the index verbatim), so charting Cheek-then-Sideburn one
+// visit and Sideburn-then-Cheek the next would otherwise produce two different
+// keys for one anatomical combination — the client's time on that pair would
+// split across two breakdown rows and the true total would appear nowhere.
+// Sorting makes the key depend on the SET of areas, which is what the question
+// "how long has this client spent on these areas" actually means. The CLINICAL
+// label keeps charting order (lib/sessions/block-areas.ts) — that one does
+// describe a single block.
 export function resolveAreaBucketLabel(block: AreaBucketBlock): string {
   const rows = block.structured_areas ?? [];
   if (rows.length > 0) {
@@ -153,7 +165,16 @@ export function resolveAreaBucketLabel(block: AreaBucketBlock): string {
       seen.add(key);
       names.push(name);
     }
-    if (names.length > 0) return names.join(AREA_BUCKET_SEPARATOR);
+    if (names.length > 0) {
+      // Case-insensitive, locale-independent sort so the key is stable across
+      // visits and across spellings.
+      const canonical = [...names].sort((a, b) => {
+        const al = a.toLowerCase();
+        const bl = b.toLowerCase();
+        return al < bl ? -1 : al > bl ? 1 : 0;
+      });
+      return canonical.join(AREA_BUCKET_SEPARATOR);
+    }
   }
   const legacy = block.primary_area?.trim();
   if (legacy && legacy.length > 0) return legacy;

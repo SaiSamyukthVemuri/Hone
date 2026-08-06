@@ -113,6 +113,61 @@ describe("multi-area blocks: the duration lands in ONE combined bucket", () => {
     expect(resolveAreaBucketLabel(bothSides)).toBe("Underarms");
   });
 
+  it("the bucket key depends on the SET of areas, not the tap order (found by adversarial review)", () => {
+    // display_order is the practitioner's TAP order: multi-area-editor appends
+    // each committed area to the end and the writer stores the index verbatim.
+    // Charting Cheek-then-Sideburn one visit and Sideburn-then-Cheek the next
+    // must not split one anatomical combination across two breakdown rows.
+    const visit1: MinutesBucketBlock = {
+      minutes_performed: 30,
+      structured_areas: [
+        { area: "Cheek", laterality: "left", display_order: 0, created_at: "t1", id: "a1" },
+        { area: "Sideburn", laterality: "right", display_order: 1, created_at: "t2", id: "a2" },
+      ] as never,
+    };
+    const visit2: MinutesBucketBlock = {
+      minutes_performed: 20,
+      structured_areas: [
+        { area: "Sideburn", laterality: "right", display_order: 0, created_at: "t1", id: "b1" },
+        { area: "Cheek", laterality: "left", display_order: 1, created_at: "t2", id: "b2" },
+      ] as never,
+    };
+
+    expect(resolveAreaBucketLabel(visit1)).toBe(resolveAreaBucketLabel(visit2));
+
+    const { byArea, total } = bucketMinutes([visit1, visit2]);
+    expect(byArea.size).toBe(1);
+    expect(byArea.get("Cheek · Sideburn")).toBe(50);
+    expect(byArea.get("Sideburn · Cheek")).toBeUndefined();
+    expect(total).toBe(50);
+
+    // And the single row carries the whole share.
+    const rows = buildAreaMinutesBreakdown([visit1, visit2]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].percentage).toBe(100);
+  });
+
+  it("three areas charted in any order collapse to ONE bucket", () => {
+    const mk = (order: string[], minutes: number): MinutesBucketBlock => ({
+      minutes_performed: minutes,
+      structured_areas: order.map((area, i) => ({
+        area,
+        laterality: "not_applicable",
+        display_order: i,
+        created_at: `t${i}`,
+        id: `${area}-${i}`,
+      })) as never,
+    });
+    const rows = buildAreaMinutesBreakdown([
+      mk(["Chin", "Jawline", "Neck"], 10),
+      mk(["Neck", "Chin", "Jawline"], 10),
+      mk(["Jawline", "Neck", "Chin"], 10),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].area).toBe("Chin · Jawline · Neck");
+    expect(rows[0].minutes).toBe(30);
+  });
+
   it("dedupes case-insensitively, keeping the first spelling", () => {
     const mixed: AreaBucketBlock = {
       structured_areas: [
