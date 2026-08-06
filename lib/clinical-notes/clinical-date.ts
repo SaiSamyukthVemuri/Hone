@@ -67,12 +67,33 @@ const DEFAULT_OPTIONS: Intl.DateTimeFormatOptions = {
   day: "numeric",
 };
 
+// HONE'S PRESENTATION LOCALE for clinical dates.
+//
+// `toLocaleDateString(undefined, …)` means "whatever locale THIS runtime
+// defaults to", and a Client Component is rendered twice: once by Node on the
+// server, once by the browser during hydration. Those two runtimes do not agree.
+// A Vercel Node runtime defaults to en-US and emits "Jul 21, 2026"; a browser
+// whose preference is fr-CA emits "21 juill. 2026". Same day, different text —
+// a React hydration mismatch on a clinical screen.
+//
+// `timeZone: "UTC"` pins the DAY. It does not pin the locale-dependent TEXT.
+// Both have to be explicit for the output to be deterministic.
+//
+// en-CA matches what the app already declares about itself: `<html lang="en">`
+// and the `en_CA` public metadata locale.
+export const HONE_CLINICAL_DATE_LOCALE = "en-CA";
+
 // Format a clinical event's calendar date.
 //
-// Month names come from the viewer's locale (so a French browser reads
-// "21 juil. 2026"), but the DATE ITSELF is pinned by `timeZone: "UTC"` against
-// a UTC-constructed instant — so the rendered day is the stored day in every
-// zone, from Asia/Kolkata to America/Los_Angeles.
+// DETERMINISTIC BY CONTRACT: the same `iso` produces the same string in every
+// runtime, because BOTH axes are explicit — the locale defaults to Hone's
+// declared presentation locale, and the zone is pinned to UTC and cannot be
+// overridden. Nothing here reads the server's locale, the browser's preference,
+// the client timezone, or the document language.
+//
+// `opts.locale` exists for deliberate, explicit callers (and for pure formatter
+// tests). It is never derived from the environment — a component must not pass
+// `navigator.language`, or the determinism this contract provides is gone.
 //
 // Returns "" for an absent or unparseable value rather than throwing, so a
 // malformed row degrades to a blank date instead of taking a clinical screen
@@ -86,16 +107,21 @@ export function formatClinicalDate(
   const instant = new Date(
     Date.UTC(parts.year, parts.month - 1, parts.day),
   );
+  // Explicit, never `undefined` — `undefined` is the runtime-dependent default
+  // that makes server and browser output diverge.
+  const locale = opts.locale ?? HONE_CLINICAL_DATE_LOCALE;
   try {
-    return instant.toLocaleDateString(opts.locale, {
+    return instant.toLocaleDateString(locale, {
       ...DEFAULT_OPTIONS,
       ...opts.options,
-      // Not overridable: dropping this is precisely the defect.
+      // Not overridable: dropping this is precisely the timezone defect.
       timeZone: "UTC",
     });
   } catch {
-    // An invalid locale tag must not break a clinical screen.
-    return instant.toLocaleDateString(undefined, {
+    // An invalid EXPLICIT locale tag must not break a clinical screen — and the
+    // fallback must still be deterministic, so it uses the app locale rather
+    // than the runtime's.
+    return instant.toLocaleDateString(HONE_CLINICAL_DATE_LOCALE, {
       ...DEFAULT_OPTIONS,
       timeZone: "UTC",
     });

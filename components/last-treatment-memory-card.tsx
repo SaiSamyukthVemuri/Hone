@@ -286,10 +286,16 @@ function NoteRow({
 }) {
   return (
     <div>
-      <dt className="text-xs text-neutral-500">
+      <dt
+        data-testid="last-treatment-note-date"
+        className="text-xs text-neutral-500"
+      >
         {/* A clinical note's occurred_at is a CALENDAR DATE, not an instant.
             <FormattedDateTime> would convert it into the viewer's zone and show
-            the previous day in every negative UTC offset. */}
+            the previous day in every negative UTC offset — and would take the
+            viewer's LOCALE too, so the server and browser renders could differ.
+            <ClinicalDate> pins both (en-CA + UTC). The session's own start time,
+            above, is a real instant and deliberately still follows the viewer. */}
         {label} · <ClinicalDate iso={note.occurredAt} />
         {note.total > 1 && ` · ${note.total} recorded`}
       </dt>

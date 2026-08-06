@@ -1,7 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  HONE_CLINICAL_DATE_LOCALE,
   civilDateParts,
   clinicalDateInputValue,
   formatClinicalDate,
@@ -183,6 +184,21 @@ describe("parsing and round-tripping", () => {
     });
   });
 
+  it("a stored value carrying a real TIME still renders its own stored day", () => {
+    // Not every occurred_at comes from the date input: the column defaults to
+    // now() when the form omits it, so some rows hold a real instant. The
+    // formatter reads the stored civil date either way and never lets the
+    // FORMATTER's own instant-parsing shift it. (This is what made a naive
+    // `new Date(iso)` implementation indistinguishable in the earlier tests.)
+    const withTime = "2026-07-21T23:59:59+00:00";
+    for (const tz of ZONES) {
+      const out = inZone(tz, () => formatClinicalDate(withTime));
+      expect(out, tz).toContain("21");
+      expect(out, tz).not.toContain("22");
+    }
+    expect(civilDateParts(withTime)).toEqual({ year: 2026, month: 7, day: 21 });
+  });
+
   it("round-trips to the date-input shape, zero-padded", () => {
     expect(clinicalDateInputValue("2026-07-21T00:00:00+00:00")).toBe("2026-07-21");
     expect(clinicalDateInputValue("2026-01-05T00:00:00+00:00")).toBe("2026-01-05");
@@ -194,11 +210,26 @@ describe("parsing and round-tripping", () => {
     }
   });
 
-  it("month names still follow the requested locale", () => {
+  it("an EXPLICIT locale override still works (deliberate callers, pure tests)", () => {
+    // This is an override a caller asks for by name. It is NOT how the
+    // component renders — the component passes no locale, so it always gets
+    // the deterministic application default.
     expect(formatClinicalDate(JULY_21, { locale: "en-US" })).toMatch(/Jul/);
     expect(formatClinicalDate(JULY_21, { locale: "fr-FR" })).toMatch(/juil/i);
-    // …but the DAY never moves, whatever the locale.
+    // …and the DAY never moves, whatever the locale.
     expect(formatClinicalDate(JULY_21, { locale: "fr-FR" })).toContain("21");
+  });
+
+  it("the DEFAULT does not follow the viewer — it follows Hone's locale", () => {
+    expect(HONE_CLINICAL_DATE_LOCALE).toBe("en-CA");
+    // The no-options call equals the app-locale call, and is unaffected by any
+    // other runtime preference.
+    expect(formatClinicalDate(JULY_21)).toBe(
+      formatClinicalDate(JULY_21, { locale: HONE_CLINICAL_DATE_LOCALE }),
+    );
+    expect(formatClinicalDate(JULY_21)).not.toBe(
+      formatClinicalDate(JULY_21, { locale: "fr-FR" }),
+    );
   });
 
   it("an invalid locale tag falls back instead of throwing", () => {
@@ -217,6 +248,147 @@ describe("parsing and round-tripping", () => {
       }),
     );
     expect(out).toContain("21");
+  });
+});
+
+describe("the DEFAULT LOCALE is explicit, never the runtime's", () => {
+  // WHY THIS IS NOT AN OUTPUT ASSERTION.
+  //
+  // en-US and en-CA render this date IDENTICALLY ("Jul 21, 2026"), and the CI
+  // runner defaults to en-US. So a test that only inspects the returned string
+  // would pass even if the implementation reverted to
+  // `toLocaleDateString(undefined, …)` — the exact defect. These tests inspect
+  // the ARGUMENT instead, and simulate the two runtimes explicitly.
+
+  const realToLocaleDateString = Date.prototype.toLocaleDateString;
+  afterEach(() => {
+    Date.prototype.toLocaleDateString = realToLocaleDateString;
+  });
+
+  it("passes the explicit application locale AND the UTC pin to the formatter", () => {
+    const spy = vi
+      .spyOn(Date.prototype, "toLocaleDateString")
+      .mockReturnValue("stubbed");
+
+    formatClinicalDate(JULY_21);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [locale, options] = spy.mock.calls[0] as [
+      string | undefined,
+      Intl.DateTimeFormatOptions,
+    ];
+    // Reverting to `toLocaleDateString(undefined, …)` reds exactly here.
+    expect(locale).toBe("en-CA");
+    expect(locale).not.toBeUndefined();
+    expect(options.timeZone).toBe("UTC");
+    spy.mockRestore();
+  });
+
+  it("an explicit caller locale is still forwarded verbatim", () => {
+    const spy = vi
+      .spyOn(Date.prototype, "toLocaleDateString")
+      .mockReturnValue("stubbed");
+    formatClinicalDate(JULY_21, { locale: "fr-FR" });
+    expect((spy.mock.calls[0] as [string])[0]).toBe("fr-FR");
+    spy.mockRestore();
+  });
+
+  it("the UTC pin cannot be overridden by a caller's options", () => {
+    const spy = vi
+      .spyOn(Date.prototype, "toLocaleDateString")
+      .mockReturnValue("stubbed");
+    formatClinicalDate(JULY_21, {
+      options: { timeZone: "America/Toronto" } as Intl.DateTimeFormatOptions,
+    });
+    const options = (spy.mock.calls[0] as [unknown, Intl.DateTimeFormatOptions])[1];
+    expect(options.timeZone).toBe("UTC");
+    spy.mockRestore();
+  });
+
+  it("SERVER (en-US default) and BROWSER (fr-CA default) produce the SAME string", () => {
+    // A Client Component is rendered twice — once by Node, once by the browser
+    // — and `undefined` means "each runtime's own default". This models that
+    // divergence directly: the stub resolves `undefined` to an INJECTED runtime
+    // default, exactly as a real runtime would.
+    function underRuntimeDefault<T>(runtimeDefault: string, fn: () => T): T {
+      Date.prototype.toLocaleDateString = function (
+        this: Date,
+        locale?: string | string[],
+        options?: Intl.DateTimeFormatOptions,
+      ) {
+        return realToLocaleDateString.call(
+          this,
+          locale ?? runtimeDefault,
+          options,
+        );
+      } as typeof Date.prototype.toLocaleDateString;
+      try {
+        return fn();
+      } finally {
+        Date.prototype.toLocaleDateString = realToLocaleDateString;
+      }
+    }
+
+    const onServer = underRuntimeDefault("en-US", () =>
+      formatClinicalDate(JULY_21),
+    );
+    const inBrowser = underRuntimeDefault("fr-CA", () =>
+      formatClinicalDate(JULY_21),
+    );
+
+    // The hydration guarantee.
+    expect(onServer).toBe(inBrowser);
+    expect(onServer).toBe(formatClinicalDate(JULY_21, { locale: "en-CA" }));
+
+    // And the control: those two runtime defaults REALLY DO diverge, so the
+    // assertion above is not vacuous.
+    const naiveServer = underRuntimeDefault("en-US", () =>
+      new Date(Date.UTC(2026, 6, 21)).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      }),
+    );
+    const naiveBrowser = underRuntimeDefault("fr-CA", () =>
+      new Date(Date.UTC(2026, 6, 21)).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      }),
+    );
+    expect(naiveServer).not.toBe(naiveBrowser);
+  });
+
+  it("holds across every zone AND every runtime default at once", () => {
+    const outputs: string[] = [];
+    for (const tz of ZONES) {
+      for (const runtimeDefault of ["en-US", "fr-CA", "de-DE", "ja-JP"]) {
+        outputs.push(
+          inZone(tz, () => {
+            Date.prototype.toLocaleDateString = function (
+              this: Date,
+              locale?: string | string[],
+              options?: Intl.DateTimeFormatOptions,
+            ) {
+              return realToLocaleDateString.call(
+                this,
+                locale ?? runtimeDefault,
+                options,
+              );
+            } as typeof Date.prototype.toLocaleDateString;
+            try {
+              return formatClinicalDate(JULY_21);
+            } finally {
+              Date.prototype.toLocaleDateString = realToLocaleDateString;
+            }
+          }),
+        );
+      }
+    }
+    expect(new Set(outputs).size).toBe(1);
+    expect(outputs[0]).toContain("21");
   });
 });
 
@@ -247,11 +419,40 @@ describe("every clinical-note date surface uses the shared formatter", () => {
     expect(src).not.toMatch(/<ClinicalDate iso=\{memory\.startedAt\}/);
   });
 
-  it("the civil-date component pins UTC and needs no hydration suppression", () => {
-    const lib = read("lib/clinical-notes/clinical-date.ts");
+  it("BOTH axes are pinned in source — locale AND zone, not zone alone", () => {
+    const lib = codeOnly("lib/clinical-notes/clinical-date.ts");
+    // Zone: the day.
     expect(lib).toMatch(/timeZone: "UTC"/);
+    // Locale: the TEXT. UTC alone does not make hydration safe.
+    expect(lib).toMatch(/HONE_CLINICAL_DATE_LOCALE = "en-CA"/);
+    expect(lib).toMatch(/opts\.locale \?\? HONE_CLINICAL_DATE_LOCALE/);
+    // The runtime-dependent default must appear nowhere in the format calls.
+    expect(lib).not.toMatch(/toLocaleDateString\(undefined/);
+    expect(lib).not.toMatch(/toLocaleDateString\(opts\.locale/);
+  });
+
+  it("the component defers entirely to the deterministic default", () => {
     const cmp = codeOnly("components/clinical-date.tsx");
-    expect(cmp).not.toMatch(/suppressHydrationWarning/);
-    expect(cmp).not.toMatch(/useEffect/);
+    // It passes NO locale of its own…
+    expect(cmp).toMatch(/formatClinicalDate\(iso\)/);
+    // …and never derives one from the browser.
+    expect(cmp).not.toMatch(/navigator/);
+    expect(cmp).not.toMatch(/languages?\b/);
+    expect(cmp).not.toMatch(/documentElement/);
+    expect(cmp).not.toMatch(/Intl\./);
+    expect(cmp).not.toMatch(/resolvedOptions/);
+  });
+
+  it("the mismatch is REMOVED, never hidden or deferred", () => {
+    const cmp = codeOnly("components/clinical-date.tsx");
+    for (const escape of [
+      "suppressHydrationWarning",
+      "useEffect",
+      "useState",
+      "ssr: false",
+      "dynamic(",
+    ]) {
+      expect(cmp, `must not use ${escape}`).not.toContain(escape);
+    }
   });
 });

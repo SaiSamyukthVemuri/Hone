@@ -673,3 +673,162 @@ test.describe("iPad — 820px, Chloe's device", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// HYDRATION DETERMINISM for clinical dates.
+//
+// <ClinicalDate> is a Client Component, so it renders TWICE: once by Node on
+// the server, once by the browser during hydration. `toLocaleDateString` with
+// no locale means "this runtime's default", and those two runtimes disagree —
+// Node emits "Jul 21, 2026" while an fr-CA browser emits "21 juill. 2026".
+// Same day, mismatched markup, React hydration error on a clinical screen.
+//
+// timeZone: "UTC" pins the DAY but not the locale-dependent TEXT. This spec
+// drives a REAL browser whose locale is fr-CA — the strongest cross-runtime
+// evidence available — and proves the date is stable, correct, and warning-free.
+// ---------------------------------------------------------------------------
+test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => {
+  test.use({ locale: "fr-CA", timezoneId: "America/Toronto" });
+
+  // Console noise this app emits for reasons unrelated to hydration. Narrow on
+  // purpose: a broad filter would swallow the very errors under test.
+  const IRRELEVANT = [
+    /Download the React DevTools/i,
+    /Failed to load resource/i,
+    /favicon/i,
+    /\[Fast Refresh\]/i,
+    // The e2e stack configures no PostHog token on purpose; the SDK complains
+    // once per page. Named explicitly rather than filtered by a broad pattern.
+    /\[PostHog\.js\] PostHog was initialized without a token/i,
+    // Vercel Analytics / Speed Insights are served by the Vercel edge in
+    // production; locally the path 404s to HTML and the browser refuses the
+    // script. Named explicitly — not a broad "MIME type" filter.
+    /_vercel\/(insights|speed-insights)/i,
+  ];
+  const isIrrelevant = (text: string) => IRRELEVANT.some((re) => re.test(text));
+
+  test("the note date is stable, correct and hydration-clean at fr-CA / Toronto", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const fx = await seedMemoryFixture(seed);
+    const prac = (
+      await sql<{ id: string }>(
+        `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+        [seed.studioId],
+      )
+    )[0];
+    // A note dated JULY 21 — stored as a calendar date, i.e. midnight UTC.
+    // Toronto is UTC-4 in July, so a naive instant conversion shows July 20.
+    await sql(
+      `insert into public.client_clinical_notes
+         (id, client_id, studio_id, practitioner_id, kind, body, occurred_at)
+       values ($1,$2,$3,$4,'consultation',$5,'2026-07-21')`,
+      [
+        randomUUID(),
+        fx.clientId,
+        seed.studioId,
+        prac.id,
+        "Hydration probe consultation.",
+      ],
+    );
+
+    // Capture console BEFORE navigation so the hydration pass is covered.
+    const errors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() !== "error" && msg.type() !== "warning") return;
+      const text = msg.text();
+      if (!isIrrelevant(text)) errors.push(`${msg.type()}: ${text}`);
+    });
+    page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${fx.clientId}?tab=consultation`);
+
+    const section = page.getByText("Consultation notes").first();
+    await expect(section).toBeVisible({ timeout: T });
+
+    await test.step("the stored day is shown, not the prior day", async () => {
+      await expect(page.getByText("Jul 21, 2026").first()).toBeVisible({
+        timeout: T,
+      });
+      // The defect: Toronto would have rendered July 20.
+      await expect(page.getByText("Jul 20, 2026")).toHaveCount(0);
+    });
+
+    await test.step("the text follows Hone's en-CA contract, NOT the fr-CA browser", async () => {
+      // A browser-locale-derived rendering would read "21 juill. 2026".
+      await expect(page.getByText(/juill\./)).toHaveCount(0);
+      await expect(page.getByText(/juillet/)).toHaveCount(0);
+    });
+
+    await test.step("the date does NOT change after hydration", async () => {
+      const before = await page
+        .getByText("Jul 21, 2026")
+        .first()
+        .textContent();
+      // Give React a full hydration + settle window.
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(750);
+      const after = await page.getByText("Jul 21, 2026").first().textContent();
+      expect(after).toBe(before);
+      expect(after?.trim()).toBe("Jul 21, 2026");
+    });
+
+    await test.step("no React hydration mismatch was reported", async () => {
+      const hydration = errors.filter((e) =>
+        /hydrat|did not match|Text content does not match|server-rendered/i.test(e),
+      );
+      expect(hydration, hydration.join("\n")).toEqual([]);
+      expect(errors, errors.join("\n")).toEqual([]);
+    });
+  });
+
+  test("the memory card's note date is deterministic while the session time stays an instant", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const fx = await seedMemoryFixture(seed);
+    const errors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() !== "error" && msg.type() !== "warning") return;
+      const text = msg.text();
+      if (!isIrrelevant(text)) errors.push(`${msg.type()}: ${text}`);
+    });
+    page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${fx.clientId}/sessions/${fx.currentSessionId}`);
+
+    const card = memoryCard(page);
+    await expect(card).toBeVisible({ timeout: T });
+
+    // THE TWO FORMATTERS, side by side in one card, behaving differently on
+    // purpose. This is the clearest possible proof of the contract.
+    //
+    // (a) NOTE dates are CIVIL dates → pinned to Hone's en-CA, so an fr-CA
+    //     browser still reads "Jan 1, 2026".
+    const noteDates = card.getByTestId("last-treatment-note-date");
+    await expect(noteDates.first()).toContainText("Jan 1, 2026");
+    for (const dt of await noteDates.all()) {
+      await expect(dt).not.toContainText("janv.");
+    }
+
+    // (b) SESSION START is a real INSTANT → still FormattedDateTime, which
+    //     deliberately follows the viewer. Under fr-CA it reads "1 janv. 2026",
+    //     and that is CORRECT — instants are not civil dates.
+    await expect(card.getByText(/janv\./).first()).toBeVisible();
+
+    // Neither changes after hydration.
+    const noteBefore = await noteDates.first().textContent();
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(750);
+    expect(await noteDates.first().textContent()).toBe(noteBefore);
+    await expect(noteDates.first()).toContainText("Jan 1, 2026");
+
+    const hydration = errors.filter((e) =>
+      /hydrat|did not match|Text content does not match|server-rendered/i.test(e),
+    );
+    expect(hydration, hydration.join("\n")).toEqual([]);
+  });
+});
