@@ -98,6 +98,13 @@ export type PointOfCareEntry = {
   mode: string | null;
   hairs_treated?: number | string | null;
   observation_chips?: unknown;
+  // The entry's practitioner-authored free text — the charting form's
+  // "Additional notes" (lib/sessions/charting-labels.ts). DELIBERATELY not read
+  // by this module: the point-of-care card is an at-a-glance surface and shows
+  // an excerpt model, not narrative. It is declared here so the ONE entry shape
+  // stays shared, and it is read by the appointment-prep narrative builder
+  // (lib/sessions/appointment-prep-memory.ts), which owns full-text display.
+  comments?: string | null;
   thermolysis_intensity_percent?: number | string | null;
   thermolysis_duration_seconds?: number | string | null;
   galvanic_ma?: number | string | null;
@@ -181,6 +188,31 @@ export type PointOfCareArea = {
   // Kept whole — never truncated at 140 characters.
   responseNote: string | null;
   cautionNote: string | null;
+  // caution_for_next_session on its own. A block can be flagged to watch with
+  // NO note; without this the area object looks unflagged and only the
+  // memory-level watchLines prose ("<area>: flagged to watch.") carries it.
+  cautionFlag: boolean;
+  // The practitioner's own free text per LIVE pass, oldest first — the charting
+  // form's "Additional notes" (electrolysis_entries.comments).
+  //
+  // THE WHOLE STORED COLUMN, deliberately.
+  //
+  // The obvious-looking alternative — resolveDisplayChips(...).note, the
+  // remainder after legacy chip hydration — LOSES TEXT on this surface, and the
+  // loss is silent. resolveDisplayChips promotes canonical tokens out of
+  // `comments` into a chip list, but it only does so when observation_chips is
+  // EMPTY, and the response line here is built from that same empty raw column
+  // (unifiedReactionLabels, below). So the promoted tokens are rendered by
+  // nothing: a pass whose comments read "Client tolerated well" produced an
+  // empty note, an empty response line, and a card that then printed "No notes
+  // recorded at the last session." over text the practitioner had typed.
+  //
+  // entry-row.tsx can safely use the remainder because it renders the promoted
+  // chips as pills alongside it. This surface does not, so it takes the column
+  // whole. Nothing double-renders: when observation_chips IS populated, those
+  // chips become the response line and resolveDisplayChips would have returned
+  // the full comments as the note anyway.
+  notes: string[];
 };
 
 export type PointOfCareMemory = {
@@ -408,6 +440,17 @@ function buildArea(block: PointOfCareBlock, index: number): PointOfCareArea {
     live.map((e) => e.observation_chips),
   );
 
+  // Oldest pass first, so the notes read in the order they were written. The
+  // WHOLE stored column — see PointOfCareArea.notes for why the chip-hydration
+  // remainder is the wrong choice on a surface that renders no pills.
+  const notes: string[] = [];
+  for (const e of [...live].sort((a, b) =>
+    a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+  )) {
+    const note = trimmedOrNull(e.comments);
+    if (note) notes.push(note);
+  }
+
   const tolerance = block.tolerance_rating;
 
   return {
@@ -435,6 +478,8 @@ function buildArea(block: PointOfCareBlock, index: number): PointOfCareArea {
     responseLine: responseLabels.length > 0 ? responseLabels.join(", ") : null,
     responseNote: trimmedOrNull(block.reaction_notes),
     cautionNote: trimmedOrNull(block.caution_note),
+    cautionFlag: block.caution_for_next_session === true,
+    notes,
   };
 }
 

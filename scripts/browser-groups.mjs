@@ -86,6 +86,10 @@ export const BROWSER_GROUPS = {
       "service-calendar-color-mobile.spec.ts",
       "service-order-and-colors.spec.ts",
       "disinfectant-notification.spec.ts",
+      // Appointment preparation memory on the calendar detail screen: the
+      // newest-CHARTED selector at the appointment boundary, the complete
+      // per-area setup + outcomes, and the full practitioner narrative.
+      "appointment-prep-memory.spec.ts",
     ],
   },
   owner_admin: {
