@@ -8,6 +8,12 @@ import {
   findMissingRequiredAnswers,
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
+import {
+  buildElectrolysisAcknowledgementDraftRecord,
+  ELECTROLYSIS_ACKNOWLEDGEMENT,
+  normalizeElectrolysisAcknowledgementClaim,
+  validateElectrolysisAcknowledgement,
+} from "@/lib/intake/acknowledgements";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 
@@ -35,6 +41,19 @@ const INTAKE_TOKEN_INVALID =
 
 // Whitelist responses to known question keys (or their `_notes` siblings) so
 // a client-side tamper can't inject arbitrary JSON fields.
+//
+// Exactly ONE key outside that set is admitted: the versioned electrolysis
+// acknowledgement record (ELECTROLYSIS_ACKNOWLEDGEMENT.id). It is not a
+// question, so the whitelist would otherwise strip it and the client's
+// assertion about which wording they read could never reach the server.
+//
+// Admitting it is NOT trusting it. The value is narrowed here to a bounded
+// {id, version, wording, accepted} claim — unknown fields dropped, non-
+// strings rejected, oversize strings rejected — and NOTHING client-authored
+// is ever persisted: the draft path overwrites the claim with a
+// server-derived record (below), and the submit path validates the claim by
+// exact equality against the canonical constant before doing the same. The
+// claim is evidence to check, never content to store.
 function sanitizeResponses(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
   const allowed = new Set(ALL_QUESTION_KEYS);
@@ -42,6 +61,10 @@ function sanitizeResponses(input: unknown): Record<string, unknown> {
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
     if (allowed.has(key)) out[key] = value;
   }
+  const ackClaim = normalizeElectrolysisAcknowledgementClaim(
+    (input as Record<string, unknown>)[ELECTROLYSIS_ACKNOWLEDGEMENT.id],
+  );
+  if (ackClaim) out[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = ackClaim;
   return out;
 }
 
@@ -92,6 +115,23 @@ export async function saveIntakeStepAction(payload: {
     ...((existing.responses as Record<string, unknown>) ?? {}),
     ...responses,
   };
+
+  // Draft semantics are unchanged: an unticked acknowledgement stays
+  // unticked and saving is never refused for it. What IS enforced here is
+  // that the stored record's id / version / wording are server-derived, so
+  // the only thing a draft can carry from the browser is the boolean. A
+  // forged draft save therefore cannot park fabricated acknowledgement text
+  // in an in-progress row for the practitioner to read.
+  //
+  // The claim is written on every save the wizard makes, so unticking the
+  // box overwrites the record rather than leaving a stale accepted one
+  // behind — the merge above is a spread and would otherwise preserve it.
+  const draftAck = buildElectrolysisAcknowledgementDraftRecord(
+    normalizeElectrolysisAcknowledgementClaim(
+      merged[ELECTROLYSIS_ACKNOWLEDGEMENT.id],
+    ),
+  );
+  if (draftAck) merged[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = draftAck;
 
   // Atomic status guard: the UPDATE is conditional on
   // `status = 'in_progress'`. If the form is submitted/reviewed
@@ -175,6 +215,46 @@ export async function submitIntakeAction(payload: {
         "Please answer all required questions before submitting your intake.",
     };
   }
+
+  // Versioned electrolysis acknowledgement — the independent server gate.
+  //
+  // This runs BELOW the already-submitted early return (so a legacy intake
+  // submitted before this acknowledgement existed is never re-validated,
+  // never rewritten, and never retroactively marked incomplete) and ABOVE
+  // the UPDATE (so a rejection performs zero writes).
+  //
+  // It trusts nothing from the browser: not the disabled-button state, not
+  // the client-side validation, and not the submitted wording version. Two
+  // independent keys must agree — the required checkbox must be exactly
+  // `true`, AND the claim must match the canonical id, version and wording
+  // by exact equality. A forged payload with a wrong id, an unknown or
+  // downgraded version, altered wording, or `accepted: false` is refused
+  // here rather than quietly corrected.
+  //
+  // What gets stored is rebuilt from the constant with a server-stamped
+  // `accepted_at`; the validated claim is evidence that the client's browser
+  // rendered this exact text, never the bytes we persist.
+  const ack = validateElectrolysisAcknowledgement(
+    merged,
+    new Date().toISOString(),
+  );
+  if (!ack.ok) {
+    // Two calm, public-safe messages. The stale-wording branch has to be
+    // actionable: a client whose tab was open across a wording change is
+    // legitimately in this state and needs to be told to reload. Neither
+    // message names a key, a version, or a database detail.
+    const staleWording =
+      ack.reason === "unknown_version" ||
+      ack.reason === "wording_mismatch" ||
+      ack.reason === "wrong_id";
+    return {
+      ok: false,
+      error: staleWording
+        ? "The electrolysis acknowledgement has been updated. Please refresh this page and confirm the current wording before submitting."
+        : "Please confirm the electrolysis acknowledgement before submitting your intake.",
+    };
+  }
+  merged[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = ack.record;
 
   // Atomic status guard: only transition to 'submitted' if the row is
   // still 'in_progress'. Two concurrent submit clicks (e.g. browser

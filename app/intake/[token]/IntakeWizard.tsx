@@ -10,9 +10,38 @@ import {
   type Question,
   type Step,
 } from "@/lib/intake/questions";
+import {
+  buildElectrolysisAcknowledgementClaim,
+  ELECTROLYSIS_ACKNOWLEDGEMENT,
+} from "@/lib/intake/acknowledgements";
 import { saveIntakeStepAction, submitIntakeAction } from "./actions";
 
 type Responses = Record<string, unknown>;
+
+// Attach the versioned electrolysis acknowledgement claim — what this
+// browser asserts it rendered — alongside the plain checkbox answer.
+//
+// Attached ONLY once the client has actually touched the checkbox. Before
+// that the key is absent, so a draft abandoned on step 1 carries no
+// acknowledgement record at all and the practitioner review surface can
+// truthfully say "not yet reached" rather than "not acknowledged".
+//
+// Sent on every save AND on submit, so unticking the box overwrites the
+// stored record instead of leaving a stale acceptance behind (the server
+// merge is a spread and would otherwise preserve it).
+//
+// The server re-derives everything it stores from its own copy of the
+// constant and validates this claim by exact equality; nothing here is
+// trusted, and this is never the only enforcement.
+function withAcknowledgementClaim(responses: Responses): Responses {
+  const answer = responses[ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey];
+  if (answer === undefined) return responses;
+  return {
+    ...responses,
+    [ELECTROLYSIS_ACKNOWLEDGEMENT.id]:
+      buildElectrolysisAcknowledgementClaim(answer === true),
+  };
+}
 
 type Props = {
   token: string;
@@ -113,7 +142,7 @@ export function IntakeWizard({
       const res = await saveIntakeStepAction({
         token,
         step: nextStep,
-        responses,
+        responses: withAcknowledgementClaim(responses),
       });
       if (!res.ok) setSavingError(res.error);
     });
@@ -134,7 +163,7 @@ export function IntakeWizard({
         const res = await saveIntakeStepAction({
           token,
           step: nextStep,
-          responses,
+          responses: withAcknowledgementClaim(responses),
         });
         if (!res.ok) {
           setSavingError(res.error);
@@ -147,7 +176,10 @@ export function IntakeWizard({
 
     // Final submit
     startTransition(async () => {
-      const res = await submitIntakeAction({ token, responses });
+      const res = await submitIntakeAction({
+        token,
+        responses: withAcknowledgementClaim(responses),
+      });
       if (!res.ok) {
         setSavingError(res.error);
         return;
@@ -282,10 +314,10 @@ function QuestionField({ q, value, notesValue, onChange, onNotesChange, error }:
         </div>
       )}
 
-      {renderControl(q, value, onChange)}
+      {renderControl(q, value, onChange, error)}
 
       {error && (
-        <p className="text-xs text-red-700" role="alert">
+        <p id={`${q.key}_error`} className="text-xs text-red-700" role="alert">
           {error}
         </p>
       )}
@@ -320,6 +352,7 @@ function renderControl(
   q: Question,
   value: unknown,
   onChange: (v: unknown) => void,
+  error?: string,
 ): React.ReactNode {
   const baseInputClass =
     "w-full min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base leading-normal focus:border-neutral-900 focus:outline-none";
@@ -454,17 +487,44 @@ function renderControl(
     );
   }
   if (q.type === "checkbox") {
+    // Unchecked unless the stored answer is exactly `true`. Nothing here
+    // defaults a checkbox to checked, and no code path ticks it on the
+    // client's behalf — opening the step or continuing past an earlier one
+    // never marks an acknowledgement accepted.
     const checked = value === true;
+    // A checkbox is the one control type QuestionField renders without the
+    // top label block, so before this it was the only one with no `id`, no
+    // required marker and no help text at all — required-ness was
+    // discoverable only by pressing Continue and failing. The wrapping
+    // <label> already names the input; what was missing is the required
+    // signal, the help text, and a programmatic tie to the error.
+    const helpId = q.helpText ? `${q.key}_help` : undefined;
+    const errorId = error ? `${q.key}_error` : undefined;
+    const describedBy = [helpId, errorId].filter(Boolean).join(" ") || undefined;
     return (
-      <label className="flex items-start gap-3 rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm text-neutral-700">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-          className="mt-0.5 h-5 w-5 rounded border-neutral-400"
-        />
-        <span>{q.label}</span>
-      </label>
+      <div className="flex flex-col gap-1.5">
+        <label className="flex items-start gap-3 rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm leading-relaxed text-neutral-700">
+          <input
+            id={q.key}
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => onChange(e.target.checked)}
+            aria-required={q.required || undefined}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedBy}
+            className="mt-0.5 h-5 w-5 flex-none rounded border-neutral-400"
+          />
+          <span>
+            {q.label}
+            {q.required && <span className="ml-1 text-red-600">*</span>}
+          </span>
+        </label>
+        {q.helpText && (
+          <span id={helpId} className="text-xs text-neutral-500">
+            {q.helpText}
+          </span>
+        )}
+      </div>
     );
   }
   return null;
