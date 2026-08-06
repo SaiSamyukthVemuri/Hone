@@ -36,13 +36,17 @@ The headline P1 has been known since the 2026-07-30 register (`HN-007` / `F-SEC-
 
 `SELECT` must be retained. Authenticated-client reads of `appointments` are load-bearing across the calendar, client detail, dashboard, portal and search surfaces; revoking it would break the product.
 
-> **Amended by §16.** After this audit was written, the practitioner-attribution audit (draft PR #520)
-> was ingested and reconciled. Two changes follow, and §§10–14 should be read with them in view:
-> (a) the program is re-phased **application-first** — the additive attribution columns now precede the
-> revocation and `0172` moves to them (§16.6); and (b) `0172` closes the appointment **boundary** but does
-> **not** by itself establish trustworthy appointment **attribution**, because the actor every command
-> records is resolved through `public.practitioners`, a table PR #520 proves any studio owner can rewrite
-> (§16.3). PR #520's `PR-A1` is a **co-requisite** of the revocation, not a blocker.
+> **Amended by §16.** The practitioner-attribution audit (draft PR #520) was ingested and reconciled
+> after this audit was written. **The sequence below is unchanged and remains authoritative: `B3` is the
+> direct-DML boundary revoke and it holds migration `0172`.** The reconciliation adds scope, not
+> re-ordering — `B5`/`0174` is extended with the additive creator/canceller columns and the audit-table
+> attribution work (§16.4, §16.6).
+>
+> One qualification on the *claim*, not the sequence: `0172` closes the appointment **boundary** but does
+> not by itself establish trustworthy appointment **attribution**, because the actor every command records
+> resolves through `public.practitioners`, a table PR #520 proves any studio owner can rewrite (§16.3).
+> PR #520's `PR-A1` is a **co-requisite of that claim** — not a blocker to the revoke, which is
+> independently valuable and independently reversible.
 
 The recommended sequence is still **nine PRs, but not the nine the brief proposed**. Six of the brief's nine — internal creation, public booking, reschedule, move/reassign, cancellation, complete and no-show — have nothing to build, because the commands already exist and are already `service_role`-only; they collapse into a single *verify-and-pin* PR. The revocation moves from eighth to third. The writer census moves from last to first, because a census that ships last never froze the writers while the migration was being written. The count returns to nine only because this audit found work the brief did not know about: audit-table integrity, a status-transition guard, and the `/cancel` acknowledgement atomicity fix. Migrations `0172`–`0177`; **`0172` is reserved here and deliberately not created**.
 
@@ -1698,7 +1702,7 @@ Three independent designs were produced against the evidence in §§2–10. This
 |---|---|---|---|---|
 | **0172** | `revoke_authenticated_appointment_dml` | The four revoke/policy groups in §11.4 | **None** | Zero — provably a no-op for the deployed app |
 | **0173** | `appointment_repair_commands` | Shared helpers + `revert_appointment_outcome` + `set_appointment_notes` | New owner-only repair surface in a **new** file, `app/(app)/calendar/appointment-repair-actions.ts` + a new panel component | Additive only |
-| **0174** | `appointment_audit_integrity` | `appointment_audit.studio_id`, FK `cascade` → `set null`, read-policy rewrite, `BEFORE INSERT` derive trigger, append-only trigger (UPDATE **and** DELETE arms) | None | Audit table only; must land after the FK re-point |
+| **0174** | `appointment_attribution_and_audit_integrity` | `appointments.created_by_practitioner_id` + `cancelled_by_practitioner_id` (`D4`/`D5`, composite same-studio FK, `ON DELETE RESTRICT`) + backfill; `appointment_audit.actor_practitioner_id` (`D2`); `appointment_audit.studio_id`, FK `cascade` → `set null`, read-policy rewrite, `BEFORE INSERT` derive trigger, append-only trigger (UPDATE **and** DELETE arms) | None | Additive columns are risk-free; the audit-table half must land after the FK re-point |
 | **0175** | `appointment_transition_guard` | `BEFORE UPDATE OF status` transition guard (full legal edge set), `set_updated_at` trigger, `capacity_enabled` added to its own trigger's column list, drop the three legacy RPCs | None | Behaviour-changing at the DB layer; needs its own review |
 
 Everything else — the postcare command, the `/cancel` acknowledgement atomicity fix (P2-5/P2-10), the span CHECK, the peripheral `p_studio_id` hardening (P3-08), the `rematerialize_studio_reservations` buffer fix (P2-7) — sits **after** this ladder and is sequenced in §12.
@@ -1944,8 +1948,8 @@ reviewable, pushable independently of a deploy, and trivially reversible.
 | **B1** | Appointment direct-DML census guard + unit-test repairs | none | 1 | — | **No** |
 | **B2** | Lifecycle / audit-invariant / cross-tenant behavioural coverage (verify + pin) | none | 2 | — (parallel with B1) | **No** |
 | **B3** | Revoke `anon`/`authenticated` DML on `appointments` + `appointment_audit` | **0172** | 3 | B1, B2; **operator probe §13.2** | **No** |
-| **B4** | Appointment repair commands (`revert_appointment_outcome`, `set_appointment_notes`) + shared SQL helpers | **0173** | 4 | B3 (or swaps with it — §12.5) | **Yes, small** — the UI mount is ~12 lines in a 1D-owned file |
-| **B5** | Appointment audit integrity (`studio_id`, FK re-point, derive trigger, append-only) | **0174** | 5 | B3, B4 | **No** |
+| **B4** | Appointment repair commands (`revert_appointment_outcome`, `set_appointment_notes`) + shared SQL helpers | **0173** | 4 | B3; may be **expedited or paired** with it — §12.5 | **Yes, small** — the UI mount is ~12 lines in a 1D-owned file |
+| **B5** | Appointment **attribution** and audit integrity — `created_by`/`cancelled_by` practitioner columns (`D4`/`D5`), `actor_practitioner_id`, `studio_id`, FK re-point, derive trigger, append-only | **0174** | 5 | B3, B4 | **No** |
 | **B6** | Transition guard + `set_updated_at` + `capacity_enabled` trigger fix + legacy RPC retirement | **0175** | 6 | B5 (ordering is load-bearing) | **No** |
 | **B7** | `/cancel` policy-acknowledgement atomicity + snapshot currency | **0176** | 7 | B4 (reuses `lock_appointment_for_command`) | **No** |
 | **B8** | Postcare email-state command — retire the last seven direct writers | **0177** | 8 | **PR #517 must be merged** | **Yes, hard** |
@@ -1953,11 +1957,11 @@ reviewable, pushable independently of a deploy, and trivially reversible.
 
 Nine PRs. Six migrations, `0172`–`0177`. Three PRs carry no migration.
 
-> **Re-phased by §16.6.** The PR identities and contents above are unchanged, but the **order and the
-> migration slots move**: additive attribution (`B5`, extended with `D4`/`D5`) takes `0172` and ships
-> **before** the revocation (`B3`), so the boundary is not closed around commands that still do not record
-> an appointment's creator. Subsequent numbers come from `npm run migration:state` at cut time. The cost —
-> `P1-1` and `P1-2` stay open one extra migration cycle — is stated and bounded in §16.6.
+> **Extended by §16.6 — order and migration slots unchanged.** `B3` remains third and remains `0172`.
+> The reconciliation with PR #520 adds *scope* to `B5`/`0174`, which now also carries
+> `appointments.created_by_practitioner_id`, `appointments.cancelled_by_practitioner_id`,
+> `appointment_audit.studio_id`, `appointment_audit.actor_practitioner_id` and the `D2`–`D5` backfill and
+> durability work. Nothing moves out of `0172`.
 
 ---
 
@@ -2133,7 +2137,7 @@ RLS-default-denied for row DML; folding them in costs 0172 its "exactly two tabl
 **Migration.** **Yes — 0172.** Owns 0172 outright.
 
 **Dependencies.** B1 and B2 merged. **And the §13.2 read-only production probe run and reviewed** — the
-no-audit-baseline count decides whether B3 or B4 goes first (§12.5).
+no-audit-baseline count decides whether B4 is expedited to follow B3 immediately, or paired with it (§12.5). It does not change which migration number B3 takes.
 
 **Test plan.** Full `npm run test:unit` **and** `npm run test:db` on a freshly reset local stack. The
 migration must be applied from zero, not against an already-migrated database, or the revoke's
@@ -2147,7 +2151,7 @@ rollback loses nothing. Realistically it is never needed: the only failure mode 
 running as `authenticated`", and B1's census plus the 56-site `.from("appointments")` classification say
 none exists.
 
-**Merge order.** 3 (or 4 — see §12.5).
+**Merge order.** 3.
 
 **Session 1D.** **No collision.** Migration + `tests/**` + `docs/**` only. 1D's two appointment reads both
 survive: the `appointments` read at `app/(app)/calendar/[id]/page.tsx:99-107` is preserved by the
@@ -2195,7 +2199,7 @@ permanently immutable. These are the two capabilities the revoke actually freeze
 
 **Migration.** **Yes — 0173.**
 
-**Dependencies.** B3 (or precedes it — §12.5). Moves the repo-max tripwire from 0172's test to 0173's.
+**Dependencies.** B3 — may be expedited to follow it immediately, or shipped as an authorised pair with it (§12.5); it does not precede it. Moves the repo-max tripwire from 0172's test to 0173's.
 
 **Test plan.** DB: every sentinel; the 72-hour boundary from both sides; `no_audit_baseline` refusal; each
 blocking-dependent class refuses independently; self-idempotency (a second call returns
@@ -2218,7 +2222,22 @@ in §15.
 
 ---
 
-#### B5 — Appointment audit integrity — **migration 0174**
+#### B5 — Appointment attribution and audit integrity — **migration 0174**
+
+> **Extended by the PR #520 reconciliation (§16.6).** In addition to the audit-table work below, this PR
+> now carries the additive appointment attribution columns:
+>
+> | Addition | Source | Shape |
+> |---|---|---|
+> | `appointments.created_by_practitioner_id` | `D4` | composite `(created_by_practitioner_id, studio_id)` FK → `practitioners (id, studio_id)`, `ON DELETE RESTRICT`. Written by `create_internal_appointment_v2`; **null** on public bookings, where `actor_type='client'` already carries the fact. Closes the gap that `public.appointments` (`0010:174-190`) has **no creator column at all** |
+> | `appointments.cancelled_by_practitioner_id` | `D5` | same shape; written by `practitioner_cancel_appointment`; null on client-token cancellations. The existing `cancelled_by` role word is **retained** — it is already server-derived from the live practitioner row (`0033:255-259`, written `:294`) and correctly distinguishes client- from practitioner-initiated |
+> | `appointment_audit.actor_practitioner_id` | `D2` | composite same-studio FK, `ON DELETE RESTRICT`. Complements — does not replace — the existing bare `actor_id uuid` (`0010:221`), which stays for backfill and for the client/system namespaces |
+> | Backfill | `D2`–`D5` | populate the two appointment columns from surviving `appointment_audit` rows where `actor_type='practitioner'`; **leave null where no actor row survives** rather than guessing. Production scale is small — 139 appointments, 220 audit rows (`docs/production/migration-state.json`; *supplied, not independently verified by this audit*) |
+> | Outside-hours override actor | `D3` | persist who authorised the override and their role at the time. The forge-the-flag path itself is already closed by `B3` |
+>
+> These are **additive** and carry no revocation risk. They are sequenced here, immediately behind the
+> boundary, precisely because an additive column is not a replacement writer and must not gate `0172`
+> (§16.6). The `studio_id` work below is the durability half of `D2`.
 
 **Exact scope.** `appointment_audit.studio_id uuid not null references public.studios(id) on delete
 cascade`, backfilled through `appointments`; `appointment_id` becomes nullable and its FK moves from
@@ -2242,7 +2261,7 @@ parent row.
 rely on the `0010:219` cascade. And the `tests/db` lane is **conditional** in CI
 (`.github/workflows/ci.yml:229`), so a PR touching no `supabase/**` path would not even reveal it.
 
-**Likely files.** `supabase/migrations/0174_appointment_audit_integrity.sql` (new);
+**Likely files.** `supabase/migrations/0174_appointment_attribution_and_audit_integrity.sql` (new);
 `tests/migrations/0174-*.test.ts` (new); `tests/db/appointment-audit-invariant.db.test.ts` (**T5.5 flips
 from `it.fails` to `it`**); `tests/db/appointment-boundary-revocation.db.test.ts` (T1.11 re-pinned);
 the six DB test files listed above if any needs its cascade expectation restated.
@@ -2444,7 +2463,7 @@ the whole program.
 |---|---|---|---|
 | **0172** | `0172_revoke_authenticated_appointment_dml.sql` | **B3** | The only migration in the program with zero application change |
 | **0173** | `0173_appointment_repair_commands.sql` | **B4** | |
-| **0174** | `0174_appointment_audit_integrity.sql` | **B5** | |
+| **0174** | `0174_appointment_attribution_and_audit_integrity.sql` | **B5** | Extended by the PR #520 reconciliation with `D4`/`D5` — §16.6 |
 | **0175** | `0175_appointment_transition_guard.sql` | **B6** | |
 | **0176** | `0176_public_cancel_policy_acknowledgement.sql` | **B7** | |
 | **0177** | `0177_postcare_email_state_command.sql` | **B8** | |
@@ -2480,7 +2499,9 @@ previous max's test into its own and deletes it from the old one. Forgetting thi
 
 ### 12.5 The one genuinely open sequencing question
 
-**Does B3 (the revoke) precede B4 (the repair commands), or the reverse?**
+**Not *whether* `B3` ships as `0172` — it does.** The boundary revoke holds `0172` in every outcome; that
+is settled (§1, §16.6). The open question is narrower: **how closely must `B4` (the repair commands)
+follow it?**
 
 §10 P2-11 rates the missing repair path as a *prerequisite* of P1-1: revoking direct DML removes the only
 escape hatch anyone currently has. That is defensible. Against it: the revoke is scoped to `anon` and
@@ -2493,8 +2514,8 @@ or a service-role script), and the hatch it closes was never an in-product capab
 
 | Probe result | Meaning | Sequence |
 |---|---|---|
-| **Zero rows** | No appointment has ever been mutated outside the command layer. The direct path has never been used | **B3 = 0172, B4 = 0173.** Ship the revoke first |
-| **Non-zero** | Someone has been correcting data by hand. Taking the hatch away before replacing it is an operational regression | **Swap: B4 = 0172, B3 = 0173.** Everything downstream keeps its relative order and its number |
+| **Zero rows** | No appointment has ever been mutated outside the command layer. The direct path has never been used | **Unchanged: `B3` = `0172`, `B4` = `0173`.** Ship the revoke, then the repair commands |
+| **Non-zero** | Someone has been correcting data by hand. Removing the hatch without a replacement would be an operational regression | **Numbers unchanged — `B3` still takes `0172`.** What changes is *urgency and packaging*: `B4` is expedited to follow `B3` immediately (same review cycle, ideally same day), and the operator is told in advance which rows they were hand-correcting and which repair command replaces that workflow. If the volume makes an unreplaced gap genuinely unacceptable, ship `B3` and `B4` as one authorised pair rather than reordering the ladder |
 
 Nothing else in the ladder is order-sensitive by argument; the rest is order-sensitive by fact (B5 before
 B6; B5's DELETE arm after its own FK re-point; B8 after #517).
@@ -2626,10 +2647,11 @@ select count(*) as terminal_without_matching_audit
                       and x.action in ('cancelled','completed','no_show'));
 ```
 
-**Zero ⇒ the direct path has never been used; the revoke ships first as 0172 (§12.5).**
-**Non-zero ⇒ someone has been correcting by hand; the repair commands become a genuine prerequisite and
-B4 takes 0172 instead.** Interpret carefully in one direction: rows predating a command's introduction are
-not evidence of a devtools `PATCH`. Cross-check `min(created_at)` of any offending appointment against
+**Zero ⇒ the direct path has never been used; ship `B3` as `0172`, then `B4` as `0173` (§12.5).**
+**Non-zero ⇒ someone has been correcting by hand.** `B3` still takes `0172` — the revoke is not reordered
+— but `B4` is expedited to follow it immediately, or the two ship as one authorised pair, and the operator
+is briefed on which workflow the repair command replaces before the hatch closes. Interpret carefully in
+one direction: rows predating a command's introduction are not evidence of a devtools `PATCH`. Cross-check `min(created_at)` of any offending appointment against
 the migration that introduced its lifecycle command.
 
 #### Probe 3 — the span invariant (pre-flight for the deferred CHECK)
@@ -3410,8 +3432,8 @@ Each is accepted, rejected or amended against source, and mapped onto the `B1`�
 | **`D1`** | Revoke `insert, update, delete, truncate` on `public.appointments` from `anon, authenticated`; retain `SELECT`; replace `appointments_member_all` with a `SELECT`-only member policy | **ACCEPTED, with two amendments.** (a) `TRUNCATE` is correctly included as hygiene but is **not** browser-reachable — PostgREST does not expose it — so it must not be presented as part of the P1 closure. (b) PR #520's supporting citation for *"`validate_appointment_availability` exists only inside the commands"* is wrong at one end: `0170:875` is a call to a **different** function, `public.validate_public_booking_slot(`. The claim itself is true and the **stronger** evidence PR #520 omits is `0146:340-343` — `revoke execute on function public.validate_appointment_availability(...) from public; … from anon; … from authenticated;` then `grant … to service_role`. The validator is not merely un-called by the app; it is un-callable by a browser role | **`B3`**, already scoped |
 | **`D2`** | Revoke DML on `appointment_audit`; drop the vestigial member `INSERT` policy; add a composite `actor_practitioner_id`; change the parent FK from `CASCADE` to `RESTRICT` | **ACCEPTED — and it is already this program's `B3` + `B5`,** independently derived. `B3` revokes; `B5` adds `studio_id`, re-points the FK and makes the table append-only. PR #520 adds the `actor_practitioner_id` **composite same-studio FK with `ON DELETE RESTRICT`**, which `B5` should adopt: `actor_id` today is a bare `uuid` with no FK (`0010:221`) | **`B3`** + **`B5`** (`0174`) |
 | **`D3`** | Make `booked_outside_availability` write-once-by-command via a `BEFORE INSERT OR UPDATE` trigger refusing a `true` value from a non-definer writer; persist the authorising actor and their role | **PARTLY REDUNDANT, PARTLY ACCEPTED.** The forge-the-flag path is closed by `D1`/`B3` outright, so the trigger is defence-in-depth, not a requirement. The *second* half — persisting **who** authorised the override and their role at the time — is **not** covered anywhere in this document and is a genuine gap. §12 already names `P2-1` and `P2-13` as override defects; add the actor to that work | override actor → **`B5`**; the trigger → optional, **`B6`** |
-| **`D4`** | Add `created_by_practitioner_id` (composite same-studio FK, `ON DELETE RESTRICT`) to `public.appointments`, written by `create_internal_appointment_v2` / `create_public_appointment` (null + `actor_type='client'` for public bookings) | **ACCEPTED — and this is the single largest gap PR #520 contributes.** Re-verified: `public.appointments` (`0010:174-190`) has **no creator column**, and no later `ALTER TABLE … ADD COLUMN` adds one. Today the creator exists **only** in an `appointment_audit` row that `P1-2` shows is `CASCADE`-deletable and `P1-3` shows is forgeable | **new additive migration, phase 2** (see §16.6) |
-| **`D5`** | Add `cancelled_by_practitioner_id` alongside the existing role discriminator; keep the role word | **ACCEPTED, with a correction to its premise.** PR #520 implies `cancelled_by` is weak attribution generally; §3 and `0033:255-259` show the role is **server-derived from the live practitioner row and is not browser-supplied on the command path**. The real defect is narrower and still real: *which* practitioner cancelled is recorded nowhere on the row. Keep the role word — it correctly distinguishes client- from practitioner-initiated | **same additive migration, phase 2** |
+| **`D4`** | Add `created_by_practitioner_id` (composite same-studio FK, `ON DELETE RESTRICT`) to `public.appointments`, written by `create_internal_appointment_v2` / `create_public_appointment` (null + `actor_type='client'` for public bookings) | **ACCEPTED — and this is the single largest gap PR #520 contributes.** Re-verified: `public.appointments` (`0010:174-190`) has **no creator column**, and no later `ALTER TABLE … ADD COLUMN` adds one. Today the creator exists **only** in an `appointment_audit` row that `P1-2` shows is `CASCADE`-deletable and `P1-3` shows is forgeable | **`B5`** (`0174`), extended — §16.6 |
+| **`D5`** | Add `cancelled_by_practitioner_id` alongside the existing role discriminator; keep the role word | **ACCEPTED, with a correction to its premise.** PR #520 implies `cancelled_by` is weak attribution generally; §3 and `0033:255-259` show the role is **server-derived from the live practitioner row and is not browser-supplied on the command path**. The real defect is narrower and still real: *which* practitioner cancelled is recorded nowhere on the row. Keep the role word — it correctly distinguishes client- from practitioner-initiated | **`B5`** (`0174`), extended — §16.6 |
 | **`D6`** | Decide: converge the appointment commands on actor-derived Style A, or retain service-role Style B with an explicit reviewed actor-verification model | **DECIDED — see §16.5.** PR #520 §10.3 recommends a blanket move to Style A. That recommendation is **partly impossible** for this command family | **§16.5**; implementation in **`B4`**/**`B6`** |
 | **`D7`** | `cancellation_token_hash` is member-writable — covered automatically by `D1`'s revoke | **ACCEPTED, no separate work.** Confirmed: it is an `UPDATE` on `public.appointments` | **`B3`** |
 
@@ -3496,39 +3518,66 @@ itself. Style A moves the trust from the app to the database and then rests it e
 `public.practitioners`. That is a strict improvement, and it is also precisely why §16.3 names `PR-A1` a
 co-requisite.
 
-### 16.6 Revised sequence — application-first
+### 16.6 Sequence — `0172` stays with the boundary revoke
 
-The sequence in §12 is correct in structure and ships the revocation **third** (`B3`, `0172`), arguing
-that it is a zero-application-change migration and therefore the fastest P1 closure available. That
-argument is sound on boundary grounds and this section does not retract it.
+**The §12 sequence is authoritative and unchanged. `B3` is the direct-DML boundary revoke and it holds
+migration `0172`.** An earlier draft of this section re-phased the program to put additive attribution
+first; that re-phasing is **withdrawn**, and this subsection records why so the argument is not re-run.
 
-The merge changes the ordering on **attribution** grounds. `D4` and `D5` establish that at `03e7dea` the
-commands do not yet record an appointment's creator or its cancelling practitioner. Revoking first would
-freeze a boundary around commands that still do not record who acted — closing the door while the ledger
-is still incomplete. The additive columns are cheap, carry no revocation risk, and are the thing that
-makes the post-revoke record worth having.
+**The application-first prerequisite is already satisfied at `03e7dea`.** Application-first means the
+replacement writer must be deployed and carrying the traffic before the old path is removed. It is:
 
-The program is therefore re-phased into four gates. **PR identities and content from §12 are unchanged**;
-only the order and the migration slots move.
+| Precondition | State at `03e7dea` |
+|---|---|
+| The command layer is deployed | Fifteen reviewed `SECURITY DEFINER` commands, every one `service_role`-only (§3) |
+| Every shipped lifecycle flow uses them | Internal creation, public booking, token reschedule, move/reassign, both cancellation paths, complete, no-show — all route through a command (§4) |
+| No shipped writer depends on the privilege being revoked | **Zero** appointment writes use the authenticated client. 48 `SELECT`, 7 `UPDATE`, 0 `INSERT`, 0 `DELETE` across 26 files; all 7 `UPDATE`s are service-role `postcare_email_*` bookkeeping (`app/(app)/calendar/actions.ts:1115,1156,1212,1243`; `app/(app)/calendar/postcare-auto-send.ts:152,187,201`) and are untouched by revoking `authenticated` |
+| `SELECT` survives | The revoke names `insert, update, delete` only; `revoke all` is never used (§11.4) |
 
-| Gate | Content | PRs | Migration |
-|---|---|---|---|
-| **1 — commands and legitimate writers** | The static direct-DML census guard that freezes the seven known writers; behavioural coverage of the lifecycle commands; retirement of the last direct writers | `B1`, `B2`, and `B8` where PR #517 permits | none |
-| **2 — additive attribution** | `appointments.created_by_practitioner_id` (`D4`) and `cancelled_by_practitioner_id` (`D5`), composite same-studio FK + `ON DELETE RESTRICT`, written by the commands and backfilled from `appointment_audit` where an actor row survives; `appointment_audit.actor_practitioner_id` + `studio_id` (`D2`); the override actor (`D3`) | `B5`, extended | **`0172`** |
-| **3 — behaviour verification** | Prove the commands carry the traffic **before** removing the alternative. Not an ACL check — a behavioural probe, per this repository's own L18 lesson that a revocation verified by ACL was never behaviourally probed | `B2` completion + §13.2 operator probe | none |
-| **4 — revocation** | `revoke insert, update, delete, truncate on public.appointments, public.appointment_audit from anon, authenticated`; `SELECT` retained; `appointments_member_all` replaced with a `SELECT`-only member policy | `B3` | next free after gate 2 |
+There is therefore no writer to migrate first. `B1` and `B2` still precede `B3` — the census guard freezes
+the known writers and the behavioural coverage proves the commands work — but nothing in the additive
+attribution work is a precondition of the revoke.
 
-**`0172` is preserved for this series and is claimed by gate 2**, the first migration the program ships.
-Subsequent numbers must be taken from `npm run migration:state` at cut time and never hard-coded
-(`CLAUDE.md` §2). This audit creates no migration.
+**Why additive attribution must not gate the revoke.** `D4` and `D5` improve the *ledger*: they record who
+created and who cancelled an appointment. That is real and it is scheduled — `B5`/`0174`, extended below.
+But an additive column is **not a replacement writer**, and shipping it does nothing to reduce the current
+bypass. Ordering it ahead of `B3` would hold `P1-1`, `P1-2` and `P1-3` open for another migration cycle to
+buy a ledger improvement that does not close them. The correct order is: close the boundary, then enrich
+the record written behind it.
 
-**The cost of this ordering, stated plainly.** `P1-1` and `P1-2` stay open for one extra migration cycle
-versus §12's ordering. That is a real cost and the owner should accept it deliberately. Two mitigations:
-gate 2 is a small additive migration with no application change beyond the command bodies, so the delay is
-short; and the exposure is bounded exactly as `P1-1` documents — no `anon` path, no cross-tenant write, no
-double-booking, and no ability to edit or delete existing audit rows. If the owner prefers the faster
-closure, §12's original ordering remains defensible and the only thing lost is that the first
-post-revoke appointments still carry no creator column.
+**Canonical sequence** — identical to §12.1, restated here so §16 and §12 cannot drift:
+
+| # | PR | Migration |
+|---|---|---|
+| `B1` | Direct-DML census guard and unit-test repairs | none |
+| `B2` | Lifecycle and audit-invariant behavioural coverage | none |
+| `B3` | **Direct-DML boundary revoke** | **`0172`** |
+| `B4` | Appointment repair commands | `0173` |
+| `B5` | Appointment attribution and audit integrity — **extended with `D4`/`D5`** | `0174` |
+| `B6` | Transition guard and legacy retirement | `0175` |
+| `B7` | Public cancellation acknowledgement atomicity | `0176` |
+| `B8` | Postcare email-state command | `0177` |
+| `B9` | Final census and documentation reconciliation | none |
+
+Six migrations, `0172`–`0177`. **This audit creates none of them**, and `0172` remains reserved.
+The `B3`/`B4` order stays subject to the single read-only operator probe in §13.2 — that question is
+settled by measurement, not by this reconciliation.
+
+**What `B5`/`0174` gains from the merge.** The PR keeps its existing scope (`appointment_audit.studio_id`,
+the FK re-point off `ON DELETE CASCADE`, the derive trigger, append-only) and adds:
+
+| Addition | Source | Shape |
+|---|---|---|
+| `appointments.created_by_practitioner_id` | `D4` | composite `(created_by_practitioner_id, studio_id)` FK → `practitioners (id, studio_id)`, `ON DELETE RESTRICT`; written by `create_internal_appointment_v2`; **null** on public bookings, where `actor_type='client'` carries the fact |
+| `appointments.cancelled_by_practitioner_id` | `D5` | same shape; written by `practitioner_cancel_appointment`; null on client-token cancellations. The existing `cancelled_by` role word is **retained** — it correctly distinguishes client- from practitioner-initiated and is already server-derived (`0033:255-259`, written `:294`) |
+| `appointment_audit.actor_practitioner_id` | `D2` | composite same-studio FK, `ON DELETE RESTRICT`. `actor_id` today is a bare `uuid` with no FK (`0010:221`); keep it for backfill and for the client/system namespaces |
+| `appointment_audit.studio_id` | already in `B5` | lets the trail outlive its parent and be retained/exported per tenant — the durability half of `D2` |
+| Backfill | `D2`–`D5` | populate `created_by_practitioner_id` and `cancelled_by_practitioner_id` from surviving `appointment_audit` rows where `actor_type='practitioner'`; leave null where no actor row survives rather than guessing. Production scale is small — 139 appointments, 220 audit rows (`docs/production/migration-state.json`, *supplied, not independently verified by this audit*) |
+| The outside-hours override actor | `D3` | persist who authorised the override and their role at the time; the forge-the-flag path is already closed by `B3` |
+
+**Ordering note.** `B5` must keep its existing dependency on `B3` and `B4`, and the append-only `DELETE`
+arm must still come **after** the FK re-point — ≥6 DB test files delete appointments and rely on the
+`0010:219` cascade until it moves.
 
 ### 16.7 Negative tests added by the merge
 
@@ -3549,7 +3598,7 @@ only asserts rejection passes equally well when the table does not exist. The re
 | `R7` | — | create an appointment through each internal command after the `D6` Style-A conversion | `created_by_practitioner_id` is non-null and equals the **derived** actor, not any passed parameter | the public commands still create with `created_by_practitioner_id` null and `actor_type='client'` | `D4`, `D6` |
 | `R8` | — | cancel through `practitioner_cancel_appointment` | `cancelled_by_practitioner_id` is the caller and `cancelled_by` is their live role | a client-token cancellation sets `cancelled_by='client'` and leaves the practitioner column null | `D5` |
 
-`R7` and `R8` cannot be written until gate 2 ships; `R1`–`R6` are writable today and `R1`–`R4` **fail
+`R7` and `R8` cannot be written until `B5`/`0174` ships; `R1`–`R6` are writable today and `R1`–`R4` **fail
 today**, which is the point.
 
 ### 16.8 Disagreements between the two audits, resolved on source
@@ -3560,7 +3609,7 @@ today**, which is the point.
 | 2 | **Style A convergence.** PR #520 §10.3 recommends every command family converge on actor-derived Style A | **PR #520 is wrong for this family.** Three of the seven appointment commands have no authenticated caller — `create_public_appointment` (anonymous), `reschedule_appointment_v2` (token), `public_cancel_appointment_with_token` (anonymous). `auth.uid()` is structurally null; Style A cannot express their actor | Changes the `D6` decision from *converge* to *split* — §16.5 |
 | 3 | **`appointment_audit` mutability.** §2.2 lists "a member can `UPDATE`/`DELETE` audit rows" as a **rejected** claim; PR #520 `A-P1-03` states the rows are permanent | **No disagreement — both are right.** RLS default-denies `UPDATE`/`DELETE` (only `SELECT` and `INSERT` policies exist, `0010:280`, `:291`). Recorded here only because the two documents' phrasings could be misread as conflicting | None. New test `R5` pins it |
 | 4 | **`cancelled_by` semantics.** PR #520 `D5` treats `cancelled_by` as weak attribution | **This document is more precise.** `cancelled_by` is read server-side from the live practitioner row inside the command (`0033:255-259`) and written as `v_role` (`0033:294`) — it is **not** browser-supplied on the command path. The genuine defect is narrower: *which* practitioner is unrecorded | `D5` is accepted with its premise corrected; the remediation is unchanged |
-| 5 | **Sequencing.** §12 ships the revocation third; PR #520 §8 and the reconciliation brief require additive attribution before revocation | **Resolved in favour of application-first (§16.6)**, on the ground that `D4`/`D5` show the commands do not yet record the creator, so revoking first freezes an incomplete ledger. §12's argument for speed is recorded, not discarded, and the cost of the delay is stated | Re-phases the program; `0172` moves to the additive migration |
+| 5 | **Sequencing.** §12 ships the revocation third as `0172`. An earlier draft of this section moved `0172` to the additive attribution work and pushed the revoke behind it | **Resolved in favour of §12: `B3` keeps `0172`.** The application-first prerequisite is a *replacement writer*, and it is already satisfied — the command layer is deployed, every lifecycle flow uses it, and zero shipped writes use the authenticated client (§16.6). An additive column is not a replacement writer and does not reduce the bypass, so ordering `D4`/`D5` ahead of the revoke would hold `P1-1`, `P1-2` and `P1-3` open for another migration cycle without closing them | **The re-phasing is withdrawn.** `D4`/`D5` land in `B5`/`0174` as added scope; the sequence is unchanged |
 | 6 | **Scope of `A-P1-01`.** PR #520 treats `public.practitioners` as an independent finding; this program could be read as closing appointment attribution without it | **Both scopings are right; the dependency was invisible to each audit alone.** `A-P1-01` stays in PR #520's queue as `PR-A1`. This document must stop short of claiming `0172` establishes trustworthy attribution — §16.3 | Adds `PR-A1` as a **co-requisite** of `B3`, not a blocker |
 
 | 7 | **Whether a forged audit row is visible in the product.** PR #520 `A-P1-03` carries a correction asserting it is not, because the `by {cancelled_by}` line reads the appointments column. This section originally endorsed that correction | **PR #520 is wrong, and the error is in the direction that *understates* the finding.** `app/(app)/calendar/[id]/page.tsx:131-139` selects `appointment_audit.details` into `cancellationInsight` under `order by created_at desc limit 1`, and renders it at `:566`, `:580-584`, `:588-591`, `:599`. Combined with `P1-3`'s finding that `created_at` is caller-chosen, a forged row wins that ordering deterministically | **Escalates `P1-3`** from durable-record forgery to UI-reachable content control. Anything PR #520 absorbed under `A-P1-03` inherits the corrected statement. No change to the remediation — `B3` + `B5` close it — but the finding's description must be updated |
@@ -3570,15 +3619,12 @@ sequencing. Two are substantive: **#2**, PR #520's Style-A recommendation, repla
 on structural evidence; and **#7**, where PR #520 understated its own finding and re-verification
 escalated it.
 
-**A note on #5 (sequencing), in fairness to the alternative.** An independent reviewer of the `D6`
-question, working only from source, also concluded the revocation should ship **first** — on the ground
-that it is what actually makes the commands the sole writers, and that converting them to Style A while a
-direct-DML bypass remains open secures a door that is not the one being used. That is the same argument
-§12 makes, now made twice from different starting points. This section still resolves in favour of
-application-first because the reconciliation brief requires it **and** because `D4`/`D5` show the ledger
-is incomplete until the additive columns land — but the owner should know the counter-argument has
-independent support, and that choosing §12's original ordering costs only the creator column on the first
-post-revoke appointments.
+**A note on #5, recorded so the decision is not re-litigated.** The revoke-first position had independent
+support from the start: §12 argued it, and an independent reviewer of the `D6` question, working only from
+source, reached the same conclusion — that the revocation is what actually makes the commands the sole
+writers, and that enriching the ledger behind a door that is still open secures the wrong thing first.
+That is now the adopted position. The attribution work is not dropped; it is sequenced where it belongs,
+in `B5`/`0174`, immediately behind the boundary that makes it meaningful.
 
 ---
 
