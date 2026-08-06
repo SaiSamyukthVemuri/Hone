@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { ClinicalDate } from "@/components/clinical-date";
 import type { PointOfCareMemory } from "@/lib/sessions/point-of-care-memory";
 
 // "Last treatment" — point-of-care treatment memory, rendered ON the live
@@ -106,9 +107,12 @@ export function LastTreatmentMemoryCard({
           data-testid="last-treatment-no-blocks"
           className="text-sm text-neutral-600 dark:text-neutral-400"
         >
-          {memory.modality === "laser"
-            ? "This visit was charted as laser passes — open the full chart for what was recorded."
-            : "This visit has no charted treatment areas — open the full chart for what was recorded."}
+          {/* ONE copy vocabulary, shared with the /sessions/new context panel
+              (lib/sessions/point-of-care-memory.ts). Never "Area not recorded":
+              a laser zone or a legacy entry area does exist, it simply is not
+              in the block-shaped model this compact surface renders. */}
+          {memory.blocklessNote ??
+            "This previous visit has no charted treatment areas. Open the full chart to review what was recorded."}
         </p>
       ) : (
         <>
@@ -283,7 +287,10 @@ function NoteRow({
   return (
     <div>
       <dt className="text-xs text-neutral-500">
-        {label} · <FormattedDateTime iso={note.occurredAt} format="date" />
+        {/* A clinical note's occurred_at is a CALENDAR DATE, not an instant.
+            <FormattedDateTime> would convert it into the viewer's zone and show
+            the previous day in every negative UTC offset. */}
+        {label} · <ClinicalDate iso={note.occurredAt} />
         {note.total > 1 && ` · ${note.total} recorded`}
       </dt>
       <dd className="whitespace-pre-wrap break-words text-neutral-700 dark:text-neutral-300">

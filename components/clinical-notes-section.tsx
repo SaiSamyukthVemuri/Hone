@@ -26,6 +26,7 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
+import { formatClinicalDate } from "@/lib/clinical-notes/clinical-date";
 import type {
   ClientClinicalNote,
   ClinicalNoteKind,
@@ -92,15 +93,13 @@ function withDerivedSupersede(
   return notes.map((n) => ({ ...n, is_superseded: superseded.has(n.id) }));
 }
 
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
+// `occurred_at` is a CALENDAR DATE (the form posts `YYYY-MM-DD` into a
+// timestamptz, so it lands at midnight UTC). Converting it into the viewer's
+// zone showed the PREVIOUS day in every negative UTC offset — every Canadian
+// and US studio — so a note dated July 21 read as July 20 right beside the
+// July 21 in its own date input. The shared civil-date formatter pins the day
+// and lets only the month NAME follow locale.
+const formatDate = formatClinicalDate;
 
 function parseAreas(text: string): string[] {
   const out: string[] = [];

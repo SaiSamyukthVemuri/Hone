@@ -106,6 +106,17 @@ async function seedMemoryFixture(seed: E2eSeed): Promise<Fixture> {
              45, 0.9, 1.2, 8, 30, 1, '2026-01-01T10:20:00Z')`,
     [randomUUID(), previousSessionId, blockId, randomUUID()],
   );
+  // SESSION 1A CONTRACT, end to end: "Sensitive skin" is a safety-relevant
+  // response chip with no coded enum member of its own. Before 1A the
+  // classifier ignored it, so it was invisible on every response surface. It
+  // must reach the Last treatment card, alongside the legacy reaction_type.
+  // "Coarse hair" is an ordinary morphology chip and must NOT.
+  await sql(
+    `update public.electrolysis_entries
+        set observation_chips = $2::jsonb
+      where session_id = $1 and created_at = '2026-01-01T10:05:00Z'`,
+    [previousSessionId, JSON.stringify(["Sensitive skin", "Coarse hair"])],
+  );
 
   // ---- clinical note context -------------------------------------------
   await sql(
@@ -239,6 +250,14 @@ test.describe("point-of-care treatment memory", () => {
       await expect(card.getByText("30 UL")).toBeVisible();
       // The retired input never appears.
       await expect(card.getByText(/galvanic intensity/i)).toHaveCount(0);
+    });
+
+    await test.step("a Session 1A safety-response chip reaches the card", async () => {
+      // Widened classifier (Session 1A) flowing through unifiedReactionLabels
+      // into the point-of-care memory. Not a second classifier.
+      await expect(card.getByText(/Sensitive skin/)).toBeVisible();
+      // …and an ordinary morphology chip stays out of the response line.
+      await expect(card.getByText(/Coarse hair/)).toHaveCount(0);
     });
 
     await test.step("response, tolerance and caution", async () => {
@@ -386,6 +405,144 @@ test.describe("point-of-care treatment memory", () => {
       ),
     ).toHaveCount(0);
     // And the panel is no longer an empty shell: it names the treated areas.
+    await expect(
+      page.getByText("Left Cheek · Right Sideburn", { exact: true }),
+    ).toBeVisible();
+  });
+
+  // ---- /sessions/new with a BLOCKLESS charted visit -----------------------
+  //
+  // The selector correctly accepts laser-only and legacy entry-only treatments.
+  // But /sessions/new renders a BLOCK-shaped summary, and buildLastSessionSummary
+  // returns a TRUTHY object with `areas: []` for them — so the panel used to
+  // render its heading and date over nothing at all. Both journeys prove the
+  // truthful fallback instead.
+
+  test("/sessions/new: a LASER-only newest charted visit gets a truthful fallback", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const fx = await seedMemoryFixture(seed);
+    const prac = (
+      await sql<{ id: string }>(
+        `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+        [seed.studioId],
+      )
+    )[0];
+
+    // A laser visit NEWER than the electrolysis one, with a plan note.
+    const laserId = randomUUID();
+    await sql(
+      `insert into public.sessions
+         (id, studio_id, client_id, practitioner_id, modality, started_at, next_session_note)
+       values ($1,$2,$3,$4,'laser','2026-05-20T10:00:00Z','Recheck the patch test')`,
+      [laserId, seed.studioId, fx.clientId, prac.id],
+    );
+    await sql(
+      `insert into public.laser_entries (id, session_id, zone) values ($1,$2,'Chin')`,
+      [randomUUID(), laserId],
+    );
+    // fx already seeded a NEWER empty session (2026-05-01) — but the laser
+    // visit is newer still, so add one above it to keep the empty-session
+    // control in play.
+    await sql(
+      `insert into public.sessions
+         (id, studio_id, client_id, practitioner_id, modality, started_at)
+       values ($1,$2,$3,$4,'electrolysis','2026-05-25T10:00:00Z')`,
+      [randomUUID(), seed.studioId, fx.clientId, prac.id],
+    );
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${fx.clientId}/sessions/new`);
+
+    await expect(page.getByText("Previous session context")).toBeVisible({
+      timeout: T,
+    });
+    // The CHARTED laser visit was selected, not the newer empty session.
+    await expect(
+      page.locator(`a[href="/clients/${fx.clientId}/sessions/${laserId}"]`).first(),
+    ).toBeVisible();
+    // Truthful fallback, shared copy.
+    await expect(page.getByTestId("previous-context-blockless")).toContainText(
+      "This previous visit was charted as laser passes. Open the full chart to review what was recorded.",
+    );
+    // No empty area summary and no false "Area not recorded".
+    await expect(page.getByText("Area not recorded")).toHaveCount(0);
+    await expect(page.getByText("Treatment area 1")).toHaveCount(0);
+    // The plan still shows.
+    await expect(page.getByText("Recheck the patch test")).toBeVisible();
+  });
+
+  test("/sessions/new: a LEGACY entry-only electrolysis visit gets its own fallback", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const prac = (
+      await sql<{ id: string }>(
+        `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+        [seed.studioId],
+      )
+    )[0];
+    const clientId = randomUUID();
+    const legacyId = randomUUID();
+    const uniq = randomUUID().slice(0, 8);
+    await sql(
+      `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+      [
+        clientId,
+        seed.studioId,
+        `Legacy Client ${seed.runId}-${uniq}`,
+        `e2e-legacy-${seed.runId}-${uniq}@harness.local`,
+      ],
+    );
+    // Pre-0019 shape: live electrolysis entries with NO settings block.
+    await sql(
+      `insert into public.sessions
+         (id, studio_id, client_id, practitioner_id, modality, started_at, next_session_note)
+       values ($1,$2,$3,$4,'electrolysis','2026-01-01T10:00:00Z','Go gently on the chin')`,
+      [legacyId, seed.studioId, clientId, prac.id],
+    );
+    await sql(
+      `insert into public.electrolysis_entries
+         (id, session_id, block_id, area, areas, mode, pulse_count, created_at)
+       values ($1,$2,null,'Chin',array['Chin']::text[],'blend',1,'2026-01-01T10:05:00Z')`,
+      [randomUUID(), legacyId],
+    );
+    // A NEWER, completely empty session above it.
+    await sql(
+      `insert into public.sessions
+         (id, studio_id, client_id, practitioner_id, modality, started_at)
+       values ($1,$2,$3,$4,'electrolysis','2026-06-01T10:00:00Z')`,
+      [randomUUID(), seed.studioId, clientId, prac.id],
+    );
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}/sessions/new`);
+
+    await expect(page.getByText("Previous session context")).toBeVisible({
+      timeout: T,
+    });
+    await expect(
+      page.locator(`a[href="/clients/${clientId}/sessions/${legacyId}"]`).first(),
+    ).toBeVisible();
+    await expect(page.getByTestId("previous-context-blockless")).toContainText(
+      "This previous visit contains legacy treatment entries without settings blocks. Open the full chart to review what was recorded.",
+    );
+    await expect(page.getByText("Area not recorded")).toHaveCount(0);
+    await expect(page.getByText("Treatment area 1")).toHaveCount(0);
+    await expect(page.getByText("Go gently on the chin")).toBeVisible();
+  });
+
+  test("/sessions/new: a visit WITH blocks still renders the ordinary area summary", async ({
+    page,
+  }) => {
+    // The control: the fallback must not swallow the normal path.
+    const seed = await seedE2eStudio();
+    const fx = await seedMemoryFixture(seed);
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${fx.clientId}/sessions/new`);
+
+    await expect(page.getByTestId("previous-context-blockless")).toHaveCount(0);
     await expect(
       page.getByText("Left Cheek · Right Sideburn", { exact: true }),
     ).toBeVisible();

@@ -122,12 +122,27 @@ export async function loadLastChartedTreatment<
     .order("sort_order", { ascending: true });
 
   if (error) {
-    // Observable, but never fatal and never carrying clinical values.
+    // CLASSIFICATION ONLY. Observable enough to operate, carrying nothing a log
+    // aggregator should not hold.
+    //
+    // `error.message` is a raw PostgREST/Postgres string. It routinely echoes
+    // the failing statement, and this query's statement embeds candidate
+    // SESSION IDS and every clinical column name in the select — so a single
+    // failed read could put a client's treatment structure into the log
+    // pipeline. The SQLSTATE alone answers the only operational question that
+    // matters (permission vs. schema vs. timeout), and the studio id and
+    // candidate count answer "how big and whose".
+    //
+    // Never logged: the raw message, the client id, treatment areas, note
+    // excerpts, entry values, or any part of the query payload.
     console.error(
       JSON.stringify({
         event: "last_charted_treatment_blocks_read_failed",
-        code: error.code ?? null,
-        message: error.message ?? null,
+        // SQLSTATE, e.g. "42501" (insufficient privilege) or "PGRST200".
+        code: typeof error.code === "string" ? error.code : null,
+        studio_id: input.studioId,
+        candidate_count: candidates.length,
+        at: new Date().toISOString(),
       }),
     );
     return null;

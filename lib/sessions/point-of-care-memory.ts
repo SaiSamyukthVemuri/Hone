@@ -200,12 +200,48 @@ export type PointOfCareMemory = {
   plan: string | null;
   consultationNote: PointOfCareNote | null;
   skinHairNote: PointOfCareNote | null;
+  // Non-null ONLY when the selected visit is charted but carries no settings
+  // blocks (laser, or pre-block legacy electrolysis). The card renders this
+  // instead of an empty area/response pair.
+  blocklessNote: string | null;
   // True when a NEWER session row exists that carries no charting, so the card
   // can say so quietly instead of implying this was the very last visit.
   supersededByEmptySession: boolean;
 };
 
 const DEFAULT_EXCERPT_CHARS = 180;
+
+// A genuinely charted visit can carry NO settings blocks:
+//   * a LASER visit charts into laser_entries and never creates a block;
+//   * pre-0019 electrolysis charted straight into electrolysis_entries.
+// Both correctly qualify as "the last treatment" — a laser visit IS the last
+// treatment for a client mid-transition — but every block-shaped summary is
+// empty for them, and an empty summary reads as "nothing was recorded" about a
+// visit that plainly happened.
+//
+// ONE copy vocabulary, used by BOTH the point-of-care card and the
+// /sessions/new context panel, so the two surfaces cannot drift into saying
+// different things about the same session.
+export const BLOCKLESS_LASER_COPY =
+  "This previous visit was charted as laser passes. Open the full chart to review what was recorded.";
+export const BLOCKLESS_LEGACY_ENTRIES_COPY =
+  "This previous visit contains legacy treatment entries without settings blocks. Open the full chart to review what was recorded.";
+
+// The truthful line for a charted visit that has no settings blocks, or null
+// when the visit does have blocks (so the caller renders the normal summary).
+// Deliberately says what the record IS, never that an area was unrecorded — a
+// laser zone or a legacy entry area exists, it simply is not in the
+// block-shaped model these compact surfaces render.
+export function blocklessTreatmentCopy(input: {
+  modality: string | null | undefined;
+  hasLiveElectrolysisEntries: boolean;
+}): string | null {
+  if ((input.modality ?? "").trim().toLowerCase() === "laser") {
+    return BLOCKLESS_LASER_COPY;
+  }
+  if (input.hasLiveElectrolysisEntries) return BLOCKLESS_LEGACY_ENTRIES_COPY;
+  return null;
+}
 
 // A safe, short preview of a clinical note. Cuts on a word boundary when one is
 // close enough, collapses interior blank lines, and reports whether anything was
@@ -451,6 +487,10 @@ export type PointOfCareMemoryInput = {
   planAlreadyShown?: string | null;
   // True when a newer session row exists with no charting on it.
   supersededByEmptySession?: boolean;
+  // Whether the selected session has LIVE electrolysis entries. Only consulted
+  // when there are no settings blocks, to tell a legacy entry-only
+  // electrolysis visit apart from a laser one.
+  hasLiveElectrolysisEntries?: boolean;
   excerptChars?: number;
 };
 
@@ -554,6 +594,14 @@ export function buildPointOfCareMemory(
     plan,
     consultationNote: toNote(input.consultationNote, excerptChars),
     skinHairNote: toNote(input.skinHairNote, excerptChars),
+    blocklessNote:
+      areas.length === 0
+        ? blocklessTreatmentCopy({
+            modality: input.session.modality,
+            hasLiveElectrolysisEntries:
+              input.hasLiveElectrolysisEntries === true,
+          })
+        : null,
     supersededByEmptySession: input.supersededByEmptySession === true,
   };
 }

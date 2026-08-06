@@ -434,6 +434,12 @@ export default async function SessionDetailPage({
         // exact text; the card omits it rather than repeating it.
         planAlreadyShown: fromLastVisit,
         supersededByEmptySession: lastTreatment.supersededByEmptySession,
+        // Distinguishes a legacy entry-only electrolysis visit from a laser one
+        // when the selected treatment carries no settings blocks.
+        hasLiveElectrolysisEntries:
+          (lastTreatment.session.electrolysis_entries ?? []).some(
+            (e) => e.deleted_at == null,
+          ),
       })
     : null;
 

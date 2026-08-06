@@ -68,8 +68,25 @@ describe("the memory card is mounted ON the live charting page", () => {
     expect(CARD).toMatch(/const hasBlockDetail = memory\.areas\.length > 0/);
     expect(CARD).toMatch(/\{!hasBlockDetail \? \(/);
     expect(CARD).toMatch(/data-testid="last-treatment-no-blocks"/);
-    expect(CARD).toMatch(/charted as laser passes/i);
-    expect(CARD).toMatch(/open the full chart/i);
+    // The copy is SHARED with the /sessions/new context panel, so the two
+    // surfaces cannot describe the same session differently.
+    expect(CARD).toMatch(/memory\.blocklessNote/);
+    expect(MEMORY).toMatch(/charted as laser passes/i);
+    expect(MEMORY).toMatch(/legacy treatment entries without settings blocks/i);
+    expect(MEMORY).toMatch(/Open the full chart to review what was recorded/i);
+  });
+
+  it("the /sessions/new context panel uses the SAME shared copy, not its own", () => {
+    expect(NEW_SESSION_PAGE).toMatch(
+      /blocklessTreatmentCopy\(\{/,
+    );
+    expect(NEW_SESSION_PAGE).toMatch(/data-testid="previous-context-blockless"/);
+    // It must not hand-roll the sentence.
+    const code = codeOnly(NEW_SESSION_PAGE);
+    expect(code).not.toMatch(/charted as laser passes/i);
+    // And it must render the fallback INSTEAD of an empty AreaSummaries.
+    expect(NEW_SESSION_PAGE).toMatch(/\{blocklessNote \? \(/);
+    expect(NEW_SESSION_PAGE).not.toMatch(/Area not recorded/);
   });
 
   it("the card carries a test handle so the browser spec is not selector-fragile", () => {
@@ -154,11 +171,41 @@ describe("read-only and RLS-scoped", () => {
     expect(CARD).not.toMatch(/useState|useTransition|action=/);
   });
 
-  it("the loader logs no clinical values on failure", () => {
-    const logBlock = LOADER.slice(
-      LOADER.indexOf("last_charted_treatment_blocks_read_failed"),
-    ).slice(0, 400);
-    expect(logBlock).not.toMatch(/body|note|area|probe|client_id|session_id/);
+  it("the loader logs CLASSIFICATION ONLY on failure — never the raw DB message", () => {
+    const code = codeOnly(LOADER);
+    // The raw PostgREST/Postgres message echoes the failing statement, and this
+    // statement embeds candidate session ids and every clinical column name.
+    expect(code).not.toMatch(/error\.message/);
+    expect(code).not.toMatch(/message:/);
+    // What IS allowed: event, SQLSTATE, studio id, candidate count, timestamp.
+    const logBlock = code.slice(
+      code.indexOf("last_charted_treatment_blocks_read_failed"),
+    ).slice(0, 500);
+    expect(logBlock).toMatch(/code:/);
+    expect(logBlock).toMatch(/studio_id: input\.studioId/);
+    expect(logBlock).toMatch(/candidate_count: candidates\.length/);
+    // And what is not.
+    for (const banned of [
+      "client_id",
+      "clientId",
+      "session_id",
+      "sessionId",
+      "body",
+      "excerpt",
+      "probe",
+      "area",
+      "BLOCK_COLUMNS",
+      "hairs",
+    ]) {
+      expect(logBlock, `log must not carry ${banned}`).not.toContain(banned);
+    }
+  });
+
+  it("the loader is the ONLY console site in the feature, and it logs one object", () => {
+    for (const src of [CARD, MEMORY, SELECTOR]) {
+      expect(codeOnly(src)).not.toMatch(/console\./);
+    }
+    expect((codeOnly(LOADER).match(/console\./g) ?? []).length).toBe(1);
   });
 
   it("the blocks read is batched and studio-scoped — no N+1, no unbounded IN", () => {

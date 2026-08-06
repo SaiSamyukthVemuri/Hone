@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  BLOCKLESS_LASER_COPY,
+  BLOCKLESS_LEGACY_ENTRIES_COPY,
+  blocklessTreatmentCopy,
   buildPointOfCareMemory,
   noteExcerpt,
   toClinicalSummaryBlocks,
@@ -556,6 +559,93 @@ describe("a charted visit with NO settings blocks (laser / pre-block legacy)", (
     expect(laser.totalMinutes).toBeNull();
     expect(laser.totalHairs).toBeNull();
     expect(laser.watchLines).toEqual([]);
+  });
+});
+
+describe("blockless charted visits get a truthful line, never an empty shell", () => {
+  const blockless = (over: Record<string, unknown>) =>
+    buildPointOfCareMemory({
+      session: {
+        id: "s-prev",
+        started_at: "2026-01-01T10:00:00Z",
+        modality: "electrolysis",
+      },
+      blocks: [],
+      ...over,
+    });
+
+  it("a LASER visit says it was charted as laser passes", () => {
+    const m = blockless({
+      session: {
+        id: "s-laser",
+        started_at: "2026-01-01T10:00:00Z",
+        modality: "laser",
+      },
+    });
+    expect(m.blocklessNote).toBe(BLOCKLESS_LASER_COPY);
+    expect(m.blocklessNote).toMatch(/charted as laser passes/i);
+  });
+
+  it("a LEGACY entry-only electrolysis visit says so", () => {
+    const m = blockless({ hasLiveElectrolysisEntries: true });
+    expect(m.blocklessNote).toBe(BLOCKLESS_LEGACY_ENTRIES_COPY);
+    expect(m.blocklessNote).toMatch(
+      /legacy treatment entries without settings blocks/i,
+    );
+  });
+
+  it("neither line ever claims the area was unrecorded", () => {
+    for (const copy of [BLOCKLESS_LASER_COPY, BLOCKLESS_LEGACY_ENTRIES_COPY]) {
+      expect(copy).not.toMatch(/not recorded/i);
+      expect(copy).toMatch(/Open the full chart to review what was recorded/);
+    }
+  });
+
+  it("a visit WITH blocks never carries the fallback line", () => {
+    const m = build([block({ primary_area: "Chin" })]);
+    expect(m.blocklessNote).toBeNull();
+    expect(m.areas).toHaveLength(1);
+  });
+
+  it("the plan still surfaces on a blockless visit", () => {
+    const m = blockless({
+      session: {
+        id: "s-laser",
+        started_at: "2026-01-01T10:00:00Z",
+        modality: "laser",
+        next_session_note: "Recheck the patch test",
+      },
+    });
+    expect(m.plan).toBe("Recheck the patch test");
+  });
+
+  it("the pure copy helper is the single source both surfaces call", () => {
+    expect(
+      blocklessTreatmentCopy({ modality: "laser", hasLiveElectrolysisEntries: false }),
+    ).toBe(BLOCKLESS_LASER_COPY);
+    expect(
+      blocklessTreatmentCopy({ modality: "LASER ", hasLiveElectrolysisEntries: false }),
+    ).toBe(BLOCKLESS_LASER_COPY);
+    expect(
+      blocklessTreatmentCopy({
+        modality: "electrolysis",
+        hasLiveElectrolysisEntries: true,
+      }),
+    ).toBe(BLOCKLESS_LEGACY_ENTRIES_COPY);
+    // Modality wins over entries, so a laser row is never mislabelled legacy.
+    expect(
+      blocklessTreatmentCopy({ modality: "laser", hasLiveElectrolysisEntries: true }),
+    ).toBe(BLOCKLESS_LASER_COPY);
+    // Nothing to say — the caller renders the ordinary summary.
+    expect(
+      blocklessTreatmentCopy({
+        modality: "electrolysis",
+        hasLiveElectrolysisEntries: false,
+      }),
+    ).toBeNull();
+    expect(
+      blocklessTreatmentCopy({ modality: null, hasLiveElectrolysisEntries: false }),
+    ).toBeNull();
   });
 });
 
