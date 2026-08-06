@@ -52,12 +52,35 @@ const MEMORY_CHILD_CANDIDATE_CAP = MEMORY_CAP * 5;
 // result sets be merged as interchangeable rows — if they drifted, a block found
 // only via its child area could render a different subtitle from the same block
 // found directly.
+// `!inner` is load-bearing, not decoration. A plain embed filters the EMBED, not
+// the parent: with `session:sessions(...)` a block whose session is soft-deleted
+// or void still comes back, just with `session: null` — which then renders an
+// href of `/clients/undefined/sessions/…`. Measured against the local stack:
+//   session_blocks, no filter ................................. 283
+//   `!inner` + session.record_status=neq.void ................. 280  ← parents dropped
+//   plain embed + session.record_status=neq.void .............. 283  ← nothing dropped
+// So the inner join is what makes the parent-session filters below actually
+// remove rows, and it removes them in the DATABASE — before ordering and before
+// the cap — so an inactive record can never occupy one of the four slots.
 const MEMORY_BLOCK_SELECT =
-  "id, session_id, primary_area, side, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions(client_id, started_at, client:clients(name))";
+  "id, session_id, primary_area, side, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions!inner(client_id, started_at, deleted_at, record_status, client:clients(name))";
+
+// A treatment record is SEARCHABLE only while its parent session is active.
+// `sessions.record_status` is `text NOT NULL check (record_status in ('draft',
+// 'finalized','void'))`, so `neq` is safe here — a NULL would make `<>` yield
+// NULL and silently drop the row, and the column cannot be NULL.
+// 'void' is the retired/withdrawn record; 'draft' and 'finalized' are both live.
+const SESSION_ACTIVE_FILTERS = {
+  deletedAt: "session.deleted_at",
+  recordStatus: "session.record_status",
+} as const;
+const VOID_RECORD_STATUS = "void";
 
 type MemoryBlockSession = {
   client_id: string | null;
   started_at: string | null;
+  deleted_at: string | null;
+  record_status: string | null;
   client: { name: string | null } | Array<{ name: string | null }> | null;
 };
 
@@ -122,6 +145,11 @@ export async function globalSearchAction(
       .select(MEMORY_BLOCK_SELECT)
       .eq("studio_id", studioId)
       .is("deleted_at", null)
+      // The block being live is not enough — a live block can hang off a session
+      // that was soft-deleted or voided, and surfacing it would expose treatment
+      // history the studio logically removed AND hand back a link that 404s.
+      .is(SESSION_ACTIVE_FILTERS.deletedAt, null)
+      .neq(SESSION_ACTIVE_FILTERS.recordStatus, VOID_RECORD_STATUS)
       .or(
         `primary_area.ilike.${like},block_name.ilike.${like},caution_note.ilike.${like},reaction_notes.ilike.${like},probe_label.ilike.${like},probe_lot_number.ilike.${like}`,
       )
@@ -133,11 +161,12 @@ export async function globalSearchAction(
     // "Left Cheek · Right Sideburn" is stored with primary_area "Cheek" and
     // searching "Sideburn" matched nothing — the secondary area was displayed
     // correctly but was unreachable. This is a bounded id-only probe; the
-    // parent blocks themselves are fetched (studio-scoped, soft-delete
-    // filtered) in the next wave, so a stale or foreign child can never become
-    // a result on its own. session_block_areas has no soft-delete column of
-    // its own: it cascades with the parent, and a soft-deleted parent is
-    // excluded by the parent fetch.
+    // parent blocks themselves are fetched in the next wave under the SAME
+    // rules as the direct path — studio scope, live block, and an ACTIVE
+    // non-void parent session — so a stale, foreign or withdrawn child can
+    // never become a result on its own. session_block_areas has no soft-delete
+    // column of its own: it cascades with the parent, so every liveness
+    // decision belongs to the parent fetch.
     supabase
       .from("session_block_areas")
       .select("session_block_id")
@@ -151,6 +180,9 @@ export async function globalSearchAction(
       .select("id, client_id, started_at, next_session_note, client:clients(name)")
       .eq("studio_id", studioId)
       .is("deleted_at", null)
+      // Same liveness rule as the block paths: a voided session's next-visit
+      // note is withdrawn treatment history and must not be searchable.
+      .neq("record_status", VOID_RECORD_STATUS)
       .ilike("next_session_note", like)
       .order("started_at", { ascending: false })
       .limit(2)
@@ -228,6 +260,10 @@ export async function globalSearchAction(
           .select(MEMORY_BLOCK_SELECT)
           .eq("studio_id", studioId)
           .is("deleted_at", null)
+          // Identical liveness rules to the direct path — a child area must not
+          // be a back door to a record the direct path would refuse.
+          .is(SESSION_ACTIVE_FILTERS.deletedAt, null)
+          .neq(SESSION_ACTIVE_FILTERS.recordStatus, VOID_RECORD_STATUS)
           .in("id", childBlockIds)
           .order("created_at", { ascending: false })
           .limit(MEMORY_CAP)
@@ -301,6 +337,22 @@ export async function globalSearchAction(
   );
   for (const b of memoryBlockRows) {
     const session = Array.isArray(b.session) ? b.session[0] : b.session;
+    // Belt and braces behind the inner join. If a parent ever arrives missing,
+    // malformed, or (impossibly, given `!inner`) inactive, DROP the row rather
+    // than emit `/clients/undefined/sessions/…` — a link that 404s is worse
+    // than no result, and a defensive render must not resurrect what the
+    // database filters were written to remove.
+    if (
+      !session ||
+      typeof session.client_id !== "string" ||
+      session.client_id === "" ||
+      typeof b.session_id !== "string" ||
+      b.session_id === "" ||
+      session.deleted_at != null ||
+      session.record_status === VOID_RECORD_STATUS
+    ) {
+      continue;
+    }
     const client = Array.isArray(session?.client)
       ? session?.client[0]
       : session?.client;

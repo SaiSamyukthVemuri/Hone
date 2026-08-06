@@ -3,6 +3,7 @@ import {
   seedE2eStudio,
   seedE2eDraftElectrolysisSession,
   seedE2eBlockWithStructuredAreas,
+  seedE2eInactivateSession,
   getSessionBlockAreas,
   getBlockPrimaryArea,
 } from "./helpers/seed";
@@ -106,6 +107,42 @@ test("one settings block treats multiple areas with independent laterality", asy
     await expect(page).toHaveURL(
       new RegExp(`/clients/${clientId}/sessions/${sessionId}`),
     );
+  });
+
+  await test.step("newer DELETED and VOID sessions with the same term never appear", async () => {
+    // Both are seeded NEWER than the live block, so an implementation that
+    // filtered after the four-slot cap would hide the valid result entirely.
+    const dead = await seedE2eDraftElectrolysisSession(seed);
+    await seedE2eBlockWithStructuredAreas(seed, dead.sessionId, {
+      primaryArea: "Sideburns",
+      areas: [{ area: "Sideburns", laterality: "left" }],
+    });
+    await seedE2eInactivateSession(dead.sessionId, { deleted: true });
+
+    const voided = await seedE2eDraftElectrolysisSession(seed);
+    await seedE2eBlockWithStructuredAreas(seed, voided.sessionId, {
+      primaryArea: "Sideburns",
+      areas: [{ area: "Sideburns", laterality: "left" }],
+    });
+    await seedE2eInactivateSession(voided.sessionId, { recordStatus: "void" });
+
+    const search = page.getByRole("searchbox", { name: "Search Hone" });
+    await search.fill("Sideburns");
+    // The valid multi-area treatment is still there...
+    const valid = page.getByRole("link", { name: /Left Cheeks · Right Sideburns/ });
+    await expect(valid).toHaveCount(1, { timeout: T });
+    // ...and the inactive ones contributed nothing: their blocks carry the
+    // legacy primary_area "Sideburns" alone, so they would render a bare
+    // "Sideburns" label, never the combined one.
+    await expect(
+      page.getByRole("link", { name: /Session · Left Sideburns$/ }),
+    ).toHaveCount(0);
+    // Following the surviving result still lands on a real session page.
+    await valid.first().click({ timeout: T });
+    await expect(page).toHaveURL(
+      new RegExp(`/clients/${clientId}/sessions/${sessionId}`),
+    );
+    await expect(page.getByText("Left Cheeks", { exact: false })).toBeVisible({ timeout: T });
   });
 
   await test.step("a foreign studio's area value returns nothing", async () => {

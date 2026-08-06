@@ -1436,6 +1436,27 @@ export async function seedE2eBlockWithStructuredAreas(
   return { blockId };
 }
 
+// Retire a session to a LEGACY inactive state for search-exclusion tests.
+// Two migration-0159 guards shape this: a session cannot be INSERTed as void,
+// and once void it is archived and read-only — so it must be charted first and
+// retired last. `deleted` is the ordinary soft delete.
+export async function seedE2eInactivateSession(
+  sessionId: string,
+  how: { deleted?: boolean; recordStatus?: "void" },
+): Promise<void> {
+  if (how.deleted) {
+    await sql(`update public.sessions set deleted_at = now() where id = $1`, [sessionId]);
+  }
+  if (how.recordStatus === "void") {
+    await sql("alter table public.sessions disable trigger sessions_guard_retired_finalization");
+    try {
+      await sql(`update public.sessions set record_status = 'void' where id = $1`, [sessionId]);
+    } finally {
+      await sql("alter table public.sessions enable trigger sessions_guard_retired_finalization");
+    }
+  }
+}
+
 // Seed a LEGACY single-area block (primary_area + block-level side, no child
 // rows) so the e2e can prove legacy records still render their single area.
 export async function seedE2eLegacyBlock(

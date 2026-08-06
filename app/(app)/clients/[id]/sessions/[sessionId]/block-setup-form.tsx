@@ -524,9 +524,18 @@ export function BlockSetupForm({
     // Full reusable setup via the shared snapshot contract: block machine
     // settings PLUS the primary (earliest live) entry's mode-gated machine
     // readings (thermolysis/galvanic/units-of-lye/pulse). Destination areas,
-    // destination MINUTES, a manually entered probe lot, and every outcome/
-    // response field are preserved — the patch carries ONLY reusable setup keys,
-    // and a key it does not own cannot be overwritten by the spread below.
+    // laterality, custom area detail, destination MINUTES and every outcome/
+    // response field are preserved — the patch does not own those keys, and a
+    // key it does not own cannot be overwritten by the spread below.
+    //
+    // The PROBE LOT is the deliberate exception, and an earlier version of this
+    // comment wrongly claimed a manually typed destination lot survives. It does
+    // NOT: the patch owns probeLotNumber, probeInventoryItemId and
+    // probeLotConfirmed, so Copy settings REPLACES a lot already typed here with
+    // the source's. That is intended — the lot belongs to the probe being copied
+    // — and it is made safe by never copying confirmation: the destination lot
+    // always lands unconfirmed and the practitioner is asked to check it against
+    // the package.
     const firstEntry = firstLiveEntry(source.electrolysis_entries);
     // The lot travels with the probe. Its inventory LINK is carried only when
     // the source's item is still an ACTIVE lot for the copied probe — so a copy

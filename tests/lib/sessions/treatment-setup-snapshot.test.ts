@@ -271,6 +271,73 @@ describe("copied probe lot + inventory link", () => {
     ...over,
   });
 
+  // ---------------------------------------------------------------------
+  // Session 1C: these pin the TRUTH of the lot contract, because the prose
+  // used to claim the opposite (a "manually entered destination lot is
+  // preserved", and probe_lot_* listed among NEVER-copied fields). The lot IS
+  // copied; what is never copied is the CONFIRMATION.
+  // ---------------------------------------------------------------------
+  it("REPLACES a lot already present on the destination draft — it does not preserve it", () => {
+    const destination = {
+      probeLotNumber: "DESTINATION-TYPED-BY-HAND",
+      probeInventoryItemId: "destination-item",
+      probeLotConfirmed: true,
+      minutes: "12",
+    };
+    const applied = {
+      ...destination,
+      ...buildTreatmentSetupDraftPatch(src(), entry(), new Set(["item-1"])),
+    };
+    // The lot travels with the probe: the source's lot wins.
+    expect(applied.probeLotNumber).toBe("460941");
+    expect(applied.probeInventoryItemId).toBe("item-1");
+    // ...and the destination's CONFIRMATION is reset, which is the safety.
+    expect(applied.probeLotConfirmed).toBe(false);
+    // Minutes, an outcome, is still untouched.
+    expect(applied.minutes).toBe("12");
+  });
+
+  it("the probe itself copies alongside its lot", () => {
+    const p = buildTreatmentSetupDraftPatch(src(), entry(), new Set(["item-1"]));
+    expect(p.probeKey).toBe("sterex-gold-two-piece-f3-short");
+  });
+
+  it("an EXPIRED / ARCHIVED / RECLASSIFIED link is dropped, lot text survives", () => {
+    // All three reach the contract identically: "not in the linkable set".
+    for (const linkable of [new Set<string>(), new Set(["expired-item"]), new Set(["other-probe-item"])]) {
+      const p = buildTreatmentSetupDraftPatch(src(), entry(), linkable);
+      expect(p.probeInventoryItemId).toBeNull();
+      expect(p.probeLotNumber).toBe("460941");
+      expect(p.probeLotConfirmed).toBe(false);
+    }
+  });
+
+  it("a copied lot is NEVER confirmed, under every linkability outcome", () => {
+    for (const linkable of [undefined, new Set<string>(), new Set(["item-1"])]) {
+      const p = buildTreatmentSetupDraftPatch(src(), entry(), linkable as never);
+      expect(p.probeLotConfirmed).toBe(false);
+    }
+  });
+
+  it("copying the lot does not disturb destination areas or outcomes", () => {
+    const destination = {
+      areas: [{ area: "Chin", laterality: "left" }],
+      primaryArea: "Chin",
+      hairsTreated: "40",
+      comments: "went well",
+      toleranceRating: "5",
+    };
+    const applied = {
+      ...destination,
+      ...buildTreatmentSetupDraftPatch(src(), entry(), new Set(["item-1"])),
+    };
+    expect(applied.areas).toEqual([{ area: "Chin", laterality: "left" }]);
+    expect(applied.primaryArea).toBe("Chin");
+    expect(applied.hairsTreated).toBe("40");
+    expect(applied.comments).toBe("went well");
+    expect(applied.toleranceRating).toBe("5");
+  });
+
   it("copies the lot number EXACTLY (trimmed) and never marks it confirmed", () => {
     const p = buildTreatmentSetupDraftPatch(src(), entry(), new Set(["item-1"]));
     expect(p.probeLotNumber).toBe("460941");

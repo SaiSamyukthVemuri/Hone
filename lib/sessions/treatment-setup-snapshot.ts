@@ -12,10 +12,23 @@
 // carries ONLY reusable setup fields and NEVER any field that describes what
 // actually happened to the client:
 //   NEVER: minutes_performed, hairs_treated, comments, observation_chips,
-//   tolerance/reaction/caution, numbing_status, probe_lot_number/confirmed/id,
-//   next-session notes, consultation notes, photos, timestamps, author/creator
-//   ids, finalized/void/audit fields, or any source entry/block/session id as a
+//   tolerance/reaction/caution, numbing_status, next-session notes,
+//   consultation notes, photos, timestamps, author/creator ids,
+//   finalized/void/audit fields, or any source entry/block/session id as a
 //   destination id.
+//
+// THE PROBE LOT IS A DELIBERATE EXCEPTION, and this list used to lie about it.
+// The lot is not an outcome — it is part of the probe SETUP, and copying a probe
+// without its lot let the destination silently auto-resolve a DIFFERENT lot from
+// unrelated history, swapping a traceability value the practitioner believed she
+// had copied. So the contract is three distinct rules, not one:
+//   * probe_lot_number      — COPIED verbatim (trimmed) with the probe;
+//   * probe_inventory_item_id — copied ONLY while that item is still an ACTIVE
+//     lot for the copied probe; expired, archived or reclassified links are
+//     DROPPED (the lot TEXT survives, the traceability claim does not);
+//   * probe_lot_confirmed   — NEVER copied. A copy is a transcription, not a
+//     check of the physical package, so the destination always starts
+//     unconfirmed and the UI asks for confirmation against the package.
 //
 // MINUTES PERFORMED IS AN OUTCOME, NOT SETUP (Chloe, Session 1C). It records how
 // long the treatment that ALREADY HAPPENED ran for; it is not a machine setting

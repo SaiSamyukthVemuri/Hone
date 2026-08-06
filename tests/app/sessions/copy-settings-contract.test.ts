@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Source-guard: the in-form "Copy settings" control now uses the SHARED
+// Source-guard: the in-form "Copy settings" control uses the SHARED
 // treatment-setup snapshot contract (so it carries the primary-entry machine
-// readings, not just block fields), preserves destination areas + a manually
-// entered probe lot, and never copies outcomes. It is a CLIENT-SIDE draft
+// readings, not just block fields), preserves destination areas, laterality and
+// every OUTCOME field, and copies the probe SETUP — including the probe-lot
+// number and, conditionally, its inventory link. It is a CLIENT-SIDE draft
 // prefill — nothing is persisted until the practitioner saves the area — so it
 // cannot fabricate performed treatment.
+//
+// An earlier version of this header claimed a "manually entered probe lot" is
+// preserved. That was false: the patch owns the lot keys and replaces it. The
+// safety is that a copied lot is NEVER marked confirmed.
 
 const ROOT = process.cwd();
 const FORM = readFileSync(
@@ -35,11 +40,16 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     expect(FORM).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.patch \}\)\)/);
   });
 
-  it("copySettings does NOT assign destination area identity or a probe lot or any outcome", () => {
+  it("copySettings assigns no destination area identity and no outcome of its own", () => {
     // Isolate the copySettings function body.
     const start = FORM.indexOf("function copySettings()");
     const body = FORM.slice(start, FORM.indexOf("\n  }", start));
-    // No destination-area / probe-lot / outcome assignments inside copySettings.
+    // NOTE ON THE PROBE LOT. `probeLotNumber:` / `probeLotConfirmed:` are listed
+    // here because copySettings must not hand-roll them — but that is NOT a
+    // claim that the lot is never copied. The shared PATCH owns all three lot
+    // keys and does copy the number and (conditionally) the inventory link; see
+    // the dedicated truthfulness suite below. This assertion is only that the
+    // form has no second, divergent copy path of its own.
     for (const forbidden of [
       "primaryArea:",
       "side:",
@@ -83,6 +93,39 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     // The application mechanism is still a spread — which is exactly why
     // omitting the key preserves the destination's own value.
     expect(body).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.patch \}\)\)/);
+  });
+
+  // -------------------------------------------------------------------------
+  // Session 1C integration: the probe-lot prose must match runtime behaviour.
+  // The old wording claimed a manually typed destination lot was preserved. It
+  // is not — the patch owns the lot keys and replaces it. Truthful docs matter
+  // here because the practitioner is being asked to trust a traceability value.
+  // -------------------------------------------------------------------------
+  it("the form comment no longer claims a manual destination lot is preserved", () => {
+    const start = FORM.indexOf("function copySettings()");
+    const comment = FORM.slice(start, FORM.indexOf("\n  }", start));
+    expect(comment).not.toMatch(/manually entered probe lot,? and every outcome/);
+    expect(comment).not.toMatch(/a manually entered probe lot.*preserved/s);
+    // ...and it states the real rule, including the safety that makes it OK.
+    expect(comment).toMatch(/REPLACES a lot already typed here/);
+    expect(comment).toMatch(/unconfirmed/);
+  });
+
+  it("the shared contract does not list the lot among the NEVER-copied fields", () => {
+    // The header NEVER list used to include `probe_lot_number/confirmed/id`,
+    // which contradicted the code directly beneath it.
+    expect(CONTRACT).not.toMatch(/NEVER:[\s\S]{0,400}probe_lot_number\/confirmed\/id/);
+    // It must instead distinguish the three rules.
+    expect(CONTRACT).toMatch(/probe_lot_number\s+— COPIED verbatim/);
+    expect(CONTRACT).toMatch(/probe_inventory_item_id\s+— copied ONLY while/);
+    expect(CONTRACT).toMatch(/probe_lot_confirmed\s+— NEVER copied/);
+  });
+
+  it("the UI still tells the practitioner to confirm a copied lot", () => {
+    // If the lot is replaced, the confirmation prompt is the safety net; losing
+    // it would turn a helpful copy into a silent traceability claim.
+    expect(FORM).toMatch(/lotStatus/);
+    expect(FORM).toMatch(/"copied"/);
   });
 
   it("ORDINARY charting still reads, validates and saves draft.minutes", () => {

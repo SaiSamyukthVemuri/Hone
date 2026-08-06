@@ -26,6 +26,7 @@ type QueryRecord = {
   select: string;
   eq: Array<[string, unknown]>;
   is: Array<[string, unknown]>;
+  neq: Array<[string, unknown]>;
   ilike: Array<[string, string]>;
   or: string[];
   in: Array<[string, readonly unknown[]]>;
@@ -66,12 +67,36 @@ function matchesIlike(value: unknown, pattern: string): boolean {
   return typeof value === "string" && likeToRegExp(pattern).test(value);
 }
 
+// PostgREST filters an EMBEDDED resource with a dotted key — `session.deleted_at`
+// — where `session` is the embed ALIAS. Resolving that path is not optional
+// nicety: a fake that looked up the literal key `"session.deleted_at"` would find
+// `undefined`, treat it as NULL, and pass EVERY row. The inactive-session tests
+// would then be green against code that filters nothing at all.
+//
+// `{ found: false }` is distinct from `{ value: undefined }` so the caller can
+// apply `!inner` semantics: a row whose embed is missing is DROPPED, exactly as
+// an inner join drops it — never silently kept.
+function resolvePath(row: Row, path: string): { found: boolean; value: unknown } {
+  const segments = path.split(".");
+  let current: unknown = row;
+  for (const segment of segments) {
+    if (Array.isArray(current)) current = current[0];
+    if (current == null || typeof current !== "object") return { found: false, value: undefined };
+    if (!(segment in (current as Record<string, unknown>))) {
+      return { found: false, value: undefined };
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return { found: true, value: current };
+}
+
 function builder(table: string, select: string) {
   const record: QueryRecord = {
     table,
     select,
     eq: [],
     is: [],
+    neq: [],
     ilike: [],
     or: [],
     in: [],
@@ -89,8 +114,23 @@ function builder(table: string, select: string) {
     },
     is(col: string, val: unknown) {
       record.is.push([col, val]);
-      // PostgREST .is(col, null) => col IS NULL
-      predicates.push((r) => (r[col] ?? null) === val);
+      // PostgREST .is(col, null) => col IS NULL. A dotted key targets the
+      // embedded resource; with `!inner`, a row whose embed is absent is
+      // dropped rather than treated as NULL-and-therefore-matching.
+      predicates.push((r) => {
+        const { found, value } = resolvePath(r, col);
+        if (!found) return false;
+        return (value ?? null) === val;
+      });
+      return chain;
+    },
+    neq(col: string, val: unknown) {
+      record.neq.push([col, val]);
+      predicates.push((r) => {
+        const { found, value } = resolvePath(r, col);
+        if (!found) return false;
+        return value !== val;
+      });
       return chain;
     },
     ilike(col: string, pattern: string) {
@@ -199,6 +239,8 @@ const MULTI_AREA_BLOCK = {
   session: {
     client_id: "client-1",
     started_at: "2026-05-01T00:00:00Z",
+    deleted_at: null,
+    record_status: "draft",
     client: { name: "Ada Lovelace" },
   },
 };
@@ -355,9 +397,14 @@ describe("tenant isolation and parent integrity", () => {
       id: "block-foreign",
       studio_id: STUDIO_B,
       primary_area: "Sideburn",
+      // A COMPLETE, ACTIVE session — otherwise the parent-liveness filter would
+      // drop this row and the tenant-isolation assertion would pass for the
+      // wrong reason, hiding a studio-scoping regression.
       session: {
         client_id: "client-b",
         started_at: "2026-05-02T00:00:00Z",
+        deleted_at: null,
+        record_status: "draft",
         client: { name: "Other Studio Client" },
       },
     });
@@ -410,6 +457,222 @@ describe("tenant isolation and parent integrity", () => {
       created_at: "2026-05-04T00:00:00Z",
     });
     expect(memories(await search("Nostril"))).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session 1C integration: a treatment record is searchable only while its PARENT
+// SESSION is active. A live block can hang off a session that was soft-deleted
+// or voided; surfacing it exposes history the studio logically removed and hands
+// back a link that 404s. The filters live in the DATABASE (via `!inner`), so an
+// inactive record is gone before ordering and before the cap.
+// ---------------------------------------------------------------------------
+
+function activeSession(over: Record<string, unknown> = {}) {
+  return {
+    client_id: "client-1",
+    started_at: "2026-05-01T00:00:00Z",
+    deleted_at: null,
+    record_status: "draft",
+    client: { name: "Ada Lovelace" },
+    ...over,
+  };
+}
+
+// A block that matches "Sideburn" DIRECTLY (legacy primary_area), with a parent
+// session shaped by the caller. `created_at` is NEWER than the baseline block so
+// an unfiltered implementation would rank it FIRST — making its absence
+// meaningful rather than incidental.
+function blockWithSession(
+  id: string,
+  session: Record<string, unknown>,
+  over: Record<string, unknown> = {},
+) {
+  return {
+    ...MULTI_AREA_BLOCK,
+    id,
+    session_id: `session-${id}`,
+    primary_area: "Sideburn",
+    created_at: "2026-09-01T00:00:00Z",
+    session,
+    ...over,
+  };
+}
+
+function childAreaFor(blockId: string, area = "Sideburn") {
+  return {
+    id: `area-of-${blockId}`,
+    session_block_id: blockId,
+    studio_id: STUDIO_A,
+    area,
+    laterality: "left",
+    display_order: 0,
+    created_at: "2026-09-01T00:00:00Z",
+  };
+}
+
+describe("only ACTIVE parent sessions are searchable", () => {
+  it("an active direct match is included (positive control)", async () => {
+    tables.session_blocks!.push(blockWithSession("blk-active-direct", activeSession()));
+    const mem = memories(await search("Sideburn"));
+    expect(mem.map((m) => m.id)).toContain("memory:block:blk-active-direct");
+  });
+
+  it("an active SECONDARY-area match is included (positive control)", async () => {
+    tables.session_blocks!.push(
+      blockWithSession("blk-active-child", activeSession(), { primary_area: "Jaw" }),
+    );
+    tables.session_block_areas!.push(childAreaFor("blk-active-child"));
+    const mem = memories(await search("Sideburn"));
+    expect(mem.map((m) => m.id)).toContain("memory:block:blk-active-child");
+  });
+
+  it("a SOFT-DELETED session's direct match is excluded", async () => {
+    tables.session_blocks!.push(
+      blockWithSession("blk-del-direct", activeSession({ deleted_at: "2026-09-02T00:00:00Z" })),
+    );
+    const mem = memories(await search("Sideburn"));
+    expect(mem.map((m) => m.id)).not.toContain("memory:block:blk-del-direct");
+  });
+
+  it("a SOFT-DELETED session's child-area match is excluded", async () => {
+    tables.session_blocks!.push(
+      blockWithSession(
+        "blk-del-child",
+        activeSession({ deleted_at: "2026-09-02T00:00:00Z" }),
+        { primary_area: "Jaw" },
+      ),
+    );
+    tables.session_block_areas!.push(childAreaFor("blk-del-child"));
+    const mem = memories(await search("Sideburn"));
+    expect(mem.map((m) => m.id)).not.toContain("memory:block:blk-del-child");
+  });
+
+  it("a VOID session's direct match is excluded", async () => {
+    tables.session_blocks!.push(
+      blockWithSession("blk-void-direct", activeSession({ record_status: "void" })),
+    );
+    const mem = memories(await search("Sideburn"));
+    expect(mem.map((m) => m.id)).not.toContain("memory:block:blk-void-direct");
+  });
+
+  it("a VOID session's child-area match is excluded", async () => {
+    tables.session_blocks!.push(
+      blockWithSession("blk-void-child", activeSession({ record_status: "void" }), {
+        primary_area: "Jaw",
+      }),
+    );
+    tables.session_block_areas!.push(childAreaFor("blk-void-child"));
+    const mem = memories(await search("Sideburn"));
+    expect(mem.map((m) => m.id)).not.toContain("memory:block:blk-void-child");
+  });
+
+  it("a 'finalized' session is still LIVE — only 'void' is withdrawn", async () => {
+    // record_status is draft | finalized | void. Excluding anything other than
+    // void would hide ordinary treatment history.
+    tables.session_blocks!.push(
+      blockWithSession("blk-finalized", activeSession({ record_status: "finalized" })),
+    );
+    const mem = memories(await search("Sideburn"));
+    expect(mem.map((m) => m.id)).toContain("memory:block:blk-finalized");
+  });
+
+  it("a MALFORMED or missing parent never produces a result or a broken href", async () => {
+    tables.session_blocks!.push(
+      blockWithSession("blk-null-parent", null as never),
+      blockWithSession("blk-no-client", activeSession({ client_id: null })),
+    );
+    const results = await search("Sideburn");
+    const mem = memories(results);
+    expect(mem.map((m) => m.id)).not.toContain("memory:block:blk-null-parent");
+    expect(mem.map((m) => m.id)).not.toContain("memory:block:blk-no-client");
+    for (const r of results) {
+      expect(r.href).not.toContain("undefined");
+      expect(r.href).not.toContain("null");
+    }
+  });
+
+  it("the parent filters are applied by the QUERY, on BOTH block paths", async () => {
+    await search("Sideburn");
+    const blockQueries = queriesFor("session_blocks");
+    expect(blockQueries.length).toBe(2);
+    for (const q of blockQueries) {
+      expect(q.select).toContain("sessions!inner");
+      expect(q.is).toContainEqual(["deleted_at", null]);
+      expect(q.is).toContainEqual(["session.deleted_at", null]);
+      expect(q.neq).toContainEqual(["session.record_status", "void"]);
+    }
+  });
+
+  it("the next-session-note path also excludes void sessions", async () => {
+    await search("Sideburn");
+    const [noteQuery] = queriesFor("sessions");
+    expect(noteQuery).toBeDefined();
+    expect(noteQuery.is).toContainEqual(["deleted_at", null]);
+    expect(noteQuery.neq).toContainEqual(["record_status", "void"]);
+  });
+});
+
+describe("inactive records never consume a treatment-memory slot", () => {
+  it("four NEWER inactive matches do not displace older ACTIVE ones", async () => {
+    // Every inactive row is newer than every active row, so an implementation
+    // that filtered in JavaScript AFTER the cap would return zero active
+    // results here. Filtering in the database is what keeps the slots.
+    for (let i = 0; i < 4; i++) {
+      tables.session_blocks!.push(
+        blockWithSession(`blk-dead-${i}`, activeSession({ deleted_at: "2026-12-31T00:00:00Z" }), {
+          created_at: `2026-12-0${i + 1}T00:00:00Z`,
+        }),
+        blockWithSession(`blk-void-${i}`, activeSession({ record_status: "void" }), {
+          created_at: `2026-11-0${i + 1}T00:00:00Z`,
+        }),
+      );
+    }
+    for (let i = 0; i < 3; i++) {
+      tables.session_blocks!.push(
+        blockWithSession(`blk-live-${i}`, activeSession(), {
+          created_at: `2026-06-0${i + 1}T00:00:00Z`,
+        }),
+      );
+    }
+    const mem = memories(await search("Sideburn"));
+    const ids = mem.map((m) => m.id);
+    expect(ids.some((id) => id.includes("dead"))).toBe(false);
+    expect(ids.some((id) => id.includes("void"))).toBe(false);
+    // The live rows kept their slots.
+    expect(ids).toContain("memory:block:blk-live-2");
+    expect(ids).toContain("memory:block:blk-live-1");
+    expect(ids).toContain("memory:block:blk-live-0");
+    expect(mem.length).toBeLessThanOrEqual(4);
+  });
+
+  it("ordering among the surviving ACTIVE rows is still newest-first", async () => {
+    for (let i = 0; i < 3; i++) {
+      tables.session_blocks!.push(
+        blockWithSession(`blk-ord-${i}`, activeSession(), {
+          created_at: `2026-06-0${i + 1}T00:00:00Z`,
+        }),
+      );
+    }
+    tables.session_blocks!.push(
+      blockWithSession("blk-ord-dead", activeSession({ record_status: "void" }), {
+        created_at: "2026-12-31T00:00:00Z",
+      }),
+    );
+    const mem = memories(await search("Sideburn"));
+    const ordered = mem.map((m) => m.id).filter((id) => id.includes("blk-ord-"));
+    expect(ordered).toEqual([
+      "memory:block:blk-ord-2",
+      "memory:block:blk-ord-1",
+      "memory:block:blk-ord-0",
+    ]);
+  });
+
+  it("a direct + child duplicate on an ACTIVE session still consumes ONE slot", async () => {
+    tables.session_blocks!.push(blockWithSession("blk-both", activeSession()));
+    tables.session_block_areas!.push(childAreaFor("blk-both"));
+    const mem = memories(await search("Sideburn"));
+    expect(mem.filter((m) => m.id === "memory:block:blk-both")).toHaveLength(1);
   });
 });
 
