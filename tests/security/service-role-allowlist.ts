@@ -33,9 +33,21 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/(app)/calendar/move-appointment-actions.ts",
-    purpose: "Practitioner Move appointment — authorized available-slot lookup + the atomic same-record move (0133 RPC).",
-    why: "Both actions resolve the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and scope every read/RPC to studio.id + practitioner.id; the browser never supplies a studio_id/practitioner_id. The move goes only through practitioner_move_appointment (service_role-only), and the slot lookup only excludes the appointment's OWN server-derived reservation.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
+    purpose: "Practitioner Move/reassign appointment — authorized available-slot lookup + the atomic move (move_or_reassign_appointment).",
+    // PR B1 CORRECTION. This entry previously named `practitioner_move_appointment`
+    // (migration 0133) as the RPC the move goes through. That has been false since
+    // 0143: the action calls `move_or_reassign_appointment`, whose EFFECTIVE
+    // definition is 0152, and `practitioner_move_appointment` (effective 0145) is
+    // now a caller-less legacy delegate — `tests/app/calendar/move-reassign-source.test.ts`
+    // positively asserts the old name is absent from this file.
+    //
+    // The scopeGuard is deliberately the RPC NAME rather than the generic
+    // `getCurrentPractitionerWithStudio` that appears in nearly every authenticated
+    // action. That is a strict TIGHTENING, not a permission change — and it is what
+    // stops this corrected justification from going stale the same way, because the
+    // companion test requires the scopeGuard string to be present in the file.
+    why: "Both actions resolve the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and scope every read/RPC to studio.id + practitioner.id; the browser never supplies a studio_id/practitioner_id. The move goes only through move_or_reassign_appointment (service_role-only; EXECUTE revoked from public/anon/authenticated), which re-derives the actor's role, re-validates target-practitioner membership and the availability contract inside one transaction, and the slot lookup only excludes the appointment's OWN server-derived reservation.",
+    scopeGuard: "move_or_reassign_appointment",
   },
   {
     path: "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts",
