@@ -2,6 +2,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 // ===========================================================================
 // TWO-CONNECTION CONCURRENCY PROOFS for create_public_appointment.
@@ -255,10 +257,28 @@ describe("Test C — structural writers stay serialized and do not deadlock", ()
   }, 30_000);
 });
 
-describe("Test D — a concurrent lifecycle mutation of the source is serialized", () => {
-  it("mark_appointment_complete on the source waits for the create", async () => {
+describe("Test D — a competing row lock on the source is serialized behind the create", () => {
+  // RENAMED (appointment boundary B2). This test was previously titled
+  // "mark_appointment_complete on the source waits for the create", which it
+  // never did: the statement it runs is a bare `select ... for update`, and
+  // mark_appointment_complete is not called anywhere in this file. The title
+  // claimed an RPC invocation that did not happen.
+  //
+  // The behaviour it genuinely measures is worth keeping and is UNCHANGED —
+  // a competing FOR UPDATE on the source row blocks until the booking
+  // transaction commits. Holding the row lock directly is in fact the
+  // sharpest way to observe that ordering, because it removes every other
+  // variable the real commands would introduce.
+  //
+  // Command-level lifecycle behaviour — every refusal branch, the audit row,
+  // the rollback invariant and the EXECUTE grant matrix for
+  // mark_appointment_complete, mark_appointment_no_show and
+  // practitioner_cancel_appointment — is now covered behaviourally in
+  // tests/db/appointment-lifecycle-commands.db.test.ts.
+  it("a competing FOR UPDATE on the source row waits for the booking transaction", async () => {
     // complete/no-show/cancel all lock only the appointment row and never take
-    // the advisory lock, so they are exactly the class this fix serializes.
+    // the advisory lock, so a bare row lock is a faithful stand-in for that
+    // whole class of writer.
     const f = await seedWithConflictCandidate("race-d");
     const A = await conn();
     const B = await conn();
@@ -275,7 +295,10 @@ describe("Test D — a concurrent lifecycle mutation of the source is serialized
         [f.blockerId],
       );
       const blocked = await waitUntilBlocked(bPid);
-      expect(blocked, "a lifecycle writer must wait on the create's source lock").toBe(true);
+      expect(
+        blocked,
+        "a competing row lock must wait on the create's source lock",
+      ).toBe(true);
 
       await A.query("commit");
       await bPromise;
@@ -464,5 +487,80 @@ describe("owner resolution is a single snapshot", () => {
     expect(ownerReads, "the active-owner set must be read exactly once").toBe(1);
     expect(src).toMatch(/with active_owners as materialized/);
     expect(src).toMatch(/when count\(\*\) = 1 then \(array_agg\(id\)\)\[1\] else null end/);
+  });
+});
+
+// ===========================================================================
+// Appointment boundary B2 — title-truthfulness guard for THIS file
+// ===========================================================================
+//
+// One test in this file was titled "mark_appointment_complete on the source
+// waits for the create" while running a bare `select ... for update` and never
+// invoking that RPC. A wrong title is not cosmetic: it is what let a
+// never-tested command look covered for the whole life of the file, and the
+// boundary audit found the gap only by reading the body.
+//
+// This guard makes the same mistake mechanical rather than editorial. If a
+// test title in this file names a lifecycle RPC, the file must actually call
+// that RPC.
+
+describe("test titles in this file do not overclaim which RPC they invoke", () => {
+  const SELF = readFileSync(
+    path.resolve(__dirname, "public-booking-concurrency.db.test.ts"),
+    "utf8",
+  );
+
+  const LIFECYCLE_RPCS = [
+    "mark_appointment_complete",
+    "mark_appointment_no_show",
+    "practitioner_cancel_appointment",
+    "public_cancel_appointment_with_token",
+    "reschedule_appointment_v2",
+    "move_or_reassign_appointment",
+  ];
+
+  // A title may name an RPC only if the file genuinely invokes it — i.e. the
+  // source contains a `public.<rpc>(` call, not merely the bare name (which
+  // also appears inside the prosrc-scan test's `in (...)` list).
+  function overclaimedRpcs(title: string, source: string): string[] {
+    return LIFECYCLE_RPCS.filter(
+      (rpc) =>
+        title.includes(rpc) &&
+        !new RegExp(`public\\.${rpc}\\s*\\(`).test(source),
+    );
+  }
+
+  const titles = [...SELF.matchAll(/\bit\(\s*"([^"]+)"/g)].map((m) => m[1]);
+
+  it("the title scanner actually found this file's tests", () => {
+    // Anti-vacuity: if the regex stopped matching, the guard below would
+    // iterate an empty list and pass while checking nothing.
+    expect(titles.length).toBeGreaterThan(5);
+  });
+
+  it("the overclaim detector detects a real overclaim (self-test, both directions)", () => {
+    // The exact title this file used to carry — must be flagged.
+    expect(
+      overclaimedRpcs(
+        "mark_appointment_complete on the source waits for the create",
+        SELF,
+      ),
+    ).toEqual(["mark_appointment_complete"]);
+    // The corrected title — must be clean.
+    expect(
+      overclaimedRpcs(
+        "a competing FOR UPDATE on the source row waits for the booking transaction",
+        SELF,
+      ),
+    ).toEqual([]);
+  });
+
+  it("no test in this file names a lifecycle RPC it never invokes", () => {
+    for (const title of titles) {
+      expect(
+        overclaimedRpcs(title, SELF),
+        `test title overclaims an RPC this file never calls: "${title}"`,
+      ).toEqual([]);
+    }
   });
 });
