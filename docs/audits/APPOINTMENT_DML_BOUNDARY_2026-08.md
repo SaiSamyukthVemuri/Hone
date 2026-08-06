@@ -1877,7 +1877,18 @@ Things every command depends on, stated once so no command re-derives them.
 
 None of these are audit findings. They are places where the product genuinely has no decision recorded, and where a designer would otherwise have to invent one.
 
-1. **Does the revoke wait for the repair command, or ship first?** §10 P2-11 rates the missing repair path as a prerequisite of P1-1. That is defensible, but it is worth being precise about what the revoke actually removes: it is scoped to `authenticated`, so it does not touch the operator's real channel — the Supabase SQL editor as `postgres`, or a service-role script — and the "escape hatch" it closes was never an in-product capability, only a devtools `PATCH` no practitioner has been asked to perform. **Recommendation: resolve it by measurement, not argument.** Run one read-only production query through the approved channel (`supabase db query --linked`): `select status, count(*) from public.appointments a where not exists (select 1 from public.appointment_audit x where x.appointment_id = a.id) group by status;`. If it returns zero, the direct path has never been used and the revoke may ship first as 0172 with the repair command as 0173. If it returns rows, someone *has* been correcting data by hand, the repair command becomes a genuine prerequisite, and the order flips. That query is D3's best contribution.
+1. **How much rollout preparation does `B4` need before `B3` is applied?** **The sequence itself is not open. `B3` always owns migration `0172`; `B4` always follows as `0173`.** The read-only no-audit probe does **not** alter numbering or order — it calibrates urgency and maintenance-window preparation only.
+
+   Context for why the numbering is settled: the revoke is scoped to `anon` and `authenticated`, so it does not touch the operator's real channel — the Supabase SQL editor as `postgres`, or a service-role script — and the "escape hatch" it closes was never an in-product capability, only a devtools `PATCH` no practitioner has been asked to perform.
+
+   **Calibrate by measurement, not argument.** Run one read-only production query through the approved channel (`supabase db query --linked`): `select status, count(*) from public.appointments a where not exists (select 1 from public.appointment_audit x where x.appointment_id = a.id) group by status;`
+
+   | Probe result | What it means | What changes |
+   |---|---|---|
+   | **Zero** | The direct path has never been used | Permits the normal sequence: `B3`/`0172`, then `B4`/`0173`, on their own cadences |
+   | **Non-zero** | Someone has been correcting data by hand | Urgency and rollout preparation change, **not** numbering or order: `B4` must be **fully built, reviewed and deploy-ready** — exact-head green — **before `B3` is applied**, so the replacement path exists the moment the manual one closes |
+
+   That query is D3's best contribution.
 2. **Should Hone ever hard-delete an appointment?** Today nothing in the product does; after the revoke nothing outside `service_role`/`postgres` can. But a client data-deletion request will eventually need an answer, and the current cascades (`appointment_audit` `0010:219`, `appointment_policy_acknowledgements` `0056:34`) mean any deletion also destroys the evidence of itself. 0174's FK re-point fixes the audit half. The policy-acknowledgement half — and whether a retention/erasure path is needed at all — is a product and legal decision.
 3. **Should Hone have a structured cancellation window?** `0064:37` and `lib/billing/manual-fee-eligibility.ts:56` record the current answer as "not yet — v1 records the practitioner's manual assertion with a surfaced warning". D3 proposed building one. That is a pricing-policy decision, not a boundary decision, and it should be made on its own merits.
 4. **Should automatic no-show marking be re-enabled?** `app/api/cron/no-show-check/route.ts:4-38` already contains the correct design (cutoff = `ends_at` + grace, mutation through `mark_appointment_no_show`, claim + advisory lock) and a documented decision to stay disabled. Re-enabling it manufactures fee-eligible states with no human in the loop and depends on P3-16 (one shared `CRON_SECRET` for all five routes, held by a third-party scheduler) being fixed first.
@@ -2199,7 +2210,7 @@ permanently immutable. These are the two capabilities the revoke actually freeze
 
 **Migration.** **Yes — 0173.**
 
-**Dependencies.** B3 — may be expedited to follow it immediately, or shipped as an authorised pair with it (§12.5); it does not precede it. Moves the repo-max tripwire from 0172's test to 0173's.
+**Dependencies.** B3, and B4 never precedes it. When §12.5's probe returns non-zero, B4 must be **fully built, reviewed and deploy-ready before B3 is applied**, then applied as its own separately authorised change in the same maintenance window — its own dry run, its own push, its own post-apply verification. Moves the repo-max tripwire from 0172's test to 0173's.
 
 **Test plan.** DB: every sentinel; the 72-hour boundary from both sides; `no_audit_baseline` refusal; each
 blocking-dependent class refuses independently; self-idempotency (a second call returns
@@ -2515,7 +2526,7 @@ or a service-role script), and the hatch it closes was never an in-product capab
 | Probe result | Meaning | Sequence |
 |---|---|---|
 | **Zero rows** | No appointment has ever been mutated outside the command layer. The direct path has never been used | **Unchanged: `B3` = `0172`, `B4` = `0173`.** Ship the revoke, then the repair commands |
-| **Non-zero** | Someone has been correcting data by hand. Removing the hatch without a replacement would be an operational regression | **Numbers unchanged — `B3` still takes `0172`.** What changes is *urgency and packaging*: `B4` is expedited to follow `B3` immediately (same review cycle, ideally same day), and the operator is told in advance which rows they were hand-correcting and which repair command replaces that workflow. If the volume makes an unreplaced gap genuinely unacceptable, ship `B3` and `B4` as one authorised pair rather than reordering the ladder |
+| **Non-zero** | Someone has been correcting data by hand. Removing the hatch without a replacement would be an operational regression | **Numbering and order unchanged — `B3` takes `0172`, `B4` takes `0173`.** What changes is urgency and rollout preparation: **prepare `B4` to exact-head green before applying `B3`**, then execute `B3`/`0172` and `B4`/`0173` as **two separately authorised, sequential changes in the same maintenance window**. Never batch the migrations into one push, never combine their rollback boundaries, and never renumber them. Brief the operator in advance on which rows they were hand-correcting and which repair command replaces that workflow |
 
 Nothing else in the ladder is order-sensitive by argument; the rest is order-sensitive by fact (B5 before
 B6; B5's DELETE arm after its own FK re-point; B8 after #517).
@@ -2647,11 +2658,24 @@ select count(*) as terminal_without_matching_audit
                       and x.action in ('cancelled','completed','no_show'));
 ```
 
-**Zero ⇒ the direct path has never been used; ship `B3` as `0172`, then `B4` as `0173` (§12.5).**
-**Non-zero ⇒ someone has been correcting by hand.** `B3` still takes `0172` — the revoke is not reordered
-— but `B4` is expedited to follow it immediately, or the two ship as one authorised pair, and the operator
-is briefed on which workflow the repair command replaces before the hatch closes. Interpret carefully in
-one direction: rows predating a command's introduction are not evidence of a devtools `PATCH`. Cross-check `min(created_at)` of any offending appointment against
+**Zero ⇒ the direct path has never been used; ship `B3` as `0172`, then `B4` as `0173` (§12.5), each on
+its own cadence.**
+
+**Non-zero ⇒ someone has been correcting by hand.** The numbering and the order do not change. **Prepare
+`B4` to exact-head green before applying `B3`**, then execute `B3`/`0172` and `B4`/`0173` as **two
+separately authorised, sequential changes in the same maintenance window. Never batch the migrations into
+one push, never combine their rollback boundaries, and never renumber them.** Concretely, and without
+exception:
+
+* every migration still gets its **own dry run**;
+* every migration still gets its **own push**;
+* every migration still gets its **own post-apply verification**;
+* if `B4`'s practitioner UI is not mounted because PR #517 has not merged, an **explicit approved operator
+  runbook must exist before `B3` closes the old manual correction path** — a repair command with no
+  reachable surface and no runbook is not a replacement.
+
+Interpret the probe carefully in one direction: rows predating a command's introduction are not evidence
+of a devtools `PATCH`. Cross-check `min(created_at)` of any offending appointment against
 the migration that introduced its lifecycle command.
 
 #### Probe 3 — the span invariant (pre-flight for the deferred CHECK)
@@ -3521,8 +3545,10 @@ co-requisite.
 ### 16.6 Sequence — `0172` stays with the boundary revoke
 
 **The §12 sequence is authoritative and unchanged. `B3` is the direct-DML boundary revoke and it holds
-migration `0172`.** An earlier draft of this section re-phased the program to put additive attribution
-first; that re-phasing is **withdrawn**, and this subsection records why so the argument is not re-run.
+migration `0172`, and `B4` always follows as `0173`.** An earlier draft of this section re-phased the
+program to put additive attribution first and moved `0172` to it. **That re-phasing was REJECTED and is
+withdrawn** — it is recorded below only as history, so the argument is not re-run. Nothing in it is
+current guidance.
 
 **The application-first prerequisite is already satisfied at `03e7dea`.** Application-first means the
 replacement writer must be deployed and carrying the traffic before the old path is removed. It is:
@@ -3609,7 +3635,7 @@ today**, which is the point.
 | 2 | **Style A convergence.** PR #520 §10.3 recommends every command family converge on actor-derived Style A | **PR #520 is wrong for this family.** Three of the seven appointment commands have no authenticated caller — `create_public_appointment` (anonymous), `reschedule_appointment_v2` (token), `public_cancel_appointment_with_token` (anonymous). `auth.uid()` is structurally null; Style A cannot express their actor | Changes the `D6` decision from *converge* to *split* — §16.5 |
 | 3 | **`appointment_audit` mutability.** §2.2 lists "a member can `UPDATE`/`DELETE` audit rows" as a **rejected** claim; PR #520 `A-P1-03` states the rows are permanent | **No disagreement — both are right.** RLS default-denies `UPDATE`/`DELETE` (only `SELECT` and `INSERT` policies exist, `0010:280`, `:291`). Recorded here only because the two documents' phrasings could be misread as conflicting | None. New test `R5` pins it |
 | 4 | **`cancelled_by` semantics.** PR #520 `D5` treats `cancelled_by` as weak attribution | **This document is more precise.** `cancelled_by` is read server-side from the live practitioner row inside the command (`0033:255-259`) and written as `v_role` (`0033:294`) — it is **not** browser-supplied on the command path. The genuine defect is narrower: *which* practitioner is unrecorded | `D5` is accepted with its premise corrected; the remediation is unchanged |
-| 5 | **Sequencing.** §12 ships the revocation third as `0172`. An earlier draft of this section moved `0172` to the additive attribution work and pushed the revoke behind it | **Resolved in favour of §12: `B3` keeps `0172`.** The application-first prerequisite is a *replacement writer*, and it is already satisfied — the command layer is deployed, every lifecycle flow uses it, and zero shipped writes use the authenticated client (§16.6). An additive column is not a replacement writer and does not reduce the bypass, so ordering `D4`/`D5` ahead of the revoke would hold `P1-1`, `P1-2` and `P1-3` open for another migration cycle without closing them | **The re-phasing is withdrawn.** `D4`/`D5` land in `B5`/`0174` as added scope; the sequence is unchanged |
+| 5 | **Sequencing.** §12 ships the revocation third as `0172`. An earlier draft of this section moved `0172` to the additive attribution work and pushed the revoke behind it | **Resolved in favour of §12: `B3` keeps `0172`.** The application-first prerequisite is a *replacement writer*, and it is already satisfied — the command layer is deployed, every lifecycle flow uses it, and zero shipped writes use the authenticated client (§16.6). An additive column is not a replacement writer and does not reduce the bypass, so ordering `D4`/`D5` ahead of the revoke would hold `P1-1`, `P1-2` and `P1-3` open for another migration cycle without closing them | **The re-phasing was REJECTED and is withdrawn** (historical record only). `D4`/`D5` land in `B5`/`0174` as added scope; the sequence is unchanged — `B3` = `0172`, `B4` = `0173` |
 | 6 | **Scope of `A-P1-01`.** PR #520 treats `public.practitioners` as an independent finding; this program could be read as closing appointment attribution without it | **Both scopings are right; the dependency was invisible to each audit alone.** `A-P1-01` stays in PR #520's queue as `PR-A1`. This document must stop short of claiming `0172` establishes trustworthy attribution — §16.3 | Adds `PR-A1` as a **co-requisite** of `B3`, not a blocker |
 
 | 7 | **Whether a forged audit row is visible in the product.** PR #520 `A-P1-03` carries a correction asserting it is not, because the `by {cancelled_by}` line reads the appointments column. This section originally endorsed that correction | **PR #520 is wrong, and the error is in the direction that *understates* the finding.** `app/(app)/calendar/[id]/page.tsx:131-139` selects `appointment_audit.details` into `cancellationInsight` under `order by created_at desc limit 1`, and renders it at `:566`, `:580-584`, `:588-591`, `:599`. Combined with `P1-3`'s finding that `created_at` is caller-chosen, a forged row wins that ordering deterministically | **Escalates `P1-3`** from durable-record forgery to UI-reachable content control. Anything PR #520 absorbed under `A-P1-03` inherits the corrected statement. No change to the remediation — `B3` + `B5` close it — but the finding's description must be updated |
@@ -3632,7 +3658,7 @@ in `B5`/`0174`, immediately behind the boundary that makes it meaningful.
 
 Two things can start immediately and independently.
 
-**(a) An operator action, not an agent task.** Before PR **B3** (migration `0172`) can be scheduled, one read-only production query must be run through the approved channel to settle the single open sequencing question in §12.5 — whether the revocation ships before or after the repair commands. It is specified in §13.2. Nobody should argue about that ordering; it is a measurement.
+**(a) An operator action, not an agent task.** Before PR **B3** (migration `0172`) can be scheduled, one read-only production query must be run through the approved channel. It does **not** decide the sequence — `B3` owns `0172` and `B4` follows as `0173` regardless — it calibrates how much rollout preparation `B4` needs first (§11.7 decision #1, §12.5). It is specified in §13.2.
 
 **(b) The next implementation session.** PR **B1**. It has no dependencies, no migration, no production surface, and it freezes the seven known direct writers before any SQL in this program is edited. The prompt below is complete and ready to use.
 
