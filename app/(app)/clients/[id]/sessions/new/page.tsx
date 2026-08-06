@@ -1,17 +1,19 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  attachStructuredAreas,
   getClientById,
   getCurrentPractitionerWithStudio,
 } from "@/lib/supabase/queries";
-import { createClient } from "@/lib/supabase/server";
 import { localLongDate } from "@/lib/booking/tz";
 import {
   buildLastSessionSummary,
-  type ClinicalSummaryBlock,
   type LastSessionSummary,
 } from "@/lib/sessions/clinical-summary";
+import { loadLastChartedTreatment } from "@/lib/sessions/last-treatment-loader";
+import {
+  blocklessTreatmentCopy,
+  toClinicalSummaryBlocks,
+} from "@/lib/sessions/point-of-care-memory";
 import {
   AreaSummaries,
   FromLastVisitForToday,
@@ -52,57 +54,61 @@ export default async function NewSessionPage({
   // five-second read before charting a returning client: last area,
   // settings, tolerance, reaction, caution, and the note left for
   // today. First-visit clients simply see no panel.
-  const supabase = await createClient();
-  const { data: prevSession } = await supabase
-    .from("sessions")
-    .select("id, started_at, modality, next_session_note")
-    .eq("studio_id", studio.id)
-    .eq("client_id", id)
-    .is("deleted_at", null)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  //
+  // The candidate used to be the newest session ROW (`order started_at desc
+  // limit 1`), which is wrong here more often than anywhere else in the app:
+  // tapping a modality on THIS page creates an empty session immediately, so an
+  // abandoned attempt — or a newer administrative row, or a laser session for a
+  // client mid-transition — permanently won the lookup and rendered a
+  // "Previous session context" heading over an empty body while the real
+  // treatment sat one row below. It is now the newest CHARTED session
+  // (lib/sessions/charted-session.ts), the same definition the live charting
+  // screen's point-of-care memory card uses.
+  //
+  // This also REMOVES two round-trips: the client's sessions and their live
+  // entries already arrived with getClientById above, and the prior blocks now
+  // carry their structured areas in the same select instead of needing a
+  // separate attachStructuredAreas pass.
+  const lastTreatment = await loadLastChartedTreatment({
+    studioId: studio.id,
+    sessions: data.sessions,
+  });
 
   let previousSummary: LastSessionSummary | null = null;
   let previousMeta: { startedAt: string; modality: string; sessionId: string } | null =
     null;
-  if (prevSession) {
-    const { data: prevBlocks } = await supabase
-      .from("session_blocks")
-      .select(
-        "id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
-      )
-      .eq("studio_id", studio.id)
-      .eq("session_id", prevSession.id)
-      .is("deleted_at", null)
-      .order("sort_order", { ascending: true });
-    // Migration 0128: attach structured areas so the previous-session summary
-    // renders every treated area + laterality, not only the legacy primary_area.
-    const prevBlockRows = (prevBlocks ?? []) as Array<
-      ClinicalSummaryBlock & {
-        id: string;
-        electrolysis_entries?:
-          | Array<{ observation_chips: unknown; deleted_at: string | null }>
-          | null;
-      }
-    >;
-    await attachStructuredAreas(prevBlockRows, studio.id);
+  // Non-null when the selected treatment is genuinely charted but carries NO
+  // settings blocks — a LASER visit (which charts into laser_entries) or
+  // pre-0019 legacy electrolysis (which charted straight into entries).
+  //
+  // The selector deliberately accepts both, and it is right to: a laser visit
+  // IS the last treatment for a client mid-transition. But every block-shaped
+  // summary is empty for them — buildLastSessionSummary still returns a TRUTHY
+  // object with `areas: []`, so this panel used to render its heading and date
+  // over nothing at all. It now says what the record actually is, using the
+  // SAME copy the charting screen's memory card uses.
+  let blocklessNote: string | null = null;
+  if (lastTreatment) {
     previousSummary = buildLastSessionSummary({
-      // Charting unification: feed the block's live entries' observation_chips so
-      // the reaction line reads the unified representation.
-      blocks: prevBlockRows.map((b) => ({
-        ...b,
-        observation_chips_list: (b.electrolysis_entries ?? [])
-          .filter((e) => e.deleted_at == null)
-          .map((e) => e.observation_chips),
-      })),
-      nextSessionNote: prevSession.next_session_note,
+      // Charting unification: the adapter feeds each block's LIVE entries'
+      // observation_chips through so the reaction line reads the unified
+      // representation.
+      blocks: toClinicalSummaryBlocks(lastTreatment.blocks),
+      nextSessionNote: lastTreatment.session.next_session_note ?? null,
     });
     previousMeta = {
-      startedAt: prevSession.started_at,
-      modality: prevSession.modality,
-      sessionId: prevSession.id,
+      startedAt: lastTreatment.session.started_at,
+      modality: lastTreatment.session.modality,
+      sessionId: lastTreatment.session.id,
     };
+    if (lastTreatment.blocks.length === 0) {
+      blocklessNote = blocklessTreatmentCopy({
+        modality: lastTreatment.session.modality,
+        hasLiveElectrolysisEntries: (
+          lastTreatment.session.electrolysis_entries ?? []
+        ).some((e) => e.deleted_at == null),
+      });
+    }
   }
 
   return (
@@ -144,9 +150,29 @@ export default async function NewSessionPage({
               · {previousMeta.modality}
             </span>
           </p>
-          {/* PR #191: per-treatment-area mini-summaries plus the ONE
-              combined From last visit box (watch + plan). */}
-          <AreaSummaries summary={previousSummary} />
+          {/* A charted visit with no settings blocks (laser / legacy
+              entry-only) renders the truthful fallback INSTEAD of an empty
+              AreaSummaries. The plan still shows below either way. */}
+          {blocklessNote ? (
+            <div className="flex flex-col gap-2">
+              <p
+                data-testid="previous-context-blockless"
+                className="text-neutral-700 dark:text-neutral-300"
+              >
+                {blocklessNote}
+              </p>
+              <Link
+                href={`/clients/${id}/sessions/${previousMeta.sessionId}`}
+                className="self-start text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+              >
+                Open full chart →
+              </Link>
+            </div>
+          ) : (
+            /* PR #191: per-treatment-area mini-summaries plus the ONE
+               combined From last visit box (watch + plan). */
+            <AreaSummaries summary={previousSummary} />
+          )}
           <FromLastVisitForToday summary={previousSummary} />
         </section>
       )}

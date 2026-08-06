@@ -51,6 +51,10 @@ export const BROWSER_GROUPS = {
       "combined-today-workflow.spec.ts",
       "dashboard-memory-visibility.spec.ts",
       "before-today-imported.spec.ts",
+      // Point-of-care treatment memory on the live charting screen: the
+      // newest-CHARTED-session selector, the setup fields that used to be
+      // missing, and the multi-area treatment-time attribution.
+      "point-of-care-memory.spec.ts",
     ],
   },
   intake: {

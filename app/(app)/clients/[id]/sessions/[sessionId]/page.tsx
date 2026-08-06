@@ -62,6 +62,9 @@ import {
   reviseClinicalNoteAction,
 } from "../../clinical-notes-actions";
 import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
+import { loadLastChartedTreatment } from "@/lib/sessions/last-treatment-loader";
+import { buildPointOfCareMemory } from "@/lib/sessions/point-of-care-memory";
+import { LastTreatmentMemoryCard } from "@/components/last-treatment-memory-card";
 import {
   resolveFinishAppointmentState,
   chartingLabel,
@@ -382,6 +385,64 @@ export default async function SessionDetailPage({
   const fromLastVisit =
     previousWithNote?.next_session_note?.trim() || null;
 
+  // POINT-OF-CARE TREATMENT MEMORY (Chloe). Everything she needs to reproduce
+  // last time's treatment — areas + laterality, frequency, probe and lot, mode
+  // and modality, the mode-valid readings, hairs, minutes, numbing, tolerance
+  // and response — used to live on the client Overview tab or inside the
+  // previous session's own chart, two or three navigations from the screen she
+  // is standing at. It renders here instead.
+  //
+  // ONE net-new query: the candidate sessions and their live entries are
+  // already in clientData (getClientById), so only the prior settings blocks
+  // are fetched, batched over the whole candidate window.
+  //
+  // The candidate is the newest CHARTED session, not the newest session ROW —
+  // tapping a modality on /sessions/new creates an empty session immediately,
+  // and an abandoned one used to win every "previous session" lookup.
+  const lastTreatment = await loadLastChartedTreatment({
+    studioId: studio.id,
+    sessions: clientData.sessions,
+    before: session.started_at,
+    excludeSessionId: session.id,
+  });
+  // Latest non-superseded entry per note kind, from the sections ALREADY
+  // loaded above. No extra query, no note body in any log line.
+  const noteHead = (kind: "consultation" | "skin_hair_analysis") => {
+    const section = clinicalNoteSections.find((s) => s.kind === kind);
+    const latest = section?.notes.find((n) => !n.is_superseded) ?? null;
+    return latest
+      ? {
+          occurredAt: latest.occurred_at,
+          body: latest.body,
+          authorName: latest.author_name,
+          total: section?.total ?? 1,
+        }
+      : null;
+  };
+  const pointOfCareMemory = lastTreatment
+    ? buildPointOfCareMemory({
+        session: {
+          id: lastTreatment.session.id,
+          started_at: lastTreatment.session.started_at,
+          modality: lastTreatment.session.modality,
+          next_session_note: lastTreatment.session.next_session_note ?? null,
+        },
+        blocks: lastTreatment.blocks,
+        consultationNote: noteHead("consultation"),
+        skinHairNote: noteHead("skin_hair_analysis"),
+        // The "From last visit, for today" band below already carries this
+        // exact text; the card omits it rather than repeating it.
+        planAlreadyShown: fromLastVisit,
+        supersededByEmptySession: lastTreatment.supersededByEmptySession,
+        // Distinguishes a legacy entry-only electrolysis visit from a laser one
+        // when the selected treatment carries no settings blocks.
+        hasLiveElectrolysisEntries:
+          (lastTreatment.session.electrolysis_entries ?? []).some(
+            (e) => e.deleted_at == null,
+          ),
+      })
+    : null;
+
   // Whole-session copy (0157): the ONE canonical authority for whether an
   // eligible previous session exists is whole_session_copy_source_descriptor —
   // the SAME function the commit RPC derives its source from. We gate the panel
@@ -515,6 +576,19 @@ export default async function SessionDetailPage({
             deleted. New sessions are ordinary editable records.
           </p>
         </section>
+      )}
+
+      {/* POINT-OF-CARE MEMORY: what happened last time, at the top of the
+          clinical workflow and BEFORE any block entry, so Chloe never has to
+          leave this screen to answer "what did we do, with what, and how did
+          she react?". Read-only; it issues no write and owns no state. Renders
+          nothing at all for a client with no prior charted treatment. */}
+      {pointOfCareMemory && (
+        <LastTreatmentMemoryCard
+          clientId={id}
+          memory={pointOfCareMemory}
+          notesHref={`/clients/${id}?tab=consultation`}
+        />
       )}
 
       {/* PR #190 (clinical memory): the plan written at the previous

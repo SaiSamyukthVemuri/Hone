@@ -46,7 +46,15 @@ test("preview creates zero blocks; commit copies areas+settings with BLANK minut
   await test.step("building the preview creates NO block (ephemeral, in-memory)", async () => {
     await page.getByTestId("copy-previous-preview").click();
     await expect(page.getByTestId("copy-previous-preview-panel")).toBeVisible({ timeout: T });
-    await expect(page.getByText("left Chin", { exact: false })).toBeVisible();
+    // Scoped to the copy PANEL. The page-wide lookup this replaces became
+    // ambiguous once the charting screen gained its own "Last treatment"
+    // memory card, which names the same area — and it was always the panel's
+    // own row that this step is about.
+    await expect(
+      page
+        .getByTestId("copy-previous-preview-panel")
+        .getByText("left Chin", { exact: false }),
+    ).toBeVisible();
     expect(await getSessionBlockCount(todaySessionId)).toBe(0);
     await noOverflow(page);
   });

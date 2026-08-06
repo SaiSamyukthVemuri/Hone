@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { buildAreaMinutesBreakdown } from "./area-bucket";
 import type { TreatmentGoal } from "@/lib/types/database";
 import type {
   AreaBreakdownRow,
@@ -26,30 +27,20 @@ export {
   relativeLastSession,
 } from "./format";
 
-// Block names that are practitioner-meaningful are kept as the area
-// label. Generic defaults ("Main", "Treatment 1", null) get bucketed as
-// "Other" because they don't tell us a real anatomical area.
-const GENERIC_BLOCK_NAME_RE = /^treatment\s+\d+$/i;
-function bucketize(blockName: string | null): string {
-  if (!blockName) return "Other";
-  const trimmed = blockName.trim();
-  if (!trimmed) return "Other";
-  if (trimmed.toLowerCase() === "main") return "Other";
-  if (GENERIC_BLOCK_NAME_RE.test(trimmed)) return "Other";
-  return trimmed;
-}
-
 // Single round-trip: load all non-deleted electrolysis sessions for the
 // client (id + started_at) plus the associated non-deleted block minutes.
 // Sum + count in app code so the helpers below can reuse the same rows.
 //
-// Body Chart v1 Phase C: also selects session_blocks.primary_area so
-// getTreatmentTimeByArea can prefer the structured area when set, with
-// bucketize(block_name) as the fallback for legacy/unset blocks. Side
-// and custom_area_detail are NOT included here — this phase keeps the
-// breakdown bucket at the Area layer (e.g. "Chin", "Underarms") and
-// does not fragment by side. The total-minutes and session-number
-// helpers don't read primary_area, so the additional column is free.
+// Body Chart v1 Phase C selected session_blocks.primary_area and bucketed on
+// it. That was the FIRST area of a multi-area block (migration 0128 defines
+// primary_area as exactly that), so a block treating Left cheek + Right
+// sideburn credited its whole duration to Cheek and the sideburn disappeared
+// from the breakdown. The structured child rows are now selected in the SAME
+// embed — still one round-trip, no N+1 — and the bucket label is resolved by
+// lib/treatment-time/area-bucket.ts, which credits a multi-area block ONCE to
+// one combined bucket. primary_area is retained as the legacy fallback. The
+// total-minutes and session-number helpers don't read either, so the extra
+// columns are free to them.
 type Row = {
   id: string;
   started_at: string;
@@ -59,6 +50,15 @@ type Row = {
     primary_area: string | null;
     minutes_performed: number | null;
     deleted_at: string | null;
+    // Migration 0128 structured areas. Present (possibly empty) on every row;
+    // these child rows have no soft-delete of their own and are reachable only
+    // through a live parent block, which the filter below already guarantees.
+    structured_areas: Array<{
+      area: string;
+      display_order: number | null;
+      created_at: string | null;
+      id: string | null;
+    }> | null;
   }>;
 };
 
@@ -70,7 +70,7 @@ async function loadElectrolysisRows(
   const { data, error } = await supabase
     .from("sessions")
     .select(
-      "id, started_at, studio_id, blocks:session_blocks(block_name, primary_area, minutes_performed, deleted_at)",
+      "id, started_at, studio_id, blocks:session_blocks(block_name, primary_area, minutes_performed, deleted_at, structured_areas:session_block_areas(id, area, display_order, created_at))",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
@@ -106,50 +106,22 @@ export async function getTotalTreatmentTime(
   };
 }
 
-// Body Chart v1 Phase C: structured area takes precedence; legacy blocks
-// continue to flow through bucketize(block_name). The result is a
-// single Area-layer breakdown (e.g. "Chin", "Underarms", "Other") with
-// no side fragmentation — `Underarms · left` rolls up into `Underarms`
-// for this PR. Returning side/custom-detail as separate buckets is
-// intentionally deferred so the v1 breakdown answers "what area did
-// they spend time on" before "what side of which area".
-function resolveAreaBucket(block: {
-  block_name: string | null;
-  primary_area: string | null;
-}): string {
-  const structured = block.primary_area?.trim();
-  if (structured && structured.length > 0) return structured;
-  return bucketize(block.block_name);
-}
-
+// The structured child rows are authoritative; legacy blocks continue to flow
+// through primary_area and then bucketize(block_name). The result is still a
+// single Area-layer breakdown with no side fragmentation — `Underarms · left`
+// still rolls up into `Underarms` — but a block that treated SEVERAL areas now
+// buckets under one combined label naming all of them, credited exactly once,
+// instead of silently crediting only its first area. See
+// lib/treatment-time/area-bucket.ts for the full rule.
 export async function getTreatmentTimeByArea(
   studioId: string,
   clientId: string,
 ): Promise<AreaBreakdownRow[]> {
   const rows = await loadElectrolysisRows(studioId, clientId);
-  const minutesByArea = new Map<string, number>();
-  let total = 0;
-  for (const r of rows) {
-    for (const b of r.blocks) {
-      const minutes = b.minutes_performed ?? 0;
-      if (minutes === 0) continue;
-      const area = resolveAreaBucket(b);
-      minutesByArea.set(area, (minutesByArea.get(area) ?? 0) + minutes);
-      total += minutes;
-    }
-  }
-  if (total === 0) return [];
-
-  const out: AreaBreakdownRow[] = [];
-  for (const [area, minutes] of minutesByArea) {
-    out.push({
-      area,
-      minutes,
-      percentage: Math.round((minutes / total) * 100),
-    });
-  }
-  out.sort((a, b) => b.minutes - a.minutes);
-  return out;
+  // The attribution itself is pure and lives in ./area-bucket, so the invariant
+  // "the breakdown sums to the same total as getTotalTreatmentTime" is proved
+  // by unit test against this exact code rather than a replica of it.
+  return buildAreaMinutesBreakdown(rows.flatMap((r) => r.blocks));
 }
 
 export async function getTreatmentGoal(
