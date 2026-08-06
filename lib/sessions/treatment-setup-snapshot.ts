@@ -11,10 +11,34 @@
 // from one session to the next. It is NOT the treatment outcome. It therefore
 // carries ONLY reusable setup fields and NEVER any field that describes what
 // actually happened to the client:
-//   NEVER: hairs_treated, comments, observation_chips, tolerance/reaction/
-//   caution, numbing_status, probe_lot_number/confirmed/id, next-session notes,
-//   consultation notes, photos, timestamps, author/creator ids, finalized/void/
-//   audit fields, or any source entry/block/session id as a destination id.
+//   NEVER: minutes_performed, hairs_treated, comments, observation_chips,
+//   tolerance/reaction/caution, numbing_status, next-session notes,
+//   consultation notes, photos, timestamps, author/creator ids,
+//   finalized/void/audit fields, or any source entry/block/session id as a
+//   destination id.
+//
+// THE PROBE LOT IS A DELIBERATE EXCEPTION, and this list used to lie about it.
+// The lot is not an outcome — it is part of the probe SETUP, and copying a probe
+// without its lot let the destination silently auto-resolve a DIFFERENT lot from
+// unrelated history, swapping a traceability value the practitioner believed she
+// had copied. So the contract is three distinct rules, not one:
+//   * probe_lot_number      — COPIED verbatim (trimmed) with the probe;
+//   * probe_inventory_item_id — copied ONLY while that item is still an ACTIVE
+//     lot for the copied probe; expired, archived or reclassified links are
+//     DROPPED (the lot TEXT survives, the traceability claim does not);
+//   * probe_lot_confirmed   — NEVER copied. A copy is a transcription, not a
+//     check of the physical package, so the destination always starts
+//     unconfirmed and the UI asks for confirmation against the package.
+//
+// MINUTES PERFORMED IS AN OUTCOME, NOT SETUP (Chloe, Session 1C). It records how
+// long the treatment that ALREADY HAPPENED ran for; it is not a machine setting
+// a practitioner reuses. It was copied until now, which silently overwrote
+// destination-specific minutes the practitioner had already typed. The key is
+// removed STRUCTURALLY rather than emitted blank: a patch that carried
+// `minutes: ""` would erase destination-entered work just as surely as one that
+// carried the source's value. Spreading a patch that does not own the key leaves
+// the destination's minutes exactly as the practitioner left them — blank when
+// none was typed, and the typed value when there is one.
 //
 // Mode gating mirrors the write path (block-actions.ts structuredReadingColumns
 // + entryMachineSnapshot) EXACTLY so a copied snapshot is byte-compatible with a
@@ -49,11 +73,12 @@ export const ENTRY_SETUP_FIELDS = [
 ] as const;
 
 // The reusable setup that lives on the session_blocks row.
+// NOTE: minutes_performed is DELIBERATELY absent — it is an outcome of the
+// treatment that already happened, never reusable setup (see the header).
 export const BLOCK_SETUP_FIELDS = [
   "mode",
   "apilus_modality",
   "energy_level",
-  "minutes_performed",
   "machine_frequency",
   "probe_key",
   "probe_brand",
@@ -74,11 +99,14 @@ export const BLOCK_SETUP_FIELDS = [
 ] as const;
 
 // Minimal structural source shapes (decoupled from the DB row types).
+// minutes_performed is intentionally NOT part of the source contract: it is
+// never read for a copy (it is an outcome, not setup). A richer DB row that
+// still carries the column satisfies this shape structurally, so callers keep
+// selecting it for ordinary charting without weakening this contract.
 export type SetupSourceBlock = {
   mode: string | null;
   apilus_modality: string | null;
   energy_level: number | null;
-  minutes_performed: number | null;
   machine_frequency: string | null;
   probe_key: string | null;
   // The lot snapshot + its durable inventory link. Optional so a caller with a
@@ -112,7 +140,9 @@ export type TreatmentSetupDraftPatch = {
   energyLevel: string;
   probeKey: string;
   machineFrequency: string;
-  minutes: string;
+  // `minutes` is intentionally absent — minutes performed is an OUTCOME. The key
+  // is omitted rather than emitted blank so applying this patch over a draft
+  // leaves the destination's own minutes untouched (see the header).
   thermolysisIntensityPercent: string;
   thermolysisDurationSeconds: string;
   galvanicMa: string;
@@ -178,7 +208,8 @@ export function buildTreatmentSetupDraftPatch(
     energyLevel: isGalv ? "" : s(block.energy_level),
     probeKey: block.probe_key ?? "",
     machineFrequency: block.machine_frequency ?? "",
-    minutes: s(block.minutes_performed),
+    // minutes_performed is NEVER read here: an outcome is not reusable setup,
+    // and a copy must not overwrite minutes the practitioner already typed.
     thermolysisIntensityPercent: wantThermo
       ? s(firstEntry?.thermolysis_intensity_percent)
       : "",
