@@ -27,14 +27,27 @@
 //
 // WORDING APPROVAL STATUS
 // -----------------------
-// The wording below is a PRODUCT-READY DRAFT authored 2026-08-06. No
-// approved electrolysis-nature acknowledgement wording existed anywhere in
-// this repository beforehand (searched: docs/**, app/**, lib/**,
-// components/**, the roadmap and decision records). It follows the posture
-// established by lib/consent/card-authorization-draft.ts: the codebase does
-// NOT claim the wording is legally approved, and the "this is a draft"
-// statement lives in THIS comment — never in the string the client reads.
-// Chloe must review and approve the wording before it is treated as final.
+// This exact v1 wording and help text were reviewed and APPROVED by Chloe
+// on 2026-08-06 for the initial Hone rollout. No wording change was
+// requested at approval.
+//
+// That approval is PRODUCT AND CLINICAL, not legal. This module does not
+// claim the wording is legally approved or reviewed by counsel, and it must
+// never be described that way. What the client ticks remains an
+// acknowledgement of what electrolysis involves — it is NOT informed
+// consent, NOT a consent form, NOT an electronic signature, and NOT any
+// form of clearance to treat. The studio's own informed-consent documents
+// and policies are separate and unaffected.
+//
+// The approval is scoped to the wording exactly as it stands at v1. Any
+// future edit requires a version bump (see CHANGING THE WORDING below) AND
+// fresh review — approving v1 says nothing about v2. Neither approving nor
+// bumping a version reaches backwards: intakes already submitted keep the
+// wording snapshot their client actually read.
+//
+// Per the posture established by lib/consent/card-authorization-draft.ts,
+// any statement about approval status lives in THIS comment and in the
+// PR/docs record — never in the string the client reads.
 //
 // CHANGING THE WORDING
 // --------------------
