@@ -13,6 +13,8 @@
  * sprint will surface this as an admin UI.
  */
 
+import { ELECTROLYSIS_ACKNOWLEDGEMENT } from "./acknowledgements";
+
 export type QuestionType =
   | "short_text"
   | "long_text"
@@ -671,6 +673,24 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
     description:
       "These confirmations help your electrologist trust the information they're working with. They are not a consent form. Treatment-specific consent happens with your electrologist in person.",
     questions: [
+      // Versioned electrolysis acknowledgement. Placed FIRST on this step so
+      // it is the acknowledgement the client reads before the routine
+      // confirmations below, rather than something buried under them.
+      //
+      // Its label and help text are NOT written here — they are read from
+      // lib/intake/acknowledgements.ts, which is the single source shared
+      // with the practitioner review surface. Do not inline the wording.
+      //
+      // Answering this checkbox stores a boolean under `questionKey`; a
+      // separate versioned provenance record is stored under
+      // ELECTROLYSIS_ACKNOWLEDGEMENT.id and validated server-side at submit.
+      {
+        key: ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey,
+        type: "checkbox",
+        label: ELECTROLYSIS_ACKNOWLEDGEMENT.wording,
+        helpText: ELECTROLYSIS_ACKNOWLEDGEMENT.helpText,
+        required: true,
+      },
       {
         key: "ack_not_a_substitute",
         type: "checkbox",

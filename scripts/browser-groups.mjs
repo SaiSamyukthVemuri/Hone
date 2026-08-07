@@ -59,7 +59,10 @@ export const BROWSER_GROUPS = {
   },
   intake: {
     description: "client intake capture and practitioner review",
-    specs: ["intake-review-integrity.spec.ts"],
+    specs: [
+      "intake-review-integrity.spec.ts",
+      "intake-electrolysis-acknowledgement.spec.ts",
+    ],
   },
   portal: {
     description: "client portal and tokenised links",
