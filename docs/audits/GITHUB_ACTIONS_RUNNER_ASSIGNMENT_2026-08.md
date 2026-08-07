@@ -317,6 +317,26 @@ gate-success scenarios are unchanged.** 0 mismatches against intent.
 > logic, making the four critical rows look correct for the wrong reason. The
 > table above is from the corrected harness.
 
+### Regression pin (closes the review's P2)
+
+`tests/ci/aggregate-fail-closed.test.ts` **executes** the aggregate script
+mechanically extracted from `.github/workflows/ci.yml` — it is never a
+reimplementation, because a hand-written copy would drift from the workflow
+silently, which is the exact class of bug this file guards against. The extractor
+self-verifies (throws if the block is short or missing known markers) so the
+suite can never pass against nothing.
+
+It pins both halves: a gate result of `cancelled` / `failure` / `skipped` /
+empty must fail the required check, and every gate-success path must behave
+exactly as before.
+
+**Negative control (mandatory, performed):** deleting the guard from
+`ci.yml` turned **7 of 17** tests red — the decisive ones reporting exit code
+`0` where `1` was required, i.e. the fail-open reproduced — while the 10
+gate-success tests stayed green, proving the file detects the missing guard
+specifically rather than being globally broken. The workflow was then restored
+**byte-identically** (sha256 `5b16796592…` before and after) and all 17 pass.
+
 ### Other validation
 
 * YAML parses (8 jobs; `browser-e2e` retains `needs: [changes,
@@ -324,7 +344,7 @@ gate-success scenarios are unchanged.** 0 mismatches against intent.
 * `npx vitest run tests/ci/` → **89 passed / 3 files** (includes
   `ci-config.test.ts`, which pins the aggregator's shape and required-check
   names).
-* `git diff --check` → clean. Diff is **1 file, +32 / −0**.
+* `git diff --check` → clean. The **workflow-code** change is 1 file, **+32 / −0** (`.github/workflows/ci.yml`). The commit as a whole also adds this audit record and the regression test that pins the contract, so the PR diff is larger — derive it from `git diff --numstat origin/claude/build-hone-saas-hOex7...HEAD` rather than from this line.
 * Classifier outputs verified unchanged for representative diffs — docs-only,
   application, migration, browser spec, payment, Google, mobile — and
   `.github/workflows/ci.yml` correctly yields `full_matrix_required=true`.
@@ -369,9 +389,18 @@ very likely be delayed or cancelled while the incident persists.
    while `Actions` is in `major_outage` reproduces the same 15-minute expiry.
 2. Confirm the component is green:
    `curl -s https://www.githubstatus.com/api/v2/components.json | grep -A2 '"Actions"'`
-3. Rerun **once** per PR, at the exact existing head — do not push commits to
-   re-trigger:
+3. Rerun **once** per PR, at the exact existing head, to learn whether runners
+   are being assigned again:
    `gh run rerun 31118347711 --failed` · `gh run rerun 31120309970 --failed`
+
+   ⚠️ **Such a rerun is a liveness probe, NEVER final merge evidence.** A rerun
+   replays the workflow definition bound to that run's original SHA / ref /
+   workflow context. #517's and #518's heads predate this fix, so their reruns
+   execute the OLD aggregate and therefore do **not** acquire the fail-closed
+   guard — if the gate starves again, the old aggregate still reports the
+   required check green with zero tests run. Final evidence for either feature
+   must come from a **fresh head and a new run created after that branch is
+   rebased/updated onto production containing this fix.**
 4. Use one watcher per PR; do not poll in parallel (CLAUDE.md §4).
 
 Do not rerun repeatedly during the incident. Two attempts on #517 already
@@ -387,7 +416,10 @@ consumed ~30 minutes of wall-clock for zero executed steps.
   `browser e2e (local stack)` is the fail-open described in §11–12 and is
   **not** evidence of anything. Treat that PR as untested until a run with a real
   runner reports on it.
-* Ideally this CI fix merges first, so both features are judged by a gate that
+* This CI fix must merge first, and each feature branch must then be updated
+  onto a production commit that contains it. Merging the fix alone changes
+  nothing for an existing #517/#518 head: those runs are pinned to their own
+  SHA's workflow, so only a NEW head produces a run judged by a gate that
   cannot go green without running.
 * #517's own local verification is already complete (7,786 unit; 1,540 DB on a
   fresh 0171 stack; 235 browser, 0 failed; payment 51; Google 13; mobile 6;
@@ -409,7 +441,18 @@ consumed ~30 minutes of wall-clock for zero executed steps.
    degradation the incident describes.
 4. **The incident was unresolved at the time of writing**, so no post-incident
    root-cause analysis from GitHub is available yet.
-5. **Other lanes still report `skipped` when the gate dies.** This fix hardens
+5. **SEPARATE FOLLOW-UP, deliberately NOT fixed here (P3).**
+   `scripts/ci-plan.mjs:114` prints `EXTENDED (all specs, 2 shards)` while the
+   machine plan emits `browser_shards=[1,2,3,4]`; the stale "two separate jobs"
+   wording also survives in the `ci.yml:113-115` comment. Both appeared in this
+   PR's own gate log (run 31123533948, job 92721276082, 23:33:53) directly above
+   `browser_shards=[1,2,3,4]`. It is display-only — the aggregate asserts
+   `EXPECTED -ne 4` against the machine value, so no behaviour depends on the
+   printed text — but it is an active trap for anyone auditing CI evidence.
+   Widening this PR to fix it would mix an unrelated change into a required-check
+   contract fix, so it is recorded here for its own change instead.
+
+6. **Other lanes still report `skipped` when the gate dies.** This fix hardens
    the designated required check only. If branch protection is enabled later,
    the required-check list must be reviewed — a skipped job satisfies protection,
    so `browser e2e (local stack)` must remain the gate that everything else is
