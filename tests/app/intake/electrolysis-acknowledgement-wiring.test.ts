@@ -422,6 +422,11 @@ const ACTIONS = "app/intake/[token]/actions.ts";
 const WIZARD = "app/intake/[token]/IntakeWizard.tsx";
 const REVIEW = "app/(app)/clients/[id]/intake/page.tsx";
 const QUESTIONS = "lib/intake/questions.ts";
+// The question control renderer moved out of the wizard when the
+// practitioner-assisted editor was added, so both surfaces render one
+// implementation. The "nothing auto-checks a checkbox" guarantee below
+// follows the code to its new home rather than being weakened.
+const FIELD = "components/intake/intake-question-field.tsx";
 
 describe("16. the wording lives in exactly one source", () => {
   // A distinctive fragment of the wording. If it appears in more than one
@@ -459,7 +464,7 @@ describe("16. the wording lives in exactly one source", () => {
 });
 
 describe("13. no typed signature anywhere in this feature", () => {
-  for (const rel of [MODULE, ACTIONS, WIZARD, REVIEW]) {
+  for (const rel of [MODULE, ACTIONS, WIZARD, REVIEW, FIELD]) {
     it(`${rel} collects no signature`, () => {
       const code = codeOnly(read(rel));
       expect(code).not.toMatch(/signature_name|signatureName|typedName|signedName/);
@@ -476,7 +481,14 @@ describe("14. nothing auto-checks the acknowledgement", () => {
   const code = codeOnly(read(WIZARD));
 
   it("the checkbox is checked only when the stored answer is exactly true", () => {
-    expect(code).toMatch(/const checked = value === true;/);
+    // Asserted against the shared control renderer, which is where the
+    // checkbox is now drawn for BOTH the public wizard and the
+    // practitioner-assisted editor. Checking it here covers both surfaces.
+    const field = codeOnly(read(FIELD));
+    expect(field).toMatch(/const checked = value === true;/);
+    expect(field).not.toMatch(/defaultChecked/);
+    expect(field).not.toMatch(/checked=\{true\}/);
+    // ...and the wizard itself must not reintroduce a control that does.
     expect(code).not.toMatch(/defaultChecked/);
     expect(code).not.toMatch(/checked=\{true\}/);
   });

@@ -12,6 +12,19 @@ import {
 } from "@/lib/intake/queries";
 import { sendIntakeUpdateRequestToClient } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import {
+  PRACTITIONER_ENTERABLE_STEPS,
+  TOTAL_STEPS,
+} from "@/lib/intake/questions";
+import {
+  assistedKeysRejected,
+  sanitizePractitionerAssistedAnswers,
+} from "@/lib/intake/responses";
+import {
+  PRACTITIONER_ASSISTED_ENTRY,
+  recordAssistedEntry,
+  recordAssistedHandoff,
+} from "@/lib/intake/entry-provenance";
 
 export type ReviewResult = { ok: true } | { ok: false; error: string };
 
@@ -58,6 +71,41 @@ const NOTES_NOT_PERMITTED =
   "Could not save these notes. Refresh and check the current intake status.";
 
 const NOTES_DB_FAILURE = "Could not save these notes. Please try again.";
+
+// FOCUSED PRIVACY FIX (see PR body). The reissue/link helpers below used to
+// return the raw PostgREST `error.message` to the browser — the exact pattern
+// the review path at the top of this file already collapses. Provider text can
+// name columns, constraints and policies, so these constants replace it and
+// the real code/message is logged server-side only via
+// logIntakeActionFailure. Deliberately scoped to this file; the broader
+// audit-wide sweep stays a separate follow-up.
+const CLIENT_NOT_AVAILABLE = "Client not found.";
+const INTAKE_NOT_AVAILABLE = "Intake not found.";
+const STUDIO_NOT_AVAILABLE = "Could not load this studio. Please try again.";
+
+// ---------------------------------------------------------------------------
+// Practitioner-assisted intake entry
+// ---------------------------------------------------------------------------
+
+// One collapsed refusal for every non-success outcome of an assisted write.
+// Like REVIEW_NOT_PERMITTED above it does not disclose whether the intake
+// exists, belongs to another client or studio, was deleted, or has already
+// been submitted — they all read the same.
+const ASSISTED_NOT_PERMITTED =
+  "This intake can no longer be completed with the client. Refresh and check the current intake status.";
+
+const ASSISTED_DB_FAILURE = "Could not save these answers. Please try again.";
+
+// Optimistic-concurrency miss. Distinct from the above because it IS
+// actionable: someone (most likely the client, through their own link) saved
+// between this editor loading and this save landing.
+const ASSISTED_STALE =
+  "This intake changed while you were recording answers. Refresh to load the latest before continuing.";
+
+// The client-owned boundary, refused loudly rather than silently stripped so a
+// UI bug or a crafted request surfaces instead of half-succeeding.
+const ASSISTED_CLIENT_OWNED =
+  "The final confirmations are completed by the client themselves. Use Hand to client to finish this intake.";
 
 // Structured, PII-free log for a sanitized failure. Never logs responses,
 // practitioner notes, client identity, or the raw row — only the event, the
@@ -277,6 +325,10 @@ async function loadAuthorisedClient(
       ok: true;
       studioId: string;
       practitionerId: string;
+      // Display name resolved from the SESSION's practitioner row at call
+      // time. Snapshotted into assisted-entry provenance so historical
+      // attribution survives a later deactivation or rename.
+      practitionerName: string;
       client: { id: string; name: string; email: string | null };
     }
   | { ok: false; error: string }
@@ -292,12 +344,24 @@ async function loadAuthorisedClient(
     .eq("studio_id", studio.id)
     .eq("id", clientId)
     .maybeSingle();
-  if (clientErr) return { ok: false, error: clientErr.message };
-  if (!client) return { ok: false, error: "Client not found." };
+  if (clientErr) {
+    // Never return provider text to the browser. A lookup failure and a
+    // cross-studio / absent client collapse to ONE message so the response
+    // cannot be used to probe which clients exist in other studios.
+    logIntakeActionFailure("intake_client_lookup_failed", {
+      code: (clientErr as { code?: string }).code,
+      message: clientErr.message,
+    });
+    return { ok: false, error: CLIENT_NOT_AVAILABLE };
+  }
+  if (!client) return { ok: false, error: CLIENT_NOT_AVAILABLE };
   return {
     ok: true,
     studioId: studio.id,
     practitionerId: practitioner.id,
+    practitionerName: practitioner.display_name?.trim()
+      ? practitioner.display_name.trim()
+      : practitioner.email,
     client: client as { id: string; name: string; email: string | null },
   };
 }
@@ -314,8 +378,14 @@ async function loadStudioForReissue(studioId: string): Promise<
     .select("id, name")
     .eq("id", studioId)
     .maybeSingle();
-  if (error) return { ok: false, error: error.message };
-  if (!data) return { ok: false, error: "Studio not found." };
+  if (error) {
+    logIntakeActionFailure("intake_studio_lookup_failed", {
+      code: (error as { code?: string }).code,
+      message: error.message,
+    });
+    return { ok: false, error: STUDIO_NOT_AVAILABLE };
+  }
+  if (!data) return { ok: false, error: STUDIO_NOT_AVAILABLE };
   return { ok: true, studio: data as { id: string; name: string } };
 }
 
@@ -430,8 +500,14 @@ export async function getIntakeLinkAction(
     .eq("client_id", auth.client.id)
     .is("deleted_at", null)
     .maybeSingle();
-  if (intakeErr) return { ok: false, error: intakeErr.message };
-  if (!intake) return { ok: false, error: "Intake not found." };
+  if (intakeErr) {
+    logIntakeActionFailure("intake_link_lookup_failed", {
+      code: (intakeErr as { code?: string }).code,
+      message: intakeErr.message,
+    });
+    return { ok: false, error: INTAKE_NOT_AVAILABLE };
+  }
+  if (!intake) return { ok: false, error: INTAKE_NOT_AVAILABLE };
   if (intake.status !== "in_progress") {
     return {
       ok: false,
@@ -498,8 +574,14 @@ export async function resendIntakeEmailAction(
     .eq("client_id", auth.client.id)
     .is("deleted_at", null)
     .maybeSingle();
-  if (intakeErr) return { ok: false, error: intakeErr.message };
-  if (!intake) return { ok: false, error: "Intake not found." };
+  if (intakeErr) {
+    logIntakeActionFailure("intake_link_lookup_failed", {
+      code: (intakeErr as { code?: string }).code,
+      message: intakeErr.message,
+    });
+    return { ok: false, error: INTAKE_NOT_AVAILABLE };
+  }
+  if (!intake) return { ok: false, error: INTAKE_NOT_AVAILABLE };
   if (intake.status !== "in_progress") {
     return {
       ok: false,
@@ -539,4 +621,288 @@ export async function resendIntakeEmailAction(
     intakeUrl: url,
     emailSent: true,
   };
+}
+
+// ---------------------------------------------------------------------------
+// PRACTITIONER-ASSISTED INTAKE ENTRY
+// ---------------------------------------------------------------------------
+//
+// "Complete intake with client": the practitioner asks the questionnaire aloud
+// and records what the client says, while the client is with them.
+//
+// THE BOUNDARY THIS CODE EXISTS TO HOLD
+// -------------------------------------
+// The practitioner may record the health questionnaire. The final step is the
+// client's own first-person acknowledgements and is theirs alone. Three
+// independent things enforce that, and none of them is the UI:
+//
+//   1. sanitizePractitionerAssistedAnswers() drops every client-owned key,
+//      derived from INTAKE_STEPS (acknowledgements step + every checkbox
+//      question anywhere), so a new acknowledgement added later is forbidden
+//      automatically;
+//   2. assistedKeysRejected() refuses the whole request when one is present,
+//      so a bug surfaces instead of half-succeeding;
+//   3. migration 0162's trigger raises `check_violation` on ANY authenticated
+//      status -> 'submitted' transition. That is why these actions use
+//      createClient() and NOT createAdminClient(): the service role is exempt
+//      from that rule, so reaching for it would hand this code the ability to
+//      submit on the client's behalf. It must never have it.
+//
+// WHAT THIS DOES NOT PROVE
+// ------------------------
+// Nothing here proves which physical human touched the device. The intake
+// link is a bearer token. What is proven is that the AUTHENTICATED assisted
+// editor could not author the acknowledgements, and that the public token path
+// cannot author the provenance. See lib/intake/entry-provenance.ts.
+
+export type AssistedSaveResult =
+  | { ok: true; updatedAt: string }
+  | { ok: false; error: string };
+
+export type AssistedHandoffResult =
+  | { ok: true; intakeUrl: string }
+  | { ok: false; error: string };
+
+// Shared authorization + row resolution for both assisted actions.
+//
+// Order is deliberate and is the whole security argument:
+//   1-3. session -> practitioner -> active            (loadAuthorisedClient)
+//   4.   client belongs to the caller's studio        (loadAuthorisedClient)
+//   5-9. the intake exists, is in THIS studio, is THIS client's, is not
+//        soft-deleted, and is still in_progress
+//
+// Every predicate is re-applied in the UPDATE itself; this read is for the
+// merge base and the concurrency token, never a substitute for them.
+async function loadAssistedIntake(
+  intakeId: string,
+  clientId: string,
+): Promise<
+  | {
+      ok: true;
+      studioId: string;
+      actor: { practitioner_id: string; display_name: string };
+      responses: Record<string, unknown>;
+      updatedAt: string;
+    }
+  | { ok: false; error: string }
+> {
+  const auth = await loadAuthorisedClient(clientId);
+  if (!auth.ok) return { ok: false, error: ASSISTED_NOT_PERMITTED };
+
+  const supabase = await createClient();
+  const { data: intake, error: intakeErr } = await supabase
+    .from("client_intake_forms")
+    .select("id, status, responses, updated_at")
+    .eq("id", intakeId)
+    .eq("studio_id", auth.studioId)
+    .eq("client_id", auth.client.id)
+    .is("deleted_at", null)
+    .eq("status", "in_progress")
+    .maybeSingle();
+  if (intakeErr) {
+    logIntakeActionFailure("assisted_intake_lookup_failed", {
+      code: (intakeErr as { code?: string }).code,
+      message: intakeErr.message,
+    });
+    return { ok: false, error: ASSISTED_DB_FAILURE };
+  }
+  // Absent / other studio / other client / deleted / already submitted all
+  // collapse here into one message. No existence oracle.
+  if (!intake) return { ok: false, error: ASSISTED_NOT_PERMITTED };
+
+  return {
+    ok: true,
+    studioId: auth.studioId,
+    actor: {
+      practitioner_id: auth.practitionerId,
+      display_name: auth.practitionerName,
+    },
+    responses: (intake.responses as Record<string, unknown>) ?? {},
+    updatedAt: intake.updated_at as string,
+  };
+}
+
+// Record the client's answers to one questionnaire step.
+//
+// `expectedUpdatedAt` is an optimistic-concurrency token, not identity: it is
+// the `updated_at` this editor last saw. Because the UPDATE assigns the whole
+// `responses` jsonb, a concurrent save (most plausibly the client through
+// their own still-live link) would otherwise be silently clobbered by whoever
+// wrote last. With the predicate in place the loser is REFUSED and told to
+// refresh instead.
+export async function saveAssistedIntakeStepAction(payload: {
+  intakeId: string;
+  clientId: string;
+  step: number;
+  responses: Record<string, unknown>;
+  expectedUpdatedAt: string;
+}): Promise<AssistedSaveResult> {
+  const { intakeId, clientId, expectedUpdatedAt } = payload;
+  if (typeof intakeId !== "string" || !intakeId) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+  if (typeof clientId !== "string" || !clientId) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+  if (typeof expectedUpdatedAt !== "string" || !expectedUpdatedAt) {
+    return { ok: false, error: ASSISTED_STALE };
+  }
+
+  // The step must be one a practitioner may fill in. The acknowledgements
+  // step is not in this set, so it cannot even be addressed here.
+  const step = Math.floor(Number(payload.step));
+  const enterable = PRACTITIONER_ENTERABLE_STEPS.some((s) => s.id === step);
+  if (!enterable) return { ok: false, error: ASSISTED_CLIENT_OWNED };
+
+  // Refuse loudly before doing anything else if the payload carries a
+  // client-owned key. Stripping alone would let a UI bug quietly no-op.
+  const forbidden = assistedKeysRejected(payload.responses);
+  if (forbidden.length > 0) {
+    logIntakeActionFailure("assisted_client_owned_key_rejected", {
+      message: `rejected ${forbidden.length} client-owned key(s)`,
+    });
+    return { ok: false, error: ASSISTED_CLIENT_OWNED };
+  }
+
+  const answers = sanitizePractitionerAssistedAnswers(payload.responses);
+
+  const loaded = await loadAssistedIntake(intakeId, clientId);
+  if (!loaded.ok) return loaded;
+
+  // Merge existing-first so answers the client already gave through their own
+  // link are preserved, and so the electrolysis acknowledgement record and any
+  // other client-owned key already present survive untouched — `answers`
+  // cannot contain them.
+  const merged: Record<string, unknown> = { ...loaded.responses, ...answers };
+
+  // Provenance is derived HERE, on the server, from the session. Nothing in
+  // `payload` reaches it. started_at / started_by are preserved from any
+  // existing record so a second practitioner continuing the intake never
+  // overwrites who began it.
+  merged[PRACTITIONER_ASSISTED_ENTRY.id] = recordAssistedEntry(
+    loaded.responses[PRACTITIONER_ASSISTED_ENTRY.id],
+    loaded.actor,
+    new Date().toISOString(),
+  );
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("client_intake_forms")
+    .update({ responses: merged, current_step: step })
+    .eq("id", intakeId)
+    .eq("studio_id", loaded.studioId)
+    .eq("client_id", clientId)
+    .is("deleted_at", null)
+    .eq("status", "in_progress")
+    .eq("updated_at", expectedUpdatedAt)
+    .select("id, client_id, updated_at");
+
+  if (error) {
+    logIntakeActionFailure("assisted_intake_save_failed", {
+      code: (error as { code?: string }).code,
+      message: error.message,
+    });
+    return { ok: false, error: ASSISTED_DB_FAILURE };
+  }
+
+  const rows = data ?? [];
+  if (rows.length !== 1) {
+    if (rows.length > 1) {
+      logIntakeActionFailure("assisted_intake_multi_row", {
+        message: `expected 1 affected row, got ${rows.length}`,
+      });
+      return { ok: false, error: ASSISTED_NOT_PERMITTED };
+    }
+    // Zero rows: the row moved under us. The concurrency token is the most
+    // likely predicate to have missed, and it is the only one the
+    // practitioner can act on.
+    return { ok: false, error: ASSISTED_STALE };
+  }
+  if (rows[0].client_id !== clientId) {
+    // Unreachable while the .eq("client_id", ...) predicate is present; kept
+    // so a future edit that drops it fails closed rather than silently
+    // writing to a foreign route.
+    logIntakeActionFailure("assisted_intake_client_mismatch", {
+      message: "affected row client_id did not match the constrained route",
+    });
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+
+  revalidatePath(`/clients/${clientId}/intake`);
+  return { ok: true, updatedAt: rows[0].updated_at as string };
+}
+
+// Hand the intake back to the client for their own acknowledgements.
+//
+// Stamps handoff_at / handoff_by into the provenance record (when assisted
+// entry actually happened), advances current_step so the client's wizard opens
+// on the acknowledgements step, and returns a freshly minted tokenized URL.
+//
+// This action does NOT submit, does NOT stamp submitted_at, and does NOT touch
+// any acknowledgement key. The client's own submission through the existing
+// public route remains the only path to `submitted`.
+export async function handOffAssistedIntakeAction(
+  formData: FormData,
+): Promise<AssistedHandoffResult> {
+  const intakeId = formData.get("intake_id");
+  const clientId = formData.get("client_id");
+  if (typeof intakeId !== "string" || !intakeId) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+  if (typeof clientId !== "string" || !clientId) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+
+  const loaded = await loadAssistedIntake(intakeId, clientId);
+  if (!loaded.ok) return { ok: false, error: loaded.error };
+
+  const patch: Record<string, unknown> = { current_step: TOTAL_STEPS };
+
+  // Only stamp a handover onto an intake that actually carries assisted
+  // provenance. A practitioner who opened the editor and recorded nothing has
+  // not performed assisted entry, and inventing a record for them would be a
+  // small lie.
+  const stamped = recordAssistedHandoff(
+    loaded.responses[PRACTITIONER_ASSISTED_ENTRY.id],
+    loaded.actor,
+    new Date().toISOString(),
+  );
+  if (stamped) {
+    patch.responses = {
+      ...loaded.responses,
+      [PRACTITIONER_ASSISTED_ENTRY.id]: stamped,
+    };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("client_intake_forms")
+    .update(patch)
+    .eq("id", intakeId)
+    .eq("studio_id", loaded.studioId)
+    .eq("client_id", clientId)
+    .is("deleted_at", null)
+    .eq("status", "in_progress")
+    .select("id, client_id");
+
+  if (error) {
+    logIntakeActionFailure("assisted_intake_handoff_failed", {
+      code: (error as { code?: string }).code,
+      message: error.message,
+    });
+    return { ok: false, error: ASSISTED_DB_FAILURE };
+  }
+  const rows = data ?? [];
+  if (rows.length !== 1 || rows[0].client_id !== clientId) {
+    return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  }
+
+  // Mint the client's link only AFTER the write succeeded. Same helper the
+  // existing "Copy link" path uses; the URL is returned to the practitioner's
+  // browser so the device can be handed over, and is never logged.
+  const url = generateIntakeLinkUrl(intakeId, getRequiredAppOrigin());
+  await stampIntakeLinkIssued(createAdminClient(), intakeId, { emailed: false });
+
+  revalidatePath(`/clients/${clientId}/intake`);
+  return { ok: true, intakeUrl: url };
 }
