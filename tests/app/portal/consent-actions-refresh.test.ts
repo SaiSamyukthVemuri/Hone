@@ -27,13 +27,13 @@ describe("signConsentFormAction: PR #177 refresh wiring", () => {
 
   it("calls the refresh helper only when template.form_type === 'card_authorization'", () => {
     expect(ACTION).toMatch(
-      /if \(template\.form_type === "card_authorization"\)[\s\S]{0,1500}refreshActiveCardAuthorizationPointersForSignature\(/,
+      /if \(result\.formType === "card_authorization"\)[\s\S]{0,1500}refreshActiveCardAuthorizationPointersForSignature\(/,
     );
   });
 
   it("passes the just-inserted signature id (created.id) as signatureId", () => {
     expect(ACTION).toMatch(
-      /refreshActiveCardAuthorizationPointersForSignature\(\{[\s\S]{0,400}signatureId:\s*created\.id[\s\S]{0,400}\}\)/,
+      /refreshActiveCardAuthorizationPointersForSignature\(\{[\s\S]{0,400}signatureId:\s*result\.signatureId[\s\S]{0,400}\}\)/,
     );
   });
 
@@ -50,7 +50,7 @@ describe("signConsentFormAction: PR #177 fail-soft contract", () => {
     // below the post-insert revalidate. We pin the order by checking
     // that the refresh-helper call site appears AFTER the insert
     // error check returns and BEFORE the final return ok:true.
-    const insertErrIdx = ACTION.indexOf("consent_sign_insert_failed");
+    const insertErrIdx = ACTION.indexOf("if (!result.ok)");
     // The import statement also matches the substring; find the
     // call site instead by looking for the open-paren after the
     // helper name.
@@ -58,7 +58,7 @@ describe("signConsentFormAction: PR #177 fail-soft contract", () => {
       "refreshActiveCardAuthorizationPointersForSignature({",
     );
     const finalReturnIdx = ACTION.lastIndexOf(
-      "return { ok: true, signatureId: created.id };",
+      "return { ok: true, signatureId: result.signatureId };",
     );
     expect(insertErrIdx).toBeGreaterThan(-1);
     expect(refreshIdx).toBeGreaterThan(insertErrIdx);
@@ -82,7 +82,7 @@ describe("signConsentFormAction: PR #177 fail-soft contract", () => {
     // wiring; pin that the wiring does NOT short-circuit the
     // happy-path return.
     const happyReturn = ACTION.match(
-      /return \{ ok: true, signatureId: created\.id \};/g,
+      /return \{ ok: true, signatureId: result\.signatureId \};/g,
     );
     expect((happyReturn ?? []).length).toBe(1);
   });

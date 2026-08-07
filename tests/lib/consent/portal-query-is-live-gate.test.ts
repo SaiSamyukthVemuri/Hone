@@ -29,6 +29,12 @@ const PORTAL_CONSENT_PATH = path.resolve(
 );
 const PORTAL_CONSENT = readFileSync(PORTAL_CONSENT_PATH, "utf8");
 
+const SIGN_CORE_PATH = path.resolve(
+  __dirname,
+  "../../../lib/consent/sign-consent-form.ts",
+);
+const SIGN_CORE = readFileSync(SIGN_CORE_PATH, "utf8");
+
 describe("portal-facing consent query (lib/consent/queries.ts)", () => {
   it("getActiveConsentTemplatesForPortal filters by is_live = true", () => {
     // Pin the exact .eq call so a refactor to .filter() or .gt()
@@ -108,12 +114,44 @@ describe("portal Add Card flow (app/portal/payment-method-actions.ts via shared 
   });
 });
 
-describe("portal sign action (app/portal/consent-actions.ts)", () => {
+// The signing ceremony moved out of the portal action into the shared core
+// (lib/consent/sign-consent-form.ts) so the intake surface can reuse ONE
+// implementation. These pins follow the code to its new home rather than
+// being weakened -- and a second pin below keeps the wrapper honest, so a
+// future edit that re-introduces a private lookup in the portal action is
+// still caught.
+describe("shared signing core (lib/consent/sign-consent-form.ts)", () => {
   it("the per-template lookup before signing requires is_live = true", () => {
-    expect(PORTAL_CONSENT).toMatch(/\.eq\("is_live",\s*true\)/);
+    expect(SIGN_CORE).toMatch(/\.eq\("is_live",\s*true\)/);
   });
 
   it("the lookup still requires status='active'", () => {
-    expect(PORTAL_CONSENT).toMatch(/\.eq\("status",\s*"active"\)/);
+    expect(SIGN_CORE).toMatch(/\.eq\("status",\s*"active"\)/);
+  });
+
+  it("the lookup is scoped to the caller-resolved studio", () => {
+    expect(SIGN_CORE).toMatch(/\.eq\("studio_id",\s*identity\.studioId\)/);
+  });
+});
+
+describe("portal sign action (app/portal/consent-actions.ts)", () => {
+  it("delegates the ceremony to the shared core", () => {
+    expect(PORTAL_CONSENT).toMatch(
+      /import \{ recordConsentSignature \} from "@\/lib\/consent\/sign-consent-form"/,
+    );
+    expect(PORTAL_CONSENT).toMatch(/await recordConsentSignature\(\{/);
+  });
+
+  it("runs NO consent_form_templates lookup of its own", () => {
+    // A private lookup here would be a second ceremony: the whole point of
+    // the extraction is that the four-clause gate exists exactly once.
+    expect(PORTAL_CONSENT).not.toMatch(/from\("consent_form_templates"\)/);
+    expect(PORTAL_CONSENT).not.toMatch(/from\("client_consent_signatures"\)/);
+  });
+
+  it("passes NO allowedFormTypes, so the portal still signs every live type", () => {
+    // The portal deliberately signs card_authorization too. Narrowing here
+    // would silently change shipped portal behaviour.
+    expect(PORTAL_CONSENT).not.toMatch(/allowedFormTypes/);
   });
 });
