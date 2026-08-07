@@ -35,6 +35,19 @@ const SIGN_CORE_PATH = path.resolve(
 );
 const SIGN_CORE = readFileSync(SIGN_CORE_PATH, "utf8");
 
+const PORTAL_PAGE = readFileSync(
+  path.resolve(__dirname, "../../../app/portal/page.tsx"),
+  "utf8",
+);
+const PORTAL_FORMS = readFileSync(
+  path.resolve(__dirname, "../../../app/portal/PortalConsentForms.tsx"),
+  "utf8",
+);
+const SNAPSHOT_LIB = readFileSync(
+  path.resolve(__dirname, "../../../lib/consent/template-snapshot.ts"),
+  "utf8",
+);
+
 describe("portal-facing consent query (lib/consent/queries.ts)", () => {
   it("getActiveConsentTemplatesForPortal filters by is_live = true", () => {
     // Pin the exact .eq call so a refactor to .filter() or .gt()
@@ -131,6 +144,34 @@ describe("shared signing core (lib/consent/sign-consent-form.ts)", () => {
 
   it("the lookup is scoped to the caller-resolved studio", () => {
     expect(SIGN_CORE).toMatch(/\.eq\("studio_id",\s*identity\.studioId\)/);
+  });
+});
+
+// The render surface is the other half of the integrity comparison, and the
+// unit lane cannot reach it: every behavioural test builds its own FormData,
+// so deleting the `fd.set("rendered_template_hash", ...)` line left the whole
+// suite green (negative control 10). These pins are that missing oracle --
+// deliberately a supplement to the behavioural tests, never a substitute.
+describe("the render surface supplies the comparand", () => {
+  it("the portal page derives the hash server-side with the canonical helper", () => {
+    expect(PORTAL_PAGE).toMatch(
+      /import \{ withRenderedTemplateHash \} from "@\/lib\/consent\/template-snapshot"/,
+    );
+    expect(PORTAL_PAGE).toMatch(/\.map\(\s*withRenderedTemplateHash,?\s*\)/);
+  });
+
+  it("the sign form posts it back as rendered_template_hash", () => {
+    expect(PORTAL_FORMS).toMatch(
+      /fd\.set\("rendered_template_hash",\s*template\.renderedTemplateHash\)/,
+    );
+  });
+
+  it("the render helper routes through buildConsentTemplateSnapshot", () => {
+    // A second, separately-derived hash here would make the comparison
+    // silently vacuous the moment either side drifted.
+    expect(SNAPSHOT_LIB).toMatch(
+      /export function withRenderedTemplateHash[\s\S]{0,400}buildConsentTemplateSnapshot\(template\)\.templateHash/,
+    );
   });
 });
 

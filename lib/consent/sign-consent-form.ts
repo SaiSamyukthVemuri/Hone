@@ -1,4 +1,5 @@
 import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildConsentTemplateSnapshot } from "./template-snapshot";
 
 // The ONE consent-signing ceremony.
@@ -72,8 +73,10 @@ export type ConsentSignatureInteraction = {
 };
 
 export type RecordConsentSignatureInput = {
-  // Injected by the caller; this module never constructs one.
-  admin: SupabaseLike;
+  // Injected by the caller; this module never constructs one. Typed as the
+  // real client rather than a hand-rolled structural stand-in so a drift in
+  // the query shape is a compile error here, not a runtime surprise.
+  admin: SupabaseClient;
   identity: ConsentSignatureIdentity;
   interaction: ConsentSignatureInteraction;
   // When supplied, the resolved template's form_type must be a member.
@@ -108,13 +111,6 @@ export type ConsentSignatureRejection =
   | "photo_response_missing"
   | "stale_template"
   | "insert_failed";
-
-// Minimal structural type for the injected Supabase client. Declared here
-// rather than importing the generated client type so this module stays
-// dependency-light and the injection point is obvious at a glance.
-type SupabaseLike = {
-  from: (table: string) => any;
-};
 
 const NAME_MIN = 1;
 const NAME_MAX = 200;

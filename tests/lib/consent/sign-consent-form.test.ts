@@ -79,7 +79,13 @@ function makeBuilder(table: keyof typeof db) {
   return builder;
 }
 
-const admin = { from: (t: string) => makeBuilder(t as keyof typeof db) };
+// The core takes the real SupabaseClient type so a drift in the query shape
+// is a compile error in production code. The fake implements only the narrow
+// chain the ceremony actually uses, so it is cast at the boundary -- the cast
+// lives here, in the test, and never in shipped code.
+const admin = {
+  from: (t: string) => makeBuilder(t as keyof typeof db),
+} as unknown as Parameters<typeof recordConsentSignature>[0]["admin"];
 
 function seed(formType: string) {
   db.consent_form_templates.push({

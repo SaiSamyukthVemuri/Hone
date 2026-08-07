@@ -294,6 +294,31 @@ describe("4. the pre-existing four-clause lookup still governs", () => {
     expect(db.client_consent_signatures).toHaveLength(0);
   });
 
+  it("REJECTS on status alone, independently of is_live", async () => {
+    // Defence in depth. Migration 0072's CHECK (NOT is_live OR
+    // status='active') means this row shape cannot exist in production, so
+    // the case is deliberately unreachable-by-schema -- but the application
+    // clause must not silently depend on the CHECK. Without this case the
+    // is_live clause alone satisfies every draft/archived test and the
+    // status clause has no behavioural oracle at all: dropping
+    // .eq("status","active") from the core left the whole suite green.
+    seedTemplate();
+    studioEditsTemplate({ status: "archived", is_live: true });
+    const res = await signConsentFormAction(signPayload());
+    expect(res.ok).toBe(false);
+    expect(db.client_consent_signatures).toHaveLength(0);
+  });
+
+  it("REJECTS on is_live alone, independently of status", async () => {
+    // The mirror of the case above, so neither clause can be dropped
+    // without a red test.
+    seedTemplate();
+    studioEditsTemplate({ status: "active", is_live: false });
+    const res = await signConsentFormAction(signPayload());
+    expect(res.ok).toBe(false);
+    expect(db.client_consent_signatures).toHaveLength(0);
+  });
+
   it("REJECTS a cross-studio template id", async () => {
     seedTemplate({ studio_id: OTHER_STUDIO_ID });
     const res = await signConsentFormAction(signPayload());
