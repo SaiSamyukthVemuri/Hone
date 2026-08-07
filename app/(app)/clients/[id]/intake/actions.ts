@@ -919,3 +919,117 @@ export async function handOffAssistedIntakeAction(
   revalidatePath(`/clients/${clientId}/intake`);
   return { ok: true, intakeUrl: url };
 }
+
+// ---------------------------------------------------------------------------
+// "Start intake with client" — the missing entry point into the assisted
+// workflow above.
+// ---------------------------------------------------------------------------
+//
+// THE GAP THIS CLOSES. Practitioner-assisted entry needs an in_progress intake
+// row to edit. When a client had none, Health & Forms said "No intake on file"
+// and offered nothing, so the only way in was: navigate to the dedicated intake
+// page -> Send a new intake form -> untick the email box -> Create new intake
+// request -> come back -> Complete intake with client. Six steps, and it
+// required knowing that a blank row must exist first.
+//
+// WHAT THIS ACTION IS, AND IS NOT. It is a resolver: it answers "which
+// in_progress intake should this practitioner open with the client in front of
+// them?" and creates one only when there is none. It is NOT a second intake
+// creation path — creation stays with requestIntakeUpdateAction, which stays
+// the single authority for the insert, the token, the link stamping and the
+// authorisation around them.
+//
+// TWO PROPERTIES ARE STRUCTURAL, NOT CONVENTIONS:
+//
+//   1. NO EMAIL. The client is standing in the room. `send_email` is pinned to
+//      "false" here and the caller cannot influence it — this action reads no
+//      email flag from its own FormData, so there is no value a browser could
+//      send to turn it on.
+//
+//   2. NO TOKEN REACHES THE BROWSER. The result carries an intakeId and
+//      nothing else. requestIntakeUpdateAction's intakeUrl — the client's
+//      bearer link — is deliberately discarded rather than returned, so this
+//      entry point cannot navigate the practitioner onto the client's own
+//      tokenized route even by mistake. The hand-off to that route stays where
+//      #525 put it: handOffAssistedIntakeAction, after the practitioner has
+//      finished the questionnaire.
+export type StartAssistedIntakeResult =
+  | { ok: true; intakeId: string }
+  | { ok: false; error: string };
+
+// One collapsed refusal for every authorisation miss — inactive practitioner,
+// another studio's client, an absent client. Like ASSISTED_NOT_PERMITTED above
+// it is not an existence oracle.
+const START_NOT_PERMITTED =
+  "This client's intake cannot be started from here. Refresh and try again.";
+
+// A genuine lookup/creation failure, kept distinct because retrying IS
+// reasonable. Neither constant ever carries provider text.
+const START_DB_FAILURE =
+  "Could not start an intake for this client. Please try again.";
+
+export async function startAssistedIntakeAction(
+  formData: FormData,
+): Promise<StartAssistedIntakeResult> {
+  const clientId = formData.get("client_id");
+  if (typeof clientId !== "string" || !clientId) {
+    return { ok: false, error: START_NOT_PERMITTED };
+  }
+
+  // Same authority as every other action in this file: session -> active
+  // practitioner -> studio, then the client is proven to belong to that studio
+  // through the user-scoped client under RLS. Nothing the browser sent is
+  // trusted beyond naming which client row to look for.
+  const auth = await loadAuthorisedClient(clientId);
+  if (!auth.ok) return { ok: false, error: START_NOT_PERMITTED };
+
+  // DUPLICATE SAFETY. An in_progress intake already open for this client IS
+  // the one to complete with them, so open it rather than stacking a second
+  // blank row behind it. This covers the ordinary races the button can lose —
+  // a double click, a stale tab, two practitioners on the same client — and
+  // it is also the honest answer to "start intake with client" in that state.
+  //
+  // It is a mitigation, not a guarantee: two genuinely simultaneous requests
+  // can both read zero rows before either inserts. Closing that completely
+  // needs a partial unique index, which is a migration, which this change
+  // deliberately does not create. See the PR body.
+  const supabase = await createClient();
+  const { data: existing, error: existingErr } = await supabase
+    .from("client_intake_forms")
+    .select("id")
+    .eq("studio_id", auth.studioId)
+    .eq("client_id", auth.client.id)
+    .is("deleted_at", null)
+    .eq("status", "in_progress")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existingErr) {
+    logIntakeActionFailure("start_assisted_intake_lookup_failed", {
+      code: (existingErr as { code?: string }).code,
+      message: existingErr.message,
+    });
+    return { ok: false, error: START_DB_FAILURE };
+  }
+  if (existing) {
+    return { ok: true, intakeId: existing.id as string };
+  }
+
+  // Creation is delegated, never re-implemented. requestIntakeUpdateAction
+  // re-derives the studio and practitioner from the session itself, so this is
+  // a genuine second authorisation rather than a trusted hand-off, and it owns
+  // the insert, the token, the expiry and the link stamping.
+  const fd = new FormData();
+  fd.set("client_id", auth.client.id);
+  fd.set("send_email", "false");
+  const created = await requestIntakeUpdateAction(fd);
+  if (!created.ok) {
+    logIntakeActionFailure("start_assisted_intake_create_failed", {
+      message: "delegated intake creation refused",
+    });
+    return { ok: false, error: START_DB_FAILURE };
+  }
+
+  // created.intakeUrl is intentionally dropped here — see the header note.
+  return { ok: true, intakeId: created.intakeId };
+}

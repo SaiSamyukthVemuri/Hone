@@ -299,6 +299,96 @@ test.describe("practitioner-assisted intake", () => {
     expect(reviewText).not.toContain("on behalf of");
   });
 
+  // The entry point. Everything above assumes an in_progress intake already
+  // exists; until this shipped, a client with NO intake row was a dead end on
+  // Health & Forms and the only way in was a six-step detour through the
+  // dedicated intake page. This proves the one-click path, and that it lands
+  // the practitioner in the editor the tests above exercise.
+  test("no intake on file: Start intake with client creates one and opens the assisted editor", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const { clientId } = await seedE2eClient(seed);
+    // Ground truth before the click: this client has no intake at all.
+    expect(await intakesFor(clientId)).toHaveLength(0);
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}?tab=health`);
+
+    const cta = page.getByTestId("start-intake-with-client");
+    await expect(cta).toBeVisible();
+    await expect(cta).toHaveText("Start intake with client");
+    await cta.click();
+
+    // --- we are in the assisted editor, on the AUTHENTICATED route
+    await page.waitForURL(/\/clients\/[^/]+\/intake\/assist\?intake=/);
+    await expect(page.getByText("Completing with client")).toBeVisible();
+    // ...with step 1 of the real questionnaire rendered.
+    await expect(page.locator("#legal_name")).toBeVisible();
+    // Not the client's bearer link. That hand-off belongs to Hand to client.
+    expect(new URL(page.url()).pathname).toBe(
+      `/clients/${clientId}/intake/assist`,
+    );
+
+    // --- EXACTLY ONE intake now exists, and it is the one the URL addresses
+    const rows = await intakesFor(clientId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("in_progress");
+    expect(new URL(page.url()).searchParams.get("intake")).toBe(rows[0].id);
+
+    // --- no email was sent: an emailed link stamps this column, and it is
+    // still null. (stampIntakeLinkIssued only sets it when emailed is true.)
+    //
+    // NECESSARY BUT NOT SUFFICIENT, and measured rather than assumed. A
+    // negative control that flipped send_email to true left this test GREEN:
+    // this lane runs with a dummy RESEND_API_KEY, so the send is genuinely
+    // attempted, fails ("API key is invalid"), and the column is never
+    // stamped either way. The load-bearing proof that this path cannot email
+    // lives in the unit lane — tests/app/clients/start-intake-with-client.ts
+    // asserts the sender is never called and the client-email rate limiter is
+    // never even consulted, and those DO go red on that mutation.
+    expect(rows[0].intake_link_last_sent_at).toBeNull();
+
+    // --- the row is a blank draft: nothing submitted, nothing acknowledged
+    const row = await getIntakeRow(rows[0].id);
+    expect(row?.submitted_at).toBeNull();
+    for (const q of INTAKE_STEPS[INTAKE_STEPS.length - 1].questions) {
+      expect(
+        row?.responses?.[q.key],
+        `${q.key} must not be ticked by starting an intake`,
+      ).toBeUndefined();
+    }
+
+    // --- back on Health & Forms the state has moved on: the card shows the
+    // in-progress intake and the start CTA is gone, so a second blank row
+    // cannot be started from here.
+    await page.goto(`/clients/${clientId}?tab=health`);
+    await expect(page.getByTestId("start-intake-with-client")).toHaveCount(0);
+    await expect(page.getByText("not yet submitted")).toBeVisible();
+    expect(await intakesFor(clientId)).toHaveLength(1);
+  });
+
+  test("a submitted intake offers no Start intake with client CTA", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId, clientId, "submitted", {
+      ...answeredQuestionnaire(),
+      ...clientOwnedAnswers(),
+    });
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}?tab=health`);
+
+    await expect(
+      page.getByRole("heading", { name: "Health intake" }),
+    ).toBeVisible();
+    await expect(page.getByTestId("start-intake-with-client")).toHaveCount(0);
+    // The terminal record is untouched, and still the only row.
+    expect(await intakesFor(clientId)).toHaveLength(1);
+    expect((await getIntakeRow(intakeId))?.status).toBe("submitted");
+  });
+
   test("an ordinary self-completed intake shows no assisted badge", async ({
     page,
   }) => {
@@ -430,6 +520,29 @@ test.describe("practitioner-assisted intake", () => {
     await assertNoHorizontalOverflow(page);
   });
 });
+
+// Every non-deleted intake row for one client, oldest first. The count IS the
+// duplicate-safety oracle for the Start-intake-with-client journey, and
+// intake_link_last_sent_at is the "no email was sent" oracle. getIntakeRow()
+// projects neither, and e2e/helpers/seed.ts is a shared-infrastructure path
+// (editing it forces EXTENDED browser coverage on every PR), so this reads the
+// columns directly rather than widening it.
+async function intakesFor(clientId: string): Promise<
+  Array<{ id: string; status: string; intake_link_last_sent_at: string | null }>
+> {
+  const { sql } = await import("./helpers/seed");
+  return sql<{
+    id: string;
+    status: string;
+    intake_link_last_sent_at: string | null;
+  }>(
+    `select id, status, intake_link_last_sent_at::text as intake_link_last_sent_at
+       from public.client_intake_forms
+      where client_id = $1 and deleted_at is null
+      order by created_at`,
+    [clientId],
+  );
+}
 
 // Seed extra answers onto an existing intake without going through the UI.
 // Uses the same `sql` escape hatch the other specs use for setup-only writes.
