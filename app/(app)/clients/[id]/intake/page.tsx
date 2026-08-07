@@ -17,6 +17,11 @@ import {
 } from "@/lib/intake/questions";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import {
+  ACKNOWLEDGEMENT_REVIEW_COPY,
+  readElectrolysisAcknowledgement,
+  type IntakeLifecycleStatus,
+} from "@/lib/intake/acknowledgements";
+import {
   deriveIntakeReviewFlags,
   MODALITY_WORDING,
   type IntakeReviewFlag,
@@ -277,6 +282,11 @@ export default async function ClientIntakePage({
       <IntakeReviewFlags responses={responses} />
 
       <FitzpatrickSummary responses={responses} />
+
+      <ElectrolysisAcknowledgementSummary
+        responses={responses}
+        status={intake.status}
+      />
 
       {intake.status === "in_progress" ? (
         <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
@@ -572,6 +582,87 @@ function FitzpatrickSummary({
       </ul>
       <p className="mt-3 text-xs text-neutral-500">
         Self-reported intake estimate, not a clinical assessment.
+      </p>
+    </section>
+  );
+}
+
+// Versioned electrolysis acknowledgement. A pure projection of what the
+// row actually stores — it never re-validates the intake, never derives a
+// verdict, and offers no control that could change the client's answer.
+// The practitioner review surface reads this record; it does not author it.
+//
+// The wording shown for an acknowledged intake is the SNAPSHOT the client
+// read at submit time, not the current constant, so editing the wording
+// later cannot rewrite what a past client is shown to have agreed to.
+//
+// Every absent-record case is stated for what it is. An intake submitted
+// before this acknowledgement existed says so explicitly rather than
+// borrowing the question grid's "Not answered", which would attribute an
+// omission to a client who was never shown the question.
+function ElectrolysisAcknowledgementSummary({
+  responses,
+  status,
+}: {
+  responses: Record<string, unknown>;
+  status: IntakeLifecycleStatus;
+}) {
+  const view = readElectrolysisAcknowledgement(responses, status);
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+        {ACKNOWLEDGEMENT_REVIEW_COPY.heading}
+      </h2>
+      <div className="mt-3 flex flex-col gap-2 text-sm text-neutral-800 dark:text-neutral-200">
+        {view.state === "acknowledged" && (
+          <>
+            <p className="font-medium">
+              {ACKNOWLEDGEMENT_REVIEW_COPY.acknowledged}
+            </p>
+            <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
+              {view.wording}
+            </p>
+            <p className="text-xs text-neutral-500">
+              Version {view.version}
+              {view.acceptedAtIso && (
+                <>
+                  {" · "}
+                  <FormattedDateTime iso={view.acceptedAtIso} />
+                </>
+              )}
+            </p>
+          </>
+        )}
+        {view.state === "not_acknowledged" && (
+          <>
+            <p className="font-medium">
+              {ACKNOWLEDGEMENT_REVIEW_COPY.notAcknowledged}
+            </p>
+            <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
+              {view.wording}
+            </p>
+            <p className="text-xs text-neutral-500">Version {view.version}</p>
+          </>
+        )}
+        {view.state === "no_record" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {ACKNOWLEDGEMENT_REVIEW_COPY.noRecord}
+          </p>
+        )}
+        {view.state === "predates" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {ACKNOWLEDGEMENT_REVIEW_COPY.predates}
+          </p>
+        )}
+        {view.state === "unreadable" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {ACKNOWLEDGEMENT_REVIEW_COPY.unreadable}
+          </p>
+        )}
+      </div>
+      <p className="mt-3 text-xs text-neutral-500">
+        {ACKNOWLEDGEMENT_REVIEW_COPY.caveat}
       </p>
     </section>
   );
