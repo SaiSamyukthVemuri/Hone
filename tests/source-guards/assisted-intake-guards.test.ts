@@ -203,6 +203,75 @@ describe("the questionnaire is not re-implemented", () => {
     expect(code).not.toMatch(/app\/intake\/\[token\]/);
   });
 
+  // FAIL-CLOSED CONSUMER GUARD.
+  //
+  // Moving the control renderer into a shared component created a surface the
+  // existing acknowledgement guards cannot see: they enumerate hard-coded file
+  // paths, so a NEW consumer of the renderer is invisible to them. A new
+  // consumer is exactly the dangerous case — the renderer emits a real
+  // <input type="checkbox">, and the step-5 acknowledgements are client-owned
+  // first-person attestations that a practitioner must never be able to tick.
+  //
+  // So this enumerates the consumers that exist today and fails when a new one
+  // appears. That is deliberate: adding a surface that renders intake controls
+  // should require a human to confirm it cannot reach a client-owned question.
+  it("only known surfaces may render intake controls", () => {
+    const roots = ["app", "components", "lib"];
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name === ".next") continue;
+        const rel = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(rel);
+        else if (/\.tsx?$/.test(e.name) && read(rel).includes("intake-question-field")) {
+          hits.push(rel);
+        }
+      }
+    };
+    for (const r of roots) walk(r);
+
+    // Importers only — the renderer does not reference its own path.
+    expect(hits.sort()).toEqual(
+      [
+        // The client's own tokenized wizard — renders every step, including
+        // the client's acknowledgements. That is correct: they are the client.
+        "app/intake/[token]/IntakeWizard.tsx",
+        // The practitioner-assisted editor — renders PRACTITIONER_ENTERABLE_STEPS
+        // only, so it can never draw a client-owned control.
+        EDITOR,
+      ].sort(),
+    );
+  });
+
+  it("the assisted editor's step set structurally excludes the client's step", () => {
+    // Not a copy of the step list: the editor derives it, and this asserts the
+    // derivation is what it uses. If someone swaps STEP_IDS for INTAKE_STEPS,
+    // the acknowledgements step becomes reachable and this goes red.
+    const code = codeOnly(read(EDITOR));
+    expect(code).toMatch(/PRACTITIONER_ENTERABLE_STEPS\.map\(\(s\) => s\.id\)/);
+    expect(code).not.toMatch(/INTAKE_STEPS/);
+    expect(code).not.toMatch(/ACKNOWLEDGEMENTS_STEP_ID/);
+  });
+
+  it("the practitioner REVIEW page renders no intake form control", () => {
+    // The acknowledgement review card is server-rendered prose with no
+    // control, which is what makes it un-tickable by a practitioner
+    // (e2e/intake-electrolysis-acknowledgement.spec.ts D6 asserts count 0 in
+    // the browser). This is the unit-level tripwire for the same contract, so
+    // routing that page through the shared renderer fails here first.
+    const src = read(REVIEW);
+    expect(src).not.toContain("intake-question-field");
+    for (const name of ["IntakeEntrySummary", "ElectrolysisAcknowledgementSummary"]) {
+      const start = src.indexOf(`function ${name}`);
+      expect(start, `${name} not found`).toBeGreaterThan(-1);
+      const after = src.indexOf("\nfunction ", start + 1);
+      const body = codeOnly(src.slice(start, after === -1 ? undefined : after));
+      expect(body, `${name} must emit no form control`).not.toMatch(
+        /<input|<textarea|<select|<button/,
+      );
+    }
+  });
+
   it("exactly one component renders intake controls", () => {
     // The wizard and the assisted editor must both go through the shared
     // field component; a third `renderControl` would be a new fork.
