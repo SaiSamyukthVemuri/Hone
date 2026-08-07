@@ -756,6 +756,27 @@ describe("global invariants", () => {
   const durations = [15, 30, 37, 45, 50, 60, 90];
   const buffers = [0, 15, 30];
 
+  // The two exhaustive sweeps below are legitimately multi-second, and Vitest's
+  // DEFAULT per-test budget is 5000ms. Each sweep walks 286 durations (15..300
+  // inclusive) x 3 (or 2) buffers, and every step generates slots TWICE — the
+  // unpacked baseline and the packed list — so the offered-count sweep alone
+  // makes 1716 getAvailableSlots calls. That is the point: the range is
+  // exhaustive because a finite sample of `durations` above already missed a
+  // real defect (the 91-minute case in the comment further down), so it must not
+  // be narrowed to buy speed.
+  //
+  // Measured: ~1.5s for the offered-count sweep and ~1.0s for the suppression
+  // sweep when this file runs ALONE, but ~4x that under the full 506-file suite
+  // on a CI runner, where the fork pool is competing for far fewer cores. Run
+  // 31192253014 timed the offered-count sweep out at the 5000ms default with the
+  // ASSERTION never failing — a budget problem misreported as a test failure.
+  //
+  // Per CLAUDE.md ("a hard timeout must always EXCEED its performance target"),
+  // this is a hard ceiling well above the ~6s CI observation, not a new target.
+  // It is scoped to these two tests deliberately: a repo-wide testTimeout would
+  // hand the same slack to 7920 tests that should still fail fast.
+  const EXHAUSTIVE_SWEEP_TIMEOUT_MS = 15_000;
+
   it("every offered slot's service end is <= close, for every duration/buffer", async () => {
     for (const duration of durations) {
       for (const buffer of buffers) {
@@ -809,7 +830,7 @@ describe("global invariants", () => {
         ).toBeGreaterThanOrEqual(before.length);
       }
     }
-  });
+  }, EXHAUSTIVE_SWEEP_TIMEOUT_MS);
 
   it("AT MOST ONE candidate is ever suppressed — every duration 15..300", async () => {
     for (let duration = 15; duration <= 300; duration += 1) {
@@ -831,7 +852,7 @@ describe("global invariants", () => {
         ).toBeLessThanOrEqual(1);
       }
     }
-  });
+  }, EXHAUSTIVE_SWEEP_TIMEOUT_MS);
 
   it("edge packing NEVER reduces the offered count WITH reservations present", async () => {
     for (const duration of durations) {
