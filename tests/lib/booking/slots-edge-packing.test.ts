@@ -786,7 +786,54 @@ describe("global invariants", () => {
     }
   });
 
-  it("edge packing NEVER reduces the number of offered slots", async () => {
+  // A SWEEP, not a sample. The first version of this test used the handful of
+  // durations above and missed a real defect: the stranding condition holds
+  // across an interval `duration` wide, so once the service runs longer than the
+  // 60-minute fallback step, MORE THAN ONE grid time falls inside it. A 91-minute
+  // service dropped both 14:00 and 15:00 for a single 15:29 anchor (7 slots -> 6).
+  // Sweeping every minute is what makes the one-for-one trade provable rather
+  // than assumed.
+  it("edge packing NEVER reduces the offered count — every duration 15..300", async () => {
+    for (let duration = 15; duration <= 300; duration += 1) {
+      for (const buffer of [0, 15, 30]) {
+        const before = await getAvailableSlots(
+          mockSupabase({ defaultRow: OPEN_09_17, reservations: [] }),
+          studio(buffer),
+          DATE,
+          duration,
+        );
+        const after = await packed({ duration, buffer });
+        expect(
+          after.length,
+          `duration=${duration} buffer=${buffer}: ${before.length} -> ${after.length}`,
+        ).toBeGreaterThanOrEqual(before.length);
+      }
+    }
+  });
+
+  it("AT MOST ONE candidate is ever suppressed — every duration 15..300", async () => {
+    for (let duration = 15; duration <= 300; duration += 1) {
+      for (const buffer of [0, 30]) {
+        const reservations = [appt("11:00", "12:00")];
+        const before = starts(
+          await getAvailableSlots(
+            mockSupabase({ defaultRow: OPEN_09_17, reservations }),
+            studio(buffer),
+            DATE,
+            duration,
+          ),
+        );
+        const after = starts(await packed({ duration, buffer, reservations }));
+        const removed = before.filter((x) => !after.includes(x));
+        expect(
+          removed.length,
+          `duration=${duration} buffer=${buffer} removed ${removed.length}`,
+        ).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it("edge packing NEVER reduces the offered count WITH reservations present", async () => {
     for (const duration of durations) {
       for (const buffer of buffers) {
         const reservations = [appt("11:00", "12:00")];

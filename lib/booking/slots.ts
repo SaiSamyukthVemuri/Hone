@@ -479,17 +479,42 @@ export async function getAvailableSlots(
     closingAnchorIsNew &&
     isOfferable(closingAnchorMs);
 
+  // AT MOST ONE candidate may be suppressed, and it is the single grid time the
+  // closing anchor REPLACES: the LATEST coarse, offerable candidate that starts
+  // before the anchor and strands the tail.
+  //
+  // Resolving one target up front — rather than testing a predicate inside the
+  // loop — is what bounds the rule to a one-for-one trade. The stranding
+  // condition `close − (start + duration) < duration` is satisfied across an
+  // interval (close − 2·duration, close − duration) that is `duration` wide, so
+  // as soon as the service runs longer than FALLBACK_GRANULARITY_MINUTES that
+  // interval spans MORE THAN ONE hourly step. A per-candidate predicate then
+  // removed several slots to add one: a 91-minute service on a 09:00–17:00 day
+  // dropped both 14:00 and 15:00 for a single 15:29 anchor, taking the offered
+  // count from 7 to 6. Only the last of those is the one the anchor stands in
+  // for; the earlier ones are ordinary "book earlier in the day" choices.
+  let suppressedMs: number | null = null;
+  if (dominanceActive) {
+    for (const ms of candidateMs) {
+      if (ms >= closingAnchorMs) continue;
+      if (preciseMs.has(ms)) continue;
+      if (closeMs - (ms + durationMs) >= durationMs) continue;
+      if (!isOfferable(ms)) continue;
+      if (suppressedMs === null || ms > suppressedMs) suppressedMs = ms;
+    }
+  }
+
   const slots: Slot[] = [];
   for (const slotStartMs of [...candidateMs].sort((a, b) => a - b)) {
     if (!isOfferable(slotStartMs)) continue;
 
-    // GAP MINIMISATION — drop a COARSE grid time that the closing anchor strictly
-    // replaces. All four conditions must hold:
+    // GAP MINIMISATION — drop the ONE coarse grid time the closing anchor
+    // replaces (resolved above as `suppressedMs`). The conditions that selected
+    // it were:
     //
     //   (a) `dominanceActive` — packing is on, the closing anchor is genuinely
-    //       NEW, and it survived the filters. This is the guarantee that the rule
-    //       can never shrink the list: a removal is always paid for by an
-    //       addition, so the offered count is non-decreasing and never empty.
+    //       NEW, and it survived the filters, so a strictly better-packed slot
+    //       is really on offer and the list can never become empty.
     //   (b) the candidate is COARSE, never a precise anchor. The opening anchor,
     //       the slot immediately after a real appointment, and the backward-packed
     //       slot before one are each a packing decision in their own right. The
@@ -514,14 +539,7 @@ export async function getAvailableSlots(
     // "One more service" uses THIS request's duration. Hone has no authoritative
     // shortest-bookable-duration concept, and inventing one would mean a new
     // service query on a hot path to support an unproven heuristic.
-    if (
-      dominanceActive &&
-      !preciseMs.has(slotStartMs) &&
-      slotStartMs < closingAnchorMs &&
-      closeMs - (slotStartMs + durationMs) < durationMs
-    ) {
-      continue;
-    }
+    if (dominanceActive && slotStartMs === suppressedMs) continue;
 
     const slotStart = new Date(slotStartMs);
     slots.push({
