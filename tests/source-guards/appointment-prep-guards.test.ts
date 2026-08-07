@@ -304,8 +304,14 @@ describe("read-only, RLS-scoped, no service role", () => {
   });
 
   it("the pure model does no I/O and logs nothing", () => {
-    expect(MODEL).not.toMatch(/console\./);
-    expect(MODEL).not.toMatch(/server-only|createClient|fetch\(/);
+    // Code lines only: a comment may legitimately mention the server-only
+    // loader while explaining why a type lives here instead.
+    const code = codeOnly(MODEL);
+    expect(code).not.toMatch(/console\./);
+    expect(code).not.toMatch(/^import .*server-only|createClient|fetch\(/m);
+    // Positive anchor — prove we are reading the real module, not an empty
+    // string, so the three negatives above cannot pass vacuously.
+    expect(code).toMatch(/export function buildAppointmentPrepMemory/);
   });
 
   it("no raw database message can reach a log from the new read", () => {
@@ -471,10 +477,17 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
 
   it("narrative is NOT nested inside LastChartedTreatment", () => {
     // Nesting is what made it impossible to return when no treatment exists.
-    const t = LOADER_CODE.slice(
-      LOADER_CODE.indexOf("export type LastChartedTreatment"),
-      LOADER_CODE.indexOf("export type PrepNarrativeItem"),
-    );
+    //
+    // POSITIVE ANCHORS FIRST. slice() with a missing anchor returns "", and
+    // `expect("").not.toMatch(...)` passes — so without these the guard would
+    // go green the moment the type were renamed.
+    const start = LOADER_CODE.indexOf("export type LastChartedTreatment");
+    const end = LOADER_CODE.indexOf("export type { PrepNarrativeItem }");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const t = LOADER_CODE.slice(start, end);
+    expect(t.length).toBeGreaterThan(40);
+    expect(t).toMatch(/supersededByEmptySession/); // proves we sliced the type
     expect(t).not.toMatch(/newestPlan|narrative/);
   });
 
@@ -502,22 +515,53 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
     );
   });
 
-  it("the page renders narrative in BOTH the unavailable and no-treatment states", () => {
-    expect(PAGE_CODE).toMatch(/<PriorNarrative narrative=\{narrative\} \/>/);
-    expect((PAGE_CODE.match(/<PriorNarrative /g) ?? []).length).toBe(2);
+  it("the page renders narrative in the unavailable, no-treatment AND card states", () => {
+    expect((PAGE_CODE.match(/<PriorNarrative /g) ?? []).length).toBe(3);
     expect(PAGE_CODE).toMatch(/data-testid="prep-prior-narrative"/);
   });
 
-  it("narrative is NOT rendered when the treatment card owns it — no duplication", () => {
-    // The card branch returns before any PriorNarrative render.
+  it("ownership is decided by the pure helper, not by JSX position", () => {
+    // The old guard compared render ORDER and a render COUNT. Both are
+    // satisfiable by the duplication they claimed to exclude — moving a render
+    // above the card keeps the count at 2 and the ordering true. Position is
+    // not the property that matters; OWNERSHIP is, and it is decided in one
+    // pure function whose behaviour is pinned in
+    // tests/lib/sessions/appointment-prep-memory.test.ts (F1-F6).
+    expect(PAGE_CODE).toMatch(/buildPrepFallbackNarrative\(\{/);
+    expect(PAGE_CODE).toMatch(/cardSessionId: memory\?\.sessionId \?\? null/);
+    // The page must never decide ownership itself.
+    expect(PAGE_CODE).not.toMatch(/legacySessionNotes\.sessionId !==/);
+    // Every render site consumes the helper's output, never the raw narrative.
+    const sites = PAGE_CODE.match(/<PriorNarrative [^>]*>/g) ?? [];
+    expect(sites.length).toBeGreaterThanOrEqual(2);
+    for (const site of sites) {
+      expect(site, `${site} must render helper output`).toMatch(
+        /items=\{fallback\}/,
+      );
+    }
+  });
+
+  it("the card branch renders narrative the card does NOT own", () => {
+    // The P2 this closes: a newer uncharted visit's legacy notes were loaded
+    // and rendered nowhere whenever an older charted treatment existed.
     const cardIdx = PAGE_CODE.indexOf("<AppointmentPrepMemoryCard");
-    const lastNarrative = PAGE_CODE.lastIndexOf("<PriorNarrative ");
-    expect(lastNarrative).toBeLessThan(cardIdx);
+    expect(cardIdx).toBeGreaterThan(-1);
+    const after = PAGE_CODE.slice(cardIdx);
+    expect(after).toMatch(/data-testid="appointment-prep-external-narrative"/);
+    expect(after).toMatch(/<PriorNarrative items=\{fallback\} \/>/);
+  });
+
+  it("every fallback item is dated — provenance, never a session id", () => {
+    expect(PAGE_CODE).toMatch(/data-testid="prep-prior-date"/);
+    expect(PAGE_CODE).toMatch(/<FormattedDateTime iso=\{item\.startedAt\}/);
+    // A raw session id must never reach the UI.
+    expect(PAGE_CODE).not.toMatch(/\{item\.sessionId\}/);
   });
 
   it("a note-only row is never called a treatment", () => {
     expect(PAGE_CODE).toMatch(/No previous treatment charted for this client/);
     expect(CARD_CODE).not.toMatch(/PriorNarrative/);
+    expect(PAGE_CODE).toMatch(/From another visit/);
   });
 
   it("fallback narrative is full text — pre-wrap, break-words, no clamp", () => {
@@ -525,7 +569,7 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
       PAGE_CODE.indexOf("function PriorNarrative"),
       PAGE_CODE.indexOf("function PriorNarrative") + 2200,
     );
-    expect((block.match(/whitespace-pre-wrap break-words/g) ?? []).length).toBe(2);
+    expect((block.match(/whitespace-pre-wrap break-words/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(block).not.toMatch(/line-clamp|\.slice\(|substring/);
   });
 });

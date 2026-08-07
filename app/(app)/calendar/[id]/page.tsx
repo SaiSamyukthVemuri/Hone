@@ -14,7 +14,9 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { loadLastChartedTreatmentForClient } from "@/lib/sessions/last-treatment-loader";
 import {
   buildAppointmentPrepMemory,
+  buildPrepFallbackNarrative,
   type AppointmentPrepMemory,
+  type PrepFallbackItem,
 } from "@/lib/sessions/appointment-prep-memory";
 import type { AppointmentPrepLoad } from "@/lib/sessions/last-treatment-loader";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
@@ -1057,12 +1059,18 @@ function LastTreatmentSection({
   narrative: AppointmentPrepLoad["narrative"];
   clientId: string | null;
 }) {
-  // Narrative is rendered here ONLY when no treatment card exists. When a
-  // treatment was selected the card already owns the plan (planSource) and the
-  // selected visit's session_notes, so rendering it again would print the same
-  // practitioner text twice on one screen.
-  const hasNarrative =
-    narrative.plan != null || narrative.legacySessionNotes != null;
+  // WHO OWNS WHAT is decided by one pure helper, not by the shape of this JSX.
+  //
+  // A treatment card owns the plan and its OWN visit's legacy notes. Legacy
+  // notes belonging to a DIFFERENT, newer visit are NOT owned by it and must
+  // still be shown — before Session 1D the page rendered the newest eligible
+  // row's session_notes unconditionally, and this surface is the only render of
+  // that column left in the product.
+  const fallback = buildPrepFallbackNarrative({
+    plan: narrative.plan,
+    legacySessionNotes: narrative.legacySessionNotes,
+    cardSessionId: memory?.sessionId ?? null,
+  });
   // Null covers three genuinely different situations, and all three are
   // truthfully described by the same sentence: a first-visit client, a client
   // whose only other sessions carry no charting at all, and a failed read (the
@@ -1090,7 +1098,7 @@ function LastTreatmentSection({
             chart to review it before treating.
           </p>
         </div>
-        <PriorNarrative narrative={narrative} />
+        <PriorNarrative items={fallback} />
       </section>
     );
   }
@@ -1110,11 +1118,33 @@ function LastTreatmentSection({
           </h2>
           <p className="mt-2">No previous treatment charted for this client.</p>
         </div>
-        {hasNarrative && <PriorNarrative narrative={narrative} />}
+        {fallback.length > 0 && <PriorNarrative items={fallback} />}
       </section>
     );
   }
-  return <AppointmentPrepMemoryCard clientId={clientId} memory={memory} />;
+  // THE CARD PLUS anything it does not own. A newer uncharted visit's legacy
+  // notes sit BELOW the treatment, dated, so they are never read as part of it.
+  return (
+    <>
+      <AppointmentPrepMemoryCard clientId={clientId} memory={memory} />
+      {fallback.length > 0 && (
+        <section
+          data-testid="appointment-prep-external-narrative"
+          className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+        >
+          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            From another visit
+          </h2>
+          <p className="mt-1 text-xs text-neutral-500">
+            Recorded on a visit other than the treatment above.
+          </p>
+          <div className="mt-3">
+            <PriorNarrative items={fallback} />
+          </div>
+        </section>
+      )}
+    </>
+  );
 }
 
 // Practitioner narrative from prior visits that produced no charted treatment
@@ -1125,43 +1155,64 @@ function LastTreatmentSection({
 //
 // Full text, whole: whitespace-pre-wrap keeps the practitioner's line breaks
 // and break-words keeps a long unbroken run from scrolling the page sideways.
-function PriorNarrative({
-  narrative,
-}: {
-  narrative: AppointmentPrepLoad["narrative"];
-}) {
-  if (!narrative.plan && !narrative.legacySessionNotes) return null;
+// Practitioner narrative this screen must show but the treatment card does not
+// own: the plan when there is no card, and legacy session_notes from a visit
+// other than the one displayed. READ-ONLY. Every item is DATED, so a note from
+// a later uncharted visit is never read as part of the treatment above it.
+//
+// Full text, whole: whitespace-pre-wrap keeps the practitioner's line breaks,
+// break-words keeps a long unbroken run from scrolling the page sideways.
+function PriorNarrative({ items }: { items: PrepFallbackItem[] }) {
+  if (items.length === 0) return null;
   return (
     <div data-testid="prep-prior-narrative" className="flex flex-col gap-3">
-      {narrative.plan && (
-        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300">
-            For next visit
+      {items.map((item) => (
+        <div
+          key={item.key}
+          data-testid={
+            item.source === "next_session_note"
+              ? "prep-prior-plan"
+              : "prep-prior-legacy-notes"
+          }
+          className={
+            item.source === "next_session_note"
+              ? "rounded-md border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40"
+              : ""
+          }
+        >
+          <p
+            className={
+              item.source === "next_session_note"
+                ? "text-[11px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300"
+                : "text-[11px] font-medium uppercase tracking-wider text-neutral-500"
+            }
+          >
+            {item.label}
+          </p>
+          {/* PROVENANCE. Every fallback item is dated, because it may come from
+              a different visit than anything shown above it. A session id is
+              never rendered — the date is the practitioner-meaningful handle. */}
+          <p
+            data-testid="prep-prior-date"
+            className={
+              item.source === "next_session_note"
+                ? "text-xs text-blue-800 dark:text-blue-300"
+                : "text-xs text-neutral-500"
+            }
+          >
+            <FormattedDateTime iso={item.startedAt} format="date" />
           </p>
           <p
-            data-testid="prep-prior-plan"
-            className="mt-0.5 whitespace-pre-wrap break-words text-sm text-blue-950 dark:text-blue-100"
+            className={
+              item.source === "next_session_note"
+                ? "mt-0.5 whitespace-pre-wrap break-words text-sm text-blue-950 dark:text-blue-100"
+                : "mt-0.5 whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300"
+            }
           >
-            {narrative.plan.text}
-          </p>
-          <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">
-            Written <FormattedDateTime iso={narrative.plan.startedAt} format="date" />
+            {item.text}
           </p>
         </div>
-      )}
-      {narrative.legacySessionNotes && (
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-            Legacy session notes
-          </p>
-          <p
-            data-testid="prep-prior-legacy-notes"
-            className="mt-0.5 whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300"
-          >
-            {narrative.legacySessionNotes.text}
-          </p>
-        </div>
-      )}
+      ))}
     </div>
   );
 }

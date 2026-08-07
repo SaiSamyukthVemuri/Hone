@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAppointmentPrepMemory,
+  buildPrepFallbackNarrative,
   buildLastSessionNoteSections,
   NARRATIVE_SOURCE_LABELS,
   NO_LAST_SESSION_NOTES_COPY,
@@ -1440,5 +1441,133 @@ describe("safety", () => {
       true,
     );
     expect(memoryOf().supersededByEmptySession).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FALLBACK NARRATIVE OWNERSHIP MATRIX (final-review P2)
+//
+// A prep screen can hold narrative from two different visits at once: an older
+// CHARTED treatment, and a newer visit never charted but carrying practitioner
+// text. Before Session 1D the page rendered the newer row's session_notes
+// unconditionally; a first repair surfaced it only when there was NO treatment
+// card, so the newer text vanished behind an older treatment. These pin who
+// owns which line, and that nothing is hidden or printed twice.
+// ---------------------------------------------------------------------------
+
+const NEWER = {
+  sessionId: "s-aug5",
+  startedAt: "2026-08-05T10:00:00.000Z",
+  text: "Client reported new medication — review before treatment",
+};
+const OWN = {
+  sessionId: "s-jul20",
+  startedAt: "2026-07-20T10:00:00.000Z",
+  text: "Tolerated well",
+};
+
+describe("fallback narrative ownership", () => {
+  it("F1. a NEWER uncharted visit's legacy notes survive an older charted treatment", () => {
+    const items = buildPrepFallbackNarrative({
+      plan: null,
+      legacySessionNotes: NEWER,
+      cardSessionId: OWN.sessionId,
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0].source).toBe("session_notes");
+    expect(items[0].text).toBe(NEWER.text);
+    // Provenance: its OWN visit date, not the treatment's.
+    expect(items[0].startedAt).toBe(NEWER.startedAt);
+    expect(items[0].sessionId).toBe(NEWER.sessionId);
+    expect(items[0].label).toBe("Legacy session notes");
+  });
+
+  it("F2. legacy notes belonging to the CARD's own session are not repeated", () => {
+    const items = buildPrepFallbackNarrative({
+      plan: null,
+      legacySessionNotes: OWN,
+      cardSessionId: OWN.sessionId,
+    });
+    expect(items).toEqual([]);
+  });
+
+  it("F3. identical plan + legacy note from the SAME visit is one fact, printed once", () => {
+    const same = { sessionId: "s-1", startedAt: "2026-08-01T10:00:00.000Z", text: "Do not treat" };
+    const items = buildPrepFallbackNarrative({
+      plan: same,
+      legacySessionNotes: same,
+      cardSessionId: null,
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0].source).toBe("next_session_note");
+  });
+
+  it("F4. the SAME sentence on DIFFERENT visits keeps both, with provenance", () => {
+    const shared = "Do not treat";
+    const items = buildPrepFallbackNarrative({
+      plan: { sessionId: "s-a", startedAt: "2026-08-05T10:00:00.000Z", text: shared },
+      legacySessionNotes: { sessionId: "s-b", startedAt: "2026-07-01T10:00:00.000Z", text: shared },
+      cardSessionId: null,
+    });
+    // Global text dedupe would erase one of two real facts.
+    expect(items).toHaveLength(2);
+    expect(new Set(items.map((i) => i.sessionId)).size).toBe(2);
+    expect(new Set(items.map((i) => i.startedAt)).size).toBe(2);
+  });
+
+  it("F5. a plan from one visit and legacy notes from another each keep their own date", () => {
+    const items = buildPrepFallbackNarrative({
+      plan: { sessionId: "s-a", startedAt: "2026-08-05T10:00:00.000Z", text: "Reduce fluence" },
+      legacySessionNotes: { sessionId: "s-b", startedAt: "2026-07-01T10:00:00.000Z", text: "Legacy" },
+      cardSessionId: null,
+    });
+    expect(items).toHaveLength(2);
+    const bySource = Object.fromEntries(items.map((i) => [i.source, i]));
+    expect(bySource.next_session_note.startedAt).toBe("2026-08-05T10:00:00.000Z");
+    expect(bySource.session_notes.startedAt).toBe("2026-07-01T10:00:00.000Z");
+    // Every item carries provenance, so neither is attributable to a treatment.
+    expect(items.every((i) => Boolean(i.startedAt) && Boolean(i.sessionId))).toBe(true);
+  });
+
+  it("F6. an ordinary treatment with no external narrative renders no fallback", () => {
+    expect(
+      buildPrepFallbackNarrative({
+        plan: { sessionId: OWN.sessionId, startedAt: OWN.startedAt, text: "plan" },
+        legacySessionNotes: OWN,
+        cardSessionId: OWN.sessionId,
+      }),
+    ).toEqual([]);
+    expect(
+      buildPrepFallbackNarrative({ plan: null, legacySessionNotes: null, cardSessionId: null }),
+    ).toEqual([]);
+  });
+
+  it("F1b. with NO card, the plan is owned here and rendered", () => {
+    const items = buildPrepFallbackNarrative({
+      plan: NEWER,
+      legacySessionNotes: null,
+      cardSessionId: null,
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0].source).toBe("next_session_note");
+    expect(items[0].label).toBe("For next visit");
+  });
+
+  it("F1c. with a card, the plan is NOT repeated — the card owns it via planSource", () => {
+    const items = buildPrepFallbackNarrative({
+      plan: NEWER,
+      legacySessionNotes: null,
+      cardSessionId: OWN.sessionId,
+    });
+    expect(items).toEqual([]);
+  });
+
+  it("keys are unique and carry no client-identifying data beyond the session id", () => {
+    const items = buildPrepFallbackNarrative({
+      plan: { sessionId: "s-a", startedAt: "2026-08-05T10:00:00.000Z", text: "a" },
+      legacySessionNotes: { sessionId: "s-b", startedAt: "2026-07-01T10:00:00.000Z", text: "b" },
+      cardSessionId: null,
+    });
+    expect(new Set(items.map((i) => i.key)).size).toBe(items.length);
   });
 });

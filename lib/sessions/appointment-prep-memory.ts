@@ -216,6 +216,95 @@ export type AppointmentPrepMemory = {
   supersededByEmptySession: boolean;
 };
 
+// A piece of practitioner narrative recovered from the CANDIDATE WINDOW, with
+// the visit it belongs to. Lives here (pure, client-safe) rather than in the
+// server-only loader so both the loader and this module can name it.
+export type PrepNarrativeItem = {
+  sessionId: string;
+  startedAt: string;
+  text: string;
+};
+
+// One fallback narrative line, ready to render, with its provenance resolved.
+export type PrepFallbackItem = {
+  // Stable React key AND test handle.
+  key: string;
+  source: Extract<NarrativeSource, "next_session_note" | "session_notes">;
+  label: string;
+  text: string;
+  sessionId: string;
+  // The visit the text was written on. Rendered whenever the item does NOT
+  // belong to the treatment shown above it, so a note from a later uncharted
+  // visit is never read as part of that treatment.
+  startedAt: string;
+};
+
+// WHO OWNS WHICH NARRATIVE — the one place that decides.
+//
+// A prep screen can hold narrative from two different visits at once: an older
+// CHARTED treatment, and a newer visit that was never charted but still carries
+// practitioner text. Both are legitimate historical facts, and before Session 1D
+// the page rendered the newer row's `session_notes` unconditionally.
+//
+// The rule:
+//   * when a treatment card exists it OWNS the plan (handed to it as planSource)
+//     and its OWN session's legacy notes — so neither is repeated here;
+//   * legacy notes belonging to a DIFFERENT, newer visit are still shown, with
+//     their own date, because nothing else on the route can reach them;
+//   * with no card, both the plan and the legacy notes are shown here.
+//
+// Deduplication is by SOURCE + SESSION + TEXT, never by text alone: the same
+// sentence written on two different visits is two facts, and suppressing one
+// would hide practitioner text. Only a plan and a legacy note from the SAME
+// visit carrying the SAME string collapse — that is one fact stored twice.
+export function buildPrepFallbackNarrative(input: {
+  plan: PrepNarrativeItem | null;
+  legacySessionNotes: PrepNarrativeItem | null;
+  // The session id of the treatment card, when one is rendered. null when there
+  // is no card and this surface owns everything.
+  cardSessionId: string | null;
+}): PrepFallbackItem[] {
+  const out: PrepFallbackItem[] = [];
+  const hasCard = input.cardSessionId != null;
+
+  const plan = input.plan;
+  // The card receives the plan as planSource and renders it with its own
+  // provenance line, so repeating it here would print it twice.
+  if (plan && !hasCard) {
+    out.push({
+      key: `next_session_note:${plan.sessionId}`,
+      source: "next_session_note",
+      label: NARRATIVE_SOURCE_LABELS.next_session_note,
+      text: plan.text,
+      sessionId: plan.sessionId,
+      startedAt: plan.startedAt,
+    });
+  }
+
+  const legacy = input.legacySessionNotes;
+  if (legacy) {
+    // The card already renders the notes of the session it is showing.
+    const ownedByCard = hasCard && legacy.sessionId === input.cardSessionId;
+    // One visit that stored the same string in both columns is one fact.
+    const sameFactAsPlan =
+      plan != null
+      && plan.sessionId === legacy.sessionId
+      && plan.text === legacy.text
+      && out.some((i) => i.source === "next_session_note");
+    if (!ownedByCard && !sameFactAsPlan) {
+      out.push({
+        key: `session_notes:${legacy.sessionId}`,
+        source: "session_notes",
+        label: NARRATIVE_SOURCE_LABELS.session_notes,
+        text: legacy.text,
+        sessionId: legacy.sessionId,
+        startedAt: legacy.startedAt,
+      });
+    }
+  }
+  return out;
+}
+
 // A laser pass, reduced to the two fields a prep surface reads.
 export type PrepLaserEntry = {
   id?: string;

@@ -11,7 +11,10 @@ import type {
   PointOfCareBlock,
   PointOfCareEntry,
 } from "@/lib/sessions/point-of-care-memory";
-import type { PrepLaserEntry } from "@/lib/sessions/appointment-prep-memory";
+import type {
+  PrepLaserEntry,
+  PrepNarrativeItem,
+} from "@/lib/sessions/appointment-prep-memory";
 import type { BlockArea } from "@/lib/sessions/block-areas";
 
 // THE loader behind every "last treatment" surface changed by this PR.
@@ -73,15 +76,12 @@ export type LastChartedTreatment<T extends SessionWithLoadedEntries> = {
   supersededByEmptySession: boolean;
 };
 
-// A piece of practitioner narrative recovered from the CANDIDATE WINDOW, with
-// the session it belongs to. Deliberately NOT part of LastChartedTreatment:
-// narrative can exist when no treatment does, and nesting it inside the
-// treatment made it structurally impossible to return in exactly that case.
-export type PrepNarrativeItem = {
-  sessionId: string;
-  startedAt: string;
-  text: string;
-};
+// PrepNarrativeItem is defined in the pure module and re-exported here for
+// callers that already import from the loader. Deliberately NOT part of
+// LastChartedTreatment: narrative can exist when no treatment does, and nesting
+// it inside the treatment made it structurally impossible to return in exactly
+// that case.
+export type { PrepNarrativeItem };
 
 // Deterministic child-row order, matching session_block_areas_block_order_idx:
 // (display_order, created_at, id). PostgREST does not order embedded rows
@@ -125,9 +125,18 @@ function newestPlanOf<T extends SessionWithLoadedEntries>(
 // disappearing — sessions.session_notes has no surviving writer, so the text on
 // existing rows can never be recreated.
 //
-// The window is stricter than the old query in one direction only (void rows
-// and this appointment's own sessions are already excluded), which can never
-// surface something the old page would have hidden.
+// THE INVARIANT, stated accurately: this reads the newest row of the CANDIDATE
+// window, which is stricter than the old `limit 1` query — void rows and this
+// appointment's own sessions are excluded before it is applied.
+//
+// That is NOT the same as "can never surface something the old page would have
+// hidden", which an earlier version of this comment claimed and which is false:
+// when the newest RAW row is void (or belongs to this appointment), the old page
+// showed its notes or nothing, whereas this falls through to the next eligible
+// candidate and may show an OLDER row's notes instead. That fall-through is the
+// intended behaviour — an excluded row must not speak — and it is exactly why
+// every fallback item carries its own date rather than being read as belonging
+// to whatever treatment is displayed above it.
 function newestLegacyNotesOf<T extends SessionWithLoadedEntries>(
   candidates: ReadonlyArray<T>,
 ): PrepNarrativeItem | null {
