@@ -2149,6 +2149,23 @@ function base64Url(buf: Buffer): string {
     .replace(/=+$/g, "");
 }
 
+// Mint the signed link for a KNOWN intake row. Extracted from
+// getIntakeTokenForClient so a spec that seeded its own intake can follow the
+// same link without a round trip through the client's email — there is exactly
+// one token format in this harness, and it lives here.
+export function mintIntakeToken(intakeId: string): string {
+  const expiresAt = new Date(Date.now() + 13 * 24 * 60 * 60 * 1000);
+  const payload = base64Url(
+    Buffer.from(
+      JSON.stringify({ intake_id: intakeId, expires_at: expiresAt.toISOString() }),
+    ),
+  );
+  const signature = base64Url(
+    createHmac("sha256", E2E_INTAKE_SIGNING_SECRET).update(payload).digest(),
+  );
+  return `${payload}.${signature}`;
+}
+
 export async function getIntakeTokenForClient(
   studioId: string,
   clientEmail: string,
@@ -2163,16 +2180,21 @@ export async function getIntakeTokenForClient(
   );
   const intakeId = rows[0]?.id;
   if (!intakeId) return null;
-  const expiresAt = new Date(Date.now() + 13 * 24 * 60 * 60 * 1000);
-  const payload = base64Url(
-    Buffer.from(
-      JSON.stringify({ intake_id: intakeId, expires_at: expiresAt.toISOString() }),
-    ),
-  );
-  const signature = base64Url(
-    createHmac("sha256", E2E_INTAKE_SIGNING_SECRET).update(payload).digest(),
-  );
-  return `${payload}.${signature}`;
+  return mintIntakeToken(intakeId);
+}
+
+// Park a seeded draft on a specific wizard step. The public page reads
+// `current_step` straight into IntakeWizard's initialStep, so this is what lets
+// a spec open directly on the Acknowledgments step instead of driving four
+// pages of unrelated questions to reach it.
+export async function setIntakeCurrentStep(
+  intakeId: string,
+  step: number,
+): Promise<void> {
+  await sql(`update public.client_intake_forms set current_step = $2 where id = $1`, [
+    intakeId,
+    step,
+  ]);
 }
 
 export async function getClientIdByEmail(
@@ -2344,6 +2366,10 @@ export type E2eIntakeRow = {
   reviewed_at: string | null;
   reviewed_by: string | null;
   practitioner_notes: string | null;
+  // The stored answers. Included so a spec can assert what was actually
+  // persisted — e.g. that the versioned acknowledgement record carries the
+  // server's own wording and timestamp rather than whatever the browser sent.
+  responses: Record<string, unknown>;
 };
 
 // The oracle. Reads the durable row, not the screen.
@@ -2353,7 +2379,8 @@ export async function getIntakeRow(intakeId: string): Promise<E2eIntakeRow | nul
             submitted_at::text as submitted_at,
             reviewed_at::text  as reviewed_at,
             reviewed_by,
-            practitioner_notes
+            practitioner_notes,
+            coalesce(responses, '{}'::jsonb) as responses
        from public.client_intake_forms
       where id = $1`,
     [intakeId],
