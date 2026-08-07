@@ -203,6 +203,10 @@ export function AssistedIntakeEditor({
             <button
               type="button"
               onClick={goBack}
+              // Distinct accessible name: an intake OPTION is also labelled
+              // "Back" (the body-area question), so a bare "Back" is
+              // ambiguous for assistive tech on that step.
+              aria-label="Back to previous step"
               disabled={STEP_IDS.indexOf(step) <= 0 || isPending}
               className="min-h-[44px] rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >

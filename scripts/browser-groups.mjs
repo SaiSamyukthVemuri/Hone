@@ -62,6 +62,9 @@ export const BROWSER_GROUPS = {
     specs: [
       "intake-review-integrity.spec.ts",
       "intake-electrolysis-acknowledgement.spec.ts",
+      // Practitioner-assisted completion: the practitioner records the
+      // questionnaire, the client completes their own acknowledgements.
+      "practitioner-assisted-intake.spec.ts",
     ],
   },
   portal: {
