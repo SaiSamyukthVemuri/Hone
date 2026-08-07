@@ -243,6 +243,45 @@ describe("the questionnaire is not re-implemented", () => {
     );
   });
 
+  // The direct-importer walk above is defeated by INDIRECTION: file A imports
+  // the renderer and re-exports it, file B imports from A. B renders intake
+  // controls while naming neither the renderer module nor appearing in the
+  // importer set, so the guard above stays green.
+  //
+  // This repo has been bitten by exactly this shape twice in the appointment
+  // DML census guard work — alias evasion (a factory classified by callee name
+  // defeated by `createClient as createAdminClient`) and the detached chain
+  // (`const q = admin.from(...)` invisible to a call-site walker). Both were
+  // real, and both were found by review rather than by the guard's author.
+  //
+  // Closing the re-export path is cheap, so it is closed rather than argued
+  // about: no file outside the renderer module may re-export its symbol.
+  it("no file re-exports the control renderer, so the importer walk cannot be bypassed", () => {
+    const RENDERER = "components/intake/intake-question-field.tsx";
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name === ".next") continue;
+        const rel = `${dir}/${e.name}`;
+        if (e.isDirectory()) {
+          walk(rel);
+          continue;
+        }
+        if (!/\.tsx?$/.test(e.name) || rel === RENDERER) continue;
+        const code = codeOnly(read(rel));
+        // `export { IntakeQuestionField ... }` / `export { X as IntakeQuestionField }`
+        const reExportsSymbol =
+          /export\s*\{[^}]*\bIntakeQuestionField\b[^}]*\}/.test(code);
+        // `export * from ".../intake-question-field"`
+        const reExportsStar =
+          /export\s+\*\s+from\s+["'][^"']*intake-question-field["']/.test(code);
+        if (reExportsSymbol || reExportsStar) offenders.push(rel);
+      }
+    };
+    for (const r of ["app", "components", "lib"]) walk(r);
+    expect(offenders).toEqual([]);
+  });
+
   it("the assisted editor's step set structurally excludes the client's step", () => {
     // Not a copy of the step list: the editor derives it, and this asserts the
     // derivation is what it uses. If someone swaps STEP_IDS for INTAKE_STEPS,
