@@ -4,10 +4,10 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
 import {
-  ALL_QUESTION_KEYS,
   findMissingRequiredAnswers,
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
+import { sanitizeQuestionResponses } from "@/lib/intake/responses";
 import {
   buildElectrolysisAcknowledgementDraftRecord,
   ELECTROLYSIS_ACKNOWLEDGEMENT,
@@ -54,13 +54,14 @@ const INTAKE_TOKEN_INVALID =
 // server-derived record (below), and the submit path validates the claim by
 // exact equality against the canonical constant before doing the same. The
 // claim is evidence to check, never content to store.
+// The question-key whitelist itself now lives in lib/intake/responses.ts so
+// the practitioner-assisted editor derives its (narrower) admitted set from
+// the same source instead of maintaining a second copy. The behaviour of THIS
+// function is unchanged: same admitted keys, same values copied through, same
+// single acknowledgement carve-out below.
 function sanitizeResponses(input: unknown): Record<string, unknown> {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
-  const allowed = new Set(ALL_QUESTION_KEYS);
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    if (allowed.has(key)) out[key] = value;
-  }
+  const out = sanitizeQuestionResponses(input);
+  if (!input || typeof input !== "object" || Array.isArray(input)) return out;
   const ackClaim = normalizeElectrolysisAcknowledgementClaim(
     (input as Record<string, unknown>)[ELECTROLYSIS_ACKNOWLEDGEMENT.id],
   );

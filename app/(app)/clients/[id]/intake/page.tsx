@@ -22,6 +22,10 @@ import {
   type IntakeLifecycleStatus,
 } from "@/lib/intake/acknowledgements";
 import {
+  ASSISTED_ENTRY_REVIEW_COPY,
+  readAssistedEntry,
+} from "@/lib/intake/entry-provenance";
+import {
   deriveIntakeReviewFlags,
   MODALITY_WORDING,
   type IntakeReviewFlag,
@@ -236,6 +240,30 @@ export default async function ClientIntakePage({
         )}
       </div>
 
+      {/* Practitioner-assisted entry. Offered only while the intake is still
+          being filled in — a submitted or reviewed intake is terminal and the
+          correction model is a NEW intake, never a rewrite. The editor covers
+          the questionnaire only; the client's own acknowledgements and the
+          submission stay with the client. */}
+      {intake.status === "in_progress" && (
+        <section className="rounded-lg border border-neutral-300 p-5 dark:border-neutral-700">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+            With the client
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+            Sitting with {client.name}? Work through the questionnaire together
+            and record their answers. They complete their own confirmations and
+            submit at the end.
+          </p>
+          <Link
+            href={`/clients/${id}/intake/assist?intake=${intake.id}`}
+            className="mt-4 inline-flex min-h-[44px] items-center rounded-md bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900"
+          >
+            Complete intake with client
+          </Link>
+        </section>
+      )}
+
       {/* PR #293: primary resend CTA for an in-progress intake — refreshes
           the link for THIS row and keeps saved answers. The reissue card
           below is the secondary "start a brand-new blank intake" path. */}
@@ -282,6 +310,11 @@ export default async function ClientIntakePage({
       <IntakeReviewFlags responses={responses} />
 
       <FitzpatrickSummary responses={responses} />
+
+      <IntakeEntrySummary
+        responses={responses}
+        reviewedBy={intake.reviewed_by}
+      />
 
       <ElectrolysisAcknowledgementSummary
         responses={responses}
@@ -664,6 +697,84 @@ function ElectrolysisAcknowledgementSummary({
       <p className="mt-3 text-xs text-neutral-500">
         {ACKNOWLEDGEMENT_REVIEW_COPY.caveat}
       </p>
+    </section>
+  );
+}
+
+// HOW THE QUESTIONNAIRE ANSWERS GOT HERE.
+//
+// Renders NOTHING for an ordinary, self-completed intake — the overwhelming
+// majority of rows carry no assisted-entry record, and an intake the client
+// filled in themselves must not gain a badge.
+//
+// Deliberately a SEPARATE section from the electrolysis acknowledgement card
+// below it. The two record different things by different people: this one says
+// a practitioner recorded the questionnaire; that one is the client's own
+// confirmation. Merging them would blur exactly the line this feature exists
+// to draw.
+//
+// Names and dates come from the STORED snapshot, never from a current
+// practitioner lookup — a practitioner who has since been deactivated must
+// still be named here.
+function IntakeEntrySummary({
+  responses,
+  reviewedBy,
+}: {
+  responses: Record<string, unknown>;
+  reviewedBy: string | null;
+}) {
+  const view = readAssistedEntry(responses);
+  if (view.state === "none") return null;
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+        {ASSISTED_ENTRY_REVIEW_COPY.heading}
+      </h2>
+      <div className="mt-3 flex flex-col gap-2 text-sm text-neutral-800 dark:text-neutral-200">
+        {view.state === "unreadable" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {ASSISTED_ENTRY_REVIEW_COPY.unreadable}
+          </p>
+        )}
+        {view.state === "assisted" && (
+          <>
+            <p className="font-medium">
+              {ASSISTED_ENTRY_REVIEW_COPY.assistedLead}{" "}
+              {view.startedBy.display_name} on{" "}
+              <FormattedDateTime iso={view.startedAtIso} />.
+            </p>
+            {view.showLastUpdated && (
+              <p className="text-neutral-700 dark:text-neutral-300">
+                Answers were last recorded by {view.lastUpdatedBy.display_name}{" "}
+                on <FormattedDateTime iso={view.lastUpdatedAtIso} />.
+              </p>
+            )}
+            <p className="text-neutral-700 dark:text-neutral-300">
+              {view.handoffAtIso && view.handoffBy ? (
+                <>
+                  {ASSISTED_ENTRY_REVIEW_COPY.handedOver}{" "}
+                  {view.handoffBy.display_name} on{" "}
+                  <FormattedDateTime iso={view.handoffAtIso} />.{" "}
+                  {ASSISTED_ENTRY_REVIEW_COPY.handedOverTail}
+                </>
+              ) : (
+                ASSISTED_ENTRY_REVIEW_COPY.notHandedOver
+              )}
+            </p>
+            <p className="text-xs text-neutral-500">
+              {ASSISTED_ENTRY_REVIEW_COPY.acknowledgementSeparate}
+            </p>
+            {reviewedBy &&
+              (reviewedBy === view.startedBy.practitioner_id ||
+                reviewedBy === view.lastUpdatedBy.practitioner_id) && (
+                <p className="text-xs text-neutral-500">
+                  {ASSISTED_ENTRY_REVIEW_COPY.selfReviewed}
+                </p>
+              )}
+          </>
+        )}
+      </div>
     </section>
   );
 }
