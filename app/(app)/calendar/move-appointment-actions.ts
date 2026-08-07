@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { getAvailableSlots, filterFutureSlots } from "@/lib/booking/slots";
+import {
+  getAvailableSlots,
+  filterFutureSlots,
+  INTERNAL_SLOT_PACKING,
+} from "@/lib/booking/slots";
 import { utcInstantFromLocal, localTimeString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { notifyAppointmentMoved, type MoveNotificationStatus } from "@/lib/email/notify-appointment-moved";
@@ -171,6 +175,7 @@ export async function loadMoveSlotsAction(input: {
           appt.duration_minutes, // use the appointment's EXISTING duration
           { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
           slotTarget, // Part 4/Item 7: the CURRENT practitioner (time-only) OR the proposed target
+          INTERNAL_SLOT_PACKING,
         ),
       ).map((s) => ({ start: s.start, end: s.end, label: s.startLabel }))
     : [];
@@ -326,6 +331,7 @@ export async function moveAppointmentAction(input: {
         appt.duration_minutes,
         { sourceKind: "appointment", sourceId: appointmentId },
         slotTarget, // Item 7: recheck against the FINAL target (reassignment) or the current practitioner
+        INTERNAL_SLOT_PACKING, // MUST match loadMoveSlotsAction, or an offered slot becomes unbookable
       ),
     );
     // Match by START INSTANT. Each offered slot is re-derived the SAME way the
