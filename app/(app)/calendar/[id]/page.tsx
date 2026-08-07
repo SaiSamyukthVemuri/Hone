@@ -14,9 +14,9 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { loadLastChartedTreatmentForClient } from "@/lib/sessions/last-treatment-loader";
 import {
   buildAppointmentPrepMemory,
-  buildPrepFallbackNarrative,
+  buildPrepProvenanceModel,
   type AppointmentPrepMemory,
-  type PrepFallbackItem,
+  type PrepNarrativeRenderItem,
 } from "@/lib/sessions/appointment-prep-memory";
 import type { AppointmentPrepLoad } from "@/lib/sessions/last-treatment-loader";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
@@ -355,7 +355,6 @@ export default async function AppointmentDetailPage({
         // The plan source is deliberately decoupled from the treatment source:
         // the instruction most likely to change today is the most RECENT one,
         // and it can live on a session that never got charted.
-        planSource: prepNarrative.plan,
         hasLiveElectrolysisEntries: (
           selected.session.electrolysis_entries ?? []
         ).some((e) => e.deleted_at == null),
@@ -1066,10 +1065,18 @@ function LastTreatmentSection({
   // still be shown — before Session 1D the page rendered the newest eligible
   // row's session_notes unconditionally, and this surface is the only render of
   // that column left in the product.
-  const fallback = buildPrepFallbackNarrative({
-    plan: narrative.plan,
-    legacySessionNotes: narrative.legacySessionNotes,
-    cardSessionId: memory?.sessionId ?? null,
+  // ONE authority decides ownership AND chronology; this component only lays
+  // out the answer. `owned` is already rendered by the treatment card, so only
+  // `external` is painted here — always attributed, never implied to belong to
+  // the treatment above.
+  const { external } = buildPrepProvenanceModel({
+    selected: memory
+      ? { sessionId: memory.sessionId, startedAt: memory.startedAt }
+      : null,
+    ownPlan: memory?.notes.forNextVisit?.text ?? null,
+    ownLegacyNotes: memory?.notes.general[0]?.text ?? null,
+    windowPlan: narrative.plan,
+    windowLegacyNotes: narrative.legacySessionNotes,
   });
   // Null covers three genuinely different situations, and all three are
   // truthfully described by the same sentence: a first-visit client, a client
@@ -1098,7 +1105,7 @@ function LastTreatmentSection({
             chart to review it before treating.
           </p>
         </div>
-        <PriorNarrative items={fallback} />
+        <PriorNarrative items={external} />
       </section>
     );
   }
@@ -1118,7 +1125,7 @@ function LastTreatmentSection({
           </h2>
           <p className="mt-2">No previous treatment charted for this client.</p>
         </div>
-        {fallback.length > 0 && <PriorNarrative items={fallback} />}
+        {external.length > 0 && <PriorNarrative items={external} />}
       </section>
     );
   }
@@ -1127,7 +1134,7 @@ function LastTreatmentSection({
   return (
     <>
       <AppointmentPrepMemoryCard clientId={clientId} memory={memory} />
-      {fallback.length > 0 && (
+      {external.length > 0 && (
         <section
           data-testid="appointment-prep-external-narrative"
           className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
@@ -1139,7 +1146,7 @@ function LastTreatmentSection({
             Recorded on a visit other than the treatment above.
           </p>
           <div className="mt-3">
-            <PriorNarrative items={fallback} />
+            <PriorNarrative items={external} />
           </div>
         </section>
       )}
@@ -1162,7 +1169,7 @@ function LastTreatmentSection({
 //
 // Full text, whole: whitespace-pre-wrap keeps the practitioner's line breaks,
 // break-words keeps a long unbroken run from scrolling the page sideways.
-function PriorNarrative({ items }: { items: PrepFallbackItem[] }) {
+function PriorNarrative({ items }: { items: PrepNarrativeRenderItem[] }) {
   if (items.length === 0) return null;
   return (
     <div data-testid="prep-prior-narrative" className="flex flex-col gap-3">
@@ -1192,6 +1199,13 @@ function PriorNarrative({ items }: { items: PrepFallbackItem[] }) {
           {/* PROVENANCE. Every fallback item is dated, because it may come from
               a different visit than anything shown above it. A session id is
               never rendered — the date is the practitioner-meaningful handle. */}
+          {/* PROVENANCE, in BOTH directions. Rendering a date only for the
+              "after" case left an OLDER plan silently undated, and that silence
+              read as "written at the treatment above" — inverting the status of
+              an instruction that may already have been carried out. Chronology
+              is the ONLY relationship the data supports: a claim about whether
+              an instruction still stands would be an inference Hone cannot
+              make. See buildPrepProvenanceModel. */}
           <p
             data-testid="prep-prior-date"
             className={
@@ -1201,6 +1215,10 @@ function PriorNarrative({ items }: { items: PrepFallbackItem[] }) {
             }
           >
             <FormattedDateTime iso={item.startedAt} format="date" />
+            {item.chronology === "after_selected_treatment"
+              && ", after the treatment above"}
+            {item.chronology === "before_selected_treatment"
+              && ", before the treatment above"}
           </p>
           <p
             className={

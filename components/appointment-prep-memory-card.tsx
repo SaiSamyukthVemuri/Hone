@@ -224,22 +224,6 @@ export function AppointmentPrepMemoryCard({
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300">
                   {notes.forNextVisit.label}
                 </p>
-                {/* Say where it came from when it is NOT the treatment above,
-                    so a plan written on a later, uncharted visit is neither
-                    silenced nor silently misattributed. */}
-                {notes.forNextVisitFromLaterVisit && (
-                  <p
-                    data-testid="prep-plan-later-visit"
-                    className="text-xs text-blue-800 dark:text-blue-300"
-                  >
-                    Written{" "}
-                    <FormattedDateTime
-                      iso={notes.forNextVisitFromLaterVisit}
-                      format="date"
-                    />
-                    , after the treatment above.
-                  </p>
-                )}
                 <p
                   data-testid="prep-note-item"
                   className="mt-0.5 whitespace-pre-wrap break-words text-sm text-blue-950 dark:text-blue-100"

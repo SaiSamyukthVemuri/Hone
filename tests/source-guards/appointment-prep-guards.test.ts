@@ -15,6 +15,17 @@ import path from "node:path";
 // Those are pinned here, against the source text.
 
 const ROOT = path.resolve(__dirname, "../..");
+
+// The body of a top-level function, bounded by the NEXT top-level declaration
+// rather than by a character count — a fixed window overruns into neighbouring
+// code and makes a "must not contain" assertion match something unrelated.
+function functionBody(src: string, name: string): string {
+  const at = src.indexOf(`function ${name}(`);
+  if (at < 0) throw new Error(`function ${name} not found`);
+  const rest = src.slice(at + 1);
+  const next = rest.search(/\nfunction |\nexport /);
+  return next < 0 ? rest : rest.slice(0, next);
+}
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
 const PAGE_PATH = "app/(app)/calendar/[id]/page.tsx";
@@ -437,9 +448,10 @@ describe("the plan source is decoupled from the treatment source", () => {
   });
 
   it("the page hands that plan to the model, and the card names its origin", () => {
-    expect(PAGE_CODE).toMatch(/planSource: prepNarrative\.plan/);
-    expect(CARD_CODE).toMatch(/notes\.forNextVisitFromLaterVisit/);
-    expect(CARD_CODE).toMatch(/data-testid="prep-plan-later-visit"/);
+    // SETTLED: the card slot is the treatment's OWN plan; cross-visit
+    // narrative renders on the attributed external surface instead.
+    expect(PAGE_CODE).toMatch(/ownPlan: memory\?\.notes\.forNextVisit\?\.text/);
+    expect(CARD_CODE).not.toMatch(/forNextVisitFromLaterVisit/);
   });
 });
 
@@ -527,17 +539,15 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
     // not the property that matters; OWNERSHIP is, and it is decided in one
     // pure function whose behaviour is pinned in
     // tests/lib/sessions/appointment-prep-memory.test.ts (F1-F6).
-    expect(PAGE_CODE).toMatch(/buildPrepFallbackNarrative\(\{/);
-    expect(PAGE_CODE).toMatch(/cardSessionId: memory\?\.sessionId \?\? null/);
-    // The page must never decide ownership itself.
-    expect(PAGE_CODE).not.toMatch(/legacySessionNotes\.sessionId !==/);
-    // Every render site consumes the helper's output, never the raw narrative.
+    expect(PAGE_CODE).toMatch(/buildPrepProvenanceModel\(\{/);
+    // The page must never decide ownership or chronology itself.
+    expect(PAGE_CODE).not.toMatch(/sessionId !==/);
+    expect(PAGE_CODE).not.toMatch(/new Date\([^)]*startedAt/);
+    // Every render site consumes the model's output.
     const sites = PAGE_CODE.match(/<PriorNarrative [^>]*>/g) ?? [];
     expect(sites.length).toBeGreaterThanOrEqual(2);
     for (const site of sites) {
-      expect(site, `${site} must render helper output`).toMatch(
-        /items=\{fallback\}/,
-      );
+      expect(site, `${site} must render model output`).toMatch(/items=\{external\}/);
     }
   });
 
@@ -548,7 +558,21 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
     expect(cardIdx).toBeGreaterThan(-1);
     const after = PAGE_CODE.slice(cardIdx);
     expect(after).toMatch(/data-testid="appointment-prep-external-narrative"/);
-    expect(after).toMatch(/<PriorNarrative items=\{fallback\} \/>/);
+    expect(after).toMatch(/<PriorNarrative items=\{external\} \/>/);
+  });
+
+  it("chronology is stated in BOTH directions, never one", () => {
+    // The blocker: only the "after" clause existed, so an OLDER plan rendered
+    // undated and that silence read as "written at the treatment above".
+    expect(PAGE_CODE).toMatch(/after_selected_treatment/);
+    expect(PAGE_CODE).toMatch(/before_selected_treatment/);
+    expect(PAGE_CODE).toMatch(/, after the treatment above/);
+    expect(PAGE_CODE).toMatch(/, before the treatment above/);
+    // Never an inference the data cannot support — scoped to the narrative
+    // renderer, since "completed" is also an appointment STATUS elsewhere.
+    const block = functionBody(PAGE_CODE, "PriorNarrative");
+    expect(block).toMatch(/item\.chronology/); // proves we sliced the renderer
+    expect(block).not.toMatch(/still applies|supersedes|resolved|completed/i);
   });
 
   it("every fallback item is dated — provenance, never a session id", () => {
@@ -565,10 +589,8 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
   });
 
   it("fallback narrative is full text — pre-wrap, break-words, no clamp", () => {
-    const block = PAGE_CODE.slice(
-      PAGE_CODE.indexOf("function PriorNarrative"),
-      PAGE_CODE.indexOf("function PriorNarrative") + 2200,
-    );
+    const block = functionBody(PAGE_CODE, "PriorNarrative");
+    expect(block).toMatch(/item\.text/); // proves we sliced the renderer
     expect((block.match(/whitespace-pre-wrap break-words/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(block).not.toMatch(/line-clamp|\.slice\(|substring/);
   });

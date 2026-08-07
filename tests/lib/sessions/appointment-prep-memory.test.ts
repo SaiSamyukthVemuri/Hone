@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAppointmentPrepMemory,
-  buildPrepFallbackNarrative,
+  buildPrepProvenanceModel,
   buildLastSessionNoteSections,
   NARRATIVE_SOURCE_LABELS,
   NO_LAST_SESSION_NOTES_COPY,
@@ -757,60 +757,39 @@ describe("narrative — complete, whole, grouped, deduplicated", () => {
     );
   });
 
-  it("25b. a plan written on a LATER visit wins, and says where it came from", () => {
-    // REGRESSION (adversarial review, P1). A plan can be written on a session
-    // that never got charted — "client started doxycycline, do not treat" —
-    // and reading only the selected treatment's own note silenced it. Three
-    // other pre-visit surfaces already decouple the plan source (PR #203).
-    const m = memoryOf({
-      planSource: {
-        sessionId: "s-newer-empty",
-        startedAt: "2026-08-03T10:00:00.000Z",
-        text: "Client started doxycycline, do not treat",
-      },
-    });
-    expect(m.notes.forNextVisit?.text).toBe(
-      "Client started doxycycline, do not treat",
-    );
-    expect(m.notes.forNextVisitFromLaterVisit).toBe("2026-08-03T10:00:00.000Z");
-    // The selected treatment's own, now-stale, plan is not shown instead.
-    expect(JSON.stringify(m.notes)).not.toContain("Start lower on the sideburn");
-  });
-
-  it("25b-i. an OLDER plan is shown but never claimed to be 'after' the treatment", () => {
-    // REGRESSION (adversarial review, P1 introduced by the 25b fix). The
-    // newest note-bearing session can be OLDER than the selected treatment —
-    // "the last charted visit left no plan, an earlier one did" is the primary
-    // case this decoupling exists to serve. Gating the provenance line on
-    // session IDENTITY rather than chronology printed "Written Jun 1, after the
-    // treatment above" beneath a Jul 10 header.
-    const m = memoryOf({
-      planSource: {
-        sessionId: "s-older",
-        startedAt: "2026-06-01T10:00:00.000Z",
-        text: "Start lower on the sideburn",
-      },
-    });
+  it("25b. the treatment's OWN plan is never replaced by a later visit's plan", () => {
+    // SETTLED CONTRACT (was: the external plan overrode the own plan, and the
+    // own plan then rendered nowhere). Session 1D promises the COMPLETE
+    // narrative from the selected treatment, so its own plan stays. A newer
+    // instruction from another visit is real too — it renders on its own
+    // attributed surface, proved by the provenance truth table rows 2 and 4.
+    const m = memoryOf();
     expect(m.notes.forNextVisit?.text).toBe("Start lower on the sideburn");
-    expect(m.notes.forNextVisitFromLaterVisit).toBeNull();
   });
 
-  it("25c. a plan belonging to the selected treatment is NOT labelled as later", () => {
+  it("25b-i. the card's plan slot carries no cross-visit provenance field", () => {
+    // Provenance moved to the external surface, where BOTH directions are
+    // stated. The card slot is own-plan only, so the treatment header already
+    // supplies its date and a one-directional field here would be a trap.
+    const m = memoryOf();
+    expect(m.notes).not.toHaveProperty("forNextVisitFromLaterVisit");
+  });
+
+  it("25c. a treatment with no plan of its own shows none in the card slot", () => {
     const m = memoryOf({
-      planSource: {
-        sessionId: "s-charted",
-        startedAt: "2026-07-10T10:00:00.000Z",
-        text: "Start lower on the sideburn",
+      session: {
+        id: "s-charted",
+        started_at: "2026-07-10T10:00:00.000Z",
+        modality: "electrolysis",
+        session_notes: null,
+        next_session_note: null,
       },
     });
-    expect(m.notes.forNextVisit?.text).toBe("Start lower on the sideburn");
-    expect(m.notes.forNextVisitFromLaterVisit).toBeNull();
+    expect(m.notes.forNextVisit).toBeNull();
   });
 
-  it("25d. with no plan anywhere, the selected session's own note is still used", () => {
-    expect(memoryOf({ planSource: null }).notes.forNextVisit?.text).toBe(
-      "Start lower on the sideburn",
-    );
+  it("25d. the card slot always reflects the selected session's own note", () => {
+    expect(memoryOf().notes.forNextVisit?.text).toBe("Start lower on the sideburn");
   });
 
   it("26. a caution is grouped to its own area", () => {
@@ -1445,129 +1424,287 @@ describe("safety", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FALLBACK NARRATIVE OWNERSHIP MATRIX (final-review P2)
+// THE PROVENANCE TRUTH TABLE
 //
-// A prep screen can hold narrative from two different visits at once: an older
-// CHARTED treatment, and a newer visit never charted but carrying practitioner
-// text. Before Session 1D the page rendered the newer row's session_notes
-// unconditionally; a first repair surfaced it only when there was NO treatment
-// card, so the newer text vanished behind an older treatment. These pin who
-// owns which line, and that nothing is hidden or printed twice.
+// Three repair cycles found defects in narrative ownership and provenance. This
+// is the exhaustive contract for buildPrepProvenanceModel, the single authority
+// the render consumes. Every row asserts: which visit owns each item, what text
+// is visible, how many times, and what chronological relationship is claimed.
 // ---------------------------------------------------------------------------
 
-const NEWER = {
-  sessionId: "s-aug5",
-  startedAt: "2026-08-05T10:00:00.000Z",
-  text: "Client reported new medication — review before treatment",
-};
-const OWN = {
-  sessionId: "s-jul20",
-  startedAt: "2026-07-20T10:00:00.000Z",
-  text: "Tolerated well",
-};
+const TREAT = { sessionId: "s-jul20", startedAt: "2026-07-20T10:00:00.000Z" };
+const NEWER_V = { sessionId: "s-aug5", startedAt: "2026-08-05T10:00:00.000Z" };
+const OLDER_V = { sessionId: "s-jun1", startedAt: "2026-06-01T10:00:00.000Z" };
 
-describe("fallback narrative ownership", () => {
-  it("F1. a NEWER uncharted visit's legacy notes survive an older charted treatment", () => {
-    const items = buildPrepFallbackNarrative({
-      plan: null,
-      legacySessionNotes: NEWER,
-      cardSessionId: OWN.sessionId,
-    });
-    expect(items).toHaveLength(1);
-    expect(items[0].source).toBe("session_notes");
-    expect(items[0].text).toBe(NEWER.text);
-    // Provenance: its OWN visit date, not the treatment's.
-    expect(items[0].startedAt).toBe(NEWER.startedAt);
-    expect(items[0].sessionId).toBe(NEWER.sessionId);
-    expect(items[0].label).toBe("Legacy session notes");
+const OWN_PLAN = "Start lower on the sideburn";
+const EXT_PLAN = "Client started doxycycline, do not treat";
+const OWN_NOTES = "Tolerated well";
+const EXT_NOTES = "Client reported new medication";
+
+const model = (over: Parameters<typeof buildPrepProvenanceModel>[0]) =>
+  buildPrepProvenanceModel(over);
+
+const texts = (items: ReadonlyArray<{ text: string }>) => items.map((i) => i.text);
+
+describe("provenance truth table — treatment + plan", () => {
+  it("1. own plan, no external plan", () => {
+    const r = model({ selected: TREAT, ownPlan: OWN_PLAN, windowPlan: { ...TREAT, text: OWN_PLAN } });
+    expect(texts(r.owned)).toEqual([OWN_PLAN]);
+    expect(r.owned[0].ownership).toBe("selected_treatment");
+    expect(r.owned[0].chronology).toBe("same");
+    expect(r.external).toEqual([]);
   });
 
-  it("F2. legacy notes belonging to the CARD's own session are not repeated", () => {
-    const items = buildPrepFallbackNarrative({
-      plan: null,
-      legacySessionNotes: OWN,
-      cardSessionId: OWN.sessionId,
+  it("2. own plan + NEWER external plan — both survive, external attributed", () => {
+    const r = model({
+      selected: TREAT,
+      ownPlan: OWN_PLAN,
+      windowPlan: { ...NEWER_V, text: EXT_PLAN },
     });
-    expect(items).toEqual([]);
+    expect(texts(r.owned)).toEqual([OWN_PLAN]);
+    expect(texts(r.external)).toEqual([EXT_PLAN]);
+    expect(r.external[0].chronology).toBe("after_selected_treatment");
+    expect(r.external[0].startedAt).toBe(NEWER_V.startedAt);
   });
 
-  it("F3. identical plan + legacy note from the SAME visit is one fact, printed once", () => {
-    const same = { sessionId: "s-1", startedAt: "2026-08-01T10:00:00.000Z", text: "Do not treat" };
-    const items = buildPrepFallbackNarrative({
-      plan: same,
-      legacySessionNotes: same,
-      cardSessionId: null,
+  it("3. own plan + OLDER external note-bearing visit", () => {
+    const r = model({
+      selected: TREAT,
+      ownPlan: OWN_PLAN,
+      windowPlan: { ...OLDER_V, text: "Test patch before treating." },
     });
-    expect(items).toHaveLength(1);
-    expect(items[0].source).toBe("next_session_note");
+    expect(texts(r.owned)).toEqual([OWN_PLAN]);
+    expect(r.external[0].chronology).toBe("before_selected_treatment");
   });
 
-  it("F4. the SAME sentence on DIFFERENT visits keeps both, with provenance", () => {
-    const shared = "Do not treat";
-    const items = buildPrepFallbackNarrative({
-      plan: { sessionId: "s-a", startedAt: "2026-08-05T10:00:00.000Z", text: shared },
-      legacySessionNotes: { sessionId: "s-b", startedAt: "2026-07-01T10:00:00.000Z", text: shared },
-      cardSessionId: null,
-    });
-    // Global text dedupe would erase one of two real facts.
-    expect(items).toHaveLength(2);
-    expect(new Set(items.map((i) => i.sessionId)).size).toBe(2);
-    expect(new Set(items.map((i) => i.startedAt)).size).toBe(2);
+  it("4. NO own plan + NEWER external plan", () => {
+    const r = model({ selected: TREAT, ownPlan: null, windowPlan: { ...NEWER_V, text: EXT_PLAN } });
+    expect(r.owned).toEqual([]);
+    expect(r.external[0].chronology).toBe("after_selected_treatment");
+    expect(r.external[0].text).toBe(EXT_PLAN);
   });
 
-  it("F5. a plan from one visit and legacy notes from another each keep their own date", () => {
-    const items = buildPrepFallbackNarrative({
-      plan: { sessionId: "s-a", startedAt: "2026-08-05T10:00:00.000Z", text: "Reduce fluence" },
-      legacySessionNotes: { sessionId: "s-b", startedAt: "2026-07-01T10:00:00.000Z", text: "Legacy" },
-      cardSessionId: null,
+  it("5. NO own plan + OLDER external plan — THE BLOCKER: never unattributed", () => {
+    // Selected Jul 20, plan from Jun 1. Rendering it undated read as "written
+    // at the treatment above", inverting the status of an instruction that may
+    // already have been carried out at Jul 20.
+    const r = model({
+      selected: TREAT,
+      ownPlan: null,
+      windowPlan: { ...OLDER_V, text: "Test patch before treating." },
     });
-    expect(items).toHaveLength(2);
-    const bySource = Object.fromEntries(items.map((i) => [i.source, i]));
-    expect(bySource.next_session_note.startedAt).toBe("2026-08-05T10:00:00.000Z");
-    expect(bySource.session_notes.startedAt).toBe("2026-07-01T10:00:00.000Z");
-    // Every item carries provenance, so neither is attributable to a treatment.
-    expect(items.every((i) => Boolean(i.startedAt) && Boolean(i.sessionId))).toBe(true);
+    expect(r.owned).toEqual([]);
+    expect(r.external).toHaveLength(1);
+    expect(r.external[0].text).toBe("Test patch before treating.");
+    expect(r.external[0].startedAt).toBe(OLDER_V.startedAt);
+    expect(r.external[0].chronology).toBe("before_selected_treatment");
+    expect(r.external[0].ownership).toBe("external_visit");
   });
 
-  it("F6. an ordinary treatment with no external narrative renders no fallback", () => {
-    expect(
-      buildPrepFallbackNarrative({
-        plan: { sessionId: OWN.sessionId, startedAt: OWN.startedAt, text: "plan" },
-        legacySessionNotes: OWN,
-        cardSessionId: OWN.sessionId,
-      }),
-    ).toEqual([]);
-    expect(
-      buildPrepFallbackNarrative({ plan: null, legacySessionNotes: null, cardSessionId: null }),
-    ).toEqual([]);
+  it("6. no charted treatment + plan-only prior visit", () => {
+    const r = model({ selected: null, windowPlan: { ...NEWER_V, text: EXT_PLAN } });
+    expect(r.owned).toEqual([]);
+    expect(texts(r.external)).toEqual([EXT_PLAN]);
+    // No treatment to be before or after.
+    expect(r.external[0].chronology).toBe("same");
+  });
+});
+
+describe("provenance truth table — treatment + legacy session notes", () => {
+  it("7. selected treatment owns the newest legacy notes", () => {
+    const r = model({
+      selected: TREAT,
+      ownLegacyNotes: OWN_NOTES,
+      windowLegacyNotes: { ...TREAT, text: OWN_NOTES },
+    });
+    expect(texts(r.owned)).toEqual([OWN_NOTES]);
+    expect(r.external).toEqual([]);
   });
 
-  it("F1b. with NO card, the plan is owned here and rendered", () => {
-    const items = buildPrepFallbackNarrative({
-      plan: NEWER,
-      legacySessionNotes: null,
-      cardSessionId: null,
+  it("8. a NEWER uncharted visit owns the legacy notes", () => {
+    const r = model({
+      selected: TREAT,
+      ownLegacyNotes: OWN_NOTES,
+      windowLegacyNotes: { ...NEWER_V, text: EXT_NOTES },
     });
-    expect(items).toHaveLength(1);
-    expect(items[0].source).toBe("next_session_note");
-    expect(items[0].label).toBe("For next visit");
+    expect(texts(r.owned)).toEqual([OWN_NOTES]);
+    expect(texts(r.external)).toEqual([EXT_NOTES]);
+    expect(r.external[0].chronology).toBe("after_selected_treatment");
   });
 
-  it("F1c. with a card, the plan is NOT repeated — the card owns it via planSource", () => {
-    const items = buildPrepFallbackNarrative({
-      plan: NEWER,
-      legacySessionNotes: null,
-      cardSessionId: OWN.sessionId,
+  it("9. an OLDER external visit owns the legacy notes", () => {
+    const r = model({
+      selected: TREAT,
+      windowLegacyNotes: { ...OLDER_V, text: EXT_NOTES },
     });
-    expect(items).toEqual([]);
+    expect(r.external[0].chronology).toBe("before_selected_treatment");
+    expect(r.external[0].startedAt).toBe(OLDER_V.startedAt);
   });
 
-  it("keys are unique and carry no client-identifying data beyond the session id", () => {
-    const items = buildPrepFallbackNarrative({
-      plan: { sessionId: "s-a", startedAt: "2026-08-05T10:00:00.000Z", text: "a" },
-      legacySessionNotes: { sessionId: "s-b", startedAt: "2026-07-01T10:00:00.000Z", text: "b" },
-      cardSessionId: null,
+  it("10. no treatment + legacy-note-only visit", () => {
+    const r = model({ selected: null, windowLegacyNotes: { ...NEWER_V, text: EXT_NOTES } });
+    expect(texts(r.external)).toEqual([EXT_NOTES]);
+    expect(r.external[0].label).toBe("Legacy session notes");
+  });
+});
+
+describe("provenance truth table — combined", () => {
+  it("11. own plan + own session notes both render, both owned", () => {
+    const r = model({ selected: TREAT, ownPlan: OWN_PLAN, ownLegacyNotes: OWN_NOTES });
+    expect(texts(r.owned).sort()).toEqual([OWN_PLAN, OWN_NOTES].sort());
+    expect(r.owned.every((i) => i.ownership === "selected_treatment")).toBe(true);
+    expect(r.external).toEqual([]);
+  });
+
+  it("12. external plan + external legacy notes from the SAME visit", () => {
+    const r = model({
+      selected: TREAT,
+      windowPlan: { ...NEWER_V, text: EXT_PLAN },
+      windowLegacyNotes: { ...NEWER_V, text: EXT_NOTES },
     });
-    expect(new Set(items.map((i) => i.key)).size).toBe(items.length);
+    expect(r.external).toHaveLength(2);
+    expect(r.external.every((i) => i.chronology === "after_selected_treatment")).toBe(true);
+    expect(new Set(r.external.map((i) => i.sessionId)).size).toBe(1);
+  });
+
+  it("13. external plan and external legacy notes from DIFFERENT visits", () => {
+    const r = model({
+      selected: TREAT,
+      windowPlan: { ...NEWER_V, text: EXT_PLAN },
+      windowLegacyNotes: { ...OLDER_V, text: EXT_NOTES },
+    });
+    expect(r.external).toHaveLength(2);
+    const by = Object.fromEntries(r.external.map((i) => [i.source, i]));
+    expect(by.next_session_note.chronology).toBe("after_selected_treatment");
+    expect(by.session_notes.chronology).toBe("before_selected_treatment");
+  });
+
+  it("14. SAME text in plan + legacy notes on the SAME visit renders once", () => {
+    const same = "Reduce intensity";
+    const r = model({
+      selected: TREAT,
+      windowPlan: { ...NEWER_V, text: same },
+      windowLegacyNotes: { ...NEWER_V, text: same },
+    });
+    expect(r.external).toHaveLength(1);
+    expect(r.external[0].source).toBe("next_session_note");
+  });
+
+  it("14b. and the same collapse applies to the selected treatment's own columns", () => {
+    const same = "Reduce intensity";
+    const r = model({ selected: TREAT, ownPlan: same, ownLegacyNotes: same });
+    expect(r.owned).toHaveLength(1);
+    expect(r.owned[0].source).toBe("next_session_note");
+  });
+
+  it("15. SAME text on TWO DIFFERENT visits is never globally deduped", () => {
+    const same = "Reduce intensity";
+    const r = model({
+      selected: TREAT,
+      ownPlan: same,
+      windowPlan: { ...NEWER_V, text: same },
+    });
+    // Two historical facts with different provenance.
+    expect(r.owned).toHaveLength(1);
+    expect(r.external).toHaveLength(1);
+    expect(r.owned[0].sessionId).not.toBe(r.external[0].sessionId);
+    expect(r.external[0].chronology).toBe("after_selected_treatment");
+  });
+
+  it("15b. an external plan equal to the treatment's own plan is still shown", () => {
+    const r = model({
+      selected: TREAT,
+      ownPlan: OWN_PLAN,
+      windowPlan: { ...OLDER_V, text: OWN_PLAN },
+    });
+    expect(texts(r.owned)).toEqual([OWN_PLAN]);
+    expect(texts(r.external)).toEqual([OWN_PLAN]);
+  });
+});
+
+describe("provenance truth table — read state", () => {
+  it("16. successful full read with everything present", () => {
+    const r = model({
+      selected: TREAT,
+      ownPlan: OWN_PLAN,
+      ownLegacyNotes: OWN_NOTES,
+      windowPlan: { ...NEWER_V, text: EXT_PLAN },
+      windowLegacyNotes: { ...NEWER_V, text: EXT_NOTES },
+    });
+    expect(r.owned).toHaveLength(2);
+    expect(r.external).toHaveLength(2);
+  });
+
+  it("17. block-read failure + external plan — no treatment, plan attributed", () => {
+    // selected === null models a failed block read: no treatment could be
+    // resolved, but the candidate narrative was already fetched.
+    const r = model({ selected: null, windowPlan: { ...NEWER_V, text: EXT_PLAN } });
+    expect(r.owned).toEqual([]);
+    expect(texts(r.external)).toEqual([EXT_PLAN]);
+  });
+
+  it("18. block-read failure + external legacy note", () => {
+    const r = model({ selected: null, windowLegacyNotes: { ...NEWER_V, text: EXT_NOTES } });
+    expect(texts(r.external)).toEqual([EXT_NOTES]);
+  });
+
+  it("19. genuine first visit — nothing at all", () => {
+    expect(model({ selected: null })).toEqual({ owned: [], external: [] });
+  });
+
+  it("20. no charted treatment but narrative exists", () => {
+    const r = model({
+      selected: null,
+      windowPlan: { ...NEWER_V, text: EXT_PLAN },
+      windowLegacyNotes: { ...OLDER_V, text: EXT_NOTES },
+    });
+    expect(r.owned).toEqual([]);
+    expect(r.external).toHaveLength(2);
+    expect(r.external.every((i) => i.ownership === "external_visit")).toBe(true);
+  });
+});
+
+describe("provenance invariants", () => {
+  it("no item ever claims a relationship the data cannot support", () => {
+    const all = [
+      model({ selected: TREAT, ownPlan: OWN_PLAN, windowPlan: { ...NEWER_V, text: EXT_PLAN } }),
+      model({ selected: TREAT, windowPlan: { ...OLDER_V, text: EXT_PLAN } }),
+      model({ selected: null, windowPlan: { ...NEWER_V, text: EXT_PLAN } }),
+    ].flatMap((r) => [...r.owned, ...r.external]);
+    expect(all.length).toBeGreaterThan(0);
+    for (const i of all) {
+      expect(["same", "before_selected_treatment", "after_selected_treatment"]).toContain(i.chronology);
+      expect(JSON.stringify(i)).not.toMatch(/current|supersed|resolved|completed|still applies/i);
+    }
+  });
+
+  it("a malformed timestamp yields no chronological claim", () => {
+    const r = model({
+      selected: TREAT,
+      windowPlan: { sessionId: "s-bad", startedAt: "not-a-date", text: "x" },
+    });
+    expect(r.external[0].chronology).toBe("same");
+  });
+
+  it("every external item carries a date and a session, and keys are unique", () => {
+    const r = model({
+      selected: TREAT,
+      windowPlan: { ...NEWER_V, text: EXT_PLAN },
+      windowLegacyNotes: { ...OLDER_V, text: EXT_NOTES },
+    });
+    expect(r.external.every((i) => Boolean(i.startedAt) && Boolean(i.sessionId))).toBe(true);
+    const keys = [...r.owned, ...r.external].map((i) => i.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("labels come from the shared vocabulary", () => {
+    const r = model({
+      selected: null,
+      windowPlan: { ...NEWER_V, text: "p" },
+      windowLegacyNotes: { ...OLDER_V, text: "n" },
+    });
+    for (const i of r.external) {
+      expect(i.label).toBe(NARRATIVE_SOURCE_LABELS[i.source]);
+    }
   });
 });

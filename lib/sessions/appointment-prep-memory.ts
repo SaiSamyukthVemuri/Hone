@@ -138,11 +138,10 @@ export type AreaNarrativeItem = NarrativeItem & {
 export type AppointmentPrepNotes = {
   general: NarrativeItem[];
   forNextVisit: NarrativeItem | null;
-  // Set when the next-visit note came from a session LATER than the selected
-  // treatment — an abandoned row can carry the most important instruction in
-  // the record ("client started doxycycline, do not treat"), and showing it
-  // without saying where it came from would be its own kind of wrong.
-  forNextVisitFromLaterVisit: string | null;
+  // NOTE: no provenance field here any more. This slot now carries ONLY the
+  // selected treatment's own plan, so the treatment header already supplies its
+  // date. Narrative from any other visit is a separate, attributed surface —
+  // see buildPrepProvenanceModel.
   cautions: AreaNarrativeItem[];
   additional: AreaNarrativeItem[];
   responses: AreaNarrativeItem[];
@@ -239,70 +238,154 @@ export type PrepFallbackItem = {
   startedAt: string;
 };
 
-// WHO OWNS WHICH NARRATIVE — the one place that decides.
+// THE PROVENANCE AUTHORITY — one pure function, exhaustively tested.
 //
-// A prep screen can hold narrative from two different visits at once: an older
-// CHARTED treatment, and a newer visit that was never charted but still carries
-// practitioner text. Both are legitimate historical facts, and before Session 1D
-// the page rendered the newer row's `session_notes` unconditionally.
+// Three repair cycles found defects in narrative ownership and provenance, each
+// time because the decision was spread across a boolean here, a JSX branch
+// there, and a chronology comparison somewhere else. It is settled here instead:
+// the render receives a decision already made.
 //
-// The rule:
-//   * when a treatment card exists it OWNS the plan (handed to it as planSource)
-//     and its OWN session's legacy notes — so neither is repeated here;
-//   * legacy notes belonging to a DIFFERENT, newer visit are still shown, with
-//     their own date, because nothing else on the route can reach them;
-//   * with no card, both the plan and the legacy notes are shown here.
+// TWO CONCEPTS, never merged:
 //
-// Deduplication is by SOURCE + SESSION + TEXT, never by text alone: the same
-// sentence written on two different visits is two facts, and suppressing one
-// would hide practitioner text. Only a plan and a legacy note from the SAME
-// visit carrying the SAME string collapse — that is one fact stored twice.
-export function buildPrepFallbackNarrative(input: {
-  plan: PrepNarrativeItem | null;
-  legacySessionNotes: PrepNarrativeItem | null;
-  // The session id of the treatment card, when one is rendered. null when there
-  // is no card and this surface owns everything.
-  cardSessionId: string | null;
-}): PrepFallbackItem[] {
-  const out: PrepFallbackItem[] = [];
-  const hasCard = input.cardSessionId != null;
+//   A. Narrative belonging to the SELECTED TREATMENT. Session 1D promises the
+//      complete practitioner narrative from that treatment, so a newer note
+//      written on some other visit must never cause the treatment's own text to
+//      disappear. Its own plan is historical treatment narrative and stays.
+//
+//   B. Narrative from ANOTHER eligible visit. A newer uncharted consultation
+//      carrying "Client started doxycycline, do not treat" is not part of the
+//      July treatment, and must not be shown as though it were — but it is
+//      exactly what Chloe needs today, so it renders separately, attributed.
+//
+// PROVENANCE. Every item from a session other than the selected treatment
+// carries its source date AND its chronological relationship. Chronology is the
+// only relationship Hone can actually know: "before" and "after" are facts,
+// whereas "current", "still applies", "supersedes", "completed" and "resolved"
+// are inferences the data does not support, and none is ever emitted.
+//
+// The bug this closes: chronology was gated on `planAt > selectedAt`, so an
+// OLDER plan rendered with NO date while the newer case always carried one —
+// and that silence read as "written at the treatment above", inverting the
+// status of an instruction that may already have been carried out.
+//
+// DEDUPLICATION is by SOURCE SEMANTIC + SESSION + normalized TEXT, never by
+// text alone. The same sentence on two different visits is two historical
+// facts; collapsing them would hide practitioner text. Only one visit that
+// stored the same string in both of its own columns collapses.
 
-  const plan = input.plan;
-  // The card receives the plan as planSource and renders it with its own
-  // provenance line, so repeating it here would print it twice.
-  if (plan && !hasCard) {
-    out.push({
-      key: `next_session_note:${plan.sessionId}`,
-      source: "next_session_note",
-      label: NARRATIVE_SOURCE_LABELS.next_session_note,
-      text: plan.text,
-      sessionId: plan.sessionId,
-      startedAt: plan.startedAt,
-    });
+export type NarrativeOwnership = "selected_treatment" | "external_visit";
+
+export type NarrativeChronology =
+  | "same"
+  | "before_selected_treatment"
+  | "after_selected_treatment";
+
+export type PrepNarrativeRenderItem = {
+  // Stable React key AND test handle: "<source>:<sessionId>".
+  key: string;
+  source: Extract<NarrativeSource, "next_session_note" | "session_notes">;
+  label: string;
+  text: string;
+  sessionId: string;
+  startedAt: string;
+  ownership: NarrativeOwnership;
+  chronology: NarrativeChronology;
+};
+
+export type PrepProvenanceModel = {
+  // Rendered by the treatment card — the selected visit's own narrative.
+  owned: PrepNarrativeRenderItem[];
+  // Rendered separately, attributed — narrative from any other visit.
+  external: PrepNarrativeRenderItem[];
+};
+
+function chronologyOf(
+  itemStartedAt: string,
+  selectedStartedAt: string | null,
+): NarrativeChronology {
+  if (selectedStartedAt == null) return "same";
+  const a = new Date(itemStartedAt).getTime();
+  const b = new Date(selectedStartedAt).getTime();
+  // A malformed timestamp yields no claim rather than a false one.
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) return "same";
+  return a > b ? "after_selected_treatment" : "before_selected_treatment";
+}
+
+export function buildPrepProvenanceModel(input: {
+  // The selected charted treatment, when one exists.
+  selected: { sessionId: string; startedAt: string } | null;
+  // The selected treatment's OWN stored narrative.
+  ownPlan?: string | null;
+  ownLegacyNotes?: string | null;
+  // Narrative resolved from the candidate window; may belong to another visit.
+  windowPlan?: PrepNarrativeItem | null;
+  windowLegacyNotes?: PrepNarrativeItem | null;
+}): PrepProvenanceModel {
+  const selectedId = input.selected?.sessionId ?? null;
+  const selectedAt = input.selected?.startedAt ?? null;
+  const owned: PrepNarrativeRenderItem[] = [];
+  const external: PrepNarrativeRenderItem[] = [];
+  // source + session + normalized text — never text alone.
+  const seen = new Set<string>();
+
+  const push = (
+    source: PrepNarrativeRenderItem["source"],
+    sessionId: string,
+    startedAt: string,
+    raw: string | null | undefined,
+  ) => {
+    const text = trimmedOrNull(raw);
+    if (!text) return;
+    const identity = JSON.stringify([source, sessionId, text]);
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    const ownership: NarrativeOwnership =
+      selectedId != null && sessionId === selectedId
+        ? "selected_treatment"
+        : "external_visit";
+    const item: PrepNarrativeRenderItem = {
+      key: `${source}:${sessionId}`,
+      source,
+      label: NARRATIVE_SOURCE_LABELS[source],
+      text,
+      sessionId,
+      startedAt,
+      ownership,
+      chronology:
+        ownership === "selected_treatment"
+          ? "same"
+          : chronologyOf(startedAt, selectedAt),
+    };
+    (ownership === "selected_treatment" ? owned : external).push(item);
+  };
+
+  // The selected treatment's own narrative FIRST, so a same-visit duplicate in
+  // the window collapses into the owned item rather than the other way round.
+  if (input.selected) {
+    push("next_session_note", input.selected.sessionId, input.selected.startedAt, input.ownPlan);
+    push("session_notes", input.selected.sessionId, input.selected.startedAt, input.ownLegacyNotes);
   }
 
-  const legacy = input.legacySessionNotes;
-  if (legacy) {
-    // The card already renders the notes of the session it is showing.
-    const ownedByCard = hasCard && legacy.sessionId === input.cardSessionId;
-    // One visit that stored the same string in both columns is one fact.
-    const sameFactAsPlan =
-      plan != null
-      && plan.sessionId === legacy.sessionId
-      && plan.text === legacy.text
-      && out.some((i) => i.source === "next_session_note");
-    if (!ownedByCard && !sameFactAsPlan) {
-      out.push({
-        key: `session_notes:${legacy.sessionId}`,
-        source: "session_notes",
-        label: NARRATIVE_SOURCE_LABELS.session_notes,
-        text: legacy.text,
-        sessionId: legacy.sessionId,
-        startedAt: legacy.startedAt,
-      });
+  const wp = input.windowPlan;
+  if (wp) push("next_session_note", wp.sessionId, wp.startedAt, wp.text);
+  const wl = input.windowLegacyNotes;
+  if (wl) push("session_notes", wl.sessionId, wl.startedAt, wl.text);
+
+  // ONE VISIT, ONE FACT: a single session that stored the identical string in
+  // both next_session_note and session_notes recorded one thing twice. Scoped
+  // to a single session on purpose — the same sentence on two different visits
+  // stays two items, because the provenance differs.
+  const collapse = (list: PrepNarrativeRenderItem[]) => {
+    const plans = new Map<string, string>();
+    for (const i of list) {
+      if (i.source === "next_session_note") plans.set(i.sessionId, i.text);
     }
-  }
-  return out;
+    return list.filter(
+      (i) => !(i.source === "session_notes" && plans.get(i.sessionId) === i.text),
+    );
+  };
+
+  return { owned: collapse(owned), external: collapse(external) };
 }
 
 // A laser pass, reduced to the two fields a prep surface reads.
@@ -344,10 +427,6 @@ export type AppointmentPrepMemoryInput = {
   // already reaches the model through that block's area.
   electrolysisEntries?: ReadonlyArray<PrepOrphanEntry> | null;
   supersededByEmptySession?: boolean;
-  // The newest next-visit note in the candidate window, which may belong to a
-  // LATER session than the selected treatment. When omitted the selected
-  // session's own note is used. See LastChartedTreatment.newestPlan.
-  planSource?: { sessionId: string; startedAt: string; text: string } | null;
   // Whether the selected session has LIVE electrolysis entries. Consulted only
   // when there are no settings blocks, to tell a legacy entry-only
   // electrolysis visit apart from a laser one.
@@ -416,41 +495,24 @@ export function buildLastSessionNoteSections(input: {
   // sessionId identifies the SELECTED treatment, so a plan belonging to a later
   // session can be labelled as such.
   sessionId?: string | null;
-  sessionStartedAt?: string | null;
-  planSource?: { sessionId: string; startedAt: string; text: string } | null;
 }): AppointmentPrepNotes {
   const collect = new NarrativeCollector();
   const SESSION_KEY = "session";
 
   // "For next visit" is claimed FIRST, so that if session_notes happens to hold
   // the identical text it is the generic copy that drops, not the specific one.
-  const ownPlan = trimmedOrNull(input.session.next_session_note);
-  const planText = trimmedOrNull(input.planSource?.text) ?? ownPlan;
+  // The SELECTED TREATMENT'S OWN plan. It is historical treatment narrative and
+  // is never replaced by a note from another visit: Session 1D promises the
+  // complete narrative from this treatment, and a later consultation adding an
+  // instruction does not erase what July recorded. An external plan renders on
+  // its own attributed surface instead.
+  const planText = trimmedOrNull(input.session.next_session_note);
   const forNextVisit = collect.add(
     "next_session_note",
     SESSION_KEY,
     "",
     planText,
   );
-  // CHRONOLOGY, never identity. `newestPlanOf` scans the whole candidate
-  // window, so the newest note-bearing session can be OLDER than the selected
-  // treatment (the last charted visit left no plan, an earlier one did — the
-  // primary case PR #203 exists to serve). Gating on "different session" would
-  // then print "written after the treatment above" over a date that precedes
-  // it: a false claim about clinical provenance, on the band the card leads
-  // with.
-  const selectedAt = new Date(input.sessionStartedAt ?? "").getTime();
-  const planAt = new Date(input.planSource?.startedAt ?? "").getTime();
-  const fromLater =
-    input.planSource
-    && input.sessionId
-    && input.planSource.sessionId !== input.sessionId
-    && Number.isFinite(selectedAt)
-    && Number.isFinite(planAt)
-    && planAt > selectedAt
-      ? input.planSource.startedAt
-      : null;
-
   const general: NarrativeItem[] = [];
   const sessionNotes = trimmedOrNull(input.session.session_notes);
   // Same text under a different source is still the same sentence on the page.
@@ -565,7 +627,6 @@ export function buildLastSessionNoteSections(input: {
   return {
     general,
     forNextVisit,
-    forNextVisitFromLaterVisit: forNextVisit ? fromLater : null,
     cautions,
     additional,
     responses,
@@ -719,8 +780,6 @@ export function buildAppointmentPrepMemory(
       laserEntries: input.laserEntries,
       electrolysisEntries: input.electrolysisEntries,
       sessionId: memory.sessionId,
-      sessionStartedAt: memory.startedAt,
-      planSource: input.planSource,
     }),
     blocklessNote: memory.blocklessNote,
     supersededByEmptySession: memory.supersededByEmptySession,
