@@ -358,7 +358,7 @@ describe("2. the client-owned boundary", () => {
     });
   }
 
-  it("refuses an assisted save carrying the acknowledgement RECORD key", async () => {
+  it("refuses an assisted save that would author the acknowledgement RECORD", async () => {
     const res = await save({
       responses: {
         legal_name: "Dana",
@@ -370,12 +370,61 @@ describe("2. the client-owned boundary", () => {
         },
       } as Record<string, unknown>,
     });
-    // The record key is not a question key, so it is dropped by the
-    // whitelist; the write proceeds without it and never fabricates one.
-    expect(res.ok).toBe(true);
+    // The record key is not a question key, so the whitelist would drop it
+    // regardless — but it is also named client-owned, so an attempt to author
+    // it is REFUSED rather than silently stripped. Nothing is written.
+    expect(res.ok).toBe(false);
+    expect(state.updates).toHaveLength(0);
     expect(storedResponses()).not.toHaveProperty(
       ELECTROLYSIS_ACKNOWLEDGEMENT.id,
     );
+  });
+
+  it("does NOT refuse a payload that merely echoes the client's stored answers", async () => {
+    // THE REGRESSION adversarial review found. The editor seeds its state from
+    // the stored responses and posts the whole map, so an intake where the
+    // client had already touched a step-5 checkbox through their own link made
+    // EVERY assisted save fail — with copy blaming the practitioner and naming
+    // a button that could never mount. Refusing on key presence rather than on
+    // change was the bug.
+    const clientRecord = {
+      id: ELECTROLYSIS_ACKNOWLEDGEMENT.id,
+      version: "v1",
+      wording: ELECTROLYSIS_ACKNOWLEDGEMENT.wording,
+      accepted: false,
+    };
+    currentIntake().responses = {
+      ack_accurate: true,
+      ack_will_update: false,
+      [ELECTROLYSIS_ACKNOWLEDGEMENT.id]: clientRecord,
+    };
+    const res = await save({
+      responses: {
+        // exactly what the editor would post back: stored map + a new answer
+        ack_accurate: true,
+        ack_will_update: false,
+        [ELECTROLYSIS_ACKNOWLEDGEMENT.id]: { ...clientRecord },
+        legal_name: "Dana Reyes",
+      } as Record<string, unknown>,
+      expectedUpdatedAt: String(currentIntake().updated_at),
+    });
+    expect(res.ok).toBe(true);
+    expect(storedResponses().legal_name).toBe("Dana Reyes");
+    // The client's own answers are untouched, not re-written by the practitioner.
+    expect(storedResponses().ack_accurate).toBe(true);
+    expect(storedResponses().ack_will_update).toBe(false);
+    expect(storedResponses()[ELECTROLYSIS_ACKNOWLEDGEMENT.id]).toEqual(clientRecord);
+  });
+
+  it("still refuses when the payload would FLIP a client answer", async () => {
+    currentIntake().responses = { ack_accurate: false };
+    const res = await save({
+      responses: { legal_name: "Dana", ack_accurate: true } as Record<string, unknown>,
+      expectedUpdatedAt: String(currentIntake().updated_at),
+    });
+    expect(res.ok).toBe(false);
+    expect(state.updates).toHaveLength(0);
+    expect(storedResponses().ack_accurate).toBe(false);
   });
 
   it("cannot address the acknowledgements step at all", async () => {

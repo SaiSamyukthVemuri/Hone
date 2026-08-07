@@ -863,13 +863,19 @@ export const PRACTITIONER_ENTERABLE_STEPS: ReadonlyArray<Step> =
 // other step, or a sixth step appended later, becomes practitioner-forbidden
 // automatically without anyone remembering to update a list. `_notes`
 // siblings are included so a follow-up note cannot be used as a side channel.
-export const CLIENT_OWNED_RESPONSE_KEYS: ReadonlySet<string> = new Set(
-  INTAKE_STEPS.flatMap((s) =>
+export const CLIENT_OWNED_RESPONSE_KEYS: ReadonlySet<string> = new Set([
+  ...INTAKE_STEPS.flatMap((s) =>
     s.questions
       .filter((q) => s.id === ACKNOWLEDGEMENTS_STEP_ID || q.type === "checkbox")
       .flatMap((q) => [q.key, `${q.key}_notes`]),
   ),
-);
+  // The versioned acknowledgement RECORD is not a question, so neither
+  // derivation above reaches it. The question-key whitelist already drops it
+  // from any practitioner payload, but naming it here makes the loud refusal
+  // cover it too — a practitioner attempting to author the client's
+  // acknowledgement record should be refused, not silently stripped.
+  ELECTROLYSIS_ACKNOWLEDGEMENT.id,
+]);
 
 export function isClientOwnedResponseKey(key: string): boolean {
   return CLIENT_OWNED_RESPONSE_KEYS.has(key);

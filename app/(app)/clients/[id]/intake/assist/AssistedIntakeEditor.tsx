@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  isClientOwnedResponseKey,
   PRACTITIONER_ENTERABLE_STEPS,
   stepById,
   validateVisibleAnswers,
@@ -26,6 +27,17 @@ type Props = {
 };
 
 const STEP_IDS = PRACTITIONER_ENTERABLE_STEPS.map((s) => s.id);
+
+// Drop every key the client alone may author before sending. Defence in
+// depth, not the control: lib/intake/responses.ts strips them server-side and
+// the action refuses any that would change a stored client answer.
+function withoutClientOwnedKeys(responses: Responses): Responses {
+  const out: Responses = {};
+  for (const [key, value] of Object.entries(responses)) {
+    if (!isClientOwnedResponseKey(key)) out[key] = value;
+  }
+  return out;
+}
 const LAST_STEP_ID = STEP_IDS[STEP_IDS.length - 1] ?? 1;
 
 export function AssistedIntakeEditor({
@@ -83,7 +95,13 @@ export function AssistedIntakeEditor({
         intakeId,
         clientId,
         step: targetStep,
-        responses,
+        // Do not post what this surface may not write. The editor's state is
+        // seeded from the stored responses, which can already contain the
+        // client's own step-5 answers if they used their link first; sending
+        // them back is pointless and makes the server work harder to prove
+        // they are unchanged. The server remains the authority — it strips
+        // these keys and refuses any that would CHANGE a client answer.
+        responses: withoutClientOwnedKeys(responses),
         expectedUpdatedAt: updatedAt,
       });
       if (!res.ok) {

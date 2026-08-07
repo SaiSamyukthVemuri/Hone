@@ -17,7 +17,7 @@ import {
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
 import {
-  assistedKeysRejected,
+  assistedKeysChanged,
   sanitizePractitionerAssistedAnswers,
 } from "@/lib/intake/responses";
 import {
@@ -754,20 +754,27 @@ export async function saveAssistedIntakeStepAction(payload: {
   const enterable = PRACTITIONER_ENTERABLE_STEPS.some((s) => s.id === step);
   if (!enterable) return { ok: false, error: ASSISTED_CLIENT_OWNED };
 
-  // Refuse loudly before doing anything else if the payload carries a
-  // client-owned key. Stripping alone would let a UI bug quietly no-op.
-  const forbidden = assistedKeysRejected(payload.responses);
-  if (forbidden.length > 0) {
-    logIntakeActionFailure("assisted_client_owned_key_rejected", {
-      message: `rejected ${forbidden.length} client-owned key(s)`,
-    });
-    return { ok: false, error: ASSISTED_CLIENT_OWNED };
-  }
-
   const answers = sanitizePractitionerAssistedAnswers(payload.responses);
 
   const loaded = await loadAssistedIntake(intakeId, clientId);
   if (!loaded.ok) return loaded;
+
+  // Refuse loudly if the payload would CHANGE a client-owned answer.
+  //
+  // Compared against what is stored, not merely detected by key presence: the
+  // editor seeds its state from the stored responses and posts the whole map,
+  // so an intake where the client had already touched a step-5 checkbox
+  // through their own link would otherwise make every assisted save fail. The
+  // boundary is unchanged in strength — a practitioner still cannot set, alter
+  // or clear one — and sanitization drops these keys regardless. This is the
+  // loud backstop for a UI bug or a crafted request.
+  const forbidden = assistedKeysChanged(payload.responses, loaded.responses);
+  if (forbidden.length > 0) {
+    logIntakeActionFailure("assisted_client_owned_key_rejected", {
+      message: `rejected ${forbidden.length} client-owned key change(s)`,
+    });
+    return { ok: false, error: ASSISTED_CLIENT_OWNED };
+  }
 
   // Merge existing-first so answers the client already gave through their own
   // link are preserved, and so the electrolysis acknowledgement record and any
@@ -883,6 +890,12 @@ export async function handOffAssistedIntakeAction(
     .eq("client_id", clientId)
     .is("deleted_at", null)
     .eq("status", "in_progress")
+    // Same concurrency guard as the save. This UPDATE also assigns the whole
+    // responses jsonb (when there is provenance to stamp), so without it a
+    // client draft-save landing between the read above and this write would be
+    // reinstated from a stale snapshot — including re-setting a checkbox the
+    // client had just cleared.
+    .eq("updated_at", loaded.updatedAt)
     .select("id, client_id");
 
   if (error) {

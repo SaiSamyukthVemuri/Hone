@@ -82,6 +82,15 @@ function normalizeActor(value: unknown): AssistedActorSnapshot | null {
   return { practitioner_id: practitionerId, display_name: displayName };
 }
 
+// Truncate an actor snapshot to what this module's own parser will accept, so
+// a value written here can always be read back.
+function boundActor(actor: AssistedActorSnapshot): AssistedActorSnapshot {
+  return {
+    practitioner_id: actor.practitioner_id.slice(0, MAX_FIELD_CHARS),
+    display_name: actor.display_name.trim().slice(0, MAX_FIELD_CHARS),
+  };
+}
+
 // Parse a stored value into a record, or null when it is absent/malformed.
 // Never throws. A malformed record is reported as such by the read side
 // rather than being quietly treated as an ordinary assisted entry.
@@ -136,13 +145,18 @@ export function recordAssistedEntry(
   nowIso: string,
 ): AssistedEntryRecord {
   const existing = parseStoredRecord(existingValue);
+  // Bound the actor on the WRITE side too. Previously only the read side
+  // applied MAX_FIELD_CHARS, so a display_name over the cap could be stored
+  // and then be refused by this module's own parser — the record would read
+  // back as "unreadable" and attribution would vanish.
+  const safeActor = boundActor(actor);
   const base: AssistedEntryRecord = {
     mode: PRACTITIONER_ASSISTED_ENTRY.mode,
     version: PRACTITIONER_ASSISTED_ENTRY.version,
     started_at: existing?.started_at ?? nowIso,
-    started_by: existing?.started_by ?? actor,
+    started_by: existing?.started_by ?? safeActor,
     last_updated_at: nowIso,
-    last_updated_by: actor,
+    last_updated_by: safeActor,
   };
   if (existing?.handoff_at && existing.handoff_by) {
     base.handoff_at = existing.handoff_at;
@@ -172,7 +186,7 @@ export function recordAssistedHandoff(
     ...existing,
     version: PRACTITIONER_ASSISTED_ENTRY.version,
     handoff_at: nowIso,
-    handoff_by: actor,
+    handoff_by: boundActor(actor),
   };
 }
 
@@ -191,9 +205,11 @@ export type AssistedEntryView =
       lastUpdatedBy: AssistedActorSnapshot;
       handoffAtIso: string | null;
       handoffBy: AssistedActorSnapshot | null;
-      // True when one practitioner both started and last recorded, so the
-      // review surface can render one line instead of two identical ones.
-      singleActor: boolean;
+      // True when the "last recorded" line would add nothing: the same
+      // practitioner AND the same instant. Comparing only the actor concealed
+      // a later edit by the same practitioner — including one made AFTER the
+      // handover — and implied a false chronology.
+      showLastUpdated: boolean;
     }
   | { state: "unreadable" };
 
@@ -224,8 +240,9 @@ export function readAssistedEntry(
     lastUpdatedBy: record.last_updated_by,
     handoffAtIso: record.handoff_at ?? null,
     handoffBy: record.handoff_by ?? null,
-    singleActor:
-      record.started_by.practitioner_id === record.last_updated_by.practitioner_id,
+    showLastUpdated:
+      record.started_by.practitioner_id !== record.last_updated_by.practitioner_id ||
+      record.last_updated_at !== record.started_at,
   };
 }
 
@@ -243,8 +260,15 @@ export const ASSISTED_ENTRY_REVIEW_COPY = {
   heading: "Intake entry",
   // Rendered with the practitioner name and date interpolated by the caller.
   assistedLead: "Questionnaire answers were recorded with the client by",
-  handedOver:
-    "The client was then handed the intake to complete their own acknowledgements.",
+  // HEDGED DELIBERATELY. The record proves only that an authenticated
+  // practitioner pressed "Hand to client" — it does not observe the client
+  // receiving anything, and the practitioner's own device is what navigates to
+  // the client's link. Asserting the physical act here would be exactly the
+  // overstatement this module's header forbids, in the one place a
+  // practitioner judges who authored the acknowledgements.
+  handedOver: "A handover to the client was recorded by",
+  handedOverTail:
+    "The acknowledgements themselves are recorded separately below.",
   notHandedOver:
     "No handover to the client has been recorded for this intake yet.",
   acknowledgementSeparate:

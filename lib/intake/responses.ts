@@ -64,7 +64,7 @@ export function sanitizeQuestionResponses(
 // CLIENT_OWNED_RESPONSE_KEYS is dropped silently here rather than rejected,
 // because a legitimate assisted save carrying a stale merged map should still
 // save the answers it is allowed to save; the caller separately reports when a
-// forbidden key was present (see assistedKeysRejected).
+// forbidden key would be CHANGED (see assistedKeysChanged).
 export function sanitizePractitionerAssistedAnswers(
   input: unknown,
 ): Record<string, unknown> {
@@ -75,12 +75,42 @@ export function sanitizePractitionerAssistedAnswers(
   );
 }
 
-// The client-owned keys present in an inbound practitioner payload. Used to
-// fail the request loudly rather than only stripping, so a UI bug or a crafted
-// request surfaces instead of silently half-succeeding.
-export function assistedKeysRejected(input: unknown): string[] {
+// The client-owned keys an inbound practitioner payload would CHANGE.
+//
+// Refusing on mere key PRESENCE was wrong and shipped a hard-block: the
+// assisted editor seeds its state from the stored responses and posts the whole
+// map, so an intake where the client had already touched a step-5 checkbox
+// through their own link (ticking OR unticking — presence, not value) made
+// every assisted save fail, with copy blaming the practitioner and naming a
+// button that could never mount. It also contradicted this module's own
+// contract below, which says a stale merged map should still save what it may.
+//
+// Comparing against what is STORED keeps the boundary exactly as strong — the
+// practitioner still cannot set, alter or clear a client-owned answer — while
+// letting a payload that merely echoes the client's own value through.
+// Sanitization drops these keys regardless; this is the loud backstop.
+export function assistedKeysChanged(
+  input: unknown,
+  stored: Record<string, unknown>,
+): string[] {
   if (!input || typeof input !== "object" || Array.isArray(input)) return [];
-  return Object.keys(input as Record<string, unknown>).filter((key) =>
-    isClientOwnedResponseKey(key),
-  );
+  const incoming = input as Record<string, unknown>;
+  return Object.keys(incoming).filter((key) => {
+    if (!isClientOwnedResponseKey(key)) return false;
+    return !sameJsonValue(incoming[key], stored[key]);
+  });
+}
+
+// Structural equality over the JSON shapes an intake answer can hold
+// (primitives, arrays of primitives, and the acknowledgement record object).
+function sameJsonValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== "object") return false;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
 }

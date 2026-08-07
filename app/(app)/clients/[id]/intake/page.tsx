@@ -744,17 +744,19 @@ function IntakeEntrySummary({
               {view.startedBy.display_name} on{" "}
               <FormattedDateTime iso={view.startedAtIso} />.
             </p>
-            {!view.singleActor && (
+            {view.showLastUpdated && (
               <p className="text-neutral-700 dark:text-neutral-300">
                 Answers were last recorded by {view.lastUpdatedBy.display_name}{" "}
                 on <FormattedDateTime iso={view.lastUpdatedAtIso} />.
               </p>
             )}
             <p className="text-neutral-700 dark:text-neutral-300">
-              {view.handoffAtIso ? (
+              {view.handoffAtIso && view.handoffBy ? (
                 <>
                   {ASSISTED_ENTRY_REVIEW_COPY.handedOver}{" "}
-                  <FormattedDateTime iso={view.handoffAtIso} />.
+                  {view.handoffBy.display_name} on{" "}
+                  <FormattedDateTime iso={view.handoffAtIso} />.{" "}
+                  {ASSISTED_ENTRY_REVIEW_COPY.handedOverTail}
                 </>
               ) : (
                 ASSISTED_ENTRY_REVIEW_COPY.notHandedOver
