@@ -102,6 +102,9 @@ export async function signConsentFormAction(
   const renderedTemplateHash = (formData.get("rendered_template_hash") ?? "")
     .toString()
     .trim();
+  const renderedFormType = (formData.get("rendered_form_type") ?? "")
+    .toString()
+    .trim();
 
   const session = await getCurrentPortalSession();
   if (!session) {
@@ -119,6 +122,7 @@ export async function signConsentFormAction(
       agreed: agreed === "true",
       response: responseRaw.length > 0 ? responseRaw : null,
       renderedTemplateHash,
+      renderedFormType,
     },
     // The portal signs EVERY live form type, including
     // card_authorization. Passing no restriction preserves that
@@ -170,7 +174,7 @@ export async function signConsentFormAction(
       console.error(
         JSON.stringify({
           event: "consent_sign_pointer_refresh_failed",
-          templateId,
+          templateId: result.templateId,
           signatureId: result.signatureId,
           reason: refresh.reason,
           timestamp: new Date().toISOString(),

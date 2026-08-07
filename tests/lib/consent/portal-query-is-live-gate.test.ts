@@ -142,8 +142,18 @@ describe("shared signing core (lib/consent/sign-consent-form.ts)", () => {
     expect(SIGN_CORE).toMatch(/\.eq\("status",\s*"active"\)/);
   });
 
-  it("the lookup is scoped to the caller-resolved studio", () => {
-    expect(SIGN_CORE).toMatch(/\.eq\("studio_id",\s*identity\.studioId\)/);
+  it("BOTH server lookups are scoped to the caller-resolved studio", () => {
+    // The core runs two studio-scoped lookups: the clients re-check and the
+    // template lookup. A single .toMatch is satisfied by EITHER, so deleting
+    // one leaves the pin green -- verified by mutation. Count them instead.
+    const scoped =
+      SIGN_CORE.match(/\.eq\("studio_id",\s*identity\.studioId\)/g) ?? [];
+    expect(scoped).toHaveLength(2);
+  });
+
+  it("the clients re-check gates on archived_at before any write", () => {
+    expect(SIGN_CORE).toMatch(/from\("clients"\)/);
+    expect(SIGN_CORE).toMatch(/client\.archived_at != null/);
   });
 });
 
@@ -160,10 +170,23 @@ describe("the render surface supplies the comparand", () => {
     expect(PORTAL_PAGE).toMatch(/\.map\(\s*withRenderedTemplateHash,?\s*\)/);
   });
 
-  it("the sign form posts it back as rendered_template_hash", () => {
+  it("the sign form posts BOTH comparands back", () => {
+    // Both, deliberately. Pinning only the hash left deleting the form_type
+    // line completely green (negative control 12) -- the same blind spot the
+    // hash pin was added to close.
     expect(PORTAL_FORMS).toMatch(
       /fd\.set\("rendered_template_hash",\s*template\.renderedTemplateHash\)/,
     );
+    expect(PORTAL_FORMS).toMatch(
+      /fd\.set\("rendered_form_type",\s*template\.form_type\)/,
+    );
+  });
+
+  it("the wrapper forwards BOTH comparands to the core", () => {
+    expect(PORTAL_CONSENT).toMatch(/formData\.get\("rendered_template_hash"\)/);
+    expect(PORTAL_CONSENT).toMatch(/formData\.get\("rendered_form_type"\)/);
+    expect(PORTAL_CONSENT).toMatch(/renderedTemplateHash,/);
+    expect(PORTAL_CONSENT).toMatch(/renderedFormType,/);
   });
 
   it("the render helper routes through buildConsentTemplateSnapshot", () => {

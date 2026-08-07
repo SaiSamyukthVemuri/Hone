@@ -154,6 +154,7 @@ function PortalConsentSignForm({
     // canonical hash of the row it resolves and refuses if it differs, so
     // this value is never trusted as data -- only compared.
     fd.set("rendered_template_hash", template.renderedTemplateHash);
+    fd.set("rendered_form_type", template.form_type);
     if (isPhotoConsent && photoResponse != null) {
       fd.set("response", photoResponse);
     }

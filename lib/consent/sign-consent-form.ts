@@ -68,8 +68,15 @@ export type ConsentSignatureInteraction = {
   agreed: boolean;
   // Only consulted for form_type='photo_consent'; ignored otherwise.
   response: string | null;
-  // Comparand only. Never stored.
+  // Comparands only. Never stored.
+  //
+  // The hash covers (title, body, version). form_type is carried SEPARATELY
+  // rather than folded into the hash because template_hash is a persisted
+  // column on every historical client_consent_signatures row and its canonical
+  // format is a documented stored contract -- widening it would silently
+  // invalidate every future hash-vs-history verification.
   renderedTemplateHash: string;
+  renderedFormType: string;
 };
 
 export type RecordConsentSignatureInput = {
@@ -92,6 +99,7 @@ export type RecordConsentSignatureResult =
   | {
       ok: true;
       signatureId: string;
+      templateId: string;
       formType: string;
       templateVersion: number;
     }
@@ -110,6 +118,7 @@ export type ConsentSignatureRejection =
   | "form_type_not_allowed"
   | "photo_response_missing"
   | "stale_template"
+  | "stale_form_type"
   | "insert_failed";
 
 const NAME_MIN = 1;
@@ -155,6 +164,7 @@ export async function recordConsentSignature(
   const templateId = interaction.templateId.trim();
   const signatureName = interaction.typedName.trim();
   const renderedTemplateHash = interaction.renderedTemplateHash.trim();
+  const renderedFormType = interaction.renderedFormType.trim();
 
   // ---- shape validation (order preserved from the portal action) ----
   if (!templateId) return reject("missing_template", ERR_MISSING_TEMPLATE);
@@ -169,7 +179,7 @@ export async function recordConsentSignature(
   // A submission with no comparand cannot be proven to match what was
   // rendered, so it is refused rather than trusted. Fail CLOSED: an older
   // client bundle posting nothing is a stale render by definition.
-  if (!renderedTemplateHash) {
+  if (!renderedTemplateHash || !renderedFormType) {
     return reject("missing_rendered_hash", STALE_CONSENT_FORM_MESSAGE);
   }
 
@@ -235,24 +245,6 @@ export async function recordConsentSignature(
     return reject("form_type_not_allowed", ERR_UNAVAILABLE);
   }
 
-  // ---- photo response resolution (server-owned labels) ----
-  let response: "accepted" | "denied";
-  let responseLabelSnapshot: string | null;
-  if (template.form_type === "photo_consent") {
-    const raw = (interaction.response ?? "").trim();
-    if (raw !== "accepted" && raw !== "denied") {
-      return reject("photo_response_missing", ERR_PHOTO_RESPONSE);
-    }
-    response = raw;
-    responseLabelSnapshot =
-      response === "accepted"
-        ? PHOTO_CONSENT_ACCEPT_LABEL
-        : PHOTO_CONSENT_DENY_LABEL;
-  } else {
-    response = "accepted";
-    responseLabelSnapshot = null;
-  }
-
   // ---- the snapshot, built from the SERVER-resolved row ----
   const snapshot = buildConsentTemplateSnapshot({
     title: template.title,
@@ -270,6 +262,37 @@ export async function recordConsentSignature(
   // this check silently vacuous.
   if (snapshot.templateHash !== renderedTemplateHash) {
     return reject("stale_template", STALE_CONSENT_FORM_MESSAGE);
+  }
+
+  // form_type is compared separately because it is NOT in the hash, and it is
+  // the field that decides whether the client's accept/deny choice is honoured
+  // at all: a flip out of 'photo_consent' sends an explicit DENY down the
+  // else-branch below, which writes response='accepted'. Through the shipped
+  // editor this is already covered by accident (updateConsentTemplateAction
+  // always bumps version, which moves the hash), but a same-studio member can
+  // PATCH form_type directly via the Data API -- migration 0057 grants
+  // authenticated studio members UPDATE on consent_form_templates with no
+  // column restriction -- leaving the hash intact. Fail closed.
+  if (template.form_type !== renderedFormType) {
+    return reject("stale_form_type", STALE_CONSENT_FORM_MESSAGE);
+  }
+
+  // ---- photo response resolution (server-owned labels) ----
+  let response: "accepted" | "denied";
+  let responseLabelSnapshot: string | null;
+  if (template.form_type === "photo_consent") {
+    const raw = (interaction.response ?? "").trim();
+    if (raw !== "accepted" && raw !== "denied") {
+      return reject("photo_response_missing", ERR_PHOTO_RESPONSE);
+    }
+    response = raw;
+    responseLabelSnapshot =
+      response === "accepted"
+        ? PHOTO_CONSENT_ACCEPT_LABEL
+        : PHOTO_CONSENT_DENY_LABEL;
+  } else {
+    response = "accepted";
+    responseLabelSnapshot = null;
   }
 
   // ---- the insert ----
@@ -311,6 +334,9 @@ export async function recordConsentSignature(
   return {
     ok: true,
     signatureId: created.id,
+    // The SERVER-resolved id, so a caller logging or branching on it never
+    // echoes the browser's spelling of the same uuid.
+    templateId: template.id,
     formType: template.form_type,
     templateVersion: snapshot.templateVersion,
   };

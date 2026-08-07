@@ -121,6 +121,7 @@ function call(over: Record<string, unknown> = {}) {
       agreed: true,
       response: null,
       renderedTemplateHash: goodHash(),
+      renderedFormType: db.consent_form_templates[0]?.form_type ?? "treatment_consent",
       ...(interactionOver as object),
     },
   } as Parameters<typeof recordConsentSignature>[0]);

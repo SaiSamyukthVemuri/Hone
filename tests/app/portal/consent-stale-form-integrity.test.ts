@@ -150,6 +150,7 @@ function signPayload(over: Record<string, string> = {}) {
     signature_name: "Jane Client",
     agreed: "true",
     rendered_template_hash: renderedHashV1(),
+    rendered_form_type: "treatment_consent",
     ...over,
   });
 }
@@ -260,6 +261,63 @@ describe("2. the stale-render race fails closed", () => {
     const res = await signConsentFormAction(fd);
     expect(res.ok).toBe(false);
     expect(db.client_consent_signatures).toHaveLength(0);
+  });
+});
+
+describe("2b. a form_type flip is stale even when the hash still matches", () => {
+  it("REJECTS a photo->other flip that would silently convert a DENY into an ACCEPT", () => {
+    // form_type is deliberately NOT in the canonical hash (template_hash is a
+    // persisted column whose format is a stored contract). A same-studio
+    // member can PATCH form_type via the Data API without touching
+    // title/body/version, leaving the hash intact -- and the else-branch of
+    // the photo block writes response='accepted' unconditionally. This is the
+    // exact harm the PR claims to close, so it gets its own comparand.
+    db.consent_form_templates = [];
+    db.consent_form_templates.push({
+      id: TEMPLATE_ID,
+      studio_id: STUDIO_ID,
+      title: TITLE_V1,
+      body: BODY_V1,
+      version: 1,
+      status: "active",
+      is_live: true,
+      form_type: "general",
+    });
+    return signConsentFormAction(
+      form({
+        template_id: TEMPLATE_ID,
+        signature_name: "Jane Client",
+        agreed: "true",
+        response: "denied",
+        rendered_template_hash: renderedHashV1(),
+        rendered_form_type: "photo_consent",
+      }),
+    ).then((res) => {
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toBe(STALE_MESSAGE);
+      expect(db.client_consent_signatures).toHaveLength(0);
+    });
+  });
+
+  it("REJECTS when the comparand form type is absent entirely", async () => {
+    seedTemplate();
+    const fd = signPayload();
+    fd.delete("rendered_form_type");
+    const res = await signConsentFormAction(fd);
+    expect(res.ok).toBe(false);
+    expect(db.client_consent_signatures).toHaveLength(0);
+  });
+
+  it("staleness OUTRANKS the photo-response shape refusal", async () => {
+    // A client who rendered a 'general' form posts no response. If the owner
+    // then flips the type to photo_consent, resolving the photo branch first
+    // would tell the client to "choose your photo consent response" -- an
+    // instruction their screen cannot satisfy, forever. Staleness must win.
+    seedTemplate({ form_type: "photo_consent" });
+    const fd = signPayload({ rendered_form_type: "general" });
+    fd.delete("response");
+    const res = await signConsentFormAction(fd);
+    expect(res.ok === false && res.error).toBe(STALE_MESSAGE);
   });
 });
 
@@ -390,7 +448,7 @@ describe("6. photo consent keeps its server-owned labels", () => {
   it("stores the canonical ACCEPTED label", async () => {
     seedPhoto();
     const res = await signConsentFormAction(
-      signPayload({ response: "accepted", rendered_template_hash: photoHash() }),
+      signPayload({ response: "accepted", rendered_template_hash: photoHash(), rendered_form_type: "photo_consent" }),
     );
     expect(res.ok).toBe(true);
     const row = db.client_consent_signatures[0];
@@ -403,7 +461,7 @@ describe("6. photo consent keeps its server-owned labels", () => {
   it("stores the canonical DENIED label", async () => {
     seedPhoto();
     const res = await signConsentFormAction(
-      signPayload({ response: "denied", rendered_template_hash: photoHash() }),
+      signPayload({ response: "denied", rendered_template_hash: photoHash(), rendered_form_type: "photo_consent" }),
     );
     expect(res.ok).toBe(true);
     const row = db.client_consent_signatures[0];
@@ -418,6 +476,7 @@ describe("6. photo consent keeps its server-owned labels", () => {
         response: "denied",
         response_label_snapshot: "I consent to photo use as described above.",
         rendered_template_hash: photoHash(),
+        rendered_form_type: "photo_consent",
       }),
     );
     expect(db.client_consent_signatures[0].response_label_snapshot).toBe(
@@ -428,7 +487,7 @@ describe("6. photo consent keeps its server-owned labels", () => {
   it("still requires an explicit accept/deny choice", async () => {
     seedPhoto();
     const res = await signConsentFormAction(
-      signPayload({ rendered_template_hash: photoHash() }),
+      signPayload({ rendered_template_hash: photoHash(), rendered_form_type: "photo_consent" }),
     );
     expect(res.ok).toBe(false);
     expect(db.client_consent_signatures).toHaveLength(0);
@@ -438,7 +497,7 @@ describe("6. photo consent keeps its server-owned labels", () => {
     seedPhoto();
     studioEditsTemplate({ body: "Rewritten photo terms.", version: 2 });
     const res = await signConsentFormAction(
-      signPayload({ response: "denied", rendered_template_hash: photoHash() }),
+      signPayload({ response: "denied", rendered_template_hash: photoHash(), rendered_form_type: "photo_consent" }),
     );
     expect(res.ok).toBe(false);
     expect(db.client_consent_signatures).toHaveLength(0);

@@ -18,6 +18,11 @@ const ACTION_PATH = path.resolve(
 );
 const ACTION = readFileSync(ACTION_PATH, "utf8");
 
+const CORE = readFileSync(
+  path.resolve(__dirname, "../../../lib/consent/sign-consent-form.ts"),
+  "utf8",
+);
+
 describe("signConsentFormAction: PR #177 refresh wiring", () => {
   it("imports the refresh helper", () => {
     expect(ACTION).toMatch(
@@ -91,6 +96,8 @@ describe("signConsentFormAction: PR #177 fail-soft contract", () => {
 describe("signConsentFormAction: PR #177 deadlock prevention", () => {
   it("does NOT import any auth-status gate (base or charge-ready)", () => {
     expect(ACTION).not.toMatch(/import \{[^}]*getCardAuthorizationStatus/);
+    expect(CORE).not.toMatch(/getCardAuthorizationStatus/);
+    expect(CORE).not.toMatch(/getChargeReadyCardAuthorizationStatus/);
     expect(ACTION).not.toMatch(
       /import \{[^}]*getChargeReadyCardAuthorizationStatus/,
     );
@@ -102,6 +109,10 @@ describe("signConsentFormAction: PR #177 deadlock prevention", () => {
     // row. Pin that no client_payment_methods read occurs anywhere
     // in the action.
     expect(ACTION).not.toMatch(/client_payment_methods/);
+    // The ceremony moved to the shared core, so the guard has to move with
+    // it: pinning only the (now nearly empty) wrapper would leave the
+    // deadlock-prevention contract unguarded exactly where the queries live.
+    expect(CORE).not.toMatch(/client_payment_methods/);
   });
 });
 
