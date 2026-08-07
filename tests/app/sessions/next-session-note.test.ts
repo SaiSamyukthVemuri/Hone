@@ -134,32 +134,76 @@ describe("surfacing: the latest previous note appears when charting", () => {
     expect(NEW_SESSION_PAGE).toMatch(/\{previousSummary && previousMeta && \(/);
   });
 
-  it("appointment detail card surfaces the note via the shared summary", () => {
-    expect(APPOINTMENT_PAGE).toMatch(/<FromLastVisitForToday summary=\{summary\} \/>/);
-    expect(APPOINTMENT_PAGE).toMatch(/buildLastSessionSummary\(\{/);
+  it("appointment detail card surfaces the note via the shared prep model", () => {
+    // Session 1D: the appointment page moved from the COMPACT summary
+    // (buildLastSessionSummary → FromLastVisitForToday) to the full appointment
+    // prep model, which carries the same note as its own labelled section
+    // rather than folded into a combined watch/plan band. The loop this file
+    // pins — written while charting, read before the next visit — is unchanged;
+    // only the surface that reads it is richer.
+    expect(APPOINTMENT_PAGE).toMatch(/buildAppointmentPrepMemory\(\{/);
+    expect(APPOINTMENT_PAGE).toMatch(
+      /next_session_note: selected\.session\.next_session_note \?\? null/,
+    );
+    const CARD = readFileSync(
+      path.join(ROOT, "components/appointment-prep-memory-card.tsx"),
+      "utf8",
+    );
+    expect(CARD).toMatch(/notes\.forNextVisit/);
+    // And the label is the shared one, not a new literal on the card.
+    const MODEL = readFileSync(
+      path.join(ROOT, "lib/sessions/appointment-prep-memory.ts"),
+      "utf8",
+    );
+    expect(MODEL).toMatch(/next_session_note: "For next visit"/);
   });
 });
 
-describe("shared summary usage (both context surfaces)", () => {
-  it("new-session page and appointment page both use the tested helper", () => {
+describe("shared helper usage (both context surfaces)", () => {
+  // Session 1D split these two surfaces on PURPOSE. /sessions/new is the
+  // five-second recap immediately before charting and keeps the compact
+  // summary; the appointment page is the full pre-visit read and uses the prep
+  // model. What must stay true of BOTH is that neither re-derives the clinical
+  // vocabulary or the "which session was the last treatment" rule.
+  it("the new-session page still uses the compact shared summary", () => {
+    expect(NEW_SESSION_PAGE).toMatch(/from "@\/lib\/sessions\/clinical-summary"/);
+    expect(NEW_SESSION_PAGE).toMatch(/from "@\/components\/last-session-summary"/);
+    expect(NEW_SESSION_PAGE).toMatch(/<AreaSummaries summary=\{/);
+  });
+
+  it("the appointment page uses the shared prep model and card", () => {
+    expect(APPOINTMENT_PAGE).toMatch(
+      /from "@\/lib\/sessions\/appointment-prep-memory"/,
+    );
+    expect(APPOINTMENT_PAGE).toMatch(
+      /from "@\/components\/appointment-prep-memory-card"/,
+    );
+    expect(APPOINTMENT_PAGE).toMatch(/<AppointmentPrepMemoryCard/);
+  });
+
+  it("BOTH surfaces select the last treatment through the ONE shared authority", () => {
+    // This is the invariant that actually matters, and it is stronger than the
+    // pin it replaces: neither page decides for itself what a prior treatment
+    // is, and neither can drift from the live charting screen.
+    expect(NEW_SESSION_PAGE).toMatch(/loadLastChartedTreatment\(\{/);
+    expect(APPOINTMENT_PAGE).toMatch(/loadLastChartedTreatmentForClient\(\{/);
     for (const page of [NEW_SESSION_PAGE, APPOINTMENT_PAGE]) {
-      expect(page).toMatch(
-        /from "@\/lib\/sessions\/clinical-summary"/,
-      );
+      expect(page).toMatch(/from "@\/lib\/sessions\/last-treatment-loader"/);
     }
   });
 
-  it("both surfaces render per-area summaries via the shared component (PR #191)", () => {
-    for (const page of [NEW_SESSION_PAGE, APPOINTMENT_PAGE]) {
-      expect(page).toMatch(/from "@\/components\/last-session-summary"/);
-      expect(page).toMatch(/<AreaSummaries summary=\{/);
-    }
-  });
-
-  it("blocks are read with a narrow select scoped to studio + session, deleted excluded", () => {
+  it("blocks are read with a narrow select scoped to studio, batched, deleted excluded", () => {
+    // The read moved OFF the page and into the shared loader, where it became
+    // one batched `.in("session_id", …)` over the whole candidate window
+    // instead of one `.eq("session_id", …)` for a single guessed row.
     const CODE = codeOnly(APPOINTMENT_PAGE);
-    expect(CODE).toMatch(
-      /\.from\("session_blocks"\)[\s\S]{0,400}\.eq\("studio_id", studio\.id\)[\s\S]{0,100}\.eq\("session_id", lastSession\.id\)[\s\S]{0,100}\.is\("deleted_at", null\)/,
+    expect(CODE).not.toMatch(/\.from\("session_blocks"\)/);
+    const LOADER = readFileSync(
+      path.join(ROOT, "lib/sessions/last-treatment-loader.ts"),
+      "utf8",
+    );
+    expect(LOADER).toMatch(
+      /\.from\("session_blocks"\)[\s\S]{0,400}\.eq\("studio_id", studioId\)[\s\S]{0,120}\.in\(\s*"session_id",[\s\S]{0,160}\.is\("deleted_at", null\)/,
     );
   });
 });

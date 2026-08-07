@@ -47,6 +47,9 @@ export type ChartedSessionCandidate = {
   started_at: string;
   record_status?: string | null;
   deleted_at?: string | null;
+  // Migration 0068. Present only on callers that select it; read solely by the
+  // excludeAppointmentId filter below.
+  appointment_id?: string | null;
   electrolysis_entries?: ReadonlyArray<{ deleted_at?: string | null }> | null;
   laser_entries?: ReadonlyArray<{ deleted_at?: string | null }> | null;
 };
@@ -62,6 +65,17 @@ export type ChartedSessionOptions = {
   before?: string | null;
   // The session being charted right now. Never its own previous treatment.
   excludeSessionId?: string | null;
+  // The appointment being PREPARED right now. Every session carrying this
+  // appointment_id is the current visit record, not the visit before it.
+  //
+  // Strictly stronger than excludeSessionId for that job: `sessions.appointment_id`
+  // has no unique constraint (migration 0068 — "one appointment may have zero or
+  // more sessions"), so excluding the single row a `limit(1)` linked-session
+  // lookup happened to return would leave a sibling behind. It is also why this
+  // is a JS-side filter and not a PostgREST `.neq("appointment_id", …)`: the
+  // column is nullable, and `NULL <> 'x'` is NULL, so a SQL neq would silently
+  // discard every UNLINKED session — which is nearly all of them.
+  excludeAppointmentId?: string | null;
   // Restrict to one modality. Deliberately OFF by default: a prior laser
   // session is legitimately "the last treatment" for a client mid-transition.
   modality?: string | null;
@@ -107,6 +121,12 @@ export function isChartedSessionCandidate(
   // is treated as non-void rather than rejected.
   if (session.record_status === "void") return false;
   if (opts.excludeSessionId && session.id === opts.excludeSessionId) {
+    return false;
+  }
+  if (
+    opts.excludeAppointmentId
+    && session.appointment_id === opts.excludeAppointmentId
+  ) {
     return false;
   }
   if (opts.before) {
