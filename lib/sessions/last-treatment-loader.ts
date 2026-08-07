@@ -71,23 +71,16 @@ export type LastChartedTreatment<T extends SessionWithLoadedEntries> = {
   // True when a NEWER candidate session exists that carries no charting at
   // all — the exact situation that used to hide this treatment.
   supersededByEmptySession: boolean;
-  // The newest candidate carrying a next-visit note, WHICH MAY NOT BE THE
-  // SELECTED TREATMENT.
-  //
-  // The plan source is deliberately decoupled from the last-treatment source,
-  // because a plan can be written on a session that never got charted — and the
-  // note most likely to change what happens today is the most RECENT one, not
-  // the one attached to the last visit that produced blocks. PR #203 made this
-  // exact decoupling on the client Overview and the dashboard preview after
-  // Chloe reported the failure; `pickPreClientWatchPlanSource`
-  // (lib/sessions/clinical-summary.ts) is the pure form of the same rule.
-  //
-  // Concretely: an abandoned row carrying "Client started doxycycline, do not
-  // treat" must not be silenced by an older charted visit that happens to say
-  // "start lower on the sideburn".
-  //
-  // Free — every candidate already carries next_session_note.
-  newestPlan: { sessionId: string; startedAt: string; text: string } | null;
+};
+
+// A piece of practitioner narrative recovered from the CANDIDATE WINDOW, with
+// the session it belongs to. Deliberately NOT part of LastChartedTreatment:
+// narrative can exist when no treatment does, and nesting it inside the
+// treatment made it structurally impossible to return in exactly that case.
+export type PrepNarrativeItem = {
+  sessionId: string;
+  startedAt: string;
+  text: string;
 };
 
 // Deterministic child-row order, matching session_block_areas_block_order_idx:
@@ -113,7 +106,7 @@ function orderAreas(rows: ReadonlyArray<RawArea>): BlockArea[] {
 // first hit is the answer. Charted-ness is deliberately NOT required.
 function newestPlanOf<T extends SessionWithLoadedEntries>(
   candidates: ReadonlyArray<T>,
-): { sessionId: string; startedAt: string; text: string } | null {
+): PrepNarrativeItem | null {
   for (const c of candidates) {
     const text = c.next_session_note?.trim();
     if (text) {
@@ -121,6 +114,28 @@ function newestPlanOf<T extends SessionWithLoadedEntries>(
     }
   }
   return null;
+}
+
+// The legacy `sessions.session_notes` of the NEWEST eligible prior row.
+//
+// Deliberately the newest row and not a scan: before this feature the
+// appointment page selected the newest non-deleted session before the
+// appointment and rendered THAT row's session_notes. Preserving the same rule
+// is what keeps a note the product previously displayed from silently
+// disappearing — sessions.session_notes has no surviving writer, so the text on
+// existing rows can never be recreated.
+//
+// The window is stricter than the old query in one direction only (void rows
+// and this appointment's own sessions are already excluded), which can never
+// surface something the old page would have hidden.
+function newestLegacyNotesOf<T extends SessionWithLoadedEntries>(
+  candidates: ReadonlyArray<T>,
+): PrepNarrativeItem | null {
+  const newest = candidates[0];
+  if (!newest) return null;
+  const text = (newest as { session_notes?: string | null }).session_notes?.trim();
+  if (!text) return null;
+  return { sessionId: newest.id, startedAt: newest.started_at, text };
 }
 
 export async function loadLastChartedTreatment<
@@ -140,8 +155,31 @@ export async function loadLastChartedTreatment<
     excludeSessionId: input.excludeSessionId,
     limit: input.limit,
   });
-  return selectFromCandidates(input.studioId, candidates);
+  // The charting screen and /sessions/new keep their existing FAIL-SOFT
+  // contract: they render nothing when there is nothing to render, and a
+  // memory panel must never take those pages down. Only the appointment-prep
+  // companion, whose surface makes an explicit statement to the practitioner,
+  // needs to tell "none" and "unavailable" apart — so the distinction is not
+  // forced on unrelated callers.
+  const outcome = await selectFromCandidates(input.studioId, candidates);
+  return outcome.status === "selected" ? outcome.treatment : null;
 }
+
+// Why this is a discriminated union and not `| null`.
+//
+// Three outcomes are CLINICALLY different and were previously collapsed into
+// one `null`: a successful read that found a treatment, a successful read that
+// found none, and a read that FAILED. A caller cannot tell the last two apart
+// from a null, so the appointment page rendered "No previous treatment charted
+// for this client." — an affirmative clinical denial — whenever the block read
+// errored. Never infer failure from an absent value.
+type SelectOutcome<T extends SessionWithLoadedEntries> =
+  | { status: "selected"; treatment: LastChartedTreatment<T> }
+  // The reads succeeded; this client genuinely has no charted prior treatment.
+  | { status: "none" }
+  // The batched block read failed. We know nothing about whether a treatment
+  // exists, and must never claim one does not.
+  | { status: "unavailable" };
 
 // The half of the loader that runs AFTER the candidate window is known: one
 // batched block read, THE shared selector, and the assembly of the returned
@@ -150,8 +188,8 @@ export async function loadLastChartedTreatment<
 async function selectFromCandidates<T extends SessionWithLoadedEntries>(
   studioId: string,
   candidates: ReadonlyArray<T>,
-): Promise<LastChartedTreatment<T> | null> {
-  if (candidates.length === 0) return null;
+): Promise<SelectOutcome<T>> {
+  if (candidates.length === 0) return { status: "none" };
 
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -191,7 +229,7 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
         at: new Date().toISOString(),
       }),
     );
-    return null;
+    return { status: "unavailable" };
   }
 
   const rows = (data ?? []) as unknown as RawBlock[];
@@ -202,7 +240,9 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
   // charting page, the new-session panel and the unit/DB tests can never drift
   // apart on what "the last treatment" means.
   const selected = pickNewestChartedSession(candidates, bySession);
-  if (!selected) return null;
+  // A SUCCESSFUL read that found nothing charted. Distinct from the failure
+  // above, and the distinction is the whole point of this type.
+  if (!selected) return { status: "none" };
 
   // Live electrolysis passes for the selected session, grouped by block. The
   // caller's sessions were already stripped of soft-deleted entries; the
@@ -226,10 +266,12 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
   );
 
   return {
-    session: selected,
-    blocks,
-    supersededByEmptySession: candidates[0]?.id !== selected.id,
-    newestPlan: newestPlanOf(candidates),
+    status: "selected",
+    treatment: {
+      session: selected,
+      blocks,
+      supersededByEmptySession: candidates[0]?.id !== selected.id,
+    },
   };
 }
 
@@ -316,9 +358,36 @@ export type AppointmentPrepSession = SessionWithLoadedEntries & {
 // this replaced could never do, because it threw instead.
 export type AppointmentPrepLoad = {
   treatment: LastChartedTreatment<AppointmentPrepSession> | null;
-  // True ONLY when a read actually failed. A first-visit client, and a client
-  // whose only other sessions carry no charting, both leave this false.
+  // True ONLY when a read actually failed — the candidate read OR the batched
+  // block read. A first-visit client, and a client whose only other sessions
+  // carry no charting, both leave this false.
   unavailable: boolean;
+  // Practitioner narrative recovered from the CANDIDATE WINDOW, independent of
+  // whether a charted treatment was selected.
+  //
+  // WHY IT IS SEPARATE FROM `treatment`
+  // -----------------------------------
+  // A plan can be written on a visit that never got charted. `start_session`
+  // (0167) creates a row the instant a modality is tapped, and
+  // `set_next_session_note` (0167) has no charting gate — so a
+  // consultation-only or abandoned visit can legitimately carry
+  // "Client started doxycycline, do not treat" with zero blocks and zero
+  // entries. While this lived inside LastChartedTreatment it was structurally
+  // unreachable in exactly that case, and the page said there was nothing to
+  // know. The note-only row is still NOT a treatment — the shared charted
+  // definition is untouched — it simply has narrative worth showing.
+  //
+  // Also survives a FAILED block read: the candidate rows were already fetched
+  // successfully, so their narrative is known even when treatment detail is not.
+  //
+  // Free: every candidate already carries both columns.
+  narrative: {
+    // newestPlanOf — the one plan authority, charted-ness not required.
+    plan: PrepNarrativeItem | null;
+    // The newest eligible row's legacy session_notes, matching what the
+    // pre-Session-1D page rendered.
+    legacySessionNotes: PrepNarrativeItem | null;
+  };
 };
 
 export async function loadLastChartedTreatmentForClient(input: {
@@ -374,7 +443,13 @@ export async function loadLastChartedTreatmentForClient(input: {
         at: new Date().toISOString(),
       }),
     );
-    return { treatment: null, unavailable: true };
+    // The candidate read itself failed, so nothing — not even narrative — was
+    // successfully loaded.
+    return {
+      treatment: null,
+      unavailable: true,
+      narrative: { plan: null, legacySessionNotes: null },
+    };
   }
 
   const rows = (data ?? []) as unknown as AppointmentPrepSession[];
@@ -387,10 +462,25 @@ export async function loadLastChartedTreatmentForClient(input: {
     excludeAppointmentId: input.excludeAppointmentId,
     limit,
   });
-  // The block read fails soft to null as well. Distinguishing THAT failure from
-  // "nothing charted" would need the shared selector to change shape, so it is
-  // deliberately reported as absence — the candidate read is where a permission
-  // or timeout failure actually shows up first.
-  const treatment = await selectFromCandidates(input.studioId, candidates);
-  return { treatment, unavailable: false };
+  // Narrative is resolved from the candidate rows we already hold, BEFORE and
+  // independently of the block read. That is what lets it survive both "nothing
+  // is charted" and "the block read failed".
+  const narrative = {
+    plan: newestPlanOf(candidates),
+    legacySessionNotes: newestLegacyNotesOf(candidates),
+  };
+
+  const outcome = await selectFromCandidates(input.studioId, candidates);
+  switch (outcome.status) {
+    case "selected":
+      return { treatment: outcome.treatment, unavailable: false, narrative };
+    case "none":
+      // Reads succeeded; this client genuinely has no charted prior treatment.
+      // Narrative may still exist and must still be shown.
+      return { treatment: null, unavailable: false, narrative };
+    case "unavailable":
+      // The block read failed. Say so, and keep the narrative that WAS loaded —
+      // discarding it would hide a safety instruction we already have in hand.
+      return { treatment: null, unavailable: true, narrative };
+  }
 }

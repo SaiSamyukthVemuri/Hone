@@ -16,6 +16,7 @@ import {
   buildAppointmentPrepMemory,
   type AppointmentPrepMemory,
 } from "@/lib/sessions/appointment-prep-memory";
+import type { AppointmentPrepLoad } from "@/lib/sessions/last-treatment-loader";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
@@ -229,8 +230,17 @@ export default async function AppointmentDetailPage({
   // in-progress session, permanently won the lookup and rendered an empty "Last
   // session" over the real treatment sitting one row below.
   let prepMemory: AppointmentPrepMemory | null = null;
-  // True only when the read itself failed — never for a first-visit client.
+  // True only when a read itself failed — never for a first-visit client, and
+  // never merely because nothing is charted.
   let prepUnavailable = false;
+  // Practitioner narrative recovered from the candidate window. Survives BOTH
+  // "nothing charted" and "the block read failed", because a plan can be
+  // written on a visit that never got charted and because those rows were
+  // already fetched successfully. Rendered only when no treatment card owns it.
+  let prepNarrative: AppointmentPrepLoad["narrative"] = {
+    plan: null,
+    legacySessionNotes: null,
+  };
   // PR #156 (migration 0068). The session, if any, that was logged
   // explicitly against THIS appointment via the new appointment_id
   // FK. Distinct from `prepMemory` above, which is the newest charted
@@ -318,6 +328,7 @@ export default async function AppointmentDetailPage({
     // Structured areas arrive inside the same block select the loader already
     // performs, so the old attachStructuredAreas round-trip is gone.
     prepUnavailable = lastTreatment.unavailable;
+    prepNarrative = lastTreatment.narrative;
     if (lastTreatment.treatment) {
       const selected = lastTreatment.treatment;
       prepMemory = buildAppointmentPrepMemory({
@@ -342,7 +353,7 @@ export default async function AppointmentDetailPage({
         // The plan source is deliberately decoupled from the treatment source:
         // the instruction most likely to change today is the most RECENT one,
         // and it can live on a session that never got charted.
-        planSource: selected.newestPlan,
+        planSource: prepNarrative.plan,
         hasLiveElectrolysisEntries: (
           selected.session.electrolysis_entries ?? []
         ).some((e) => e.deleted_at == null),
@@ -397,6 +408,7 @@ export default async function AppointmentDetailPage({
       <LastTreatmentSection
         memory={prepMemory}
         unavailable={prepUnavailable}
+        narrative={prepNarrative}
         clientId={data.client?.id ?? null}
       />
 
@@ -1037,12 +1049,20 @@ function IntakeStatusLine({
 function LastTreatmentSection({
   memory,
   unavailable,
+  narrative,
   clientId,
 }: {
   memory: AppointmentPrepMemory | null;
   unavailable: boolean;
+  narrative: AppointmentPrepLoad["narrative"];
   clientId: string | null;
 }) {
+  // Narrative is rendered here ONLY when no treatment card exists. When a
+  // treatment was selected the card already owns the plan (planSource) and the
+  // selected visit's session_notes, so rendering it again would print the same
+  // practitioner text twice on one screen.
+  const hasNarrative =
+    narrative.plan != null || narrative.legacySessionNotes != null;
   // Null covers three genuinely different situations, and all three are
   // truthfully described by the same sentence: a first-visit client, a client
   // whose only other sessions carry no charting at all, and a failed read (the
@@ -1052,35 +1072,98 @@ function LastTreatmentSection({
   // "no previous treatment" because a query timed out would have the
   // practitioner prep a forty-visit client as a first visit.
   if (unavailable && !memory) {
+    // A FAILED read is not the same clinical statement as "no history". Any
+    // narrative that WAS loaded is still shown: the candidate rows succeeded, so
+    // discarding a safety instruction we already hold would compound the
+    // failure rather than report it.
     return (
       <section
         data-testid="appointment-prep-unavailable"
-        className="rounded-lg border border-dashed border-amber-300 p-5 text-sm text-amber-900 dark:border-amber-800 dark:text-amber-200"
+        className="flex flex-col gap-3 rounded-lg border border-dashed border-amber-300 p-5 text-sm text-amber-900 dark:border-amber-800 dark:text-amber-200"
       >
-        <h2 className="text-xs font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">
-          Last treatment
-        </h2>
-        <p className="mt-2">
-          Previous treatment could not be loaded. Open the client&rsquo;s chart
-          to review it before treating.
-        </p>
+        <div>
+          <h2 className="text-xs font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">
+            Last treatment
+          </h2>
+          <p className="mt-2">
+            Previous treatment could not be loaded. Open the client&rsquo;s
+            chart to review it before treating.
+          </p>
+        </div>
+        <PriorNarrative narrative={narrative} />
       </section>
     );
   }
   if (!memory || !clientId) {
+    // No charted treatment. That statement stays — a note-only visit is NOT a
+    // treatment and must never be promoted to one — but the practitioner
+    // narrative attached to those visits is still shown, because "nothing was
+    // charted" and "there is nothing to know" are different things.
     return (
       <section
         data-testid="appointment-prep-empty"
-        className="rounded-lg border border-dashed border-neutral-300 p-5 text-sm text-neutral-500 dark:border-neutral-700"
+        className="flex flex-col gap-3 rounded-lg border border-dashed border-neutral-300 p-5 text-sm text-neutral-500 dark:border-neutral-700"
       >
-        <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Last treatment
-        </h2>
-        <p className="mt-2">No previous treatment charted for this client.</p>
+        <div>
+          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Last treatment
+          </h2>
+          <p className="mt-2">No previous treatment charted for this client.</p>
+        </div>
+        {hasNarrative && <PriorNarrative narrative={narrative} />}
       </section>
     );
   }
   return <AppointmentPrepMemoryCard clientId={clientId} memory={memory} />;
+}
+
+// Practitioner narrative from prior visits that produced no charted treatment
+// (or whose treatment detail could not be loaded). READ-ONLY, and deliberately
+// never labelled as a treatment: it reuses the same section vocabulary the
+// treatment card uses — "For next visit", "Legacy session notes" — so the two
+// surfaces read identically without either claiming the other's meaning.
+//
+// Full text, whole: whitespace-pre-wrap keeps the practitioner's line breaks
+// and break-words keeps a long unbroken run from scrolling the page sideways.
+function PriorNarrative({
+  narrative,
+}: {
+  narrative: AppointmentPrepLoad["narrative"];
+}) {
+  if (!narrative.plan && !narrative.legacySessionNotes) return null;
+  return (
+    <div data-testid="prep-prior-narrative" className="flex flex-col gap-3">
+      {narrative.plan && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300">
+            For next visit
+          </p>
+          <p
+            data-testid="prep-prior-plan"
+            className="mt-0.5 whitespace-pre-wrap break-words text-sm text-blue-950 dark:text-blue-100"
+          >
+            {narrative.plan.text}
+          </p>
+          <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">
+            Written <FormattedDateTime iso={narrative.plan.startedAt} format="date" />
+          </p>
+        </div>
+      )}
+      {narrative.legacySessionNotes && (
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+            Legacy session notes
+          </p>
+          <p
+            data-testid="prep-prior-legacy-notes"
+            className="mt-0.5 whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300"
+          >
+            {narrative.legacySessionNotes.text}
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

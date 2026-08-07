@@ -422,7 +422,7 @@ describe("the plan source is decoupled from the treatment source", () => {
     // made the appointment page the one that silences it.
     expect(LOADER_CODE).toMatch(/function newestPlanOf/);
     expect(LOADER_CODE).toMatch(/const text = c\.next_session_note\?\.trim\(\);/);
-    expect(LOADER_CODE).toMatch(/newestPlan: newestPlanOf\(candidates\)/);
+    expect(LOADER_CODE).toMatch(/plan: newestPlanOf\(candidates\)/);
     // Charted-ness is deliberately NOT required — the scan runs over the raw
     // candidate window, not over the selected treatment.
     expect(LOADER_CODE).not.toMatch(
@@ -431,7 +431,7 @@ describe("the plan source is decoupled from the treatment source", () => {
   });
 
   it("the page hands that plan to the model, and the card names its origin", () => {
-    expect(PAGE_CODE).toMatch(/planSource: selected\.newestPlan/);
+    expect(PAGE_CODE).toMatch(/planSource: prepNarrative\.plan/);
     expect(CARD_CODE).toMatch(/notes\.forNextVisitFromLaterVisit/);
     expect(CARD_CODE).toMatch(/data-testid="prep-plan-later-visit"/);
   });
@@ -449,5 +449,83 @@ describe("a failed read is not a clinical claim of 'no history'", () => {
     expect(PAGE_CODE).toMatch(/Previous treatment could not be loaded/);
     // And the "no history" sentence is still reserved for a successful read.
     expect(PAGE_CODE).toMatch(/No previous treatment charted for this client/);
+  });
+});
+
+describe("narrative survives without a charted treatment (final-review P2 #2)", () => {
+  it("the loader resolves narrative BEFORE and independently of the block read", () => {
+    // The defect: newestPlanOf sat after `if (!selected) return null`, so a
+    // consultation-only visit's plan was structurally unreachable.
+    // Scoped to the COMPANION body: `selectFromCandidates` is also called by
+    // the shared loader earlier in the file, and indexOf would find that one.
+    const companion = LOADER_CODE.slice(
+      LOADER_CODE.indexOf("export async function loadLastChartedTreatmentForClient"),
+    );
+    const planIdx = companion.indexOf("plan: newestPlanOf(candidates)");
+    const selectIdx = companion.indexOf("await selectFromCandidates(input.studioId, candidates)");
+    expect(planIdx).toBeGreaterThan(-1);
+    expect(selectIdx).toBeGreaterThan(-1);
+    expect(planIdx).toBeLessThan(selectIdx);
+    expect(LOADER_CODE).toMatch(/legacySessionNotes: newestLegacyNotesOf\(candidates\)/);
+  });
+
+  it("narrative is NOT nested inside LastChartedTreatment", () => {
+    // Nesting is what made it impossible to return when no treatment exists.
+    const t = LOADER_CODE.slice(
+      LOADER_CODE.indexOf("export type LastChartedTreatment"),
+      LOADER_CODE.indexOf("export type PrepNarrativeItem"),
+    );
+    expect(t).not.toMatch(/newestPlan|narrative/);
+  });
+
+  it("every load outcome carries narrative, and only a candidate-read failure has none", () => {
+    expect(LOADER_CODE).toMatch(/case "selected":[\s\S]{0,120}unavailable: false, narrative/);
+    expect(LOADER_CODE).toMatch(/case "none":[\s\S]{0,200}unavailable: false, narrative/);
+    expect(LOADER_CODE).toMatch(/case "unavailable":[\s\S]{0,200}unavailable: true, narrative/);
+  });
+
+  it("newestPlanOf remains the ONE plan authority", () => {
+    expect((LOADER_CODE.match(/next_session_note\?\.trim\(\)/g) ?? []).length).toBe(1);
+    expect((LOADER_CODE.match(/function newestPlanOf/g) ?? []).length).toBe(1);
+  });
+
+  it("a block-read failure is a distinct outcome, never inferred from null", () => {
+    expect(LOADER_CODE).toMatch(/status: "unavailable"/);
+    expect(LOADER_CODE).toMatch(/status: "none"/);
+    // The old bug: hardcoding unavailable:false after selection.
+    expect(LOADER_CODE).not.toMatch(/return \{ treatment, unavailable: false \}/);
+  });
+
+  it("the shared loader keeps its fail-soft contract for other surfaces", () => {
+    expect(LOADER_CODE).toMatch(
+      /outcome\.status === "selected" \? outcome\.treatment : null/,
+    );
+  });
+
+  it("the page renders narrative in BOTH the unavailable and no-treatment states", () => {
+    expect(PAGE_CODE).toMatch(/<PriorNarrative narrative=\{narrative\} \/>/);
+    expect((PAGE_CODE.match(/<PriorNarrative /g) ?? []).length).toBe(2);
+    expect(PAGE_CODE).toMatch(/data-testid="prep-prior-narrative"/);
+  });
+
+  it("narrative is NOT rendered when the treatment card owns it — no duplication", () => {
+    // The card branch returns before any PriorNarrative render.
+    const cardIdx = PAGE_CODE.indexOf("<AppointmentPrepMemoryCard");
+    const lastNarrative = PAGE_CODE.lastIndexOf("<PriorNarrative ");
+    expect(lastNarrative).toBeLessThan(cardIdx);
+  });
+
+  it("a note-only row is never called a treatment", () => {
+    expect(PAGE_CODE).toMatch(/No previous treatment charted for this client/);
+    expect(CARD_CODE).not.toMatch(/PriorNarrative/);
+  });
+
+  it("fallback narrative is full text — pre-wrap, break-words, no clamp", () => {
+    const block = PAGE_CODE.slice(
+      PAGE_CODE.indexOf("function PriorNarrative"),
+      PAGE_CODE.indexOf("function PriorNarrative") + 2200,
+    );
+    expect((block.match(/whitespace-pre-wrap break-words/g) ?? []).length).toBe(2);
+    expect(block).not.toMatch(/line-clamp|\.slice\(|substring/);
   });
 });
