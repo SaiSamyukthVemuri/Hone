@@ -322,9 +322,9 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/portal/consent-actions.ts",
-    purpose: "Payment / consent ledger helper.",
-    why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",
-    scopeGuard: '.eq("studio_id"',
+    purpose: "Client-portal consent signing (thin wrapper over the shared ceremony).",
+    why: "Constructs the service-role client and hands it to recordConsentSignature (lib/consent/sign-consent-form.ts), which owns every query. Identity is NOT client-supplied: getCurrentPortalSession() resolves (studioId, clientId) and those server-resolved values are what the core scopes its clients / consent_form_templates lookups and its client_consent_signatures INSERT to. The core is deliberately NOT on this inventory because it constructs no client of its own — the allowlist should keep naming the surfaces that resolve identity.",
+    scopeGuard: "getCurrentPortalSession",
   },
   {
     path: "app/portal/login/actions.ts",

@@ -18,6 +18,11 @@ const ACTION_PATH = path.resolve(
 );
 const ACTION = readFileSync(ACTION_PATH, "utf8");
 
+const CORE = readFileSync(
+  path.resolve(__dirname, "../../../lib/consent/sign-consent-form.ts"),
+  "utf8",
+);
+
 describe("signConsentFormAction: PR #177 refresh wiring", () => {
   it("imports the refresh helper", () => {
     expect(ACTION).toMatch(
@@ -27,13 +32,13 @@ describe("signConsentFormAction: PR #177 refresh wiring", () => {
 
   it("calls the refresh helper only when template.form_type === 'card_authorization'", () => {
     expect(ACTION).toMatch(
-      /if \(template\.form_type === "card_authorization"\)[\s\S]{0,1500}refreshActiveCardAuthorizationPointersForSignature\(/,
+      /if \(result\.formType === "card_authorization"\)[\s\S]{0,1500}refreshActiveCardAuthorizationPointersForSignature\(/,
     );
   });
 
   it("passes the just-inserted signature id (created.id) as signatureId", () => {
     expect(ACTION).toMatch(
-      /refreshActiveCardAuthorizationPointersForSignature\(\{[\s\S]{0,400}signatureId:\s*created\.id[\s\S]{0,400}\}\)/,
+      /refreshActiveCardAuthorizationPointersForSignature\(\{[\s\S]{0,400}signatureId:\s*result\.signatureId[\s\S]{0,400}\}\)/,
     );
   });
 
@@ -50,7 +55,7 @@ describe("signConsentFormAction: PR #177 fail-soft contract", () => {
     // below the post-insert revalidate. We pin the order by checking
     // that the refresh-helper call site appears AFTER the insert
     // error check returns and BEFORE the final return ok:true.
-    const insertErrIdx = ACTION.indexOf("consent_sign_insert_failed");
+    const insertErrIdx = ACTION.indexOf("if (!result.ok)");
     // The import statement also matches the substring; find the
     // call site instead by looking for the open-paren after the
     // helper name.
@@ -58,7 +63,7 @@ describe("signConsentFormAction: PR #177 fail-soft contract", () => {
       "refreshActiveCardAuthorizationPointersForSignature({",
     );
     const finalReturnIdx = ACTION.lastIndexOf(
-      "return { ok: true, signatureId: created.id };",
+      "return { ok: true, signatureId: result.signatureId };",
     );
     expect(insertErrIdx).toBeGreaterThan(-1);
     expect(refreshIdx).toBeGreaterThan(insertErrIdx);
@@ -82,7 +87,7 @@ describe("signConsentFormAction: PR #177 fail-soft contract", () => {
     // wiring; pin that the wiring does NOT short-circuit the
     // happy-path return.
     const happyReturn = ACTION.match(
-      /return \{ ok: true, signatureId: created\.id \};/g,
+      /return \{ ok: true, signatureId: result\.signatureId \};/g,
     );
     expect((happyReturn ?? []).length).toBe(1);
   });
@@ -91,6 +96,8 @@ describe("signConsentFormAction: PR #177 fail-soft contract", () => {
 describe("signConsentFormAction: PR #177 deadlock prevention", () => {
   it("does NOT import any auth-status gate (base or charge-ready)", () => {
     expect(ACTION).not.toMatch(/import \{[^}]*getCardAuthorizationStatus/);
+    expect(CORE).not.toMatch(/getCardAuthorizationStatus/);
+    expect(CORE).not.toMatch(/getChargeReadyCardAuthorizationStatus/);
     expect(ACTION).not.toMatch(
       /import \{[^}]*getChargeReadyCardAuthorizationStatus/,
     );
@@ -102,6 +109,10 @@ describe("signConsentFormAction: PR #177 deadlock prevention", () => {
     // row. Pin that no client_payment_methods read occurs anywhere
     // in the action.
     expect(ACTION).not.toMatch(/client_payment_methods/);
+    // The ceremony moved to the shared core, so the guard has to move with
+    // it: pinning only the (now nearly empty) wrapper would leave the
+    // deadlock-prevention contract unguarded exactly where the queries live.
+    expect(CORE).not.toMatch(/client_payment_methods/);
   });
 });
 

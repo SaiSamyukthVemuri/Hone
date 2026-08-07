@@ -29,6 +29,25 @@ const PORTAL_CONSENT_PATH = path.resolve(
 );
 const PORTAL_CONSENT = readFileSync(PORTAL_CONSENT_PATH, "utf8");
 
+const SIGN_CORE_PATH = path.resolve(
+  __dirname,
+  "../../../lib/consent/sign-consent-form.ts",
+);
+const SIGN_CORE = readFileSync(SIGN_CORE_PATH, "utf8");
+
+const PORTAL_PAGE = readFileSync(
+  path.resolve(__dirname, "../../../app/portal/page.tsx"),
+  "utf8",
+);
+const PORTAL_FORMS = readFileSync(
+  path.resolve(__dirname, "../../../app/portal/PortalConsentForms.tsx"),
+  "utf8",
+);
+const SNAPSHOT_LIB = readFileSync(
+  path.resolve(__dirname, "../../../lib/consent/template-snapshot.ts"),
+  "utf8",
+);
+
 describe("portal-facing consent query (lib/consent/queries.ts)", () => {
   it("getActiveConsentTemplatesForPortal filters by is_live = true", () => {
     // Pin the exact .eq call so a refactor to .filter() or .gt()
@@ -108,12 +127,95 @@ describe("portal Add Card flow (app/portal/payment-method-actions.ts via shared 
   });
 });
 
-describe("portal sign action (app/portal/consent-actions.ts)", () => {
+// The signing ceremony moved out of the portal action into the shared core
+// (lib/consent/sign-consent-form.ts) so the intake surface can reuse ONE
+// implementation. These pins follow the code to its new home rather than
+// being weakened -- and a second pin below keeps the wrapper honest, so a
+// future edit that re-introduces a private lookup in the portal action is
+// still caught.
+describe("shared signing core (lib/consent/sign-consent-form.ts)", () => {
   it("the per-template lookup before signing requires is_live = true", () => {
-    expect(PORTAL_CONSENT).toMatch(/\.eq\("is_live",\s*true\)/);
+    expect(SIGN_CORE).toMatch(/\.eq\("is_live",\s*true\)/);
   });
 
   it("the lookup still requires status='active'", () => {
-    expect(PORTAL_CONSENT).toMatch(/\.eq\("status",\s*"active"\)/);
+    expect(SIGN_CORE).toMatch(/\.eq\("status",\s*"active"\)/);
+  });
+
+  it("BOTH server lookups are scoped to the caller-resolved studio", () => {
+    // The core runs two studio-scoped lookups: the clients re-check and the
+    // template lookup. A single .toMatch is satisfied by EITHER, so deleting
+    // one leaves the pin green -- verified by mutation. Count them instead.
+    const scoped =
+      SIGN_CORE.match(/\.eq\("studio_id",\s*identity\.studioId\)/g) ?? [];
+    expect(scoped).toHaveLength(2);
+  });
+
+  it("the clients re-check gates on archived_at before any write", () => {
+    expect(SIGN_CORE).toMatch(/from\("clients"\)/);
+    expect(SIGN_CORE).toMatch(/client\.archived_at != null/);
+  });
+});
+
+// The render surface is the other half of the integrity comparison, and the
+// unit lane cannot reach it: every behavioural test builds its own FormData,
+// so deleting the `fd.set("rendered_template_hash", ...)` line left the whole
+// suite green (negative control 10). These pins are that missing oracle --
+// deliberately a supplement to the behavioural tests, never a substitute.
+describe("the render surface supplies the comparand", () => {
+  it("the portal page derives the hash server-side with the canonical helper", () => {
+    expect(PORTAL_PAGE).toMatch(
+      /import \{ withRenderedTemplateHash \} from "@\/lib\/consent\/template-snapshot"/,
+    );
+    expect(PORTAL_PAGE).toMatch(/\.map\(\s*withRenderedTemplateHash,?\s*\)/);
+  });
+
+  it("the sign form posts BOTH comparands back", () => {
+    // Both, deliberately. Pinning only the hash left deleting the form_type
+    // line completely green (negative control 12) -- the same blind spot the
+    // hash pin was added to close.
+    expect(PORTAL_FORMS).toMatch(
+      /fd\.set\("rendered_template_hash",\s*template\.renderedTemplateHash\)/,
+    );
+    expect(PORTAL_FORMS).toMatch(
+      /fd\.set\("rendered_form_type",\s*template\.form_type\)/,
+    );
+  });
+
+  it("the wrapper forwards BOTH comparands to the core", () => {
+    expect(PORTAL_CONSENT).toMatch(/formData\.get\("rendered_template_hash"\)/);
+    expect(PORTAL_CONSENT).toMatch(/formData\.get\("rendered_form_type"\)/);
+    expect(PORTAL_CONSENT).toMatch(/renderedTemplateHash,/);
+    expect(PORTAL_CONSENT).toMatch(/renderedFormType,/);
+  });
+
+  it("the render helper routes through buildConsentTemplateSnapshot", () => {
+    // A second, separately-derived hash here would make the comparison
+    // silently vacuous the moment either side drifted.
+    expect(SNAPSHOT_LIB).toMatch(
+      /export function withRenderedTemplateHash[\s\S]{0,400}buildConsentTemplateSnapshot\(template\)\.templateHash/,
+    );
+  });
+});
+
+describe("portal sign action (app/portal/consent-actions.ts)", () => {
+  it("delegates the ceremony to the shared core", () => {
+    expect(PORTAL_CONSENT).toMatch(
+      /import \{ recordConsentSignature \} from "@\/lib\/consent\/sign-consent-form"/,
+    );
+    expect(PORTAL_CONSENT).toMatch(/await recordConsentSignature\(\{/);
+  });
+
+  it("runs NO consent_form_templates lookup of its own", () => {
+    // A private lookup here would be a second ceremony: the whole point of
+    // the extraction is that the four-clause gate exists exactly once.
+    expect(PORTAL_CONSENT).not.toMatch(/from\("consent_form_templates"\)/);
+    expect(PORTAL_CONSENT).not.toMatch(/from\("client_consent_signatures"\)/);
+  });
+
+  it("passes NO allowedFormTypes, so the portal still signs every live type", () => {
+    // The portal deliberately signs card_authorization too. Narrowing here
+    // would silently change shipped portal behaviour.
+    expect(PORTAL_CONSENT).not.toMatch(/allowedFormTypes/);
   });
 });

@@ -69,7 +69,14 @@ export const BROWSER_GROUPS = {
   },
   portal: {
     description: "client portal and tokenised links",
-    specs: ["appointment-token-hash.spec.ts", "personal-notes-bullets-mobile.spec.ts", "pinned-note-edit-mobile.spec.ts"],
+    specs: [
+      "appointment-token-hash.spec.ts",
+      // PR #526: the only browser proof of the consent render -> comparand
+      // -> submit chain (stale-form refusal + photo deny).
+      "portal-consent-signing-integrity.spec.ts",
+      "personal-notes-bullets-mobile.spec.ts",
+      "pinned-note-edit-mobile.spec.ts",
+    ],
   },
   booking: {
     description: "public booking and appointment lifecycle",
