@@ -5,6 +5,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
+import { practitionerIntakeReviewHref } from "@/lib/dashboard/today-intake";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
 import { referralSourceLabel } from "@/lib/booking/referral-source";
@@ -1001,10 +1002,10 @@ function IntakeStatusLine({
         </span>{" "}
         ·{" "}
         <Link
-          href={`/clients/${clientId}/intake`}
+          href={practitionerIntakeReviewHref(clientId)}
           className="text-neutral-700 hover:underline dark:text-neutral-300"
         >
-          View
+          Review intake
         </Link>
       </p>
     );
@@ -1018,10 +1019,10 @@ function IntakeStatusLine({
         </span>{" "}
         ·{" "}
         <Link
-          href={`/clients/${clientId}/intake`}
+          href={practitionerIntakeReviewHref(clientId)}
           className="text-neutral-700 hover:underline dark:text-neutral-300"
         >
-          Review
+          Review intake
         </Link>
       </p>
     );
