@@ -130,7 +130,6 @@ import {
   submitIntakeAction,
 } from "@/app/intake/[token]/actions";
 import { PRACTITIONER_ASSISTED_ENTRY } from "@/lib/intake/entry-provenance";
-import { ELECTROLYSIS_ACKNOWLEDGEMENT } from "@/lib/intake/acknowledgements";
 import { INTAKE_STEPS, TOTAL_STEPS } from "@/lib/intake/questions";
 
 const KEY = PRACTITIONER_ASSISTED_ENTRY.id;
@@ -180,12 +179,7 @@ function completeAnswers(): Record<string, unknown> {
       else out[q.key] = "answer";
     }
   }
-  out[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = {
-    id: ELECTROLYSIS_ACKNOWLEDGEMENT.id,
-    version: ELECTROLYSIS_ACKNOWLEDGEMENT.version,
-    wording: ELECTROLYSIS_ACKNOWLEDGEMENT.wording,
-    accepted: true,
-  };
+  // RETIRED (#518): the acknowledgement claim used to be attached here.
   return out;
 }
 
@@ -299,21 +293,12 @@ describe("the client's own SUBMIT preserves it and still works", () => {
     expect(stored()[KEY]).toEqual(REAL_PROVENANCE);
   });
 
-  it("the acknowledgement is still the client's own, server-rebuilt", async () => {
-    state.rows = [
-      row({ responses: { ...completeAnswers(), [KEY]: { ...REAL_PROVENANCE } } }),
-    ];
-    await submitIntakeAction({ token: "tok", responses: completeAnswers() });
-    const ack = stored()[ELECTROLYSIS_ACKNOWLEDGEMENT.id] as Record<string, unknown>;
-    expect(ack.accepted).toBe(true);
-    // accepted_at is stamped by the server, never taken from the browser.
-    expect(typeof ack.accepted_at).toBe("string");
-    expect(ack.wording).toBe(ELECTROLYSIS_ACKNOWLEDGEMENT.wording);
-  });
-
-  it("a submit still REFUSES without the acknowledgement, provenance or not", async () => {
+  it("a submit still REFUSES without the client's own confirmations, provenance or not", async () => {
+    // Retargeted at retirement: the #518 acknowledgement is gone, but Step 5's
+    // first-person confirmations remain client-owned and required. Assisted
+    // provenance must not become a back door around THOSE either.
     const answers = completeAnswers();
-    delete answers[ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey];
+    delete answers["ack_accurate"];
     state.rows = [row({ responses: { [KEY]: { ...REAL_PROVENANCE } } })];
     const res = await submitIntakeAction({ token: "tok", responses: answers });
     expect(res.ok).toBe(false);

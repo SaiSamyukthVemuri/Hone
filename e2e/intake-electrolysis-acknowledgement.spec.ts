@@ -127,284 +127,15 @@ test.beforeAll(async () => {
 // A. Client intake — the checkbox itself
 // ---------------------------------------------------------------------------
 
-test.describe("A. client intake acknowledgement", () => {
-  test("A1. renders on the Acknowledgments step, unchecked, with the approved wording and help text", async ({
-    page,
-  }) => {
-    const { intakeId, token } = await seedDraftOnAckStep(seed);
-
-    await page.setViewportSize(DESKTOP);
-    await page.goto(`/intake/${token}`);
-
-    // The step the acknowledgement belongs to, by its own heading.
-    await expect(
-      page.getByRole("heading", { name: "Acknowledgments" }),
-    ).toBeVisible();
-
-    const box = ackCheckbox(page);
-    await expect(box).toBeVisible();
-    // THE default. Nothing on the way in ticks it.
-    await expect(box).not.toBeChecked();
-
-    // The approved v1 text, on screen, in full.
-    await expect(page.getByText(CANON.wording, { exact: false })).toBeVisible();
-    await expect(page.getByText(CANON.helpText, { exact: false })).toBeVisible();
-
-    // ORACLE: opening the step wrote no acknowledgement record at all.
-    const row = await getIntakeRow(intakeId);
-    expect(row?.status).toBe("in_progress");
-    expect((row?.responses as Record<string, unknown>)[CANON.id]).toBeUndefined();
-    expect(
-      (row?.responses as Record<string, unknown>)[CANON.questionKey],
-    ).toBeUndefined();
-  });
-
-  test("A2. submitting while unticked is refused, and writes nothing", async ({
-    page,
-  }) => {
-    const { intakeId, token } = await seedDraftOnAckStep(seed);
-
-    await page.setViewportSize(DESKTOP);
-    await page.goto(`/intake/${token}`);
-    await expect(ackCheckbox(page)).not.toBeChecked();
-
-    await page.getByRole("button", { name: "Submit intake" }).click();
-
-    // Refused, and said so where a screen reader will hear it.
-    const err = page.getByRole("alert").filter({ hasText: REQUIRED_ERROR });
-    await expect(err).toBeVisible();
-
-    // Still on the wizard — no navigation to the thank-you page.
-    await expect(page).not.toHaveURL(/thank-you/);
-
-    // ORACLE: nothing was submitted and nothing was recorded.
-    const row = await getIntakeRow(intakeId);
-    expect(row?.status).toBe("in_progress");
-    expect(row?.submitted_at).toBeNull();
-    expect((row?.responses as Record<string, unknown>)[CANON.id]).toBeUndefined();
-  });
-
-  test("A3. ticking then submitting stores the canonical record with a server timestamp", async ({
-    page,
-  }) => {
-    const { intakeId, token } = await seedDraftOnAckStep(seed);
-
-    await page.setViewportSize(DESKTOP);
-    await page.goto(`/intake/${token}`);
-
-    const before = Date.now();
-    await ackCheckbox(page).check();
-    await expect(ackCheckbox(page)).toBeChecked();
-    await page.getByRole("button", { name: "Submit intake" }).click();
-    await page.waitForURL(/thank-you/);
-    const after = Date.now();
-
-    // ORACLE: the row, not the screen.
-    const row = await getIntakeRow(intakeId);
-    expect(row?.status).toBe("submitted");
-    expect(row?.submitted_at).not.toBeNull();
-
-    const responses = row?.responses as Record<string, unknown>;
-    // The boolean answer and the provenance record are two SEPARATE keys.
-    expect(CANON.id).not.toBe(CANON.questionKey);
-    expect(responses[CANON.questionKey]).toBe(true);
-
-    const rec = responses[CANON.id] as Record<string, unknown>;
-    expect(rec).toBeTruthy();
-    expect(rec.id).toBe(CANON.id);
-    expect(rec.version).toBe(CANON.version);
-    // Rebuilt from the server's own constant.
-    expect(rec.wording).toBe(CANON.wording);
-    expect(rec.accepted).toBe(true);
-
-    // Stamped by the server, within the window this test was running.
-    expect(typeof rec.accepted_at).toBe("string");
-    const stamped = Date.parse(rec.accepted_at as string);
-    expect(Number.isNaN(stamped)).toBe(false);
-    expect(stamped).toBeGreaterThanOrEqual(before - 60_000);
-    expect(stamped).toBeLessThanOrEqual(after + 60_000);
-  });
-
-  test("A4. unticking overwrites the draft record instead of leaving a stale acceptance", async ({
-    page,
-  }) => {
-    // The failure this guards: the server merge is a spread, so a client that
-    // ticked, saved, then unticked would keep `accepted: true` on the row if the
-    // wizard stopped sending the claim.
-    const { intakeId, token } = await seedDraftOnAckStep(seed);
-
-    await page.setViewportSize(DESKTOP);
-    await page.goto(`/intake/${token}`);
-
-    await ackCheckbox(page).check();
-    await page.getByRole("button", { name: "Back" }).click();
-    await expect(page.getByRole("button", { name: "Continue" })).toBeVisible();
-
-    await expect
-      .poll(async () => {
-        const r = await getIntakeRow(intakeId);
-        const rec = (r?.responses as Record<string, unknown>)[CANON.id] as
-          | Record<string, unknown>
-          | undefined;
-        return rec?.accepted;
-      })
-      .toBe(true);
-
-    // A draft acceptance is NOT an acceptance: no timestamp is stamped.
-    const drafted = await getIntakeRow(intakeId);
-    const draftRec = (drafted?.responses as Record<string, unknown>)[
-      CANON.id
-    ] as Record<string, unknown>;
-    expect(draftRec.accepted_at).toBeUndefined();
-    expect(drafted?.status).toBe("in_progress");
-
-    // Back to the step, untick, save again.
-    await page.getByRole("button", { name: "Continue" }).click();
-    await expect(ackCheckbox(page)).toBeChecked();
-    await ackCheckbox(page).uncheck();
-    await page.getByRole("button", { name: "Back" }).click();
-
-    await expect
-      .poll(async () => {
-        const r = await getIntakeRow(intakeId);
-        const rec = (r?.responses as Record<string, unknown>)[CANON.id] as
-          | Record<string, unknown>
-          | undefined;
-        return rec?.accepted;
-      })
-      .toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// B. 390px — the width the operator's clients actually use
-// ---------------------------------------------------------------------------
-
-test.describe("B. acknowledgement at 390px", () => {
-  test("B1. no horizontal overflow, and every part of the control stays inside the viewport", async ({
-    page,
-  }) => {
-    const { token } = await seedDraftOnAckStep(seed);
-
-    await page.setViewportSize(MOBILE);
-    await page.goto(`/intake/${token}`);
-
-    const box = ackCheckbox(page);
-    await expect(box).toBeVisible();
-
-    // The page itself must not scroll sideways.
-    await assertNoHorizontalOverflow(page);
-
-    // The whole control block — border, checkbox and the wording beside it.
-    const control = box.locator("xpath=ancestor::label[1]");
-    await assertWithinViewport(control, MOBILE.width, "acknowledgement control");
-    // Comfortably tappable: the label is the touch target, not the 20px input.
-    const controlBox = await control.boundingBox();
-    expect(controlBox!.height).toBeGreaterThanOrEqual(44);
-
-    // The wording is readable, not clipped to a sliver.
-    const wording = page.getByText(CANON.wording, { exact: false });
-    await assertWithinViewport(wording, MOBILE.width, "acknowledgement wording");
-
-    // The help text carrying the not-a-signature boundary is readable too.
-    const help = page.getByText(CANON.helpText, { exact: false });
-    await expect(help).toBeVisible();
-    await assertWithinViewport(help, MOBILE.width, "acknowledgement help text");
-
-    // It is genuinely usable at this width.
-    await box.check();
-    await expect(box).toBeChecked();
-    await assertNoHorizontalOverflow(page);
-  });
-
-  test("B2. the required-state message is visible and inside the viewport after a refused submit", async ({
-    page,
-  }) => {
-    const { token } = await seedDraftOnAckStep(seed);
-
-    await page.setViewportSize(MOBILE);
-    await page.goto(`/intake/${token}`);
-    await page.getByRole("button", { name: "Submit intake" }).click();
-
-    const err = page.getByRole("alert").filter({ hasText: REQUIRED_ERROR });
-    await expect(err).toBeVisible();
-    await assertWithinViewport(err, MOBILE.width, "required-state message");
-    // A message that pushes the page sideways is not discoverable either.
-    await assertNoHorizontalOverflow(page);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// C. Accessibility sanity
-// ---------------------------------------------------------------------------
-
-test.describe("C. accessibility", () => {
-  test("C1. accessible name, label activation, keyboard operation", async ({
-    page,
-  }) => {
-    const { token } = await seedDraftOnAckStep(seed);
-
-    await page.setViewportSize(DESKTOP);
-    await page.goto(`/intake/${token}`);
-
-    // Resolving by role+name IS the accessible-name assertion.
-    const box = ackCheckbox(page);
-    await expect(box).toHaveCount(1);
-    await expect(box).not.toBeChecked();
-    await expect(box).toHaveAttribute("aria-required", "true");
-
-    // Clicking the wording (not the input) toggles it — the label is wired.
-    await page.getByText(CANON.wording, { exact: false }).click();
-    await expect(box).toBeChecked();
-
-    // Keyboard: focus lands on it and Space toggles.
-    await box.focus();
-    await expect(box).toBeFocused();
-    await page.keyboard.press("Space");
-    await expect(box).not.toBeChecked();
-    await page.keyboard.press("Space");
-    await expect(box).toBeChecked();
-  });
-
-  test("C2. help text and error state are programmatically associated", async ({
-    page,
-  }) => {
-    const { token } = await seedDraftOnAckStep(seed);
-
-    await page.setViewportSize(DESKTOP);
-    await page.goto(`/intake/${token}`);
-
-    const box = ackCheckbox(page);
-
-    // Help text is described-by before any interaction.
-    const helpId = `${CANON.questionKey}_help`;
-    await expect(box).toHaveAttribute(
-      "aria-describedby",
-      new RegExp(helpId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-    );
-    await expect(page.locator(`#${helpId}`)).toHaveText(CANON.helpText);
-
-    // No error state until one is earned.
-    await expect(box).not.toHaveAttribute("aria-invalid", "true");
-
-    await page.getByRole("button", { name: "Submit intake" }).click();
-
-    // Now invalid, described by a real element that exists and announces.
-    await expect(box).toHaveAttribute("aria-invalid", "true");
-    const errorId = `${CANON.questionKey}_error`;
-    const described = await box.getAttribute("aria-describedby");
-    expect(described).toContain(errorId);
-    const errorEl = page.locator(`#${errorId}`);
-    await expect(errorEl).toHaveText(REQUIRED_ERROR);
-    await expect(errorEl).toHaveAttribute("role", "alert");
-    // The help text is still associated, not replaced by the error.
-    expect(described).toContain(helpId);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// D. Practitioner review — the STORED snapshot, and the legacy states
-// ---------------------------------------------------------------------------
+// RETIRED (#518): describes A (client collection), B (390px control) and C
+// (control accessibility) drove a checkbox that no longer exists — #529's real
+// studio consent forms replaced it and are proven in
+// e2e/intake-live-consent-forms.spec.ts. They are removed with the collection
+// they covered.
+//
+// D remains, and matters MORE after retirement: every intake that already
+// recorded an acknowledgement must keep rendering its stored wording and
+// version forever.
 
 test.describe("D. practitioner review", () => {
   test("D1. renders the STORED wording and version, never today's constant", async ({
@@ -485,7 +216,7 @@ test.describe("D. practitioner review", () => {
     await expect(section).toContainText(/Jul(y)?/);
   });
 
-  test("D3. a submitted intake with no record says it PREDATES the acknowledgement", async ({
+  test("D3. a submitted intake with no record says so NEUTRALLY, never 'predates'", async ({
     page,
   }) => {
     const { clientId } = await seedE2eClient(seed);
@@ -498,7 +229,7 @@ test.describe("D. practitioner review", () => {
     await page.goto(`/clients/${clientId}/intake`);
 
     const section = reviewSection(page);
-    await expect(section).toContainText(ACKNOWLEDGEMENT_REVIEW_COPY.predates);
+    await expect(section).toContainText(ACKNOWLEDGEMENT_REVIEW_COPY.notRecorded);
     // Never dressed up as an acceptance, and never confused with a draft.
     await expect(section).not.toContainText(
       ACKNOWLEDGEMENT_REVIEW_COPY.acknowledged,
@@ -506,7 +237,7 @@ test.describe("D. practitioner review", () => {
     await expect(section).not.toContainText(ACKNOWLEDGEMENT_REVIEW_COPY.noRecord);
   });
 
-  test("D4. an in-progress intake with no record says NO RECORD, not predates", async ({
+  test("D4. an in-progress intake with no record says NO RECORD", async ({
     page,
   }) => {
     const { clientId } = await seedE2eClient(seed);
@@ -521,7 +252,7 @@ test.describe("D. practitioner review", () => {
     const section = reviewSection(page);
     await expect(section).toContainText(ACKNOWLEDGEMENT_REVIEW_COPY.noRecord);
     // The two absences are different facts and must never be conflated.
-    await expect(section).not.toContainText(ACKNOWLEDGEMENT_REVIEW_COPY.predates);
+    await expect(section).not.toContainText(ACKNOWLEDGEMENT_REVIEW_COPY.notRecorded);
     await expect(section).not.toContainText(
       ACKNOWLEDGEMENT_REVIEW_COPY.acknowledged,
     );

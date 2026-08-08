@@ -1,4 +1,22 @@
-// Versioned electrolysis acknowledgement — the ONE shared definition.
+// Versioned electrolysis acknowledgement — RETIRED, kept as the legacy READ
+// contract.
+//
+// RETIREMENT (this PR). #518 was a temporary stand-in for the studio's own
+// consent documents. #529 shipped the real thing — the studio's live
+// treatment/photo consent forms, completed inside the intake — so this
+// acknowledgement is no longer collected: the question is gone from
+// INTAKE_STEPS, the wizard sends no claim, the public sanitizer admits no
+// carve-out for it, and the submit gate no longer requires or builds one.
+//
+// WHAT REMAINS, AND WHY. Every intake that already recorded an
+// acknowledgement must stay readable forever, showing the wording snapshot
+// and version the client actually read. So the constant, the claim parser and
+// readElectrolysisAcknowledgement all stay. The three WRITE-side helpers
+// (claim builder, draft-record builder, submit validator) are gone with the
+// collection they served — leaving them would be an invitation to re-wire a
+// retired write path.
+//
+// Nothing here is backfilled, rewritten or deleted from stored history.
 //
 // Both the public client wizard (app/intake/[token]/IntakeWizard.tsx, a
 // client component) and the practitioner review surface
@@ -128,23 +146,6 @@ function boundedString(value: unknown): string | null {
   return value;
 }
 
-// Build the claim the wizard sends alongside the checkbox answer.
-// `accepted` mirrors the checkbox exactly — an unticked box produces a
-// claim with `accepted: false`, NOT an absent claim. Sending it either way
-// means the stored draft record can never disagree with the checkbox: the
-// merge on the server is a spread, so an omitted key would leave a stale
-// `accepted: true` record behind after the client unticked the box.
-export function buildElectrolysisAcknowledgementClaim(
-  accepted: boolean,
-): ElectrolysisAcknowledgementClaim {
-  return {
-    id: ELECTROLYSIS_ACKNOWLEDGEMENT.id,
-    version: ELECTROLYSIS_ACKNOWLEDGEMENT.version,
-    wording: ELECTROLYSIS_ACKNOWLEDGEMENT.wording,
-    accepted,
-  };
-}
-
 // Narrow an untrusted inbound value to the claim shape, or `null`. Applied
 // by the public actions' sanitizer before the value is allowed anywhere
 // near storage: unknown fields are dropped, non-strings rejected, oversize
@@ -160,84 +161,6 @@ export function normalizeElectrolysisAcknowledgementClaim(
   const wording = boundedString(raw.wording);
   if (id === null || version === null || wording === null) return null;
   return { id, version, wording, accepted: raw.accepted === true };
-}
-
-// The record persisted on a DRAFT save.
-//
-// Note what this does NOT do: it does not carry the client's claimed id,
-// version or wording through to storage. Only the client's `accepted`
-// boolean survives; the rest is re-derived from the canonical constant. A
-// forged draft save therefore cannot park fabricated acknowledgement text
-// in an in-progress row for a practitioner to read.
-export function buildElectrolysisAcknowledgementDraftRecord(
-  claim: ElectrolysisAcknowledgementClaim | null,
-): ElectrolysisAcknowledgementRecord | null {
-  if (!claim) return null;
-  return {
-    id: ELECTROLYSIS_ACKNOWLEDGEMENT.id,
-    version: ELECTROLYSIS_ACKNOWLEDGEMENT.version,
-    wording: ELECTROLYSIS_ACKNOWLEDGEMENT.wording,
-    accepted: claim.accepted === true,
-  };
-}
-
-export type AcknowledgementRejection =
-  | "missing"
-  | "wrong_id"
-  | "unknown_version"
-  | "wording_mismatch"
-  | "not_accepted"
-  | "checkbox_missing";
-
-export type AcknowledgementValidation =
-  | { ok: true; record: ElectrolysisAcknowledgementRecord }
-  | { ok: false; reason: AcknowledgementRejection };
-
-// Server-side gate for the FINAL submit. Independent of any client
-// validation, any disabled-button state and any hidden input.
-//
-// Every field is checked by exact equality against the canonical constant,
-// so a forged payload with a wrong id, an unknown/downgraded version,
-// altered wording, or `accepted: false` is REJECTED rather than silently
-// corrected. The checkbox answer must independently be `true` as well: two
-// separate keys have to agree before an acknowledgement is recorded.
-//
-// On success the returned record is rebuilt from the constant with a
-// server-stamped `accepted_at` — the validated claim is evidence that the
-// client saw this exact text, never the bytes we store.
-export function validateElectrolysisAcknowledgement(
-  responses: Record<string, unknown>,
-  acceptedAtIso: string,
-): AcknowledgementValidation {
-  if (responses[ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey] !== true) {
-    return { ok: false, reason: "checkbox_missing" };
-  }
-  const claim = normalizeElectrolysisAcknowledgementClaim(
-    responses[ELECTROLYSIS_ACKNOWLEDGEMENT.id],
-  );
-  if (!claim) return { ok: false, reason: "missing" };
-  if (claim.id !== ELECTROLYSIS_ACKNOWLEDGEMENT.id) {
-    return { ok: false, reason: "wrong_id" };
-  }
-  if (claim.version !== ELECTROLYSIS_ACKNOWLEDGEMENT.version) {
-    return { ok: false, reason: "unknown_version" };
-  }
-  if (claim.wording !== ELECTROLYSIS_ACKNOWLEDGEMENT.wording) {
-    return { ok: false, reason: "wording_mismatch" };
-  }
-  if (claim.accepted !== true) {
-    return { ok: false, reason: "not_accepted" };
-  }
-  return {
-    ok: true,
-    record: {
-      id: ELECTROLYSIS_ACKNOWLEDGEMENT.id,
-      version: ELECTROLYSIS_ACKNOWLEDGEMENT.version,
-      wording: ELECTROLYSIS_ACKNOWLEDGEMENT.wording,
-      accepted: true,
-      accepted_at: acceptedAtIso,
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -263,17 +186,23 @@ export type AcknowledgementView =
       wording: string;
       acceptedAtIso: string | null;
     }
-  // Record present, client has not ticked the box. Only reachable on a
-  // draft: submission is refused without an acceptance.
+  // Record present, client has not ticked the box. It used to be true that
+  // this was "only reachable on a draft, because submission is refused
+  // without an acceptance" — retirement removed that gate, so a draft left
+  // unticked before retirement can now be submitted and arrive here with
+  // status `submitted`/`reviewed`. The copy below must therefore claim
+  // nothing about submission being blocked.
   | { state: "not_acknowledged"; version: string; wording: string }
   // No record, and the intake is still being filled in. Deliberately
-  // says nothing about how far the client got: an untouched checkbox and a
-  // read-then-declined checkbox are indistinguishable here, so the state
-  // reports the absence of a record and nothing more.
+  // says nothing about how far the client got.
   | { state: "no_record" }
-  // No record on a submitted/reviewed intake: it was submitted before this
-  // acknowledgement existed. The client was never shown the wording.
-  | { state: "predates" }
+  // No record on a submitted/reviewed intake. RENAMED from "predates" at
+  // retirement: that word asserted the intake was submitted BEFORE this
+  // acknowledgement existed, which the database cannot prove any more. Now
+  // that #518 is retired, an intake submitted TODAY also carries no record —
+  // and calling that "predates" would be a plain falsehood on a clinical
+  // surface. The state now reports only what is true: nothing was recorded.
+  | { state: "not_recorded" }
   // A record exists but does not match the shape we write. Shown as-is
   // rather than dressed up as an acceptance.
   | { state: "unreadable" };
@@ -294,7 +223,7 @@ export function readElectrolysisAcknowledgement(
   if (raw === undefined || raw === null) {
     return status === "in_progress"
       ? { state: "no_record" }
-      : { state: "predates" };
+      : { state: "not_recorded" };
   }
   const claim = normalizeElectrolysisAcknowledgementClaim(raw);
   if (!claim || claim.id !== ELECTROLYSIS_ACKNOWLEDGEMENT.id) {
@@ -326,14 +255,22 @@ export function readElectrolysisAcknowledgement(
 export const ACKNOWLEDGEMENT_REVIEW_COPY = {
   heading: "Electrolysis acknowledgement",
   acknowledged: "Acknowledged by the client.",
-  notAcknowledged:
-    "Not acknowledged. The client has not ticked this box; an intake cannot be submitted until they do.",
+  // States only what the stored row proves. The trailing clause "an intake
+  // cannot be submitted until they do" was TRUE while #518 gated submission
+  // and became FALSE at retirement: a pre-retirement draft left unticked now
+  // submits, so a practitioner reading a submitted intake would have been
+  // told a plain falsehood on a clinical surface. Same defect class as the
+  // "predates" copy retired alongside it.
+  notAcknowledged: "Not acknowledged. The client did not tick this box.",
   // States only what the stored row proves. An earlier draft of this copy
   // said the client "has not got to the acknowledgement step", which is
   // false for a client who read the wording and chose not to tick it —
   // both cases store no record at all.
   noRecord: "No acknowledgement recorded. This intake is still in progress.",
-  predates: "This intake predates the versioned electrolysis acknowledgement.",
+  // Neutral and provable. Says what the row shows and claims nothing about
+  // when the intake was submitted relative to the retired acknowledgement.
+  notRecorded:
+    "No versioned electrolysis acknowledgement was recorded with this intake.",
   unreadable:
     "An acknowledgement entry is present but could not be read. Treat this intake as not acknowledged.",
   caveat:

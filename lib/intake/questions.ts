@@ -674,24 +674,17 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
     description:
       "These confirmations help your electrologist trust the information they're working with. They are not a consent form. Treatment-specific consent happens with your electrologist in person.",
     questions: [
-      // Versioned electrolysis acknowledgement. Placed FIRST on this step so
-      // it is the acknowledgement the client reads before the routine
-      // confirmations below, rather than something buried under them.
+      // RETIRED: the versioned electrolysis acknowledgement (#518) used to sit
+      // here, first on this step. It was a temporary stand-in for the studio's
+      // own consent documents, and #529 replaced it with the real thing — the
+      // studio's live treatment/photo consent forms, completed after this step.
+      // It is no longer collected, so it is no longer a question.
       //
-      // Its label and help text are NOT written here — they are read from
-      // lib/intake/acknowledgements.ts, which is the single source shared
-      // with the practitioner review surface. Do not inline the wording.
-      //
-      // Answering this checkbox stores a boolean under `questionKey`; a
-      // separate versioned provenance record is stored under
-      // ELECTROLYSIS_ACKNOWLEDGEMENT.id and validated server-side at submit.
-      {
-        key: ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey,
-        type: "checkbox",
-        label: ELECTROLYSIS_ACKNOWLEDGEMENT.wording,
-        helpText: ELECTROLYSIS_ACKNOWLEDGEMENT.helpText,
-        required: true,
-      },
+      // Removing it from this list removes it from ALL_QUESTION_KEYS, which is
+      // what stops the public sanitizer admitting it and what stops
+      // findMissingRequiredAnswers demanding it. Historical answers are
+      // untouched and still readable; see lib/intake/acknowledgements.ts, which
+      // is now a READ-ONLY legacy contract.
       {
         key: "ack_not_a_substitute",
         type: "checkbox",
@@ -870,11 +863,19 @@ export const CLIENT_OWNED_RESPONSE_KEYS: ReadonlySet<string> = new Set([
       .filter((q) => s.id === ACKNOWLEDGEMENTS_STEP_ID || q.type === "checkbox")
       .flatMap((q) => [q.key, `${q.key}_notes`]),
   ),
-  // The versioned acknowledgement RECORD is not a question, so neither
-  // derivation above reaches it. The question-key whitelist already drops it
-  // from any practitioner payload, but naming it here makes the loud refusal
-  // cover it too — a practitioner attempting to author the client's
-  // acknowledgement record should be refused, not silently stripped.
+  // LEGACY #518, both keys, named EXPLICITLY and load-bearing.
+  //
+  // Retiring the acknowledgement removed its question from INTAKE_STEPS, which
+  // silently removed `ack_electrolysis_nature` from the derivation above. That
+  // would have made a historical client-owned answer practitioner-WRITABLE for
+  // the first time — the exact opposite of what retirement should do. Both keys
+  // are therefore named here so the loud refusal keeps covering them for as
+  // long as any intake still carries them.
+  //
+  // The record key was always explicit (it is not a question); the question key
+  // is explicit now for the same reason.
+  ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey,
+  `${ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey}_notes`,
   ELECTROLYSIS_ACKNOWLEDGEMENT.id,
   // The client's responses to the studio's live consent forms, for exactly
   // the same reason. Reading the studio's consent text and choosing to agree
