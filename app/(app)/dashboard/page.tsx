@@ -52,6 +52,11 @@ import {
   type TodayWorkflowInput,
   type TodayWorkflowItem,
 } from "@/lib/dashboard/today-workflow";
+import {
+  resolveTodayIntakeAction,
+  selectCurrentIntakeByClient,
+  type TodayIntakeRow,
+} from "@/lib/dashboard/today-intake";
 import { PilotFeedbackPrompt } from "./pilot-feedback-prompt";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
@@ -613,6 +618,16 @@ function AppointmentRow({
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
   });
+  // Review intake: the direct route from Today into the canonical
+  // practitioner intake-review surface, replacing the
+  // Today -> client profile -> Health & Forms -> intake detour. Resolved from
+  // `intakeStatus`, which is ALREADY loaded — no extra query, no wider read.
+  // Null for in-progress and no-intake states, where the IntakePill below is
+  // the truthful statement and there is nothing to review.
+  const intakeAction = resolveTodayIntakeAction({
+    status: intakeStatus,
+    clientId: appt.client_id,
+  });
   const time = formatTimeForStudio(new Date(appt.starts_at), tz, timeFormat);
   const performerName = appt.practitioner?.display_name?.trim();
   const performerColor = resolvePractitionerColor(appt.practitioner?.color);
@@ -778,6 +793,19 @@ function AppointmentRow({
         >
           {nextAction.label}
         </Link>
+        {/* Secondary by design: borderless, so it never competes with the
+            resolved primary action (Start/Continue charting) or the checkout
+            cell above it. Sibling of the row-body link, never nested inside
+            it. */}
+        {intakeAction && (
+          <Link
+            href={intakeAction.href}
+            data-testid="today-review-intake"
+            className="rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+          >
+            {intakeAction.label}
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -1048,8 +1076,14 @@ async function loadIntakeStatusByClient(
   studioId: string,
   clientIds: ReadonlyArray<string>,
 ): Promise<Map<string, ClientIntakeForm["status"]>> {
-  const out = new Map<string, ClientIntakeForm["status"]>();
-  if (clientIds.length === 0) return out;
+  if (clientIds.length === 0) {
+    return new Map<string, ClientIntakeForm["status"]>();
+  }
+  // ONE bounded, studio-scoped, RLS-backed read for EVERY client on the day —
+  // never one query per appointment. The projection is deliberately narrow:
+  // `responses` (the medical answers, the #518 acknowledgement, consent text)
+  // is NEVER loaded here. Today only needs to know which row is current and
+  // what state it is in; the answers belong on the review page.
   const { data, error } = await supabase
     .from("client_intake_forms")
     .select("client_id, status, created_at")
@@ -1060,15 +1094,10 @@ async function loadIntakeStatusByClient(
   if (error) {
     throw new Error(`Failed to load intake status: ${error.message}`);
   }
-  // First row per client_id wins (created_at desc), so each client maps
-  // to the status of their most recent non-deleted intake.
-  for (const row of (data ?? []) as {
-    client_id: string;
-    status: ClientIntakeForm["status"];
-  }[]) {
-    if (!out.has(row.client_id)) out.set(row.client_id, row.status);
-  }
-  return out;
+  // Hone's canonical current-intake rule (newest non-deleted row by
+  // created_at), applied in memory across the batch by the shared pure helper
+  // so Today can never disagree with the page its link opens.
+  return selectCurrentIntakeByClient((data ?? []) as TodayIntakeRow[]);
 }
 
 async function countIntakesAwaitingReview(
