@@ -22,9 +22,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type Row = Record<string, unknown>;
 
-type DbState = { rows: Row[]; updates: Array<{ patch: Row; matched: number }> };
+// `templates` backs consent_form_templates. submitIntakeAction now re-resolves
+// the studio's live consent forms on every submit; an EMPTY set is the "studio
+// has no live consent forms" case, in which submission must behave exactly as
+// it did before that feature — which is what this file goes on proving.
+type DbState = {
+  rows: Row[];
+  templates: Row[];
+  updates: Array<{ patch: Row; matched: number }>;
+};
 
 function makeFakeAdmin(state: DbState) {
+  // The chain was previously table-blind: every query read state.rows. That was
+  // harmless while only client_intake_forms was queried, but a
+  // consent_form_templates read would otherwise match intake rows.
+  function rowsFor(table: string): Row[] {
+    return table === "consent_form_templates" ? state.templates : state.rows;
+  }
   function chain(table: string, patch?: Row) {
     const predicates: Array<(r: Row) => boolean> = [];
     let projection = "*";
@@ -42,8 +56,15 @@ function makeFakeAdmin(state: DbState) {
         predicates.push((r) => r[col] === val);
         return api;
       },
+      in(col: string, vals: unknown[]) {
+        predicates.push((r) => vals.includes(r[col]));
+        return api;
+      },
+      order() {
+        return api;
+      },
       async maybeSingle() {
-        const found = state.rows.filter((r) => predicates.every((p) => p(r)));
+        const found = rowsFor(table).filter((r) => predicates.every((p) => p(r)));
         if (found.length === 0) return { data: null, error: null };
         const cols = projection.split(",").map((c) => c.trim());
         return {
@@ -52,7 +73,7 @@ function makeFakeAdmin(state: DbState) {
         };
       },
       then(resolve: (v: { data: Row[]; error: null }) => void) {
-        const matched = state.rows.filter((r) => predicates.every((p) => p(r)));
+        const matched = rowsFor(table).filter((r) => predicates.every((p) => p(r)));
         if (patch) {
           for (const r of matched) Object.assign(r, patch);
           state.updates.push({ patch, matched: matched.length });
@@ -82,7 +103,7 @@ function makeFakeAdmin(state: DbState) {
 const INTAKE = "intake-1";
 const CLIENT = "client-1";
 const STUDIO = "studio-1";
-const state: DbState = { rows: [], updates: [] };
+const state: DbState = { rows: [], templates: [], updates: [] };
 
 const { createAdminClient, verifyIntakeToken, limitTokenRoute, headers, recordPractitionerNotification } =
   vi.hoisted(() => ({
@@ -170,6 +191,7 @@ function completeAnswers(): Record<string, unknown> {
 
 beforeEach(() => {
   state.rows = [row()];
+  state.templates = [];
   state.updates = [];
   headers.mockResolvedValue(new Headers());
   limitTokenRoute.mockResolvedValue({ allowed: true });

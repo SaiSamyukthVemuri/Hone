@@ -389,6 +389,89 @@ test.describe("practitioner-assisted intake", () => {
     expect((await getIntakeRow(intakeId))?.status).toBe("submitted");
   });
 
+  // Journey B for live consent forms (PR: intake live consent). The
+  // practitioner records the questionnaire and hands over; the studio's real
+  // consent forms are the CLIENT's to complete and must not be reachable — or
+  // prefillable — from the practitioner's side.
+  //
+  // Deliberately does NOT re-drive every #525 question: the assisted flow is
+  // proven above. This asserts only the consent boundary across the handoff.
+  test("live consent forms appear only on the client side of the hand-off", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const { randomUUID } = await import("node:crypto");
+    const { sql } = await import("./helpers/seed");
+    const templateId = randomUUID();
+    const CONSENT_BODY =
+      "STUDIO TREATMENT CONSENT for the assisted hand-off journey.";
+    await sql(
+      `insert into public.consent_form_templates
+         (id, studio_id, title, body, form_type, version, status, is_live)
+       values ($1,$2,'Treatment Consent',$3,'treatment_consent',1,'active',true)`,
+      [templateId, seed.studioId, CONSENT_BODY],
+    );
+
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(
+      seed.studioId,
+      clientId,
+      "in_progress",
+      answeredQuestionnaire(),
+    );
+    await setIntakeCurrentStep(intakeId, LAST_ENTERABLE);
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}/intake/assist?intake=${intakeId}`);
+
+    // --- the practitioner surface never renders the consent forms
+    await expect(page.getByText("Completing with client")).toBeVisible();
+    await expect(page.getByTestId("intake-consent-form")).toHaveCount(0);
+    await expect(page.getByText(CONSENT_BODY)).toHaveCount(0);
+
+    // Reach the hand-off and hand over.
+    await page
+      .getByRole("button", { name: /Continue|Save and continue/ })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Client confirmation required" }),
+    ).toBeVisible();
+    // Still nothing consent-shaped on the practitioner's side.
+    await expect(page.getByTestId("intake-consent-agree")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Hand to client" }).click();
+    await page.waitForURL(/\/intake\/[^/?#]+$/);
+
+    // --- the practitioner prefilled NOTHING: the row carries no consent record
+    let row = await getIntakeRow(intakeId);
+    expect(row?.responses?.["intake_consent_responses"]).toBeUndefined();
+
+    // --- the client completes their own acknowledgements, then the consent
+    const ackStep = INTAKE_STEPS[INTAKE_STEPS.length - 1];
+    for (const q of ackStep.questions) {
+      await page.locator(`#${q.key}`).check();
+    }
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    // NOW the studio's real form is on screen — on the client's own surface.
+    await expect(page.getByText(CONSENT_BODY)).toBeVisible();
+    const agree = page.getByTestId("intake-consent-agree");
+    await expect(agree, "must start unticked for the client").not.toBeChecked();
+    await agree.check();
+    await page.getByRole("button", { name: "Submit intake" }).click();
+    await page.waitForURL("**/intake/thank-you");
+
+    row = await getIntakeRow(intakeId);
+    expect(row?.status).toBe("submitted");
+    const consent = row?.responses?.["intake_consent_responses"] as {
+      forms: Array<Record<string, unknown>>;
+    };
+    expect(consent.forms).toHaveLength(1);
+    expect(consent.forms[0].response).toBe("accepted");
+    expect(consent.forms[0].body_snapshot).toBe(CONSENT_BODY);
+    // Practitioner provenance is unchanged and still present.
+    expect(provenanceOf(row)?.handoff_at).toBeTruthy();
+  });
+
   test("an ordinary self-completed intake shows no assisted badge", async ({
     page,
   }) => {

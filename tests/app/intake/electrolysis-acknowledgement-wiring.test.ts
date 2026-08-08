@@ -25,9 +25,19 @@ const STUDIO_ID = "33333333-3333-4333-8333-333333333333";
 
 type Row = Record<string, unknown>;
 
-const db: { client_intake_forms: Row[]; clients: Row[] } = {
+// consent_form_templates is present but EMPTY, which is the "studio has no
+// live consent forms" case. submitIntakeAction now re-resolves that table on
+// every submit, and an empty result must leave submission behaving exactly as
+// it did before live consent forms existed — which is precisely what every
+// assertion in this file continues to prove.
+const db: {
+  client_intake_forms: Row[];
+  clients: Row[];
+  consent_form_templates: Row[];
+} = {
   client_intake_forms: [],
   clients: [],
+  consent_form_templates: [],
 };
 const failNextUpdateWith: { value: { code: string; message: string } | null } = {
   value: null,
@@ -71,6 +81,11 @@ function makeBuilder(table: keyof typeof db) {
       filters.push((r) => (r[col] ?? null) === val);
       return builder;
     },
+    in: (col: string, vals: unknown[]) => {
+      filters.push((r) => vals.includes(r[col]));
+      return builder;
+    },
+    order: () => builder,
     maybeSingle: () => {
       const res = run();
       const rows = (res.data ?? []) as Row[];

@@ -22,6 +22,11 @@ import {
   type IntakeLifecycleStatus,
 } from "@/lib/intake/acknowledgements";
 import {
+  INTAKE_CONSENT_REVIEW_COPY,
+  intakeConsentResponseLabel,
+  readIntakeConsentResponses,
+} from "@/lib/intake/consent-forms";
+import {
   ASSISTED_ENTRY_REVIEW_COPY,
   readAssistedEntry,
 } from "@/lib/intake/entry-provenance";
@@ -317,6 +322,11 @@ export default async function ClientIntakePage({
       />
 
       <ElectrolysisAcknowledgementSummary
+        responses={responses}
+        status={intake.status}
+      />
+
+      <IntakeConsentFormsSummary
         responses={responses}
         status={intake.status}
       />
@@ -792,4 +802,91 @@ function resolveOptionLabel(key: string, value: string): string {
     }
   }
   return value;
+}
+
+// Read-only record of the studio's live consent forms as the client completed
+// them inside the intake.
+//
+// EVERY field rendered here comes from the SNAPSHOT stored at completion, not
+// from today's consent_form_templates row — a studio that has since edited or
+// retired a form must not change what a historical intake says the client read.
+//
+// Emits no form control: this is server-rendered prose, which is what makes it
+// structurally impossible for a practitioner to complete a client's consent
+// from the review surface (pinned by tests/source-guards/assisted-intake-guards).
+//
+// Vocabulary is constrained to INTAKE_CONSENT_REVIEW_COPY — "Acknowledged",
+// "Accepted", "Denied". Never "Signed": nothing here is a signature, and only
+// the portal's own signature records may be described that way.
+function IntakeConsentFormsSummary({
+  responses,
+  status,
+}: {
+  responses: Record<string, unknown>;
+  status: IntakeLifecycleStatus;
+}) {
+  const view = readIntakeConsentResponses(responses, status);
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+        {INTAKE_CONSENT_REVIEW_COPY.heading}
+      </h2>
+      <div className="mt-3 flex flex-col gap-4 text-sm text-neutral-800 dark:text-neutral-200">
+        {view.state === "recorded" &&
+          view.forms.map((form, i) => (
+            <div
+              key={`${form.formType}-${i}`}
+              className="flex flex-col gap-1"
+              data-testid="intake-review-consent-form"
+            >
+              <p className="font-medium">{form.titleSnapshot}</p>
+              <p className="font-medium text-neutral-700 dark:text-neutral-300">
+                {intakeConsentResponseLabel(form)}
+              </p>
+              {form.responseLabelSnapshot && (
+                <p className="text-neutral-700 dark:text-neutral-300">
+                  {form.responseLabelSnapshot}
+                </p>
+              )}
+              <p className="whitespace-pre-wrap break-words text-neutral-700 dark:text-neutral-300">
+                {form.bodySnapshot}
+              </p>
+              <p className="text-xs text-neutral-500">
+                Version {form.templateVersion}
+                {form.respondedAtIso && (
+                  <>
+                    {" · "}
+                    <FormattedDateTime iso={form.respondedAtIso} />
+                  </>
+                )}
+              </p>
+            </div>
+          ))}
+        {view.state === "no_record" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.noRecord}
+          </p>
+        )}
+        {view.state === "none_recorded" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.noneRecorded}
+          </p>
+        )}
+        {view.state === "unreadable" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.unreadable}
+          </p>
+        )}
+      </div>
+      {view.state === "recorded" && (
+        <p className="mt-3 text-xs text-neutral-500">
+          {INTAKE_CONSENT_REVIEW_COPY.historicalNote}
+        </p>
+      )}
+      <p className="mt-3 text-xs text-neutral-500">
+        {INTAKE_CONSENT_REVIEW_COPY.caveat}
+      </p>
+    </section>
+  );
 }

@@ -435,6 +435,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/intake/consent-gate.ts",
+    purpose:
+      "Live consent forms inside the client intake — resolve the studio's live treatment/photo templates for render, and re-resolve them at the final submit gate.",
+    why: "The public intake is token-authenticated with no Supabase session, so it cannot satisfy member RLS on consent_form_templates. READ-ONLY: this module never inserts, updates or deletes, and never touches client_consent_signatures. The studio_id is taken from the intake row the verified token addresses — never from the request — and every query filters that studio_id plus is_live/status/form_type, so a token can only ever resolve its own studio's live forms.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "lib/notifications/practitioner-notifications.ts",
     purpose: "Operational practitioner-notification writer.",
     why: "Called from anonymous / token-bearing flows that cannot satisfy the is_studio_member RLS predicate; writes a notification stamped with the caller-supplied studio_id (no cross-studio read).",

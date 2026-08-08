@@ -65,6 +65,10 @@ export const BROWSER_GROUPS = {
       // Practitioner-assisted completion: the practitioner records the
       // questionnaire, the client completes their own acknowledgements.
       "practitioner-assisted-intake.spec.ts",
+      // The studio's real live consent forms completed inside the intake:
+      // required treatment checkbox, photo Accept/Deny (both completing), and
+      // the stale-template refusal.
+      "intake-live-consent-forms.spec.ts",
     ],
   },
   portal: {

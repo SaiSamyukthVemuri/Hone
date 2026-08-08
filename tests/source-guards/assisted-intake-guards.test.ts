@@ -67,17 +67,27 @@ describe("the client cannot author practitioner provenance", () => {
     expect(code).not.toMatch(/PRACTITIONER_ASSISTED_ENTRY|entry-provenance/);
   });
 
-  it("the public sanitizer admits exactly ONE non-question carve-out", () => {
+  it("the public sanitizer admits exactly TWO non-question carve-outs", () => {
     const body = read(PUBLIC_ACTIONS).slice(
       read(PUBLIC_ACTIONS).indexOf("function sanitizeResponses"),
     );
     const head = body.slice(0, body.indexOf("\nexport "));
-    // The acknowledgement claim is the only key written into `out` outside
-    // the shared whitelist. Any second `out[...] =` is a new carve-out and
-    // must be reviewed against the forgery argument above.
+    // Two keys are written into `out` outside the shared whitelist, and this
+    // guard names both. A THIRD `out[...] =` is a new carve-out and must be
+    // reviewed against the forgery argument above before this count moves.
+    //
+    // The second carve-out (live consent responses) was added deliberately and
+    // reviewed on the same terms as the first: the value is narrowed to a
+    // bounded per-form claim, and every field that reaches storage is
+    // re-derived server-side from the studio's own consent_form_templates row
+    // (lib/intake/consent-gate.ts). Like the acknowledgement claim it is
+    // evidence to check, never content to store. Critically, it is NOT the
+    // provenance key — the assertions above still hold: neither carve-out
+    // admits PRACTITIONER_ASSISTED_ENTRY.
     const assignments = head.match(/out\[[^\]]+\]\s*=/g) ?? [];
-    expect(assignments).toHaveLength(1);
+    expect(assignments).toHaveLength(2);
     expect(assignments[0]).toContain("ELECTROLYSIS_ACKNOWLEDGEMENT.id");
+    expect(assignments[1]).toContain("INTAKE_CONSENT_RESPONSES.id");
   });
 });
 
