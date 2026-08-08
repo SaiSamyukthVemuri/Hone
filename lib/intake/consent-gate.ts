@@ -97,6 +97,114 @@ async function loadLiveIntakeConsentTemplates(
   ) as LiveConsentTemplateRow[];
 }
 
+// ---------------------------------------------------------------------------
+// Existing PORTAL completions
+// ---------------------------------------------------------------------------
+//
+// A client who already completed the EXACT CURRENT form through the portal
+// must not be made to answer the identical form again inside intake.
+//
+// STRICTLY READ-ONLY. This module never inserts, updates or deletes a
+// signature, never fabricates a typed name, and never copies a signature into
+// `intake_consent_responses`. The two evidence channels stay historically
+// distinct: a portal signature remains a portal signature, and the intake
+// record contains only what was completed DURING the intake.
+//
+// WHAT COUNTS AS CURRENT. The stored `template_hash` must equal the canonical
+// hash of the template row as it stands right now. That is deliberately
+// stricter than the version comparison `consentRowState` uses
+// (`sig.template_version < template.version`): the hash covers title, body AND
+// version, so a studio that edited the body WITHOUT bumping the version — which
+// a version check would miss entirely — also invalidates the old completion.
+// It reuses the same buildConsentTemplateSnapshot authority the signing side
+// wrote the column with, so there is no second hashing scheme to drift.
+export type IntakeConsentPortalCompletion = {
+  response: "accepted" | "denied";
+  signedAtIso: string;
+  templateVersion: number;
+};
+
+type SignatureRow = {
+  template_id: string;
+  template_hash: string;
+  template_version: number;
+  response: string;
+  signed_at: string;
+};
+
+async function loadCurrentPortalCompletions(input: {
+  studioId: string;
+  clientId: string;
+  rows: LiveConsentTemplateRow[];
+}): Promise<Map<string, IntakeConsentPortalCompletion>> {
+  const out = new Map<string, IntakeConsentPortalCompletion>();
+  if (input.rows.length === 0) return out;
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("client_consent_signatures")
+    .select("template_id, template_hash, template_version, response, signed_at")
+    // Scoped to BOTH ids, so another client's or another studio's signature can
+    // never satisfy this intake's forms.
+    .eq("studio_id", input.studioId)
+    .eq("client_id", input.clientId)
+    .in(
+      "template_id",
+      input.rows.map((r) => r.id),
+    )
+    // Newest first, so the first match per template is the latest signature —
+    // the same first-write-wins pass getLatestSignaturesByTemplateForPortal
+    // uses.
+    .order("signed_at", { ascending: false });
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "intake_consent_portal_completions_load_failed",
+        code: error.code,
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    // Fail SAFE, not open: an unreadable signature history means we simply do
+    // not credit any portal completion, so the client is asked to complete the
+    // form in intake. That is a duplicate request in the worst case — never a
+    // skipped consent.
+    return out;
+  }
+
+  const sigs = (data ?? []) as SignatureRow[];
+  for (const row of input.rows) {
+    const canonical = buildConsentTemplateSnapshot({
+      title: row.title,
+      body: row.body,
+      version: row.version,
+    }).templateHash;
+    const match = sigs.find(
+      (s) => s.template_id === row.id && s.template_hash === canonical,
+    );
+    if (!match) continue;
+    if (row.form_type === "photo_consent") {
+      // Either answer completes a photo form, and a portal DENY stays a DENY.
+      if (match.response !== "accepted" && match.response !== "denied") continue;
+      out.set(row.id, {
+        response: match.response,
+        signedAtIso: match.signed_at,
+        templateVersion: match.template_version,
+      });
+      continue;
+    }
+    // A treatment consent is completed only by an acceptance. A 'denied'
+    // treatment signature (which the portal does not produce) would not count.
+    if (match.response !== "accepted") continue;
+    out.set(row.id, {
+      response: "accepted",
+      signedAtIso: match.signed_at,
+      templateVersion: match.template_version,
+    });
+  }
+  return out;
+}
+
 // One form as the wizard renders it. The body is the studio's own text,
 // verbatim — never truncated, never clamped, never re-authored here.
 export type IntakeConsentFormForRender = {
@@ -109,6 +217,10 @@ export type IntakeConsentFormForRender = {
   // The canonical hash of exactly this (title, body, version). The browser
   // carries it back as a COMPARAND at submit time.
   renderedTemplateHash: string;
+  // Present when the client ALREADY completed this exact current form through
+  // the portal. The wizard renders a read-only completed state instead of an
+  // interactive control, and the submit gate does not require an answer.
+  portalCompletion: IntakeConsentPortalCompletion | null;
 };
 
 // Resolve the forms to display for an intake. Returns [] when the studio has
@@ -116,9 +228,15 @@ export type IntakeConsentFormForRender = {
 // exactly as it did before this feature.
 export async function getIntakeConsentFormsForRender(
   studioId: string,
+  clientId: string,
 ): Promise<IntakeConsentFormForRender[]> {
   const rows = await loadLiveIntakeConsentTemplates(studioId);
   if (!rows) return [];
+  const portal = await loadCurrentPortalCompletions({
+    studioId,
+    clientId,
+    rows,
+  });
   return rows.map((row) => {
     const withHash = withRenderedTemplateHash({
       title: row.title,
@@ -133,6 +251,7 @@ export async function getIntakeConsentFormsForRender(
       body: row.body,
       version: row.version,
       renderedTemplateHash: withHash.renderedTemplateHash,
+      portalCompletion: portal.get(row.id) ?? null,
     };
   });
 }
@@ -235,6 +354,7 @@ function findClaim(
 // must never block submission.
 export async function validateIntakeConsentResponses(input: {
   studioId: string;
+  clientId: string;
   responses: Record<string, unknown>;
   respondedAtIso: string | null;
 }): Promise<IntakeConsentGateResult> {
@@ -250,8 +370,26 @@ export async function validateIntakeConsentResponses(input: {
     normalizeIntakeConsentClaims(input.responses[INTAKE_CONSENT_RESPONSES.id])
       ?.forms ?? [];
 
+  // Existing portal completions of the EXACT current form. Either channel
+  // satisfies a form:
+  //   treatment : portal accepted   OR intake accepted
+  //   photo     : portal accepted/denied OR intake accepted/denied
+  // Nothing else does — and an OLD portal signature is not a completion,
+  // because loadCurrentPortalCompletions matched on the current hash.
+  const portal = await loadCurrentPortalCompletions({
+    studioId: input.studioId,
+    clientId: input.clientId,
+    rows,
+  });
+
   const records: IntakeConsentFormRecord[] = [];
   for (const row of rows) {
+    // A current portal completion satisfies this form outright. It is
+    // deliberately NOT copied into the intake record: the signature stays the
+    // portal's evidence, and `intake_consent_responses` continues to mean
+    // "completed during the intake" and nothing else.
+    if (portal.has(row.id)) continue;
+
     const claim = findClaim(claims, row.id);
     if (!claim) return reject("missing_response", ERR_MISSING);
 
@@ -282,6 +420,11 @@ export async function validateIntakeConsentResponses(input: {
     }
     records.push(buildRecord(row, claim.response, input.respondedAtIso));
   }
+
+  // Every live form was satisfied by an existing portal completion, so the
+  // client completed nothing during this intake. Write no record rather than
+  // an empty one — an absent key honestly means "nothing was completed here".
+  if (records.length === 0) return { ok: true, record: null };
 
   return {
     ok: true,

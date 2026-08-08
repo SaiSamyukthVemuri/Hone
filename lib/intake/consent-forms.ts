@@ -254,6 +254,17 @@ export function readIntakeConsentResponses(
   }
   const formsRaw = (raw as Record<string, unknown>).forms;
   if (!Array.isArray(formsRaw)) return { state: "unreadable" };
+  // An EMPTY forms array is not malformed — it is the honest record of an
+  // intake in which nothing was completed here, which is exactly what happens
+  // when every live form was already completed in the portal. Reporting it as
+  // "unreadable" told the practitioner the entry "could not be read" and to
+  // "treat these forms as not completed", both of which are false and
+  // alarming. Found by the portal-precompletion browser journey.
+  if (formsRaw.length === 0) {
+    return status === "in_progress"
+      ? { state: "no_record" }
+      : { state: "none_recorded" };
+  }
   const forms: IntakeConsentFormView[] = [];
   for (const entry of formsRaw) {
     const view = readFormRecord(entry);
@@ -261,6 +272,7 @@ export function readIntakeConsentResponses(
     // silently counted as a completion either, so it is simply not rendered.
     if (view) forms.push(view);
   }
+  // Entries were present but none could be read: that IS malformed.
   if (forms.length === 0) return { state: "unreadable" };
   return { state: "recorded", forms };
 }

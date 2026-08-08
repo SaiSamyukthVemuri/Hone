@@ -332,11 +332,22 @@ export async function submitIntakeAction(payload: {
   // state, a hidden input, or any browser-supplied version or text.
   const consent = await validateIntakeConsentResponses({
     studioId: existing.studio_id,
+    // Same posture as studio_id: read from the intake row, never the request.
+    clientId: existing.client_id,
     responses: merged,
     respondedAtIso: new Date().toISOString(),
   });
   if (!consent.ok) return { ok: false, error: consent.error };
-  if (consent.record) merged[INTAKE_CONSENT_RESPONSES.id] = consent.record;
+  if (consent.record) {
+    merged[INTAKE_CONSENT_RESPONSES.id] = consent.record;
+  } else {
+    // Nothing was completed during this intake — either the studio has no live
+    // forms, or every one of them was already completed in the portal. Drop any
+    // record a draft save left behind (the wizard posts an empty claim set in
+    // that state) so the stored row does not carry a hollow consent entry the
+    // review surface has to interpret.
+    delete merged[INTAKE_CONSENT_RESPONSES.id];
+  }
 
   // Atomic status guard: only transition to 'submitted' if the row is
   // still 'in_progress'. Two concurrent submit clicks (e.g. browser

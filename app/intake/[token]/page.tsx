@@ -47,7 +47,7 @@ async function loadIntake(token: string): Promise<LoadResult> {
   // still cryptographically valid.
   const { data: header, error: headerErr } = await admin
     .from("client_intake_forms")
-    .select("id, status, current_step, studio_id, studio:studios(name)")
+    .select("id, status, current_step, studio_id, client_id, studio:studios(name)")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -69,6 +69,7 @@ async function loadIntake(token: string): Promise<LoadResult> {
     status: string;
     current_step: number;
     studio_id: string;
+    client_id: string;
     studio: { name: string } | { name: string }[] | null;
   };
   const headerRow = header as unknown as JoinedHeader;
@@ -109,7 +110,13 @@ async function loadIntake(token: string): Promise<LoadResult> {
   // submitted/reviewed intake: that surface renders no wizard at all.
   const consentForms: RenderedConsentForm[] = alreadySubmitted
     ? []
-    : await getIntakeConsentFormsForRender(headerRow.studio_id);
+    : await getIntakeConsentFormsForRender(
+        headerRow.studio_id,
+        // client_id comes from the intake row the verified token addresses,
+        // never from the request, so an existing portal completion can only
+        // ever be credited to the client this intake actually belongs to.
+        headerRow.client_id,
+      );
 
   return {
     ok: true,

@@ -26,6 +26,14 @@ export type RenderedConsentForm = {
   body: string;
   version: number;
   renderedTemplateHash: string;
+  // Set when the client already completed this EXACT current form through the
+  // portal. The form is then rendered read-only: no duplicate acceptance is
+  // requested, and a portal DENY is displayed as Denied, not reset.
+  portalCompletion: {
+    response: "accepted" | "denied";
+    signedAtIso: string;
+    templateVersion: number;
+  } | null;
 };
 
 type Props = {
@@ -48,6 +56,9 @@ export function buildIntakeConsentClaims(
 ): IntakeConsentFormClaim[] {
   const out: IntakeConsentFormClaim[] = [];
   for (const form of forms) {
+    // A form already completed in the portal is not answered again here, so it
+    // contributes no claim. The server credits it from the signature itself.
+    if (form.portalCompletion) continue;
     const response = answers[form.templateId];
     if (response !== "accepted" && response !== "denied") continue;
     out.push({
@@ -69,6 +80,8 @@ export function findIncompleteConsentForms(
 ): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const form of forms) {
+    // Already completed in the portal — nothing is required of the client.
+    if (form.portalCompletion) continue;
     const response = answers[form.templateId];
     if (form.formType === "treatment_consent") {
       // Only an explicit acceptance completes a treatment consent.
@@ -129,7 +142,23 @@ export function IntakeConsentForms({
               {form.body}
             </div>
 
-            {form.formType === "treatment_consent" ? (
+            {form.portalCompletion ? (
+              // ALREADY COMPLETED, in the client portal, against this exact
+              // current form. Read-only and truthful: no control is rendered,
+              // so there is nothing to re-tick and nothing that could silently
+              // overwrite the existing answer. A portal DENY stays Denied.
+              <p
+                className="text-sm font-medium text-neutral-800"
+                data-testid="intake-consent-already-completed"
+                data-response={form.portalCompletion.response}
+              >
+                {form.formType === "photo_consent"
+                  ? form.portalCompletion.response === "accepted"
+                    ? "Already answered: Accepted. You completed this form previously — no need to answer again."
+                    : "Already answered: Denied. You completed this form previously — no need to answer again."
+                  : "Already agreed. You completed this form previously — no need to agree again."}
+              </p>
+            ) : form.formType === "treatment_consent" ? (
               <label className="flex min-h-[44px] cursor-pointer items-start gap-3 py-1 text-sm text-neutral-800">
                 <input
                   type="checkbox"

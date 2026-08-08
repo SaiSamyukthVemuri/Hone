@@ -30,7 +30,16 @@ const db: {
   client_intake_forms: Row[];
   clients: Row[];
   consent_form_templates: Row[];
-} = { client_intake_forms: [], clients: [], consent_form_templates: [] };
+  // The gate now reads existing portal signatures to credit a client who
+  // already completed the exact current form. Empty by default, so every test
+  // above continues to exercise the no-portal-completion path.
+  client_consent_signatures: Row[];
+} = {
+  client_intake_forms: [],
+  clients: [],
+  consent_form_templates: [],
+  client_consent_signatures: [],
+};
 
 function makeBuilder(table: keyof typeof db) {
   const filters: Array<(r: Row) => boolean> = [];
@@ -200,6 +209,7 @@ beforeEach(() => {
   ];
   db.clients = [{ id: CLIENT_ID, studio_id: STUDIO_ID, name: "Dana" }];
   db.consent_form_templates = [];
+  db.client_consent_signatures = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -319,5 +329,117 @@ describe("the server accepts a complete submit", () => {
         INTAKE_CONSENT_RESPONSES.id
       ],
     ).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Existing portal completions, proven through the REAL action.
+// ---------------------------------------------------------------------------
+
+// A portal signature matching the CURRENT text of `row` unless overridden.
+function signature(row: Row, over: Partial<Row> = {}): Row {
+  return {
+    studio_id: STUDIO_ID,
+    client_id: CLIENT_ID,
+    template_id: row.id,
+    template_hash: hashOf(row),
+    template_version: row.version,
+    response: "accepted",
+    signed_at: "2026-07-01T09:00:00.000Z",
+    signature_name: "Dana Reyes",
+    ...over,
+  };
+}
+
+describe("an existing CURRENT portal completion satisfies the submit", () => {
+  it("portal treatment acceptance lets the intake submit with no consent answer", async () => {
+    db.consent_form_templates = [treatmentTemplate()];
+    db.client_consent_signatures = [signature(treatmentTemplate())];
+    const res = await submit();
+    expect(res.ok).toBe(true);
+    expect(currentRow().status).toBe("submitted");
+  });
+
+  it("portal photo DENY lets the intake submit, and stays a denial", async () => {
+    db.consent_form_templates = [photoTemplate()];
+    db.client_consent_signatures = [
+      signature(photoTemplate(), { response: "denied" }),
+    ];
+    const res = await submit();
+    expect(res.ok).toBe(true);
+    expect(currentRow().status).toBe("submitted");
+    // The portal signature is untouched: still exactly one row, still denied.
+    expect(db.client_consent_signatures).toHaveLength(1);
+    expect(db.client_consent_signatures[0].response).toBe("denied");
+  });
+
+  it("a hollow consent record left by a draft save is cleared on submit", async () => {
+    // The wizard posts an empty claim set when every live form is already
+    // completed in the portal, so a draft can carry {version:1, forms:[]}.
+    // Submitting must not leave that behind.
+    db.consent_form_templates = [treatmentTemplate()];
+    db.client_consent_signatures = [signature(treatmentTemplate())];
+    (currentRow().responses as Record<string, unknown>)[
+      INTAKE_CONSENT_RESPONSES.id
+    ] = { version: 1, forms: [] };
+    const res = await submit();
+    expect(res.ok).toBe(true);
+    expect(
+      (currentRow().responses as Record<string, unknown>)[
+        INTAKE_CONSENT_RESPONSES.id
+      ],
+    ).toBeUndefined();
+  });
+
+  it("the portal signature is never copied into the intake record", async () => {
+    db.consent_form_templates = [treatmentTemplate()];
+    db.client_consent_signatures = [signature(treatmentTemplate())];
+    await submit();
+    // Nothing was completed DURING this intake, so no consent record is written.
+    expect(
+      (currentRow().responses as Record<string, unknown>)[
+        INTAKE_CONSENT_RESPONSES.id
+      ],
+    ).toBeUndefined();
+    // ...and no signature was manufactured, altered or duplicated.
+    expect(db.client_consent_signatures).toHaveLength(1);
+    expect(db.client_consent_signatures[0].signature_name).toBe("Dana Reyes");
+  });
+
+  it("an OLD portal version does NOT satisfy the current live template", async () => {
+    const v1 = treatmentTemplate({ version: 1 });
+    db.consent_form_templates = [
+      treatmentTemplate({ version: 2, body: "Revised v2 text." }),
+    ];
+    db.client_consent_signatures = [signature(v1)];
+    const res = await submit();
+    expect(res.ok).toBe(false);
+    expect(currentRow().status).toBe("in_progress");
+  });
+
+  it("another client's portal signature does not satisfy this intake", async () => {
+    db.consent_form_templates = [treatmentTemplate()];
+    db.client_consent_signatures = [
+      signature(treatmentTemplate(), { client_id: "someone-else" }),
+    ];
+    const res = await submit();
+    expect(res.ok).toBe(false);
+    expect(currentRow().status).toBe("in_progress");
+  });
+
+  it("portal treatment + intake photo denial submits together", async () => {
+    db.consent_form_templates = [treatmentTemplate(), photoTemplate()];
+    db.client_consent_signatures = [signature(treatmentTemplate())];
+    const res = await submit(
+      consentClaim([{ row: photoTemplate(), response: "denied" }]),
+    );
+    expect(res.ok).toBe(true);
+    expect(currentRow().status).toBe("submitted");
+    const stored = (currentRow().responses as Record<string, unknown>)[
+      INTAKE_CONSENT_RESPONSES.id
+    ] as { forms: Array<Record<string, unknown>> };
+    // ONLY the intake-completed form is recorded.
+    expect(stored.forms).toHaveLength(1);
+    expect(stored.forms[0].form_type).toBe("photo_consent");
   });
 });

@@ -78,6 +78,37 @@ async function studioEditsTemplate(templateId: string, body: string) {
   );
 }
 
+// Seed a real portal signature for the CURRENT text of a template — exactly
+// what recordConsentSignature writes, including the typed name that only the
+// portal ceremony collects. The intake must READ this and never touch it.
+async function seedPortalSignature(
+  studioId: string,
+  clientId: string,
+  templateId: string,
+  response: "accepted" | "denied",
+): Promise<void> {
+  await sql(
+    `insert into public.client_consent_signatures
+       (id, studio_id, client_id, template_id,
+        template_title_snapshot, template_body_snapshot,
+        template_version, template_hash, signature_name, response)
+     select gen_random_uuid(), $1, $2, t.id, t.title, t.body, t.version,
+            encode(digest(t.title || E'\n---\n' || t.body || E'\n---\n' || t.version::text, 'sha256'), 'hex'),
+            'Dana Reyes', $4
+       from public.consent_form_templates t
+      where t.id = $3`,
+    [studioId, clientId, templateId, response],
+  );
+}
+
+async function countSignatures(clientId: string): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::int n from public.client_consent_signatures where client_id = $1`,
+    [clientId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
 // Every required, unconditional questionnaire answer, so the intake is
 // complete except for the consent phase under test.
 function answeredQuestionnaire(): Record<string, unknown> {
@@ -213,6 +244,68 @@ test.describe("live consent forms in the intake", () => {
       [seed.studioId],
     );
     expect(Number(sigs[0]?.n ?? 0)).toBe(0);
+  });
+
+  test("D. a CURRENT portal completion is credited — no duplicate answer demanded", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const treatmentId = await seedLiveTemplate(
+      seed.studioId,
+      "treatment_consent",
+      "Treatment Consent",
+      TREATMENT_BODY,
+    );
+    const photoId = await seedLiveTemplate(
+      seed.studioId,
+      "photo_consent",
+      "Photo Consent",
+      PHOTO_BODY,
+    );
+    const { clientId, intakeId, token } = await seedDraftOnLastStep(seed);
+
+    // The client already completed BOTH forms in the portal — and DENIED
+    // photo use. That denial must survive as a denial.
+    await seedPortalSignature(seed.studioId, clientId, treatmentId, "accepted");
+    await seedPortalSignature(seed.studioId, clientId, photoId, "denied");
+    expect(await countSignatures(clientId)).toBe(2);
+
+    await page.goto(`/intake/${token}`);
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    // --- both forms render a read-only completed state...
+    await expect(
+      page.getByRole("heading", { name: "Consent forms" }),
+    ).toBeVisible();
+    const completed = page.getByTestId("intake-consent-already-completed");
+    await expect(completed).toHaveCount(2);
+    // ...the photo denial is shown as Denied, not reset to unanswered...
+    await expect(
+      page.locator('[data-testid="intake-consent-already-completed"][data-response="denied"]'),
+    ).toHaveCount(1);
+    // ...and NO duplicate control is offered for either form.
+    await expect(page.getByTestId("intake-consent-agree")).toHaveCount(0);
+    await expect(page.getByTestId("intake-consent-photo-accepted")).toHaveCount(0);
+    await expect(page.getByTestId("intake-consent-photo-denied")).toHaveCount(0);
+
+    // --- submission succeeds with no further consent input
+    await page.getByRole("button", { name: "Submit intake" }).click();
+    await page.waitForURL("**/intake/thank-you");
+
+    const row = await getIntakeRow(intakeId);
+    expect(row?.status).toBe("submitted");
+    // Nothing was completed DURING the intake, so no consent record is written.
+    expect(storedConsent(row)).toBeUndefined();
+    // The portal signatures are untouched: same count, denial intact.
+    expect(await countSignatures(clientId)).toBe(2);
+    const denied = await sql<{ response: string; signature_name: string }>(
+      `select response, signature_name from public.client_consent_signatures
+        where client_id = $1 and template_id = $2`,
+      [clientId, photoId],
+    );
+    expect(denied[0].response).toBe("denied");
+    expect(denied[0].signature_name).toBe("Dana Reyes");
   });
 
   test("C. a form edited mid-review is refused, then completes against the current version", async ({

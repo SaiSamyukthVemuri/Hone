@@ -14,10 +14,11 @@ import { join } from "node:path";
 
 type Row = Record<string, unknown>;
 
-const state: { templates: Row[]; failWith: { code?: string; message: string } | null } = {
-  templates: [],
-  failWith: null,
-};
+const state: {
+  templates: Row[];
+  signatures: Row[];
+  failWith: { code?: string; message: string } | null;
+} = { templates: [], signatures: [], failWith: null };
 
 const { createAdminClient } = vi.hoisted(() => ({ createAdminClient: vi.fn() }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient }));
@@ -25,7 +26,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient }));
 function makeFakeAdmin() {
   return {
     from(table: string) {
-      if (table !== "consent_form_templates") {
+      if (
+        table !== "consent_form_templates" &&
+        table !== "client_consent_signatures"
+      ) {
         throw new Error(`unexpected table ${table}`);
       }
       const predicates: Array<(r: Row) => boolean> = [];
@@ -43,14 +47,16 @@ function makeFakeAdmin() {
           return api;
         },
         then(resolve: (v: { data: Row[] | null; error: unknown }) => void) {
-          if (state.failWith) {
+          if (state.failWith && table === "consent_form_templates") {
             const err = state.failWith;
             state.failWith = null;
             return Promise.resolve({ data: null, error: err }).then(resolve as never);
           }
-          const matched = state.templates.filter((r) =>
-            predicates.every((p) => p(r)),
-          );
+          const source =
+            table === "client_consent_signatures"
+              ? state.signatures
+              : state.templates;
+          const matched = source.filter((r) => predicates.every((p) => p(r)));
           return Promise.resolve({ data: matched, error: null }).then(
             resolve as never,
           );
@@ -139,16 +145,35 @@ function claims(
   };
 }
 
+const CLIENT = "client-1";
+const OTHER_CLIENT = "client-2";
+
 async function gate(responses: Record<string, unknown>, studioId = STUDIO) {
   return validateIntakeConsentResponses({
     studioId,
+    clientId: CLIENT,
     responses,
     respondedAtIso: AT,
   });
 }
 
+// A portal signature row, matching the CURRENT text of `row` unless overridden.
+function signature(row: Row, over: Partial<Row> = {}): Row {
+  return {
+    studio_id: STUDIO,
+    client_id: CLIENT,
+    template_id: row.id,
+    template_hash: hashOf(row),
+    template_version: row.version,
+    response: "accepted",
+    signed_at: "2026-07-01T09:00:00.000Z",
+    ...over,
+  };
+}
+
 beforeEach(() => {
   state.templates = [];
+  state.signatures = [];
   state.failWith = null;
   createAdminClient.mockReset();
   createAdminClient.mockImplementation(() => makeFakeAdmin());
@@ -158,7 +183,7 @@ beforeEach(() => {
 describe("1. which forms appear", () => {
   it("surfaces only the studio's live+active treatment and photo forms", async () => {
     state.templates = [template(), photoTemplate()];
-    const forms = await getIntakeConsentFormsForRender(STUDIO);
+    const forms = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
     expect(forms.map((f) => f.formType).sort()).toEqual([
       "photo_consent",
       "treatment_consent",
@@ -176,7 +201,7 @@ describe("1. which forms appear", () => {
   ] as const) {
     it(`never surfaces a ${label} form`, async () => {
       state.templates = [template(over as Partial<Row>)];
-      expect(await getIntakeConsentFormsForRender(STUDIO)).toEqual([]);
+      expect(await getIntakeConsentFormsForRender(STUDIO, CLIENT)).toEqual([]);
     });
   }
 
@@ -187,13 +212,13 @@ describe("1. which forms appear", () => {
   ]) {
     it(`never surfaces a ${formType} form`, async () => {
       state.templates = [template({ id: `x-${formType}`, form_type: formType })];
-      expect(await getIntakeConsentFormsForRender(STUDIO)).toEqual([]);
+      expect(await getIntakeConsentFormsForRender(STUDIO, CLIENT)).toEqual([]);
     });
   }
 
   it("never surfaces another studio's form", async () => {
     state.templates = [template({ studio_id: OTHER_STUDIO })];
-    expect(await getIntakeConsentFormsForRender(STUDIO)).toEqual([]);
+    expect(await getIntakeConsentFormsForRender(STUDIO, CLIENT)).toEqual([]);
   });
 
   it("supports more than one live form of each type", async () => {
@@ -202,13 +227,13 @@ describe("1. which forms appear", () => {
       template({ id: "t2", created_at: "2026-01-03T00:00:00.000Z" }),
       photoTemplate(),
     ];
-    const forms = await getIntakeConsentFormsForRender(STUDIO);
+    const forms = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
     expect(forms).toHaveLength(3);
   });
 
   it("attaches the canonical hash of the exact rendered text", async () => {
     state.templates = [template()];
-    const [form] = await getIntakeConsentFormsForRender(STUDIO);
+    const [form] = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
     expect(form.renderedTemplateHash).toBe(hashOf(template()));
   });
 });
@@ -617,10 +642,15 @@ describe("10. no typed-name / signature fiction", () => {
   });
 
   it("nothing in this feature writes client_consent_signatures", () => {
-    for (const code of [GATE_CODE, MODULE_CODE, FORMS_UI_CODE]) {
+    // The gate now READS the signing table to credit an existing portal
+    // completion, so a blanket "never mentions it" assertion would be wrong.
+    // The contract is narrower and stronger: the isomorphic module and the
+    // client component must not touch it at all, and the gate may only SELECT.
+    // The write prohibition itself is pinned in section 15.
+    for (const code of [MODULE_CODE, FORMS_UI_CODE]) {
       expect(code).not.toContain("client_consent_signatures");
     }
-    expect(GATE_CODE).not.toMatch(/\.insert\(/);
+    expect(GATE_CODE).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
   });
 
   it("the consent UI hard-codes no consent wording — it renders form.body", () => {
@@ -675,5 +705,228 @@ describe("11. #518 and the DB step contract are untouched", () => {
   it("no migration is required by this feature", () => {
     expect(GATE_CODE).not.toMatch(/alter table|create table|add column/i);
     expect(MODULE_CODE).not.toMatch(/alter table|create table|add column/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EXISTING PORTAL COMPLETIONS
+//
+// A client who already completed the EXACT CURRENT form through the portal must
+// not be asked for the identical answer again inside intake. The matching rule
+// is the stored template_hash, which covers title + body + version — strictly
+// tighter than a version comparison, so an edit at the same version also
+// invalidates the old completion.
+//
+// READ-ONLY throughout: the intake never writes, alters or copies a signature.
+// ---------------------------------------------------------------------------
+describe("12. a current portal completion satisfies the intake form", () => {
+  it("current portal TREATMENT acceptance satisfies it — no intake answer needed", async () => {
+    state.templates = [template()];
+    state.signatures = [signature(template())];
+    const res = await gate({});
+    expect(res.ok).toBe(true);
+    // Nothing was completed during the intake, so nothing is recorded here.
+    if (res.ok) expect(res.record).toBeNull();
+  });
+
+  it("current portal PHOTO acceptance satisfies it", async () => {
+    state.templates = [photoTemplate()];
+    state.signatures = [signature(photoTemplate(), { response: "accepted" })];
+    const res = await gate({});
+    expect(res.ok).toBe(true);
+  });
+
+  it("current portal photo DENY satisfies it — and never blocks the intake", async () => {
+    state.templates = [photoTemplate()];
+    state.signatures = [signature(photoTemplate(), { response: "denied" })];
+    const res = await gate({});
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.record).toBeNull();
+  });
+
+  it("a portal DENY is rendered as Denied, not reset to unanswered", async () => {
+    state.templates = [photoTemplate()];
+    state.signatures = [signature(photoTemplate(), { response: "denied" })];
+    const [form] = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
+    expect(form.portalCompletion).toMatchObject({ response: "denied" });
+  });
+
+  it("a portal completion is NOT copied into the intake record", async () => {
+    state.templates = [template(), photoTemplate()];
+    state.signatures = [signature(template())];
+    // Only the photo form is answered in the intake.
+    const res = await gate(
+      claims([{ row: photoTemplate(), response: "denied" }]),
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Exactly ONE stored form — the intake one. The portal signature stays the
+    // portal's evidence and is not converted into an intake response.
+    expect(res.record!.forms).toHaveLength(1);
+    expect(res.record!.forms[0].form_type).toBe("photo_consent");
+    expect(
+      res.record!.forms.some((f) => f.form_type === "treatment_consent"),
+    ).toBe(false);
+  });
+
+  it("mixed: portal treatment + intake photo submits", async () => {
+    state.templates = [template(), photoTemplate()];
+    state.signatures = [signature(template())];
+    const res = await gate(
+      claims([{ row: photoTemplate(), response: "accepted" }]),
+    );
+    expect(res.ok).toBe(true);
+  });
+});
+
+describe("13. only the CURRENT version counts", () => {
+  it("an OLD treatment signature does not satisfy a newly live version", async () => {
+    const v1 = template({ version: 1 });
+    state.templates = [template({ version: 2, body: "Revised v2 text." })];
+    state.signatures = [signature(v1)]; // hash of v1
+    const res = await gate({});
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("missing_response");
+  });
+
+  it("an OLD photo signature does not satisfy a newly live version", async () => {
+    const v2 = photoTemplate({ version: 2 });
+    state.templates = [photoTemplate({ version: 3, body: "Revised photo." })];
+    state.signatures = [signature(v2, { response: "denied" })];
+    const res = await gate({});
+    expect(res.ok).toBe(false);
+  });
+
+  it("an edited body at the SAME version also invalidates the completion", async () => {
+    // A version comparison would miss this; the hash does not.
+    const original = template();
+    state.templates = [template({ body: "Silently edited, same version." })];
+    state.signatures = [signature(original)];
+    const res = await gate({});
+    expect(res.ok).toBe(false);
+  });
+
+  it("an outdated completion still renders an INTERACTIVE control", async () => {
+    const v1 = template({ version: 1 });
+    state.templates = [template({ version: 2, body: "Revised v2 text." })];
+    state.signatures = [signature(v1)];
+    const [form] = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
+    expect(form.portalCompletion).toBeNull();
+  });
+
+  it("the existing stale-template behaviour is unchanged by all this", async () => {
+    // No portal signature at all; a stale intake claim still fails closed.
+    state.templates = [template({ version: 2, body: "Edited." })];
+    const res = await gate(
+      claims([{ row: template({ version: 1 }), response: "accepted" }]),
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe("stale_template");
+      expect(res.error).toBe(INTAKE_CONSENT_STALE_MESSAGE);
+    }
+  });
+});
+
+describe("14. portal completions cannot be borrowed", () => {
+  it("no portal completion still requires an intake answer", async () => {
+    state.templates = [template()];
+    state.signatures = [];
+    const res = await gate({});
+    expect(res.ok).toBe(false);
+    const [form] = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
+    expect(form.portalCompletion).toBeNull();
+  });
+
+  it("ANOTHER CLIENT's signature does not satisfy this client's form", async () => {
+    state.templates = [template()];
+    state.signatures = [signature(template(), { client_id: OTHER_CLIENT })];
+    const res = await gate({});
+    expect(res.ok).toBe(false);
+    const [form] = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
+    expect(form.portalCompletion).toBeNull();
+  });
+
+  it("ANOTHER STUDIO's signature does not satisfy this form", async () => {
+    state.templates = [template()];
+    state.signatures = [signature(template(), { studio_id: OTHER_STUDIO })];
+    const res = await gate({});
+    expect(res.ok).toBe(false);
+  });
+
+  it("a 'denied' TREATMENT signature does not complete a treatment form", async () => {
+    state.templates = [template()];
+    state.signatures = [signature(template(), { response: "denied" })];
+    const res = await gate({});
+    expect(res.ok).toBe(false);
+  });
+
+  it("the newest matching signature wins when several exist", async () => {
+    state.templates = [photoTemplate()];
+    state.signatures = [
+      signature(photoTemplate(), {
+        response: "denied",
+        signed_at: "2026-07-05T09:00:00.000Z",
+      }),
+      signature(photoTemplate(), {
+        response: "accepted",
+        signed_at: "2026-07-01T09:00:00.000Z",
+      }),
+    ];
+    const [form] = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
+    // The fake returns rows in array order, mirroring `order signed_at desc`.
+    expect(form.portalCompletion).toMatchObject({ response: "denied" });
+  });
+});
+
+describe("15. the intake never writes to the signing system", () => {
+  it("the gate module performs no signature INSERT / UPDATE / DELETE", () => {
+    const code = codeOnly(read("lib/intake/consent-gate.ts"));
+    // It reads the table...
+    expect(code).toContain('.from("client_consent_signatures")');
+    // ...and only ever selects from it.
+    const sigSlice = code.slice(code.indexOf('.from("client_consent_signatures")'));
+    const nextFrom = sigSlice.indexOf(".from(", 10);
+    const scoped = nextFrom > -1 ? sigSlice.slice(0, nextFrom) : sigSlice;
+    expect(scoped).toContain(".select(");
+    expect(scoped).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
+    // And no typed name is ever produced.
+    expect(code).not.toMatch(/signature_name\s*:/);
+  });
+
+  it("both signature queries are scoped to studio AND client", () => {
+    const code = codeOnly(read("lib/intake/consent-gate.ts"));
+    expect(code).toMatch(/\.eq\("studio_id", input\.studioId\)/);
+    expect(code).toMatch(/\.eq\("client_id", input\.clientId\)/);
+  });
+});
+
+describe("16. an empty consent record is not 'unreadable'", () => {
+  // Found by the portal-precompletion browser journey. A draft save posts an
+  // empty claim set when every live form is already completed in the portal,
+  // so `{version:1, forms:[]}` can legitimately reach the row. Reporting that
+  // as "unreadable" told the practitioner it "could not be read" and to treat
+  // the forms as not completed — both false.
+  const empty = { [INTAKE_CONSENT_RESPONSES.id]: { version: 1, forms: [] } };
+
+  it("reads as none_recorded on a submitted intake", () => {
+    expect(readIntakeConsentResponses(empty, "submitted").state).toBe(
+      "none_recorded",
+    );
+  });
+
+  it("reads as no_record on a draft", () => {
+    expect(readIntakeConsentResponses(empty, "in_progress").state).toBe(
+      "no_record",
+    );
+  });
+
+  it("entries that are present but all malformed ARE unreadable", () => {
+    const malformed = {
+      [INTAKE_CONSENT_RESPONSES.id]: { version: 1, forms: [{ nope: true }] },
+    };
+    expect(readIntakeConsentResponses(malformed, "submitted").state).toBe(
+      "unreadable",
+    );
   });
 });
