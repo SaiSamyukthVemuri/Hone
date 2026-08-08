@@ -1,0 +1,206 @@
+-- ---------------------------------------------------------------------------
+-- 0172 — APPOINTMENT BOUNDARY B3: revoke direct anon/authenticated DML on
+--        public.appointments and public.appointment_audit
+--
+-- WHAT THIS CLOSES
+-- ===========================================================================
+-- `docs/audits/APPOINTMENT_DML_BOUNDARY_2026-08.md` (PR #521) found that
+-- `public.appointments` and `public.appointment_audit` have never received a
+-- GRANT or REVOKE in any of the 171 migrations. They therefore still carry the
+-- Supabase default table grants for the two browser-reachable API roles, so a
+-- practitioner holding a valid JWT — or an unauthenticated visitor — can issue
+-- INSERT / UPDATE / DELETE straight at PostgREST, entirely outside the reviewed
+-- command layer. RLS narrows WHICH rows they may touch; it does not stop them
+-- touching rows at all, and for `appointment_audit` the 0010 `FOR INSERT`
+-- policy actively permits a member to FORGE audit rows for their own studio.
+--
+-- This migration removes the capability itself. It is the P1 closure.
+--
+-- WHY THIS IS A ZERO-APPLICATION-CHANGE MIGRATION
+-- ===========================================================================
+-- The clinical precedent (L18) needed two steps 82 migrations apart — 0087 split
+-- the FOR ALL policies, 0169 revoked the privileges — because 25 authenticated
+-- clinical writers existed in between and needed a compatibility window.
+--
+-- Appointments has ZERO such writers, so the two steps collapse into one
+-- migration with no window at all. That is not an assertion: it is frozen by a
+-- static census that shipped FIRST, deliberately, in PR B1 (#522) —
+-- `tests/security/appointment-direct-dml-guard.test.ts`. That guard proves, with
+-- a TypeScript compiler-API analyzer resistant to alias evasion and detached
+-- receiver chains, that shipped code contains:
+--
+--   direct appointments writers .................. 7
+--   direct appointment_audit runtime writers ..... 0
+--   of those 7, authenticated-client writers ..... 0
+--
+-- and that all seven are `service_role` PostgREST UPDATEs touching ONLY
+-- `postcare_email_*` bookkeeping columns under a server-resolved studio_id. They
+-- are INSIDE the boundary this file draws, and B3 does not retire them; that is
+-- later work. Nothing deployed loses a capability here.
+--
+-- The behavioural counterpart is PR B2 (#523), which established the
+-- pre-revocation lifecycle/audit baseline this migration is measured against.
+--
+-- MEASURED IN PRODUCTION BEFORE WRITING THIS
+-- ===========================================================================
+-- Read-only production probes (§13.2 probes 1-5, ZERO production writes) found,
+-- for BOTH tables:
+--
+--   anon           SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER MAINTAIN
+--   authenticated  SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER MAINTAIN
+--   service_role   the same broad posture — MUST REMAIN UNCHANGED
+--   postgres       unchanged
+--   PUBLIC         no grant at all
+--
+-- and exactly three policies, with no drift:
+--
+--   appointments_member_all           ALL     (0010:272-277)
+--   appointment_audit_member_read     SELECT  (0010:279-288)
+--   appointment_audit_member_insert   INSERT  (0010:290-299)
+--
+-- Every privilege named below was therefore observed to EXIST in production.
+-- Nothing here is speculative and nothing here is a guess about the platform's
+-- defaults.
+--
+-- THE MAINTAIN PRIVILEGE (GROUP 5) — WHY IT IS NAMED, AND ITS VERSION FLOOR
+-- ===========================================================================
+-- PostgreSQL 17 introduced a per-table MAINTAIN privilege (VACUUM, ANALYZE,
+-- CLUSTER, REINDEX, REFRESH MATERIALIZED VIEW, LOCK TABLE). Supabase's default
+-- grant set includes it, which is why the production ACL letter map reads
+-- `arwdDxtm` — the trailing `m` IS MAINTAIN — for anon and authenticated on both
+-- tables. It is a maintenance capability a browser role has no business holding,
+-- and the 0169 doctrine of naming every verb rather than reaching for
+-- `REVOKE ALL` means it must be named explicitly here or it silently survives.
+--
+--   Production ................. MAINTAIN present (measured, §13.2)
+--   supabase/config.toml ....... [db] major_version = 17
+--   Local test stack ........... postgres:17.6.1.131, server_version_num 170006
+--
+-- Local and production are on the same major version, so this statement is
+-- validated from zero on the same PostgreSQL that will execute it. It is kept in
+-- its OWN group, separate from GROUP 4, precisely because it is the one group
+-- with a version floor: on a pre-17 server it would be a syntax error rather
+-- than a no-op, and a reviewer who ever needs to excise it can do so without
+-- touching the P1 closure in groups 1-2 or the doctrine sweep in group 4. No
+-- compatibility shim, no DO-block, no version sniffing — this repository targets
+-- PostgreSQL 17 and says so in config.toml.
+--
+-- SELECT IS NEVER NAMED — AND `REVOKE ALL` IS FORBIDDEN
+-- ===========================================================================
+-- `authenticated` SELECT on `appointments` is load-bearing at ~22 read sites
+-- (booking queries, the calendar day page, dashboard, global search, practice
+-- metrics, quick checkout, data export); `authenticated` SELECT on
+-- `appointment_audit` powers the cancellation-insight card. `REVOKE ALL` would
+-- take SELECT with it and break every one of them, and it would silently absorb
+-- any future privilege type instead of naming exactly the verbs this cutover is
+-- about. There is no `revoke all` in this file and no revocation below mentions
+-- SELECT. This is the 0169 doctrine, applied unchanged.
+--
+-- THE POLICY REPLACEMENT MUST BE ADJACENT (GROUP 3)
+-- ===========================================================================
+-- The privilege is the enforcement. The policy is the durable record of intent,
+-- and the thing that keeps the hole shut if a privilege is ever re-granted by
+-- platform tooling or a future `auto_expose_new_tables` regression.
+--
+-- Dropping `appointments_member_all` WITHOUT its replacement in the same
+-- transaction has exactly the same blast radius as `REVOKE ALL`: appointments
+-- would have no permissive SELECT policy and every practitioner read would
+-- return zero rows. The DROP and the CREATE are therefore adjacent and inside
+-- one transaction. The replacement reuses `public.is_studio_member(studio_id)`
+-- VERBATIM — the predicate is not rewritten, re-derived or widened, and
+-- `is_studio_member` itself is not touched — so no read changes.
+--
+-- `appointment_audit_member_insert` is dropped outright with no replacement:
+-- after this migration no client role holds INSERT on that table, so a policy
+-- permitting an insert it can never reach is pure residue, and residue that
+-- reads as an intentional grant is worse than none.
+--
+-- `appointment_audit_member_read` is PRESERVED EXACTLY AS-IS. Its `studio_id`
+-- redesign (it currently reaches the studio through a subquery on appointments)
+-- belongs to B5/0174 and is deliberately not attempted here.
+--
+-- WHAT THIS DOES NOT TOUCH
+-- ===========================================================================
+-- * service_role — NOT revoked, not mentioned as a grantee anywhere below. The
+--   governed command layer executes as service_role and every appointment write
+--   in the product depends on it. Revoking here would be an outage.
+-- * postgres — unchanged. PUBLIC — holds no grant (measured: 0) and is not
+--   mutated.
+-- * NO trigger function is created, replaced or dropped. This is a STANDING
+--   PROHIBITION for this file, not a stylistic preference: production's
+--   `snapshot_appointment_buffer()` carries an out-of-band GUC behaviour that
+--   exists in NO migration in this repository, so a `create or replace function`
+--   emitted from repo source would silently delete a live production behaviour.
+--   There is not a single function statement in this file.
+-- * No function EXECUTE grant or revocation; no command is touched. No table,
+--   column, index, constraint, ownership, storage or extension change. Not one
+--   statement below writes, deletes or repairs a row.
+-- * No repair command, no reverse lifecycle edge, no notes repair, no
+--   attribution change, no audit trigger, no audit `studio_id`, no actor FK, no
+--   status-transition trigger, no `set_updated_at`, no capacity-trigger fix, no
+--   legacy RPC drop, no cancellation-acknowledgement work, no postcare writer
+--   replacement. Those are B4-B9 and each owns its own migration number.
+-- * Exactly TWO tables are in scope. `appointment_payments`,
+--   `appointment_policy_acknowledgements` and `studio_calendar_reservations` are
+--   deliberately excluded: all three are already RLS-default-denied for row DML,
+--   so folding them in would be defence-in-depth on tables with no writers and
+--   would cost this migration its "exactly two tables" scope note. They get
+--   their own hygiene migration.
+--
+-- A NOTE FOR THE NEXT READER ABOUT 0170 AND 0171
+-- ===========================================================================
+-- The post-apply verification comments in `0170` (§3) and `0171` (§4) each say
+-- "EXPECT both roles still TRUE on all three. This migration revokes NOTHING."
+-- Those statements were TRUE when 0170 and 0171 were applied and are the record
+-- of what was verified at that time. THIS FILE SUPERSEDES THEM. They are
+-- deliberately left byte-identical rather than corrected in place, because
+-- `docs/production/migration-state.json` records the sha256 of the exact 0171
+-- bytes that were applied to production
+-- (f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6); editing an
+-- applied migration — even only its comments — would falsify that record. An
+-- applied migration is not edited. It is superseded, here.
+--
+-- ROLLBACK
+-- ===========================================================================
+-- If this must be reversed, the reversal is a NEW migration that re-grants the
+-- named privileges to `anon` and `authenticated` and restores the 0010 policy
+-- shape. Do not edit this file after it is applied. Note that reversal restores
+-- a CAPABILITY, not data: this migration writes no rows, so nothing is lost by
+-- applying it and nothing is recovered by reverting it.
+--
+-- Own transaction + armed lock_timeout: `supabase db push` does not wrap a
+-- migration file in a transaction, so a bare SET LOCAL emits 25P01 and never
+-- arms (the 0159 lesson, recorded verbatim at 0169:70-76).
+--
+-- Migration max 0171 -> 0172.
+-- ---------------------------------------------------------------------------
+
+begin;
+
+set local lock_timeout = '5s';
+
+-- GROUP 1 — appointments row DML. SELECT is deliberately NOT named.
+revoke insert, update, delete on table public.appointments       from authenticated;
+revoke insert, update, delete on table public.appointments       from anon;
+
+-- GROUP 2 — appointment_audit row DML. SELECT is deliberately NOT named.
+revoke insert, update, delete on table public.appointment_audit  from authenticated;
+revoke insert, update, delete on table public.appointment_audit  from anon;
+
+-- GROUP 3 — policy residue. DROP and CREATE are adjacent and in one
+-- transaction; the membership predicate is reused verbatim.
+drop policy if exists "appointments_member_all" on public.appointments;
+create policy "appointments_member_select"
+  on public.appointments for select to authenticated
+  using (public.is_studio_member(studio_id));
+drop policy if exists "appointment_audit_member_insert" on public.appointment_audit;
+
+-- GROUP 4 — maintenance/definition verbs the browser roles must not hold.
+revoke truncate, references, trigger on table public.appointments      from anon, authenticated;
+revoke truncate, references, trigger on table public.appointment_audit from anon, authenticated;
+
+-- GROUP 5 — MAINTAIN (PostgreSQL 17+; measured present in production).
+revoke maintain on table public.appointments      from anon, authenticated;
+revoke maintain on table public.appointment_audit from anon, authenticated;
+
+commit;

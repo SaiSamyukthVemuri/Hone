@@ -1427,19 +1427,44 @@ describe("0171 — privilege boundary", () => {
     expect(r.rows[0].svc).toBe(true);
   });
 
-  it("revokes NOTHING from the appointments table", async () => {
+  it("after 0172 the appointments table leaves both browser roles with SELECT only", async () => {
+    // Was "revokes NOTHING from the appointments table". 0171 itself still
+    // revokes nothing — that remains pinned byte-level in
+    // tests/migrations/0171-public-reschedule-command.test.ts. What changed is
+    // the CHAIN this suite runs against: migration 0172 (appointment boundary
+    // B3) now applies after 0171, so the observed posture inverts.
     const r = await adminQuery(
       `select r.rolname,
               has_table_privilege(r.oid,'public.appointments','INSERT') ins,
               has_table_privilege(r.oid,'public.appointments','UPDATE') upd,
-              has_table_privilege(r.oid,'public.appointments','DELETE') del
-         from pg_roles r where r.rolname in ('anon','authenticated')`,
+              has_table_privilege(r.oid,'public.appointments','DELETE') del,
+              has_table_privilege(r.oid,'public.appointments','TRUNCATE') trunc,
+              has_table_privilege(r.oid,'public.appointments','MAINTAIN') maint,
+              has_table_privilege(r.oid,'public.appointments','SELECT') sel
+         from pg_roles r where r.rolname in ('anon','authenticated') order by 1`,
     );
+    expect(r.rowCount, "both browser roles must be probed").toBe(2);
     for (const row of r.rows) {
-      expect(row.ins).toBe(true);
-      expect(row.upd).toBe(true);
-      expect(row.del).toBe(true);
+      expect(row.ins, `${row.rolname} INSERT`).toBe(false);
+      expect(row.upd, `${row.rolname} UPDATE`).toBe(false);
+      expect(row.del, `${row.rolname} DELETE`).toBe(false);
+      expect(row.trunc, `${row.rolname} TRUNCATE`).toBe(false);
+      expect(row.maint, `${row.rolname} MAINTAIN`).toBe(false);
+      expect(row.sel, `${row.rolname} SELECT must be retained`).toBe(true);
     }
+  });
+
+  it("the reschedule command itself keeps its service_role EXECUTE after 0172", async () => {
+    // The reschedule path writes appointments as service_role. If 0172 had
+    // reached service_role or the function layer, every public reschedule in
+    // production would start failing.
+    const r = await adminQuery(
+      `select has_function_privilege('service_role', p.oid, 'EXECUTE') svc
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname='public' and p.proname='reschedule_appointment_v2'`,
+    );
+    expect(r.rowCount).toBe(1);
+    expect(r.rows[0].svc).toBe(true);
   });
 });
 
