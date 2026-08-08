@@ -308,6 +308,61 @@ test.describe("live consent forms in the intake", () => {
     expect(denied[0].signature_name).toBe("Dana Reyes");
   });
 
+  // RETIREMENT (#518). The temporary electrolysis acknowledgement is gone from
+  // the client ceremony; #529's real studio forms are what a new intake
+  // completes. This is the one browser proof that the retired checkbox is
+  // absent and that neither legacy key is created by a new submission.
+  test("E. the retired #518 acknowledgement is absent, and no legacy key is written", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    await seedLiveTemplate(
+      seed.studioId,
+      "treatment_consent",
+      "Treatment Consent",
+      TREATMENT_BODY,
+    );
+    await seedLiveTemplate(
+      seed.studioId,
+      "photo_consent",
+      "Photo Consent",
+      PHOTO_BODY,
+    );
+    const { intakeId, token } = await seedDraftOnLastStep(seed);
+
+    await page.goto(`/intake/${token}`);
+
+    // --- Step 5 no longer renders the retired acknowledgement
+    await expect(
+      page.getByRole("heading", { name: "Acknowledgments" }),
+    ).toBeVisible();
+    await expect(page.locator("#ack_electrolysis_nature")).toHaveCount(0);
+    const step5 = (await page.locator("body").innerText()).toLowerCase();
+    expect(step5).not.toContain("electrolysis is a course of treatment");
+    // ...while the client's own confirmations remain.
+    await expect(page.locator("#ack_accurate")).toHaveCount(1);
+
+    // --- on to the real consent forms
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByText(TREATMENT_BODY)).toBeVisible();
+    await page.getByTestId("intake-consent-agree").check();
+    await page.getByTestId("intake-consent-photo-denied").check();
+    await page.getByRole("button", { name: "Submit intake" }).click();
+    await page.waitForURL("**/intake/thank-you");
+
+    // --- DB oracle: submitted, NO legacy keys, and the #529 record present
+    const row = await getIntakeRow(intakeId);
+    expect(row?.status).toBe("submitted");
+    expect(row?.responses).not.toHaveProperty("ack_electrolysis_nature");
+    expect(row?.responses).not.toHaveProperty("electrolysis_acknowledgement");
+    const consent = storedConsent(row)!;
+    expect(consent.forms).toHaveLength(2);
+    expect(
+      consent.forms.find((f) => f.form_type === "photo_consent")!.response,
+    ).toBe("denied");
+  });
+
   test("C. a form edited mid-review is refused, then completes against the current version", async ({
     page,
   }) => {

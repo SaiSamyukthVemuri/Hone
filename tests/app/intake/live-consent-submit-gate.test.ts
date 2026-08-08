@@ -106,15 +106,11 @@ vi.mock("@/lib/notifications/practitioner-notifications", () => ({
 
 import { submitIntakeAction } from "@/app/intake/[token]/actions";
 import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
-import {
-  buildElectrolysisAcknowledgementClaim,
-  ELECTROLYSIS_ACKNOWLEDGEMENT as CANON,
-} from "@/lib/intake/acknowledgements";
 import { INTAKE_STEPS } from "@/lib/intake/questions";
 import { buildConsentTemplateSnapshot } from "@/lib/consent/template-snapshot";
 
-// Every required, unconditional answer plus the #518 acknowledgement, so the
-// ONLY thing that can block a submit in these tests is consent.
+// Every required, unconditional answer, so the ONLY thing that can block a
+// submit in these tests is consent.
 function completeAnswers(): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const step of INTAKE_STEPS) {
@@ -128,7 +124,9 @@ function completeAnswers(): Record<string, unknown> {
       else out[q.key] = "provided";
     }
   }
-  out[CANON.id] = buildElectrolysisAcknowledgementClaim(true);
+  // The #518 acknowledgement claim used to be attached here. It is retired:
+  // consent is now the ONLY thing that can block a submit in these tests,
+  // which is exactly what this file is for.
   return out;
 }
 

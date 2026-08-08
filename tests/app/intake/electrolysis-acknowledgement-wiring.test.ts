@@ -1,20 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import {
-  buildElectrolysisAcknowledgementClaim,
-  ELECTROLYSIS_ACKNOWLEDGEMENT,
-} from "@/lib/intake/acknowledgements";
+import { ELECTROLYSIS_ACKNOWLEDGEMENT } from "@/lib/intake/acknowledgements";
+import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 import { INTAKE_STEPS } from "@/lib/intake/questions";
 
-// Versioned electrolysis acknowledgement — the PUBLIC BOUNDARY.
+// Versioned electrolysis acknowledgement — RETIRED at the PUBLIC BOUNDARY.
 //
-// The first half drives the REAL saveIntakeStepAction / submitIntakeAction
-// against an in-memory admin client, so the forgery cases are proven at the
-// action boundary and not merely against the pure validator. The second
-// half is source guards for the properties a behavioural test cannot reach
-// (no typed signature anywhere, one shared wording source, no migration,
-// no Session 1D surface touched).
+// This file used to prove the COLLECTION wiring: that the real
+// saveIntakeStepAction / submitIntakeAction built, validated and stored a
+// versioned acknowledgement, and refused forged ones. #529 replaced the
+// acknowledgement with the studio's own live consent forms, so collection is
+// retired and those proofs are retired with it.
+//
+// What it proves now is the retirement itself, at the same real action
+// boundary: a new intake submits with NO acknowledgement, neither key is
+// created, and a forged payload for either key is not persisted — because the
+// sanitizer carve-out that made the key browser-authorable is gone rather than
+// merely unused. Historical rows are proven untouched.
+//
+// The source guards below are unchanged and still earn their place.
 //
 // Service-independent: no Supabase, no browser, no network.
 
@@ -131,7 +136,8 @@ function completeAnswers(): Record<string, unknown> {
       else out[q.key] = "provided";
     }
   }
-  out[CANON.id] = buildElectrolysisAcknowledgementClaim(true);
+  // RETIRED: this used to attach the acknowledgement claim. A complete set of
+  // answers no longer includes it, which is the point of the tests below.
   return out;
 }
 
@@ -173,254 +179,7 @@ beforeEach(() => {
   seed();
 });
 
-describe("submit boundary — a valid acknowledgement is recorded", () => {
-  it("submits, and persists a server-authored versioned record", async () => {
-    const before = Date.now();
-    const res = await submitIntakeAction({ token: "good", responses: completeAnswers() });
-    expect(res).toEqual({ ok: true });
-    expect(row().status).toBe("submitted");
-
-    const ack = storedAck();
-    expect(ack.id).toBe(CANON.id);
-    expect(ack.version).toBe(CANON.version);
-    expect(ack.wording).toBe(CANON.wording);
-    expect(ack.accepted).toBe(true);
-    // accepted_at is stamped from the SERVER clock.
-    const at = Date.parse(String(ack.accepted_at));
-    expect(Number.isNaN(at)).toBe(false);
-    expect(at).toBeGreaterThanOrEqual(before);
-    expect(at).toBeLessThanOrEqual(Date.now());
-    // The plain checkbox answer is stored alongside, under its own key.
-    expect(storedResponses()[CANON.questionKey]).toBe(true);
-  });
-
-  it("stores exactly the five contract fields — nothing the client injected", async () => {
-    await submitIntakeAction({
-      token: "good",
-      responses: {
-        ...completeAnswers(),
-        [CANON.id]: {
-          ...buildElectrolysisAcknowledgementClaim(true),
-          accepted_at: "1999-01-01T00:00:00.000Z",
-          signature_name: "Ada Lovelace",
-          studio_id: "attacker-studio",
-        },
-      },
-    });
-    expect(row().status).toBe("submitted");
-    expect(Object.keys(storedAck()).sort()).toEqual([
-      "accepted",
-      "accepted_at",
-      "id",
-      "version",
-      "wording",
-    ]);
-    expect(storedAck().accepted_at).not.toBe("1999-01-01T00:00:00.000Z");
-  });
-});
-
-describe("submit boundary — forged payloads do not submit", () => {
-  const forgeries: Array<[string, Record<string, unknown>]> = [
-    ["missing acknowledgement record", { [CANON.id]: undefined }],
-    ["accepted: false", { [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), accepted: false } }],
-    ["accepted: 'true' (string)", { [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), accepted: "true" } }],
-    ["wrong id", { [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), id: "marketing_consent" } }],
-    ["unknown version", { [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), version: "v99" } }],
-    ["downgraded version", { [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), version: "v0" } }],
-    ["altered wording", { [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), wording: "I agree to anything." } }],
-    ["record present but checkbox false", { [CANON.questionKey]: false }],
-    ["record present but checkbox absent", { [CANON.questionKey]: undefined }],
-    ["record is a bare true", { [CANON.id]: true }],
-  ];
-
-  for (const [name, override] of forgeries) {
-    it(`refuses: ${name}`, async () => {
-      const responses = { ...completeAnswers(), ...override };
-      const res = await submitIntakeAction({ token: "good", responses });
-      expect(res.ok).toBe(false);
-      // The row never transitions and never gains an acceptance.
-      expect(row().status).toBe("in_progress");
-      expect(row().submitted_at ?? null).toBeNull();
-      const ack = storedResponses()[CANON.id] as Record<string, unknown> | undefined;
-      expect(ack?.accepted ?? false).not.toBe(true);
-    });
-  }
-
-  it("names no key, version, table or database detail in any refusal", async () => {
-    for (const [, override] of forgeries) {
-      seed();
-      const res = await submitIntakeAction({
-        token: "good",
-        responses: { ...completeAnswers(), ...override },
-      });
-      expect(res.ok).toBe(false);
-      if (res.ok) continue;
-      expect(res.error).not.toMatch(/electrolysis_acknowledgement|ack_electrolysis_nature/);
-      expect(res.error).not.toMatch(/client_intake_forms|jsonb|postgres|constraint|null value/i);
-      expect(res.error).not.toMatch(/\bv1\b/);
-      expect(res.error.length).toBeLessThan(200);
-    }
-  });
-
-  it("tells a client with stale wording to refresh, without leaking internals", async () => {
-    const res = await submitIntakeAction({
-      token: "good",
-      responses: {
-        ...completeAnswers(),
-        [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), version: "v0" },
-      },
-    });
-    expect(res.ok).toBe(false);
-    expect(res.ok === false && res.error).toMatch(/refresh/i);
-  });
-
-  it("returns the generic error — never the raw DB message — when the write fails", async () => {
-    failNextUpdateWith.value = {
-      code: "23514",
-      message: 'new row violates check constraint "client_intake_forms_status_check"',
-    };
-    const res = await submitIntakeAction({ token: "good", responses: completeAnswers() });
-    expect(res.ok).toBe(false);
-    if (res.ok) return;
-    expect(res.error).not.toMatch(/constraint|23514|client_intake_forms/);
-    expect(res.error).toBe(
-      "We couldn't save your intake. Please refresh and try again.",
-    );
-  });
-});
-
-describe("legacy compatibility", () => {
-  it("an already-submitted intake is returned ok and never rewritten", async () => {
-    const legacy = { legal_name: "Old Client", has_allergies: "no" };
-    seed({ status: "submitted", responses: legacy, submitted_at: "2026-01-01T00:00:00.000Z" });
-    const res = await submitIntakeAction({ token: "good", responses: completeAnswers() });
-    expect(res).toEqual({ ok: true });
-    // Untouched: no acknowledgement injected, no answers changed, no
-    // retroactive corruption of a record the client already signed off.
-    expect(storedResponses()).toEqual(legacy);
-    expect(storedResponses()[CANON.id]).toBeUndefined();
-    expect(row().submitted_at).toBe("2026-01-01T00:00:00.000Z");
-  });
-
-  it("a reviewed intake is likewise untouched", async () => {
-    const legacy = { legal_name: "Reviewed Client" };
-    seed({ status: "reviewed", responses: legacy });
-    await submitIntakeAction({ token: "good", responses: completeAnswers() });
-    expect(storedResponses()).toEqual(legacy);
-  });
-
-  it("a legacy draft can still be saved and is not bricked", async () => {
-    seed({ responses: { legal_name: "Half-done" } });
-    const res = await saveIntakeStepAction({
-      token: "good",
-      step: 3,
-      responses: { preferred_name: "Sam" },
-    });
-    expect(res).toEqual({ ok: true });
-    expect(storedResponses().legal_name).toBe("Half-done");
-    expect(storedResponses().preferred_name).toBe("Sam");
-    // No acknowledgement is invented for a client who has not seen it.
-    expect(storedResponses()[CANON.id]).toBeUndefined();
-  });
-});
-
-describe("draft save — serialization, restoration, and no forged wording", () => {
-  it("persists the acknowledgement so a resumed draft restores it", async () => {
-    await saveIntakeStepAction({
-      token: "good",
-      step: 5,
-      responses: {
-        [CANON.questionKey]: true,
-        [CANON.id]: buildElectrolysisAcknowledgementClaim(true),
-      },
-    });
-    expect(storedResponses()[CANON.questionKey]).toBe(true);
-    expect(storedAck().accepted).toBe(true);
-    expect(storedAck().wording).toBe(CANON.wording);
-    // A draft is not an acceptance: no timestamp until submit.
-    expect(storedAck().accepted_at).toBeUndefined();
-  });
-
-  it("a draft save NEVER persists client-supplied wording, id or version", async () => {
-    await saveIntakeStepAction({
-      token: "good",
-      step: 5,
-      responses: {
-        [CANON.questionKey]: true,
-        [CANON.id]: {
-          id: "totally_different",
-          version: "v99",
-          wording: "I agree to unlimited charges and waive all rights.",
-          accepted: true,
-        },
-      },
-    });
-    expect(storedAck().id).toBe(CANON.id);
-    expect(storedAck().version).toBe(CANON.version);
-    expect(storedAck().wording).toBe(CANON.wording);
-  });
-
-  it("unticking overwrites the stored acceptance rather than leaving it stale", async () => {
-    await saveIntakeStepAction({
-      token: "good",
-      step: 5,
-      responses: {
-        [CANON.questionKey]: true,
-        [CANON.id]: buildElectrolysisAcknowledgementClaim(true),
-      },
-    });
-    expect(storedAck().accepted).toBe(true);
-    await saveIntakeStepAction({
-      token: "good",
-      step: 5,
-      responses: {
-        [CANON.questionKey]: false,
-        [CANON.id]: buildElectrolysisAcknowledgementClaim(false),
-      },
-    });
-    expect(storedAck().accepted).toBe(false);
-    // And that stale-free state genuinely blocks submission.
-    const res = await submitIntakeAction({
-      token: "good",
-      responses: { ...completeAnswers(), [CANON.questionKey]: false, [CANON.id]: buildElectrolysisAcknowledgementClaim(false) },
-    });
-    expect(res.ok).toBe(false);
-    expect(row().status).toBe("in_progress");
-  });
-
-  it("changing an unrelated answer does not clear the acknowledgement", async () => {
-    await saveIntakeStepAction({
-      token: "good",
-      step: 5,
-      responses: {
-        [CANON.questionKey]: true,
-        [CANON.id]: buildElectrolysisAcknowledgementClaim(true),
-      },
-    });
-    await saveIntakeStepAction({
-      token: "good",
-      step: 2,
-      responses: { outcome_hoped: "Clear upper lip" },
-    });
-    expect(storedResponses()[CANON.questionKey]).toBe(true);
-    expect(storedAck().accepted).toBe(true);
-    expect(storedResponses().outcome_hoped).toBe("Clear upper lip");
-  });
-
-  it("a draft save is never refused for an unticked acknowledgement", async () => {
-    const res = await saveIntakeStepAction({
-      token: "good",
-      step: 5,
-      responses: { [CANON.questionKey]: false, legal_name: "Partial" },
-    });
-    expect(res).toEqual({ ok: true });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Source guards
-// ---------------------------------------------------------------------------
-
+// Source-guard helpers (unchanged).
 const ROOT = path.resolve(__dirname, "../../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 // Strip // line comments and {/* jsx */} blocks so negative greps target
@@ -442,6 +201,7 @@ const QUESTIONS = "lib/intake/questions.ts";
 // implementation. The "nothing auto-checks a checkbox" guarantee below
 // follows the code to its new home rather than being weakened.
 const FIELD = "components/intake/intake-question-field.tsx";
+
 
 describe("16. the wording lives in exactly one source", () => {
   // A distinctive fragment of the wording. If it appears in more than one
@@ -470,8 +230,11 @@ describe("16. the wording lives in exactly one source", () => {
   });
 
   it("the question label and the review card both READ the shared constant", () => {
-    expect(read(QUESTIONS)).toMatch(/label: ELECTROLYSIS_ACKNOWLEDGEMENT\.wording/);
-    expect(read(QUESTIONS)).toMatch(/helpText: ELECTROLYSIS_ACKNOWLEDGEMENT\.helpText/);
+    // RETIRED: the questionnaire no longer renders a label or help text from
+    // the constant, because there is no question. What remains is the review
+    // card, which reads the STORED historical snapshot through the legacy
+    // reader — the only surviving consumer.
+    expect(read(QUESTIONS)).not.toMatch(/label: ELECTROLYSIS_ACKNOWLEDGEMENT\.wording/);
     expect(read(REVIEW)).toMatch(/readElectrolysisAcknowledgement/);
     // The card renders the STORED snapshot, not the current constant.
     expect(codeOnly(read(REVIEW))).toMatch(/\{view\.wording\}/);
@@ -492,86 +255,6 @@ describe("13. no typed signature anywhere in this feature", () => {
   });
 });
 
-describe("14. nothing auto-checks the acknowledgement", () => {
-  const code = codeOnly(read(WIZARD));
-
-  it("the checkbox is checked only when the stored answer is exactly true", () => {
-    // Asserted against the shared control renderer, which is where the
-    // checkbox is now drawn for BOTH the public wizard and the
-    // practitioner-assisted editor. Checking it here covers both surfaces.
-    const field = codeOnly(read(FIELD));
-    expect(field).toMatch(/const checked = value === true;/);
-    expect(field).not.toMatch(/defaultChecked/);
-    expect(field).not.toMatch(/checked=\{true\}/);
-    // ...and the wizard itself must not reintroduce a control that does.
-    expect(code).not.toMatch(/defaultChecked/);
-    expect(code).not.toMatch(/checked=\{true\}/);
-  });
-
-  it("the claim mirrors the answer and is never hard-coded to accepted", () => {
-    expect(code).toMatch(
-      /buildElectrolysisAcknowledgementClaim\(answer === true\)/,
-    );
-    expect(code).not.toMatch(/buildElectrolysisAcknowledgementClaim\(true\)/);
-  });
-
-  it("no record is attached before the client has touched the checkbox", () => {
-    expect(code).toMatch(/if \(answer === undefined\) return responses;/);
-  });
-
-  it("the wizard keeps validate-on-continue and does not gate on a disabled button", () => {
-    // The server must not be able to rely on a disabled submit button, and
-    // the wizard deliberately validates on click instead of disabling.
-    expect(code).toMatch(/disabled=\{isPending\}/);
-    expect(code).not.toMatch(/disabled=\{[^}]*acknowledg/i);
-  });
-});
-
-describe("server enforcement is independent and correctly placed", () => {
-  const src = read(ACTIONS);
-  const submitBody = (() => {
-    const start = src.indexOf("export async function submitIntakeAction");
-    const end = src.indexOf("\nasync function syncIntakeToClient", start);
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    return src.slice(start, end);
-  })();
-
-  it("validates the acknowledgement inside the submit action", () => {
-    expect(submitBody).toMatch(/validateElectrolysisAcknowledgement\(/);
-  });
-
-  it("validates AFTER the already-submitted early return", () => {
-    const earlyReturn = submitBody.indexOf('existing.status === "submitted"');
-    const validate = submitBody.indexOf("validateElectrolysisAcknowledgement(");
-    expect(earlyReturn).toBeGreaterThan(-1);
-    expect(validate).toBeGreaterThan(earlyReturn);
-  });
-
-  it("validates BEFORE the row is updated, so a rejection writes nothing", () => {
-    const validate = submitBody.indexOf("validateElectrolysisAcknowledgement(");
-    const update = submitBody.indexOf('status: "submitted"');
-    expect(update).toBeGreaterThan(-1);
-    expect(validate).toBeLessThan(update);
-  });
-
-  it("keeps the atomic in_progress guard on the update", () => {
-    expect(submitBody).toMatch(/\.eq\("status", "in_progress"\)/);
-  });
-
-  it("stores the SERVER-built record, not the client's claim", () => {
-    expect(submitBody).toMatch(
-      /merged\[ELECTROLYSIS_ACKNOWLEDGEMENT\.id\] = ack\.record;/,
-    );
-  });
-
-  it("15. returns no raw database message from any acknowledgement path", () => {
-    const code = codeOnly(src);
-    expect(code).not.toMatch(/error: [a-zA-Z]*[eE]rr\.message/);
-    expect(code).not.toMatch(/error: JSON\.stringify/);
-  });
-});
-
 describe("18. no migration, and no schema change", () => {
   it("no migration file mentions the acknowledgement", () => {
     const dir = "supabase/migrations";
@@ -581,11 +264,13 @@ describe("18. no migration, and no schema change", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the acknowledgement is stored inside the existing responses jsonb", () => {
-    // Both write paths put the record into the `responses` map that
-    // migration 0015 already provides; no column, table or type is added.
+  it("retirement writes nothing, and still adds no column or table", () => {
+    // Retiring the collection removed both write paths. What matters for this
+    // guard is unchanged: no column, table or type was ever added, and none is
+    // added by removing it either. Historical records stay in the `responses`
+    // map migration 0015 already provides.
     const src = read(ACTIONS);
-    expect(src).toMatch(/merged\[ELECTROLYSIS_ACKNOWLEDGEMENT\.id\]/);
+    expect(src).not.toMatch(/merged\[ELECTROLYSIS_ACKNOWLEDGEMENT\.id\]/);
     expect(src).not.toMatch(/acknowledgement_version|acknowledged_at:/);
   });
 });
@@ -610,5 +295,143 @@ describe("17. Session 1D surfaces are not involved", () => {
     for (const rel of importers) {
       expect(read(rel)).toMatch(/acknowledgement|ELECTROLYSIS_ACKNOWLEDGEMENT/i);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RETIREMENT — proven at the REAL action boundary
+// ---------------------------------------------------------------------------
+describe("retirement — a new intake collects no acknowledgement", () => {
+  it("submits with NO acknowledgement, and creates neither legacy key", async () => {
+    const res = await submitIntakeAction({
+      token: "good",
+      responses: completeAnswers(),
+    });
+    expect(res).toEqual({ ok: true });
+    expect(row().status).toBe("submitted");
+    expect(storedResponses()).not.toHaveProperty(CANON.id);
+    expect(storedResponses()).not.toHaveProperty(CANON.questionKey);
+  });
+
+  it("a forged acknowledgement RECORD is not persisted", async () => {
+    // The sanitizer carve-out that used to admit this key is gone, so the
+    // value never reaches storage — there is no gate left to validate it.
+    await submitIntakeAction({
+      token: "good",
+      responses: {
+        ...completeAnswers(),
+        [CANON.id]: {
+          id: CANON.id,
+          version: "v99",
+          wording: "FORGED WORDING",
+          accepted: true,
+          accepted_at: "1999-01-01T00:00:00.000Z",
+        },
+      },
+    });
+    expect(storedResponses()).not.toHaveProperty(CANON.id);
+    expect(JSON.stringify(storedResponses())).not.toContain("FORGED");
+  });
+
+  it("a forged checkbox answer cannot re-enable legacy collection", async () => {
+    await submitIntakeAction({
+      token: "good",
+      responses: { ...completeAnswers(), [CANON.questionKey]: true },
+    });
+    // Not a question any more, so the whitelist drops it.
+    expect(storedResponses()).not.toHaveProperty(CANON.questionKey);
+  });
+
+  it("a DRAFT save also refuses to author either key", async () => {
+    await saveIntakeStepAction({
+      token: "good",
+      step: 1,
+      responses: {
+        legal_name: "Dana",
+        [CANON.questionKey]: true,
+        [CANON.id]: { id: CANON.id, version: "v1", wording: "x", accepted: true },
+      },
+    });
+    expect(storedResponses().legal_name).toBe("Dana");
+    expect(storedResponses()).not.toHaveProperty(CANON.id);
+    expect(storedResponses()).not.toHaveProperty(CANON.questionKey);
+  });
+
+  it("a HISTORICAL acknowledgement survives a later save untouched", async () => {
+    // The merge is {...stored, ...incoming} and the key is stripped on the way
+    // in, so what a client recorded before retirement stays exactly as it was.
+    const historical = {
+      id: CANON.id,
+      version: CANON.version,
+      wording: CANON.wording,
+      accepted: true,
+      accepted_at: "2026-08-01T09:00:00.000Z",
+    };
+    storedResponses()[CANON.id] = historical;
+    storedResponses()[CANON.questionKey] = true;
+
+    await saveIntakeStepAction({
+      token: "good",
+      step: 2,
+      responses: {
+        pronouns: "they/them",
+        // A crafted attempt to overwrite the historical record.
+        [CANON.id]: { id: CANON.id, version: "v1", wording: "OVERWRITTEN", accepted: false },
+        [CANON.questionKey]: false,
+      },
+    });
+    expect(storedResponses()[CANON.id]).toEqual(historical);
+    expect(storedResponses()[CANON.questionKey]).toBe(true);
+    expect(JSON.stringify(storedResponses())).not.toContain("OVERWRITTEN");
+  });
+
+  it("a pre-retirement draft left UNTICKED can now submit, unticked record intact", async () => {
+    // The behavioural half of the copy fix in lib/intake/acknowledgements.ts.
+    // While #518 gated submission, an unticked record was draft-only. It is
+    // now reachable on a SUBMITTED row, so the review copy must not claim
+    // submission is blocked.
+    const unticked = {
+      id: CANON.id,
+      version: CANON.version,
+      wording: CANON.wording,
+      accepted: false,
+    };
+    seed({ responses: { [CANON.id]: unticked, [CANON.questionKey]: false } });
+
+    const res = await submitIntakeAction({
+      token: "good",
+      responses: completeAnswers(),
+    });
+    expect(res).toEqual({ ok: true });
+    expect(row().status).toBe("submitted");
+    // The historical record is neither rewritten nor promoted to accepted.
+    expect(storedAck()).toEqual(unticked);
+    expect(storedResponses()[CANON.questionKey]).toBe(false);
+  });
+
+  it("the public sanitizer no longer names the retired key at all", () => {
+    const src = read("app/intake/[token]/actions.ts");
+    const fn = src.slice(
+      src.indexOf("function sanitizeResponses"),
+      src.indexOf("export async function saveIntakeStepAction"),
+    );
+    const code = fn
+      .split("\n")
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n");
+    expect(code).not.toContain("ELECTROLYSIS_ACKNOWLEDGEMENT");
+    expect(code).toContain("INTAKE_CONSENT_RESPONSES.id");
+  });
+
+  it("#529's consent response is what a new intake records instead", async () => {
+    // Sanity: the replacement is the active flow. With no live forms seeded
+    // the studio has nothing to complete, which is the pre-existing
+    // no-live-forms behaviour and must remain unblocked.
+    const res = await submitIntakeAction({
+      token: "good",
+      responses: completeAnswers(),
+    });
+    expect(res).toEqual({ ok: true });
+    expect(INTAKE_CONSENT_RESPONSES.id).toBe("intake_consent_responses");
   });
 });
