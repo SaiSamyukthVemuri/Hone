@@ -107,6 +107,10 @@ export const BROWSER_GROUPS = {
       // newest-CHARTED selector at the appointment boundary, the complete
       // per-area setup + outcomes, and the full practitioner narrative.
       "appointment-prep-memory.spec.ts",
+      // The practitioner week runs Sunday → Saturday, and the SAME Sunday
+      // boundary drives the data range — a grid that starts Sunday while the
+      // query starts Monday loses the Sunday appointment silently.
+      "calendar-week-starts-sunday.spec.ts",
     ],
   },
   owner_admin: {
