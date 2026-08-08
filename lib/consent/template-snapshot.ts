@@ -36,6 +36,27 @@ export type ConsentTemplateSnapshot = {
   templateHash: string;
 };
 
+// Render-side companion to buildConsentTemplateSnapshot.
+//
+// A surface that displays a consent template attaches the canonical hash of
+// the EXACT (title, body, version) it rendered, and the browser carries that
+// value back at signing time as a COMPARAND. recordConsentSignature
+// re-resolves the template, recomputes the hash from its own row, and refuses
+// if the two differ -- which is what stops a studio edit between render and
+// submit from snapshotting text the client never read.
+//
+// It deliberately routes through the SAME buildConsentTemplateSnapshot the
+// signing side uses. A second, separately-derived hash implementation here
+// would make the comparison silently vacuous the moment either drifted.
+export function withRenderedTemplateHash<T extends ConsentTemplateInput>(
+  template: T,
+): T & { renderedTemplateHash: string } {
+  return {
+    ...template,
+    renderedTemplateHash: buildConsentTemplateSnapshot(template).templateHash,
+  };
+}
+
 export function buildConsentTemplateSnapshot(
   input: ConsentTemplateInput,
 ): ConsentTemplateSnapshot {

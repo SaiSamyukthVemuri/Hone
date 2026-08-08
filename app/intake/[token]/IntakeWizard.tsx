@@ -4,25 +4,55 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   INTAKE_STEPS,
-  NONE_VALUE,
   TOTAL_STEPS,
   stepById,
-  type Question,
+  validateVisibleAnswers,
+  visibleQuestionsForStep,
   type Step,
 } from "@/lib/intake/questions";
+import {
+  INTAKE_CONSENT_RESPONSES,
+  type IntakeConsentResponse,
+} from "@/lib/intake/consent-forms";
+import { IntakeQuestionField } from "@/components/intake/intake-question-field";
+import {
+  buildIntakeConsentClaims,
+  findIncompleteConsentForms,
+  IntakeConsentForms,
+  type RenderedConsentForm,
+} from "./IntakeConsentForms";
 import { saveIntakeStepAction, submitIntakeAction } from "./actions";
 
 type Responses = Record<string, unknown>;
 
+// The consent forms are a wizard-LOCAL phase that follows step 5. It is
+// deliberately NOT a sixth step: `client_intake_forms.current_step` is bounded
+// by the questionnaire (1..TOTAL_STEPS) and every other surface — the assisted
+// editor's clamp, the hand-off, findMissingRequiredAnswers — reads that
+// contract. Persisting a 6 would be a schema change in all but name.
+//
+// So the phase lives only in this component's state, and every save it makes
+// persists `current_step = TOTAL_STEPS`. A client who abandons the intake on
+// the consent phase resumes on step 5 with their answers intact, which is
+// truthful: they have not completed the consent forms.
+const CONSENT_PHASE = TOTAL_STEPS + 1;
+
+// RETIRED (#518): this component used to attach a versioned electrolysis
+// acknowledgement claim to every save and submit. The acknowledgement is no
+// longer collected — #529's real studio consent forms replaced it — so the
+// claim is gone and the browser no longer sends anything under that key.
+//
 type Props = {
   token: string;
   studioName: string;
   initialStep: number;
   initialResponses: Responses;
   alreadySubmitted: boolean;
+  // The studio's live treatment/photo consent forms, resolved server-side.
+  // Empty when the studio has none live — the wizard then behaves exactly as
+  // it did before this feature: step 5 submits.
+  consentForms: RenderedConsentForm[];
 };
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function IntakeWizard({
   token,
@@ -30,6 +60,7 @@ export function IntakeWizard({
   initialStep,
   initialResponses,
   alreadySubmitted,
+  consentForms,
 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState(
@@ -39,13 +70,71 @@ export function IntakeWizard({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [savingError, setSavingError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  // The client's consent choices, keyed by template id.
+  //
+  // Seeded EMPTY, deliberately. A resumed draft may carry stored consent
+  // entries, but re-checking a box on the client's behalf because a previous
+  // session did is exactly the auto-acceptance this feature must not have —
+  // and the stored entry may be against a version that has since changed. The
+  // client re-reads the current text and answers again.
+  const [consentAnswers, setConsentAnswers] = useState<
+    Record<string, IntakeConsentResponse>
+  >({});
+  const [consentErrors, setConsentErrors] = useState<Record<string, string>>({});
 
+  const hasConsentPhase = consentForms.length > 0;
+  const lastPhase = hasConsentPhase ? CONSENT_PHASE : TOTAL_STEPS;
+
+  // Attach the consent claims to whatever the wizard is about to send.
+  // Applied on top of the acknowledgement claim so both carve-outs travel
+  // together on every save and on submit.
+  function withConsentClaims(base: Responses): Responses {
+    if (!hasConsentPhase) return base;
+    return {
+      ...base,
+      [INTAKE_CONSENT_RESPONSES.id]: {
+        version: INTAKE_CONSENT_RESPONSES.version,
+        forms: buildIntakeConsentClaims(consentForms, consentAnswers),
+      },
+    };
+  }
+
+  function outbound(): Responses {
+    return withConsentClaims(responses);
+  }
+
+  function setConsentAnswer(
+    templateId: string,
+    response: IntakeConsentResponse | null,
+  ) {
+    setConsentAnswers((prev) => {
+      const next = { ...prev };
+      // Unticking a treatment checkbox CLEARS the answer rather than
+      // recording a denial: a treatment consent has no "denied" state, and
+      // storing one would be a false record of what the client did.
+      if (response === null) delete next[templateId];
+      else next[templateId] = response;
+      return next;
+    });
+    setConsentErrors((prev) => {
+      if (!prev[templateId]) return prev;
+      const next = { ...prev };
+      delete next[templateId];
+      return next;
+    });
+  }
+
+  const onConsentPhase = step === CONSENT_PHASE;
   const current: Step | undefined = stepById(step);
 
-  const visibleQuestions = useMemo(() => {
-    if (!current) return [];
-    return current.questions.filter((q) => isVisible(q, responses));
-  }, [current, responses]);
+  // Conditional visibility comes from the shared questionnaire authority in
+  // lib/intake/questions.ts. This component used to carry a private `isVisible`
+  // fork of the same predicate; the fork is gone so the practitioner-assisted
+  // editor and this wizard cannot disagree about which questions apply.
+  const visibleQuestions = useMemo(
+    () => visibleQuestionsForStep(step, responses),
+    [step, responses],
+  );
 
   if (alreadySubmitted) {
     return (
@@ -57,7 +146,7 @@ export function IntakeWizard({
       </div>
     );
   }
-  if (!current) return null;
+  if (!current && !onConsentPhase) return null;
 
   function setValue(key: string, value: unknown) {
     setResponses((prev) => ({ ...prev, [key]: value }));
@@ -69,41 +158,6 @@ export function IntakeWizard({
     });
   }
 
-  function validateStep(): Record<string, string> {
-    const stepErrors: Record<string, string> = {};
-    for (const q of visibleQuestions) {
-      if (!q.required) continue;
-      const v = responses[q.key];
-      if (q.type === "multi_select") {
-        if (!Array.isArray(v) || v.length === 0) {
-          stepErrors[q.key] = "Please answer this question to continue.";
-        }
-        continue;
-      }
-      if (q.type === "checkbox") {
-        if (v !== true) {
-          stepErrors[q.key] = "Please confirm to continue.";
-        }
-        continue;
-      }
-      if (typeof v !== "string" || v.trim() === "") {
-        stepErrors[q.key] = "Please answer this question to continue.";
-        continue;
-      }
-      if (q.key === "email" && !EMAIL_RE.test(v.trim())) {
-        stepErrors[q.key] = "Enter a valid email address.";
-      }
-      if (q.type === "date") {
-        const d = new Date(v);
-        const year = d.getUTCFullYear();
-        if (Number.isNaN(d.getTime()) || year < 1900 || d.getTime() > Date.now()) {
-          stepErrors[q.key] = "Enter a valid date of birth.";
-        }
-      }
-    }
-    return stepErrors;
-  }
-
   function goBack() {
     if (step <= 1) return;
     const nextStep = step - 1;
@@ -112,15 +166,48 @@ export function IntakeWizard({
     startTransition(async () => {
       const res = await saveIntakeStepAction({
         token,
-        step: nextStep,
-        responses,
+        // The consent phase is not a persisted step: leaving it saves against
+        // the last real questionnaire step.
+        step: Math.min(nextStep, TOTAL_STEPS),
+        responses: outbound(),
       });
       if (!res.ok) setSavingError(res.error);
     });
   }
 
+  function submit() {
+    startTransition(async () => {
+      const res = await submitIntakeAction({ token, responses: outbound() });
+      if (!res.ok) {
+        setSavingError(res.error);
+        return;
+      }
+      router.push("/intake/thank-you");
+    });
+  }
+
   function goNext() {
-    const stepErrors = validateStep();
+    // The consent phase validates consent, not questionnaire answers.
+    if (step === CONSENT_PHASE) {
+      const incomplete = findIncompleteConsentForms(
+        consentForms,
+        consentAnswers,
+      );
+      if (Object.keys(incomplete).length > 0) {
+        setConsentErrors(incomplete);
+        return;
+      }
+      setConsentErrors({});
+      setSavingError(null);
+      submit();
+      return;
+    }
+
+    const stepErrors = validateVisibleAnswers(
+      visibleQuestions,
+      responses,
+      Date.now(),
+    );
     if (Object.keys(stepErrors).length > 0) {
       setErrors(stepErrors);
       return;
@@ -128,13 +215,15 @@ export function IntakeWizard({
     setErrors({});
     setSavingError(null);
 
-    if (step < TOTAL_STEPS) {
+    if (step < lastPhase) {
       const nextStep = step + 1;
       startTransition(async () => {
         const res = await saveIntakeStepAction({
           token,
-          step: nextStep,
-          responses,
+          // Entering the consent phase still persists TOTAL_STEPS — the DB
+          // step contract is unchanged by this feature.
+          step: Math.min(nextStep, TOTAL_STEPS),
+          responses: outbound(),
         });
         if (!res.ok) {
           setSavingError(res.error);
@@ -145,43 +234,53 @@ export function IntakeWizard({
       return;
     }
 
-    // Final submit
-    startTransition(async () => {
-      const res = await submitIntakeAction({ token, responses });
-      if (!res.ok) {
-        setSavingError(res.error);
-        return;
-      }
-      router.push("/intake/thank-you");
-    });
+    // No consent phase for this studio: step 5 submits, exactly as before.
+    submit();
   }
 
   return (
     <div className="flex flex-col gap-6">
-      <StepIndicator currentStep={step} />
+      <StepIndicator currentStep={step} showConsent={hasConsentPhase} />
 
       <div>
         <h2 className="text-[24px] font-semibold leading-tight tracking-tight">
-          {current.title}
+          {onConsentPhase ? "Consent forms" : current!.title}
         </h2>
-        {current.description && (
-          <p className="mt-2 text-sm text-neutral-600">{current.description}</p>
+        {onConsentPhase ? (
+          <p className="mt-2 text-sm text-neutral-600">
+            Please read {studioName}&apos;s forms below and complete each one.
+          </p>
+        ) : (
+          current!.description && (
+            <p className="mt-2 text-sm text-neutral-600">
+              {current!.description}
+            </p>
+          )
         )}
       </div>
 
-      <div className="flex flex-col gap-5">
-        {visibleQuestions.map((q) => (
-          <QuestionField
-            key={q.key}
-            q={q}
-            value={responses[q.key]}
-            notesValue={responses[`${q.key}_notes`]}
-            onChange={(v) => setValue(q.key, v)}
-            onNotesChange={(v) => setValue(`${q.key}_notes`, v)}
-            error={errors[q.key]}
-          />
-        ))}
-      </div>
+      {onConsentPhase ? (
+        <IntakeConsentForms
+          forms={consentForms}
+          answers={consentAnswers}
+          onChange={setConsentAnswer}
+          errors={consentErrors}
+        />
+      ) : (
+        <div className="flex flex-col gap-5">
+          {visibleQuestions.map((q) => (
+            <IntakeQuestionField
+              key={q.key}
+              q={q}
+              value={responses[q.key]}
+              notesValue={responses[`${q.key}_notes`]}
+              onChange={(v) => setValue(q.key, v)}
+              onNotesChange={(v) => setValue(`${q.key}_notes`, v)}
+              error={errors[q.key]}
+            />
+          ))}
+        </div>
+      )}
 
       {savingError && (
         <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
@@ -206,7 +305,7 @@ export function IntakeWizard({
         >
           {isPending
             ? "Saving..."
-            : step === TOTAL_STEPS
+            : step === lastPhase
               ? "Submit intake"
               : "Continue"}
         </button>
@@ -215,21 +314,30 @@ export function IntakeWizard({
   );
 }
 
-function isVisible(q: Question, responses: Responses): boolean {
-  if (!q.conditional) return true;
-  const parent = responses[q.conditional.whenKey];
-  const allowed = q.conditional.whenEquals;
-  if (typeof parent === "string") return allowed.includes(parent);
-  if (Array.isArray(parent)) {
-    return parent.some((v) => typeof v === "string" && allowed.includes(v));
-  }
-  return false;
-}
-
-function StepIndicator({ currentStep }: { currentStep: number }) {
+function StepIndicator({
+  currentStep,
+  showConsent,
+}: {
+  currentStep: number;
+  showConsent: boolean;
+}) {
+  // The consent phase gets a column only when the studio actually has live
+  // forms, so a studio with none sees the unchanged five-column indicator.
+  const columns: Array<{ id: number; shortLabel: string }> = [
+    ...INTAKE_STEPS.map((s) => ({ id: s.id, shortLabel: s.shortLabel })),
+    ...(showConsent
+      ? [{ id: CONSENT_PHASE, shortLabel: "Consent" }]
+      : []),
+  ];
   return (
-    <ol className="grid grid-cols-5 gap-2" aria-label="Intake progress">
-      {INTAKE_STEPS.map((s) => {
+    <ol
+      className="grid gap-2"
+      style={{
+        gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+      }}
+      aria-label="Intake progress"
+    >
+      {columns.map((s) => {
         const done = s.id < currentStep;
         const active = s.id === currentStep;
         return (
@@ -252,220 +360,4 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
       })}
     </ol>
   );
-}
-
-type FieldProps = {
-  q: Question;
-  value: unknown;
-  notesValue: unknown;
-  onChange: (v: unknown) => void;
-  onNotesChange: (v: unknown) => void;
-  error?: string;
-};
-
-function QuestionField({ q, value, notesValue, onChange, onNotesChange, error }: FieldProps) {
-  const showTopLabel = q.type !== "checkbox";
-  return (
-    <div className="flex flex-col gap-2">
-      {showTopLabel && (
-        <div className="flex flex-col gap-0.5">
-          <label
-            htmlFor={q.key}
-            className="text-sm font-medium text-neutral-800"
-          >
-            {q.label}
-            {q.required && <span className="ml-1 text-red-600">*</span>}
-          </label>
-          {q.helpText && (
-            <span className="text-xs text-neutral-500">{q.helpText}</span>
-          )}
-        </div>
-      )}
-
-      {renderControl(q, value, onChange)}
-
-      {error && (
-        <p className="text-xs text-red-700" role="alert">
-          {error}
-        </p>
-      )}
-
-      {q.followUpNotesPrompt && shouldShowFollowUp(q, value) && (
-        <div className="mt-1 flex flex-col gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-3">
-          <label
-            htmlFor={`${q.key}_notes`}
-            className="text-xs font-medium text-neutral-700"
-          >
-            {q.followUpNotesPrompt}
-          </label>
-          <textarea
-            id={`${q.key}_notes`}
-            value={typeof notesValue === "string" ? notesValue : ""}
-            onChange={(e) => onNotesChange(e.target.value)}
-            rows={3}
-            className="w-full min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm leading-relaxed focus:border-neutral-900 focus:outline-none"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function shouldShowFollowUp(q: Question, value: unknown): boolean {
-  if (q.type === "yes_no") return value === "yes";
-  return false;
-}
-
-function renderControl(
-  q: Question,
-  value: unknown,
-  onChange: (v: unknown) => void,
-): React.ReactNode {
-  const baseInputClass =
-    "w-full min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base leading-normal focus:border-neutral-900 focus:outline-none";
-
-  if (q.type === "short_text") {
-    return (
-      <input
-        id={q.key}
-        type="text"
-        value={typeof value === "string" ? value : ""}
-        onChange={(e) => onChange(e.target.value)}
-        className={baseInputClass}
-        inputMode={q.key === "phone" || q.key === "emergency_contact_phone" ? "tel" : undefined}
-        autoComplete={
-          q.key === "email"
-            ? "email"
-            : q.key === "phone"
-              ? "tel"
-              : q.key === "legal_name"
-                ? "name"
-                : undefined
-        }
-      />
-    );
-  }
-  if (q.type === "long_text") {
-    return (
-      <textarea
-        id={q.key}
-        value={typeof value === "string" ? value : ""}
-        onChange={(e) => onChange(e.target.value)}
-        rows={4}
-        className={`${baseInputClass} leading-relaxed`}
-      />
-    );
-  }
-  if (q.type === "date") {
-    return (
-      <input
-        id={q.key}
-        type="date"
-        value={typeof value === "string" ? value : ""}
-        onChange={(e) => onChange(e.target.value)}
-        className={baseInputClass}
-      />
-    );
-  }
-  if (q.type === "yes_no") {
-    const sel = value;
-    return (
-      <div className="flex gap-2">
-        {[
-          { v: "yes", label: "Yes" },
-          { v: "no", label: "No" },
-        ].map((opt) => (
-          <button
-            key={opt.v}
-            type="button"
-            onClick={() => onChange(opt.v)}
-            className={`min-h-[44px] flex-1 rounded-md border px-4 py-2 text-sm font-medium ${
-              sel === opt.v
-                ? "border-neutral-900 bg-neutral-900 text-white"
-                : "border-neutral-300 bg-white text-neutral-700"
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-    );
-  }
-  if (q.type === "single_select") {
-    return (
-      <div className="flex flex-col gap-2">
-        {(q.options ?? []).map((opt) => {
-          const selected = value === opt.value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => onChange(opt.value)}
-              className={`min-h-[44px] rounded-md border px-4 py-3 text-left text-sm ${
-                selected
-                  ? "border-neutral-900 bg-neutral-900 text-white"
-                  : "border-neutral-300 bg-white text-neutral-700"
-              }`}
-            >
-              {opt.label}
-            </button>
-          );
-        })}
-      </div>
-    );
-  }
-  if (q.type === "multi_select") {
-    const selected = new Set(
-      Array.isArray(value) ? (value as unknown[]).filter((v): v is string => typeof v === "string") : [],
-    );
-    return (
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {(q.options ?? []).map((opt) => {
-          const isSel = selected.has(opt.value);
-          const isNone = opt.value === NONE_VALUE;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => {
-                // "None of the above" is exclusive: selecting it clears any
-                // other choices; selecting any other option clears it.
-                if (isNone) {
-                  onChange(isSel ? [] : [NONE_VALUE]);
-                  return;
-                }
-                const next = new Set(selected);
-                next.delete(NONE_VALUE);
-                if (isSel) next.delete(opt.value);
-                else next.add(opt.value);
-                onChange(Array.from(next));
-              }}
-              className={`min-h-[44px] rounded-md border px-4 py-3 text-left text-sm ${
-                isSel
-                  ? "border-neutral-900 bg-neutral-900 text-white"
-                  : "border-neutral-300 bg-white text-neutral-700"
-              } ${isNone ? "sm:col-span-2" : ""}`}
-            >
-              {opt.label}
-            </button>
-          );
-        })}
-      </div>
-    );
-  }
-  if (q.type === "checkbox") {
-    const checked = value === true;
-    return (
-      <label className="flex items-start gap-3 rounded-md border border-neutral-300 bg-white px-3 py-3 text-sm text-neutral-700">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-          className="mt-0.5 h-5 w-5 rounded border-neutral-400"
-        />
-        <span>{q.label}</span>
-      </label>
-    );
-  }
-  return null;
 }

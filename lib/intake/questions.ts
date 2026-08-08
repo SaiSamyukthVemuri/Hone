@@ -13,6 +13,9 @@
  * sprint will surface this as an admin UI.
  */
 
+import { ELECTROLYSIS_ACKNOWLEDGEMENT } from "./acknowledgements";
+import { INTAKE_CONSENT_RESPONSES } from "./consent-forms";
+
 export type QuestionType =
   | "short_text"
   | "long_text"
@@ -671,6 +674,17 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
     description:
       "These confirmations help your electrologist trust the information they're working with. They are not a consent form. Treatment-specific consent happens with your electrologist in person.",
     questions: [
+      // RETIRED: the versioned electrolysis acknowledgement (#518) used to sit
+      // here, first on this step. It was a temporary stand-in for the studio's
+      // own consent documents, and #529 replaced it with the real thing — the
+      // studio's live treatment/photo consent forms, completed after this step.
+      // It is no longer collected, so it is no longer a question.
+      //
+      // Removing it from this list removes it from ALL_QUESTION_KEYS, which is
+      // what stops the public sanitizer admitting it and what stops
+      // findMissingRequiredAnswers demanding it. Historical answers are
+      // untouched and still readable; see lib/intake/acknowledgements.ts, which
+      // is now a READ-ONLY legacy contract.
       {
         key: "ack_not_a_substitute",
         type: "checkbox",
@@ -760,7 +774,12 @@ export function isConditionalSatisfied(
 // required predicate. Mirrors the wizard's client-side validateStep
 // rules: multi_select needs a non-empty array, checkbox needs `true`,
 // everything else needs a non-empty trimmed string.
-function isAnswerProvided(
+//
+// Exported so every surface that asks "is this answered?" asks the SAME
+// function. Before the practitioner-assisted work this was private and the
+// public wizard re-derived it inline, which is precisely the drift this
+// module exists to prevent.
+export function isAnswerProvided(
   q: Question,
   value: unknown,
 ): boolean {
@@ -796,4 +815,162 @@ export function findMissingRequiredAnswers(
     }
   }
   return missing;
+}
+
+// ---------------------------------------------------------------------------
+// SHARED QUESTIONNAIRE AUTHORITY
+// ---------------------------------------------------------------------------
+//
+// Everything below exists so that the public client wizard
+// (app/intake/[token]/IntakeWizard.tsx) and the practitioner-assisted editor
+// (app/(app)/clients/[id]/intake/assist/*) evaluate the questionnaire with ONE
+// implementation rather than two that look alike today and drift tomorrow.
+//
+// Before this, `isVisible` lived privately inside IntakeWizard.tsx as a fork of
+// isConditionalSatisfied (which had ZERO importers), and the per-step required /
+// email / date-of-birth rules existed only in that component and were never
+// re-run server-side. Moving them here is deliberately behaviour-preserving:
+// the predicates, the branch order and the exact error strings below are
+// transcribed from the wizard as it shipped, and
+// tests/lib/intake/questionnaire-authority.test.ts pins that parity against the
+// original implementations.
+
+// The step whose questions are the client's own first-person
+// acknowledgements. Derived from INTAKE_STEPS rather than hard-coded as `5`
+// anywhere downstream, so re-ordering or renumbering steps cannot silently
+// move the client-owned boundary.
+export const ACKNOWLEDGEMENTS_STEP_ID: number =
+  INTAKE_STEPS[INTAKE_STEPS.length - 1]?.id ?? 0;
+
+// The steps a practitioner may fill in while sitting with the client. Every
+// step EXCEPT the acknowledgements step.
+export const PRACTITIONER_ENTERABLE_STEPS: ReadonlyArray<Step> =
+  INTAKE_STEPS.filter((s) => s.id !== ACKNOWLEDGEMENTS_STEP_ID);
+
+// Response keys only the CLIENT may author. Two independent derivations are
+// unioned so neither alone is load-bearing:
+//
+//   1. every question on the acknowledgements step, and
+//   2. every `checkbox` question anywhere in the form.
+//
+// (2) is the future-proofing rule: an acknowledgement checkbox added to some
+// other step, or a sixth step appended later, becomes practitioner-forbidden
+// automatically without anyone remembering to update a list. `_notes`
+// siblings are included so a follow-up note cannot be used as a side channel.
+export const CLIENT_OWNED_RESPONSE_KEYS: ReadonlySet<string> = new Set([
+  ...INTAKE_STEPS.flatMap((s) =>
+    s.questions
+      .filter((q) => s.id === ACKNOWLEDGEMENTS_STEP_ID || q.type === "checkbox")
+      .flatMap((q) => [q.key, `${q.key}_notes`]),
+  ),
+  // LEGACY #518, both keys, named EXPLICITLY and load-bearing.
+  //
+  // Retiring the acknowledgement removed its question from INTAKE_STEPS, which
+  // silently removed `ack_electrolysis_nature` from the derivation above. That
+  // would have made a historical client-owned answer practitioner-WRITABLE for
+  // the first time — the exact opposite of what retirement should do. Both keys
+  // are therefore named here so the loud refusal keeps covering them for as
+  // long as any intake still carries them.
+  //
+  // The record key was always explicit (it is not a question); the question key
+  // is explicit now for the same reason.
+  ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey,
+  `${ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey}_notes`,
+  ELECTROLYSIS_ACKNOWLEDGEMENT.id,
+  // The client's responses to the studio's live consent forms, for exactly
+  // the same reason. Reading the studio's consent text and choosing to agree
+  // — or to deny photo use — is the client's own act. A practitioner sitting
+  // with the client may record the health questionnaire; they may not answer
+  // this on the client's behalf, and an attempt to is refused rather than
+  // quietly dropped.
+  INTAKE_CONSENT_RESPONSES.id,
+]);
+
+export function isClientOwnedResponseKey(key: string): boolean {
+  return CLIENT_OWNED_RESPONSE_KEYS.has(key);
+}
+
+// The visible questions of one step for a given response map — the derivation
+// that used to be a `useMemo` inside the wizard and had no shared export.
+export function visibleQuestionsForStep(
+  stepId: number,
+  responses: Record<string, unknown>,
+): ReadonlyArray<Question> {
+  const step = stepById(stepId);
+  if (!step) return [];
+  return step.questions.filter((q) =>
+    isConditionalSatisfied(responses, q.conditional),
+  );
+}
+
+// Email shape check. Deliberately permissive — it rejects obvious typos, not
+// undeliverable addresses. Transcribed verbatim from IntakeWizard's EMAIL_RE.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isValidIntakeEmail(value: string): boolean {
+  return EMAIL_RE.test(value.trim());
+}
+
+// Date-of-birth range check. `nowMs` is a parameter rather than a call to
+// Date.now() so the rule is pure and testable; the wizard passes the real
+// clock. Transcribed verbatim from IntakeWizard's date branch, including its
+// use of getUTCFullYear.
+export function isValidIntakeDate(value: string, nowMs: number): boolean {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return false;
+  if (d.getUTCFullYear() < 1900) return false;
+  if (d.getTime() > nowMs) return false;
+  return true;
+}
+
+// The exact copy the wizard shows. Centralised so the assisted editor cannot
+// invent its own phrasing for the same failure.
+export const ANSWER_ERROR_COPY = {
+  required: "Please answer this question to continue.",
+  confirm: "Please confirm to continue.",
+  email: "Enter a valid email address.",
+  date: "Enter a valid date of birth.",
+} as const;
+
+export type AnswerErrors = Record<string, string>;
+
+// Per-question validation over an ALREADY-VISIBLE question list. Returns a
+// key -> message map; empty means the step may advance.
+//
+// Branch order matters and is preserved from the wizard: multi_select and
+// checkbox short-circuit, so the email and date rules only ever apply to the
+// non-empty-string branch.
+export function validateVisibleAnswers(
+  questions: ReadonlyArray<Question>,
+  responses: Record<string, unknown>,
+  nowMs: number,
+): AnswerErrors {
+  const errors: AnswerErrors = {};
+  for (const q of questions) {
+    if (!q.required) continue;
+    const v = responses[q.key];
+    if (q.type === "multi_select") {
+      if (!Array.isArray(v) || v.length === 0) {
+        errors[q.key] = ANSWER_ERROR_COPY.required;
+      }
+      continue;
+    }
+    if (q.type === "checkbox") {
+      if (v !== true) {
+        errors[q.key] = ANSWER_ERROR_COPY.confirm;
+      }
+      continue;
+    }
+    if (typeof v !== "string" || v.trim() === "") {
+      errors[q.key] = ANSWER_ERROR_COPY.required;
+      continue;
+    }
+    if (q.key === "email" && !isValidIntakeEmail(v)) {
+      errors[q.key] = ANSWER_ERROR_COPY.email;
+    }
+    if (q.type === "date" && !isValidIntakeDate(v, nowMs)) {
+      errors[q.key] = ANSWER_ERROR_COPY.date;
+    }
+  }
+  return errors;
 }

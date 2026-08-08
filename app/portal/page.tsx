@@ -22,6 +22,7 @@ import {
   getLatestSignaturesByTemplateForPortal,
 } from "@/lib/consent/queries";
 import { PortalConsentForms } from "./PortalConsentForms";
+import { withRenderedTemplateHash } from "@/lib/consent/template-snapshot";
 import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
 import { resolveStripePublishableKey } from "@/lib/stripe/publishable-key";
 import { inferStripeLivemode } from "@/lib/stripe/server";
@@ -439,7 +440,11 @@ export default async function PortalHomePage() {
                       so the "Card authorization needed" placeholder
                       below can deep-link the client straight to the
                       signing surface via a fragment URL. */}
-                  <PortalConsentForms templates={unsignedConsentTemplates} />
+                  <PortalConsentForms
+                    templates={unsignedConsentTemplates.map(
+                      withRenderedTemplateHash,
+                    )}
+                  />
                 </section>
               )}
 

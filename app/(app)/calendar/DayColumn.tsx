@@ -434,6 +434,14 @@ export function DayColumn({
 
   return (
     <div
+      // Test hook for the Sunday-start invariant: binds this column's rendered
+      // appointments to the LOCAL DATE they belong to. A week whose grid starts
+      // Sunday but whose query still starts Monday looks perfectly normal —
+      // the Sunday column simply renders empty — so the browser needs to assert
+      // "this exact date's column holds this appointment", not just that a
+      // header says "Sun".
+      data-testid="week-day-column"
+      data-date={date}
       className="relative border-l border-neutral-300 dark:border-neutral-700"
       style={{ height: GRID_HEIGHT }}
     >

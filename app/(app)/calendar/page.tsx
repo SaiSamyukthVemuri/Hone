@@ -316,6 +316,15 @@ export default async function CalendarPage({
               return (
                 <div
                   key={date}
+                  // Test hook for the Sunday-start invariant. The weekday
+                  // label is rendered from the COLUMN INDEX (`weekdayLabel(i)`)
+                  // while the column's data comes from `date`, so the two only
+                  // agree while days[0] is a Sunday. Exposing the date beside
+                  // the label lets the browser assert that agreement directly,
+                  // instead of trusting a header that would keep saying "Sun"
+                  // even if the underlying week started on a Monday.
+                  data-testid="week-day-header"
+                  data-date={date}
                   className={
                     "border-l border-neutral-300 px-3 py-2.5 dark:border-neutral-700" +
                     // Today's header cell: PR #194 (Chloe iPad feedback)

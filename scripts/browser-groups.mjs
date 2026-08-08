@@ -59,11 +59,28 @@ export const BROWSER_GROUPS = {
   },
   intake: {
     description: "client intake capture and practitioner review",
-    specs: ["intake-review-integrity.spec.ts"],
+    specs: [
+      "intake-review-integrity.spec.ts",
+      "intake-electrolysis-acknowledgement.spec.ts",
+      // Practitioner-assisted completion: the practitioner records the
+      // questionnaire, the client completes their own acknowledgements.
+      "practitioner-assisted-intake.spec.ts",
+      // The studio's real live consent forms completed inside the intake:
+      // required treatment checkbox, photo Accept/Deny (both completing), and
+      // the stale-template refusal.
+      "intake-live-consent-forms.spec.ts",
+    ],
   },
   portal: {
     description: "client portal and tokenised links",
-    specs: ["appointment-token-hash.spec.ts", "personal-notes-bullets-mobile.spec.ts", "pinned-note-edit-mobile.spec.ts"],
+    specs: [
+      "appointment-token-hash.spec.ts",
+      // PR #526: the only browser proof of the consent render -> comparand
+      // -> submit chain (stale-form refusal + photo deny).
+      "portal-consent-signing-integrity.spec.ts",
+      "personal-notes-bullets-mobile.spec.ts",
+      "pinned-note-edit-mobile.spec.ts",
+    ],
   },
   booking: {
     description: "public booking and appointment lifecycle",
@@ -86,6 +103,14 @@ export const BROWSER_GROUPS = {
       "service-calendar-color-mobile.spec.ts",
       "service-order-and-colors.spec.ts",
       "disinfectant-notification.spec.ts",
+      // Appointment preparation memory on the calendar detail screen: the
+      // newest-CHARTED selector at the appointment boundary, the complete
+      // per-area setup + outcomes, and the full practitioner narrative.
+      "appointment-prep-memory.spec.ts",
+      // The practitioner week runs Sunday → Saturday, and the SAME Sunday
+      // boundary drives the data range — a grid that starts Sunday while the
+      // query starts Monday loses the Sunday appointment silently.
+      "calendar-week-starts-sunday.spec.ts",
     ],
   },
   owner_admin: {

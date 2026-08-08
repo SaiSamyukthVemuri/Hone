@@ -4,7 +4,9 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
+import { getIntakeConsentFormsForRender } from "@/lib/intake/consent-gate";
 import { IntakeWizard } from "./IntakeWizard";
+import type { RenderedConsentForm } from "./IntakeConsentForms";
 
 // PR #142. Token-bearing route. See
 // app/portal/verify/[token]/page.tsx for the full rationale.
@@ -20,6 +22,7 @@ type LoadResult =
       initialStep: number;
       initialResponses: Record<string, unknown>;
       alreadySubmitted: boolean;
+      consentForms: RenderedConsentForm[];
     }
   | { ok: false; error: string };
 
@@ -44,7 +47,7 @@ async function loadIntake(token: string): Promise<LoadResult> {
   // still cryptographically valid.
   const { data: header, error: headerErr } = await admin
     .from("client_intake_forms")
-    .select("id, status, current_step, studio:studios(name)")
+    .select("id, status, current_step, studio_id, client_id, studio:studios(name)")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -65,6 +68,8 @@ async function loadIntake(token: string): Promise<LoadResult> {
     id: string;
     status: string;
     current_step: number;
+    studio_id: string;
+    client_id: string;
     studio: { name: string } | { name: string }[] | null;
   };
   const headerRow = header as unknown as JoinedHeader;
@@ -99,6 +104,20 @@ async function loadIntake(token: string): Promise<LoadResult> {
     initialResponses = (row?.responses as Record<string, unknown> | null) ?? {};
   }
 
+  // The studio's live treatment/photo consent forms, resolved server-side
+  // from the intake's OWN studio_id. The browser never names a studio, so a
+  // token can only ever surface its own studio's forms. Not loaded for a
+  // submitted/reviewed intake: that surface renders no wizard at all.
+  const consentForms: RenderedConsentForm[] = alreadySubmitted
+    ? []
+    : await getIntakeConsentFormsForRender(
+        headerRow.studio_id,
+        // client_id comes from the intake row the verified token addresses,
+        // never from the request, so an existing portal completion can only
+        // ever be credited to the client this intake actually belongs to.
+        headerRow.client_id,
+      );
+
   return {
     ok: true,
     token,
@@ -106,6 +125,7 @@ async function loadIntake(token: string): Promise<LoadResult> {
     initialStep: headerRow.current_step,
     initialResponses,
     alreadySubmitted,
+    consentForms,
   };
 }
 
@@ -160,6 +180,7 @@ export default async function IntakePage({
               initialStep={result.initialStep}
               initialResponses={result.initialResponses}
               alreadySubmitted={result.alreadySubmitted}
+              consentForms={result.consentForms}
             />
           ) : (
             <p className="text-[16px] text-[#0A0A0A]">{result.error}</p>

@@ -37,20 +37,62 @@ Surface: `/portal` → "Needs you" zone → form card → "Read and sign" flow.
 
 ```
 client opens the unsigned form in /portal
-  -> renders title + body + version (server-rendered from the template row)
+  -> server renders title + body + version from the template row, and derives
+       renderedTemplateHash = sha256(canonical((title, body, version)))
+       via withRenderedTemplateHash (lib/consent/template-snapshot.ts)
   -> client types their full name + agrees
-  -> POST -> createConsentSignatureAction
-       resolves portal session (studio_id, client_id)
-       reads the template by id; refuses unless is_live=true AND status='active'
-         (PR #167; before PR #167 the gate was only status='active')
-       snapshots (title, body, version) onto the new signature row
-       computes template_hash = sha256(canonical((title, body, version)))
-       writes ip_hash / ua_hash via hashFingerprint (returns null in prod
-         if PORTAL_FINGERPRINT_SALT is missing; that is intentional;
-         the columns are nullable, the signature row still writes)
-       INSERT into client_consent_signatures
-       returns generic ok
+  -> POST -> signConsentFormAction (app/portal/consent-actions.ts)
+       THIN WRAPPER. Owns only what is portal-specific:
+         resolves the portal session (studio_id, client_id)
+         constructs the service-role client
+         card_authorization pointer refresh (fail-soft, PR #177)
+         revalidatePath("/portal")
+       -> recordConsentSignature (lib/consent/sign-consent-form.ts)
+            THE ONE CEREMONY. Reused by any future signing surface.
+            reads the template by id; refuses unless
+              studio_id matches AND is_live=true AND status='active'
+              (PR #167; before PR #167 the gate was only status='active')
+            optional allowedFormTypes narrowing for restricted callers
+            re-checks the client row is non-archived
+            snapshots (title, body, version) onto the new signature row
+            computes template_hash = sha256(canonical((title, body, version)))
+            REFUSES if template_hash != the hash the client rendered, or if
+              form_type changed since render  <-- stale-form gate
+            writes ip_hash / ua_hash via hashFingerprint (returns null in prod
+              if PORTAL_FINGERPRINT_SALT is missing; that is intentional;
+              the columns are nullable, the signature row still writes)
+            INSERT into client_consent_signatures
+            returns generic ok
 ```
+
+### The stale-form gate
+
+A studio can edit a live template between the moment a client renders it and
+the moment they submit: `updateConsentTemplateAction` rewrites title/body and
+bumps `version` while touching **neither `status` nor `is_live`**, so the row
+stays signable. Before this gate existed the ceremony snapshotted the
+**current** row, attaching the client's typed name to text they never read —
+and for a `photo_consent` form it could record an acceptance for a client who
+chose to deny.
+
+The browser therefore returns two **comparands**: the hash of what it rendered
+and the `form_type` it rendered. The server re-resolves the template, rebuilds
+the snapshot from its own row, and compares. Any difference (or a missing
+comparand) writes **nothing** and returns:
+
+> This form changed while you were reviewing it. Please refresh and review the
+> current version before signing.
+
+The comparands are never stored, never echoed onto the row, and never trusted
+as data — every stored field is still re-derived server-side. `form_type` is
+carried separately rather than folded into the hash because `template_hash` is
+a persisted column whose canonical format is a stored contract; widening it
+would invalidate hash-vs-history verification for every existing row.
+
+The guarantee is anchored to the single template read: an edit landing between
+that read and the INSERT cannot corrupt the stored snapshot, but a signature
+may be recorded against a template that has just been superseded. That is the
+accepted residual.
 
 ## Live / Draft client visibility (PR #167)
 

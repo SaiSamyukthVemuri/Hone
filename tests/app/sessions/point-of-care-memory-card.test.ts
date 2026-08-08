@@ -182,7 +182,11 @@ describe("read-only and RLS-scoped", () => {
       code.indexOf("last_charted_treatment_blocks_read_failed"),
     ).slice(0, 500);
     expect(logBlock).toMatch(/code:/);
-    expect(logBlock).toMatch(/studio_id: input\.studioId/);
+    // Session 1D split the loader's "select from a known candidate window" half
+    // into its own function, so the block read now names the parameter directly
+    // rather than through the input object. Either spelling satisfies the
+    // contract; what matters is that it is the STUDIO id and nothing narrower.
+    expect(logBlock).toMatch(/studio_id: (input\.)?studioId/);
     expect(logBlock).toMatch(/candidate_count: candidates\.length/);
     // And what is not.
     for (const banned of [
@@ -201,11 +205,38 @@ describe("read-only and RLS-scoped", () => {
     }
   });
 
-  it("the loader is the ONLY console site in the feature, and it logs one object", () => {
+  it("the loader is the ONLY console site in the feature, and every site logs one object", () => {
     for (const src of [CARD, MEMORY, SELECTOR]) {
       expect(codeOnly(src)).not.toMatch(/console\./);
     }
-    expect((codeOnly(LOADER).match(/console\./g) ?? []).length).toBe(1);
+    // Session 1D added the appointment-prep candidate read, which is a second
+    // query and therefore a second failure to classify. Both sites, and ONLY
+    // these two, may log — and both are held to the redaction contract above.
+    const code = codeOnly(LOADER);
+    expect((code.match(/console\./g) ?? []).length).toBe(2);
+    expect((code.match(/console\.error\(\s*JSON\.stringify\(\{/g) ?? []).length).toBe(
+      2,
+    );
+    const prepLog = code
+      .slice(code.indexOf("appointment_prep_sessions_read_failed"))
+      .slice(0, 500);
+    expect(prepLog).toMatch(/code:/);
+    expect(prepLog).toMatch(/studio_id: input\.studioId/);
+    for (const banned of [
+      "client_id",
+      "clientId",
+      "session_id",
+      "sessionId",
+      "appointment_id",
+      "appointmentId",
+      "body",
+      "excerpt",
+      "probe",
+      "notes",
+      "comments",
+    ]) {
+      expect(prepLog, `prep log must not carry ${banned}`).not.toContain(banned);
+    }
   });
 
   it("the blocks read is batched and studio-scoped — no N+1, no unbounded IN", () => {
