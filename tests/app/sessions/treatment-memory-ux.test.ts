@@ -154,13 +154,27 @@ describe("5 + 6. per-area summary and ONE combined warning box", () => {
   });
 
   it("no surface renders the old separate warning boxes any more", () => {
-    for (const page of [APPOINTMENT_PAGE, NEW_SESSION_PAGE]) {
-      expect(page).not.toMatch(/Watch today/);
-      expect(page).not.toMatch(/cautionFlagged/);
-      // Exactly one combined-box render per surface.
-      const boxes = page.match(/<FromLastVisitForToday /g) ?? [];
-      expect(boxes.length).toBe(1);
-    }
+    // THE INVARIANT (PR #191): never two competing warning boxes on one
+    // surface. It is unchanged; only the appointment page's implementation of
+    // it moved (Session 1D).
+    expect(NEW_SESSION_PAGE).not.toMatch(/Watch today/);
+    expect(NEW_SESSION_PAGE).not.toMatch(/cautionFlagged/);
+    expect((NEW_SESSION_PAGE.match(/<FromLastVisitForToday /g) ?? []).length).toBe(1);
+
+    // The appointment page now renders the full prep card instead of the
+    // compact combined box — so it must render NEITHER the old box nor a
+    // second warning surface of its own.
+    expect(APPOINTMENT_PAGE).not.toMatch(/<FromLastVisitForToday /);
+    expect(APPOINTMENT_PAGE).not.toMatch(/<AreaSummaries /);
+    expect(APPOINTMENT_PAGE).not.toMatch(/cautionFlagged/);
+    // And the card itself carries exactly one caution band and one plan band.
+    const CARD = readFileSync(
+      path.join(ROOT, "components/appointment-prep-memory-card.tsx"),
+      "utf8",
+    );
+    expect((CARD.match(/Watch today/g) ?? []).length).toBe(1);
+    expect((CARD.match(/notes\.forNextVisit\.label/g) ?? []).length).toBe(1);
+    expect((CARD.match(/notes\.cautions\.map/g) ?? []).length).toBe(1);
   });
 
   it("no misleading first-area-only labeling remains", () => {

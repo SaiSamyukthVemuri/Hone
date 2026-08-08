@@ -1,28 +1,26 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import {
-  attachStructuredAreas,
-  getCurrentPractitionerWithStudio,
-} from "@/lib/supabase/queries";
+import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
 import { getLatestIntakeForClient } from "@/lib/intake/queries";
+import { practitionerIntakeReviewHref } from "@/lib/dashboard/today-intake";
 import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
 import { referralSourceLabel } from "@/lib/booking/referral-source";
 import { resolveTimeFormat } from "@/lib/booking/tz";
 import { MoveAppointmentButton } from "../MoveAppointmentButton";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { loadLastChartedTreatmentForClient } from "@/lib/sessions/last-treatment-loader";
 import {
-  buildLastSessionSummary,
-  type ClinicalSummaryBlock,
-  type LastSessionSummary,
-} from "@/lib/sessions/clinical-summary";
-import {
-  AreaSummaries,
-  FromLastVisitForToday,
-} from "@/components/last-session-summary";
+  buildAppointmentPrepMemory,
+  buildPrepProvenanceModel,
+  type AppointmentPrepMemory,
+  type PrepNarrativeRenderItem,
+} from "@/lib/sessions/appointment-prep-memory";
+import type { AppointmentPrepLoad } from "@/lib/sessions/last-treatment-loader";
+import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
@@ -221,22 +219,40 @@ export default async function AppointmentDetailPage({
   let treatmentPlans: Awaited<
     ReturnType<typeof getTreatmentPlansForClient>
   > = [];
-  let lastSession: Pick<
-    Session,
-    "id" | "started_at" | "modality" | "session_notes" | "next_session_note"
-  > | null = null;
-  // PR #190 (clinical memory): compact clinical summary of the last
-  // session's blocks (areas, settings, tolerance, reaction, caution),
-  // built by the shared lib/sessions/clinical-summary helper.
-  let lastSessionSummary: LastSessionSummary | null = null;
+  // Appointment preparation uses the same newest-charted-treatment authority as
+  // the active charting and new-session surfaces
+  // (lib/sessions/charted-session.ts, reached through
+  // loadLastChartedTreatmentForClient). There is ONE definition of "the last
+  // treatment" in the product and this page no longer carries a second one.
+  //
+  // What it replaces: a `sessions … order started_at desc limit 1` read whose
+  // chosen row was then inspected for blocks. That query has no way to ask
+  // whether a session CONTAINS anything, so an abandoned empty session — one is
+  // created the instant a practitioner taps a modality on /sessions/new — or a
+  // newer administrative row, or a void row, or this appointment's own
+  // in-progress session, permanently won the lookup and rendered an empty "Last
+  // session" over the real treatment sitting one row below.
+  let prepMemory: AppointmentPrepMemory | null = null;
+  // True only when a read itself failed — never for a first-visit client, and
+  // never merely because nothing is charted.
+  let prepUnavailable = false;
+  // Practitioner narrative recovered from the candidate window. Survives BOTH
+  // "nothing charted" and "the block read failed", because a plan can be
+  // written on a visit that never got charted and because those rows were
+  // already fetched successfully. Rendered only when no treatment card owns it.
+  let prepNarrative: AppointmentPrepLoad["narrative"] = {
+    plan: null,
+    legacySessionNotes: null,
+  };
   // PR #156 (migration 0068). The session, if any, that was logged
   // explicitly against THIS appointment via the new appointment_id
-  // FK. Distinct from `lastSession` above, which is the most recent
-  // session for the client (used as a "what happened last time" hint
-  // for context). The linked session is the per-visit treatment
-  // record for this appointment; when present, the appointment is
-  // already charted and the Chart session affordance becomes a View
-  // session link instead.
+  // FK. Distinct from `prepMemory` above, which is the newest charted
+  // treatment BEFORE this appointment. The linked session is the
+  // per-visit treatment record for this appointment; when present, the
+  // appointment is already charted and the Chart session affordance
+  // becomes a View session link instead. The two can never be the same
+  // row: the prep loader excludes every session carrying this
+  // appointment id.
   let linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null =
     null;
 
@@ -247,28 +263,32 @@ export default async function AppointmentDetailPage({
       tagsRes,
       intakeRes,
       plansRes,
-      lastSessionRes,
+      lastTreatment,
       linkedSessionRes,
     ] = await Promise.all([
       getPinnedNotesForClient(studio.id, clientId),
       getClientTags(studio.id, clientId),
       getLatestIntakeForClient(studio.id, clientId),
       getTreatmentPlansForClient(studio.id, clientId),
-      // Most recent non-deleted session that began before this
-      // appointment. Used as a one-line "what happened last time"
-      // hint above the per-visit chart. Narrow column set; no
-      // entries, no audit, no notes leakage beyond the existing
-      // owner-only view.
-      supabase
-        .from("sessions")
-        .select("id, started_at, modality, session_notes, next_session_note")
-        .eq("studio_id", studio.id)
-        .eq("client_id", clientId)
-        .is("deleted_at", null)
-        .lt("started_at", data.starts_at)
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+      // THE newest charted treatment before this appointment. Same selector,
+      // same batched block read and same fail-soft contract as the charting
+      // screen and /sessions/new — this page just has to fetch its own bounded
+      // candidate window, because it is appointment-scoped and (deliberately)
+      // never loads the client profile.
+      //
+      // Two round-trips, independent of how long the client's history is, how
+      // many areas each block treats and how many passes each area carries. It
+      // replaces three: newest row → that row's blocks → structured areas.
+      loadLastChartedTreatmentForClient({
+        studioId: studio.id,
+        clientId,
+        // Strictly before this appointment. Not now(), which would let a
+        // session charted after the appointment began win; not omitted, which
+        // would let a future booking's session win.
+        before: data.starts_at,
+        // This appointment's own visit record is never its own history.
+        excludeAppointmentId: id,
+      }),
       // PR #156 (migration 0068). Explicitly linked session, if one
       // was logged against this appointment id. ON DELETE SET NULL
       // means the row is queryable even if the parent appointment
@@ -293,17 +313,6 @@ export default async function AppointmentDetailPage({
     tags = tagsRes;
     intake = intakeRes;
     treatmentPlans = plansRes;
-    if (lastSessionRes.error) {
-      throw new Error(
-        `Failed to load last session: ${lastSessionRes.error.message}`,
-      );
-    }
-    lastSession = (lastSessionRes.data ?? null) as
-      | Pick<
-          Session,
-          "id" | "started_at" | "modality" | "session_notes" | "next_session_note"
-        >
-      | null;
     if (linkedSessionRes.error) {
       throw new Error(
         `Failed to load linked session: ${linkedSessionRes.error.message}`,
@@ -313,42 +322,43 @@ export default async function AppointmentDetailPage({
       | Pick<Session, "id" | "started_at" | "modality">
       | null;
 
-    // PR #190 (clinical memory): the last session's blocks feed the
-    // compact clinical summary on the card below. One extra narrow
-    // read, only when a previous session exists. A block-less session
-    // (e.g. laser) yields a summary of nulls, which renders as the
-    // pre-#190 card plus the next-session note when present.
-    if (lastSession) {
-      const { data: lastBlocks } = await supabase
-        .from("session_blocks")
-        .select(
-          "id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
-        )
-        .eq("studio_id", studio.id)
-        .eq("session_id", lastSession.id)
-        .is("deleted_at", null)
-        .order("sort_order", { ascending: true });
-      // Migration 0128: attach structured areas so the appointment-card summary
-      // shows every treated area + laterality, not only the legacy primary_area.
-      const lastBlockRows = (lastBlocks ?? []) as Array<
-        ClinicalSummaryBlock & {
-          id: string;
-          electrolysis_entries?:
-            | Array<{ observation_chips: unknown; deleted_at: string | null }>
-            | null;
-        }
-      >;
-      await attachStructuredAreas(lastBlockRows, studio.id);
-      lastSessionSummary = buildLastSessionSummary({
-        // Charting unification: feed live entries' observation_chips so the
-        // reaction line reads the unified representation.
-        blocks: lastBlockRows.map((b) => ({
-          ...b,
-          observation_chips_list: (b.electrolysis_entries ?? [])
-            .filter((e) => e.deleted_at == null)
-            .map((e) => e.observation_chips),
-        })),
-        nextSessionNote: lastSession.next_session_note,
+    // The complete pre-visit view model: every treated area with laterality,
+    // the complete per-area setup, the outcomes kept separate from that setup,
+    // and the WHOLE practitioner narrative — at full length, with line breaks
+    // preserved and nothing clamped. Assembled by a pure builder; this page
+    // decides nothing about which notes exist or how they group.
+    //
+    // Structured areas arrive inside the same block select the loader already
+    // performs, so the old attachStructuredAreas round-trip is gone.
+    prepUnavailable = lastTreatment.unavailable;
+    prepNarrative = lastTreatment.narrative;
+    if (lastTreatment.treatment) {
+      const selected = lastTreatment.treatment;
+      prepMemory = buildAppointmentPrepMemory({
+        session: {
+          id: selected.session.id,
+          started_at: selected.session.started_at,
+          modality: selected.session.modality,
+          // Legacy, and the only render of this column anywhere in the product:
+          // sessions.session_notes has no surviving writer, so the text on
+          // existing rows can never be recreated once a surface stops showing
+          // it.
+          session_notes: selected.session.session_notes ?? null,
+          next_session_note: selected.session.next_session_note ?? null,
+        },
+        blocks: selected.blocks,
+        laserEntries: selected.session.laser_entries ?? null,
+        // Pre-0019 electrolysis charted straight into entries with no block, so
+        // this is the ONLY channel that narrative has. Passes that do belong to
+        // a block arrive through that block instead and are skipped there.
+        electrolysisEntries: selected.session.electrolysis_entries ?? null,
+        supersededByEmptySession: selected.supersededByEmptySession,
+        // The plan source is deliberately decoupled from the treatment source:
+        // the instruction most likely to change today is the most RECENT one,
+        // and it can live on a session that never got charted.
+        hasLiveElectrolysisEntries: (
+          selected.session.electrolysis_entries ?? []
+        ).some((e) => e.deleted_at == null),
       });
     }
   }
@@ -397,9 +407,10 @@ export default async function AppointmentDetailPage({
         appointmentId={id}
       />
 
-      <LastSessionCard
-        session={lastSession}
-        summary={lastSessionSummary}
+      <LastTreatmentSection
+        memory={prepMemory}
+        unavailable={prepUnavailable}
+        narrative={prepNarrative}
         clientId={data.client?.id ?? null}
       />
 
@@ -991,10 +1002,10 @@ function IntakeStatusLine({
         </span>{" "}
         ·{" "}
         <Link
-          href={`/clients/${clientId}/intake`}
+          href={practitionerIntakeReviewHref(clientId)}
           className="text-neutral-700 hover:underline dark:text-neutral-300"
         >
-          View
+          Review intake
         </Link>
       </p>
     );
@@ -1008,10 +1019,10 @@ function IntakeStatusLine({
         </span>{" "}
         ·{" "}
         <Link
-          href={`/clients/${clientId}/intake`}
+          href={practitionerIntakeReviewHref(clientId)}
           className="text-neutral-700 hover:underline dark:text-neutral-300"
         >
-          Review
+          Review intake
         </Link>
       </p>
     );
@@ -1027,90 +1038,201 @@ function IntakeStatusLine({
 }
 
 // ---------------------------------------------------------------------------
-// Last session memory at the point of care. PR #190 upgraded this
-// from a date+modality pointer to a compact clinical summary: areas,
-// settings, probe, tolerance, reaction, caution, and the note the
-// practitioner left for this visit. Lines render only when recorded
-// (lib/sessions/clinical-summary nulls absent data), so pre-#190
-// sessions show the same calm card as before. Session id + client id
-// link to the session detail route.
+// Appointment preparation memory. PR #190 turned this from a date+modality
+// pointer into a compact per-area summary; Session 1D turns it into the COMPLETE
+// pre-visit read — every treated area, the complete setup, the outcomes kept
+// distinct from that setup, and the whole practitioner narrative at full length.
+//
+// Appointment preparation uses the same newest-charted-treatment authority as
+// the active charting and new-session surfaces. This function is presentation
+// only: it chooses between "there is a prior charted treatment" and "there is
+// not", and delegates everything else to the shared card.
 // ---------------------------------------------------------------------------
-function LastSessionCard({
-  session,
-  summary,
+function LastTreatmentSection({
+  memory,
+  unavailable,
+  narrative,
   clientId,
 }: {
-  session: Pick<
-    Session,
-    "id" | "started_at" | "modality" | "session_notes" | "next_session_note"
-  > | null;
-  summary: LastSessionSummary | null;
+  memory: AppointmentPrepMemory | null;
+  unavailable: boolean;
+  narrative: AppointmentPrepLoad["narrative"];
   clientId: string | null;
 }) {
-  if (!session) {
+  // WHO OWNS WHAT is decided by one pure helper, not by the shape of this JSX.
+  //
+  // A treatment card owns the plan and its OWN visit's legacy notes. Legacy
+  // notes belonging to a DIFFERENT, newer visit are NOT owned by it and must
+  // still be shown — before Session 1D the page rendered the newest eligible
+  // row's session_notes unconditionally, and this surface is the only render of
+  // that column left in the product.
+  // ONE authority decides ownership AND chronology; this component only lays
+  // out the answer. `owned` is already rendered by the treatment card, so only
+  // `external` is painted here — always attributed, never implied to belong to
+  // the treatment above.
+  const { external } = buildPrepProvenanceModel({
+    selected: memory
+      ? { sessionId: memory.sessionId, startedAt: memory.startedAt }
+      : null,
+    ownPlan: memory?.notes.forNextVisit?.text ?? null,
+    ownLegacyNotes: memory?.notes.general[0]?.text ?? null,
+    windowPlan: narrative.plan,
+    windowLegacyNotes: narrative.legacySessionNotes,
+  });
+  // Null covers three genuinely different situations, and all three are
+  // truthfully described by the same sentence: a first-visit client, a client
+  // whose only other sessions carry no charting at all, and a failed read (the
+  // loader fails soft — a memory panel must never take the appointment page
+  // down). It is deliberately NOT an empty card with headings over nothing.
+  // A FAILED read is not the same clinical statement as "no history". Saying
+  // "no previous treatment" because a query timed out would have the
+  // practitioner prep a forty-visit client as a first visit.
+  if (unavailable && !memory) {
+    // A FAILED read is not the same clinical statement as "no history". Any
+    // narrative that WAS loaded is still shown: the candidate rows succeeded, so
+    // discarding a safety instruction we already hold would compound the
+    // failure rather than report it.
     return (
-      <section className="rounded-lg border border-dashed border-neutral-300 p-5 text-sm text-neutral-500 dark:border-neutral-700">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Last session
-        </h2>
-        <p className="mt-2">No previous session logged for this client.</p>
+      <section
+        data-testid="appointment-prep-unavailable"
+        className="flex flex-col gap-3 rounded-lg border border-dashed border-amber-300 p-5 text-sm text-amber-900 dark:border-amber-800 dark:text-amber-200"
+      >
+        <div>
+          <h2 className="text-xs font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">
+            Last treatment
+          </h2>
+          <p className="mt-2">
+            Previous treatment could not be loaded. Open the client&rsquo;s
+            chart to review it before treating.
+          </p>
+        </div>
+        <PriorNarrative items={external} />
       </section>
     );
   }
-  const sessionLine = (
+  if (!memory || !clientId) {
+    // No charted treatment. That statement stays — a note-only visit is NOT a
+    // treatment and must never be promoted to one — but the practitioner
+    // narrative attached to those visits is still shown, because "nothing was
+    // charted" and "there is nothing to know" are different things.
+    return (
+      <section
+        data-testid="appointment-prep-empty"
+        className="flex flex-col gap-3 rounded-lg border border-dashed border-neutral-300 p-5 text-sm text-neutral-500 dark:border-neutral-700"
+      >
+        <div>
+          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Last treatment
+          </h2>
+          <p className="mt-2">No previous treatment charted for this client.</p>
+        </div>
+        {external.length > 0 && <PriorNarrative items={external} />}
+      </section>
+    );
+  }
+  // THE CARD PLUS anything it does not own. A newer uncharted visit's legacy
+  // notes sit BELOW the treatment, dated, so they are never read as part of it.
+  return (
     <>
-      <span className="font-medium">
-        <FormattedDateTime iso={session.started_at} />
-      </span>
-      <span className="text-neutral-500 capitalize"> · {session.modality}</span>
+      <AppointmentPrepMemoryCard clientId={clientId} memory={memory} />
+      {external.length > 0 && (
+        <section
+          data-testid="appointment-prep-external-narrative"
+          className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+        >
+          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            From another visit
+          </h2>
+          <p className="mt-1 text-xs text-neutral-500">
+            Recorded on a visit other than the treatment above.
+          </p>
+          <div className="mt-3">
+            <PriorNarrative items={external} />
+          </div>
+        </section>
+      )}
     </>
   );
+}
+
+// Practitioner narrative from prior visits that produced no charted treatment
+// (or whose treatment detail could not be loaded). READ-ONLY, and deliberately
+// never labelled as a treatment: it reuses the same section vocabulary the
+// treatment card uses — "For next visit", "Legacy session notes" — so the two
+// surfaces read identically without either claiming the other's meaning.
+//
+// Full text, whole: whitespace-pre-wrap keeps the practitioner's line breaks
+// and break-words keeps a long unbroken run from scrolling the page sideways.
+// Practitioner narrative this screen must show but the treatment card does not
+// own: the plan when there is no card, and legacy session_notes from a visit
+// other than the one displayed. READ-ONLY. Every item is DATED, so a note from
+// a later uncharted visit is never read as part of the treatment above it.
+//
+// Full text, whole: whitespace-pre-wrap keeps the practitioner's line breaks,
+// break-words keeps a long unbroken run from scrolling the page sideways.
+function PriorNarrative({ items }: { items: PrepNarrativeRenderItem[] }) {
+  if (items.length === 0) return null;
   return (
-    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-        Last session
-      </h2>
-      <p className="mt-2 text-sm">
-        {clientId ? (
-          <Link
-            href={`/clients/${clientId}/sessions/${session.id}`}
-            className="hover:underline"
+    <div data-testid="prep-prior-narrative" className="flex flex-col gap-3">
+      {items.map((item) => (
+        <div
+          key={item.key}
+          data-testid={
+            item.source === "next_session_note"
+              ? "prep-prior-plan"
+              : "prep-prior-legacy-notes"
+          }
+          className={
+            item.source === "next_session_note"
+              ? "rounded-md border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40"
+              : ""
+          }
+        >
+          <p
+            className={
+              item.source === "next_session_note"
+                ? "text-[11px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300"
+                : "text-[11px] font-medium uppercase tracking-wider text-neutral-500"
+            }
           >
-            {sessionLine}
-          </Link>
-        ) : (
-          sessionLine
-        )}
-      </p>
-      {/* PR #191: one compact mini-summary PER treatment area, plus
-          ONE combined From last visit box (watch + plan). Never a
-          first-area-only line, never two competing warning boxes. */}
-      {summary && summary.areas.length > 0 && (
-        <div className="mt-3">
-          <AreaSummaries summary={summary} />
-        </div>
-      )}
-      {summary && (
-        <div className="mt-3">
-          <FromLastVisitForToday summary={summary} />
-        </div>
-      )}
-      {session.session_notes && (
-        <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
-          {session.session_notes}
-        </p>
-      )}
-      {clientId && (
-        <p className="mt-3 text-xs">
-          <Link
-            href={`/clients/${clientId}/sessions/${session.id}`}
-            className="text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+            {item.label}
+          </p>
+          {/* PROVENANCE. Every fallback item is dated, because it may come from
+              a different visit than anything shown above it. A session id is
+              never rendered — the date is the practitioner-meaningful handle. */}
+          {/* PROVENANCE, in BOTH directions. Rendering a date only for the
+              "after" case left an OLDER plan silently undated, and that silence
+              read as "written at the treatment above" — inverting the status of
+              an instruction that may already have been carried out. Chronology
+              is the ONLY relationship the data supports: a claim about whether
+              an instruction still stands would be an inference Hone cannot
+              make. See buildPrepProvenanceModel. */}
+          <p
+            data-testid="prep-prior-date"
+            className={
+              item.source === "next_session_note"
+                ? "text-xs text-blue-800 dark:text-blue-300"
+                : "text-xs text-neutral-500"
+            }
           >
-            View full session
-          </Link>
-        </p>
-      )}
-    </section>
+            <FormattedDateTime iso={item.startedAt} format="date" />
+            {item.chronology === "after_selected_treatment"
+              && ", after the treatment above"}
+            {item.chronology === "before_selected_treatment"
+              && ", before the treatment above"}
+          </p>
+          <p
+            className={
+              item.source === "next_session_note"
+                ? "mt-0.5 whitespace-pre-wrap break-words text-sm text-blue-950 dark:text-blue-100"
+                : "mt-0.5 whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300"
+            }
+          >
+            {item.text}
+          </p>
+        </div>
+      ))}
+    </div>
   );
 }
 

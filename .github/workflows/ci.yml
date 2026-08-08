@@ -459,6 +459,9 @@ jobs:
     steps:
       - name: Aggregate browser shard results
         env:
+          # The GATE's own outcome, not just its outputs. Load-bearing: see the
+          # fail-closed check at the top of the script.
+          CHANGES_RESULT: ${{ needs.changes.result }}
           SHARD_RESULT: ${{ needs.browser-e2e-shard.result }}
           BROWSER_RUN: ${{ needs.changes.outputs.browser_run }}
           FULL_MATRIX: ${{ needs.changes.outputs.full_matrix_required }}
@@ -466,10 +469,39 @@ jobs:
           SHARDS: ${{ needs.changes.outputs.browser_shards }}
         run: |
           set -euo pipefail
+
+          # FAIL CLOSED WHEN THE GATE DID NOT SUCCEED.
+          #
+          # Every "is browser coverage required?" answer below is derived from
+          # changed-path detection's OUTPUTS. When that job does not succeed its
+          # outputs are the empty string, so REQUIRED computes to "false", the
+          # shard job reports "skipped", and this aggregator concluded "no
+          # browser coverage required for this diff — satisfied" and exited 0.
+          #
+          # That is a fail-OPEN: the one check the repository designates as the
+          # stable required check reported SUCCESS having run zero tests, purely
+          # because the job that decides what to run had died. Observed on a real
+          # PR head during the 2026-08-06 GitHub Actions incident
+          # (https://stspg.io/rcz3fcm83sff): run 31120309970 on
+          # fd6538209dfc202de2818af313f8f2f01ed9cbeb shows
+          # `browser e2e (local stack) = success` with every lane skipped and the
+          # gate cancelled after 15 minutes without ever being assigned a runner.
+          #
+          # An unknown classification must always mean MORE checks, never fewer,
+          # so an unsuccessful gate is an unconditional failure here. This is the
+          # only safe reading: without the gate's outputs we cannot know whether
+          # coverage was required, and "we could not tell" must never render as
+          # a green required check.
+          if [ "${CHANGES_RESULT:-}" != "success" ]; then
+            echo "::error::changed-path detection did not succeed (result: ${CHANGES_RESULT:-<missing>}) — browser coverage cannot be proven unnecessary, so this required check fails closed"
+            exit 1
+          fi
+
           REQUIRED="false"
           if [ "$BROWSER_RUN" = "true" ] || [ "$FULL_MATRIX" = "true" ]; then REQUIRED="true"; fi
           EXPECTED=$(node -e 'const s=process.env.SHARDS||"[1]";console.log(JSON.parse(s).length)')
 
+          echo "gate result      : $CHANGES_RESULT"
           echo "shard job result : ${SHARD_RESULT:-<missing>}"
           echo "browser required : $REQUIRED"
           echo "extended         : $EXTENDED"

@@ -23,10 +23,19 @@ import { signConsentFormAction } from "./consent-actions";
 
 const SIGNATURE_MAX = 200;
 
+// The template as handed to the signing surface: the portal row plus the
+// canonical hash of the exact (title, body, version) being rendered. The
+// parent server component derives it with withRenderedTemplateHash; this
+// component only carries it back to the action as a comparand, and never
+// reads or interprets it.
+export type ConsentFormTemplateForSigning = ConsentFormTemplateForPortal & {
+  renderedTemplateHash: string;
+};
+
 export function PortalConsentForms({
   templates,
 }: {
-  templates: ConsentFormTemplateForPortal[];
+  templates: ConsentFormTemplateForSigning[];
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -100,7 +109,7 @@ function PortalConsentSignForm({
   template,
   onCancel,
 }: {
-  template: ConsentFormTemplateForPortal;
+  template: ConsentFormTemplateForSigning;
   onCancel: () => void;
 }) {
   const [signatureName, setSignatureName] = useState("");
@@ -141,6 +150,11 @@ function PortalConsentSignForm({
     fd.set("template_id", template.id);
     fd.set("signature_name", trimmed);
     fd.set("agreed", "true");
+    // Comparand for the stale-render check. The server recomputes the
+    // canonical hash of the row it resolves and refuses if it differs, so
+    // this value is never trusted as data -- only compared.
+    fd.set("rendered_template_hash", template.renderedTemplateHash);
+    fd.set("rendered_form_type", template.form_type);
     if (isPhotoConsent && photoResponse != null) {
       fd.set("response", photoResponse);
     }

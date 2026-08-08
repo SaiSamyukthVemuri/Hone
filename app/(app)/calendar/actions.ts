@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { getAvailableSlots } from "@/lib/booking/slots";
+import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import {
@@ -280,6 +280,7 @@ export async function bookAppointmentForClientAction(
       service.default_duration_minutes,
       undefined,
       targetPractitionerId,
+      INTERNAL_SLOT_PACKING,
     );
     const isFree = slots.some(
       (s) => new Date(s.start).getTime() === start.getTime(),

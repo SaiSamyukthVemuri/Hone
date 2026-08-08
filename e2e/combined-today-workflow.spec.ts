@@ -3,6 +3,8 @@ import {
   seedE2eStudio,
   seedE2eDashboardMemoryClient,
   seedE2eSecondAppointmentToday,
+  seedE2eIntake,
+  sql,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -240,6 +242,138 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       await expect(
         section.getByRole("link", { name: "Book appointment" }),
       ).toHaveCount(1);
+    });
+
+    // -----------------------------------------------------------------------
+    // Review intake from Today.
+    //
+    // THE DEFECT. Today already KNEW the intake state — it renders the "Intake
+    // awaiting review" pill — but stated it as inert text. Preparing for an
+    // appointment therefore meant leaving the working screen entirely:
+    //
+    //   Today -> client profile -> Health & Forms -> intake -> review
+    //
+    // The oracle is the EXISTING practitioner review surface: the CTA must land
+    // on it, for the right client, showing the right intake. No new page, no
+    // bearer token, nothing created.
+    // -----------------------------------------------------------------------
+    test("Review intake opens the canonical practitioner surface for the right client and intake", async ({
+      page,
+    }) => {
+      const seed = await seedE2eStudio();
+      const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+        cautionNote: null,
+      });
+      // A detail that exists ONLY on this intake, so the review page proves it
+      // opened the right RECORD, not merely the right route.
+      const allergyNote = `Reacts to nickel jewellery ${seed.runId}`;
+      const intakeId = await seedE2eIntake(seed.studioId, clientId, "submitted", {
+        has_allergies: "yes",
+        has_allergies_notes: allergyNote,
+      });
+      const clientName = (
+        await sql<{ name: string }>(`select name from public.clients where id = $1`, [
+          clientId,
+        ])
+      )[0].name;
+
+      await loginAsOwner(page, seed);
+      await openDashboard(page);
+
+      const section = todaySection(page);
+      const cta = section.getByTestId("today-review-intake");
+
+      await test.step("the appointment card offers Review intake, once", async () => {
+        await expect(cta).toHaveCount(1);
+        await expect(cta).toHaveText("Review intake");
+        // The canonical AUTHENTICATED practitioner route — never the client's
+        // /intake/<token> bearer page.
+        await expect(cta).toHaveAttribute("href", `/clients/${clientId}/intake`);
+        // Truthful state, stated once beside it.
+        await expect(section.getByText("Intake awaiting review")).toHaveCount(1);
+        await expectNoHorizontalScroll(page);
+      });
+
+      await test.step("one click lands on the existing review surface", async () => {
+        await cta.click();
+        await page.waitForURL(`**/clients/${clientId}/intake`, { timeout: T });
+        // No token, hash or magic-link payload ever entered the URL.
+        expect(page.url()).not.toMatch(/\/intake\/[^/?#]+/);
+        await expect(
+          page.getByRole("heading", { name: "Health intake" }),
+        ).toBeVisible({ timeout: T });
+      });
+
+      await test.step("correct client, correct intake, page fully loads", async () => {
+        // Correct client: the review page's own back-link names them.
+        await expect(page.getByRole("link", { name: `← ${clientName}` })).toBeVisible();
+        // Correct intake: the unique detail from THIS row is on screen (the
+        // review page renders it in both the allergies summary and the
+        // response grid), and the page's submitted-state line rendered.
+        const detail = page.getByText(allergyNote);
+        expect(await detail.count()).toBeGreaterThan(0);
+        await expect(detail.first()).toBeVisible();
+        await expect(page.getByText(/^Submitted /).first()).toBeVisible();
+        // The existing review surface is intact — its review control is here.
+        await expect(page.getByRole("heading", { name: "Allergies summary" })).toBeVisible();
+        await expectNoHorizontalScroll(page);
+      });
+
+      await test.step("nothing was created or mutated", async () => {
+        const rows = await sql<{ id: string; status: string }>(
+          `select id, status from public.client_intake_forms where client_id = $1`,
+          [clientId],
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0].id).toBe(intakeId);
+        expect(rows[0].status).toBe("submitted");
+      });
+    });
+
+    test("no intake on file: Review intake is absent, and so is any fake action", async ({
+      page,
+    }) => {
+      const seed = await seedE2eStudio();
+      await seedE2eDashboardMemoryClient(seed, { cautionNote: null });
+      await loginAsOwner(page, seed);
+      await openDashboard(page);
+
+      const section = todaySection(page);
+      await expect(section.getByTestId("today-review-intake")).toHaveCount(0);
+      await expect(section.getByText("No intake on file")).toHaveCount(1);
+      await expectNoHorizontalScroll(page);
+    });
+
+    test("older reviewed + newer in-progress: the STALE intake is not offered for review", async ({
+      page,
+    }) => {
+      const seed = await seedE2eStudio();
+      const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+        cautionNote: null,
+      });
+      // The canonical current-intake rule is "newest non-deleted row"
+      // (lib/intake/queries.ts). A reissue the client has not finished is the
+      // current record; the old reviewed one must NOT win a "Review intake"
+      // CTA, or the link would open a different record than Today described.
+      const oldReviewed = await seedE2eIntake(
+        seed.studioId,
+        clientId,
+        "reviewed",
+      );
+      await sql(
+        `update public.client_intake_forms set created_at = now() - interval '90 days' where id = $1`,
+        [oldReviewed],
+      );
+      await seedE2eIntake(seed.studioId, clientId, "in_progress");
+
+      await loginAsOwner(page, seed);
+      await openDashboard(page);
+
+      const section = todaySection(page);
+      await expect(section.getByTestId("today-review-intake")).toHaveCount(0);
+      await expect(section.getByText("Intake in progress")).toHaveCount(1);
+      await expect(section.getByText("Intake reviewed")).toHaveCount(0);
+      await expectNoHorizontalScroll(page);
     });
 
     test("a new client shows ONE relationship line", async ({ page }) => {

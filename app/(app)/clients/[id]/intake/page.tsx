@@ -17,6 +17,20 @@ import {
 } from "@/lib/intake/questions";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import {
+  ACKNOWLEDGEMENT_REVIEW_COPY,
+  readElectrolysisAcknowledgement,
+  type IntakeLifecycleStatus,
+} from "@/lib/intake/acknowledgements";
+import {
+  INTAKE_CONSENT_REVIEW_COPY,
+  intakeConsentResponseLabel,
+  readIntakeConsentResponses,
+} from "@/lib/intake/consent-forms";
+import {
+  ASSISTED_ENTRY_REVIEW_COPY,
+  readAssistedEntry,
+} from "@/lib/intake/entry-provenance";
+import {
   deriveIntakeReviewFlags,
   MODALITY_WORDING,
   type IntakeReviewFlag,
@@ -231,6 +245,30 @@ export default async function ClientIntakePage({
         )}
       </div>
 
+      {/* Practitioner-assisted entry. Offered only while the intake is still
+          being filled in — a submitted or reviewed intake is terminal and the
+          correction model is a NEW intake, never a rewrite. The editor covers
+          the questionnaire only; the client's own acknowledgements and the
+          submission stay with the client. */}
+      {intake.status === "in_progress" && (
+        <section className="rounded-lg border border-neutral-300 p-5 dark:border-neutral-700">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+            With the client
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+            Sitting with {client.name}? Work through the questionnaire together
+            and record their answers. They complete their own confirmations and
+            submit at the end.
+          </p>
+          <Link
+            href={`/clients/${id}/intake/assist?intake=${intake.id}`}
+            className="mt-4 inline-flex min-h-[44px] items-center rounded-md bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900"
+          >
+            Complete intake with client
+          </Link>
+        </section>
+      )}
+
       {/* PR #293: primary resend CTA for an in-progress intake — refreshes
           the link for THIS row and keeps saved answers. The reissue card
           below is the secondary "start a brand-new blank intake" path. */}
@@ -277,6 +315,21 @@ export default async function ClientIntakePage({
       <IntakeReviewFlags responses={responses} />
 
       <FitzpatrickSummary responses={responses} />
+
+      <IntakeEntrySummary
+        responses={responses}
+        reviewedBy={intake.reviewed_by}
+      />
+
+      <ElectrolysisAcknowledgementSummary
+        responses={responses}
+        status={intake.status}
+      />
+
+      <IntakeConsentFormsSummary
+        responses={responses}
+        status={intake.status}
+      />
 
       {intake.status === "in_progress" ? (
         <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
@@ -577,6 +630,165 @@ function FitzpatrickSummary({
   );
 }
 
+// Versioned electrolysis acknowledgement. A pure projection of what the
+// row actually stores — it never re-validates the intake, never derives a
+// verdict, and offers no control that could change the client's answer.
+// The practitioner review surface reads this record; it does not author it.
+//
+// The wording shown for an acknowledged intake is the SNAPSHOT the client
+// read at submit time, not the current constant, so editing the wording
+// later cannot rewrite what a past client is shown to have agreed to.
+//
+// Every absent-record case is stated for what it is. An intake submitted
+// before this acknowledgement existed says so explicitly rather than
+// borrowing the question grid's "Not answered", which would attribute an
+// omission to a client who was never shown the question.
+function ElectrolysisAcknowledgementSummary({
+  responses,
+  status,
+}: {
+  responses: Record<string, unknown>;
+  status: IntakeLifecycleStatus;
+}) {
+  const view = readElectrolysisAcknowledgement(responses, status);
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+        {ACKNOWLEDGEMENT_REVIEW_COPY.heading}
+      </h2>
+      <div className="mt-3 flex flex-col gap-2 text-sm text-neutral-800 dark:text-neutral-200">
+        {view.state === "acknowledged" && (
+          <>
+            <p className="font-medium">
+              {ACKNOWLEDGEMENT_REVIEW_COPY.acknowledged}
+            </p>
+            <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
+              {view.wording}
+            </p>
+            <p className="text-xs text-neutral-500">
+              Version {view.version}
+              {view.acceptedAtIso && (
+                <>
+                  {" · "}
+                  <FormattedDateTime iso={view.acceptedAtIso} />
+                </>
+              )}
+            </p>
+          </>
+        )}
+        {view.state === "not_acknowledged" && (
+          <>
+            <p className="font-medium">
+              {ACKNOWLEDGEMENT_REVIEW_COPY.notAcknowledged}
+            </p>
+            <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
+              {view.wording}
+            </p>
+            <p className="text-xs text-neutral-500">Version {view.version}</p>
+          </>
+        )}
+        {view.state === "no_record" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {ACKNOWLEDGEMENT_REVIEW_COPY.noRecord}
+          </p>
+        )}
+        {view.state === "not_recorded" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {ACKNOWLEDGEMENT_REVIEW_COPY.notRecorded}
+          </p>
+        )}
+        {view.state === "unreadable" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {ACKNOWLEDGEMENT_REVIEW_COPY.unreadable}
+          </p>
+        )}
+      </div>
+      <p className="mt-3 text-xs text-neutral-500">
+        {ACKNOWLEDGEMENT_REVIEW_COPY.caveat}
+      </p>
+    </section>
+  );
+}
+
+// HOW THE QUESTIONNAIRE ANSWERS GOT HERE.
+//
+// Renders NOTHING for an ordinary, self-completed intake — the overwhelming
+// majority of rows carry no assisted-entry record, and an intake the client
+// filled in themselves must not gain a badge.
+//
+// Deliberately a SEPARATE section from the electrolysis acknowledgement card
+// below it. The two record different things by different people: this one says
+// a practitioner recorded the questionnaire; that one is the client's own
+// confirmation. Merging them would blur exactly the line this feature exists
+// to draw.
+//
+// Names and dates come from the STORED snapshot, never from a current
+// practitioner lookup — a practitioner who has since been deactivated must
+// still be named here.
+function IntakeEntrySummary({
+  responses,
+  reviewedBy,
+}: {
+  responses: Record<string, unknown>;
+  reviewedBy: string | null;
+}) {
+  const view = readAssistedEntry(responses);
+  if (view.state === "none") return null;
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+        {ASSISTED_ENTRY_REVIEW_COPY.heading}
+      </h2>
+      <div className="mt-3 flex flex-col gap-2 text-sm text-neutral-800 dark:text-neutral-200">
+        {view.state === "unreadable" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {ASSISTED_ENTRY_REVIEW_COPY.unreadable}
+          </p>
+        )}
+        {view.state === "assisted" && (
+          <>
+            <p className="font-medium">
+              {ASSISTED_ENTRY_REVIEW_COPY.assistedLead}{" "}
+              {view.startedBy.display_name} on{" "}
+              <FormattedDateTime iso={view.startedAtIso} />.
+            </p>
+            {view.showLastUpdated && (
+              <p className="text-neutral-700 dark:text-neutral-300">
+                Answers were last recorded by {view.lastUpdatedBy.display_name}{" "}
+                on <FormattedDateTime iso={view.lastUpdatedAtIso} />.
+              </p>
+            )}
+            <p className="text-neutral-700 dark:text-neutral-300">
+              {view.handoffAtIso && view.handoffBy ? (
+                <>
+                  {ASSISTED_ENTRY_REVIEW_COPY.handedOver}{" "}
+                  {view.handoffBy.display_name} on{" "}
+                  <FormattedDateTime iso={view.handoffAtIso} />.{" "}
+                  {ASSISTED_ENTRY_REVIEW_COPY.handedOverTail}
+                </>
+              ) : (
+                ASSISTED_ENTRY_REVIEW_COPY.notHandedOver
+              )}
+            </p>
+            <p className="text-xs text-neutral-500">
+              {ASSISTED_ENTRY_REVIEW_COPY.acknowledgementSeparate}
+            </p>
+            {reviewedBy &&
+              (reviewedBy === view.startedBy.practitioner_id ||
+                reviewedBy === view.lastUpdatedBy.practitioner_id) && (
+                <p className="text-xs text-neutral-500">
+                  {ASSISTED_ENTRY_REVIEW_COPY.selfReviewed}
+                </p>
+              )}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // Look up the option label for a single_select / multi_select answer
 // by walking INTAKE_STEPS. Falls back to the raw value if the question
 // or option isn't found (e.g. an older intake whose key has since been
@@ -590,4 +802,91 @@ function resolveOptionLabel(key: string, value: string): string {
     }
   }
   return value;
+}
+
+// Read-only record of the studio's live consent forms as the client completed
+// them inside the intake.
+//
+// EVERY field rendered here comes from the SNAPSHOT stored at completion, not
+// from today's consent_form_templates row — a studio that has since edited or
+// retired a form must not change what a historical intake says the client read.
+//
+// Emits no form control: this is server-rendered prose, which is what makes it
+// structurally impossible for a practitioner to complete a client's consent
+// from the review surface (pinned by tests/source-guards/assisted-intake-guards).
+//
+// Vocabulary is constrained to INTAKE_CONSENT_REVIEW_COPY — "Acknowledged",
+// "Accepted", "Denied". Never "Signed": nothing here is a signature, and only
+// the portal's own signature records may be described that way.
+function IntakeConsentFormsSummary({
+  responses,
+  status,
+}: {
+  responses: Record<string, unknown>;
+  status: IntakeLifecycleStatus;
+}) {
+  const view = readIntakeConsentResponses(responses, status);
+
+  return (
+    <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+        {INTAKE_CONSENT_REVIEW_COPY.heading}
+      </h2>
+      <div className="mt-3 flex flex-col gap-4 text-sm text-neutral-800 dark:text-neutral-200">
+        {view.state === "recorded" &&
+          view.forms.map((form, i) => (
+            <div
+              key={`${form.formType}-${i}`}
+              className="flex flex-col gap-1"
+              data-testid="intake-review-consent-form"
+            >
+              <p className="font-medium">{form.titleSnapshot}</p>
+              <p className="font-medium text-neutral-700 dark:text-neutral-300">
+                {intakeConsentResponseLabel(form)}
+              </p>
+              {form.responseLabelSnapshot && (
+                <p className="text-neutral-700 dark:text-neutral-300">
+                  {form.responseLabelSnapshot}
+                </p>
+              )}
+              <p className="whitespace-pre-wrap break-words text-neutral-700 dark:text-neutral-300">
+                {form.bodySnapshot}
+              </p>
+              <p className="text-xs text-neutral-500">
+                Version {form.templateVersion}
+                {form.respondedAtIso && (
+                  <>
+                    {" · "}
+                    <FormattedDateTime iso={form.respondedAtIso} />
+                  </>
+                )}
+              </p>
+            </div>
+          ))}
+        {view.state === "no_record" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.noRecord}
+          </p>
+        )}
+        {view.state === "none_recorded" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.noneRecorded}
+          </p>
+        )}
+        {view.state === "unreadable" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.unreadable}
+          </p>
+        )}
+      </div>
+      {view.state === "recorded" && (
+        <p className="mt-3 text-xs text-neutral-500">
+          {INTAKE_CONSENT_REVIEW_COPY.historicalNote}
+        </p>
+      )}
+      <p className="mt-3 text-xs text-neutral-500">
+        {INTAKE_CONSENT_REVIEW_COPY.caveat}
+      </p>
+    </section>
+  );
 }

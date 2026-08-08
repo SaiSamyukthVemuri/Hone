@@ -4,10 +4,18 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
 import {
-  ALL_QUESTION_KEYS,
   findMissingRequiredAnswers,
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
+import { sanitizeQuestionResponses } from "@/lib/intake/responses";
+import {
+  INTAKE_CONSENT_RESPONSES,
+  normalizeIntakeConsentClaims,
+} from "@/lib/intake/consent-forms";
+import {
+  buildIntakeConsentDraftRecord,
+  validateIntakeConsentResponses,
+} from "@/lib/intake/consent-gate";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 
@@ -35,13 +43,39 @@ const INTAKE_TOKEN_INVALID =
 
 // Whitelist responses to known question keys (or their `_notes` siblings) so
 // a client-side tamper can't inject arbitrary JSON fields.
+//
+// Exactly ONE key outside that set is admitted: the live consent responses
+// claim (INTAKE_CONSENT_RESPONSES.id). It is not a question, so the whitelist
+// would otherwise strip it and the client's assertion about which form text
+// they read could never reach the server.
+//
+// Admitting it is NOT trusting it. The value is narrowed here to a bounded
+// per-form {template_id, form_type, rendered_template_hash, response} claim,
+// and NOTHING client-authored is persisted — every stored snapshot field is
+// re-derived from the studio's own database row (lib/intake/consent-gate.ts).
+// The claim is evidence to check, never content to store.
+//
+// RETIRED (#518): there used to be a SECOND carve-out here for the versioned
+// electrolysis acknowledgement record. Now that the acknowledgement is no
+// longer collected, that carve-out would be an orphaned forgery channel — a
+// browser-authorable path to a reserved key that no server gate validates any
+// more. It is deliberately GONE, not merely unused, so:
+//
+//   * a new `electrolysis_acknowledgement` cannot be authored from a browser;
+//   * a HISTORICAL one cannot be overwritten (the key is stripped on the way
+//     in, and the server merge is `{...stored, ...incoming}`, so what is
+//     already stored survives untouched);
+//   * `ack_electrolysis_nature` is likewise stripped, because retiring the
+//     question removed it from ALL_QUESTION_KEYS.
+//
+// Historical evidence stays readable; no new evidence is accepted.
 function sanitizeResponses(input: unknown): Record<string, unknown> {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
-  const allowed = new Set(ALL_QUESTION_KEYS);
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    if (allowed.has(key)) out[key] = value;
-  }
+  const out = sanitizeQuestionResponses(input);
+  if (!input || typeof input !== "object" || Array.isArray(input)) return out;
+  const consentClaims = normalizeIntakeConsentClaims(
+    (input as Record<string, unknown>)[INTAKE_CONSENT_RESPONSES.id],
+  );
+  if (consentClaims) out[INTAKE_CONSENT_RESPONSES.id] = consentClaims;
   return out;
 }
 
@@ -73,7 +107,12 @@ export async function saveIntakeStepAction(payload: {
   const admin = createAdminClient();
   const { data: existing, error: lookupErr } = await admin
     .from("client_intake_forms")
-    .select("id, status, responses")
+    // studio_id is needed to re-resolve the studio's own live consent
+    // templates when normalising a draft consent response below. It is read
+    // from the intake row the verified token addresses — never from the
+    // request — so a claim can only ever be checked against ITS OWN studio's
+    // forms.
+    .select("id, status, responses, studio_id")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -92,6 +131,27 @@ export async function saveIntakeStepAction(payload: {
     ...((existing.responses as Record<string, unknown>) ?? {}),
     ...responses,
   };
+
+  // Same draft posture for the live consent forms: a save is NEVER refused
+  // for an unanswered or half-answered consent form — that is a normal
+  // in-progress state — but what lands in the row is server-derived. Only a
+  // claim matching one of THIS studio's current live templates, carrying the
+  // current canonical hash, produces a draft entry, and every snapshot field
+  // comes from the database row rather than the browser. A stale or forged
+  // claim is dropped, so an in-progress row can never hold fabricated consent
+  // text for a practitioner to read.
+  //
+  // Written whenever the client sent a consent key at all, so clearing an
+  // answer overwrites the stored record instead of leaving a stale one behind
+  // (the merge above is a spread).
+  if (merged[INTAKE_CONSENT_RESPONSES.id] !== undefined) {
+    const draftConsent = await buildIntakeConsentDraftRecord({
+      studioId: existing.studio_id as string,
+      responses: merged,
+    });
+    if (draftConsent) merged[INTAKE_CONSENT_RESPONSES.id] = draftConsent;
+    else delete merged[INTAKE_CONSENT_RESPONSES.id];
+  }
 
   // Atomic status guard: the UPDATE is conditional on
   // `status = 'in_progress'`. If the form is submitted/reviewed
@@ -174,6 +234,56 @@ export async function submitIntakeAction(payload: {
       error:
         "Please answer all required questions before submitting your intake.",
     };
+  }
+
+  // RETIRED (#518): the versioned electrolysis acknowledgement gate used to
+  // run here. It is gone with the acknowledgement itself — a submission no
+  // longer requires it and no longer constructs one. The live consent gate
+  // below, added by #529, is now the consent authority for a new intake.
+  //
+  // Deliberately NOT replaced with a "legacy row still needs it" branch: an
+  // in-progress intake started before retirement must be able to finish, and
+  // its stored acknowledgement (if any) is preserved by the merge above.
+
+  // Live consent forms — the server-side consent gate.
+  //
+  // Placed below the already-submitted early return (so an intake
+  // submitted before this feature is never re-validated, never rewritten and
+  // never retroactively marked incomplete) and above the UPDATE (so a
+  // rejection performs zero writes).
+  //
+  // It re-resolves the studio's CURRENT live treatment/photo templates from
+  // the database rather than trusting the set the browser rendered, so:
+  //   * a form that went live after the client opened the wizard is still
+  //     required;
+  //   * a v1 acknowledgement cannot satisfy a v2 template — the canonical
+  //     hash differs and the submit fails closed with a refresh prompt;
+  //   * every treatment consent must be explicitly accepted;
+  //   * every photo consent must be explicitly ANSWERED — and a denial is a
+  //     complete answer that must never block the submission.
+  //
+  // A studio with no live treatment/photo forms yields record = null and
+  // submission proceeds exactly as it did before this feature existed.
+  //
+  // Nothing here trusts the disabled Submit button, the client-side React
+  // state, a hidden input, or any browser-supplied version or text.
+  const consent = await validateIntakeConsentResponses({
+    studioId: existing.studio_id,
+    // Same posture as studio_id: read from the intake row, never the request.
+    clientId: existing.client_id,
+    responses: merged,
+    respondedAtIso: new Date().toISOString(),
+  });
+  if (!consent.ok) return { ok: false, error: consent.error };
+  if (consent.record) {
+    merged[INTAKE_CONSENT_RESPONSES.id] = consent.record;
+  } else {
+    // Nothing was completed during this intake — either the studio has no live
+    // forms, or every one of them was already completed in the portal. Drop any
+    // record a draft save left behind (the wizard posts an empty claim set in
+    // that state) so the stored row does not carry a hollow consent entry the
+    // review surface has to interpret.
+    delete merged[INTAKE_CONSENT_RESPONSES.id];
   }
 
   // Atomic status guard: only transition to 'submitted' if the row is

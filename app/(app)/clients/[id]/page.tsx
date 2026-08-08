@@ -59,6 +59,7 @@ import {
 } from "@/lib/intake/queries";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
+import { StartAssistedIntakeButton } from "./intake/StartAssistedIntakeButton";
 import { PortalAccessCard } from "./PortalAccessCard";
 import {
   getPortalAccessSummary,
@@ -1054,11 +1055,21 @@ export default async function ClientCheatSheetPage({
               </span>
             )}
           </div>
+          {/* No intake at all. Until now this state was a dead end: it stated
+              the fact and offered nothing, so starting one with the client in
+              the room meant knowing that a blank row had to be created on the
+              dedicated intake page first. The CTA creates that row (no email)
+              and opens the existing assisted editor. Gated on !intake, so a
+              submitted or reviewed record is never a reason to start another
+              — that path stays Send a new intake form. */}
           {!intake && (
-            <p className="mt-2 text-sm text-neutral-500">
-              No intake on file. A link is sent automatically with each booking
-              confirmation.
-            </p>
+            <div className="mt-2 flex flex-col gap-3">
+              <p className="text-sm text-neutral-500">
+                No intake on file for this client. A link is sent automatically
+                with each booking confirmation.
+              </p>
+              <StartAssistedIntakeButton clientId={client.id} />
+            </div>
           )}
           {intake?.status === "in_progress" && (
             <div className="mt-2 flex flex-col gap-3">

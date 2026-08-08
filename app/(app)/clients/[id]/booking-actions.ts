@@ -2,7 +2,11 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { getAvailableSlots, type Slot } from "@/lib/booking/slots";
+import {
+  getAvailableSlots,
+  INTERNAL_SLOT_PACKING,
+  type Slot,
+} from "@/lib/booking/slots";
 
 function logBookingSlotError(stage: string, code: string | undefined): void {
   // Bounded PHI-free marker only — never the raw DB/PostgREST message.
@@ -96,6 +100,7 @@ export async function fetchSlotsForClientBookingAction(params: {
     undefined,
     // Legacy (flag off) ignores the id → studio-wide, exactly as today.
     capacityOn ? target : null,
+    INTERNAL_SLOT_PACKING,
   );
   return { ok: true, slots };
 }

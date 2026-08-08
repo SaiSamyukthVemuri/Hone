@@ -105,6 +105,27 @@ Do NOT exercise this against production data.
    Expected: new row with the title/body/version snapshot, `signature_name` populated, `signed_at` recent.
 4. Repeat for a `photo_consent` template.
 
+### 3a. Stale-form smoke — the ONLY lane that exercises the render→submit wiring
+
+No e2e spec drives `/portal`, so this is the only executable check that the
+render surface still supplies its comparands. Run it whenever the signing
+surface or `lib/consent/sign-consent-form.ts` changes.
+
+1. As a test client, open a live consent form in `/portal` and **leave the
+   drawer open** — type a name and tick the box, but do not submit.
+2. In another session, as the studio owner in `/settings/consent`, **edit that
+   same template** (change a word in the body) and save. `version` bumps;
+   `status` stays `active` and `is_live` stays `true`.
+3. Back in the client tab, submit. Expected: the sign is **refused** with
+   exactly:
+   `This form changed while you were reviewing it. Please refresh and review the current version before signing.`
+4. SQL: confirm **no new row** landed for that (client, template) pair.
+5. Reload the client tab. The new body renders and signing now succeeds.
+
+A pass proves the page derives the hash, the form posts it back, and the
+server compares it. If step 3 *succeeds* instead of refusing, the render→submit
+wiring is broken even if every unit test is green.
+
 ## 4. Photo denial smoke (PR #137)
 
 1. From a test client's `/portal`, find an active `photo_consent` form.

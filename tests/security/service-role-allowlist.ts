@@ -322,9 +322,9 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/portal/consent-actions.ts",
-    purpose: "Payment / consent ledger helper.",
-    why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",
-    scopeGuard: '.eq("studio_id"',
+    purpose: "Client-portal consent signing (thin wrapper over the shared ceremony).",
+    why: "Constructs the service-role client and hands it to recordConsentSignature (lib/consent/sign-consent-form.ts), which owns every query. Identity is NOT client-supplied: getCurrentPortalSession() resolves (studioId, clientId) and those server-resolved values are what the core scopes its clients / consent_form_templates lookups and its client_consent_signatures INSERT to. The core is deliberately NOT on this inventory because it constructs no client of its own — the allowlist should keep naming the surfaces that resolve identity.",
+    scopeGuard: "getCurrentPortalSession",
   },
   {
     path: "app/portal/login/actions.ts",
@@ -433,6 +433,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Public booking / portal / token-scoped read.",
     why: "Session-less or portal-session path that cannot satisfy member RLS; the query is explicitly studio/client scoped (see scopeGuard). Service-role reads the tenant-scoped rows.",
     scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/intake/consent-gate.ts",
+    purpose:
+      "Live consent forms inside the client intake — resolve the studio's live treatment/photo templates for render, and re-resolve them at the final submit gate.",
+    why: "The public intake is token-authenticated with no Supabase session, so it cannot satisfy member RLS on consent_form_templates. READ-ONLY: this module never inserts, updates or deletes, and never touches client_consent_signatures. The studio_id is taken from the intake row the verified token addresses — never from the request — and every query filters that studio_id plus is_live/status/form_type, so a token can only ever resolve its own studio's live forms.",
+    scopeGuard: '.eq("studio_id", studioId)',
   },
   {
     path: "lib/notifications/practitioner-notifications.ts",
