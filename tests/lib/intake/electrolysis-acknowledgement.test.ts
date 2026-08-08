@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   ACKNOWLEDGEMENT_REVIEW_COPY,
-  buildElectrolysisAcknowledgementClaim,
-  buildElectrolysisAcknowledgementDraftRecord,
   ELECTROLYSIS_ACKNOWLEDGEMENT,
   normalizeElectrolysisAcknowledgementClaim,
   readElectrolysisAcknowledgement,
-  validateElectrolysisAcknowledgement,
 } from "@/lib/intake/acknowledgements";
-import { findMissingRequiredAnswers, INTAKE_STEPS } from "@/lib/intake/questions";
+import {
+  ALL_QUESTION_KEYS,
+  findMissingRequiredAnswers,
+  INTAKE_STEPS,
+  isClientOwnedResponseKey,
+} from "@/lib/intake/questions";
 
 // Versioned electrolysis acknowledgement — the shared contract.
 //
@@ -40,7 +42,7 @@ function completeResponses(
       else out[q.key] = "provided";
     }
   }
-  out[CANON.id] = buildElectrolysisAcknowledgementClaim(true);
+  // RETIRED (#518): the acknowledgement claim used to be attached here.
   return { ...out, ...overrides };
 }
 
@@ -102,289 +104,6 @@ describe("1. shared ID / version / wording contract", () => {
   });
 });
 
-describe("2 + 14. unchecked default, and nothing auto-checks", () => {
-  it("an empty responses map yields no acknowledgement and no acceptance", () => {
-    const v = validateElectrolysisAcknowledgement({}, NOW);
-    expect(v.ok).toBe(false);
-    expect(v.ok === false && v.reason).toBe("checkbox_missing");
-  });
-
-  it("the claim builder mirrors the checkbox rather than defaulting true", () => {
-    expect(buildElectrolysisAcknowledgementClaim(false).accepted).toBe(false);
-    expect(buildElectrolysisAcknowledgementClaim(true).accepted).toBe(true);
-  });
-
-  it("a draft record built from an unticked claim is not accepted", () => {
-    const rec = buildElectrolysisAcknowledgementDraftRecord(
-      buildElectrolysisAcknowledgementClaim(false),
-    );
-    expect(rec?.accepted).toBe(false);
-  });
-});
-
-describe("3. client-side required enforcement rides the existing machinery", () => {
-  it("registers the acknowledgement as a required checkbox on the last step", () => {
-    const last = INTAKE_STEPS[INTAKE_STEPS.length - 1];
-    const q = last.questions.find((x) => x.key === CANON.questionKey);
-    expect(q).toBeDefined();
-    expect(q?.type).toBe("checkbox");
-    expect(q?.required).toBe(true);
-    // Label and help text are the SHARED constants, not a second copy.
-    expect(q?.label).toBe(CANON.wording);
-    expect(q?.helpText).toBe(CANON.helpText);
-  });
-
-  it("is unconditional, so it can never be skipped by an earlier answer", () => {
-    const q = INTAKE_STEPS.flatMap((s) => s.questions).find(
-      (x) => x.key === CANON.questionKey,
-    );
-    expect(q?.conditional).toBeUndefined();
-  });
-
-  it("findMissingRequiredAnswers reports it missing when unticked", () => {
-    expect(findMissingRequiredAnswers({})).toContain(CANON.questionKey);
-    expect(
-      findMissingRequiredAnswers({ [CANON.questionKey]: false }),
-    ).toContain(CANON.questionKey);
-    expect(
-      findMissingRequiredAnswers(completeResponses()),
-    ).not.toContain(CANON.questionKey);
-  });
-});
-
-describe("4 + 5. draft serialization and restoration", () => {
-  it("a draft record carries canonical id/version/wording and the client's boolean", () => {
-    const rec = buildElectrolysisAcknowledgementDraftRecord(
-      buildElectrolysisAcknowledgementClaim(true),
-    );
-    expect(rec).toEqual({
-      id: CANON.id,
-      version: CANON.version,
-      wording: CANON.wording,
-      accepted: true,
-    });
-    // A draft is not an acceptance: no timestamp is stamped until submit.
-    expect(rec).not.toHaveProperty("accepted_at");
-  });
-
-  it("a draft record NEVER carries client-supplied wording, id or version", () => {
-    const forged = normalizeElectrolysisAcknowledgementClaim({
-      id: "something_else",
-      version: "v99",
-      wording: "I agree to whatever the studio wants.",
-      accepted: true,
-    });
-    const rec = buildElectrolysisAcknowledgementDraftRecord(forged);
-    expect(rec?.id).toBe(CANON.id);
-    expect(rec?.version).toBe(CANON.version);
-    expect(rec?.wording).toBe(CANON.wording);
-  });
-
-  it("round-trips: a saved draft record re-validates as accepted", () => {
-    const saved = buildElectrolysisAcknowledgementDraftRecord(
-      buildElectrolysisAcknowledgementClaim(true),
-    );
-    const restored = { [CANON.questionKey]: true, [CANON.id]: saved };
-    const v = validateElectrolysisAcknowledgement(restored, NOW);
-    expect(v.ok).toBe(true);
-  });
-
-  // NOTE ON SCOPE. "Unticking overwrites the stored record" is a property
-  // of saveIntakeStepAction's merge, NOT of this pure module, and it is
-  // proven against the real action in
-  // tests/app/intake/electrolysis-acknowledgement-wiring.test.ts.
-  //
-  // An earlier version of this test tried to prove it here and was
-  // vacuous twice over: it built `{ ...{ [id]: stale }, [id]: fresh }`,
-  // where the later computed key wins at construction so the stale record
-  // was discarded before the validator ever ran; and its lone
-  // `expect(v.ok).toBe(false)` was satisfied by the checkbox branch, so it
-  // could not distinguish the case it named. What this module can honestly
-  // prove is the guarantee below — and it asserts the REASON, so it cannot
-  // be satisfied by the wrong branch.
-  it("a stale accepted record cannot rescue an unticked checkbox", () => {
-    const stale = buildElectrolysisAcknowledgementDraftRecord(
-      buildElectrolysisAcknowledgementClaim(true),
-    );
-    expect(stale?.accepted).toBe(true); // the stale record really is accepted
-    const v = validateElectrolysisAcknowledgement(
-      { [CANON.questionKey]: false, [CANON.id]: stale },
-      NOW,
-    );
-    expect(v.ok).toBe(false);
-    expect(v.ok === false && v.reason).toBe("checkbox_missing");
-  });
-
-  it("an unticked record is rejected on its own reason, with the checkbox true", () => {
-    // Reaches the record branch (the checkbox guard returns first
-    // otherwise), so this pins the `not_accepted` path specifically.
-    const v = validateElectrolysisAcknowledgement(
-      {
-        [CANON.questionKey]: true,
-        [CANON.id]: buildElectrolysisAcknowledgementDraftRecord(
-          buildElectrolysisAcknowledgementClaim(false),
-        ),
-      },
-      NOW,
-    );
-    expect(v.ok).toBe(false);
-    expect(v.ok === false && v.reason).toBe("not_accepted");
-  });
-});
-
-describe("6-10. the server gate — forged payloads are rejected, not corrected", () => {
-  it("6. rejects a missing acknowledgement record", () => {
-    const r = completeResponses();
-    delete r[CANON.id];
-    const v = validateElectrolysisAcknowledgement(r, NOW);
-    expect(v.ok).toBe(false);
-    expect(v.ok === false && v.reason).toBe("missing");
-  });
-
-  it("7. rejects accepted: false", () => {
-    const v = validateElectrolysisAcknowledgement(
-      completeResponses({
-        [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), accepted: false },
-      }),
-      NOW,
-    );
-    expect(v.ok).toBe(false);
-    expect(v.ok === false && v.reason).toBe("not_accepted");
-  });
-
-  it("7b. rejects a truthy-but-not-true accepted value", () => {
-    for (const sneaky of ["true", 1, "yes", {}, [], "on"]) {
-      const v = validateElectrolysisAcknowledgement(
-        completeResponses({
-          [CANON.id]: {
-            ...buildElectrolysisAcknowledgementClaim(true),
-            accepted: sneaky,
-          },
-        }),
-        NOW,
-      );
-      expect(v.ok, `accepted: ${JSON.stringify(sneaky)}`).toBe(false);
-    }
-  });
-
-  it("8. rejects a wrong acknowledgement id", () => {
-    const v = validateElectrolysisAcknowledgement(
-      completeResponses({
-        [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), id: "marketing_consent" },
-      }),
-      NOW,
-    );
-    expect(v.ok).toBe(false);
-    expect(v.ok === false && v.reason).toBe("wrong_id");
-  });
-
-  it("9. rejects an unknown version — including a downgrade", () => {
-    for (const version of ["v0", "v2", "", "V1", " v1"]) {
-      const v = validateElectrolysisAcknowledgement(
-        completeResponses({
-          [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), version },
-        }),
-        NOW,
-      );
-      expect(v.ok, `version ${JSON.stringify(version)}`).toBe(false);
-      expect(v.ok === false && v.reason).toBe("unknown_version");
-    }
-  });
-
-  it("9b. rejects altered wording, even a single trailing space", () => {
-    for (const wording of [
-      `${CANON.wording} `,
-      CANON.wording.replace("permanent", "possibly permanent"),
-      "I agree.",
-      "",
-    ]) {
-      const v = validateElectrolysisAcknowledgement(
-        completeResponses({
-          [CANON.id]: { ...buildElectrolysisAcknowledgementClaim(true), wording },
-        }),
-        NOW,
-      );
-      expect(v.ok, `wording ${JSON.stringify(wording.slice(0, 24))}`).toBe(false);
-      expect(v.ok === false && v.reason).toBe("wording_mismatch");
-    }
-  });
-
-  it("9c. rejects a valid claim when the checkbox itself is not exactly true", () => {
-    // Two independent keys must agree. A forger who writes only the record
-    // still does not get an acknowledgement.
-    for (const answer of [false, undefined, "true", 1]) {
-      const v = validateElectrolysisAcknowledgement(
-        completeResponses({ [CANON.questionKey]: answer }),
-        NOW,
-      );
-      expect(v.ok, `checkbox ${JSON.stringify(answer)}`).toBe(false);
-      expect(v.ok === false && v.reason).toBe("checkbox_missing");
-    }
-  });
-
-  it("9d. rejects a malformed record (non-object, array, missing fields)", () => {
-    for (const bad of [true, "yes", 42, [], null, {}, { accepted: true }]) {
-      const v = validateElectrolysisAcknowledgement(
-        completeResponses({ [CANON.id]: bad }),
-        NOW,
-      );
-      expect(v.ok, `record ${JSON.stringify(bad)}`).toBe(false);
-    }
-  });
-
-  it("9e. rejects an oversize wording claim without retaining it", () => {
-    const v = validateElectrolysisAcknowledgement(
-      completeResponses({
-        [CANON.id]: {
-          ...buildElectrolysisAcknowledgementClaim(true),
-          wording: "x".repeat(5000),
-        },
-      }),
-      NOW,
-    );
-    expect(v.ok).toBe(false);
-    expect(v.ok === false && v.reason).toBe("missing");
-  });
-
-  it("10. accepts a valid acknowledgement and returns a server-authored record", () => {
-    const v = validateElectrolysisAcknowledgement(completeResponses(), NOW);
-    expect(v.ok).toBe(true);
-    expect(v.ok === true && v.record).toEqual({
-      id: CANON.id,
-      version: CANON.version,
-      wording: CANON.wording,
-      accepted: true,
-      accepted_at: NOW,
-    });
-  });
-
-  it("10b. the stored record is rebuilt, so extra client fields never persist", () => {
-    const v = validateElectrolysisAcknowledgement(
-      completeResponses({
-        [CANON.id]: {
-          ...buildElectrolysisAcknowledgementClaim(true),
-          accepted_at: "1999-01-01T00:00:00.000Z",
-          signature_name: "Ada Lovelace",
-          studio_id: "some-other-studio",
-        },
-      }),
-      NOW,
-    );
-    expect(v.ok).toBe(true);
-    if (!v.ok) return;
-    expect(v.record.accepted_at).toBe(NOW);
-    expect(v.record).not.toHaveProperty("signature_name");
-    expect(v.record).not.toHaveProperty("studio_id");
-    expect(Object.keys(v.record).sort()).toEqual([
-      "accepted",
-      "accepted_at",
-      "id",
-      "version",
-      "wording",
-    ]);
-  });
-});
-
 describe("11 + 12. practitioner review projection", () => {
   it("11. shows the stored wording and version for an acknowledged intake", () => {
     const responses = {
@@ -428,10 +147,13 @@ describe("11 + 12. practitioner review projection", () => {
   it("12. a legacy submitted intake is described truthfully, never as declined", () => {
     for (const status of ["submitted", "reviewed"] as const) {
       const view = readElectrolysisAcknowledgement({ legal_name: "A" }, status);
-      expect(view.state).toBe("predates");
+      expect(view.state).toBe("not_recorded");
     }
-    expect(ACKNOWLEDGEMENT_REVIEW_COPY.predates).toBe(
-      "This intake predates the versioned electrolysis acknowledgement.",
+    // Neutral and provable. The old copy asserted the intake "predates" the
+    // acknowledgement, which retirement made unprovable: an intake submitted
+    // today also carries no record.
+    expect(ACKNOWLEDGEMENT_REVIEW_COPY.notRecorded).toBe(
+      "No versioned electrolysis acknowledgement was recorded with this intake.",
     );
   });
 
@@ -452,11 +174,17 @@ describe("11 + 12. practitioner review projection", () => {
   });
 
   it("12c. an unticked record reads as not acknowledged, with its wording", () => {
+    // Written as a literal, because the builder that used to produce this is
+    // retired — but rows of exactly this shape are still in the database and
+    // must keep reading correctly forever.
     const view = readElectrolysisAcknowledgement(
       {
-        [CANON.id]: buildElectrolysisAcknowledgementDraftRecord(
-          buildElectrolysisAcknowledgementClaim(false),
-        ),
+        [CANON.id]: {
+          id: CANON.id,
+          version: CANON.version,
+          wording: CANON.wording,
+          accepted: false,
+        },
       },
       "in_progress",
     );
@@ -528,5 +256,72 @@ describe("normalizer hardening", () => {
         accepted: true,
       }),
     ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RETIREMENT
+// ---------------------------------------------------------------------------
+//
+// #529 shipped the studio's real live consent forms inside the intake, so this
+// temporary acknowledgement is no longer collected. These pins prove the
+// collection side is genuinely gone — not merely hidden — while the read side
+// above keeps historical evidence intact.
+describe("retirement — nothing new is collected", () => {
+  it("the acknowledgement is no longer a question on any step", () => {
+    const keys = INTAKE_STEPS.flatMap((s) => s.questions.map((q) => q.key));
+    expect(keys).not.toContain(CANON.questionKey);
+    expect(ALL_QUESTION_KEYS).not.toContain(CANON.questionKey);
+  });
+
+  it("it is therefore never a missing REQUIRED answer", () => {
+    // A response map with every other required answer must not be blocked by
+    // the retired checkbox.
+    const answers: Record<string, unknown> = {};
+    for (const step of INTAKE_STEPS) {
+      for (const q of step.questions) {
+        if (!q.required || q.conditional) continue;
+        if (q.type === "multi_select") answers[q.key] = ["x"];
+        else if (q.type === "checkbox") answers[q.key] = true;
+        else if (q.type === "single_select") answers[q.key] = q.options?.[0]?.value ?? "x";
+        else if (q.type === "yes_no") answers[q.key] = "no";
+        else if (q.type === "date") answers[q.key] = "1990-01-01";
+        else answers[q.key] = "provided";
+      }
+    }
+    const missing = findMissingRequiredAnswers(answers);
+    expect(missing).not.toContain(CANON.questionKey);
+    expect(missing).toEqual([]);
+  });
+
+  it("the WRITE-side helpers are gone from the module surface", async () => {
+    // Leaving a claim builder / draft builder / submit validator exported for
+    // a retired collection is an invitation to re-wire it.
+    const mod = await import("@/lib/intake/acknowledgements");
+    expect(mod).not.toHaveProperty("buildElectrolysisAcknowledgementClaim");
+    expect(mod).not.toHaveProperty("buildElectrolysisAcknowledgementDraftRecord");
+    expect(mod).not.toHaveProperty("validateElectrolysisAcknowledgement");
+    // ...and the read side is still exported.
+    expect(typeof mod.readElectrolysisAcknowledgement).toBe("function");
+  });
+
+  it("BOTH legacy keys stay client-owned, so a practitioner cannot alter them", () => {
+    // Load-bearing: removing the question dropped questionKey out of the
+    // DERIVED client-owned set. If it were not named explicitly, retirement
+    // would have made a historical client answer practitioner-writable.
+    expect(isClientOwnedResponseKey(CANON.questionKey)).toBe(true);
+    expect(isClientOwnedResponseKey(`${CANON.questionKey}_notes`)).toBe(true);
+    expect(isClientOwnedResponseKey(CANON.id)).toBe(true);
+  });
+
+  it("no copy claims an intake 'predates' the acknowledgement", () => {
+    // After retirement an intake submitted TODAY also carries no record, so
+    // "predates" would be a falsehood on a clinical surface.
+    for (const value of Object.values(ACKNOWLEDGEMENT_REVIEW_COPY)) {
+      expect(value).not.toMatch(/predate/i);
+    }
+    expect(ACKNOWLEDGEMENT_REVIEW_COPY.notRecorded).toBe(
+      "No versioned electrolysis acknowledgement was recorded with this intake.",
+    );
   });
 });

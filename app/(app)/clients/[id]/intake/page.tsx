@@ -693,9 +693,9 @@ function ElectrolysisAcknowledgementSummary({
             {ACKNOWLEDGEMENT_REVIEW_COPY.noRecord}
           </p>
         )}
-        {view.state === "predates" && (
+        {view.state === "not_recorded" && (
           <p className="text-neutral-600 dark:text-neutral-400">
-            {ACKNOWLEDGEMENT_REVIEW_COPY.predates}
+            {ACKNOWLEDGEMENT_REVIEW_COPY.notRecorded}
           </p>
         )}
         {view.state === "unreadable" && (

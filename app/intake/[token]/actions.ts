@@ -9,12 +9,6 @@ import {
 } from "@/lib/intake/questions";
 import { sanitizeQuestionResponses } from "@/lib/intake/responses";
 import {
-  buildElectrolysisAcknowledgementDraftRecord,
-  ELECTROLYSIS_ACKNOWLEDGEMENT,
-  normalizeElectrolysisAcknowledgementClaim,
-  validateElectrolysisAcknowledgement,
-} from "@/lib/intake/acknowledgements";
-import {
   INTAKE_CONSENT_RESPONSES,
   normalizeIntakeConsentClaims,
 } from "@/lib/intake/consent-forms";
@@ -50,42 +44,34 @@ const INTAKE_TOKEN_INVALID =
 // Whitelist responses to known question keys (or their `_notes` siblings) so
 // a client-side tamper can't inject arbitrary JSON fields.
 //
-// Exactly ONE key outside that set is admitted: the versioned electrolysis
-// acknowledgement record (ELECTROLYSIS_ACKNOWLEDGEMENT.id). It is not a
-// question, so the whitelist would otherwise strip it and the client's
-// assertion about which wording they read could never reach the server.
+// Exactly ONE key outside that set is admitted: the live consent responses
+// claim (INTAKE_CONSENT_RESPONSES.id). It is not a question, so the whitelist
+// would otherwise strip it and the client's assertion about which form text
+// they read could never reach the server.
 //
 // Admitting it is NOT trusting it. The value is narrowed here to a bounded
-// {id, version, wording, accepted} claim — unknown fields dropped, non-
-// strings rejected, oversize strings rejected — and NOTHING client-authored
-// is ever persisted: the draft path overwrites the claim with a
-// server-derived record (below), and the submit path validates the claim by
-// exact equality against the canonical constant before doing the same. The
-// claim is evidence to check, never content to store.
-// The question-key whitelist itself now lives in lib/intake/responses.ts so
-// the practitioner-assisted editor derives its (narrower) admitted set from
-// the same source instead of maintaining a second copy. The behaviour of THIS
-// function is unchanged: same admitted keys, same values copied through, same
-// single acknowledgement carve-out below.
-//
-// A SECOND carve-out was added for live consent forms
-// (INTAKE_CONSENT_RESPONSES.id). It is admitted on exactly the same terms and
-// for exactly the same reason: the client's response to the studio's own
-// consent templates is not a questionnaire answer, so the whitelist would
-// strip it and the client's assertion about which form text they read could
-// never reach the server. It is narrowed to a bounded
-// {template_id, form_type, rendered_template_hash, response} claim per form,
+// per-form {template_id, form_type, rendered_template_hash, response} claim,
 // and NOTHING client-authored is persisted — every stored snapshot field is
 // re-derived from the studio's own database row (lib/intake/consent-gate.ts).
-// The electrolysis carve-out above is unchanged in both admitted shape and
-// behaviour.
+// The claim is evidence to check, never content to store.
+//
+// RETIRED (#518): there used to be a SECOND carve-out here for the versioned
+// electrolysis acknowledgement record. Now that the acknowledgement is no
+// longer collected, that carve-out would be an orphaned forgery channel — a
+// browser-authorable path to a reserved key that no server gate validates any
+// more. It is deliberately GONE, not merely unused, so:
+//
+//   * a new `electrolysis_acknowledgement` cannot be authored from a browser;
+//   * a HISTORICAL one cannot be overwritten (the key is stripped on the way
+//     in, and the server merge is `{...stored, ...incoming}`, so what is
+//     already stored survives untouched);
+//   * `ack_electrolysis_nature` is likewise stripped, because retiring the
+//     question removed it from ALL_QUESTION_KEYS.
+//
+// Historical evidence stays readable; no new evidence is accepted.
 function sanitizeResponses(input: unknown): Record<string, unknown> {
   const out = sanitizeQuestionResponses(input);
   if (!input || typeof input !== "object" || Array.isArray(input)) return out;
-  const ackClaim = normalizeElectrolysisAcknowledgementClaim(
-    (input as Record<string, unknown>)[ELECTROLYSIS_ACKNOWLEDGEMENT.id],
-  );
-  if (ackClaim) out[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = ackClaim;
   const consentClaims = normalizeIntakeConsentClaims(
     (input as Record<string, unknown>)[INTAKE_CONSENT_RESPONSES.id],
   );
@@ -145,23 +131,6 @@ export async function saveIntakeStepAction(payload: {
     ...((existing.responses as Record<string, unknown>) ?? {}),
     ...responses,
   };
-
-  // Draft semantics are unchanged: an unticked acknowledgement stays
-  // unticked and saving is never refused for it. What IS enforced here is
-  // that the stored record's id / version / wording are server-derived, so
-  // the only thing a draft can carry from the browser is the boolean. A
-  // forged draft save therefore cannot park fabricated acknowledgement text
-  // in an in-progress row for the practitioner to read.
-  //
-  // The claim is written on every save the wizard makes, so unticking the
-  // box overwrites the record rather than leaving a stale accepted one
-  // behind — the merge above is a spread and would otherwise preserve it.
-  const draftAck = buildElectrolysisAcknowledgementDraftRecord(
-    normalizeElectrolysisAcknowledgementClaim(
-      merged[ELECTROLYSIS_ACKNOWLEDGEMENT.id],
-    ),
-  );
-  if (draftAck) merged[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = draftAck;
 
   // Same draft posture for the live consent forms: a save is NEVER refused
   // for an unanswered or half-answered consent form — that is a normal
@@ -267,50 +236,18 @@ export async function submitIntakeAction(payload: {
     };
   }
 
-  // Versioned electrolysis acknowledgement — the independent server gate.
+  // RETIRED (#518): the versioned electrolysis acknowledgement gate used to
+  // run here. It is gone with the acknowledgement itself — a submission no
+  // longer requires it and no longer constructs one. The live consent gate
+  // below, added by #529, is now the consent authority for a new intake.
   //
-  // This runs BELOW the already-submitted early return (so a legacy intake
-  // submitted before this acknowledgement existed is never re-validated,
-  // never rewritten, and never retroactively marked incomplete) and ABOVE
-  // the UPDATE (so a rejection performs zero writes).
-  //
-  // It trusts nothing from the browser: not the disabled-button state, not
-  // the client-side validation, and not the submitted wording version. Two
-  // independent keys must agree — the required checkbox must be exactly
-  // `true`, AND the claim must match the canonical id, version and wording
-  // by exact equality. A forged payload with a wrong id, an unknown or
-  // downgraded version, altered wording, or `accepted: false` is refused
-  // here rather than quietly corrected.
-  //
-  // What gets stored is rebuilt from the constant with a server-stamped
-  // `accepted_at`; the validated claim is evidence that the client's browser
-  // rendered this exact text, never the bytes we persist.
-  const ack = validateElectrolysisAcknowledgement(
-    merged,
-    new Date().toISOString(),
-  );
-  if (!ack.ok) {
-    // Two calm, public-safe messages. The stale-wording branch has to be
-    // actionable: a client whose tab was open across a wording change is
-    // legitimately in this state and needs to be told to reload. Neither
-    // message names a key, a version, or a database detail.
-    const staleWording =
-      ack.reason === "unknown_version" ||
-      ack.reason === "wording_mismatch" ||
-      ack.reason === "wrong_id";
-    return {
-      ok: false,
-      error: staleWording
-        ? "The electrolysis acknowledgement has been updated. Please refresh this page and confirm the current wording before submitting."
-        : "Please confirm the electrolysis acknowledgement before submitting your intake.",
-    };
-  }
-  merged[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = ack.record;
+  // Deliberately NOT replaced with a "legacy row still needs it" branch: an
+  // in-progress intake started before retirement must be able to finish, and
+  // its stored acknowledgement (if any) is preserved by the merge above.
 
-  // Live consent forms — the second independent server gate.
+  // Live consent forms — the server-side consent gate.
   //
-  // Placed in the SAME band as the acknowledgement gate above, and for the
-  // same two reasons: below the already-submitted early return (so an intake
+  // Placed below the already-submitted early return (so an intake
   // submitted before this feature is never re-validated, never rewritten and
   // never retroactively marked incomplete) and above the UPDATE (so a
   // rejection performs zero writes).

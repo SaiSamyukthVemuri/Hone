@@ -11,10 +11,6 @@ import {
   type Step,
 } from "@/lib/intake/questions";
 import {
-  buildElectrolysisAcknowledgementClaim,
-  ELECTROLYSIS_ACKNOWLEDGEMENT,
-} from "@/lib/intake/acknowledgements";
-import {
   INTAKE_CONSENT_RESPONSES,
   type IntakeConsentResponse,
 } from "@/lib/intake/consent-forms";
@@ -41,31 +37,11 @@ type Responses = Record<string, unknown>;
 // truthful: they have not completed the consent forms.
 const CONSENT_PHASE = TOTAL_STEPS + 1;
 
-// Attach the versioned electrolysis acknowledgement claim — what this
-// browser asserts it rendered — alongside the plain checkbox answer.
+// RETIRED (#518): this component used to attach a versioned electrolysis
+// acknowledgement claim to every save and submit. The acknowledgement is no
+// longer collected — #529's real studio consent forms replaced it — so the
+// claim is gone and the browser no longer sends anything under that key.
 //
-// Attached ONLY once the client has actually touched the checkbox. Before
-// that the key is absent, so a draft abandoned on step 1 carries no
-// acknowledgement record at all and the practitioner review surface can
-// truthfully say "not yet reached" rather than "not acknowledged".
-//
-// Sent on every save AND on submit, so unticking the box overwrites the
-// stored record instead of leaving a stale acceptance behind (the server
-// merge is a spread and would otherwise preserve it).
-//
-// The server re-derives everything it stores from its own copy of the
-// constant and validates this claim by exact equality; nothing here is
-// trusted, and this is never the only enforcement.
-function withAcknowledgementClaim(responses: Responses): Responses {
-  const answer = responses[ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey];
-  if (answer === undefined) return responses;
-  return {
-    ...responses,
-    [ELECTROLYSIS_ACKNOWLEDGEMENT.id]:
-      buildElectrolysisAcknowledgementClaim(answer === true),
-  };
-}
-
 type Props = {
   token: string;
   studioName: string;
@@ -124,7 +100,7 @@ export function IntakeWizard({
   }
 
   function outbound(): Responses {
-    return withConsentClaims(withAcknowledgementClaim(responses));
+    return withConsentClaims(responses);
   }
 
   function setConsentAnswer(
