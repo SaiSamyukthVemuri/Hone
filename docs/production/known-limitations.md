@@ -244,6 +244,22 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 
 ## L19 — `TRUNCATE` is still granted broadly outside the clinical tables, and two session links are not same-client validated
 
+> The heading above is preserved verbatim as the historical title of this
+> limitation (and is pinned by `tests/migrations/0160-immutable-clinical-lineage.test.ts`).
+> **Part (a) NARROWS BY TWO TABLES once migration `0172` is applied.** `0172`
+> (appointment boundary B3) revokes `TRUNCATE`, `REFERENCES`, `TRIGGER` and
+> `MAINTAIN` — as well as INSERT/UPDATE/DELETE — from `anon` and `authenticated`
+> on `public.appointments` and `public.appointment_audit`, so the nine tables
+> `0159` covered become eleven. The rest of (a) is unchanged: `session_audit`,
+> `record_keeping_audit_events` and every other operational table still carry the
+> default `TRUNCATE` grant, and the repo-wide sweep described under **Next gate**
+> is still the fix. Part (b) is untouched by `0172`.
+>
+> ⚠️ **`0172` is NOT YET APPLIED to production.** It exists in the repository and
+> is proven on a fresh local chain; the hosted migration max in
+> `docs/production/migration-state.json` is the authority and has not moved.
+> Until that push, L19(a) remains open in production at its original breadth.
+
 | Field | Value |
 |---|---|
 | **Recorded** | 2026-07-29 |
