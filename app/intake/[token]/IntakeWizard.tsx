@@ -14,10 +14,32 @@ import {
   buildElectrolysisAcknowledgementClaim,
   ELECTROLYSIS_ACKNOWLEDGEMENT,
 } from "@/lib/intake/acknowledgements";
+import {
+  INTAKE_CONSENT_RESPONSES,
+  type IntakeConsentResponse,
+} from "@/lib/intake/consent-forms";
 import { IntakeQuestionField } from "@/components/intake/intake-question-field";
+import {
+  buildIntakeConsentClaims,
+  findIncompleteConsentForms,
+  IntakeConsentForms,
+  type RenderedConsentForm,
+} from "./IntakeConsentForms";
 import { saveIntakeStepAction, submitIntakeAction } from "./actions";
 
 type Responses = Record<string, unknown>;
+
+// The consent forms are a wizard-LOCAL phase that follows step 5. It is
+// deliberately NOT a sixth step: `client_intake_forms.current_step` is bounded
+// by the questionnaire (1..TOTAL_STEPS) and every other surface — the assisted
+// editor's clamp, the hand-off, findMissingRequiredAnswers — reads that
+// contract. Persisting a 6 would be a schema change in all but name.
+//
+// So the phase lives only in this component's state, and every save it makes
+// persists `current_step = TOTAL_STEPS`. A client who abandons the intake on
+// the consent phase resumes on step 5 with their answers intact, which is
+// truthful: they have not completed the consent forms.
+const CONSENT_PHASE = TOTAL_STEPS + 1;
 
 // Attach the versioned electrolysis acknowledgement claim — what this
 // browser asserts it rendered — alongside the plain checkbox answer.
@@ -50,6 +72,10 @@ type Props = {
   initialStep: number;
   initialResponses: Responses;
   alreadySubmitted: boolean;
+  // The studio's live treatment/photo consent forms, resolved server-side.
+  // Empty when the studio has none live — the wizard then behaves exactly as
+  // it did before this feature: step 5 submits.
+  consentForms: RenderedConsentForm[];
 };
 
 export function IntakeWizard({
@@ -58,6 +84,7 @@ export function IntakeWizard({
   initialStep,
   initialResponses,
   alreadySubmitted,
+  consentForms,
 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState(
@@ -67,7 +94,61 @@ export function IntakeWizard({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [savingError, setSavingError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  // The client's consent choices, keyed by template id.
+  //
+  // Seeded EMPTY, deliberately. A resumed draft may carry stored consent
+  // entries, but re-checking a box on the client's behalf because a previous
+  // session did is exactly the auto-acceptance this feature must not have —
+  // and the stored entry may be against a version that has since changed. The
+  // client re-reads the current text and answers again.
+  const [consentAnswers, setConsentAnswers] = useState<
+    Record<string, IntakeConsentResponse>
+  >({});
+  const [consentErrors, setConsentErrors] = useState<Record<string, string>>({});
 
+  const hasConsentPhase = consentForms.length > 0;
+  const lastPhase = hasConsentPhase ? CONSENT_PHASE : TOTAL_STEPS;
+
+  // Attach the consent claims to whatever the wizard is about to send.
+  // Applied on top of the acknowledgement claim so both carve-outs travel
+  // together on every save and on submit.
+  function withConsentClaims(base: Responses): Responses {
+    if (!hasConsentPhase) return base;
+    return {
+      ...base,
+      [INTAKE_CONSENT_RESPONSES.id]: {
+        version: INTAKE_CONSENT_RESPONSES.version,
+        forms: buildIntakeConsentClaims(consentForms, consentAnswers),
+      },
+    };
+  }
+
+  function outbound(): Responses {
+    return withConsentClaims(withAcknowledgementClaim(responses));
+  }
+
+  function setConsentAnswer(
+    templateId: string,
+    response: IntakeConsentResponse | null,
+  ) {
+    setConsentAnswers((prev) => {
+      const next = { ...prev };
+      // Unticking a treatment checkbox CLEARS the answer rather than
+      // recording a denial: a treatment consent has no "denied" state, and
+      // storing one would be a false record of what the client did.
+      if (response === null) delete next[templateId];
+      else next[templateId] = response;
+      return next;
+    });
+    setConsentErrors((prev) => {
+      if (!prev[templateId]) return prev;
+      const next = { ...prev };
+      delete next[templateId];
+      return next;
+    });
+  }
+
+  const onConsentPhase = step === CONSENT_PHASE;
   const current: Step | undefined = stepById(step);
 
   // Conditional visibility comes from the shared questionnaire authority in
@@ -89,7 +170,7 @@ export function IntakeWizard({
       </div>
     );
   }
-  if (!current) return null;
+  if (!current && !onConsentPhase) return null;
 
   function setValue(key: string, value: unknown) {
     setResponses((prev) => ({ ...prev, [key]: value }));
@@ -109,14 +190,43 @@ export function IntakeWizard({
     startTransition(async () => {
       const res = await saveIntakeStepAction({
         token,
-        step: nextStep,
-        responses: withAcknowledgementClaim(responses),
+        // The consent phase is not a persisted step: leaving it saves against
+        // the last real questionnaire step.
+        step: Math.min(nextStep, TOTAL_STEPS),
+        responses: outbound(),
       });
       if (!res.ok) setSavingError(res.error);
     });
   }
 
+  function submit() {
+    startTransition(async () => {
+      const res = await submitIntakeAction({ token, responses: outbound() });
+      if (!res.ok) {
+        setSavingError(res.error);
+        return;
+      }
+      router.push("/intake/thank-you");
+    });
+  }
+
   function goNext() {
+    // The consent phase validates consent, not questionnaire answers.
+    if (step === CONSENT_PHASE) {
+      const incomplete = findIncompleteConsentForms(
+        consentForms,
+        consentAnswers,
+      );
+      if (Object.keys(incomplete).length > 0) {
+        setConsentErrors(incomplete);
+        return;
+      }
+      setConsentErrors({});
+      setSavingError(null);
+      submit();
+      return;
+    }
+
     const stepErrors = validateVisibleAnswers(
       visibleQuestions,
       responses,
@@ -129,13 +239,15 @@ export function IntakeWizard({
     setErrors({});
     setSavingError(null);
 
-    if (step < TOTAL_STEPS) {
+    if (step < lastPhase) {
       const nextStep = step + 1;
       startTransition(async () => {
         const res = await saveIntakeStepAction({
           token,
-          step: nextStep,
-          responses: withAcknowledgementClaim(responses),
+          // Entering the consent phase still persists TOTAL_STEPS — the DB
+          // step contract is unchanged by this feature.
+          step: Math.min(nextStep, TOTAL_STEPS),
+          responses: outbound(),
         });
         if (!res.ok) {
           setSavingError(res.error);
@@ -146,46 +258,53 @@ export function IntakeWizard({
       return;
     }
 
-    // Final submit
-    startTransition(async () => {
-      const res = await submitIntakeAction({
-        token,
-        responses: withAcknowledgementClaim(responses),
-      });
-      if (!res.ok) {
-        setSavingError(res.error);
-        return;
-      }
-      router.push("/intake/thank-you");
-    });
+    // No consent phase for this studio: step 5 submits, exactly as before.
+    submit();
   }
 
   return (
     <div className="flex flex-col gap-6">
-      <StepIndicator currentStep={step} />
+      <StepIndicator currentStep={step} showConsent={hasConsentPhase} />
 
       <div>
         <h2 className="text-[24px] font-semibold leading-tight tracking-tight">
-          {current.title}
+          {onConsentPhase ? "Consent forms" : current!.title}
         </h2>
-        {current.description && (
-          <p className="mt-2 text-sm text-neutral-600">{current.description}</p>
+        {onConsentPhase ? (
+          <p className="mt-2 text-sm text-neutral-600">
+            Please read {studioName}&apos;s forms below and complete each one.
+          </p>
+        ) : (
+          current!.description && (
+            <p className="mt-2 text-sm text-neutral-600">
+              {current!.description}
+            </p>
+          )
         )}
       </div>
 
-      <div className="flex flex-col gap-5">
-        {visibleQuestions.map((q) => (
-          <IntakeQuestionField
-            key={q.key}
-            q={q}
-            value={responses[q.key]}
-            notesValue={responses[`${q.key}_notes`]}
-            onChange={(v) => setValue(q.key, v)}
-            onNotesChange={(v) => setValue(`${q.key}_notes`, v)}
-            error={errors[q.key]}
-          />
-        ))}
-      </div>
+      {onConsentPhase ? (
+        <IntakeConsentForms
+          forms={consentForms}
+          answers={consentAnswers}
+          onChange={setConsentAnswer}
+          errors={consentErrors}
+        />
+      ) : (
+        <div className="flex flex-col gap-5">
+          {visibleQuestions.map((q) => (
+            <IntakeQuestionField
+              key={q.key}
+              q={q}
+              value={responses[q.key]}
+              notesValue={responses[`${q.key}_notes`]}
+              onChange={(v) => setValue(q.key, v)}
+              onNotesChange={(v) => setValue(`${q.key}_notes`, v)}
+              error={errors[q.key]}
+            />
+          ))}
+        </div>
+      )}
 
       {savingError && (
         <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
@@ -210,7 +329,7 @@ export function IntakeWizard({
         >
           {isPending
             ? "Saving..."
-            : step === TOTAL_STEPS
+            : step === lastPhase
               ? "Submit intake"
               : "Continue"}
         </button>
@@ -219,10 +338,30 @@ export function IntakeWizard({
   );
 }
 
-function StepIndicator({ currentStep }: { currentStep: number }) {
+function StepIndicator({
+  currentStep,
+  showConsent,
+}: {
+  currentStep: number;
+  showConsent: boolean;
+}) {
+  // The consent phase gets a column only when the studio actually has live
+  // forms, so a studio with none sees the unchanged five-column indicator.
+  const columns: Array<{ id: number; shortLabel: string }> = [
+    ...INTAKE_STEPS.map((s) => ({ id: s.id, shortLabel: s.shortLabel })),
+    ...(showConsent
+      ? [{ id: CONSENT_PHASE, shortLabel: "Consent" }]
+      : []),
+  ];
   return (
-    <ol className="grid grid-cols-5 gap-2" aria-label="Intake progress">
-      {INTAKE_STEPS.map((s) => {
+    <ol
+      className="grid gap-2"
+      style={{
+        gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+      }}
+      aria-label="Intake progress"
+    >
+      {columns.map((s) => {
         const done = s.id < currentStep;
         const active = s.id === currentStep;
         return (

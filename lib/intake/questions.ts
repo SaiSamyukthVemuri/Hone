@@ -14,6 +14,7 @@
  */
 
 import { ELECTROLYSIS_ACKNOWLEDGEMENT } from "./acknowledgements";
+import { INTAKE_CONSENT_RESPONSES } from "./consent-forms";
 
 export type QuestionType =
   | "short_text"
@@ -875,6 +876,13 @@ export const CLIENT_OWNED_RESPONSE_KEYS: ReadonlySet<string> = new Set([
   // cover it too — a practitioner attempting to author the client's
   // acknowledgement record should be refused, not silently stripped.
   ELECTROLYSIS_ACKNOWLEDGEMENT.id,
+  // The client's responses to the studio's live consent forms, for exactly
+  // the same reason. Reading the studio's consent text and choosing to agree
+  // — or to deny photo use — is the client's own act. A practitioner sitting
+  // with the client may record the health questionnaire; they may not answer
+  // this on the client's behalf, and an attempt to is refused rather than
+  // quietly dropped.
+  INTAKE_CONSENT_RESPONSES.id,
 ]);
 
 export function isClientOwnedResponseKey(key: string): boolean {

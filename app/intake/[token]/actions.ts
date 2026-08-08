@@ -14,6 +14,14 @@ import {
   normalizeElectrolysisAcknowledgementClaim,
   validateElectrolysisAcknowledgement,
 } from "@/lib/intake/acknowledgements";
+import {
+  INTAKE_CONSENT_RESPONSES,
+  normalizeIntakeConsentClaims,
+} from "@/lib/intake/consent-forms";
+import {
+  buildIntakeConsentDraftRecord,
+  validateIntakeConsentResponses,
+} from "@/lib/intake/consent-gate";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 
@@ -59,6 +67,18 @@ const INTAKE_TOKEN_INVALID =
 // the same source instead of maintaining a second copy. The behaviour of THIS
 // function is unchanged: same admitted keys, same values copied through, same
 // single acknowledgement carve-out below.
+//
+// A SECOND carve-out was added for live consent forms
+// (INTAKE_CONSENT_RESPONSES.id). It is admitted on exactly the same terms and
+// for exactly the same reason: the client's response to the studio's own
+// consent templates is not a questionnaire answer, so the whitelist would
+// strip it and the client's assertion about which form text they read could
+// never reach the server. It is narrowed to a bounded
+// {template_id, form_type, rendered_template_hash, response} claim per form,
+// and NOTHING client-authored is persisted — every stored snapshot field is
+// re-derived from the studio's own database row (lib/intake/consent-gate.ts).
+// The electrolysis carve-out above is unchanged in both admitted shape and
+// behaviour.
 function sanitizeResponses(input: unknown): Record<string, unknown> {
   const out = sanitizeQuestionResponses(input);
   if (!input || typeof input !== "object" || Array.isArray(input)) return out;
@@ -66,6 +86,10 @@ function sanitizeResponses(input: unknown): Record<string, unknown> {
     (input as Record<string, unknown>)[ELECTROLYSIS_ACKNOWLEDGEMENT.id],
   );
   if (ackClaim) out[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = ackClaim;
+  const consentClaims = normalizeIntakeConsentClaims(
+    (input as Record<string, unknown>)[INTAKE_CONSENT_RESPONSES.id],
+  );
+  if (consentClaims) out[INTAKE_CONSENT_RESPONSES.id] = consentClaims;
   return out;
 }
 
@@ -97,7 +121,12 @@ export async function saveIntakeStepAction(payload: {
   const admin = createAdminClient();
   const { data: existing, error: lookupErr } = await admin
     .from("client_intake_forms")
-    .select("id, status, responses")
+    // studio_id is needed to re-resolve the studio's own live consent
+    // templates when normalising a draft consent response below. It is read
+    // from the intake row the verified token addresses — never from the
+    // request — so a claim can only ever be checked against ITS OWN studio's
+    // forms.
+    .select("id, status, responses, studio_id")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -133,6 +162,27 @@ export async function saveIntakeStepAction(payload: {
     ),
   );
   if (draftAck) merged[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = draftAck;
+
+  // Same draft posture for the live consent forms: a save is NEVER refused
+  // for an unanswered or half-answered consent form — that is a normal
+  // in-progress state — but what lands in the row is server-derived. Only a
+  // claim matching one of THIS studio's current live templates, carrying the
+  // current canonical hash, produces a draft entry, and every snapshot field
+  // comes from the database row rather than the browser. A stale or forged
+  // claim is dropped, so an in-progress row can never hold fabricated consent
+  // text for a practitioner to read.
+  //
+  // Written whenever the client sent a consent key at all, so clearing an
+  // answer overwrites the stored record instead of leaving a stale one behind
+  // (the merge above is a spread).
+  if (merged[INTAKE_CONSENT_RESPONSES.id] !== undefined) {
+    const draftConsent = await buildIntakeConsentDraftRecord({
+      studioId: existing.studio_id as string,
+      responses: merged,
+    });
+    if (draftConsent) merged[INTAKE_CONSENT_RESPONSES.id] = draftConsent;
+    else delete merged[INTAKE_CONSENT_RESPONSES.id];
+  }
 
   // Atomic status guard: the UPDATE is conditional on
   // `status = 'in_progress'`. If the form is submitted/reviewed
@@ -256,6 +306,37 @@ export async function submitIntakeAction(payload: {
     };
   }
   merged[ELECTROLYSIS_ACKNOWLEDGEMENT.id] = ack.record;
+
+  // Live consent forms — the second independent server gate.
+  //
+  // Placed in the SAME band as the acknowledgement gate above, and for the
+  // same two reasons: below the already-submitted early return (so an intake
+  // submitted before this feature is never re-validated, never rewritten and
+  // never retroactively marked incomplete) and above the UPDATE (so a
+  // rejection performs zero writes).
+  //
+  // It re-resolves the studio's CURRENT live treatment/photo templates from
+  // the database rather than trusting the set the browser rendered, so:
+  //   * a form that went live after the client opened the wizard is still
+  //     required;
+  //   * a v1 acknowledgement cannot satisfy a v2 template — the canonical
+  //     hash differs and the submit fails closed with a refresh prompt;
+  //   * every treatment consent must be explicitly accepted;
+  //   * every photo consent must be explicitly ANSWERED — and a denial is a
+  //     complete answer that must never block the submission.
+  //
+  // A studio with no live treatment/photo forms yields record = null and
+  // submission proceeds exactly as it did before this feature existed.
+  //
+  // Nothing here trusts the disabled Submit button, the client-side React
+  // state, a hidden input, or any browser-supplied version or text.
+  const consent = await validateIntakeConsentResponses({
+    studioId: existing.studio_id,
+    responses: merged,
+    respondedAtIso: new Date().toISOString(),
+  });
+  if (!consent.ok) return { ok: false, error: consent.error };
+  if (consent.record) merged[INTAKE_CONSENT_RESPONSES.id] = consent.record;
 
   // Atomic status guard: only transition to 'submitted' if the row is
   // still 'in_progress'. Two concurrent submit clicks (e.g. browser
