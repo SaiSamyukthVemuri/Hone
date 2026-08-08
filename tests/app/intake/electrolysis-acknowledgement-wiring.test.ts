@@ -385,6 +385,30 @@ describe("retirement — a new intake collects no acknowledgement", () => {
     expect(JSON.stringify(storedResponses())).not.toContain("OVERWRITTEN");
   });
 
+  it("a pre-retirement draft left UNTICKED can now submit, unticked record intact", async () => {
+    // The behavioural half of the copy fix in lib/intake/acknowledgements.ts.
+    // While #518 gated submission, an unticked record was draft-only. It is
+    // now reachable on a SUBMITTED row, so the review copy must not claim
+    // submission is blocked.
+    const unticked = {
+      id: CANON.id,
+      version: CANON.version,
+      wording: CANON.wording,
+      accepted: false,
+    };
+    seed({ responses: { [CANON.id]: unticked, [CANON.questionKey]: false } });
+
+    const res = await submitIntakeAction({
+      token: "good",
+      responses: completeAnswers(),
+    });
+    expect(res).toEqual({ ok: true });
+    expect(row().status).toBe("submitted");
+    // The historical record is neither rewritten nor promoted to accepted.
+    expect(storedAck()).toEqual(unticked);
+    expect(storedResponses()[CANON.questionKey]).toBe(false);
+  });
+
   it("the public sanitizer no longer names the retired key at all", () => {
     const src = read("app/intake/[token]/actions.ts");
     const fn = src.slice(

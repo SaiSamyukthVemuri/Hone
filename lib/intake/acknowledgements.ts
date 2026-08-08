@@ -186,8 +186,12 @@ export type AcknowledgementView =
       wording: string;
       acceptedAtIso: string | null;
     }
-  // Record present, client has not ticked the box. Only reachable on a
-  // draft: submission is refused without an acceptance.
+  // Record present, client has not ticked the box. It used to be true that
+  // this was "only reachable on a draft, because submission is refused
+  // without an acceptance" — retirement removed that gate, so a draft left
+  // unticked before retirement can now be submitted and arrive here with
+  // status `submitted`/`reviewed`. The copy below must therefore claim
+  // nothing about submission being blocked.
   | { state: "not_acknowledged"; version: string; wording: string }
   // No record, and the intake is still being filled in. Deliberately
   // says nothing about how far the client got.
@@ -251,8 +255,13 @@ export function readElectrolysisAcknowledgement(
 export const ACKNOWLEDGEMENT_REVIEW_COPY = {
   heading: "Electrolysis acknowledgement",
   acknowledged: "Acknowledged by the client.",
-  notAcknowledged:
-    "Not acknowledged. The client has not ticked this box; an intake cannot be submitted until they do.",
+  // States only what the stored row proves. The trailing clause "an intake
+  // cannot be submitted until they do" was TRUE while #518 gated submission
+  // and became FALSE at retirement: a pre-retirement draft left unticked now
+  // submits, so a practitioner reading a submitted intake would have been
+  // told a plain falsehood on a clinical surface. Same defect class as the
+  // "predates" copy retired alongside it.
+  notAcknowledged: "Not acknowledged. The client did not tick this box.",
   // States only what the stored row proves. An earlier draft of this copy
   // said the client "has not got to the acknowledgement step", which is
   // false for a client who read the wording and chose not to tick it —

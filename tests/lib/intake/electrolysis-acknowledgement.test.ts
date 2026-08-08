@@ -314,6 +314,42 @@ describe("retirement — nothing new is collected", () => {
     expect(isClientOwnedResponseKey(CANON.id)).toBe(true);
   });
 
+  it("an unticked LEGACY record is reachable on a SUBMITTED intake", () => {
+    // Before retirement this state was draft-only, because the submit gate
+    // refused without an acceptance. Retirement removed that gate, so a
+    // pre-retirement draft left unticked now submits and lands here. This is
+    // the precondition for the copy assertion below.
+    const unticked = {
+      [CANON.id]: {
+        id: CANON.id,
+        version: CANON.version,
+        wording: CANON.wording,
+        accepted: false,
+      },
+    };
+    for (const status of ["in_progress", "submitted", "reviewed"] as const) {
+      const view = readElectrolysisAcknowledgement(unticked, status);
+      expect(view.state, status).toBe("not_acknowledged");
+      // The stored snapshot still renders truthfully in every case.
+      expect(view.state === "not_acknowledged" && view.wording).toBe(
+        CANON.wording,
+      );
+    }
+  });
+
+  it("no copy claims a missing acknowledgement still BLOCKS submission", () => {
+    // Retirement removed the submit gate. Any copy saying an intake "cannot
+    // be submitted" until the box is ticked is now false on a clinical
+    // surface — exactly the defect the 'predates' rename fixed next door.
+    for (const [key, value] of Object.entries(ACKNOWLEDGEMENT_REVIEW_COPY)) {
+      expect(value, key).not.toMatch(/cannot be submitted/i);
+      expect(value, key).not.toMatch(/until they do/i);
+    }
+    expect(ACKNOWLEDGEMENT_REVIEW_COPY.notAcknowledged).toBe(
+      "Not acknowledged. The client did not tick this box.",
+    );
+  });
+
   it("no copy claims an intake 'predates' the acknowledgement", () => {
     // After retirement an intake submitted TODAY also carries no record, so
     // "predates" would be a falsehood on a clinical surface.
