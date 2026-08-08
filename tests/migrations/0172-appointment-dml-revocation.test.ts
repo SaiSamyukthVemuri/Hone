@@ -32,8 +32,25 @@ const PROSE = SQL.split("\n")
   .filter((l) => l.trimStart().startsWith("--"))
   .join(" ");
 
-/** Every executable REVOKE statement, whole. */
-const REVOKES = CODE.match(/^revoke [^;]+;/gm) ?? [];
+/**
+ * Every executable REVOKE statement, whole.
+ *
+ * NOT `^revoke` — that anchors at column 0, so a statement indented by a single
+ * space becomes INVISIBLE to this list and to every guard built on it. An
+ * adversarial pass demonstrated four mutants that passed the entire suite that
+ * way, including `  revoke select on table public.appointments from
+ * authenticated;` sailing past the "no revocation names SELECT" doctrine, and
+ * `  revoke insert, update, delete on all tables in schema public from
+ * authenticated;` evading the count, the grantee check and the two-table scope
+ * check at once. Leading whitespace is now consumed, and the statement-count
+ * cross-check below proves the extraction saw everything.
+ */
+const REVOKES = CODE.match(/^[ \t]*revoke\b[^;]+;/gm) ?? [];
+
+/** Every executable statement, split on `;`, for whole-file scope checks. */
+const STATEMENTS = CODE.split(";")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const TABLES = ["appointments", "appointment_audit"] as const;
 const ROW_DML = ["insert", "update", "delete"] as const;
@@ -131,6 +148,51 @@ describe("0172 — the exact revocation surface, and nothing beyond it", () => {
     expect(REVOKES).toHaveLength(8);
   });
 
+  it("the REVOKE extraction is complete — no statement can hide from it", () => {
+    // The guard on the guard. Counts every `revoke` token in the executable SQL
+    // independently of the extraction regex, so an indented, line-wrapped or
+    // otherwise unusually-formatted revoke cannot be silently skipped by the
+    // list every other assertion in this file is built on.
+    const tokens = (CODE.match(/\brevoke\b/gi) ?? []).length;
+    expect(tokens, "every `revoke` token must appear in exactly one extracted statement").toBe(
+      REVOKES.length,
+    );
+  });
+
+  it("the whole file contains exactly FIFTEEN executable statements", () => {
+    // begin, set local lock_timeout, 8 revokes, 3 drop policy, 1 create policy,
+    // commit. Anything smuggled in — at any indentation — changes this number.
+    expect(STATEMENTS).toHaveLength(15);
+  });
+
+  it("no statement uses a schema-wide or ALL TABLES form", () => {
+    // `revoke ... on all tables in schema public` contains no `public.<table>`
+    // token, so it evades every "exactly two tables" check by construction.
+    expect(CODE_FLAT).not.toMatch(/all tables in schema/i);
+    expect(CODE_FLAT).not.toMatch(/all sequences in schema/i);
+    expect(CODE_FLAT).not.toMatch(/all functions in schema/i);
+    expect(CODE_FLAT).not.toMatch(/default privileges/i);
+  });
+
+  it("every executable statement is one of the shapes this migration is allowed to contain", () => {
+    // A whitelist, so a statement TYPE nobody anticipated fails rather than
+    // slipping between the negative guards.
+    const ALLOWED = [
+      /^begin$/i,
+      /^set local lock_timeout = '5s'$/i,
+      /^revoke\b/i,
+      /^drop policy if exists\b/i,
+      /^create policy\b/i,
+      /^commit$/i,
+    ];
+    for (const s of STATEMENTS) {
+      expect(
+        ALLOWED.some((re) => re.test(s)),
+        `unexpected statement shape: ${s.slice(0, 120)}`,
+      ).toBe(true);
+    }
+  });
+
   it("targets ONLY public.appointments and public.appointment_audit", () => {
     const targets = [...CODE.matchAll(/on table public\.(\w+)/g)].map((m) => m[1]);
     expect([...new Set(targets)].sort()).toEqual([...TABLES].sort());
@@ -216,7 +278,7 @@ describe("0172 — GROUP 3: the policy replacement", () => {
     expect(stmt).not.toMatch(/with check/i);
   });
 
-  it("the DROP and the CREATE are adjacent, inside the one transaction", () => {
+  it("the DROPs and the CREATE are adjacent, inside the one transaction", () => {
     // Dropping appointments_member_all WITHOUT its replacement has exactly the
     // same blast radius as REVOKE ALL: no permissive SELECT policy, so every
     // practitioner read returns zero rows.
@@ -224,7 +286,33 @@ describe("0172 — GROUP 3: the policy replacement", () => {
     const dropIdx = lines.findIndex((l) => l.startsWith('drop policy if exists "appointments_member_all"'));
     const createIdx = lines.findIndex((l) => l.startsWith('create policy "appointments_member_select"'));
     expect(dropIdx, "drop present").toBeGreaterThan(-1);
-    expect(createIdx, "create present").toBe(dropIdx + 1);
+    // drop member_all -> drop member_select -> create member_select
+    expect(createIdx, "create immediately follows the two drops").toBe(dropIdx + 2);
+  });
+
+  it("the replacement policy is itself dropped first, so a re-run cannot abort 42710", () => {
+    // Repository convention (docs/09_DATABASE_AND_RLS.md) and push safety: a
+    // bare CREATE POLICY on a pre-existing table aborts with 42710 if a policy
+    // of that name already exists in the target database.
+    expect(CODE).toMatch(
+      /^drop policy if exists "appointments_member_select" on public\.appointments;$/m,
+    );
+    const lines = CODE.split("\n").map((l) => l.trim()).filter(Boolean);
+    const dropSelf = lines.findIndex((l) =>
+      l.startsWith('drop policy if exists "appointments_member_select"'),
+    );
+    const create = lines.findIndex((l) => l.startsWith('create policy "appointments_member_select"'));
+    expect(dropSelf, "self-drop present").toBeGreaterThan(-1);
+    expect(create, "self-drop immediately precedes the create").toBe(dropSelf + 1);
+  });
+
+  it("every CREATE POLICY in this file is preceded by a same-name DROP", () => {
+    const created = [...CODE.matchAll(/create policy "([^"]+)"/g)].map((m) => m[1]);
+    for (const name of created) {
+      expect(CODE, `${name} must be dropped before it is created`).toMatch(
+        new RegExp(`^drop policy if exists "${name}" on `, "m"),
+      );
+    }
   });
 
   it("drops appointment_audit_member_insert", () => {
@@ -241,9 +329,11 @@ describe("0172 — GROUP 3: the policy replacement", () => {
     expect(CODE_FLAT).not.toMatch(/function public\.is_studio_member/i);
   });
 
-  it("declares exactly one policy and drops exactly two", () => {
-    expect(CODE.match(/^create policy /gm) ?? []).toHaveLength(1);
-    expect(CODE.match(/^drop policy /gm) ?? []).toHaveLength(2);
+  it("declares exactly one policy and drops exactly three", () => {
+    // drops: appointments_member_all, appointments_member_select (the
+    // push-safety self-drop), appointment_audit_member_insert.
+    expect(CODE.match(/^[ \t]*create policy /gm) ?? []).toHaveLength(1);
+    expect(CODE.match(/^[ \t]*drop policy /gm) ?? []).toHaveLength(3);
   });
 });
 
@@ -354,6 +444,33 @@ describe("0172 — the doctrine the file must carry for the next reader", () => 
 
   it("records the standing prohibition on replacing snapshot_appointment_buffer", () => {
     expect(PROSE).toMatch(/snapshot_appointment_buffer/);
+  });
+
+  it("states the PROVENANCE of the production figures honestly", () => {
+    // The boundary audit that specifies these probes is UNMERGED and its §13.2
+    // is a specification, not a result set. A reader must not be sent to a
+    // document they cannot open and told it contains the measurement.
+    expect(PROSE).toMatch(/PROVENANCE/i);
+    expect(PROSE).toMatch(/UNMERGED/i);
+    expect(PROSE).toMatch(/RE-CONFIRMED|re-confirmed/);
+    expect(PROSE).toMatch(/Probe 6 was NOT run/i);
+  });
+
+  it("discloses the policy ROLE narrowing rather than burying it", () => {
+    // appointments_member_all had no TO clause (PUBLIC); the replacement is
+    // TO authenticated. "The predicate is verbatim" must not be allowed to
+    // imply "nothing else changed".
+    expect(PROSE).toMatch(/TO` clause|TO clause|role clause|ROLE CLAUSE/i);
+    expect(PROSE).toMatch(/INERT|inert/);
+  });
+
+  it("records the FK referential-action residue it does NOT close", () => {
+    // A referential action runs as the constraint's owner and consults neither
+    // the ACL nor RLS. The file must not read as "no member can cause a write".
+    expect(PROSE).toMatch(/REFERENTIAL ACTIONS|referential action/i);
+    expect(PROSE).toMatch(/ON DELETE SET NULL/i);
+    expect(PROSE).toMatch(/services_member_all/);
+    expect(PROSE).toMatch(/CASCADE/);
   });
 
   it("explains why 0170 and 0171 are superseded rather than edited", () => {

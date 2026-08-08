@@ -43,8 +43,27 @@
 --
 -- MEASURED IN PRODUCTION BEFORE WRITING THIS
 -- ===========================================================================
--- Read-only production probes (§13.2 probes 1-5, ZERO production writes) found,
--- for BOTH tables:
+-- PROVENANCE, stated exactly, because the source is NOT in this repository.
+-- The boundary audit (`docs/audits/APPOINTMENT_DML_BOUNDARY_2026-08.md`, PR
+-- #521) is still UNMERGED — it lives only on branch
+-- `audit/appointment-dml-boundary`, and its §13.2 is a SPECIFICATION of probes
+-- to run, written in "Expected:" language, not a record of results. Do not read
+-- it as the evidence for the figures below.
+--
+-- The figures below are the RESULTS of executing those §13.2 probes 1-5
+-- read-only against production in a PRIOR session (zero production writes,
+-- reconciled at probe 2), carried into this session as verified inputs. They
+-- were not re-measured while writing this file, and NO production access of any
+-- kind occurred in the session that authored it. Probe 6 was NOT run.
+--
+-- What that means for a reviewer: everything below is second-hand to this file
+-- and cannot be re-derived from anything in this repository. It is reproduced
+-- here so the migration is self-contained, and it must be RE-CONFIRMED through
+-- the approved read-only channel immediately before any production push. The
+-- local evidence — a fresh chain from 0001 to 0172 on PostgreSQL 17.6 — is
+-- first-hand and reproducible; the production posture is not.
+--
+-- With that stated: for BOTH tables the probes found
 --
 --   anon           SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER MAINTAIN
 --   authenticated  SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER MAINTAIN
@@ -58,9 +77,9 @@
 --   appointment_audit_member_read     SELECT  (0010:279-288)
 --   appointment_audit_member_insert   INSERT  (0010:290-299)
 --
--- Every privilege named below was therefore observed to EXIST in production.
--- Nothing here is speculative and nothing here is a guess about the platform's
--- defaults.
+-- Every privilege named below was therefore observed to EXIST in production by
+-- those probes. Nothing here is a guess about the platform's defaults — but see
+-- the provenance note above for exactly how far that observation travels.
 --
 -- THE MAINTAIN PRIVILEGE (GROUP 5) — WHY IT IS NAMED, AND ITS VERSION FLOOR
 -- ===========================================================================
@@ -108,7 +127,30 @@
 -- return zero rows. The DROP and the CREATE are therefore adjacent and inside
 -- one transaction. The replacement reuses `public.is_studio_member(studio_id)`
 -- VERBATIM — the predicate is not rewritten, re-derived or widened, and
--- `is_studio_member` itself is not touched — so no read changes.
+-- `is_studio_member` itself is not touched.
+--
+-- The replacement is preceded by its OWN `drop policy if exists`, matching the
+-- repository convention and, more importantly, so the statement cannot abort
+-- with 42710 if a policy of that name already exists in the target database.
+--
+-- ONE THING DID CHANGE BESIDES THE COMMAND: THE ROLE CLAUSE.
+-- `appointments_member_all` carried NO `TO` clause, so it applied to PUBLIC —
+-- every role, `anon` included. `appointments_member_select` is `TO
+-- authenticated`. This is a deliberate narrowing and it is called out here
+-- rather than left for a reader to discover in `pg_policy`.
+--
+-- It is behaviourally INERT, and that was measured rather than reasoned: with
+-- real appointment and audit rows present, `anon` reads 0 rows under the NEW
+-- policy and 0 rows under a restored copy of the OLD one, because
+-- `is_studio_member()` resolves `auth.uid()` to null for `anon` and returns
+-- false. `service_role` and `postgres` both carry `rolbypassrls`, so policies do
+-- not apply to them at all. No role's read result changes.
+--
+-- Note `anon` KEEPS its SELECT table grant here (SELECT is never revoked) while
+-- having no policy it can satisfy. That combination is harmless today and is
+-- pinned by a test, because if a future feature ever adds a permissive `TO
+-- public` SELECT policy to this table, the retained grant would turn it
+-- straight into unauthenticated access to every studio's schedule.
 --
 -- `appointment_audit_member_insert` is dropped outright with no replacement:
 -- after this migration no client role holds INSERT on that table, so a policy
@@ -146,6 +188,46 @@
 --   so folding them in would be defence-in-depth on tables with no writers and
 --   would cost this migration its "exactly two tables" scope note. They get
 --   their own hygiene migration.
+--
+-- WHAT THIS DOES *NOT* CLOSE — THE BOUNDARY'S REAL EDGE
+-- ===========================================================================
+-- Do not read this migration as "no member can cause a write to appointments".
+-- It closes DIRECT DML. It does not close FOREIGN-KEY REFERENTIAL ACTIONS, and
+-- the difference was measured, not assumed:
+--
+--   A referential action runs as the CONSTRAINT's owner and consults neither
+--   the table ACL nor RLS (`appointments` is not FORCE RLS). So deleting a
+--   PARENT row still writes `appointments` for a caller holding no privilege on
+--   it whatsoever.
+--
+-- Two such paths are REACHABLE from a browser after this migration:
+--
+--   * any member may DELETE a `services` row (`services_member_all` is FOR ALL)
+--     -> `appointments_service_same_studio_fk` ON DELETE SET NULL
+--     -> `appointments.service_id` becomes null
+--   * an owner may DELETE a `practitioners` row ("practitioners: owners delete")
+--     -> `appointments_practitioner_same_studio_fk` ON DELETE SET NULL
+--     -> `appointments.practitioner_id` becomes null
+--
+-- Verified reachable end-to-end on the local 0172 chain: the DIRECT update is
+-- refused 42501 while the parent delete succeeds and nulls the column. The write
+-- is also SILENT — no audit row, no `updated_at` touch, no `sync_version` bump,
+-- no calendar outbox enqueue.
+--
+-- The two CASCADE parents are NOT reachable, and that is what keeps this to
+-- "a column is nulled" rather than "the appointment disappears":
+-- `appointments_client_same_studio_fk` and `appointments_studio_id_fkey` are ON
+-- DELETE CASCADE, but neither `clients` nor `studios` carries a DELETE policy,
+-- so RLS default-denies the parent delete. Both facts are pinned by tests, so a
+-- delete policy appearing on either — or a new CASCADE — fails CI rather than
+-- silently widening this edge.
+--
+-- This is deliberately NOT fixed here. Closing it means changing grants or FK
+-- actions on OTHER tables (`services`, `practitioners`), and this migration's
+-- entire value is being exactly two tables wide and provably no-op for the
+-- deployed application. It belongs to the later boundary work, and it is
+-- recorded as L23 in docs/production/known-limitations.md so it cannot be
+-- forgotten.
 --
 -- A NOTE FOR THE NEXT READER ABOUT 0170 AND 0171
 -- ===========================================================================
@@ -190,6 +272,7 @@ revoke insert, update, delete on table public.appointment_audit  from anon;
 -- GROUP 3 — policy residue. DROP and CREATE are adjacent and in one
 -- transaction; the membership predicate is reused verbatim.
 drop policy if exists "appointments_member_all" on public.appointments;
+drop policy if exists "appointments_member_select" on public.appointments;
 create policy "appointments_member_select"
   on public.appointments for select to authenticated
   using (public.is_studio_member(studio_id));

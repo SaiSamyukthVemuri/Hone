@@ -136,6 +136,19 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // MANDATORY, not hygiene. `attemptAsUser` goes through asUser, which COMMITS
+  // on success (harness.ts) — unlike asRole, which always rolls back. Every
+  // attemptAsUser probe below EXPECTS to fail, so nothing normally commits; but
+  // on a database where 0172 was NOT applied those probes SUCCEED and commit,
+  // leaving forged appointments and forged audit rows permanently in the shared
+  // local stack. That is precisely the run where an engineer is debugging, and
+  // the pollution would outlive the red test. Clean up unconditionally.
+  await adminQuery(
+    `delete from public.appointment_audit
+      where appointment_id in (select id from public.appointments where studio_id = $1)`,
+    [A.studioId],
+  );
+  await adminQuery(`delete from public.appointments where studio_id = $1`, [A.studioId]);
   await closePool();
 });
 
@@ -327,6 +340,10 @@ describe("0172 — INSERT is refused by PRIVILEGE, provably not merely by RLS", 
       `select action from public.appointment_audit where id = $1`,
       [auditId],
     );
+    // Guarded: if both writes had succeeded and committed, rows[0] is undefined
+    // and an unguarded property read would die with a TypeError instead of
+    // reporting the actual defect.
+    expect(surviving.rowCount, "the audit row must still exist").toBe(1);
     expect(surviving.rows[0].action).toBe("created");
   });
 
@@ -358,7 +375,10 @@ describe("0172 — the maintenance and definition verbs are behaviourally gone",
     for (const role of CLIENT_ROLES) {
       it(`${table}: ${role} cannot TRUNCATE`, async () => {
         // TRUNCATE is not filtered by RLS at all, so this can only ever be a
-        // privilege refusal — and before 0172 it would have EMPTIED the table.
+        // privilege refusal. Note the blast radius differs per table: with the
+        // grant restored, `appointment_audit` really would be EMPTIED, while
+        // `appointments` raises 0A000 first (appointment_audit's FK references
+        // it). 42501 here proves the privilege check fires before either.
         expectPrivilegeDenial(
           await attempt(role, `truncate table public.${table}`),
           `${role} TRUNCATE ${table}`,
@@ -526,8 +546,12 @@ describe("0172 — the policy set is exactly the intended shape", () => {
     expect(r.rows.map((x) => x.polname)).toEqual(["appointment_audit_member_read"]);
     expect(r.rows[0].polcmd).toBe("r");
     // B3 does NOT rewrite this predicate; its studio_id redesign is B5/0174.
-    expect(r.rows[0].qual).toMatch(/is_studio_member/);
-    expect(r.rows[0].qual).toMatch(/appointment_id/);
+    // Pinned to the EXACT normalised text: /is_studio_member/ + /appointment_id/
+    // would both still match a predicate widened to `... OR true`.
+    expect(r.rows[0].qual.replace(/\s+/g, " ").trim()).toBe(
+      "(appointment_id IN ( SELECT appointments.id FROM appointments " +
+        "WHERE is_studio_member(appointments.studio_id)))",
+    );
   });
 
   it("appointment_audit_member_insert is GONE", async () => {
@@ -536,6 +560,32 @@ describe("0172 — the policy set is exactly the intended shape", () => {
          where p.polname = 'appointment_audit_member_insert'`,
     );
     expect(r.rows[0].n).toBe(0);
+  });
+
+  it("appointments carries NO policy granted to PUBLIC or to anon", async () => {
+    // `anon` KEEPS the SELECT table grant (0172 never names SELECT) but after
+    // GROUP 3 there is no policy it can satisfy, so it reads zero rows — the
+    // same zero it read before, when appointments_member_all evaluated
+    // is_studio_member() to false for a null auth.uid().
+    //
+    // That combination is a latent hazard worth pinning: if a future feature
+    // ever adds a permissive `TO public` SELECT policy here, the retained anon
+    // grant turns it straight into unauthenticated PostgREST access to every
+    // studio's schedule, with no second gate. This test is that tripwire.
+    const r = await adminQuery(
+      `select p.polname,
+              (select array_agg(rolname::text order by rolname)
+                 from pg_roles where oid = any(p.polroles)) roles
+         from pg_policy p
+         join pg_class c on c.oid = p.polrelid
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname='public' and c.relname='appointments'`,
+    );
+    for (const row of r.rows) {
+      // polroles = {0} (PUBLIC) surfaces as a null array from pg_roles.
+      expect(row.roles, `${row.polname} must name explicit roles, not PUBLIC`).not.toBeNull();
+      expect(row.roles, `${row.polname} must not include anon`).not.toContain("anon");
+    }
   });
 
   it("RLS is still ENABLED on both tables", async () => {
@@ -551,11 +601,126 @@ describe("0172 — the policy set is exactly the intended shape", () => {
 });
 
 // ---------------------------------------------------------------------------
+// T1.11 — THE RESIDUE 0172 DOES NOT CLOSE, measured rather than assumed
+// ---------------------------------------------------------------------------
+
+describe("0172 — the boundary's known edge: FK referential actions still reach appointments", () => {
+  // A referential action runs as the CONSTRAINT's owner, not as the caller, and
+  // consults neither the table ACL nor RLS (appointments is not FORCE RLS). So a
+  // member who may DELETE a PARENT row can still cause a write to appointments
+  // without ever holding a privilege on it.
+  //
+  // This is NOT closed by 0172 and is deliberately out of its scope: closing it
+  // means changing grants or FK actions on OTHER tables (`services`,
+  // `practitioners`), and 0172's whole value is being exactly two tables wide.
+  // It is pinned HERE, measured, so the boundary's real shape is recorded and a
+  // silent widening — a new CASCADE, or a delete policy appearing on `clients` —
+  // fails a test instead of going unnoticed.
+
+  it("the delete actions on appointments' FKs are exactly as measured", async () => {
+    const r = await adminQuery(
+      `select conname, confdeltype
+         from pg_constraint
+        where conrelid='public.appointments'::regclass and contype='f'
+        order by conname`,
+    );
+    // c = CASCADE, n = SET NULL. A new 'c' on a parent a member can delete
+    // would turn "a column is nulled" into "the appointment row disappears".
+    expect(Object.fromEntries(r.rows.map((x) => [x.conname, x.confdeltype]))).toEqual({
+      appointments_client_same_studio_fk: "c",
+      appointments_practitioner_same_studio_fk: "n",
+      appointments_rescheduled_from_appointment_id_fkey: "n",
+      appointments_rescheduled_to_appointment_id_fkey: "n",
+      appointments_service_same_studio_fk: "n",
+      appointments_studio_id_fkey: "c",
+    });
+  });
+
+  it("the two CASCADE parents are NOT member-deletable, so no member can delete an appointment row", async () => {
+    // This is the load-bearing half. `clients` and `studios` cascade-delete
+    // appointments, but neither carries a DELETE policy, so RLS default-denies
+    // the parent delete and the cascade is unreachable. If a delete policy ever
+    // appears on either, a member gains indirect row deletion on appointments.
+    const r = await adminQuery(
+      `select c.relname, count(*) filter (where p.polcmd in ('d','*'))::int del_policies
+         from pg_class c
+         join pg_namespace n on n.oid = c.relnamespace
+         left join pg_policy p on p.polrelid = c.oid
+        where n.nspname='public' and c.relname in ('clients','studios')
+        group by c.relname order by c.relname`,
+    );
+    expect(r.rowCount).toBe(2);
+    for (const row of r.rows) {
+      expect(row.del_policies, `${row.relname} must have no DELETE-capable policy`).toBe(0);
+    }
+  });
+
+  it("a member CAN still null appointments.service_id by deleting the service — recorded, not fixed", async () => {
+    // Reproduced end to end, then rolled back. asUser COMMITS on success, so
+    // this runs through asRole (which always rolls back) with a member identity
+    // supplied explicitly.
+    const s = await adminQuery(
+      `insert into public.services (id, studio_id, name, default_duration_minutes, price_cents, active)
+       values (gen_random_uuid(), $1, 'b3-fk-residue', 60, 0, true) returning id`,
+      [A.studioId],
+    );
+    const serviceId = s.rows[0].id as string;
+    const a = await adminQuery(
+      `insert into public.appointments
+         (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
+          duration_minutes, status, cancellation_token_hash)
+       values (gen_random_uuid(), $1, null, $2, $3,
+               '2033-11-01T10:00:00Z'::timestamptz, '2033-11-01T11:00:00Z'::timestamptz,
+               60, 'confirmed', $4)
+       returning id`,
+      [A.studioId, A.clientId, serviceId, hash64()],
+    );
+    const targetId = a.rows[0].id as string;
+
+    const nulled = await asRole("authenticated", async (q) => {
+      await q(`select set_config('request.jwt.claims', $1, true)`, [
+        JSON.stringify({ sub: A.userId, role: "authenticated" }),
+      ]);
+      // The direct route is refused...
+      let direct: string | null = null;
+      try {
+        await q(`update public.appointments set service_id = null where id = $1`, [targetId]);
+      } catch (e) {
+        direct = (e as { code?: string }).code ?? null;
+      }
+      return direct;
+    });
+    expect(nulled, "the DIRECT update must still be refused by privilege").toBe(
+      INSUFFICIENT_PRIVILEGE,
+    );
+
+    // ...the indirect route is not. Separate transaction: the failed statement
+    // above aborts its own.
+    const after = await asRole("authenticated", async (q) => {
+      await q(`select set_config('request.jwt.claims', $1, true)`, [
+        JSON.stringify({ sub: A.userId, role: "authenticated" }),
+      ]);
+      const del = await q(`delete from public.services where id = $1`, [serviceId]);
+      const read = await q(`select service_id from public.appointments where id = $1`, [targetId]);
+      return { deleted: del.rowCount, serviceId: read.rows[0]?.service_id ?? null };
+    });
+    expect(after.deleted, "a member may delete a service (services_member_all is FOR ALL)").toBe(1);
+    expect(
+      after.serviceId,
+      "and the FK's ON DELETE SET NULL wrote appointments without any privilege on it",
+    ).toBeNull();
+
+    await adminQuery(`delete from public.appointments where id = $1`, [targetId]);
+    await adminQuery(`delete from public.services where id = $1`, [serviceId]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // T1.10 — nothing else drifted
 // ---------------------------------------------------------------------------
 
 describe("0172 — no trigger or function drift", () => {
-  it("snapshot_appointment_buffer still exists and was NOT replaced by this migration", async () => {
+  it("snapshot_appointment_buffer still EXISTS (that it was not replaced is proven by the source test)", async () => {
     // The standing prohibition: production's copy carries out-of-band behaviour
     // that exists in no migration here. 0172 contains no function statement at
     // all, so the function's presence is asserted, never its body.
@@ -566,7 +731,11 @@ describe("0172 — no trigger or function drift", () => {
     expect(r.rows[0].n).toBeGreaterThan(0);
   });
 
-  it("both tables keep every non-internal trigger they had", async () => {
+  it("both tables keep EXACTLY the non-internal triggers they had", async () => {
+    // Pinned to the exact count, not `> 0`. A `toBeGreaterThan(0)` here would
+    // still pass after six of the seven were dropped, while reporting "no
+    // trigger drift" — and appointment_audit would not be covered at all,
+    // because it has none and its key would simply be undefined.
     const r = await adminQuery(
       `select c.relname t, count(*)::int n
          from pg_trigger g join pg_class c on c.oid = g.tgrelid
@@ -576,7 +745,8 @@ describe("0172 — no trigger or function drift", () => {
       [[...TABLES]],
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
-    expect(byTable.appointments, "appointments triggers").toBeGreaterThan(0);
+    expect(byTable.appointments, "appointments non-internal triggers").toBe(7);
+    expect(byTable.appointment_audit ?? 0, "appointment_audit non-internal triggers").toBe(0);
   });
 
   it("is_studio_member was not rewritten and is still authenticated-executable", async () => {

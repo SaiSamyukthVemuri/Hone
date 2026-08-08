@@ -395,7 +395,7 @@ describe("no schema change", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("migration 0172 was not created by this work", () => {
+  it("this feature did not author migration 0172", () => {
     // 0172 was RESERVED for Appointment DML B3, and B3 has now claimed it
     // (0172_revoke_authenticated_appointment_dml.sql). The guard's subject was
     // never "0172 must not exist" — it is "this feature did not author it".
@@ -408,7 +408,7 @@ describe("no schema change", () => {
       (f) => f.endsWith(".sql"),
     );
     const claimed = files.filter((f) => f.startsWith("0172"));
-    expect(claimed).toEqual(["0172_revoke_authenticated_appointment_dml.sql"]);
+    expect(claimed).toHaveLength(1);
 
     const sql = read(`supabase/migrations/${claimed[0]}`);
     expect(sql).not.toContain(KEY);
