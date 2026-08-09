@@ -60,7 +60,14 @@ export function PracticeSnapshot({
 }) {
   const a = metrics.appointments;
   return (
-    <div className="flex flex-col gap-4">
+    <section className="flex flex-col gap-4">
+      {/* The snapshot's only h2 used to be "Action needed", which moved to the
+          To do section. Without a heading of its own, its cards' h3s would nest
+          under the PRECEDING h2 in the accessibility tree — "Birthdays this
+          month" — so a screen-reader user navigating by heading would find
+          "Service value" and "Payments" as children of Birthdays. It gets its
+          own h2 for the same reason every other top-level section has one. */}
+      <h2 className="text-lg font-medium">Practice snapshot</h2>
       <div className="flex flex-wrap items-center gap-2">
         {PERIODS.map((p) => (
           <Link
@@ -175,7 +182,7 @@ export function PracticeSnapshot({
           </p>
         </Card>
       </div>
-    </div>
+    </section>
   );
 }
 

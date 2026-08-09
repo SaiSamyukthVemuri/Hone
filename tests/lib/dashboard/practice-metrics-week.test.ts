@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolvePeriodRange } from "@/lib/dashboard/practice-metrics";
-import { addDays, startOfWeek } from "@/lib/booking/tz";
+import {
+  addDays,
+  localTimeString,
+  startOfWeek,
+  utcInstantFromLocal,
+} from "@/lib/booking/tz";
 
 // ===========================================================================
 // Dashboard V2 Part 1 — the dashboard reporting week runs SUNDAY -> SATURDAY.
@@ -137,10 +142,9 @@ describe("dashboard week — boundaries that are not week boundaries", () => {
     expect(lastDayOf(r)).toBe("2028-03-04");
   });
 
-  it("is unaffected by DST transitions, because it ranges over DATE STRINGS", () => {
+  it("resolves the DST weeks to the right Sundays", () => {
     // America/Toronto springs forward 2026-03-08 and falls back 2026-11-01 —
-    // both Sundays, i.e. both are week STARTS. A "start + 168 hours" range
-    // would land 23h/25h off; a date-string range cannot.
+    // both Sundays, i.e. both are week STARTS.
     for (const [inside, expectedStart] of [
       ["2026-03-11", "2026-03-08"],
       ["2026-11-04", "2026-11-01"],
@@ -149,6 +153,45 @@ describe("dashboard week — boundaries that are not week boundaries", () => {
       expect(r.startLocal, inside).toBe(expectedStart);
       expect(weekdayOf(r.startLocal)).toBe("Sun");
       expect(r.endLocalExclusive).toBe(addDays(expectedStart, 7));
+    }
+  });
+
+  it("the ACTUAL UTC window absorbs DST — 167h in spring, 169h in autumn", () => {
+    // The case above is date-string arithmetic, which is DST-free BY
+    // CONSTRUCTION: it would pass against an implementation with no timezone
+    // handling at all. What actually matters is the conversion the metrics
+    // query performs on those strings (practice-metrics.ts, utcInstantFromLocal
+    // on BOTH ends separately). If that ever became "start + 168 hours", or if
+    // utcInstantFromLocal lost its re-sample step, the window would silently
+    // include one wrong hour of the next Sunday AND double-count it against the
+    // following week — with every date-string assertion above still green.
+    const TZ = "America/Toronto";
+    const H = 3_600_000;
+    for (const [inside, expectedHours] of [
+      ["2026-03-11", 167], // spring forward: the week is an hour SHORT
+      ["2026-11-04", 169], // fall back: the week is an hour LONG
+      ["2026-08-12", 168], // an ordinary week, as the control
+    ] as const) {
+      const r = week(inside);
+      const startUtc = utcInstantFromLocal(r.startLocal, "00:00", TZ);
+      const endUtc = utcInstantFromLocal(r.endLocalExclusive, "00:00", TZ);
+      expect((endUtc.getTime() - startUtc.getTime()) / H, inside).toBe(expectedHours);
+      // Both ends must still BE local midnight, not merely 168h apart.
+      expect(localTimeString(startUtc, TZ), `${inside} start`).toBe("00:00");
+      expect(localTimeString(endUtc, TZ), `${inside} end`).toBe("00:00");
+    }
+  });
+
+  it("consecutive weeks abut exactly across a DST transition — no gap, no overlap", () => {
+    const TZ = "America/Toronto";
+    for (const sunday of ["2026-03-01", "2026-03-08", "2026-10-25", "2026-11-01"]) {
+      const a = week(sunday);
+      const b = week(a.endLocalExclusive);
+      expect(b.startLocal, sunday).toBe(a.endLocalExclusive);
+      expect(
+        utcInstantFromLocal(b.startLocal, "00:00", TZ).getTime(),
+        `${sunday} boundary instant`,
+      ).toBe(utcInstantFromLocal(a.endLocalExclusive, "00:00", TZ).getTime());
     }
   });
 });
