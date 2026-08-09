@@ -146,35 +146,44 @@ test.describe("practitioner View intake shows recorded consent", () => {
     const grid = page.locator("dl");
     await expect(grid.first()).toBeVisible();
 
-    // --- SECTION 2: the intake's OWN consent record, both forms
+    // --- SECTION 2: CURRENT consent. Treatment consent is intake-owned and
+    // therefore still current; the intake's historical PHOTO answer is not
+    // here at all (it moved to history when #545 sent photo consent to the
+    // portal, and the clarity fix is what actually enforces that).
     const recorded = page.getByTestId("intake-review-consent-form");
-    await expect(recorded).toHaveCount(2);
+    await expect(recorded).toHaveCount(1);
     // Treatment reads "Acknowledged" — never "Signed".
     await expect(recorded.filter({ hasText: "Treatment Consent" })).toContainText(
       "Acknowledged",
     );
-    // The historical photo DENIAL is still shown, and shown as a denial —
-    // not as missing, not as unanswered, not as signed.
-    const historicalPhoto = recorded.filter({
-      hasText: "Photo Consent (as asked during intake)",
-    });
-    await expect(historicalPhoto).toContainText("Denied");
-    await expect(historicalPhoto).toContainText("Recorded with this intake");
-    // The STORED snapshot, not today's template text.
-    await expect(historicalPhoto).toContainText(
-      "The photo consent text the client read at the time.",
-    );
 
-    // --- SECTION 3: the CURRENT portal status, as its own source
+    // --- SECTION 3: the CURRENT portal photo status, in the current block
     const portal = page.getByTestId("review-portal-photo-consent");
     await expect(portal).toBeVisible();
     await expect(page.getByTestId("review-portal-photo-status")).toHaveText(
       "Consent granted",
     );
-    await expect(portal).toContainText("Completed in client portal");
-    // History is NOT overwritten by it: the intake still says Denied above,
-    // and the portal block does not claim to be the intake's answer.
+    await expect(portal).toContainText("Current portal response");
+    // The portal block does not claim to be the intake's answer.
     await expect(portal).not.toContainText("Recorded with this intake");
+
+    // --- SECTION 4: the historical intake DENIAL still exists, as history.
+    // Preserved verbatim — same answer, same provenance, same stored text.
+    const history = page.getByTestId("consent-history-block");
+    // Collapsed by default, so expand it the way a practitioner would.
+    await history.locator("> summary").click();
+    const historyEntry = page.getByTestId("consent-history-entry");
+    await expect(historyEntry).toHaveCount(1);
+    await expect(historyEntry).toContainText(
+      "Photo Consent (as asked during intake)",
+    );
+    await expect(historyEntry).toContainText("Denied");
+    await expect(historyEntry).toContainText("Recorded with this intake");
+    // The STORED snapshot is still reachable, one more click in.
+    await historyEntry.locator("summary").click();
+    await expect(historyEntry).toContainText(
+      "The photo consent text the client read at the time.",
+    );
 
     // --- the existing signed-record viewer is reused, not rebuilt
     await portal.getByRole("button", { name: "View signed form" }).click();
@@ -324,5 +333,422 @@ test.describe("View intake reports only forms the client can reach", () => {
     await expect(rows).toHaveCount(1);
     await expect(rows).toContainText("Photo use consent");
     await expect(rows).not.toContainText("Retired photo form");
+  });
+});
+
+// ===========================================================================
+// CHLOE'S SCREENSHOT, 2026-08-09, minutes after #545 went live.
+//
+//   Photo Consent · Accepted   · Recorded with this intake · v2 · 3:56 PM
+//   ... full legal body ...
+//   CURRENT PORTAL CONSENT STATUS
+//   Photo Consent · Consent denied · 3:57 PM
+//
+// "consent was both accepted and denied" / "this should not be possible" /
+// "very confusing" / "hard to find in all the text".
+//
+// Both records are real and both are KEPT. What these tests pin is that the
+// screen has exactly ONE current answer per consent question, that the current
+// answer is the portal's, and that the prior answer is visibly history.
+//
+// The intake record here is stored against the REAL live template id, which is
+// what makes supersession provable: a consent template is versioned in place
+// (`update ... set version = version + 1 where id = $id`), so a shared
+// template_id is the same logical consent question.
+// ===========================================================================
+
+const LONG_TREATMENT_BODY = [
+  "TREATMENT CONSENT AND RISK DISCLOSURE.",
+  "1. NATURE OF TREATMENT. Electrolysis permanently destroys the hair follicle.",
+  "2. RISKS. Temporary redness, swelling, scabbing and pigment change may occur.",
+  "3. AFTERCARE. Avoid sun exposure and heat for 48 hours following treatment.",
+  "4. RESULTS. Multiple sessions are required; individual outcomes vary.",
+].join("\n\n");
+
+const LONG_PHOTO_BODY = [
+  "PHOTOGRAPHIC CONSENT AND MEDIA RELEASE AGREEMENT.",
+  "1. PURPOSE. Clinical photographs document treatment progress over time.",
+  "2. STORAGE. Images are retained in the clinical record for seven years.",
+  "3. DISCLOSURE. Images are not shared with third parties without consent.",
+  "4. WITHDRAWAL. You may withdraw this consent at any time in writing.",
+  "5. MARKETING. Separate written permission is required for promotional use.",
+].join("\n\n");
+
+async function seedIntakeWithPhotoAnswer(
+  seed: E2eSeed,
+  clientId: string,
+  opts: {
+    photoTemplateId: string;
+    response: "accepted" | "denied";
+    respondedAt?: string | null;
+    body?: string;
+    version?: number;
+  },
+) {
+  const photo: Record<string, unknown> = {
+    template_id: opts.photoTemplateId,
+    form_type: "photo_consent",
+    template_version: opts.version ?? 2,
+    title_snapshot: "Photo Consent",
+    body_snapshot: opts.body ?? "The photo consent text the client read.",
+    template_hash: "hash-photo",
+    response: opts.response,
+    response_label_snapshot:
+      opts.response === "accepted"
+        ? "I consent to photographs."
+        : "I do NOT consent to photographs.",
+  };
+  if (opts.respondedAt !== null) {
+    photo.responded_at = opts.respondedAt ?? "2026-08-09T15:56:00.000Z";
+  }
+  await seedE2eIntake(seed.studioId, clientId, "submitted", {
+    has_allergies: "no",
+    [INTAKE_CONSENT_RESPONSES.id]: { version: 1, forms: [photo] },
+  });
+}
+
+async function openReview(page: import("@playwright/test").Page, seed: E2eSeed, clientId: string) {
+  await loginAsOwner(page, seed);
+  await page.goto(`/clients/${clientId}/intake`);
+  await expect(page.getByText("Consent forms").first()).toBeVisible();
+}
+
+test.describe("one unmistakable CURRENT consent answer", () => {
+  test("CASE 1 — historical ACCEPT + current DENY: the screen says DENIED, once", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    const templateId = await seedLivePhotoTemplate(seed.studioId);
+    await seedIntakeWithPhotoAnswer(seed, clientId, {
+      photoTemplateId: templateId,
+      response: "accepted",
+      respondedAt: "2026-08-09T15:56:00.000Z",
+    });
+    await seedPortalSignature(seed, clientId, templateId, "denied");
+
+    await openReview(page, seed, clientId);
+
+    // THE CURRENT BLOCK: denied, and nothing in it says Accepted.
+    const current = page.getByTestId("consent-current-block");
+    await expect(current).toBeVisible();
+    await expect(page.getByTestId("review-portal-photo-status")).toHaveText(
+      "Consent denied",
+    );
+    await expect(current).toContainText("Current portal response");
+    // The precise defect Chloe reported: an "Accepted" standing beside a
+    // "Consent denied" as though both were current.
+    await expect(current).not.toContainText("Accepted");
+
+    // ...and the Accepted is NOT lost. It is history, labelled as history.
+    const history = page.getByTestId("consent-history-block");
+    await history.locator("> summary").click();
+    const entry = page.getByTestId("consent-history-entry");
+    await expect(entry).toContainText("Previous response");
+    await expect(entry).toContainText("Accepted");
+    await expect(entry).toContainText("Recorded with this intake");
+    // Supersession is asserted only because the template ids match AND the
+    // portal answer is the later one.
+    await expect(entry).toHaveAttribute(
+      "data-provenance",
+      "superseded_by_portal",
+    );
+    await expect(entry).toContainText("Superseded by a newer portal response");
+  });
+
+  test("CASE 2 — historical DENY + current ACCEPT: the screen says GRANTED", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    const templateId = await seedLivePhotoTemplate(seed.studioId);
+    await seedIntakeWithPhotoAnswer(seed, clientId, {
+      photoTemplateId: templateId,
+      response: "denied",
+    });
+    await seedPortalSignature(seed, clientId, templateId, "accepted");
+
+    await openReview(page, seed, clientId);
+
+    const current = page.getByTestId("consent-current-block");
+    await expect(page.getByTestId("review-portal-photo-status")).toHaveText(
+      "Consent granted",
+    );
+    // The mirror image: no stale "Denied" competing with the live grant.
+    await expect(current).not.toContainText("Denied");
+
+    await page.getByTestId("consent-history-block").locator("> summary").click();
+    await expect(page.getByTestId("consent-history-entry")).toContainText(
+      "Denied",
+    );
+  });
+
+  test("CASE 3 — same answer twice still yields exactly ONE current answer", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    const templateId = await seedLivePhotoTemplate(seed.studioId);
+    await seedIntakeWithPhotoAnswer(seed, clientId, {
+      photoTemplateId: templateId,
+      response: "accepted",
+    });
+    await seedPortalSignature(seed, clientId, templateId, "accepted");
+
+    await openReview(page, seed, clientId);
+
+    // One current photo row, not two agreeing ones.
+    await expect(page.getByTestId("review-portal-photo-consent")).toHaveCount(1);
+    await expect(page.getByTestId("review-portal-photo-status")).toHaveText(
+      "Consent granted",
+    );
+    await page.getByTestId("consent-history-block").locator("> summary").click();
+    await expect(page.getByTestId("consent-history-entry")).toHaveCount(1);
+  });
+
+  test("CASE 4 — a live portal form with NO answer is Not completed, not inherited consent", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    const templateId = await seedLivePhotoTemplate(seed.studioId);
+    // The client accepted at intake and has NOT answered in the portal.
+    await seedIntakeWithPhotoAnswer(seed, clientId, {
+      photoTemplateId: templateId,
+      response: "accepted",
+    });
+
+    await openReview(page, seed, clientId);
+
+    // Truthful: a historical intake acceptance is NOT current portal consent.
+    await expect(page.getByTestId("review-portal-photo-status")).toHaveText(
+      "Not completed",
+    );
+    const current = page.getByTestId("consent-current-block");
+    await expect(current).not.toContainText("Consent granted");
+    await expect(current).not.toContainText("Accepted");
+
+    // The prior acceptance survives, and is NOT called superseded — nothing
+    // superseded it, because nobody answered the portal form.
+    await page.getByTestId("consent-history-block").locator("> summary").click();
+    const entry = page.getByTestId("consent-history-entry");
+    await expect(entry).toContainText("Accepted");
+    await expect(entry).toHaveAttribute("data-provenance", "no_longer_collected");
+    await expect(entry).not.toContainText("Superseded");
+  });
+
+  test("CASE 5 — no live photo form at all invents no portal requirement", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    await seedIntakeWithPhotoAnswer(seed, clientId, {
+      photoTemplateId: "legacy-photo-template",
+      response: "accepted",
+    });
+
+    await openReview(page, seed, clientId);
+
+    // No live form -> no current photo row at all, and no "Not completed"
+    // blaming the client for a form that does not exist.
+    await expect(page.getByTestId("review-portal-photo-consent")).toHaveCount(0);
+    await expect(page.getByTestId("review-portal-photo-status")).toHaveCount(0);
+    // History remains available.
+    await page.getByTestId("consent-history-block").locator("> summary").click();
+    await expect(page.getByTestId("consent-history-entry")).toContainText(
+      "Accepted",
+    );
+  });
+
+  test("CASE 6 — two live photo templates keep two independent current answers", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    const docs = await seedPhotoTemplate(seed.studioId, {
+      title: "Photo documentation",
+    });
+    const marketing = await seedPhotoTemplate(seed.studioId, {
+      title: "Marketing photography",
+    });
+    // The old intake answer belongs to the MARKETING template specifically.
+    await seedIntakeWithPhotoAnswer(seed, clientId, {
+      photoTemplateId: marketing,
+      response: "accepted",
+    });
+    await seedPortalSignature(seed, clientId, docs, "denied");
+    await seedPortalSignature(seed, clientId, marketing, "accepted");
+
+    await openReview(page, seed, clientId);
+
+    const rows = page.getByTestId("review-portal-photo-consent");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: "Photo documentation" })).toContainText(
+      "Consent denied",
+    );
+    await expect(rows.filter({ hasText: "Marketing photography" })).toContainText(
+      "Consent granted",
+    );
+    // Not collapsed into one generic photo status.
+    await expect(
+      rows.filter({ hasText: "Photo documentation" }),
+    ).not.toContainText("Consent granted");
+
+    // The history entry is attributed to the template it actually answered.
+    await page.getByTestId("consent-history-block").locator("> summary").click();
+    const entry = page.getByTestId("consent-history-entry");
+    await expect(entry).toHaveCount(1);
+    await expect(entry).toHaveAttribute(
+      "data-provenance",
+      "superseded_by_portal",
+    );
+  });
+
+  test("CASE 7 — long legal text never dominates the scan view", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    const templateId = await seedLivePhotoTemplate(seed.studioId);
+    // BOTH a long-bodied TREATMENT form — which is CURRENT and therefore sits
+    // in the top block, not inside the collapsed history — and the historical
+    // photo answer. Seeding only the photo record made an earlier version of
+    // this test vacuous: the sole record body lived inside the collapsed
+    // history <details>, so it was invisible whatever its own disclosure did,
+    // and expanding every body by default still passed. The treatment record
+    // is the one that would actually be dumped on the practitioner.
+    await seedE2eIntake(seed.studioId, clientId, "submitted", {
+      has_allergies: "no",
+      [INTAKE_CONSENT_RESPONSES.id]: {
+        version: 1,
+        forms: [
+          {
+            template_id: "tmpl-treatment",
+            form_type: "treatment_consent",
+            template_version: 1,
+            title_snapshot: "Treatment Consent",
+            body_snapshot: LONG_TREATMENT_BODY,
+            template_hash: "hash-treatment",
+            response: "accepted",
+            response_label_snapshot: null,
+            responded_at: "2026-08-09T15:56:00.000Z",
+          },
+          {
+            template_id: templateId,
+            form_type: "photo_consent",
+            template_version: 2,
+            title_snapshot: "Photo Consent",
+            body_snapshot: LONG_PHOTO_BODY,
+            template_hash: "hash-photo",
+            response: "accepted",
+            response_label_snapshot: "I consent to photographs.",
+            responded_at: "2026-08-09T15:56:00.000Z",
+          },
+        ],
+      },
+    });
+    await seedPortalSignature(seed, clientId, templateId, "denied");
+
+    await openReview(page, seed, clientId);
+
+    // The ANSWERS are visible immediately, without opening anything.
+    await expect(page.getByTestId("review-portal-photo-status")).toBeVisible();
+    await expect(page.getByTestId("review-portal-photo-status")).toHaveText(
+      "Consent denied",
+    );
+    await expect(page.getByTestId("consent-current-status")).toHaveText(
+      "Acknowledged",
+    );
+
+    // No stored legal body is rendered expanded anywhere on arrival — INCLUDING
+    // the current-block treatment record, which is not hidden behind the
+    // history collapse and is therefore the one that discriminates.
+    const bodies = page.getByTestId("intake-consent-record-body");
+    await expect(bodies).not.toHaveCount(0);
+    const count = await bodies.count();
+    for (let i = 0; i < count; i += 1) {
+      await expect(bodies.nth(i)).not.toBeVisible();
+    }
+    // Present in the DOM — it is preserved history and must never be dropped —
+    // but NOT rendered to the practitioner until asked for. Absence would be
+    // the wrong contract here; invisibility is the right one.
+    await expect(
+      page.getByText("PHOTOGRAPHIC CONSENT AND MEDIA RELEASE"),
+    ).not.toBeVisible();
+    await expect(
+      page.getByText("TREATMENT CONSENT AND RISK DISCLOSURE"),
+    ).not.toBeVisible();
+
+    // ...and it is still reachable on demand, exactly as stored.
+    await page.getByTestId("consent-history-block").locator("> summary").click();
+    await page
+      .getByTestId("consent-history-entry")
+      .locator("summary")
+      .click();
+    await expect(
+      page
+        .getByTestId("consent-history-entry")
+        .getByTestId("intake-consent-record-body"),
+    ).toContainText("PHOTOGRAPHIC CONSENT AND MEDIA RELEASE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MOBILE. Chloe reported this from an iPhone, and the ordering defect is worst
+// at a phone width where everything stacks into one column: under #545 the
+// current answer sat below the historical answer AND its full legal body, so
+// it was several screens down.
+//
+// NOTE ON FIDELITY: the harness engine is mobile-Chromium at 390px, not real
+// iOS Safari. It proves layout order and reachability, not Safari rendering.
+test.describe("mobile — the current answer is reachable without hunting", () => {
+  test("current photo status renders above any historical consent text at 390px", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    const templateId = await seedLivePhotoTemplate(seed.studioId);
+    await seedIntakeWithPhotoAnswer(seed, clientId, {
+      photoTemplateId: templateId,
+      response: "accepted",
+      body: LONG_PHOTO_BODY,
+    });
+    await seedPortalSignature(seed, clientId, templateId, "denied");
+
+    await openReview(page, seed, clientId);
+
+    const status = page.getByTestId("review-portal-photo-status");
+    await expect(status).toBeVisible();
+    await expect(status).toHaveText("Consent denied");
+
+    // ORDER, measured rather than assumed: the current answer must sit above
+    // the history disclosure on the page.
+    const statusBox = await status.boundingBox();
+    const historyBox = await page
+      .getByTestId("consent-history-block")
+      .boundingBox();
+    expect(statusBox).not.toBeNull();
+    expect(historyBox).not.toBeNull();
+    expect(statusBox!.y).toBeLessThan(historyBox!.y);
+
+    // No horizontal scrolling: the status must be readable as laid out.
+    const overflows = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    );
+    expect(overflows).toBe(false);
+
+    // The answer is in the FIRST viewport of the consent section — not buried
+    // under paragraphs of legal copy.
+    const section = await page.getByTestId("consent-current-block").boundingBox();
+    expect(section).not.toBeNull();
+    expect(statusBox!.y - section!.y).toBeLessThan(844);
   });
 });
