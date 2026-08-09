@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
@@ -69,6 +69,75 @@ describe("0173 — migration state", () => {
   it("is the current repository maximum", () => {
     expect(isRepoMax("0173")).toBe(true);
     expect(versionsAbove("0173")).toEqual([]);
+  });
+
+  it("0174 does not exist — that number belongs to B5", () => {
+    const dir = join(__dirname, "..", "..", "supabase", "migrations");
+    expect(readdirSync(dir).filter((f) => f.startsWith("0174"))).toEqual([]);
+  });
+});
+
+describe("0173 — production truth (applied 2026-08-09)", () => {
+  // The CURRENT hosted-state pins live with the current maximum migration
+  // (CLAUDE.md §2). 0172's test keeps only its own frozen historical facts.
+  //
+  // 0173 was applied DATABASE-FIRST, before PR #534 shipped its application
+  // code, so the deployed app does not yet call the six service_role-only RPCs.
+  // That is deliberate and is recorded rather than smoothed over.
+  const rec = JSON.parse(
+    readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
+  );
+
+  it("the canonical hosted record reads 0173 — hosted == repo, nothing pending", () => {
+    expect(rec.hosted_migration_max).toBe("0173");
+    expect(rec.hosted_applied_at).toBe("2026-08-09T12:06:47Z");
+    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+  });
+
+  it("the record carries the sha256 of the exact 0173 bytes that were applied", async () => {
+    // If this hash ever changes, an applied migration has been edited and a
+    // recorded production apply fact has been falsified.
+    const { createHash } = await import("node:crypto");
+    const bytes = readFileSync(join(__dirname, "..", "..", FILE));
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    expect(sha).toBe("04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb");
+    expect(rec.hosted_note).toContain(sha);
+  });
+
+  it("earlier applies stay recorded — 0172 and 0171 checksums are not dropped", () => {
+    expect(rec.hosted_note).toContain(
+      "b89b0d47a70ea2d4a7574bcc4223081cfe1d527394b3ef8b6d4c82bb090f42f1",
+    );
+    expect(rec.hosted_note).toContain(
+      "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6",
+    );
+  });
+
+  it("the note records the apply as non-mutating, service_role-only and database-first", () => {
+    expect(rec.hosted_note).toMatch(/max\(appointments\.updated_at\) unchanged/i);
+    expect(rec.hosted_note).toMatch(/service_role ONLY/);
+    expect(rec.hosted_note).toMatch(/NO RPC WAS INVOKED AGAINST PRODUCTION/);
+    expect(rec.hosted_note).toMatch(/UNMERGED at apply time/);
+  });
+
+  it("L23 is recorded as closed by AUTHORITY, with FK semantics untouched", () => {
+    expect(rec.hosted_note).toMatch(/L23 CLOSED BY AUTHORITY BOUNDARY/);
+    expect(rec.hosted_note).toMatch(
+      /FOREIGN-KEY REFERENTIAL SEMANTICS ARE DELIBERATELY UNCHANGED/,
+    );
+    const lim = readFileSync(
+      join(__dirname, "..", "..", "docs/production/known-limitations.md"),
+      "utf8",
+    );
+    const l23 = lim.slice(lim.indexOf("## L23"), lim.indexOf("## L19"));
+    expect(l23).toMatch(/CLOSED 2026-08-09 \(migration `0173`\)/);
+    expect(l23).toMatch(/BY AUTHORITY BOUNDARY/);
+    expect(l23, "must not claim the FKs themselves changed").toMatch(
+      /FOREIGN KEYS THEMSELVES WERE NOT CHANGED/,
+    );
+    expect(l23, "must no longer say OPEN IN PRODUCTION").not.toMatch(
+      /OPEN IN PRODUCTION/,
+    );
   });
 });
 

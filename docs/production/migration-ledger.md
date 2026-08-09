@@ -14,7 +14,82 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-09, post-0172 apply)
+## Current state (verified 2026-08-09, post-0173 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0173** (`0173_appointment_repair_commands.sql`, applied 2026-08-09T12:06:37Z→12:06:47Z) |
+| **Repo migration max** | **0173** — **hosted == repo.** Next free number is **0174** (reserved for B5). |
+| **Total migrations in repo** | **172** (`0001` … `0157`, `0159` … `0173` — **no `0158`**) |
+| **Total applied in production** | **172**, each applied **exactly once**. Applied count moved 171 → 172. |
+| **`0173` checksum (frozen)** | `04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb` |
+| **Applied from** | B4 head `0f2d58eec1e6a667d1c123f539a32f24e74f2362` (PR #534) — **UNMERGED at apply time, deliberately** |
+| **Production application source** | `59ffb28f6df48d483b80a8ffcd2286844ec56124` — contains **neither `0173` nor the B4 UI**; unchanged by this apply |
+
+> ⚠️ **DATABASE-FIRST APPLY — DELIBERATE INTERMEDIATE STATE.** `0173` was applied *before* its
+> application code shipped, so the B4 UI and server actions will deploy against RPCs that already
+> exist rather than the reverse. All six functions are `service_role`-only, and the deployed
+> application at `59ffb28f` does not call them, so they are **inert** until #534 merges.
+> This ledger entry records the DATABASE truth; #534 remains open and unmerged.
+
+> ⚠️ **LEDGER GAP (unchanged, still open).** `0170` and `0171` have no narrative entry in this
+> file — their apply records live only in `migration-state.json`'s `hosted_note` history. That gap
+> is pre-existing and is still **not** back-filled here. Back-fill from their own apply evidence
+> as separate work.
+
+### 0173 — APPOINTMENT BOUNDARY B4: governed repair commands + L23 closure
+
+**Class: additive command layer + privilege cutover.** Two subjects in one migration, kept in
+clearly separated groups: `GROUP 1` shared helpers · `GROUP 2` `revert_appointment_outcome` ·
+`GROUP 3` `set_appointment_notes` · `GROUP 4` EXECUTE posture · `GROUP 5` L23 parent-delete
+closure. The L23 closure was briefly drafted as a companion `0174` and withdrawn, because the
+canonical appointment-DML program reserves `0174` for B5, `0175` for B6, `0176` for B7 and `0177`
+for B8.
+
+**Why the repair commands exist.** `0172` revoked direct browser DML on `appointments`, which
+closed an operational hatch: after it there was no way to correct a mis-marked outcome, and
+appointment notes were immutable through the browser. `0173` supplies the governed replacements.
+
+| Field | Value |
+|---|---|
+| Migration | `0173_appointment_repair_commands.sql` |
+| sha256 (frozen) | `04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb` |
+| git blob | `61be257cb75d7944891f0fa70477b67606d88a02` |
+| Applied | 2026-08-09T12:06:37Z → 12:06:47Z (~10s) |
+| Command | `supabase db push --linked --yes` |
+| CLI | `supabase@2.102.0` |
+| Project | `alhhybgqdmcdyzpybykj` (production) |
+| Applied from | B4 head `0f2d58eec1e6a667d1c123f539a32f24e74f2362` |
+| Exit code | **0** |
+| Output | THREE benign `NOTICE`s: policies `services_member_select` / `services_member_insert` / `services_member_update` … *does not exist, skipping* — GROUP 5's own re-run-safety `drop policy if exists` preceding each `create policy`. **No error, no 25P01, no 55P03.** |
+
+**Pre-apply gates.** `migration list --linked`: 171 applied, hosted max `0172`, pending **exactly
+`0173`**, zero remote-only, no `0174`. `db push --linked --dry-run`: exit 0, exactly one migration.
+
+**Post-apply verification (read-only catalog introspection).**
+
+| Check | Result |
+|---|---|
+| Hosted max | `0172` → **`0173`** |
+| Applied count | 171 → **172**; exactly one `0173` record; nothing pending; no remote-only; no `0174` |
+| Six functions | **all present**, exact bare-type signatures, **no overloads** |
+| Security posture | all six `SECURITY DEFINER`, owner `postgres`, `search_path=pg_catalog, pg_temp` |
+| EXECUTE matrix | `service_role` **YES**; `PUBLIC`, `anon`, `authenticated` **all NO** |
+| B3 boundary | **preserved** — on `appointments` and `appointment_audit`, `anon`/`authenticated` retain SELECT and remain false on all seven write/maintenance verbs; `service_role`/`postgres` retain all eight. `0173` reopened nothing. |
+| L23 — `services` | `anon`/`authenticated` **DELETE = NO**; `authenticated` retains SELECT/INSERT/UPDATE; `services_member_all` **ABSENT**; `services_member_select`/`_insert`/`_update` **PRESENT** (`TO authenticated`, `is_studio_member(studio_id)`); **no DELETE policy** |
+| L23 — `practitioners` | `anon`/`authenticated` **DELETE = NO**; `"practitioners: owners delete"` **ABSENT**; members-read / owners-insert / owners-update **preserved unchanged** |
+| Privileged roles | `service_role` and `postgres` retain DELETE on both parents |
+| FK semantics | **UNCHANGED** — `appointments_service_same_studio_fk` and `appointments_practitioner_same_studio_fk` still `ON DELETE SET NULL`; every appointment parent FK still `ON UPDATE NO ACTION`. **L23 was closed by removing browser AUTHORITY, not by altering referential actions.** |
+| Business data | **UNCHANGED — measured, not asserted.** Probe 6 immediately before (12:05:57Z) and after (12:09:30Z) was identical on every field: appointments **153** (71 confirmed, 31 cancelled, 47 completed, 4 no_show), `appointment_audit` **241**, policy acknowledgements **13**, calendar reservations **128**, and `max(appointments.updated_at)` unchanged at **2026-08-09 10:12:00.700758+00**. |
+
+**No production mutation testing was performed.** None of the six RPCs was invoked against
+production, and no `DELETE` was attempted on `services` or `practitioners`. Both postures are
+proven by catalog introspection alone — deliberately, because invoking a repair command or
+attempting a parent delete would each itself be a production mutation.
+
+**L23 status: CLOSED BY AUTHORITY BOUNDARY.**
+
+## Previous state (verified 2026-08-09, post-0172 apply)
 
 | Field | Value |
 |---|---|
