@@ -130,10 +130,14 @@ const CHART_MODALITIES: Record<string, ReadonlyArray<IntakeModality>> = {
   //     type would be a clinical judgement. Hone surfaces intake answers for
   //     review; it does not decide treatment, and no one has approved a
   //     per-type rule.
-  //   * Every intake submitted before the subtype existed has no type at all,
-  //     and gestational diabetes — a chart row in its own right — is not one of
-  //     the two options offered. Keying off the subtype would quietly flag those
-  //     records differently from each other for no clinically stated reason.
+  //   * The subtype cannot be relied on to be present or specific. Every intake
+  //     submitted before it existed has no type at all, and "Other / not sure"
+  //     is a legitimate answer a client may give — so keying off it would flag
+  //     otherwise-identical records differently for no clinically stated reason.
+  //
+  // (The option set now includes gestational, which is a chart row in its own
+  // right. That makes a per-type rule MORE tempting, not less — and it is still
+  // Chloe's call to make, not this table's to assume.)
   //
   // So the union stands, and the subtype is information for the practitioner to
   // read on the review grid rather than an input to this table.

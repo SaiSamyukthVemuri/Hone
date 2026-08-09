@@ -95,7 +95,7 @@ vi.mock("@/lib/notifications/practitioner-notifications", () => ({
 }));
 
 import { submitIntakeAction } from "@/app/intake/[token]/actions";
-import { INTAKE_STEPS } from "@/lib/intake/questions";
+import { getQuestionByKey, INTAKE_STEPS } from "@/lib/intake/questions";
 
 // Every required, UNCONDITIONAL answer. Conditional questions are skipped on
 // purpose — that is what lets each test below choose its own medical_conditions
@@ -176,38 +176,72 @@ describe("1. a new intake reporting the condition must state the type", () => {
     expect(storedRow().status).toBe("in_progress");
   });
 
-  it("accepts each canonical diabetes type", async () => {
-    for (const value of ["type_1", "type_2"]) {
+  it("accepts EVERY canonical diabetes type, catch-alls included", async () => {
+    // Driven off the option list, so a newly offered value cannot ship without
+    // a proof that a real client can actually submit with it.
+    const options = getQuestionByKey("diabetes_type")?.options ?? [];
+    expect(options.length).toBeGreaterThan(0);
+    for (const opt of options) {
       seedIntake();
       const res = await submitIntakeAction({
         token: "good",
         responses: completeAnswers({
           medical_conditions: ["diabetes"],
-          diabetes_type: value,
+          diabetes_type: opt.value,
         }),
       });
 
-      expect(res.ok, value).toBe(true);
-      expect(storedRow().status).toBe("submitted");
-      expect(storedResponses().diabetes_type).toBe(value);
+      expect(res.ok, opt.value).toBe(true);
+      expect(storedRow().status, opt.value).toBe("submitted");
+      expect(storedResponses().diabetes_type).toBe(opt.value);
     }
   });
 
-  it("accepts each canonical thyroid type", async () => {
-    for (const value of ["hypothyroidism", "hyperthyroidism"]) {
+  it("accepts EVERY canonical thyroid type, catch-all included", async () => {
+    const options = getQuestionByKey("thyroid_type")?.options ?? [];
+    expect(options.length).toBeGreaterThan(0);
+    for (const opt of options) {
       seedIntake();
       const res = await submitIntakeAction({
         token: "good",
         responses: completeAnswers({
           medical_conditions: ["thyroid"],
-          thyroid_type: value,
+          thyroid_type: opt.value,
         }),
       });
 
-      expect(res.ok, value).toBe(true);
-      expect(storedRow().status).toBe("submitted");
-      expect(storedResponses().thyroid_type).toBe(value);
+      expect(res.ok, opt.value).toBe(true);
+      expect(storedRow().status, opt.value).toBe("submitted");
+      expect(storedResponses().thyroid_type).toBe(opt.value);
     }
+  });
+
+  it("lets a gestational or unsure client through — the point of the change", async () => {
+    // The first draft made this client choose between a wrong answer and an
+    // unfinished intake. Both must now submit cleanly and store what they said.
+    seedIntake();
+    const gestational = await submitIntakeAction({
+      token: "good",
+      responses: completeAnswers({
+        medical_conditions: ["diabetes"],
+        diabetes_type: "gestational",
+      }),
+    });
+    expect(gestational.ok).toBe(true);
+    expect(storedResponses().diabetes_type).toBe("gestational");
+
+    seedIntake();
+    const unsure = await submitIntakeAction({
+      token: "good",
+      responses: completeAnswers({
+        medical_conditions: ["diabetes", "thyroid"],
+        diabetes_type: "other_or_unsure",
+        thyroid_type: "other_or_unsure",
+      }),
+    });
+    expect(unsure.ok).toBe(true);
+    expect(storedResponses().diabetes_type).toBe("other_or_unsure");
+    expect(storedResponses().thyroid_type).toBe("other_or_unsure");
   });
 
   it("requires BOTH types when both conditions are reported", async () => {
@@ -247,7 +281,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
 
 describe("2. the browser does not decide what is a valid type", () => {
   it("refuses a value that is not one of the offered options", async () => {
-    for (const bad of ["gestational", "Type 1", "type_3", "<script>"]) {
+    for (const bad of ["Type 1", "type_3", "gestational_diabetes", "other", "<script>"]) {
       seedIntake();
       const res = await submitIntakeAction({
         token: "good",

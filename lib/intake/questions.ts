@@ -145,20 +145,36 @@ const CONDITIONS: ReadonlyArray<Option> = [
 // validation admits ONLY these values (findInvalidChoiceAnswers), so the stored
 // answer can never be free text.
 //
-// SCOPE NOTE, deliberate: these are the two option sets Chloe asked for. They do
-// not cover every clinical case — gestational diabetes has no home here, and a
-// client who does not know their type must pick one of the two or leave the
-// intake incomplete. That is a product decision to revisit with Chloe, not one
-// to paper over by inventing an option she did not ask for. Nothing in Hone
-// infers a type from medication, age, notes or any other answer.
+// EVERY SET ENDS IN A TRUTHFUL CATCH-ALL, and that is the point.
+//
+// The first draft offered only the two named types each. Because the question is
+// REQUIRED, that forced a client with gestational diabetes — or one who simply
+// does not know which type they have — either to pick a type that is not theirs
+// or to abandon the intake. A required field with no honest answer does not
+// collect better data; it manufactures wrong data and makes the record less
+// trustworthy than the generic "Diabetes" it replaced.
+//
+// So "Other / not sure" is a real, first-class answer here, distinct from every
+// other state the review surface can show: it means the client WAS asked and
+// answered honestly that they cannot narrow it further. That is not the same as
+// "Not collected on this intake" (a record predating the question) or "Not
+// applicable" (a client who never reported the condition), and
+// lib/intake/review-answers.ts keeps the three apart.
+//
+// Still no free text, deliberately: these remain closed enums, so the stored
+// value is always one the server validated. Nothing in Hone infers a type from
+// medication, age, notes or any other answer.
 const DIABETES_TYPES: ReadonlyArray<Option> = [
   { value: "type_1", label: "Type 1" },
   { value: "type_2", label: "Type 2" },
+  { value: "gestational", label: "Gestational diabetes" },
+  { value: "other_or_unsure", label: "Other / not sure" },
 ];
 
 const THYROID_TYPES: ReadonlyArray<Option> = [
   { value: "hypothyroidism", label: "Hypothyroidism" },
   { value: "hyperthyroidism", label: "Hyperthyroidism" },
+  { value: "other_or_unsure", label: "Other / not sure" },
 ];
 
 const METAL_ALLERGY_TYPES: ReadonlyArray<Option> = [

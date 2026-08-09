@@ -153,7 +153,10 @@ vi.mock("@/lib/email/send-appointment", () => ({
 
 import { saveAssistedIntakeStepAction } from "@/app/(app)/clients/[id]/intake/actions";
 import { PRACTITIONER_ASSISTED_ENTRY } from "@/lib/intake/entry-provenance";
-import { CLIENT_OWNED_RESPONSE_KEYS } from "@/lib/intake/questions";
+import {
+  CLIENT_OWNED_RESPONSE_KEYS,
+  getQuestionByKey,
+} from "@/lib/intake/questions";
 
 const PROV = PRACTITIONER_ASSISTED_ENTRY.id;
 
@@ -245,6 +248,40 @@ describe("1. a practitioner can record the subtype", () => {
     expect(storedResponses().legal_name).toBe("Dana Reyes");
   });
 
+  it("persists EVERY canonical value, catch-alls included", async () => {
+    // The assisted editor renders the same option list, so every value a client
+    // can choose must also be recordable by a practitioner sitting with them.
+    for (const [key, condition] of [
+      ["diabetes_type", "diabetes"],
+      ["thyroid_type", "thyroid"],
+    ] as const) {
+      const options = getQuestionByKey(key)?.options ?? [];
+      expect(options.length).toBeGreaterThan(0);
+      for (const opt of options) {
+        state.intakes = [intakeRow()];
+        const res = await save({
+          medical_conditions: [condition],
+          [key]: opt.value,
+        });
+
+        expect(res.ok, `${key}=${opt.value}`).toBe(true);
+        expect(storedResponses()[key], `${key}=${opt.value}`).toBe(opt.value);
+      }
+    }
+  });
+
+  it("records gestational and 'not sure' without complaint", async () => {
+    const res = await save({
+      medical_conditions: ["diabetes", "thyroid"],
+      diabetes_type: "gestational",
+      thyroid_type: "other_or_unsure",
+    });
+
+    expect(res.ok).toBe(true);
+    expect(storedResponses().diabetes_type).toBe("gestational");
+    expect(storedResponses().thyroid_type).toBe("other_or_unsure");
+  });
+
   it("lets the practitioner correct a type they mis-recorded", async () => {
     await save({ medical_conditions: ["diabetes"], diabetes_type: "type_1" });
     const fix = await save({
@@ -261,7 +298,7 @@ describe("2. the assisted path is not the soft way in", () => {
   it("refuses a value that is not one of the offered options", async () => {
     const res = await save({
       medical_conditions: ["diabetes"],
-      diabetes_type: "gestational",
+      diabetes_type: "gestational_diabetes",
     });
 
     expect(res.ok).toBe(false);

@@ -79,21 +79,41 @@ describe("1. the question definitions", () => {
     expect(q("diabetes_type").options?.map((o) => o.value)).toEqual([
       "type_1",
       "type_2",
+      "gestational",
+      "other_or_unsure",
     ]);
     expect(q("diabetes_type").options?.map((o) => o.label)).toEqual([
       "Type 1",
       "Type 2",
+      "Gestational diabetes",
+      "Other / not sure",
     ]);
 
     expect(q("thyroid_type").type).toBe("single_select");
     expect(q("thyroid_type").options?.map((o) => o.value)).toEqual([
       "hypothyroidism",
       "hyperthyroidism",
+      "other_or_unsure",
     ]);
     expect(q("thyroid_type").options?.map((o) => o.label)).toEqual([
       "Hypothyroidism",
       "Hyperthyroidism",
+      "Other / not sure",
     ]);
+  });
+
+  it("gives every set a truthful catch-all, because the field is required", () => {
+    // A required question whose options exclude the client's real situation
+    // does not collect better data — it manufactures wrong data. This is the
+    // property that makes requiring an answer defensible at all.
+    for (const key of ["diabetes_type", "thyroid_type"]) {
+      const values = q(key).options?.map((o) => o.value) ?? [];
+      expect(values, key).toContain("other_or_unsure");
+      expect(q(key).required, key).toBe(true);
+    }
+    expect(q("diabetes_type").options?.map((o) => o.value)).toContain(
+      "gestational",
+    );
   });
 
   it("is required, and conditional on its own parent option only", () => {
@@ -207,20 +227,24 @@ describe("3. required-ness is conditional, server-side", () => {
     expect(missing).not.toContain("diabetes_type");
   });
 
-  it("is satisfied by either canonical value", () => {
-    for (const value of ["type_1", "type_2"]) {
+  it("is satisfied by EVERY canonical value, catch-alls included", () => {
+    // Derived from the option list rather than a hand-written copy of it, so
+    // adding an option can never quietly go unproven here.
+    for (const opt of q("diabetes_type").options ?? []) {
       const missing = findMissingRequiredAnswers({
         ...withConditions("diabetes"),
-        diabetes_type: value,
+        diabetes_type: opt.value,
       });
-      expect(missing, `diabetes_type=${value}`).not.toContain("diabetes_type");
+      expect(missing, `diabetes_type=${opt.value}`).not.toContain(
+        "diabetes_type",
+      );
     }
-    for (const value of ["hypothyroidism", "hyperthyroidism"]) {
+    for (const opt of q("thyroid_type").options ?? []) {
       const missing = findMissingRequiredAnswers({
         ...withConditions("thyroid"),
-        thyroid_type: value,
+        thyroid_type: opt.value,
       });
-      expect(missing, `thyroid_type=${value}`).not.toContain("thyroid_type");
+      expect(missing, `thyroid_type=${opt.value}`).not.toContain("thyroid_type");
     }
   });
 
@@ -236,22 +260,61 @@ describe("3. required-ness is conditional, server-side", () => {
 });
 
 describe("4. only the offered values are accepted", () => {
-  it("accepts every canonical value", () => {
+  it("accepts every canonical value, on both questions", () => {
+    for (const opt of q("diabetes_type").options ?? []) {
+      expect(
+        findInvalidChoiceAnswers({
+          ...withConditions("diabetes"),
+          diabetes_type: opt.value,
+        }),
+        `diabetes_type=${opt.value}`,
+      ).toEqual([]);
+    }
+    for (const opt of q("thyroid_type").options ?? []) {
+      expect(
+        findInvalidChoiceAnswers({
+          ...withConditions("thyroid"),
+          thyroid_type: opt.value,
+        }),
+        `thyroid_type=${opt.value}`,
+      ).toEqual([]);
+    }
+  });
+
+  it("keeps the two questions' option sets separate", () => {
+    // They now SHARE the `other_or_unsure` token, which is fine — values are
+    // scoped per question — but a diabetes-only value must still be rejected on
+    // the thyroid question and vice versa.
+    expect(
+      findInvalidChoiceAnswers({
+        ...withConditions("thyroid"),
+        thyroid_type: "gestational",
+      }),
+    ).toContain("thyroid_type");
+    expect(
+      findInvalidChoiceAnswers({
+        ...withConditions("diabetes"),
+        diabetes_type: "hypothyroidism",
+      }),
+    ).toContain("diabetes_type");
+    // ...while the shared catch-all is legitimate on both.
     expect(
       findInvalidChoiceAnswers({
         ...withConditions("diabetes", "thyroid"),
-        diabetes_type: "type_2",
-        thyroid_type: "hyperthyroidism",
+        diabetes_type: "other_or_unsure",
+        thyroid_type: "other_or_unsure",
       }),
     ).toEqual([]);
   });
 
   it("rejects free text, near-misses and wrong-question values", () => {
     for (const bad of [
-      "gestational",
-      "Type 1",
+      "Type 1", // the LABEL, not the value
       "type_3",
-      "type_1 ",
+      "type_1 ", // trailing space
+      "gestational_diabetes", // near-miss on a real value
+      "other", // near-miss on the catch-all
+      "unsure",
       "hypothyroidism", // right value, wrong question
       "",
       " ",
@@ -326,6 +389,55 @@ describe("5. the practitioner review tells the truth about what is known", () =>
       "answered",
     );
     expect(getOptionLabel("diabetes_type", "type_1")).toBe("Type 1");
+  });
+
+  it("renders EVERY canonical value as a real answer with its own label", () => {
+    for (const key of ["diabetes_type", "thyroid_type"] as const) {
+      const condition = key === "diabetes_type" ? "diabetes" : "thyroid";
+      for (const opt of q(key).options ?? []) {
+        const responses = { ...withConditions(condition), [key]: opt.value };
+        expect(
+          reviewAnswerState(q(key), responses, "reviewed"),
+          `${key}=${opt.value}`,
+        ).toBe("answered");
+        // Resolved to the label, never shown as the raw token.
+        expect(getOptionLabel(key, opt.value)).toBe(opt.label);
+        expect(getOptionLabel(key, opt.value)).not.toBe(opt.value);
+      }
+    }
+  });
+
+  it("distinguishes 'not sure' from 'never asked' and 'never collected'", () => {
+    // THE distinction the catch-all creates. A client who answered "Other / not
+    // sure" WAS asked and answered honestly; that must never collapse into the
+    // two states that mean nobody asked them.
+    const unsure = {
+      ...withConditions("diabetes"),
+      diabetes_type: "other_or_unsure",
+    };
+    expect(reviewAnswerState(q("diabetes_type"), unsure, "reviewed")).toBe(
+      "answered",
+    );
+    expect(getOptionLabel("diabetes_type", "other_or_unsure")).toBe(
+      "Other / not sure",
+    );
+
+    // Never asked (predates the question) — a different, weaker statement.
+    expect(
+      reviewAnswerState(q("diabetes_type"), withConditions("diabetes"), "reviewed"),
+    ).toBe("not_collected");
+    // Never applicable — weaker still.
+    expect(
+      reviewAnswerState(q("diabetes_type"), withConditions("pcos"), "reviewed"),
+    ).toBe("not_applicable");
+
+    // And the three read differently to the practitioner.
+    const seen = new Set([
+      reviewerSees("answered"),
+      reviewerSees("not_collected"),
+      reviewerSees("not_applicable"),
+    ]);
+    expect(seen.size).toBe(3);
   });
 
   it("marks the child not applicable when the client did not report it", () => {
