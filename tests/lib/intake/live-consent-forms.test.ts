@@ -181,17 +181,31 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------
 describe("1. which forms appear", () => {
-  it("surfaces only the studio's live+active treatment and photo forms", async () => {
+  it("surfaces the studio's live+active TREATMENT form", async () => {
+    state.templates = [template()];
+    const forms = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
+    expect(forms.map((f) => f.formType)).toEqual(["treatment_consent"]);
+    // The text is the STUDIO'S, passed through verbatim.
+    expect(forms[0].body).toBe("The studio's own treatment consent text.");
+  });
+
+  // Chloe, 2026-08-09: photo consent left the intake. It is NOT retired — the
+  // portal still collects it — but the intake must be structurally incapable
+  // of asking, and must not even ship the photo text to the browser.
+  it("NEVER surfaces a live photo form, and leaks none of its text", async () => {
     state.templates = [template(), photoTemplate()];
     const forms = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
-    expect(forms.map((f) => f.formType).sort()).toEqual([
-      "photo_consent",
-      "treatment_consent",
-    ]);
-    // The text is the STUDIO'S, passed through verbatim.
-    expect(forms.find((f) => f.formType === "treatment_consent")!.body).toBe(
-      "The studio's own treatment consent text.",
-    );
+    expect(forms.map((f) => f.formType)).toEqual(["treatment_consent"]);
+    // Excluded server-side: the photo title/body are absent from the payload
+    // entirely, not merely hidden by the wizard.
+    const payload = JSON.stringify(forms);
+    expect(payload).not.toContain("photo");
+    expect(payload).not.toContain(photoTemplate().body as string);
+  });
+
+  it("a studio with ONLY a live photo form has no intake consent at all", async () => {
+    state.templates = [photoTemplate()];
+    expect(await getIntakeConsentFormsForRender(STUDIO, CLIENT)).toEqual([]);
   });
 
   for (const [label, over] of [
@@ -221,14 +235,18 @@ describe("1. which forms appear", () => {
     expect(await getIntakeConsentFormsForRender(STUDIO, CLIENT)).toEqual([]);
   });
 
-  it("supports more than one live form of each type", async () => {
+  it("supports more than one live treatment form", async () => {
     state.templates = [
       template(),
       template({ id: "t2", created_at: "2026-01-03T00:00:00.000Z" }),
       photoTemplate(),
     ];
     const forms = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
-    expect(forms).toHaveLength(3);
+    // Both treatment forms; the photo form is not one of them.
+    expect(forms).toHaveLength(2);
+    expect(new Set(forms.map((f) => f.formType))).toEqual(
+      new Set(["treatment_consent"]),
+    );
   });
 
   it("attaches the canonical hash of the exact rendered text", async () => {
@@ -268,56 +286,69 @@ describe("2. treatment consent", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("3. photo consent — Deny is a completed answer", () => {
-  beforeEach(() => {
+describe("3. photo consent is NOT collected by the intake", () => {
+  // Chloe, 2026-08-09: "please remove photo consent from the intake form" —
+  // no photographs are taken at the consultation, and asking there made
+  // clients fear they would be.
+  //
+  // Photo consent is NOT retired. Its Accept/Deny ceremony, and the rule that
+  // a DENIAL is a completed answer, live on in the client portal and are
+  // proven there — tests/lib/consent/signature-status.test.ts (denied is
+  // complete, needs no attention), tests/lib/consent/signed-record.test.ts
+  // (a denied record is valid, not malformed) and
+  // e2e/portal-consent-signing-integrity.spec.ts (a real browser Deny writing
+  // response='denied'). Those assertions moved surface, not existence.
+
+  it("a live photo form does NOT block submission", async () => {
     state.templates = [photoTemplate()];
-  });
-
-  it("an unanswered photo form blocks submission", async () => {
     const res = await gate({});
-    expect(res.ok).toBe(false);
+    expect(res.ok).toBe(true);
+    // Nothing was completed in the intake, so nothing is stored.
+    if (res.ok) expect(res.record).toBeNull();
   });
 
-  it("Accept completes it", async () => {
-    const res = await gate(
-      claims([{ row: photoTemplate(), response: "accepted" }]),
-    );
+  it("a live photo form does not block an accepted treatment form", async () => {
+    state.templates = [template(), photoTemplate()];
+    const res = await gate(claims([{ row: template(), response: "accepted" }]));
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.record!.forms[0].response).toBe("accepted");
-    expect(res.record!.forms[0].response_label_snapshot).toBe(
-      PHOTO_CONSENT_ACCEPT_LABEL,
-    );
+    expect(res.record!.forms.map((f) => f.form_type)).toEqual([
+      "treatment_consent",
+    ]);
   });
 
-  it("DENY ALSO completes it and does NOT block submission", async () => {
-    // THE load-bearing requirement: the client must ANSWER the photo
-    // question, not agree to it.
-    const res = await gate(
-      claims([{ row: photoTemplate(), response: "denied" }]),
-    );
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.record!.forms[0].response).toBe("denied");
-    expect(res.record!.forms[0].response_label_snapshot).toBe(
-      PHOTO_CONSENT_DENY_LABEL,
-    );
-  });
-
-  it("a denied photo form does not block an accepted treatment form", async () => {
+  it("a CRAFTED photo claim is ignored, never stored", async () => {
+    // The wizard cannot produce this — the form is not rendered — so reaching
+    // it means a hand-built payload. The server resolves live intake forms
+    // itself and simply has no photo row to match, so the claim dies there
+    // rather than writing a consent answer nobody was asked for.
     state.templates = [template(), photoTemplate()];
     const res = await gate(
       claims([
         { row: template(), response: "accepted" },
-        { row: photoTemplate(), response: "denied" },
+        { row: photoTemplate(), response: "accepted" },
       ]),
     );
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.record!.forms.map((f) => f.response)).toEqual([
-      "accepted",
-      "denied",
-    ]);
+    expect(res.record!.forms).toHaveLength(1);
+    expect(res.record!.forms[0].form_type).toBe("treatment_consent");
+    expect(JSON.stringify(res.record)).not.toContain("photo_consent");
+  });
+
+  it("a studio with ONLY a live photo form submits with nothing stored", async () => {
+    state.templates = [photoTemplate()];
+    const res = await gate(claims([]));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.record).toBeNull();
+  });
+
+  it("a photo template edited mid-intake does NOT stale the submit", async () => {
+    // It is not an intake form any more, so its version cannot fail the intake
+    // closed. The treatment stale rule is unchanged and proven in section 4.
+    state.templates = [template(), photoTemplate({ version: 9 })];
+    const res = await gate(claims([{ row: template(), response: "accepted" }]));
+    expect(res.ok).toBe(true);
   });
 });
 
@@ -343,15 +374,20 @@ describe("4. stale templates fail closed", () => {
   });
 
   it("a form_type flipped between render and submit is stale", async () => {
-    state.templates = [template({ form_type: "photo_consent" })];
+    // The comparand is unchanged by photo consent leaving the intake: the
+    // browser's claimed form_type must still match the row the server
+    // resolved. Asserted from the other direction now — a claim asserting
+    // photo_consent against the studio's live TREATMENT row — because only one
+    // type is collected, so a collected-to-collected flip is unconstructible.
+    state.templates = [template()];
     const res = await gate({
       [INTAKE_CONSENT_RESPONSES.id]: {
         version: 1,
         forms: [
           {
             template_id: TREATMENT,
-            form_type: "treatment_consent",
-            rendered_template_hash: hashOf(template({ form_type: "photo_consent" })),
+            form_type: "photo_consent",
+            rendered_template_hash: hashOf(template()),
             response: "accepted",
           },
         ],
@@ -370,8 +406,14 @@ describe("4. stale templates fail closed", () => {
 
   it("a form that went live AFTER the render is still required", async () => {
     const rendered = template();
-    state.templates = [template(), photoTemplate()];
-    // The browser only knows about the treatment form.
+    // A SECOND treatment form went live between render and submit. (It used to
+    // be a photo form; that no longer proves anything, because a photo form is
+    // not an intake form and correctly cannot make a submit incomplete.)
+    state.templates = [
+      template(),
+      template({ id: "t-late", created_at: "2026-02-01T00:00:00.000Z" }),
+    ];
+    // The browser only knows about the first treatment form.
     const res = await gate(claims([{ row: rendered, response: "accepted" }]));
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("missing_response");
@@ -744,29 +786,43 @@ describe("12. a current portal completion satisfies the intake form", () => {
     if (res.ok) expect(res.record).toBeNull();
   });
 
-  it("a portal DENY is rendered as Denied, not reset to unanswered", async () => {
-    state.templates = [photoTemplate()];
-    state.signatures = [signature(photoTemplate(), { response: "denied" })];
+  it("a portal completion is surfaced with its stored response, verbatim", async () => {
+    // Was asserted with a photo DENY. Photo forms no longer render in the
+    // intake at all, so the intake render can no longer prove anything about
+    // them — that property moved to the practitioner review (which shows
+    // "Consent denied" from the portal signature) and to the portal's own
+    // tests. What remains provable HERE is the general rule the photo case was
+    // an instance of: a portal completion is passed through as-is.
+    state.templates = [template()];
+    state.signatures = [signature(template(), { response: "accepted" })];
     const [form] = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
-    expect(form.portalCompletion).toMatchObject({ response: "denied" });
+    expect(form.portalCompletion).toMatchObject({ response: "accepted" });
   });
 
   it("a portal completion is NOT copied into the intake record", async () => {
-    state.templates = [template(), photoTemplate()];
+    // Two live treatment forms: one already completed in the portal, the other
+    // answered here. (Previously the intake-answered one was a photo form.)
+    const second = template({ id: "t2", created_at: "2026-01-03T00:00:00.000Z" });
+    state.templates = [template(), second];
     state.signatures = [signature(template())];
-    // Only the photo form is answered in the intake.
-    const res = await gate(
-      claims([{ row: photoTemplate(), response: "denied" }]),
-    );
+    const res = await gate(claims([{ row: second, response: "accepted" }]));
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     // Exactly ONE stored form — the intake one. The portal signature stays the
     // portal's evidence and is not converted into an intake response.
     expect(res.record!.forms).toHaveLength(1);
-    expect(res.record!.forms[0].form_type).toBe("photo_consent");
-    expect(
-      res.record!.forms.some((f) => f.form_type === "treatment_consent"),
-    ).toBe(false);
+    expect(res.record!.forms[0].template_id).toBe("t2");
+    expect(res.record!.forms.some((f) => f.template_id === TREATMENT)).toBe(
+      false,
+    );
+  });
+
+  it("mixed: portal treatment + intake treatment submits", async () => {
+    const second = template({ id: "t2", created_at: "2026-01-03T00:00:00.000Z" });
+    state.templates = [template(), second];
+    state.signatures = [signature(template())];
+    const res = await gate(claims([{ row: second, response: "accepted" }]));
+    expect(res.ok).toBe(true);
   });
 
   it("mixed: portal treatment + intake photo submits", async () => {
@@ -789,13 +845,11 @@ describe("13. only the CURRENT version counts", () => {
     if (!res.ok) expect(res.reason).toBe("missing_response");
   });
 
-  it("an OLD photo signature does not satisfy a newly live version", async () => {
-    const v2 = photoTemplate({ version: 2 });
-    state.templates = [photoTemplate({ version: 3, body: "Revised photo." })];
-    state.signatures = [signature(v2, { response: "denied" })];
-    const res = await gate({});
-    expect(res.ok).toBe(false);
-  });
+  // (The photo-form variant of the rule above is gone: a photo form is no
+  // longer an intake form, so no photo signature — current or stale — can make
+  // an intake submit incomplete. The current-version rule itself is unchanged
+  // and proven by the treatment case directly above; the portal enforces its
+  // own version rule in tests/lib/consent/signature-status.test.ts.)
 
   it("an edited body at the SAME version also invalidates the completion", async () => {
     // A version comparison would miss this; the hash does not.
@@ -862,20 +916,25 @@ describe("14. portal completions cannot be borrowed", () => {
   });
 
   it("the newest matching signature wins when several exist", async () => {
-    state.templates = [photoTemplate()];
+    // Same rule, asserted on the treatment form now that photo forms do not
+    // render in the intake. Two signatures of the SAME live template: the
+    // newest is the one surfaced.
+    state.templates = [template()];
     state.signatures = [
-      signature(photoTemplate(), {
-        response: "denied",
+      signature(template(), {
+        response: "accepted",
         signed_at: "2026-07-05T09:00:00.000Z",
       }),
-      signature(photoTemplate(), {
+      signature(template(), {
         response: "accepted",
         signed_at: "2026-07-01T09:00:00.000Z",
       }),
     ];
     const [form] = await getIntakeConsentFormsForRender(STUDIO, CLIENT);
     // The fake returns rows in array order, mirroring `order signed_at desc`.
-    expect(form.portalCompletion).toMatchObject({ response: "denied" });
+    expect(form.portalCompletion).toMatchObject({
+      signedAtIso: "2026-07-05T09:00:00.000Z",
+    });
   });
 });
 

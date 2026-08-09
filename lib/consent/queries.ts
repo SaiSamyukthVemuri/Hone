@@ -242,3 +242,75 @@ export async function getPhotoConsentStateForClient(
       : undefined,
   );
 }
+
+// The client's CURRENT portal photo-consent status, for the practitioner's
+// intake review.
+//
+// Photo consent left the intake (Chloe, 2026-08-09) and lives only in the
+// portal. Without this, "View intake" could show a historical intake photo
+// answer and nothing else — so a client who later changed their mind in the
+// portal would be represented by a stale answer with no sign that a newer one
+// existed. Chloe's actual report was the blunter version of the same gap: her
+// route never read `client_consent_signatures` at all, so portal-completed
+// consent was invisible there.
+//
+// Returns null when the studio has no active photo_consent template — photo
+// consent is not in use, so the review shows nothing rather than an empty
+// "not completed" row that reads like a missing task.
+//
+// Deliberately reuses consentRowState + the existing practitioner-view
+// signature shape, so this surface and the profile card can never disagree
+// about what "granted" means. It builds no second signed-consent engine.
+export type PortalPhotoConsentView = {
+  state: ConsentRowState;
+  templateTitle: string;
+  currentVersion: number;
+  // The latest signature, when one exists — the full immutable record, so the
+  // existing SignedConsentViewer can open it unchanged.
+  record: PractitionerSignatureSummary | null;
+};
+
+export async function getPortalPhotoConsentForPractitionerView(
+  studioId: string,
+  clientId: string,
+): Promise<PortalPhotoConsentView | null> {
+  const admin = createAdminClient();
+  const { data: template } = await admin
+    .from("consent_form_templates")
+    .select("id, title, form_type, version")
+    .eq("studio_id", studioId)
+    .eq("form_type", "photo_consent")
+    .eq("status", "active")
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!template) return null;
+
+  const { data: sig } = await admin
+    .from("client_consent_signatures")
+    .select(
+      "id, template_id, template_title_snapshot, template_version, signature_name, signed_at, response, template_body_snapshot, response_label_snapshot, template_hash, created_at",
+    )
+    .eq("studio_id", studioId)
+    .eq("client_id", clientId)
+    .eq("template_id", template.id as string)
+    .order("signed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const record = (sig as PractitionerSignatureSummary | null) ?? null;
+  return {
+    state: consentRowState(
+      {
+        form_type: template.form_type as string,
+        version: template.version as number,
+      },
+      record
+        ? { template_version: record.template_version, response: record.response }
+        : undefined,
+    ),
+    templateTitle: (template.title as string) ?? "Photo consent",
+    currentVersion: template.version as number,
+    record,
+  };
+}

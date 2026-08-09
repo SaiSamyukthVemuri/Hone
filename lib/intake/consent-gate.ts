@@ -9,10 +9,11 @@ import {
   PHOTO_CONSENT_DENY_LABEL,
 } from "@/lib/consent/sign-consent-form";
 import {
-  INTAKE_CONSENT_FORM_TYPES,
+  INTAKE_CONSENT_COLLECTED_FORM_TYPES,
   INTAKE_CONSENT_RESPONSES,
-  isIntakeConsentFormType,
+  isIntakeConsentCollectedFormType,
   normalizeIntakeConsentClaims,
+  retainedHistoricalConsentForms,
   type IntakeConsentFormClaim,
   type IntakeConsentFormRecord,
   type IntakeConsentFormType,
@@ -42,7 +43,13 @@ import {
 //   studio_id = the intake's OWN studio (never a browser-supplied id)
 //   is_live   = true
 //   status    = 'active'
-//   form_type IN (treatment_consent, photo_consent)
+//   form_type IN (treatment_consent)
+//
+// PHOTO CONSENT IS DELIBERATELY ABSENT (Chloe, 2026-08-09). Photos are not
+// taken at the consultation, so asking here implied they might be. It is not
+// retired — the client portal is now its only collection surface. Excluded at
+// the QUERY, so the photo template's title and body are never even sent to the
+// intake browser; hiding it client-side would still ship the text.
 //
 // is_live AND status are BOTH required. Migration 0072's CHECK makes the
 // second structurally redundant, but the portal query keeps it for
@@ -73,7 +80,7 @@ async function loadLiveIntakeConsentTemplates(
     .eq("studio_id", studioId)
     .eq("is_live", true)
     .eq("status", "active")
-    .in("form_type", [...INTAKE_CONSENT_FORM_TYPES])
+    .in("form_type", [...INTAKE_CONSENT_COLLECTED_FORM_TYPES])
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });
   if (error) {
@@ -93,7 +100,7 @@ async function loadLiveIntakeConsentTemplates(
   // The `.in()` filter is the authority; this re-narrows in TypeScript so a
   // row with an unexpected form_type can never reach the render payload.
   return (data ?? []).filter((row) =>
-    isIntakeConsentFormType(row.form_type),
+    isIntakeConsentCollectedFormType(row.form_type),
   ) as LiveConsentTemplateRow[];
 }
 
@@ -357,14 +364,34 @@ export async function validateIntakeConsentResponses(input: {
   clientId: string;
   responses: Record<string, unknown>;
   respondedAtIso: string | null;
+  // The row's CURRENTLY STORED responses, straight from the database — NOT
+  // the merged map, whose consent key the browser has already overwritten with
+  // claims. Needed so an answer the intake no longer collects survives.
+  storedResponses?: Record<string, unknown> | null;
 }): Promise<IntakeConsentGateResult> {
   const rows = await loadLiveIntakeConsentTemplates(input.studioId);
   if (!rows) return reject("lookup_failed", ERR_LOOKUP);
 
-  // No live treatment/photo forms: this studio has nothing to complete.
-  // Submission behaves exactly as it did before this feature existed, and
-  // nothing is written into the responses map.
-  if (rows.length === 0) return { ok: true, record: null };
+  // Answers already given for forms this intake has stopped collecting. They
+  // are re-attached below rather than re-validated: there is no live template
+  // left to validate them against, and the stored snapshot is the text the
+  // client actually read.
+  const retained = retainedHistoricalConsentForms(input.storedResponses);
+
+  // No live intake forms: this studio has nothing to complete. Submission
+  // behaves exactly as it did before this feature existed — except that any
+  // retained historical answer is still preserved rather than dropped.
+  if (rows.length === 0) {
+    return retained.length > 0
+      ? {
+          ok: true,
+          record: {
+            version: INTAKE_CONSENT_RESPONSES.version,
+            forms: retained,
+          },
+        }
+      : { ok: true, record: null };
+  }
 
   const claims =
     normalizeIntakeConsentClaims(input.responses[INTAKE_CONSENT_RESPONSES.id])
@@ -421,14 +448,19 @@ export async function validateIntakeConsentResponses(input: {
     records.push(buildRecord(row, claim.response, input.respondedAtIso));
   }
 
-  // Every live form was satisfied by an existing portal completion, so the
-  // client completed nothing during this intake. Write no record rather than
-  // an empty one — an absent key honestly means "nothing was completed here".
-  if (records.length === 0) return { ok: true, record: null };
+  // Retained history rides along with whatever was completed here. Appended
+  // AFTER the freshly built records so the current answers read first.
+  const forms = [...records, ...retained];
+
+  // Every live form was satisfied by an existing portal completion and there
+  // is nothing historical to keep, so the client completed nothing during this
+  // intake. Write no record rather than an empty one — an absent key honestly
+  // means "nothing was completed here".
+  if (forms.length === 0) return { ok: true, record: null };
 
   return {
     ok: true,
-    record: { version: INTAKE_CONSENT_RESPONSES.version, forms: records },
+    record: { version: INTAKE_CONSENT_RESPONSES.version, forms },
   };
 }
 
@@ -443,17 +475,32 @@ export async function validateIntakeConsentResponses(input: {
 export async function buildIntakeConsentDraftRecord(input: {
   studioId: string;
   responses: Record<string, unknown>;
+  // As in validateIntakeConsentResponses: the row's stored responses, so a
+  // draft that already holds an answer for a no-longer-collected form keeps it
+  // through every subsequent save.
+  storedResponses?: Record<string, unknown> | null;
 }): Promise<IntakeConsentResponsesRecord | null> {
+  const retained = retainedHistoricalConsentForms(input.storedResponses);
   const raw = input.responses[INTAKE_CONSENT_RESPONSES.id];
-  if (raw === undefined || raw === null) return null;
+  if (raw === undefined || raw === null) {
+    return retained.length > 0
+      ? { version: INTAKE_CONSENT_RESPONSES.version, forms: retained }
+      : null;
+  }
   const claims = normalizeIntakeConsentClaims(raw)?.forms ?? [];
   if (claims.length === 0) {
     // The client cleared their answers: store an empty set rather than
-    // leaving a stale record behind (the server merge is a spread).
-    return { version: INTAKE_CONSENT_RESPONSES.version, forms: [] };
+    // leaving a stale record behind (the server merge is a spread). Retained
+    // history is NOT theirs to clear — the intake stopped offering that form,
+    // so no client action here can be a retraction of it.
+    return { version: INTAKE_CONSENT_RESPONSES.version, forms: retained };
   }
   const rows = await loadLiveIntakeConsentTemplates(input.studioId);
-  if (!rows || rows.length === 0) return null;
+  if (!rows || rows.length === 0) {
+    return retained.length > 0
+      ? { version: INTAKE_CONSENT_RESPONSES.version, forms: retained }
+      : null;
+  }
 
   const records: IntakeConsentFormRecord[] = [];
   for (const row of rows) {
@@ -470,5 +517,8 @@ export async function buildIntakeConsentDraftRecord(input: {
     // completion.
     records.push(buildRecord(row, claim.response, null));
   }
-  return { version: INTAKE_CONSENT_RESPONSES.version, forms: records };
+  return {
+    version: INTAKE_CONSENT_RESPONSES.version,
+    forms: [...records, ...retained],
+  };
 }
