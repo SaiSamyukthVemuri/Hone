@@ -35,16 +35,27 @@ const DESKTOP = { width: 1280, height: 800 };
 
 const PHOTO_BODY = "WILLOW PHOTO CONSENT. We photograph treatment areas to track progress.";
 
-async function seedLivePhotoTemplate(studioId: string): Promise<string> {
+async function seedPhotoTemplate(
+  studioId: string,
+  opts: { title?: string; isLive?: boolean; body?: string } = {},
+): Promise<string> {
   const id = randomUUID();
   await sql(
     `insert into public.consent_form_templates
        (id, studio_id, title, body, form_type, version, status, is_live)
-     values ($1,$2,'Photo Consent',$3,'photo_consent',1,'active',true)`,
-    [id, studioId, PHOTO_BODY],
+     values ($1,$2,$3,$4,'photo_consent',1,'active',$5)`,
+    [
+      id,
+      studioId,
+      opts.title ?? "Photo Consent",
+      opts.body ?? PHOTO_BODY,
+      opts.isLive ?? true,
+    ],
   );
   return id;
 }
+
+const seedLivePhotoTemplate = (studioId: string) => seedPhotoTemplate(studioId);
 
 // A real portal signature — the same shape recordConsentSignature writes,
 // including the typed name only the portal ceremony collects.
@@ -220,5 +231,98 @@ test.describe("practitioner View intake shows recorded consent", () => {
     await expect(
       page.getByTestId("review-portal-photo-consent"),
     ).not.toContainText("Consent denied");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The portal-eligibility boundary, in a real browser against the real database.
+//
+// `status = 'active'` is NOT portal visibility — migration 0072's CHECK still
+// permits active + is_live=false, a form the owner activated and deliberately
+// hid. The unit tests pin the resolver; this proves the practitioner's SCREEN
+// obeys it, which is where the wrong claim would actually be read.
+test.describe("View intake reports only forms the client can reach", () => {
+  test("an ACTIVE but NOT LIVE photo form produces no portal status at all", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    await seedE2eIntake(seed.studioId, clientId, "submitted", {
+      has_allergies: "no",
+    });
+    await seedPhotoTemplate(seed.studioId, { isLive: false });
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}/intake`);
+
+    // The intake answers still render — the page is fine, the CLAIM is absent.
+    await expect(page.getByText("Consent forms").first()).toBeVisible();
+    // No status row, and above all no "Not completed" against a form the
+    // client cannot open.
+    await expect(
+      page.getByTestId("review-portal-photo-consent"),
+    ).toHaveCount(0);
+    await expect(page.getByTestId("review-portal-photo-status")).toHaveCount(0);
+  });
+
+  test("TWO live photo forms render independently, with their own answers", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    await seedE2eIntake(seed.studioId, clientId, "submitted", {
+      has_allergies: "no",
+    });
+    const first = await seedPhotoTemplate(seed.studioId, {
+      title: "Photo use consent",
+    });
+    const second = await seedPhotoTemplate(seed.studioId, {
+      title: "Treatment photography authorization",
+    });
+    // Opposite answers, so a collapse into one status could not pass by luck.
+    await seedPortalSignature(seed, clientId, first, "denied");
+    await seedPortalSignature(seed, clientId, second, "accepted");
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}/intake`);
+
+    const rows = page.getByTestId("review-portal-photo-consent");
+    await expect(rows).toHaveCount(2);
+    await expect(
+      rows.filter({ hasText: "Photo use consent" }),
+    ).toContainText("Consent denied");
+    await expect(
+      rows.filter({ hasText: "Treatment photography authorization" }),
+    ).toContainText("Consent granted");
+    // Neither answer leaked into the other's row.
+    await expect(
+      rows.filter({ hasText: "Photo use consent" }),
+    ).not.toContainText("Consent granted");
+  });
+
+  test("a hidden form alongside a live one leaves only the live one", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    await seedE2eIntake(seed.studioId, clientId, "submitted", {
+      has_allergies: "no",
+    });
+    await seedPhotoTemplate(seed.studioId, {
+      title: "Retired photo form",
+      isLive: false,
+    });
+    await seedPhotoTemplate(seed.studioId, { title: "Photo use consent" });
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}/intake`);
+
+    const rows = page.getByTestId("review-portal-photo-consent");
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText("Photo use consent");
+    await expect(rows).not.toContainText("Retired photo form");
   });
 });

@@ -216,6 +216,15 @@ export async function getPhotoConsentStateForClient(
     .select("id, form_type, version")
     .eq("studio_id", studioId)
     .eq("form_type", "photo_consent")
+    // is_live, added 2026-08-09 alongside photo consent moving to the portal.
+    // This helper shipped in #405 filtering on status alone, which predates
+    // the contract that the PORTAL is where photo consent is collected. Under
+    // that contract an active-but-hidden template is not an actionable
+    // requirement: the client cannot reach it, so Treatment Images must not
+    // report "photo consent not completed" against it and send the
+    // practitioner chasing an answer nobody can give. Same boundary as
+    // getActiveConsentTemplatesForPortal; no separate definition of "live".
+    .eq("is_live", true)
     .eq("status", "active")
     .order("version", { ascending: false })
     .limit(1)
@@ -262,55 +271,126 @@ export async function getPhotoConsentStateForClient(
 // signature shape, so this surface and the profile card can never disagree
 // about what "granted" means. It builds no second signed-consent engine.
 export type PortalPhotoConsentView = {
+  // The template this status is about. A distinct template id is a distinct
+  // consent record — never merged with another.
+  templateId: string;
   state: ConsentRowState;
   templateTitle: string;
   currentVersion: number;
-  // The latest signature, when one exists — the full immutable record, so the
-  // existing SignedConsentViewer can open it unchanged.
+  // The latest signature FOR THIS TEMPLATE, when one exists — the full
+  // immutable record, so the existing SignedConsentViewer opens it unchanged.
   record: PractitionerSignatureSummary | null;
 };
 
-export async function getPortalPhotoConsentForPractitionerView(
+export async function getPortalPhotoConsentsForPractitionerView(
   studioId: string,
   clientId: string,
-): Promise<PortalPhotoConsentView | null> {
+): Promise<PortalPhotoConsentView[]> {
   const admin = createAdminClient();
-  const { data: template } = await admin
+
+  // THE SAME ELIGIBILITY BOUNDARY THE PORTAL USES, and that is the point.
+  //
+  // `status = 'active'` alone is NOT portal visibility. PR #167 introduced
+  // is_live precisely because activating a template for the studio's own
+  // workflow used to drop it into the client portal; migration 0072's CHECK
+  // (NOT is_live OR status='active') makes is_live imply active, but it
+  // deliberately still permits active + is_live=false — a form the owner has
+  // activated and deliberately hidden.
+  //
+  // Claiming "Current portal consent status — Not completed" for such a form
+  // would blame the client for not completing something they cannot see. So
+  // this reads exactly what getActiveConsentTemplatesForPortal reads, with the
+  // same created_at ordering, and never defines portal visibility on its own.
+  const { data: templates, error: templatesError } = await admin
     .from("consent_form_templates")
-    .select("id, title, form_type, version")
+    .select("id, title, version")
     .eq("studio_id", studioId)
     .eq("form_type", "photo_consent")
+    .eq("is_live", true)
     .eq("status", "active")
-    .order("version", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!template) return null;
+    .order("created_at", { ascending: true });
+  if (templatesError) {
+    console.error(
+      JSON.stringify({
+        event: "portal_photo_consent_templates_failed",
+        code: templatesError.code,
+        message: templatesError.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return [];
+  }
+  const rows = (templates ?? []) as Array<{
+    id: string;
+    title: string | null;
+    version: number;
+  }>;
+  // No live photo form: photo consent is not in use in this portal, so the
+  // review shows nothing rather than an empty "not completed" row that reads
+  // like an outstanding task.
+  if (rows.length === 0) return [];
 
-  const { data: sig } = await admin
+  // ALL of them. A studio may run more than one live photo form — the portal
+  // resolver returns every live form of a type — and each is a separate
+  // question the client answers separately. Picking the highest `version`
+  // across DIFFERENT template ids would be a category error: version is a
+  // template's own history, not a ranking between templates, so it would
+  // silently hide one consent record behind another.
+
+  // ONE signatures query for every template, mapped in memory rather than a
+  // query per template.
+  const { data: sigs, error: sigsError } = await admin
     .from("client_consent_signatures")
     .select(
       "id, template_id, template_title_snapshot, template_version, signature_name, signed_at, response, template_body_snapshot, response_label_snapshot, template_hash, created_at",
     )
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
-    .eq("template_id", template.id as string)
-    .order("signed_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .in(
+      "template_id",
+      rows.map((r) => r.id),
+    )
+    .order("signed_at", { ascending: false });
+  if (sigsError) {
+    console.error(
+      JSON.stringify({
+        event: "portal_photo_consent_signatures_failed",
+        code: sigsError.code,
+        message: sigsError.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return [];
+  }
 
-  const record = (sig as PractitionerSignatureSummary | null) ?? null;
-  return {
-    state: consentRowState(
-      {
-        form_type: template.form_type as string,
-        version: template.version as number,
-      },
-      record
-        ? { template_version: record.template_version, response: record.response }
-        : undefined,
-    ),
-    templateTitle: (template.title as string) ?? "Photo consent",
-    currentVersion: template.version as number,
-    record,
-  };
+  // Latest per template_id: first-write-wins over a signed_at-desc list. Keyed
+  // STRICTLY by template_id, so one template's signature can never stand in
+  // for another's — the outdated/granted/denied calculation below is per
+  // template and must stay that way.
+  const latestByTemplate = new Map<string, PractitionerSignatureSummary>();
+  for (const row of sigs ?? []) {
+    const r = row as PractitionerSignatureSummary;
+    if (!latestByTemplate.has(r.template_id)) {
+      latestByTemplate.set(r.template_id, r);
+    }
+  }
+
+  return rows.map((t) => {
+    const record = latestByTemplate.get(t.id) ?? null;
+    return {
+      templateId: t.id,
+      state: consentRowState(
+        { form_type: "photo_consent", version: t.version },
+        record
+          ? {
+              template_version: record.template_version,
+              response: record.response,
+            }
+          : undefined,
+      ),
+      templateTitle: t.title ?? "Photo consent",
+      currentVersion: t.version,
+      record,
+    };
+  });
 }
