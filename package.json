@@ -28,7 +28,11 @@
     "migration:state": "node scripts/migration-state.mjs",
     "ci:classify": "node scripts/classify-changes.mjs",
     "ci:plan": "node scripts/ci-plan.mjs",
-    "verify:changed": "node scripts/verify-changed.mjs"
+    "verify:changed": "node scripts/verify-changed.mjs",
+    "synthetic-mirror:status": "node --env-file=.env.local scripts/synthetic-mirror.mjs status",
+    "synthetic-mirror:dry-run": "node --env-file=.env.local scripts/synthetic-mirror.mjs dry-run",
+    "synthetic-mirror:sync": "node --env-file=.env.local scripts/synthetic-mirror.mjs sync",
+    "synthetic-mirror:reset": "node --env-file=.env.local scripts/synthetic-mirror.mjs reset"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.66.0",
