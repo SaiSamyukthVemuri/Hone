@@ -26,11 +26,15 @@ export async function updateOwnProfileAction(formData: FormData): Promise<void> 
     "Your name",
   );
 
+  // Migration 0174: `authenticated` no longer holds UPDATE on
+  // public.practitioners, so this goes through the narrow self-service command.
+  // The id is a LOCATOR only — the command proves user_id = auth.uid() in SQL,
+  // so this action cannot reach a colleague's row even for a studio owner.
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("practitioners")
-    .update({ display_name: displayName })
-    .eq("id", practitioner.id);
+  const { error } = await supabase.rpc("set_own_practitioner_display_name", {
+    p_practitioner_id: practitioner.id,
+    p_display_name: displayName,
+  });
   if (error) {
     throw new Error(`Failed to save your name: ${error.message}`);
   }
@@ -50,11 +54,14 @@ export async function updatePractitionerColorAction(
     throw new Error("Pick a color from the palette.");
   }
 
+  // Migration 0174: narrow self-service command. isPractitionerColor() above
+  // remains the authoritative palette gate; the command enforces a defensive
+  // shape check beneath it.
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("practitioners")
-    .update({ color: token })
-    .eq("id", practitioner.id);
+  const { error } = await supabase.rpc("set_own_practitioner_color", {
+    p_practitioner_id: practitioner.id,
+    p_color: token,
+  });
   if (error) {
     throw new Error(`Failed to save your color: ${error.message}`);
   }
@@ -105,14 +112,14 @@ export async function rotateCalendarFeedTokenAction(): Promise<CalendarFeedResul
   const supabase = await createClient();
   const token = generateCalendarFeedToken();
   const tokenHash = hashCalendarFeedToken(token);
-  const { error } = await supabase
-    .from("practitioners")
-    // Migration 0116: hash-only at rest. Only the SHA-256 hash is stored; the
-    // raw token is returned once (below) and never persisted or re-read.
-    .update({
-      calendar_feed_token_hash: tokenHash,
-    })
-    .eq("id", practitioner.id);
+  // Migration 0116: hash-only at rest. Only the SHA-256 hash is stored; the
+  // raw token is returned once (below) and never persisted or re-read.
+  // Migration 0174: written through the narrow self-service command, which
+  // re-checks the hex shape AND the active requirement inside the database.
+  const { error } = await supabase.rpc("rotate_own_calendar_feed_token", {
+    p_practitioner_id: practitioner.id,
+    p_token_hash: tokenHash,
+  });
   if (error) {
     return {
       ok: false,
@@ -129,13 +136,12 @@ export async function clearCalendarFeedTokenAction(): Promise<CalendarFeedResult
     return { ok: false, error: "Inactive practitioners cannot manage feeds." };
   }
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("practitioners")
-    // Migration 0116: hash-only at rest — clearing the hash revokes the feed.
-    .update({
-      calendar_feed_token_hash: null,
-    })
-    .eq("id", practitioner.id);
+  // Migration 0116: hash-only at rest — clearing the hash revokes the feed.
+  // Migration 0174: narrow self-service command; the active requirement is
+  // re-enforced in the database.
+  const { error } = await supabase.rpc("clear_own_calendar_feed_token", {
+    p_practitioner_id: practitioner.id,
+  });
   if (error) {
     return {
       ok: false,
