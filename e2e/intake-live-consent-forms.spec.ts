@@ -23,8 +23,11 @@ import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 //
 // WHAT THESE PROVE
 //   A. the primary product journey: real studio text, an unticked treatment
-//      checkbox that blocks submission, and a photo DENIAL that completes the
-//      form and submits successfully;
+//      checkbox that blocks submission, and — since photo consent moved to the
+//      client portal (Chloe, 2026-08-09) — a live photo template that is
+//      neither rendered nor required here. The photo Accept/Deny ceremony, and
+//      the rule that a DENIAL completes the form, are proven in the portal:
+//      e2e/portal-consent-signing-integrity.spec.ts;
 //   C. the stale-template race: a client answering v1 after the studio
 //      published v2 is refused, and completes after reviewing v2.
 //
@@ -161,7 +164,7 @@ async function assertNoHorizontalOverflow(page: Page): Promise<void> {
 
 // ---------------------------------------------------------------------------
 test.describe("live consent forms in the intake", () => {
-  test("A. real studio forms: treatment blocks until ticked, photo DENY completes and submits", async ({
+  test("A. real studio forms: treatment blocks until ticked; a live photo form is NOT shown or required", async ({
     page,
   }) => {
     await page.setViewportSize(MOBILE);
