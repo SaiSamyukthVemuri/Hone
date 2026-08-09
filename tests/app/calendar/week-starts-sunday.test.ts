@@ -25,14 +25,18 @@ import { monthGridDates } from "@/lib/booking/month-grid";
 // Nothing here is a settings/locale preference. The practitioner calendar has
 // a FIXED Sunday-start week.
 //
-// SCOPE — read this before concluding "Hone is Sunday-first everywhere".
-// It is not. `lib/dashboard/practice-metrics.ts` anchors its "this week"
-// REPORTING period on MONDAY (`const sinceMonday = (dow + 6) % 7`), and that
-// is deliberate and untouched here: a metrics week is a business-reporting
-// decision, not calendar presentation. The consequence is real and worth
-// knowing — on a Sunday, the dashboard's "this week" and the calendar's week
-// differ by a full week, because Sunday is day 7 of one and day 1 of the
-// other. Reconciling them is a product call, not a refactor.
+// SCOPE — this note used to say Hone was NOT Sunday-first everywhere, because
+// `lib/dashboard/practice-metrics.ts` anchored its "this week" REPORTING period
+// on MONDAY (`const sinceMonday = (dow + 6) % 7`). It called reconciling them
+// "a product call, not a refactor", and it was right.
+//
+// THAT PRODUCT CALL HAS NOW BEEN MADE (Dashboard V2 Part 1). The consequence
+// this note warned about — on a Sunday, the dashboard's "this week" and the
+// calendar's week differed by a FULL WEEK, because Sunday was day 7 of one and
+// day 1 of the other — is closed: `resolvePeriodRange` now delegates to the
+// SAME `startOfWeek` helper asserted throughout this file, so there is exactly
+// one Sunday boundary in the product. The dashboard's own boundary cases live
+// in tests/lib/dashboard/practice-metrics-week.test.ts.
 
 const TZ = "America/Toronto"; // the repo's established DST fixture timezone
 const CAL_PAGE = readFileSync(

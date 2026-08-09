@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
+import { addDays, startOfWeek, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
 import {
   getClientProcedureRecords,
   type ClientProcedureRecord,
@@ -22,7 +22,7 @@ export function isDashboardPeriod(v: string | undefined): v is DashboardPeriod {
 }
 
 // Pure: resolve the studio-local date range for a period. `todayLocal`
-// is the studio-local YYYY-MM-DD. Weeks start Monday; ranges are
+// is the studio-local YYYY-MM-DD. Weeks start SUNDAY; ranges are
 // [startLocal, endLocalExclusive).
 export function resolvePeriodRange(
   todayLocal: string,
@@ -36,11 +36,24 @@ export function resolvePeriodRange(
     };
   }
   if (period === "week") {
-    // Day-of-week of the local date; anchor at noon UTC so the UTC
-    // calendar day matches the local date string regardless of host tz.
-    const dow = new Date(`${todayLocal}T12:00:00Z`).getUTCDay(); // 0=Sun
-    const sinceMonday = (dow + 6) % 7;
-    const startLocal = addDays(todayLocal, -sinceMonday);
+    // SUNDAY -> SATURDAY, delegated to the SAME helper the practitioner
+    // calendar uses (lib/booking/tz.startOfWeek: "the Sunday on or before").
+    //
+    // This used to roll its own Monday anchor —
+    //   const dow = new Date(`${todayLocal}T12:00:00Z`).getUTCDay();
+    //   const sinceMonday = (dow + 6) % 7;
+    // — which made the dashboard's "this week" and the calendar's week differ
+    // by a FULL WEEK every Sunday: Sunday was day 7 of the metrics week and
+    // day 1 of the calendar week. Chloe reported this. The two are now one
+    // boundary, and deliberately ONE algorithm: a second copy is how they
+    // drifted apart in the first place.
+    //
+    // startOfWeek() takes the same noon-UTC anchoring this code used, so the
+    // studio-local date string semantics are unchanged — only the anchor day
+    // moves. Ranges stay [startLocal, endLocalExclusive) over local date
+    // STRINGS, never "start + 168 hours", so DST is handled by the existing
+    // utcInstantFromLocal() conversion exactly as before.
+    const startLocal = startOfWeek(todayLocal);
     return {
       startLocal,
       endLocalExclusive: addDays(startLocal, 7),
