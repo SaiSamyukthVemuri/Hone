@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
-import { adminQuery, seedStudio, closePool, type SeededStudio } from "./helpers/harness";
+import { adminQuery, purgeAppointmentAudit, seedStudio, closePool, type SeededStudio } from "./helpers/harness";
 
 // B2.4 Stage 2 amendment to migration 0131: the DEDICATED provisioning-state
 // columns + their mode guard on calendar_connections, and the destination-BINDING
@@ -57,6 +57,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await adminQuery(`delete from public.google_oauth_states where studio_id = $1`, [studio.studioId]).catch(() => {});
   await adminQuery(`delete from public.calendar_connections where id = $1`, [connId]).catch(() => {});
+  await purgeAppointmentAudit(studio.studioId).catch(() => {});
   await adminQuery(`delete from public.studios where id = $1`, [studio.studioId]).catch(() => {});
   await closePool();
 });

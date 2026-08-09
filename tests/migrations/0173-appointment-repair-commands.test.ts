@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // 0173 — APPOINTMENT BOUNDARY B4 source contract.
@@ -65,15 +65,20 @@ describe("0173 — migration state", () => {
   // 0173 is B4's ONLY migration. The L23 closure it also carries was briefly
   // drafted as a companion 0174 and withdrawn, because the canonical
   // appointment-DML program reserves 0174 for B5, 0175 for B6, 0176 for B7 and
-  // 0177 for B8. When B5's 0174 lands, this block moves there.
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0173")).toBe(true);
-    expect(versionsAbove("0173")).toEqual([]);
-  });
-
-  it("0174 does not exist — that number belongs to B5", () => {
+  // 0177 for B8.
+  //
+  // THAT MOVE HAS NOW HAPPENED. B5 landed 0174, so the `isRepoMax` tripwire and
+  // the "nothing above me" pin live in
+  // tests/migrations/0174-appointment-attribution-audit-integrity.test.ts.
+  // Keeping them here would turn every future migration into a mechanical
+  // sweep, which is exactly how 0163, 0164 and 0165 each went red after push
+  // (CLAUDE.md §2).
+  it("0173 is still exactly one file, and B5 took 0174 rather than renumbering it", () => {
+    expect(countVersion("0173")).toBe(1);
     const dir = join(__dirname, "..", "..", "supabase", "migrations");
-    expect(readdirSync(dir).filter((f) => f.startsWith("0174"))).toEqual([]);
+    expect(readdirSync(dir).filter((f) => f.startsWith("0174"))).toEqual([
+      "0174_appointment_attribution_and_audit_integrity.sql",
+    ]);
   });
 });
 
@@ -88,10 +93,14 @@ describe("0173 — production truth (applied 2026-08-09)", () => {
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("the canonical hosted record reads 0173 — hosted == repo, nothing pending", () => {
+  it("the canonical hosted record still reads 0173 — B5 did NOT touch it", () => {
+    // 0174 is authored but UNAPPLIED. `hosted_migration_max` is a statement
+    // about production, not about the repository, and B5 performed zero
+    // production access — so this number must not move until a separately
+    // authorized apply ceremony moves it. The repo/hosted divergence it creates
+    // is asserted in 0174's own test.
     expect(rec.hosted_migration_max).toBe("0173");
     expect(rec.hosted_applied_at).toBe("2026-08-09T12:06:47Z");
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
   });
 
   it("the record carries the sha256 of the exact 0173 bytes that were applied", async () => {

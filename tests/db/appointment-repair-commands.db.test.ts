@@ -29,8 +29,10 @@ import {
   adminQuery,
   asRole,
   closePool,
+  adminTx,
   seedStudio,
   seedMember,
+  seedHistoricalAppointmentAudit,
   type SeededStudio,
 } from "./helpers/harness";
 
@@ -104,13 +106,19 @@ async function seedAppointment(
     ],
   );
   if (opts.status !== "confirmed" && opts.baselineAgo !== null) {
-    await adminQuery(
-      `insert into public.appointment_audit
-         (appointment_id, actor_type, actor_id, action, details, created_at)
-       values ($1, 'practitioner', $2, $3, '{}'::jsonb,
-               now() - interval '${opts.baselineAgo ?? "1 hour"}')`,
-      [id, studio.practitionerId, BASELINE_ACTION[opts.status]],
-    );
+    // B5/0174: appointment_audit.created_at is now derived from the database
+    // clock at INSERT, so a plain INSERT can no longer seed a HISTORICAL
+    // baseline — the value would be silently replaced by now() and every
+    // window test would measure zero elapsed time. The owner-only harness
+    // fixture is the sanctioned way to build that state; it ships in no
+    // migration and no runtime role can reach it.
+    await seedHistoricalAppointmentAudit({
+      appointmentId: id,
+      actorType: "practitioner",
+      actorId: studio.practitionerId,
+      action: BASELINE_ACTION[opts.status],
+      createdAtSql: `now() - interval '${opts.baselineAgo ?? "1 hour"}'`,
+    });
   }
   return id;
 }
@@ -447,10 +455,13 @@ describe("0173 — revert_appointment_outcome: the repair window", () => {
       status: "completed",
       baselineAgo: null,
     });
+    // B5/0174: a 'practitioner' row must name its actor
+    // (appointment_audit_actor_id_type_ck). The point of the test is the
+    // ACTION being wrong, not the actor being absent.
     await adminQuery(
-      `insert into public.appointment_audit (appointment_id, actor_type, action, details)
-       values ($1, 'practitioner', 'created', '{}'::jsonb)`,
-      [appt],
+      `insert into public.appointment_audit (appointment_id, actor_type, actor_id, action, details)
+       values ($1, 'practitioner', $2, 'created', '{}'::jsonb)`,
+      [appt, studio.practitionerId],
     );
     await expectRefusal(
       appt,
@@ -464,11 +475,24 @@ describe("0173 — revert_appointment_outcome: the repair window", () => {
     const appt = await seedAppointment(studio, { status: "completed" });
     // Same transaction => now() is identical for the UPDATE and the command,
     // so the elapsed interval is exactly 72 hours.
-    const code = await asRole("service_role", async (q) => {
+    //
+    // B5/0174: the UPDATE is the append-only trigger's business now, so the
+    // backdate runs with that trigger disabled as the table OWNER (harness
+    // fixture, no runtime path). `adminTx` keeps both statements on one
+    // connection in one transaction — without that the backdate and the
+    // command would observe two different clocks and "exactly 72 hours" would
+    // silently become "72 hours plus a few milliseconds".
+    const code = await adminTx(async (q) => {
+      await q(
+        `alter table public.appointment_audit disable trigger appointment_audit_append_only`,
+      );
       await q(
         `update public.appointment_audit set created_at = now() - interval '72 hours'
           where appointment_id = $1 and action = 'marked_complete'`,
         [appt],
+      );
+      await q(
+        `alter table public.appointment_audit enable trigger appointment_audit_append_only`,
       );
       const r = await q(
         `select public.revert_appointment_outcome($1, $2, $3, 'completed', $4) code`,
@@ -482,12 +506,18 @@ describe("0173 — revert_appointment_outcome: the repair window", () => {
   it("one microsecond past 72 hours is outside the window", async () => {
     const studio = await seedStudio("b4-boundary-out");
     const appt = await seedAppointment(studio, { status: "completed" });
-    const code = await asRole("service_role", async (q) => {
+    const code = await adminTx(async (q) => {
+      await q(
+        `alter table public.appointment_audit disable trigger appointment_audit_append_only`,
+      );
       await q(
         `update public.appointment_audit
             set created_at = now() - interval '72 hours' - interval '1 microsecond'
           where appointment_id = $1 and action = 'marked_complete'`,
         [appt],
+      );
+      await q(
+        `alter table public.appointment_audit enable trigger appointment_audit_append_only`,
       );
       const r = await q(
         `select public.revert_appointment_outcome($1, $2, $3, 'completed', $4) code`,
@@ -518,11 +548,16 @@ describe("0173 — revert_appointment_outcome: the repair window", () => {
       status: "completed",
       baselineAgo: "30 days",
     });
-    await adminQuery(
-      `insert into public.appointment_audit (appointment_id, actor_type, action, details, created_at)
-       values ($1, 'practitioner', 'marked_complete', '{}'::jsonb, now() - interval '1 hour')`,
-      [appt],
-    );
+    // B5/0174: a 'practitioner' audit row must now name its actor
+    // (appointment_audit_actor_id_type_ck), and created_at is derived at INSERT
+    // — so the recent baseline is seeded through the owner-only fixture.
+    await seedHistoricalAppointmentAudit({
+      appointmentId: appt,
+      actorType: "practitioner",
+      actorId: studio.practitionerId,
+      action: "marked_complete",
+      createdAtSql: "now() - interval '1 hour'",
+    });
     expect(
       await revert(appt, studio.studioId, studio.userId, "completed"),
     ).toBe("ok");
@@ -978,7 +1013,6 @@ describe("0173 — EXECUTE grant matrix", () => {
     "public.lock_appointment_for_command(uuid, uuid)",
     "public.appointment_actor_role(uuid, uuid)",
     "public.appointment_has_blocking_dependents(uuid, uuid)",
-    "public.write_appointment_audit(uuid, text, uuid, text, jsonb)",
   ];
 
   for (const fn of FUNCTIONS) {
@@ -996,6 +1030,62 @@ describe("0173 — EXECUTE grant matrix", () => {
       expect(r.rows[0].pub, "PUBLIC must NOT execute").toBe(false);
     });
   }
+
+  // write_appointment_audit MOVED OUT of the list above at B5/0174, and the
+  // move is the assertion. 0173 created it service_role-executable alongside
+  // the two repair commands; B5 revoked that because the census proved it has
+  // ZERO application callers and exactly two callers anywhere — B4's own
+  // revert_appointment_outcome and set_appointment_notes, both postgres-owned
+  // SECURITY DEFINER commands that reach it as their OWNER, not as
+  // service_role.
+  //
+  // Left service_role-executable it is a forgery primitive that survives every
+  // other control in 0174: it takes actor_type, actor_id, action and details as
+  // PARAMETERS, so a service caller could mint an audit event naming any
+  // colleague as the actor of any action. That is exactly P1-3.
+  it("public.write_appointment_audit is INTERNAL: no role may execute it directly", async () => {
+    const r = await adminQuery(
+      `select has_function_privilege('service_role', $1, 'EXECUTE') svc,
+              has_function_privilege('authenticated', $1, 'EXECUTE') auth,
+              has_function_privilege('anon', $1, 'EXECUTE') anon,
+              has_function_privilege('public', $1, 'EXECUTE') pub`,
+      ["public.write_appointment_audit(uuid, text, uuid, text, jsonb)"],
+    );
+    expect(r.rows[0].svc, "service_role must NOT execute (B5/0174)").toBe(false);
+    expect(r.rows[0].auth, "authenticated must NOT execute").toBe(false);
+    expect(r.rows[0].anon, "anon must NOT execute").toBe(false);
+    expect(r.rows[0].pub, "PUBLIC must NOT execute").toBe(false);
+  });
+
+  it("...and its B4 internal callers still audit successfully through it", async () => {
+    // The positive control that makes the revoke meaningful. If EXECUTE were
+    // load-bearing for B4, this is where it would show up as a failure rather
+    // than as a silently-missing audit row.
+    const studio = await seedStudio("b5-wab-internal");
+    const appt = await seedAppointment(studio, { status: "completed" });
+    const before = await auditCount(appt);
+
+    // The delta MUST be read inside the same transaction: asRole always rolls
+    // back (harness.ts), so an audit count taken after it returns would observe
+    // the pre-command state and this test would pass while proving nothing.
+    const observed = await asRole("service_role", async (q) => {
+      const r = await q(
+        `select public.revert_appointment_outcome($1, $2, $3, 'completed', $4) code`,
+        [appt, studio.studioId, studio.userId, VALID_REASON],
+      );
+      const n = await q(
+        `select count(*)::int n from public.appointment_audit where appointment_id = $1`,
+        [appt],
+      );
+      return { code: r.rows[0].code as string, audit: n.rows[0].n as number };
+    });
+
+    expect(observed.code, "B4 repair must still succeed").toBe("ok");
+    expect(
+      observed.audit,
+      "the internal helper still wrote exactly one audit row",
+    ).toBe(before + 1);
+  });
 
   it("a browser role calling the command is refused at the privilege layer", async () => {
     const studio = await seedStudio("b4-exec");

@@ -247,33 +247,42 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
   // T4.1 / T4.2 — the 0151 composite same-studio foreign keys, under service_role
   // -------------------------------------------------------------------------
   //
-  // Run as `service_role` on purpose. service_role bypasses RLS, so RLS cannot
-  // be what rejects these rows — the composite FK is genuinely the control
-  // under test, and it stays under test after B3 removes the authenticated
-  // verb. (`asRole` always rolls back, so nothing here persists.)
+  // Run as `postgres` (adminQuery) on purpose, since B5 / 0174.
+  //
+  // These blocks were written against `service_role` because it bypasses RLS,
+  // so RLS could not be what rejected the rows and the composite FK was
+  // genuinely the control under test. 0174 GROUP 10.1 revoked service_role's
+  // INSERT on public.appointments, so that role now fails at 42501 BEFORE any
+  // constraint is consulted — which would silently destroy the FK coverage.
+  //
+  // The proof therefore moves to `postgres`, the table owner and migration
+  // channel: the only role that still holds INSERT, and also a BYPASSRLS role,
+  // so the original argument carries over intact. The privilege posture that
+  // forced the move is pinned separately in
+  // tests/db/appointment-boundary-revocation.db.test.ts and by T5.5 in
+  // tests/db/appointment-audit-invariant.db.test.ts, so nothing is lost.
+  //
+  // Rows are cleaned up in this suite's teardown rather than by asRole's
+  // rollback.
 
   describe("T4.1 client_id must belong to the appointment's studio", () => {
     it("positive control: a fully same-studio appointment INSERTs successfully as service_role", async () => {
       const offset = nextDayOffset();
-      const seen = await asRole("service_role", async (q) => {
-        const ins = await q(insertApptSql(), [
-          a.studioId,
-          a.practitionerId,
-          a.clientId,
-          serviceA,
-          offset,
-          hash64(),
-        ]);
-        const id = ins.rows[0].id as string;
-        // Asserted INSIDE the transaction: asRole rolls back on the way out,
-        // so a check made afterwards would find nothing and prove nothing.
-        const back = await q(
-          `select studio_id, client_id, service_id, practitioner_id
-             from public.appointments where id = $1`,
-          [id],
-        );
-        return back.rows[0];
-      });
+      const ins = await adminQuery(insertApptSql(), [
+        a.studioId,
+        a.practitionerId,
+        a.clientId,
+        serviceA,
+        offset,
+        hash64(),
+      ]);
+      const id = ins.rows[0].id as string;
+      const back = await adminQuery(
+        `select studio_id, client_id, service_id, practitioner_id
+           from public.appointments where id = $1`,
+        [id],
+      );
+      const seen = back.rows[0];
       expect(seen.studio_id).toBe(a.studioId);
       expect(seen.client_id).toBe(a.clientId);
       expect(seen.service_id).toBe(serviceA);
@@ -285,8 +294,7 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
       // only constraint that can fire.
       const offset = nextDayOffset();
       await expect(
-        asRole("service_role", (q) =>
-          q(insertApptSql(), [
+        adminQuery(insertApptSql(), [
             a.studioId,
             a.practitionerId,
             b.clientId,
@@ -294,7 +302,6 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
             offset,
             hash64(),
           ]),
-        ),
       ).rejects.toMatchObject({
         code: "23503",
         constraint: "appointments_client_same_studio_fk",
@@ -306,8 +313,7 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
     it("studio B's service_id on a studio A appointment is rejected 23503", async () => {
       const offset = nextDayOffset();
       await expect(
-        asRole("service_role", (q) =>
-          q(insertApptSql(), [
+        adminQuery(insertApptSql(), [
             a.studioId,
             a.practitionerId,
             a.clientId,
@@ -315,7 +321,6 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
             offset,
             hash64(),
           ]),
-        ),
       ).rejects.toMatchObject({
         code: "23503",
         constraint: "appointments_service_same_studio_fk",
@@ -325,8 +330,7 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
     it("studio B's practitioner_id on a studio A appointment is rejected 23503", async () => {
       const offset = nextDayOffset();
       await expect(
-        asRole("service_role", (q) =>
-          q(insertApptSql(), [
+        adminQuery(insertApptSql(), [
             a.studioId,
             b.practitionerId,
             a.clientId,
@@ -334,7 +338,6 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
             offset,
             hash64(),
           ]),
-        ),
       ).rejects.toMatchObject({
         code: "23503",
         constraint: "appointments_practitioner_same_studio_fk",
@@ -356,16 +359,14 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
       ) => {
         const offset = nextDayOffset();
         try {
-          await asRole("service_role", (q) =>
-            q(insertApptSql(), [
+          await adminQuery(insertApptSql(), [
               a.studioId,
               practitionerId,
               clientId,
               serviceId,
               offset,
               hash64(),
-            ]),
-          );
+            ]);
           throw new Error("expected the insert to be rejected, but it succeeded");
         } catch (e) {
           const err = e as { code?: string; constraint?: string };

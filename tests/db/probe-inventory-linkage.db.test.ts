@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  purgeAppointmentAudit,
   asUser,
   closePool,
   seedSession,
@@ -241,6 +242,7 @@ describe("studio-scoped cascade still removes both the block and its inventory",
       probe_inventory_item_id: item,
       probe_lot_number: "C-LOT",
     });
+    await purgeAppointmentAudit(c.studioId);
     await adminQuery("delete from public.studios where id=$1", [c.studioId]);
     const blk = await adminQuery(
       "select id from public.session_blocks where id=$1",

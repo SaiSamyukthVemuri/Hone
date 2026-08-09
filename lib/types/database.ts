@@ -393,6 +393,26 @@ export type Appointment = {
   // Actual-interval overlap remains a hard constraint regardless. Optional for
   // pre-0152 rows.
   booked_outside_availability?: boolean;
+  // Migration 0174 (appointment boundary B5 — attribution + audit integrity):
+  // WHO acted, recorded on the row itself. Before 0174 this existed only inside
+  // an appointment_audit row that was CASCADE-deleted with its parent.
+  //
+  // NULL is a first-class, TRUTHFUL value in all of these: it means "no
+  // practitioner actor", which is the correct state for a public/client booking
+  // and for a client-token cancellation. Nothing manufactures a practitioner
+  // for a client actor. Optional for pre-0174 rows.
+  //
+  // The existing `cancelled_by` ROLE WORD above is retained and unchanged;
+  // `cancelled_by_practitioner_id` complements it with WHICH practitioner.
+  created_by_practitioner_id?: string | null;
+  cancelled_by_practitioner_id?: string | null;
+  // The outside-hours override authoriser and their role AT THE TIME. Both
+  // commands that can set booked_outside_availability refuse a non-owner, so
+  // the role is always 'owner' when written. Cleared together with the flag
+  // when a later move no longer needs the override.
+  outside_availability_authorized_by_practitioner_id?: string | null;
+  outside_availability_authorized_role?: string | null;
+  outside_availability_authorized_at?: string | null;
   // Migration 0025: email tracking + opaque token used in cancel and
   // reschedule URLs.
   confirmation_sent_at: string | null;
@@ -678,11 +698,27 @@ export type ClientPaymentMethod = {
 
 export type AppointmentAudit = {
   id: string;
-  appointment_id: string;
+  // Migration 0174 (appointment boundary B5): NULLABLE since the parent FK
+  // moved from ON DELETE CASCADE to ON DELETE SET NULL. Deleting an appointment
+  // through an authorized privileged path now DETACHES its audit history
+  // instead of erasing it, so an orphaned row is a normal, readable state.
+  appointment_id: string | null;
+  // Migration 0174: the tenant, derived from the parent appointment at INSERT
+  // and never accepted from the caller. This is what keeps a detached row
+  // tenant-authorizable — appointment_audit_member_read now reads it directly.
+  studio_id: string;
   actor_type: "practitioner" | "client" | "system";
   actor_id: string | null;
+  // Migration 0174: durable, same-studio-validated practitioner correlation.
+  // NULL for client and system actors — never invented for a non-practitioner.
+  // Complements, and does not replace, the historical bare actor_id above.
+  actor_practitioner_id: string | null;
   action: string;
   details: Record<string, unknown> | null;
+  // Migration 0174: DATABASE-derived at INSERT. A caller-supplied value is
+  // silently overwritten, which is what closes the back-dating that wins the
+  // cancellation-insight card's `order by created_at desc limit 1` and that
+  // B4's 72-hour repair window is measured from.
   created_at: string;
 };
 

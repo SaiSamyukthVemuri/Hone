@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, seedStudio, closePool, type SeededStudio } from "./helpers/harness";
+import { adminQuery, purgeAppointmentAudit, seedStudio, closePool, type SeededStudio } from "./helpers/harness";
 
 // B2.4 (migration 0131) DB contract: the destination-aware required-scope function
 // and the destination-aware, empty-array-fail-closed readiness predicate. Runs
@@ -36,6 +36,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await adminQuery(`delete from public.calendar_connections where id = $1`, [connId]).catch(() => {});
+  await purgeAppointmentAudit(studio.studioId).catch(() => {});
   await adminQuery(`delete from public.studios where id = $1`, [studio.studioId]).catch(() => {});
   await closePool();
 });

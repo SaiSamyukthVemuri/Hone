@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { adminQuery, seedStudio, type SeededStudio } from "./harness";
+import { adminQuery, purgeAppointmentAudit, seedStudio, type SeededStudio } from "./harness";
 
 // Reusable synthetic payment eligibility fixture for the quick-checkout DB
 // integration tests (Stage B–I). TEST-ONLY: it seeds the complete real
@@ -409,6 +409,10 @@ export async function getSessionPaymentAttempts(sessionId: string): Promise<
 // the client/settings deletes, so the studio cascade alone can't remove them).
 // The final `delete studios` cascades clients + practitioners. Never truncates.
 export async function cleanupPaymentScenario(studioId: string): Promise<void> {
+  // B5/0174: the audit trail must go before its appointments and its studio —
+  // appointment_audit is append-only (no runtime DELETE) and its studio FK is
+  // RESTRICT. Owner-only harness fixture; ships in no migration.
+  await purgeAppointmentAudit(studioId);
   for (const sql of [
     `delete from public.payment_charge_attempts where studio_id=$1`,
     `delete from public.client_payment_methods where studio_id=$1`,

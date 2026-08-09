@@ -71,13 +71,16 @@ describe("0173 GROUP 5 — migration ownership", () => {
     expect(L23_CODE.length).toBeGreaterThan(100);
   });
 
-  it("NO 0174 migration exists — that number belongs to B5", () => {
+  it("0174 went to B5, exactly as this reservation intended", () => {
+    // This assertion previously read "NO 0174 migration exists". It was never
+    // about 0174 being EMPTY — it was about 0174 not being spent on L23. B5 has
+    // now claimed it for appointment attribution + audit integrity, which is
+    // the outcome the reservation was protecting, so the assertion is restated
+    // rather than deleted: the withdrawn L23 companion must still not exist,
+    // and 0174 must be exactly one file and B5's.
     const files = readdirSync(MIGRATIONS_DIR);
     const zero174 = files.filter((f) => f.startsWith("0174"));
-    expect(
-      zero174,
-      `0174 is reserved for B5 (appointment attribution + audit integrity); found: ${zero174.join(", ")}`,
-    ).toEqual([]);
+    expect(zero174).toEqual(["0174_appointment_attribution_and_audit_integrity.sql"]);
     expect(
       existsSync(
         join(MIGRATIONS_DIR, "0174_revoke_parent_delete_appointment_lineage.sql"),

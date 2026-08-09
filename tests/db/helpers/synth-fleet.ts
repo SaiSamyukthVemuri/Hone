@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { adminQuery, type SeededStudio } from "./harness";
+import { adminQuery, purgeAppointmentAudit, type SeededStudio } from "./harness";
 
 // ===========================================================================
 // SAFE-SYNTH — synthetic tenant fleet (Wave 1, PR 1) — PARTIALLY DELIVERED
@@ -189,6 +189,13 @@ export async function seedStudioWideOpenAllWeek(
  *  live outside the public schema. Never truncates. Proven by
  *  tests/db/synth-fleet-cleanup.db.test.ts. */
 export async function dropSynthStudio(studio: SynthStudio): Promise<void> {
+  // B5/0174: appointment_audit.studio_id is ON DELETE RESTRICT (the convention
+  // every append-only history table in this schema uses — clinical_audit_events,
+  // clinical_record_amendments, clinical_record_snapshots). A studio that has
+  // ever had an appointment audited therefore cannot be deleted until its trail
+  // is removed, and 0174 leaves NO runtime path that can remove it. The
+  // owner-only harness fixture is the sanctioned teardown.
+  await purgeAppointmentAudit(studio.studioId);
   await adminQuery(`delete from public.studios where id = $1`, [studio.studioId]);
   for (const p of studio.practitioners) {
     await adminQuery(`delete from auth.users where id = $1`, [p.userId]);
