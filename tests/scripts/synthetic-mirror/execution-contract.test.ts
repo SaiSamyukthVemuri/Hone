@@ -344,3 +344,102 @@ describe("export writes a FILE and never a row", () => {
     expect(writeAt).toBeGreaterThan(verifyAt);
   });
 });
+
+describe("Phase 2.5 — the sterile-item entity", () => {
+  const plan = build();
+  const items = () => plan.body.entities.record_keeping_sterile_items;
+
+  it("is allowlisted as an entity, table and identity kind", () => {
+    expect(ENTITY_ORDER).toContain("record_keeping_sterile_items");
+    expect(ENTITY_TABLE.record_keeping_sterile_items).toBe("record_keeping_sterile_items");
+    expect(ENTITY_IDENTITY.record_keeping_sterile_items).toBe("sterile_item");
+  });
+
+  it("carries no client or session linkage of any kind", () => {
+    // This entity is scoped ONLY by studio, which is why it cannot carry or
+    // leak a client identity even in principle.
+    const cols = ALLOWED_COLUMNS.record_keeping_sterile_items as string[];
+    expect(cols).not.toContain("client_id");
+    expect(cols).not.toContain("session_id");
+    expect(cols).not.toContain("created_by_practitioner_id");
+    for (const row of items()) {
+      expect("client_id" in row).toBe(false);
+      expect("session_id" in row).toBe(false);
+    }
+  });
+
+  it("mints derivable v8 ids bound to the target studio", () => {
+    items().forEach((row: { id: string; studio_id: string }, i: number) => {
+      expect(row.id).toBe(deriveSyntheticId(TARGET, "sterile_item", i));
+      expect(row.studio_id).toBe(TARGET);
+    });
+  });
+
+  it("places rows either side of the product's own expiry boundaries", () => {
+    // The thresholds belong to lib/record-keeping/expiry.ts; this only checks
+    // that the fixture straddles them, including a control that must NOT be
+    // returned by the 30-day loader.
+    const today = new Date(ANCHOR).toISOString().slice(0, 10);
+    const dates = items().map((r: { expiry_date: string }) => r.expiry_date).sort();
+    expect(dates.some((d: string) => d < today)).toBe(true);   // expired
+    expect(dates.some((d: string) => d === today)).toBe(true); // expires today
+    const horizon = new Date(ANCHOR + 30 * 86_400_000).toISOString().slice(0, 10);
+    expect(dates.some((d: string) => d > today && d <= horizon)).toBe(true); // soon
+    expect(dates.some((d: string) => d > horizon)).toBe(true);  // neutral control
+  });
+
+  it("stays small, so studio-level rows cannot crowd out per-client gaps", () => {
+    expect(items().length).toBeLessThanOrEqual(6);
+  });
+
+  it("carries only safe invented values", () => {
+    const blob = JSON.stringify(items()).toLowerCase();
+    expect(blob).toContain("test");
+    for (const term of ["gmail", "willow", "stripe", "@"]) {
+      expect(blob.includes(term), term).toBe(false);
+    }
+  });
+
+  it("is refused when it carries an unknown column", () => {
+    const p = reseal(clone(build()));
+    p.body.entities.record_keeping_sterile_items[0].probe_key = "smuggled";
+    reseal(p);
+    expect((verifyPlan(p, EXPECTED) as string[]).join(" ")).toContain("unknown writable column");
+  });
+
+  it("is refused when renamed to an unknown entity", () => {
+    const p = reseal(clone(build()));
+    p.body.entities.supplies = p.body.entities.record_keeping_sterile_items;
+    delete p.body.entities.record_keeping_sterile_items;
+    delete p.body.expected_counts.record_keeping_sterile_items;
+    reseal(p);
+    expect((verifyPlan(p, EXPECTED) as string[]).join(" ")).toContain("unknown writable entity");
+  });
+});
+
+describe("schema compatibility rule is explicit", () => {
+  it("documents WHY an entity could be added without a version bump", () => {
+    const src = readFileSync(join(ROOT, "scripts/synthetic-mirror/plan-schema.mjs"), "utf8");
+    expect(src).toMatch(/COMPATIBILITY RULE/);
+    // The load-bearing justification: an older verifier fails CLOSED.
+    expect(src).toMatch(/fails closed/i);
+    // And the condition under which the permission expires.
+    expect(src).toMatch(/THIS PERMISSION EXPIRES/);
+    expect(src).toMatch(/MUST increment SCHEMA_VERSION/);
+  });
+
+  it("an older verifier would refuse a newer plan rather than half-execute it", () => {
+    // Simulated by presenting an entity the current allowlist does not know:
+    // exactly what an out-of-date verifier sees when handed a newer plan.
+    const p = reseal(clone(build()));
+    p.body.entities.some_future_entity = [];
+    reseal(p);
+    const v = verifyPlan(p, EXPECTED) as string[];
+    expect(v.join(" ")).toContain("unknown writable entity");
+  });
+
+  it("still pins the version at 1", () => {
+    expect(SCHEMA_VERSION).toBe(1);
+    expect(build().schema_version).toBe(1);
+  });
+});

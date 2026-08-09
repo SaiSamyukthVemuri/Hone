@@ -25,6 +25,42 @@
 
 export const SCHEMA_VERSION = 1;
 
+/**
+ * COMPATIBILITY RULE — when may this "closed" schema grow?
+ * =======================================================
+ * Phase 2.5 added `record_keeping_sterile_items` to the allowlist without
+ * bumping the version. That is a deliberate decision, not an oversight, and the
+ * rule it follows is written here so the next person does not have to guess.
+ *
+ * Adding an entity or column is ADDITIVE in one direction only:
+ *   - a plan produced BEFORE the addition still verifies afterwards, because
+ *     everything it contains is still allowlisted;
+ *   - a plan produced AFTER the addition is REFUSED by an older verifier, which
+ *     reports `unknown writable entity`.
+ *
+ * That asymmetry is survivable here for one specific reason: the older verifier
+ * FAILS CLOSED. An out-of-date executor handed a newer plan refuses the whole
+ * thing; it cannot be tricked into writing an entity it does not know about.
+ * The failure mode of a version skew is "nothing happens", not "something
+ * unreviewed is written".
+ *
+ * It is also true, today, that NOTHING has consumed schema_version 1: both PRs
+ * are unmerged drafts, no plan has ever been executed against production, and
+ * the only executor in existence is an unpushed local prototype. Bumping to
+ * version 2 would imply a released v1 that had to stay readable, which would be
+ * fiction.
+ *
+ * THIS PERMISSION EXPIRES. Once a plan has been executed against production, or
+ * once any executor exists that is not rebuilt in lockstep with this file, an
+ * entity or column addition MUST increment SCHEMA_VERSION — because from that
+ * point a newer plan meeting an older verifier is an operational failure rather
+ * than a development detail. Removing or repurposing an entity or column
+ * requires a bump immediately, in every circumstance, because that direction is
+ * not additive at all.
+ *
+ * Pinned by tests/scripts/synthetic-mirror/execution-contract.test.ts.
+ */
+
 /** Top-level keys. Anything else is a refusal. */
 export const ENVELOPE_KEYS = Object.freeze([
   "schema_version",
@@ -52,9 +88,12 @@ export const BODY_KEYS = Object.freeze([
  *   appointments         -> studios, clients, practitioners, services
  *   sessions             -> studios, clients, practitioners, appointments
  *   session_blocks       -> studios, sessions
+ *   record_keeping_sterile_items -> studios ONLY (no client/session link)
  * so clients precede their children, appointments precede the sessions that
- * chart them, and sessions precede their blocks. Reset walks this list in
- * REVERSE, which is what keeps the deletes FK-safe.
+ * chart them, and sessions precede their blocks. Sterile items depend on
+ * nothing but the studio, so their position is free; they sit last for
+ * readability. Reset walks this list in REVERSE, which is what keeps the
+ * deletes FK-safe.
  */
 export const ENTITY_ORDER = Object.freeze([
   "clients",
@@ -62,6 +101,7 @@ export const ENTITY_ORDER = Object.freeze([
   "appointments",
   "sessions",
   "session_blocks",
+  "record_keeping_sterile_items",
 ]);
 
 /** entity -> the exact physical table it may touch. Not caller-supplied. */
@@ -71,6 +111,7 @@ export const ENTITY_TABLE = Object.freeze({
   appointments: "appointments",
   sessions: "sessions",
   session_blocks: "session_blocks",
+  record_keeping_sterile_items: "record_keeping_sterile_items",
 });
 
 /** entity -> the synthetic identity kind used to derive/prove its primary key. */
@@ -80,6 +121,7 @@ export const ENTITY_IDENTITY = Object.freeze({
   appointments: "appointment",
   sessions: "session",
   session_blocks: "session_block",
+  record_keeping_sterile_items: "sterile_item",
 });
 
 /**
@@ -118,6 +160,14 @@ export const ALLOWED_COLUMNS = Object.freeze({
     "probe_lot_number", "probe_lot_confirmed",
     "caution_for_next_session", "caution_note",
     "reaction_type", "reaction_notes", "tolerance_rating",
+  ]),
+  // Studio-scoped stock. NOTE it has no client or session foreign key at all,
+  // so it is the one entity carrying no per-client linkage — which is also why
+  // it can never leak a client identity.
+  record_keeping_sterile_items: Object.freeze([
+    "id", "studio_id",
+    "date_purchased", "item_description", "manufacturer_name",
+    "amount_purchased", "lot_number", "expiry_date", "notes",
   ]),
 });
 

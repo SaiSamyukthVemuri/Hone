@@ -259,6 +259,57 @@ export function buildSessionBlockRows(opts) {
 }
 
 /**
+ * Build synthetic sterile-inventory rows — the studio's stock record.
+ *
+ * This is what makes the `supply_expiry` To-do kind reachable. The dashboard
+ * loads sterile items whose `expiry_date` is non-null and at or before
+ * today + SUPPLY_EXPIRING_WITHIN_DAYS, and `supplyExpiryState()` then sorts
+ * each into expired / today / expiring / neutral. Those thresholds are the
+ * PRODUCT's, so this builder is given day offsets and never re-implements the
+ * rule — it just places rows either side of the real boundaries.
+ *
+ * Deliberately small. Supplies are studio-level rows and each one becomes its
+ * own To-do item, so a large stock list would crowd every per-client gap out of
+ * the six-item display. Four rows is enough to prove expired, expires-today,
+ * expires-soon AND a neutral control that must NOT appear.
+ *
+ * NOTE this entity has no client or session foreign key at all — it is scoped
+ * only by studio, so it cannot carry or leak a client identity.
+ *
+ * `todayIso` is passed in (never read from a clock here) so the builder stays
+ * pure and the offsets are reproducible.
+ */
+export function buildSterileItemRows(opts) {
+  const { studioId, todayIso } = opts;
+  const day = 86_400_000;
+  const base = Date.parse(`${todayIso.slice(0, 10)}T00:00:00Z`);
+  const iso = (offsetDays) =>
+    new Date(base + offsetDays * day).toISOString().slice(0, 10);
+
+  // offset, description — chosen to land on each side of the real boundaries.
+  const spec = [
+    [-14, "Sterile probes, size F2 (expired control)"],
+    [0, "Sterile probes, size F3 (expires today)"],
+    [12, "Sterile probes, size F4 (expires soon)"],
+    // Far outside the 30-day horizon: the loader must NOT return this one.
+    // Its absence from the To-do list is a negative control, not an oversight.
+    [180, "Sterile probes, size F5 (neutral control)"],
+  ];
+
+  return spec.map(([offset, description], ordinal) => ({
+    id: deriveSyntheticId(studioId, "sterile_item", ordinal),
+    studio_id: studioId,
+    date_purchased: iso(-365),
+    item_description: description,
+    manufacturer_name: "Synthetic Supply Co (test fixture)",
+    amount_purchased: "1 box (50)",
+    lot_number: `TEST-LOT-${2000 + ordinal}`,
+    expiry_date: iso(offset),
+    notes: SAFE_NOTES.client,
+  }));
+}
+
+/**
  * RESET SELECTION (Phase 13).
  *
  * Given the ids actually present in the target for one entity, return only

@@ -17,6 +17,7 @@ import {
   buildIntakeRows,
   buildSessionBlockRows,
   buildSessionRows,
+  buildSterileItemRows,
 } from "./writer.mjs";
 import { digestBody } from "./plan-digest.mjs";
 import { ORDINAL_CEILING, SYNTHETIC_NAMESPACE } from "./identity.mjs";
@@ -102,12 +103,20 @@ export function buildPlanDocument(opts) {
     sessions,
   });
 
+  // Studio-level stock. Placed relative to the export's own anchor so the
+  // expired / today / expiring rows land where the product's thresholds expect.
+  const sterileItems = buildSterileItemRows({
+    studioId: targetStudioId,
+    todayIso: new Date(anchorMs).toISOString().slice(0, 10),
+  });
+
   const entities = {
     clients,
     client_intake_forms: intakes,
     appointments,
     sessions,
     session_blocks: sessionBlocks,
+    record_keeping_sterile_items: sterileItems,
   };
 
   const body = {
