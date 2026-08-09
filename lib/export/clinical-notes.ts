@@ -81,9 +81,21 @@ export const CLINICAL_NOTES_CSV_FILENAME = "client_clinical_notes.csv";
  * the convention the appointment/audit exports already follow. Losing the row
  * because a name lookup missed would be the worse failure.
  *
- * `areas` is passed through as the array it is. `csvCell` JSON-encodes arrays,
- * which is lossless and is exactly how `electrolysis_entries.areas` already
- * exports — no second convention is invented here.
+ * `areas` is passed through as the array it is, so `csvCell` JSON-encodes it.
+ *
+ * THIS IS DELIBERATELY NOT THE SIBLING CONVENTION, and the difference is worth
+ * stating because an earlier version of this comment claimed otherwise. The two
+ * existing array columns in this export are flattened to delimiter-joined
+ * strings before serialization — `electrolysis_entries.areas` with `"; "` and
+ * `treatment_plans.treatment_areas` with `" | "`. Both are chosen for
+ * spreadsheet readability, and both are LOSSY: a value that itself contains the
+ * delimiter cannot be recovered from the joined string.
+ *
+ * Clinical-note areas keep the JSON encoding instead, because this column is
+ * part of a clinical record whose whole point here is historical portability —
+ * the exported form must be reconstructable, not merely readable. JSON preserves
+ * the `text[]` structure exactly, including element count and any element that
+ * contains punctuation. Nothing is dropped and no delimiter is overloaded.
  *
  * No filtering, no de-duplication, no latest-only collapse: every row in,
  * every row out, in the order given.
