@@ -26,7 +26,7 @@ export async function updateOwnProfileAction(formData: FormData): Promise<void> 
     "Your name",
   );
 
-  // Migration 0174: `authenticated` no longer holds UPDATE on
+  // Migration 0178: `authenticated` no longer holds UPDATE on
   // public.practitioners, so this goes through the narrow self-service command.
   // The id is a LOCATOR only — the command proves user_id = auth.uid() in SQL,
   // so this action cannot reach a colleague's row even for a studio owner.
@@ -54,7 +54,7 @@ export async function updatePractitionerColorAction(
     throw new Error("Pick a color from the palette.");
   }
 
-  // Migration 0174: narrow self-service command. isPractitionerColor() above
+  // Migration 0178: narrow self-service command. isPractitionerColor() above
   // remains the authoritative palette gate; the command enforces a defensive
   // shape check beneath it.
   const supabase = await createClient();
@@ -114,7 +114,7 @@ export async function rotateCalendarFeedTokenAction(): Promise<CalendarFeedResul
   const tokenHash = hashCalendarFeedToken(token);
   // Migration 0116: hash-only at rest. Only the SHA-256 hash is stored; the
   // raw token is returned once (below) and never persisted or re-read.
-  // Migration 0174: written through the narrow self-service command, which
+  // Migration 0178: written through the narrow self-service command, which
   // re-checks the hex shape AND the active requirement inside the database.
   const { error } = await supabase.rpc("rotate_own_calendar_feed_token", {
     p_practitioner_id: practitioner.id,
@@ -137,7 +137,7 @@ export async function clearCalendarFeedTokenAction(): Promise<CalendarFeedResult
   }
   const supabase = await createClient();
   // Migration 0116: hash-only at rest — clearing the hash revokes the feed.
-  // Migration 0174: narrow self-service command; the active requirement is
+  // Migration 0178: narrow self-service command; the active requirement is
   // re-enforced in the database.
   const { error } = await supabase.rpc("clear_own_calendar_feed_token", {
     p_practitioner_id: practitioner.id,

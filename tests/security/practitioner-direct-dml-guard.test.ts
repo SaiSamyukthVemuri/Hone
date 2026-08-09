@@ -3,10 +3,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// PRACTITIONER DIRECT-DML GUARD (audit finding A-P1-01, migration 0174).
+// PRACTITIONER DIRECT-DML GUARD (audit finding A-P1-01, migration 0178).
 // ===========================================================================
 //
-// WHY THIS EXISTS. 0174 revoked INSERT/UPDATE/DELETE on `public.practitioners`
+// WHY THIS EXISTS. 0178 revoked INSERT/UPDATE/DELETE on `public.practitioners`
 // from `anon` and `authenticated`, so a browser-client write now fails at the
 // privilege layer. That is the real enforcement, and this guard cannot
 // substitute for it.
@@ -44,7 +44,7 @@ const SERVICE_ROLE_ALLOWLIST: ReadonlyArray<{
     whyServiceRole:
       "Writes ONLY practitioners.default_machine_frequency — a UI convenience default, " +
       "not an identity or roster field. It runs as a fire-and-forget tail of a charting " +
-      "save, and 0174 removed the authenticated privilege it previously relied on.",
+      "save, and 0178 removed the authenticated privilege it previously relied on.",
     authorizationBeforeWrite:
       "The enclosing charting action has already resolved the acting practitioner through " +
       "getCurrentPractitionerWithStudio() and written the session block; the practitioner id " +
@@ -144,9 +144,9 @@ describe("no AUTHENTICATED-client write may reach public.practitioners", () => {
     const browserWrites = SITES.filter((s) => !s.admin);
     expect(
       browserWrites.map((s) => `${s.file}:${s.line} .${s.verb}()`),
-      "0174 revoked INSERT/UPDATE/DELETE from `authenticated`, so a browser-client " +
+      "0178 revoked INSERT/UPDATE/DELETE from `authenticated`, so a browser-client " +
         "write here fails at runtime for every practitioner. Use a narrow " +
-        "self-service command (see 0174) or a reviewed service-role writer.",
+        "self-service command (see 0178) or a reviewed service-role writer.",
     ).toEqual([]);
   });
 

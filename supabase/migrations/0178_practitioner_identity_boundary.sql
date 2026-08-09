@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- 0174 — PRACTITIONER IDENTITY BOUNDARY (closes audit finding A-P1-01)
+-- 0178 — PRACTITIONER IDENTITY BOUNDARY (closes audit finding A-P1-01)
 --
 -- WHAT THIS CLOSES
 -- ===========================================================================
@@ -103,7 +103,7 @@
 -- migration file in a transaction, so a bare SET LOCAL emits 25P01 and never
 -- arms (the 0159 lesson).
 --
--- Migration max 0173 -> 0174.
+-- Migration max on THIS BRANCH 0173 -> 0178.
 -- ---------------------------------------------------------------------------
 
 begin;

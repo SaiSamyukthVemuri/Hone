@@ -46,16 +46,37 @@ describe("rotateCalendarFeedTokenAction: uses the shared helpers", () => {
 });
 
 describe("rotateCalendarFeedTokenAction: writes ONLY the hash (phase 2 / 0116)", () => {
-  it("the UPDATE body sets calendar_feed_token_hash and NOT the raw token", () => {
+  // WHY THIS CHANGED. The old expectation pinned a DIRECT table write —
+  // `.update({ calendar_feed_token_hash: tokenHash }).eq("id", practitioner.id)`
+  // on the authenticated client. Migration 0178 (practitioner identity boundary)
+  // revoked UPDATE on public.practitioners from `authenticated`, so that write
+  // can no longer exist: it would fail at the privilege layer for every
+  // practitioner. The rotation now goes through the narrow SECURITY DEFINER
+  // command, which re-checks the hex shape AND the active requirement inside the
+  // database.
+  //
+  // The PROPERTY being pinned is unchanged and is what still matters: only the
+  // HASH is ever sent, never the raw token.
+  it("sends calendar_feed_token_hash and NEVER the raw token", () => {
     expect(ACTIONS).toMatch(
-      /\.update\(\{\s*\n?\s*calendar_feed_token_hash: tokenHash,\s*\n?\s*\}\)/,
+      /rpc\("rotate_own_calendar_feed_token",\s*\{[\s\S]{0,160}?p_token_hash: tokenHash,/,
     );
     expect(ACTIONS).not.toMatch(/calendar_feed_token: token,/);
+    expect(ACTIONS, "the raw token must never be a command argument").not.toMatch(
+      /p_token: token\b/,
+    );
   });
 
-  it("scopes the update to the calling practitioner", () => {
-    expect(ACTIONS).toMatch(
-      /\.eq\("id", practitioner\.id\)/,
+  // WHY THIS CHANGED. Scoping used to be expressed as `.eq("id", practitioner.id)`
+  // on a direct UPDATE — i.e. the CLIENT chose the row. Under 0178 the id is a
+  // LOCATOR only: the command proves `user_id = auth.uid()` in SQL, so a caller
+  // passing someone else's id is refused regardless of studio ownership. This
+  // pins the id still being passed, and the DB suite
+  // (tests/db/practitioner-identity-boundary.db.test.ts) proves the refusal.
+  it("scopes the command to the calling practitioner", () => {
+    expect(ACTIONS).toMatch(/p_practitioner_id: practitioner\.id/);
+    expect(ACTIONS, "no direct table write may remain").not.toMatch(
+      /\.from\(\s*["']practitioners["']\s*\)/,
     );
   });
 
@@ -83,11 +104,19 @@ describe("rotateCalendarFeedTokenAction: writes ONLY the hash (phase 2 / 0116)",
 });
 
 describe("clearCalendarFeedTokenAction: nulls ONLY the hash (phase 2 / 0116)", () => {
-  it("nulls calendar_feed_token_hash and NOT the raw column", () => {
-    expect(ACTIONS).toMatch(
-      /\.update\(\{\s*\n?\s*calendar_feed_token_hash: null,\s*\n?\s*\}\)/,
-    );
+  // WHY THIS CHANGED. Same reason as rotation: the direct
+  // `.update({ calendar_feed_token_hash: null })` is impossible under 0178. The
+  // clear command takes no value at all — it can ONLY null the hash — which is a
+  // stronger guarantee than the old expectation, because there is no argument
+  // through which any other value could be supplied.
+  it("clears the hash through a command that can set nothing else", () => {
+    expect(ACTIONS).toMatch(/rpc\("clear_own_calendar_feed_token",\s*\{/);
     expect(ACTIONS).not.toMatch(/calendar_feed_token: null,/);
+    // The clear command's ONLY argument is the locator.
+    const call = ACTIONS.slice(ACTIONS.indexOf('rpc("clear_own_calendar_feed_token"'));
+    const args = call.slice(0, call.indexOf("})"));
+    expect(args).toMatch(/p_practitioner_id: practitioner\.id/);
+    expect(args, "no value argument exists on the clear command").not.toMatch(/hash|token:/i);
   });
 });
 

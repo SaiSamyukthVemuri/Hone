@@ -10,11 +10,11 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// 0174 — PRACTITIONER IDENTITY BOUNDARY (audit finding A-P1-01).
+// 0178 — PRACTITIONER IDENTITY BOUNDARY (audit finding A-P1-01).
 // ===========================================================================
 //
 // `public.practitioners` is the identity spine: every auth.uid()-derived
-// clinical guarantee resolves through a row here. Before 0174 it was an
+// clinical guarantee resolves through a row here. Before 0178 it was an
 // ordinary authenticated-writable table, and the 0001 policy
 // `practitioners: owners update` pinned only `is_studio_owner(studio_id)` — it
 // constrained WHICH ROWS, never WHICH COLUMNS. Measured on a local chain, a
@@ -28,10 +28,10 @@ import {
 //       privilege -> `permission denied for table practitioners`
 //       RLS       -> `new row violates row-level security policy ...`
 //    Every direct-DML probe below asserts the MESSAGE, so this suite cannot
-//    pass on a database where 0174 was never applied but a policy happened to
+//    pass on a database where 0178 was never applied but a policy happened to
 //    filter the row.
 //
-// 2. A ZERO-ROW UPDATE IS NOT A REFUSAL. Before 0174 a NON-OWNER's profile save
+// 2. A ZERO-ROW UPDATE IS NOT A REFUSAL. Before 0178 a NON-OWNER's profile save
 //    matched no rows and returned success — the bug this migration also fixes.
 //    So "it didn't change anything" is never accepted as proof; the probes
 //    assert a raised error, and the self-service tests assert the row actually
@@ -110,7 +110,7 @@ afterAll(async () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0174 — the privilege matrix", () => {
+describe("0178 — the privilege matrix", () => {
   for (const role of ["authenticated", "anon"] as const) {
     it(`${role} holds no INSERT/UPDATE/DELETE/TRUNCATE on practitioners`, async () => {
       const r = await adminQuery(
@@ -160,7 +160,7 @@ describe("0174 — the privilege matrix", () => {
   });
 });
 
-describe("0174 — direct DML is refused by PRIVILEGE, for every column and role", () => {
+describe("0178 — direct DML is refused by PRIVILEGE, for every column and role", () => {
   // Zero-row predicates: with the privilege retained these would succeed with
   // rowCount 0 and no error, and `attempt` would return null.
   const NOROW = "00000000-0000-0000-0000-000000000000";
@@ -179,8 +179,8 @@ describe("0174 — direct DML is refused by PRIVILEGE, for every column and role
     expectPrivilegeDenial(await attempt("authenticated", sql), `UPDATE ${_col}`);
   });
 
-  it("an OWNER cannot direct-UPDATE a colleague's identity — the exact pre-0174 exploit", async () => {
-    // Reproduced before 0174 as UPDATE 1: user_id + role + active in ONE
+  it("an OWNER cannot direct-UPDATE a colleague's identity — the exact pre-0178 exploit", async () => {
+    // Reproduced before 0178 as UPDATE 1: user_id + role + active in ONE
     // statement against a COLLEAGUE's row, by a legitimate studio owner.
     expectPrivilegeDenial(
       await attemptAsUser(
@@ -261,7 +261,7 @@ describe("0174 — direct DML is refused by PRIVILEGE, for every column and role
   });
 });
 
-describe("0174 — self-service commands DO work, for owners and non-owners alike", () => {
+describe("0178 — self-service commands DO work, for owners and non-owners alike", () => {
   it("display name: the caller's own row is updated", async () => {
     await asUser(memberUserId, (q) =>
       q(`select public.set_own_practitioner_display_name($1, $2)`, [memberPractId, "Renamed Member"]),
@@ -272,7 +272,7 @@ describe("0174 — self-service commands DO work, for owners and non-owners alik
     expect(r.rows[0].display_name).toBe("Renamed Member");
   });
 
-  it("display name: a NON-OWNER succeeds — before 0174 this silently affected zero rows", async () => {
+  it("display name: a NON-OWNER succeeds — before 0178 this silently affected zero rows", async () => {
     // The old `practitioners: owners update` policy was the only UPDATE policy,
     // so this actor's save matched nothing and reported success.
     await asUser(memberUserId, (q) =>
@@ -349,7 +349,7 @@ describe("0174 — self-service commands DO work, for owners and non-owners alik
         expect(f!.message).toMatch(/Inactive practitioners cannot manage feeds/i);
       }
       // ...and the inactive practitioner may still rename themselves, which is
-      // the pre-0174 behaviour: only the FEED actions were active-gated.
+      // the pre-0178 behaviour: only the FEED actions were active-gated.
       await asUser(memberUserId, (q) =>
         q(`select public.set_own_practitioner_display_name($1,$2)`, [memberPractId, "Still Me"]),
       );
@@ -359,7 +359,7 @@ describe("0174 — self-service commands DO work, for owners and non-owners alik
   });
 });
 
-describe("0174 — the command cannot be turned into an attack", () => {
+describe("0178 — the command cannot be turned into an attack", () => {
   it("an OWNER cannot target a colleague through ANY self-service command", async () => {
     // Ownership is never consulted: the owner is refused exactly as a stranger.
     for (const sql of [
@@ -468,7 +468,7 @@ describe("0174 — the command cannot be turned into an attack", () => {
   });
 });
 
-describe("0174 — the policy set truthfully reflects the boundary", () => {
+describe("0178 — the policy set truthfully reflects the boundary", () => {
   it("practitioners carries exactly ONE policy: members read (SELECT)", async () => {
     const r = await adminQuery(
       `select p.polname, p.polcmd::text cmd, pg_get_expr(p.polqual, p.polrelid) qual
@@ -498,7 +498,7 @@ describe("0174 — the policy set truthfully reflects the boundary", () => {
   });
 });
 
-describe("0174 — governed roster administration is untouched", () => {
+describe("0178 — governed roster administration is untouched", () => {
   it("set_practitioner_active_locked still exists and keeps its posture", async () => {
     const r = await adminQuery(
       `select p.prosecdef,

@@ -4,13 +4,13 @@ import { join } from "node:path";
 import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
-// 0174 — PRACTITIONER IDENTITY BOUNDARY source contract.
+// 0178 — PRACTITIONER IDENTITY BOUNDARY source contract.
 //
 // Byte-level properties of the migration; behaviour lives in
 // tests/db/practitioner-identity-boundary.db.test.ts.
 // ===========================================================================
 
-const FILE = "supabase/migrations/0174_practitioner_identity_boundary.sql";
+const FILE = "supabase/migrations/0178_practitioner_identity_boundary.sql";
 const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 
 /** Executable SQL only. The header discusses every forbidden pattern at length. */
@@ -35,15 +35,15 @@ const COMMANDS = [
   "clear_own_calendar_feed_token",
 ] as const;
 
-describe("0174 — migration state", () => {
+describe("0178 — migration state", () => {
   // Only the current maximum migration's own test carries this (CLAUDE.md §2).
   it("is the current repository maximum", () => {
-    expect(isRepoMax("0174")).toBe(true);
-    expect(versionsAbove("0174")).toEqual([]);
+    expect(isRepoMax("0178")).toBe(true);
+    expect(versionsAbove("0178")).toEqual([]);
   });
 });
 
-describe("0174 — the revocation surface", () => {
+describe("0178 — the revocation surface", () => {
   it("revokes INSERT, UPDATE and DELETE from BOTH browser roles", () => {
     for (const role of ["authenticated", "anon"]) {
       expect(CODE).toMatch(
@@ -102,7 +102,7 @@ describe("0174 — the revocation surface", () => {
   });
 });
 
-describe("0174 — dead write policies are removed, the read policy is preserved", () => {
+describe("0178 — dead write policies are removed, the read policy is preserved", () => {
   it("drops the owner insert and owner update policies", () => {
     for (const p of ["practitioners: owners insert", "practitioners: owners update"]) {
       expect(CODE).toMatch(
@@ -124,7 +124,7 @@ describe("0174 — dead write policies are removed, the read policy is preserved
   });
 });
 
-describe("0174 — the four self-service commands", () => {
+describe("0178 — the four self-service commands", () => {
   it.each(COMMANDS)("%s is declared exactly once", (fn) => {
     const decls = CODE.match(new RegExp(`create or replace function public\\.${fn}\\(`, "g")) ?? [];
     expect(decls).toHaveLength(1);
@@ -195,7 +195,7 @@ describe("0174 — the four self-service commands", () => {
   });
 
   it("the feed commands gate on active; the name/color commands deliberately do not", () => {
-    // Preserving the pre-0174 contract exactly: only the FEED actions checked
+    // Preserving the pre-0178 contract exactly: only the FEED actions checked
     // `practitioner.active`. Broadening it would remove a capability.
     const bodies = Object.fromEntries(
       CODE.split("create or replace function public.")
@@ -209,7 +209,7 @@ describe("0174 — the four self-service commands", () => {
   });
 });
 
-describe("0174 — EXECUTE grants are exact", () => {
+describe("0178 — EXECUTE grants are exact", () => {
   it("revokes EXECUTE from public, anon AND service_role for every command", () => {
     // Supabase grants EXECUTE to all three at create time; missing one is the
     // 0129 (anon) and 0164 (service_role) mistake.
@@ -236,7 +236,7 @@ describe("0174 — EXECUTE grants are exact", () => {
   });
 });
 
-describe("0174 — scope: nothing else is touched", () => {
+describe("0178 — scope: nothing else is touched", () => {
   it("names no appointment object — B3/0172 and B4/0173 are untouched", () => {
     expect(CODE_FLAT).not.toMatch(/appointment/i);
   });
@@ -274,7 +274,7 @@ describe("0174 — scope: nothing else is touched", () => {
   });
 });
 
-describe("0174 — transaction and lock discipline", () => {
+describe("0178 — transaction and lock discipline", () => {
   it("opens its OWN transaction with lock_timeout armed INSIDE it", () => {
     const lines = CODE.split("\n").map((l) => l.trim()).filter(Boolean);
     expect(lines[0]).toBe("begin;");
@@ -286,7 +286,7 @@ describe("0174 — transaction and lock discipline", () => {
   });
 });
 
-describe("0174 — the doctrine the file must carry", () => {
+describe("0178 — the doctrine the file must carry", () => {
   it("records that the finding was REVALIDATED, not inherited from the audit", () => {
     expect(PROSE).toMatch(/REVALIDATED AT PRODUCTION/i);
     expect(PROSE).toMatch(/UPDATE 1/);
@@ -313,8 +313,8 @@ describe("0174 — the doctrine the file must carry", () => {
   });
 });
 
-describe("0174 — production truth is NOT advanced by this PR", () => {
-  it("the canonical hosted record still reads 0173 — 0174 is UNAPPLIED", () => {
+describe("0178 — production truth is NOT advanced by this PR", () => {
+  it("the canonical hosted record still reads 0173 — 0178 is UNAPPLIED", () => {
     const rec = JSON.parse(
       readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
     );

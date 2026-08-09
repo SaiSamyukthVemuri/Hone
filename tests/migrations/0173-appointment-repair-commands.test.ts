@@ -66,9 +66,19 @@ describe("0173 — migration state", () => {
   // drafted as a companion 0174 and withdrawn, because the canonical
   // appointment-DML program reserves 0174 for B5, 0175 for B6, 0176 for B7 and
   // 0177 for B8. When B5's 0174 lands, this block moves there.
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0173")).toBe(true);
-    expect(versionsAbove("0173")).toEqual([]);
+  //
+  // MOVED, per the same CLAUDE.md §2 convention that put it here: the
+  // practitioner identity boundary branch carries 0178 (Phase 2 — Practitioner /
+  // Actor Integrity), so on THAT branch 0178 is the repository maximum and
+  // tests/migrations/0178-practitioner-identity-boundary.test.ts carries the
+  // tripwire. 0173 remains the PRODUCTION maximum and the canonical next
+  // production migration is still 0174 / B5 — the assertions below pin that
+  // hosted truth and are deliberately unchanged.
+  it("0173 is still the highest APPLIED migration, whatever a branch carries", () => {
+    // Deliberately not isRepoMax(): a parked Phase-2 branch may legitimately
+    // hold a higher, unapplied number. What must stay true is that nothing
+    // between 0174 and 0177 has been consumed.
+    expect(versionsAbove("0173").filter((v) => v < "0178")).toEqual([]);
   });
 
   it("0174 does not exist — that number belongs to B5", () => {
@@ -88,10 +98,16 @@ describe("0173 — production truth (applied 2026-08-09)", () => {
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("the canonical hosted record reads 0173 — hosted == repo, nothing pending", () => {
+  it("the canonical hosted record reads 0173", () => {
+    // Hosted truth, pinned exactly as before — this is production fact and is
+    // NOT weakened.
     expect(rec.hosted_migration_max).toBe("0173");
     expect(rec.hosted_applied_at).toBe("2026-08-09T12:06:47Z");
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+    // The former `isRepoMax(hosted)` "hosted == repo" coupling is dropped
+    // because it is false on any branch carrying an unapplied migration, which
+    // is exactly what a parked Phase-2 branch is. The property that actually
+    // matters — that no appointment-program number was consumed early — is
+    // asserted above and by the "0174 does not exist" reservation test.
   });
 
   it("the record carries the sha256 of the exact 0173 bytes that were applied", async () => {
