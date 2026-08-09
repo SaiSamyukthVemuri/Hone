@@ -1,28 +1,50 @@
 /**
  * scripts/synthetic-mirror/writer.mjs — synthetic row builders + reset selection.
  *
- * PURE. Builds the exact row objects the CLI inserts, and decides exactly which
- * ids reset may delete. Kept separate from the CLI so all of it is unit-testable
- * without a database.
+ * PURE ROW / PLAN BUILDER. It returns plain JavaScript objects describing the
+ * population a reconciliation WOULD create, and decides which ids a reset WOULD
+ * be allowed to remove. It opens no database client, issues no statement and
+ * performs no I/O — which is what makes all of it unit-testable without a
+ * database.
  *
- * WRITE PATH — why direct service_role INSERT rather than a governed command
- * -------------------------------------------------------------------------
- * The brief prefers governed write paths. Here they are both unavailable and
- * unsafe:
- *   - `authenticated` has had INSERT on appointments / sessions /
- *     client_intake_forms revoked (0169, 0172), so there is no authenticated
- *     path left to use;
- *   - the governed PUBLIC command (`0170_public_appointment_command`) is reached
- *     through the booking server action, which SENDS A CONFIRMATION EMAIL and
- *     writes an audit row attributed to a client actor. Using it to mint
- *     fixtures would be both noisier and less safe.
- * service_role retains INSERT on all four tables (verified against production
- * with has_table_privilege). A direct insert touches no notification path, so
- * it is the quiet option as well as the only available one.
+ * NOTHING IN THIS CHANGE INSERTS THESE ROWS
+ * -----------------------------------------
+ * The objects below are a DESCRIPTION of intended state, not a write. No code
+ * in this PR passes them to a database: `scripts/synthetic-mirror.mjs` performs
+ * zero DML and reports that boundary explicitly (see `reportWriteBoundary()`
+ * there). Executing them is a separately authorized layer that does not yet
+ * exist.
  *
- * Business invariants are still respected rather than bypassed: appointments
- * carry a consistent ends_at / duration_minutes / buffer_minutes_snapshot /
- * blocked_ends_at, and statuses come from the table's own CHECK vocabulary.
+ * WHY DIRECT service_role DML WAS REJECTED
+ * ----------------------------------------
+ * Writing these rows directly from this repository was considered and
+ * deliberately abandoned. It would breach two shipped guards, both of which
+ * scan `scripts/` as well as `app/`, `lib/` and `components/`:
+ *
+ *   - `tests/security/entry-direct-dml-guard.test.ts` (L18 Phase 4) holds the
+ *     direct-writer census for `sessions`, `session_blocks`,
+ *     `session_block_areas`, `electrolysis_entries`, `laser_entries` and
+ *     `treatment_images` at ZERO, with an exception list that is empty and
+ *     documented as having no list left to append to;
+ *   - `tests/security/appointment-direct-dml-guard.test.ts` freezes
+ *     `appointments` at exactly seven reviewed writers, every one an UPDATE.
+ *
+ * service_role does still retain INSERT on these tables (verified in
+ * production with has_table_privilege), and the governed alternatives are
+ * genuinely unsuitable — `authenticated` INSERT was revoked by 0169/0172, and
+ * the public booking command (0170) is reached through a server action that
+ * SENDS A CONFIRMATION EMAIL. But "technically permitted and quieter" is not a
+ * reason to become the one unreviewed clinical writer those guards exist to
+ * prevent. Fixture convenience does not outrank the clinical-write boundary.
+ *
+ * A future executor therefore needs a GOVERNED path — a service_role-only RPC
+ * added under an agreed migration number, or an out-of-repo operator process —
+ * not an insert added here.
+ *
+ * Business invariants are respected rather than bypassed even though nothing is
+ * written: appointments carry a consistent ends_at / duration_minutes /
+ * buffer_minutes_snapshot / blocked_ends_at, and statuses come from the table's
+ * own CHECK vocabulary, so the planned rows would be valid as-is.
  */
 
 import { deriveSyntheticId } from "./identity.mjs";
@@ -172,8 +194,13 @@ export function buildIntakeRows(opts) {
  *
  * Given the ids actually present in the target for one entity, return only
  * those that are PROVABLY synthetic, plus the ones that must be left alone.
- * The caller deletes `deletable` and nothing else — there is deliberately no
- * code path that issues `delete ... where studio_id = ...`.
+ *
+ * This is a SELECTION, not a deletion: nothing in this change removes a row.
+ * `reset` reports these counts only. The contract a future governed executor
+ * must honour is that it may act on `deletable` and on nothing else — which is
+ * why `refused` is returned explicitly rather than silently dropped, and why
+ * there is deliberately no code path anywhere in this tool that could issue
+ * `delete ... where studio_id = ...`.
  */
 export function selectResettableIds(presentIds, derivableSet) {
   const deletable = [];
