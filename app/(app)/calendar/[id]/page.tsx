@@ -304,6 +304,7 @@ export default async function AppointmentDetailPage({
       plansRes,
       lastTreatment,
       linkedSessionRes,
+      clinicalNotesRes,
     ] = await Promise.all([
       getPinnedNotesForClient(studio.id, clientId),
       getClientTags(studio.id, clientId),
@@ -346,6 +347,14 @@ export default async function AppointmentDetailPage({
         .order("started_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // Latest consultation + skin/hair note. It depends on NOTHING else in
+      // this block — only `clientId`, which is already in hand — so it belongs
+      // INSIDE this parallel wave. Awaiting it after the wave added a whole
+      // extra round-trip to every appointment render, including the
+      // electrolysis and laser visits where the card goes on to render
+      // nothing. Same helper the client profile calls: no new query shape, no
+      // second note model, no write path.
+      getClinicalNotesSummary(clientId),
     ]);
 
     pinnedNotes = pinnedRes;
@@ -361,7 +370,7 @@ export default async function AppointmentDetailPage({
       | Pick<Session, "id" | "started_at" | "modality">
       | null;
 
-    clinicalNotesSummary = await getClinicalNotesSummary(clientId);
+    clinicalNotesSummary = clinicalNotesRes;
 
     // The complete pre-visit view model: every treated area with laterality,
     // the complete per-area setup, the outcomes kept separate from that setup,

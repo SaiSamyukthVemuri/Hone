@@ -151,11 +151,25 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
     await expect(card).toContainText(skinBody);
     await expect(card).not.toContainText(consultBody);
 
-    // Charting stays reachable — a consultation may include a test treatment.
-    await expect(page.getByTestId("appointment-consultation-notes")).toBeVisible();
+    // BOTH affordances coexist on a consultation appointment. A consultation
+    // may include a short electrolysis test treatment, so the notes CTA has to
+    // ADD to this surface rather than replace charting. Asserted through the
+    // shipping accessible name and the real href, so it cannot pass on a
+    // lookalike: the link must point at THIS appointment's charting route.
+    // (The earlier version of this assertion re-checked the notes card by
+    // mistake and therefore proved nothing about charting at all.)
+    const chartLink = page.getByRole("link", { name: "+ Chart session" });
+    await expect(chartLink).toBeVisible();
+    await expect(chartLink).toHaveAttribute(
+      "href",
+      new RegExp(
+        `/clients/${clientId}/sessions/new\\?appointment_id=${appointmentId}`,
+      ),
+    );
 
     // The primary CTA lands on the EXISTING tab, whose deep link is unchanged.
     const cta = page.getByTestId("appointment-record-consultation-notes");
+    await expect(cta).toBeVisible();
     await expect(cta).toHaveText("Record consultation notes");
     const box = await cta.boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -163,10 +177,14 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
     await expect(page).toHaveURL(new RegExp(`/clients/${clientId}\\?tab=consultation`));
     // ...and that tab now says what it holds. This journey runs at MOBILE
     // width, where the profile tabs are a <select> rather than the desktop
-    // <button> row — so assert the option, not a button.
-    await expect(page.locator("select").first()).toContainText(
-      "Consultation & Skin/Hair",
-    );
+    // <button> row — so assert the option, not a button. Scoped to the profile
+    // nav by its accessible name (the same handle mobile-ux.spec.ts uses) so
+    // this cannot silently start matching some other select on the page.
+    await expect(
+      page
+        .getByRole("navigation", { name: "Client profile sections" })
+        .locator("select"),
+    ).toContainText("Consultation & Skin/Hair");
   });
 });
 

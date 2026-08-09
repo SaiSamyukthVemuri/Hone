@@ -141,7 +141,10 @@ export function ConsultationNotesCard({
         className={
           isConsultation
             ? "min-h-[44px] self-start rounded-md border border-neutral-900 bg-neutral-900 px-3 py-2.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-            : "self-start text-xs font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-300"
+            : // Quieter than the primary CTA, but still a real tap target at
+              // phone width: inline-flex + min-h-[44px] gives it the same 44px
+              // hit area without turning it into a second button.
+              "inline-flex min-h-[44px] items-center self-start text-xs font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-300"
         }
       >
         {isConsultation

@@ -33,22 +33,33 @@ describe("G1 — the appointment reaches the notes", () => {
     expect(CARD).not.toMatch(/\/consultation\/new|\/notes\/new/);
   });
 
-  it("the primary 'Record consultation notes' CTA is scoped to consultation modality", () => {
-    expect(CARD).toMatch(/Record consultation notes/);
-    // The label is chosen by isConsultation, never rendered unconditionally.
+  // SOURCE-STRUCTURE test, not a rendering test. The earlier name claimed the
+  // CTA "is scoped to consultation modality", which a regex cannot establish —
+  // and the old proximity pattern (/isConsultation[\s\S]{0,120}Record .../)
+  // would still have matched if the ternary were INVERTED, i.e. the exact
+  // regression it named. It now pins the TRUE branch of each ternary, so an
+  // inversion fails here. Runtime scoping is proved in the browser:
+  // e2e/clinical-notes.spec.ts asserts the record CTA on a consultation
+  // appointment.
+  it("source: the record CTA is the TRUE branch of the isConsultation ternary", () => {
+    // testid ternary: true -> record, false -> view.
     expect(CARD).toMatch(
-      /isConsultation[\s\S]{0,120}Record consultation notes/,
+      /isConsultation\s*\?\s*"appointment-record-consultation-notes"\s*:\s*"appointment-view-consultation-notes"/,
     );
+    // label ternary: true -> "Record consultation notes".
+    expect(CARD).toMatch(/isConsultation\s*\?\s*\n?\s*"Record consultation notes"/);
     // And the page derives that flag from the SERVICE modality it already has.
     expect(APPT).toMatch(
       /isConsultation=\{data\.service\?\.modality === "consultation"\}/,
     );
   });
 
-  it("Chart session remains available — a consultation may include a test treatment", () => {
-    // The consultation CTA must not replace charting: the postcare section on
-    // this same page already encodes that consultations can include a short
-    // electrolysis test treatment.
+  // SOURCE-ORDER test. That ChartSessionCard actually RENDERS beside the notes
+  // card on a real consultation appointment is proved in the browser
+  // (e2e/clinical-notes.spec.ts asserts the "+ Chart session" link and its
+  // appointment-scoped href). This only pins that the notes card was ADDED
+  // after it in the tree rather than replacing it.
+  it("source: the notes card is added after ChartSessionCard, not in place of it", () => {
     expect(APPT).toMatch(/<ChartSessionCard/);
     const chartAt = APPT.indexOf("<ChartSessionCard");
     const notesAt = APPT.indexOf("<ConsultationNotesCard");
@@ -56,11 +67,11 @@ describe("G1 — the appointment reaches the notes", () => {
     expect(notesAt).toBeGreaterThan(chartAt);
   });
 
-  it("a client-less appointment renders nothing rather than a broken link", () => {
+  it("source: a client-less card early-returns null rather than build a link", () => {
     expect(CARD).toMatch(/if \(!clientId\) return null;/);
   });
 
-  it("a non-consultation appointment with NO notes renders nothing at all", () => {
+  it("source: a non-consultation card with no notes early-returns null", () => {
     // No empty panel on every electrolysis appointment.
     expect(CARD).toMatch(/if \(!isConsultation && !hasAnyNote\) return null;/);
   });
@@ -71,19 +82,43 @@ describe("G2 — pre-visit note context reuses the existing authority", () => {
     expect(APPT).toMatch(
       /import \{ getClinicalNotesSummary \} from "@\/lib\/clinical-notes\/queries"/,
     );
-    expect(APPT).toMatch(/await getClinicalNotesSummary\(clientId\)/);
   });
 
-  it("renders both kinds, each only when present", () => {
+  it("source: each kind's block is guarded by its own presence check", () => {
     expect(CARD).toMatch(/\{consultation && \(/);
     expect(CARD).toMatch(/\{skinHair && \(/);
     expect(CARD).toMatch(/Consultation note/);
     expect(CARD).toMatch(/Skin\/hair analysis/);
   });
 
-  it("shows the CURRENT entry and says so when there are more", () => {
-    // Never reads as the whole record; history stays on the tab.
-    expect(CARD).toMatch(/latest of \$\{total\}|latest of /);
+  // That the CURRENT (non-superseded) entry is what actually appears is proved
+  // against real records in e2e/clinical-notes.spec.ts, which writes a note,
+  // revises it, and asserts the appointment card shows the revision and NOT
+  // the superseded original. This only pins the qualifier's condition.
+  it("source: the 'latest of N' qualifier sits in the TRUE branch of total > 1", () => {
+    // The old pattern (/latest of \$\{total\}|latest of /) matched the bare
+    // literal unconditionally, so it could not have detected `total > 1`
+    // becoming `total > 100`, nor the qualifier moving branches.
+    expect(CARD).toMatch(/total > 1\s*\?[\s\S]{0,40}latest of \$\{total\}/);
+  });
+
+  // The PRIMARY CTA's 44px target is measured for real in the browser
+  // (e2e/clinical-notes.spec.ts reads its boundingBox). The secondary link only
+  // renders on a NON-consultation appointment that already has notes, which
+  // that journey does not visit, so it is pinned structurally here: both
+  // branches of the className ternary must carry the affordance.
+  it("source: BOTH CTA className branches carry the 44px touch target", () => {
+    // Reads ONLY the className ternary, with comments stripped. The first
+    // version of this assertion counted /min-h-\[44px\]/ across the whole file
+    // and stayed green when the secondary branch's class was deleted, because
+    // a COMMENT mentioning min-h-[44px] kept the count at two. A negative
+    // control caught that; do not loosen it back to a file-wide count.
+    const block = CARD.match(/className=\{[\s\S]*?\n\s*\}/)?.[0] ?? "";
+    const branches = block.replace(/\/\/.*$/gm, "").match(/"[^"]+"/g) ?? [];
+    expect(branches).toHaveLength(2);
+    for (const branch of branches) {
+      expect(branch).toContain("min-h-[44px]");
+    }
   });
 
   it("does not truncate clinical text", () => {
@@ -107,6 +142,50 @@ describe("G3 — the tab says what it holds, without changing its URL", () => {
     expect(TABS).not.toMatch(/value: "consultation_skin_hair"/);
     expect(TAB_MODEL).toMatch(/\| "consultation"/);
     expect(TAB_MODEL).toMatch(/value === "consultation"/);
+  });
+});
+
+// The independent review found this read awaited AFTER the page's six-way
+// Promise.all. It depends on nothing in that wave — only `clientId`, already in
+// hand — so it added a whole serial round-trip to EVERY appointment render,
+// including the electrolysis and laser visits where the card then renders
+// nothing at all.
+//
+// HONEST SCOPE: this is a source-structure guard, NOT a timing measurement. A
+// wall-clock concurrency assertion over a Next.js async server component would
+// need a full request harness and would be flaky under CI load. What it does
+// pin is the two shapes that actually regress — a standalone `await`, or a
+// second call site drifting back out of the wave.
+describe("the clinical-note read stays inside the page's parallel wave (source structure)", () => {
+  // The `] = await Promise.all([ … ]);` array, sliced out of the page source.
+  function parallelBlock(): string {
+    const open = APPT.indexOf("] = await Promise.all([");
+    const close = APPT.indexOf("\n    ]);", open);
+    return open > -1 && close > open ? APPT.slice(open, close) : "";
+  }
+
+  it("the page still has exactly one parallel wave to belong to", () => {
+    expect(parallelBlock().length).toBeGreaterThan(0);
+  });
+
+  it("getClinicalNotesSummary is invoked exactly once on this page", () => {
+    // The import and the `typeof` in the declaration carry no call paren, so
+    // this counts invocations only.
+    expect(APPT.match(/getClinicalNotesSummary\(/g) ?? []).toHaveLength(1);
+  });
+
+  it("that single invocation sits INSIDE the Promise.all array", () => {
+    expect(parallelBlock()).toMatch(/getClinicalNotesSummary\(clientId\)/);
+  });
+
+  it("no standalone `await getClinicalNotesSummary(...)` remains", () => {
+    // The exact shape that serialized before.
+    expect(APPT).not.toMatch(/await\s+getClinicalNotesSummary\(/);
+  });
+
+  it("its result is consumed from the wave's destructuring, not re-fetched", () => {
+    expect(APPT).toMatch(/clinicalNotesRes,/);
+    expect(APPT).toMatch(/clinicalNotesSummary = clinicalNotesRes;/);
   });
 });
 
