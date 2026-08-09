@@ -241,16 +241,34 @@ export function selectBrowserGroups(files) {
     }
   }
 
+  // Fail SAFE on application code we could not attribute to a group.
+  //
+  // This check is PER FILE, and deliberately so. It used to run only when the
+  // whole diff selected ZERO groups, which meant a single co-changed file that
+  // DID match a group silently cancelled the safety net for every file that did
+  // not. Measured: `app/(app)/dashboard/page.tsx` alone correctly selected
+  // extended, but that same file plus one calendar test selected `calendar` +
+  // `smoke` — the dashboard, entirely uncovered, because something else in the
+  // commit happened to be attributable.
+  //
+  // The doctrine this restores is the one already written down in CLAUDE.md §3:
+  // "Unattributable application code fails safe to extended — NEVER to a narrow
+  // group." Attributing a file narrows it on purpose; failing to attribute one
+  // must never narrow it by accident.
+  const unattributed = list.filter(
+    (f) =>
+      /^(app|components|lib|hooks)\//.test(f) &&
+      !PATH_TO_GROUP.some((rule) => rule.patterns.some((re) => re.test(f))),
+  );
+  if (unattributed.length > 0) {
+    return {
+      groups: [EXTENDED],
+      extended: true,
+      reason: `application code changed that matches no browser group (${unattributed[0]}) — failing safe to extended coverage`,
+    };
+  }
+
   if (groups.size === 0) {
-    // Touched app/component code we could not attribute. Fail SAFE.
-    const appish = list.some((f) => /^(app|components|lib|hooks)\//.test(f));
-    if (appish) {
-      return {
-        groups: [EXTENDED],
-        extended: true,
-        reason: "application code changed but no group matched — failing safe to extended coverage",
-      };
-    }
     return { groups: [], extended: false, reason: "no browser-affecting paths" };
   }
 

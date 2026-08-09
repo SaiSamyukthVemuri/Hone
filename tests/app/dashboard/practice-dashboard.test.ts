@@ -34,20 +34,31 @@ describe("resolvePeriodRange", () => {
     });
   });
 
-  it("week starts Monday (2026-06-11 is a Thursday)", () => {
+  // Dashboard V2 Part 1: the reporting week moved from a Monday anchor to the
+  // calendar's SUNDAY anchor, so these two cases invert. 2026-06-11 is a
+  // Thursday; its week now runs Sun 2026-06-07 .. Sat 2026-06-13.
+  // Full boundary coverage — Sunday/Monday/Saturday, rollover, month, year,
+  // leap day, DST, and a 365-day agreement check against the calendar helper —
+  // lives in tests/lib/dashboard/practice-metrics-week.test.ts.
+  it("week starts Sunday (2026-06-11 is a Thursday)", () => {
     expect(resolvePeriodRange("2026-06-11", "week")).toEqual({
-      startLocal: "2026-06-08",
-      endLocalExclusive: "2026-06-15",
+      startLocal: "2026-06-07",
+      endLocalExclusive: "2026-06-14",
       label: "this week",
     });
   });
 
-  it("a Monday starts its own week; Sunday belongs to the prior Monday", () => {
-    expect(resolvePeriodRange("2026-06-08", "week").startLocal).toBe(
-      "2026-06-08",
+  it("a Sunday starts its own week; the following Saturday belongs to it", () => {
+    // 2026-06-07 is a Sunday, 2026-06-13 the Saturday that closes its week.
+    expect(resolvePeriodRange("2026-06-07", "week").startLocal).toBe(
+      "2026-06-07",
     );
+    expect(resolvePeriodRange("2026-06-13", "week").startLocal).toBe(
+      "2026-06-07",
+    );
+    // ...and the NEXT Sunday rolls over rather than extending it.
     expect(resolvePeriodRange("2026-06-14", "week").startLocal).toBe(
-      "2026-06-08",
+      "2026-06-14",
     );
   });
 

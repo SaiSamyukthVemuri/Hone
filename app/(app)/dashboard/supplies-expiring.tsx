@@ -41,7 +41,7 @@ export function SuppliesExpiringCard({
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <div>
-        <h2 className="text-lg font-medium">Supplies expiring</h2>
+        <h3 className="text-base font-medium">Supplies expiring</h3>
         <p className="text-sm text-neutral-500">
           Sterile items and probe lots expired or expiring within 30 days.
         </p>

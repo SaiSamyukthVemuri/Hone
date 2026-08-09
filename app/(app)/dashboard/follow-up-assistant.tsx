@@ -63,7 +63,7 @@ export function FollowUpAssistantCard({
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <div>
-        <h2 className="text-lg font-medium">Follow-up assistant</h2>
+        <h3 className="text-base font-medium">Follow-up assistant</h3>
         <p className="text-sm text-neutral-500">
           Record gaps and follow-ups from recent appointments.
         </p>
