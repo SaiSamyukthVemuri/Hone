@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
 import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memory";
+import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 
 // ===========================================================================
 // Dashboard V2 Part 2A — the previous treatment, in place, on the Today row.
@@ -106,30 +107,4 @@ export function TodayTreatmentMemory({
       </div>
     </div>
   );
-}
-
-/**
- * The compact identity of the visit: when, what modality, which areas.
- *
- * Every part is optional because the historical record genuinely may not carry
- * it. Absent values are omitted, never rendered as "0 min", "0 hairs" or an
- * empty area — a legacy visit with no recorded minutes did not take zero
- * minutes. The model already distinguishes "not recorded" from "recorded as
- * zero" (totalMinutes / totalHairs are null vs 0); this preserves that.
- */
-export function compactSummary(memory: AppointmentPrepMemory): string {
-  const date = new Date(memory.startedAt);
-  const parts: string[] = [
-    Number.isNaN(date.getTime())
-      ? "Date not recorded"
-      : date.toLocaleDateString(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        }),
-  ];
-  if (memory.modality) parts.push(memory.modality);
-  if (memory.areaHeadline) parts.push(memory.areaHeadline);
-  if (memory.totalMinutes != null) parts.push(`${memory.totalMinutes} min`);
-  return parts.join(" · ");
 }
