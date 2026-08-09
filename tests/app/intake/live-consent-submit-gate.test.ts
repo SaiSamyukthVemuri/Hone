@@ -211,6 +211,86 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
+// TRANSITIONAL: intakes that already hold a photo answer.
+//
+// Between #529 and this change the intake DID collect photo consent, so real
+// records carry real answers. Both writers rebuild the stored record from the
+// studio's currently-live intake forms, which means a form no longer resolved
+// simply stops being written — so without an explicit carry-forward the very
+// next save or submit would erase a client's photo answer. Silent clinical
+// history loss is the worst outcome available here, so it is pinned through
+// the REAL action, not the helper.
+describe("a stored photo answer survives the move to the portal", () => {
+  // Exactly the shape validateIntakeConsentResponses stored when photo consent
+  // was still an intake form.
+  const storedPhoto = {
+    template_id: "photo-1",
+    form_type: "photo_consent",
+    template_version: 1,
+    title_snapshot: "Photo Consent",
+    body_snapshot: "Studio photo consent text.",
+    template_hash: "hash-photo-v1",
+    response: "denied",
+    response_label_snapshot: "I do NOT consent to photographs.",
+    responded_at: "2026-08-08T10:00:00.000Z",
+  };
+
+  function seedStoredPhoto() {
+    currentRow().responses = {
+      [INTAKE_CONSENT_RESPONSES.id]: { version: 1, forms: [storedPhoto] },
+    };
+  }
+
+  it("SUBMIT preserves it byte-identically, alongside the new treatment answer", async () => {
+    db.consent_form_templates = [treatmentTemplate(), photoTemplate()];
+    seedStoredPhoto();
+    const res = await submit(
+      consentClaim([{ row: treatmentTemplate(), response: "accepted" }]),
+    );
+    expect(res.ok).toBe(true);
+    const stored = (currentRow().responses as Record<string, unknown>)[
+      INTAKE_CONSENT_RESPONSES.id
+    ] as { forms: Array<Record<string, unknown>> };
+    const photo = stored.forms.find((f) => f.form_type === "photo_consent");
+    // Byte-identical: the snapshot is the text the client actually read, and
+    // responded_at is when they actually answered — not re-stamped as today.
+    expect(photo).toEqual(storedPhoto);
+    expect(
+      stored.forms.some((f) => f.form_type === "treatment_consent"),
+    ).toBe(true);
+  });
+
+  it("preserves it even when the studio has NO live intake forms left", async () => {
+    // The early "nothing to complete" return is the easiest place to drop it.
+    db.consent_form_templates = [photoTemplate()];
+    seedStoredPhoto();
+    const res = await submit();
+    expect(res.ok).toBe(true);
+    const stored = (currentRow().responses as Record<string, unknown>)[
+      INTAKE_CONSENT_RESPONSES.id
+    ] as { forms: Array<Record<string, unknown>> };
+    expect(stored.forms).toEqual([storedPhoto]);
+  });
+
+  it("writes NO photo record when the draft never had one", async () => {
+    // Absence is not denial. Nothing may invent an answer on the client's
+    // behalf just because the form left the intake.
+    db.consent_form_templates = [treatmentTemplate(), photoTemplate()];
+    const res = await submit(
+      consentClaim([{ row: treatmentTemplate(), response: "accepted" }]),
+    );
+    expect(res.ok).toBe(true);
+    const stored = (currentRow().responses as Record<string, unknown>)[
+      INTAKE_CONSENT_RESPONSES.id
+    ] as { forms: Array<Record<string, unknown>> };
+    expect(stored.forms.some((f) => f.form_type === "photo_consent")).toBe(
+      false,
+    );
+    expect(JSON.stringify(stored)).not.toContain("denied");
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe("the server refuses a submit that skips live consent", () => {
   it("a missing treatment consent BLOCKS the submit and the row does not move", async () => {
     db.consent_form_templates = [treatmentTemplate()];
@@ -230,11 +310,20 @@ describe("the server refuses a submit that skips live consent", () => {
     expect(currentRow().status).toBe("in_progress");
   });
 
-  it("an unanswered photo consent BLOCKS", async () => {
+  // Chloe, 2026-08-09: photo consent left the intake. An unanswered photo form
+  // must now be a NON-EVENT for the intake — that is the whole point of the
+  // change, and the inverse of what this test used to assert.
+  it("an unanswered photo consent does NOT block (it is not an intake form)", async () => {
     db.consent_form_templates = [photoTemplate()];
     const res = await submit();
-    expect(res.ok).toBe(false);
-    expect(currentRow().status).toBe("in_progress");
+    expect(res.ok).toBe(true);
+    expect(currentRow().status).toBe("submitted");
+    // And no consent record is invented for a form nobody was asked.
+    expect(
+      (currentRow().responses as Record<string, unknown>)[
+        INTAKE_CONSENT_RESPONSES.id
+      ],
+    ).toBeUndefined();
   });
 
   it("a STALE rendered hash BLOCKS and stores no acknowledgement of the new text", async () => {
@@ -260,27 +349,21 @@ describe("the server refuses a submit that skips live consent", () => {
 });
 
 describe("the server accepts a complete submit", () => {
-  it("treatment accepted + photo DENIED submits, and the denial is recorded", async () => {
+  it("treatment accepted submits and is recorded, with a live photo form present", async () => {
     db.consent_form_templates = [treatmentTemplate(), photoTemplate()];
     const res = await submit(
-      consentClaim([
-        { row: treatmentTemplate(), response: "accepted" },
-        { row: photoTemplate(), response: "denied" },
-      ]),
+      consentClaim([{ row: treatmentTemplate(), response: "accepted" }]),
     );
     expect(res.ok).toBe(true);
     expect(currentRow().status).toBe("submitted");
     const stored = (currentRow().responses as Record<string, unknown>)[
       INTAKE_CONSENT_RESPONSES.id
     ] as { forms: Array<Record<string, unknown>> };
-    expect(stored.forms).toHaveLength(2);
-    expect(
-      stored.forms.find((f) => f.form_type === "photo_consent")!.response,
-    ).toBe("denied");
+    // ONLY the treatment form. The live photo template is untouched by intake.
+    expect(stored.forms).toHaveLength(1);
+    const treatment = stored.forms[0];
+    expect(treatment.form_type).toBe("treatment_consent");
     // Server-derived snapshot, server-stamped time.
-    const treatment = stored.forms.find(
-      (f) => f.form_type === "treatment_consent",
-    )!;
     expect(treatment.body_snapshot).toBe("Studio treatment consent text.");
     expect(typeof treatment.responded_at).toBe("string");
   });
@@ -425,19 +508,18 @@ describe("an existing CURRENT portal completion satisfies the submit", () => {
     expect(currentRow().status).toBe("in_progress");
   });
 
-  it("portal treatment + intake photo denial submits together", async () => {
+  it("a portal treatment completion alone submits, recording nothing here", async () => {
     db.consent_form_templates = [treatmentTemplate(), photoTemplate()];
     db.client_consent_signatures = [signature(treatmentTemplate())];
-    const res = await submit(
-      consentClaim([{ row: photoTemplate(), response: "denied" }]),
-    );
+    const res = await submit();
     expect(res.ok).toBe(true);
     expect(currentRow().status).toBe("submitted");
-    const stored = (currentRow().responses as Record<string, unknown>)[
-      INTAKE_CONSENT_RESPONSES.id
-    ] as { forms: Array<Record<string, unknown>> };
-    // ONLY the intake-completed form is recorded.
-    expect(stored.forms).toHaveLength(1);
-    expect(stored.forms[0].form_type).toBe("photo_consent");
+    // Nothing was completed IN the intake, so no intake consent record — the
+    // portal signature stays the portal's evidence.
+    expect(
+      (currentRow().responses as Record<string, unknown>)[
+        INTAKE_CONSENT_RESPONSES.id
+      ],
+    ).toBeUndefined();
   });
 });

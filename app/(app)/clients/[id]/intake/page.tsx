@@ -23,9 +23,15 @@ import {
 } from "@/lib/intake/acknowledgements";
 import {
   INTAKE_CONSENT_REVIEW_COPY,
+  PORTAL_PHOTO_CONSENT_COPY,
   intakeConsentResponseLabel,
   readIntakeConsentResponses,
 } from "@/lib/intake/consent-forms";
+import {
+  getPortalPhotoConsentsForPractitionerView,
+  type PortalPhotoConsentView,
+} from "@/lib/consent/queries";
+import { SignedConsentViewer } from "@/components/signed-consent-viewer";
 import {
   ASSISTED_ENTRY_REVIEW_COPY,
   readAssistedEntry,
@@ -131,6 +137,19 @@ export default async function ClientIntakePage({
     .maybeSingle();
   if (clientErr) throw new Error(clientErr.message);
   if (!client) notFound();
+
+  // Photo consent lives in the CLIENT PORTAL, not in the intake, so the
+  // practitioner reviewing an intake would otherwise have no way to see
+  // whether this client has granted or denied photo use — which is exactly the
+  // gap Chloe hit ("I can't see the answers to the consent forms"). Loaded
+  // here and rendered beside the intake's own consent record, clearly labelled
+  // as a different source. Null when the studio runs no photo consent form.
+  // EVERY live photo form, not just one: a studio may run more than one, and
+  // each is a separate question the client answers separately.
+  const portalPhotos = await getPortalPhotoConsentsForPractitionerView(
+    studio.id,
+    id,
+  );
 
   // Full history powers the new IntakeHistoryList and the latest-vs-
   // requested resolution below. Cheap: small per-client cardinality.
@@ -329,6 +348,7 @@ export default async function ClientIntakePage({
       <IntakeConsentFormsSummary
         responses={responses}
         status={intake.status}
+        portalPhotos={portalPhotos}
       />
 
       {intake.status === "in_progress" ? (
@@ -818,12 +838,31 @@ function resolveOptionLabel(key: string, value: string): string {
 // Vocabulary is constrained to INTAKE_CONSENT_REVIEW_COPY — "Acknowledged",
 // "Accepted", "Denied". Never "Signed": nothing here is a signature, and only
 // the portal's own signature records may be described that way.
+// The four portal states, in the practitioner's words. `not_signed` cannot
+// occur for photo consent (consentRowState returns `not_answered`) but is
+// mapped rather than left to fall through, so a future vocabulary change
+// cannot silently render an empty status.
+function portalPhotoLabel(state: PortalPhotoConsentView["state"]): string {
+  switch (state) {
+    case "granted":
+      return PORTAL_PHOTO_CONSENT_COPY.granted;
+    case "denied":
+      return PORTAL_PHOTO_CONSENT_COPY.denied;
+    case "outdated":
+      return PORTAL_PHOTO_CONSENT_COPY.needsReview;
+    default:
+      return PORTAL_PHOTO_CONSENT_COPY.notCompleted;
+  }
+}
+
 function IntakeConsentFormsSummary({
   responses,
   status,
+  portalPhotos,
 }: {
   responses: Record<string, unknown>;
   status: IntakeLifecycleStatus;
+  portalPhotos: PortalPhotoConsentView[];
 }) {
   const view = readIntakeConsentResponses(responses, status);
 
@@ -853,7 +892,8 @@ function IntakeConsentFormsSummary({
                 {form.bodySnapshot}
               </p>
               <p className="text-xs text-neutral-500">
-                Version {form.templateVersion}
+                {INTAKE_CONSENT_REVIEW_COPY.recordedInIntake}
+                {" · "}Version {form.templateVersion}
                 {form.respondedAtIso && (
                   <>
                     {" · "}
@@ -887,6 +927,75 @@ function IntakeConsentFormsSummary({
       <p className="mt-3 text-xs text-neutral-500">
         {INTAKE_CONSENT_REVIEW_COPY.caveat}
       </p>
+
+      {/* CURRENT portal photo-consent status — a DIFFERENT source, kept in its
+          own block on purpose.
+          The two are never merged: an answer given inside the intake is a
+          historical event, and the portal signature is what stands today. A
+          client who denied photos at intake and later granted them in the
+          portal must read as exactly that, not as one overwritten answer.
+
+          ONE ROW PER LIVE FORM. Collapsing several live photo forms into a
+          single status would drop a real consent record — and picking the
+          "highest version" across different template ids would do it silently,
+          since version is a template's own history and not a ranking between
+          templates. */}
+      {portalPhotos.length > 0 && (
+        <div className="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            {INTAKE_CONSENT_REVIEW_COPY.portalHeading}
+          </h3>
+          <div className="mt-2 flex flex-col gap-4">
+            {portalPhotos.map((photo) => (
+              <div
+                key={photo.templateId}
+                data-testid="review-portal-photo-consent"
+                data-template-id={photo.templateId}
+                data-state={photo.state}
+                className="flex flex-col gap-1 text-sm"
+              >
+                <p className="font-medium">{photo.templateTitle}</p>
+                <p
+                  data-testid="review-portal-photo-status"
+                  className="font-medium text-neutral-700 dark:text-neutral-300"
+                >
+                  {portalPhotoLabel(photo.state)}
+                </p>
+                {photo.record?.signed_at ? (
+                  <p className="text-xs text-neutral-500">
+                    {PORTAL_PHOTO_CONSENT_COPY.completedInPortal}
+                    {" · "}
+                    <FormattedDateTime iso={photo.record.signed_at} />
+                    {" · "}Version {photo.record.template_version}
+                  </p>
+                ) : (
+                  <p className="text-xs text-neutral-500">
+                    {PORTAL_PHOTO_CONSENT_COPY.notCompletedHint}
+                  </p>
+                )}
+                {photo.state === "outdated" && (
+                  <p className="text-xs text-neutral-500">
+                    {PORTAL_PHOTO_CONSENT_COPY.needsReviewHint}
+                  </p>
+                )}
+                {/* The existing signed-record viewer, reused rather than
+                    rebuilt — one signed-consent engine, as PR #405
+                    established. */}
+                {photo.record && (
+                  <SignedConsentViewer
+                    record={photo.record}
+                    formType="photo_consent"
+                    currentVersion={photo.currentVersion}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-neutral-500">
+            {INTAKE_CONSENT_REVIEW_COPY.photoMovedNote}
+          </p>
+        </div>
+      )}
     </section>
   );
 }

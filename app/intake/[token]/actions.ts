@@ -148,6 +148,10 @@ export async function saveIntakeStepAction(payload: {
     const draftConsent = await buildIntakeConsentDraftRecord({
       studioId: existing.studio_id as string,
       responses: merged,
+      // The row as it stands BEFORE this save. `merged` is not a substitute:
+      // the browser's claims have already overwritten the consent key there,
+      // so an answer to a form the intake no longer collects exists only here.
+      storedResponses: existing.responses as Record<string, unknown> | null,
     });
     if (draftConsent) merged[INTAKE_CONSENT_RESPONSES.id] = draftConsent;
     else delete merged[INTAKE_CONSENT_RESPONSES.id];
@@ -273,6 +277,9 @@ export async function submitIntakeAction(payload: {
     clientId: existing.client_id,
     responses: merged,
     respondedAtIso: new Date().toISOString(),
+    // As above: the pre-merge row, so submitting cannot drop a photo answer
+    // this client gave while the intake still asked for one.
+    storedResponses: existing.responses as Record<string, unknown> | null,
   });
   if (!consent.ok) return { ok: false, error: consent.error };
   if (consent.record) {
