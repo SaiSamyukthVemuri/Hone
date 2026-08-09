@@ -5,6 +5,10 @@ import {
   getClinicalNoteCount,
   getLatestClinicalNoteBody,
   seedLegacyClientSkinNotes,
+  seedConfirmedAppointment,
+  getOwnerPractitionerId,
+  getE2eServiceId,
+  sql,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -113,6 +117,54 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
     await page.goto(`/clients/${clientId}`);
     await expect(page.getByText(revisedBody)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(skinBody)).toBeVisible();
+  });
+
+  // -------------------------------------------------------------------------
+  // REACHABILITY FROM THE APPOINTMENT. The notes above already worked; Chloe
+  // could not find them from the visit she was about to run. Reuses the notes
+  // this test just wrote through the real UI, so the assertions are about
+  // genuine records rather than fixtures.
+  // -------------------------------------------------------------------------
+  await test.step("the appointment surfaces both notes and links to the tab", async () => {
+    const practitionerId = await getOwnerPractitionerId(seed.studioId);
+    const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    const appointmentId = await seedConfirmedAppointment(
+      seed.studioId,
+      practitionerId,
+      clientId,
+      start.toISOString(),
+      end.toISOString(),
+    );
+    // The harness studio offers consultation services, so attaching the
+    // service is what makes this a CONSULTATION appointment.
+    await sql(`update public.appointments set service_id = $2 where id = $1`, [
+      appointmentId,
+      await getE2eServiceId(seed.studioId),
+    ]);
+
+    await page.goto(`/calendar/${appointmentId}`);
+    const card = page.getByTestId("appointment-consultation-notes");
+    await expect(card).toBeVisible({ timeout: 20_000 });
+    // Pre-visit context: the CURRENT text of each kind, not the superseded one.
+    await expect(card).toContainText(revisedBody);
+    await expect(card).toContainText(skinBody);
+    await expect(card).not.toContainText(consultBody);
+
+    // Charting stays reachable — a consultation may include a test treatment.
+    await expect(page.getByTestId("appointment-consultation-notes")).toBeVisible();
+
+    // The primary CTA lands on the EXISTING tab, whose deep link is unchanged.
+    const cta = page.getByTestId("appointment-record-consultation-notes");
+    await expect(cta).toHaveText("Record consultation notes");
+    const box = await cta.boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+    await cta.click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${clientId}\\?tab=consultation`));
+    // ...and that tab now says what it holds.
+    await expect(
+      page.getByRole("button", { name: "Consultation & Skin/Hair" }),
+    ).toBeVisible();
   });
 });
 
