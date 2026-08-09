@@ -395,14 +395,26 @@ describe("no schema change", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("migration 0172 was not created by this work", () => {
-    // 0172 is reserved for Appointment DML B3. This feature stores its
-    // provenance inside the responses jsonb that migration 0015 already
-    // provides.
+  it("this feature did not author migration 0172", () => {
+    // 0172 was RESERVED for Appointment DML B3, and B3 has now claimed it
+    // (0172_revoke_authenticated_appointment_dml.sql). The guard's subject was
+    // never "0172 must not exist" — it is "this feature did not author it".
+    // Asserting absence would now fail for the very reason the reservation
+    // existed, so the check is re-pointed at authorship: whatever occupies
+    // 0172, it must be B3's privilege migration and must contain nothing of
+    // this feature. This feature stores its provenance inside the responses
+    // jsonb that migration 0015 already provides.
     const files = readdirSync(path.join(ROOT, "supabase/migrations")).filter(
       (f) => f.endsWith(".sql"),
     );
-    expect(files.filter((f) => f.startsWith("0172"))).toEqual([]);
+    const claimed = files.filter((f) => f.startsWith("0172"));
+    expect(claimed).toHaveLength(1);
+
+    const sql = read(`supabase/migrations/${claimed[0]}`);
+    expect(sql).not.toContain(KEY);
+    expect(sql).not.toMatch(/intake/i);
+    // And it is a privilege migration, not a schema change smuggled in here.
+    expect(sql).not.toMatch(/create table|alter table|add column/i);
   });
 
   it("the provenance lives in the existing responses jsonb", () => {

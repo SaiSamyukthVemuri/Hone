@@ -70,7 +70,14 @@ describe("the appointment page uses the SHARED last-treatment authority", () => 
     expect(PAGE).toMatch(
       /import \{\s*buildAppointmentPrepMemory/,
     );
-    expect(PAGE_CODE).toMatch(/buildAppointmentPrepMemory\(\{/);
+    // The literal input object moved into the SHARED mapper
+    // (prepMemoryInputFromTreatment) when the dashboard became a second
+    // consumer — two hand-written copies of that mapping is how two surfaces
+    // start disagreeing about what a visit looked like. The page must still
+    // call the builder, and must do it through that mapper.
+    expect(PAGE_CODE).toMatch(
+      /buildAppointmentPrepMemory\(\s*prepMemoryInputFromTreatment\(selected\),?\s*\)/,
+    );
   });
 
   it("renders the prep card", () => {
@@ -100,12 +107,17 @@ describe("the duplicate legacy previous-treatment path is GONE, not parallel", (
 
   it("the legacy session_notes column is still surfaced — it has no writer left", () => {
     // sessions.session_notes has no surviving write path anywhere in the
-    // product. This page is the ONLY thing that renders it, so a refactor that
-    // quietly drops it destroys text that can never be recreated.
-    expect(PAGE_CODE).toMatch(
+    // product, so a refactor that quietly drops it destroys text that can never
+    // be recreated.
+    //
+    // The passthrough now lives in the SHARED mapper rather than inline in this
+    // page — which is strictly better, because it protects the dashboard's copy
+    // of the same surface too. Pinned where it actually is.
+    const MODEL = read("lib/sessions/appointment-prep-memory.ts");
+    expect(MODEL).toMatch(
       /session_notes: selected\.session\.session_notes \?\? null/,
     );
-    expect(PAGE_CODE).toMatch(
+    expect(MODEL).toMatch(
       /next_session_note: selected\.session\.next_session_note \?\? null/,
     );
     // The candidate read is what makes them available.
@@ -137,9 +149,14 @@ describe("the duplicate legacy previous-treatment path is GONE, not parallel", (
       (LOADER_CODE.match(/selectFromCandidates\(input\.studioId, candidates\)/g) ?? [])
         .length,
     ).toBe(2);
+    // TWO call sites now: the per-client path (via selectFromCandidates) and
+    // the BATCHED companion the dashboard uses. Both go through the shared
+    // selector — which is the property this test exists to protect. What must
+    // never appear is a hand-rolled pick.
     expect(
       (LOADER_CODE.match(/pickNewestChartedSession\(/g) ?? []).length,
-    ).toBe(1);
+    ).toBe(2);
+    expect(LOADER_CODE).not.toMatch(/candidates\[0\]\s*\?\?\s*null/);
     // And the companion applies the shared filters rather than its own.
     expect(LOADER_CODE).toMatch(
       /chartedSessionCandidates\(rows, \{[\s\S]{0,200}excludeAppointmentId: input\.excludeAppointmentId/,
@@ -285,13 +302,29 @@ describe("read-only, RLS-scoped, no service role", () => {
     );
   });
 
-  it("the blocks read stays batched — no N+1 per session, block or area", () => {
+  it("the blocks read stays batched — no N+1 per session, block, area or CLIENT", () => {
     expect(LOADER).toMatch(/\.in\(\s*"session_id",/);
-    // Exactly one block read and one candidate read for the whole feature.
-    expect((LOADER_CODE.match(/from\("session_blocks"\)/g) ?? []).length).toBe(1);
-    expect((LOADER_CODE.match(/from\("sessions"\)/g) ?? []).length).toBe(1);
-    // Structured areas ride along INSIDE that one block select — never a
-    // separate per-block round-trip.
+    // TWO entry points now — the per-client loader and the batched companion
+    // the dashboard uses — so the count is two, not one. Counting alone was
+    // never the real guarantee anyway; what follows is.
+    expect((LOADER_CODE.match(/from\("session_blocks"\)/g) ?? []).length).toBe(2);
+    expect((LOADER_CODE.match(/from\("sessions"\)/g) ?? []).length).toBe(2);
+    // EVERY block read is keyed by an `.in(...)` list, never by a single id —
+    // that is what makes each one a batch rather than a per-row round-trip.
+    for (const seg of LOADER_CODE.split('from("session_blocks")').slice(1)) {
+      const head = seg.slice(0, 500);
+      expect(head, "every block read must be batched").toMatch(/\.in\(\s*\n?\s*"session_id",/);
+      expect(head, "never a single-session block read").not.toMatch(/\.eq\("session_id"/);
+    }
+    // The batched companion reads MANY clients in one statement.
+    expect(LOADER_CODE).toMatch(/\.in\("client_id", clientIds\)/);
+    // No read of any kind inside a loop.
+    for (const m of LOADER_CODE.matchAll(/for \(const [^)]+\) \{/g)) {
+      const body = LOADER_CODE.slice(m.index!, LOADER_CODE.indexOf("\n  }", m.index!));
+      expect(body, "no query inside a loop").not.toMatch(/await supabase|\.from\(/);
+    }
+    // Structured areas ride along INSIDE the block select — never a separate
+    // per-block round-trip.
     expect(LOADER_CODE).not.toMatch(/from\("session_block_areas"\)/);
     expect(LOADER).toMatch(/structured_areas:session_block_areas\(/);
   });

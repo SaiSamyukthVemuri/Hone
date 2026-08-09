@@ -44,6 +44,13 @@ import {
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
+import { loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
+import {
+  buildAppointmentPrepMemory,
+  prepMemoryInputFromTreatment,
+  type AppointmentPrepMemory,
+} from "@/lib/sessions/appointment-prep-memory";
+import { TodayTreatmentMemory } from "./today-treatment-memory";
 import {
   buildTodayWorkflow,
   todayWorkflowByAppointment,
@@ -60,8 +67,8 @@ import {
 import { PilotFeedbackPrompt } from "./pilot-feedback-prompt";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
-import { FollowUpAssistantCard } from "./follow-up-assistant";
-import { SuppliesExpiringCard } from "./supplies-expiring";
+import { DashboardTodoList } from "./todo-list";
+import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
 import { PilotLearningCard } from "./pilot-learning";
 import {
   buildGettingStarted,
@@ -323,6 +330,53 @@ export default async function DashboardPage({
     visibleAppointments.map((a) => a.client_id),
   );
 
+  // Dashboard V2 Part 2A: the FULL previous treatment for every returning
+  // client of the day, from the SAME #517 authority the appointment page uses.
+  //
+  // ONE batched call for the whole day — two round-trips total, independent of
+  // how many appointments there are. Calling the per-client loader inside the
+  // map below would be an N+1 that grows with the studio's schedule, which is
+  // why the batched companion exists.
+  //
+  // Each request carries its OWN appointment boundary: `before` is that
+  // appointment's starts_at, and `excludeAppointmentId` keeps a session already
+  // linked to today's visit from being presented as its own previous treatment.
+  const prepLoads = await loadLastChartedTreatmentsForClients({
+    studioId: studio.id,
+    requests: visibleAppointments.map((a) => ({
+      // The APPOINTMENT is the unit of identity, not the client. A client with
+      // two bookings today gets two requests with two different boundaries and
+      // must get back two different answers.
+      requestKey: a.id,
+      clientId: a.client_id,
+      before: a.starts_at,
+      excludeAppointmentId: a.id,
+    })),
+  });
+
+  // Pure fold into the shared model — no I/O. `prepLoads` is ALREADY keyed by
+  // appointment id (the requestKey passed above), so this reads its own key and
+  // never re-derives one from the client. An earlier version looked the load up
+  // by `appt.client_id`, which handed both of a client's appointments whichever
+  // answer was written last.
+  const prepMemoryByAppointment = new Map<
+    string,
+    { memory: AppointmentPrepMemory | null; unavailable: boolean }
+  >();
+  for (const appt of visibleAppointments) {
+    const load = prepLoads.get(appt.id);
+    if (!load) {
+      prepMemoryByAppointment.set(appt.id, { memory: null, unavailable: false });
+      continue;
+    }
+    prepMemoryByAppointment.set(appt.id, {
+      memory: load.treatment
+        ? buildAppointmentPrepMemory(prepMemoryInputFromTreatment(load.treatment))
+        : null,
+      unavailable: load.unavailable,
+    });
+  }
+
   // ONE combined Today workflow (Chloe: "Today and the Daily Prep Brief are
   // redundant"). A pure helper turns facts already loaded above — visible
   // appointments, the Before Today previews, the linked-session charting state,
@@ -379,6 +433,27 @@ export default async function DashboardPage({
   // PR #316: sterile items / probe lots expired or expiring within 30 days,
   // studio-scoped, for the on-dashboard "Supplies expiring" attention card.
   const expiringSupplies = await getExpiringSterileItems(studio.id, todayLocal);
+
+  // Dashboard V2 Part 2B — the ONE To-do model.
+  //
+  // Everything below was already loaded for the four sub-sections this
+  // replaces. `buildDashboardTodo` is PURE: no client, no query, no clock, no
+  // model. It normalizes the four domains into one row grammar
+  // (subject · reason · action), dedupes on domain identity, and orders by the
+  // documented TODO_PRIORITY. Adding it costs ZERO additional round-trips.
+  const dashboardTodo = buildDashboardTodo({
+    assistant: followUpAssistant,
+    attention: clientsNeedingAttention,
+    supplies: expiringSupplies,
+    metrics: practiceMetrics.actions,
+    studio: {
+      isOwner,
+      intakesAwaitingReviewCount,
+      activeServicesCount,
+      paymentStatus,
+    },
+    todayLocal,
+  });
 
   // PR #215: Getting Started progress for the dashboard card.
   const gettingStarted = buildGettingStarted(
@@ -471,6 +546,12 @@ export default async function DashboardPage({
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "no_session"}
+                  prepMemory={
+                    prepMemoryByAppointment.get(appt.id) ?? {
+                      memory: null,
+                      unavailable: false,
+                    }
+                  }
                   tz={studio.timezone}
                   timeFormat={resolveTimeFormat(studio)}
                 />
@@ -489,10 +570,75 @@ export default async function DashboardPage({
       </section>
 
 
+      {/* ===================================================================
+          TO DO — Dashboard V2 Part 2B.
+          ===================================================================
+          Part 1 put ONE heading over four independent products: "Action
+          needed", "Follow-up assistant", "Supplies expiring" and "Needs
+          attention". They still had four loaders, four row grammars, four
+          empty states, and they asked for the same unresolved work more than
+          once — most visibly "Aftercare not marked", which arrived both as a
+          per-session row from the assistant and as a count tile computed over
+          a different window in a different unit.
+
+          Part 2B replaces the four visible sub-sections with ONE ordered list
+          built from ONE normalized model:
+
+              domain facts → lib/dashboard/todo-model.ts → one To-do list
+
+          The domain loaders below are deliberately UNCHANGED — rewriting them
+          would expand scope — and NO query was added: `buildDashboardTodo` is
+          pure and consumes results the page already had. Deduplication is on
+          domain identity (`kind:subjectId`), never on rendered text; ordering
+          is documented in TODO_PRIORITY. Every action that worked before is
+          carried through unchanged, including the assistant's deep links to a
+          specific session or appointment. */}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-lg font-medium">To do</h2>
+        <DashboardTodoList todo={dashboardTodo} />
+        {/* The pilot feedback prompt that lived at the foot of the retired
+            Follow-up assistant card. surface="follow_up_assistant" is an
+            UNCHANGED pilot contract — keeping the same surface id is what
+            makes feedback comparable across this restructure, exactly as
+            surface="daily_prep" was kept across the Daily Prep retirement.
+            Rendered ONCE, at the foot of the section, never per row. */}
+        <PilotFeedbackPrompt surface="follow_up_assistant" />
+      </section>
+
+      {/* Relationship context, BELOW the operational work — never above it. */}
+      <BirthdaysThisMonth
+        birthdays={birthdaysThisMonth}
+        today={todayLocal}
+        accentColor={studio.birthday_reminder_color}
+      />
+
+      {/* ===================================================================
+          Secondary — reporting and setup, below the operational hierarchy.
+          ===================================================================
+          PR #208's practice snapshot (period filter + appointment counts +
+          service value + test-mode payment posture). It is REPORTING, so it is
+          demoted below Today / To do / Birthdays rather than removed: the
+          owner-only Financials route that will eventually own service value and
+          payment posture does not exist yet, and deleting the only surface that
+          shows them before their replacement exists would destroy working
+          functionality. Nothing here was recomputed, renamed or duplicated —
+          the only change to its numbers in this PR is the Sunday week
+          boundary correction in resolvePeriodRange. */}
+      <PracticeSnapshot metrics={practiceMetrics} livemode={inferStripeLivemode()} />
+
+      {isOwner && bookingReadiness && (
+        <BookingSetupCard
+          readiness={bookingReadiness}
+          studioSlug={studio.slug}
+          appOrigin={getRequiredAppOrigin()}
+        />
+      )}
+
       {/* PR #215: setup/readiness checklist entry point. A normal
-          link card, never a blocking modal. PR #238: shown here, under
-          Today, only while auto-detected steps remain; the full
-          checklist always lives on /getting-started. */}
+          link card, never a blocking modal. PR #238: shown only while
+          auto-detected steps remain; the full checklist always lives on
+          /getting-started. Demoted out of the operational flow — setup is not
+          daily work. */}
       {!onboardingV2On && !setupComplete && (
         <Link
           href="/getting-started"
@@ -505,39 +651,6 @@ export default async function DashboardPage({
           </span>
         </Link>
       )}
-
-      {/* PR #208: practice snapshot (period filter + appointment
-          counts + service value + test-mode payment posture + action
-          cards). Read-only; never labeled revenue while live payments
-          are disabled. */}
-      <PracticeSnapshot metrics={practiceMetrics} attention={clientsNeedingAttention} livemode={inferStripeLivemode()} />
-
-      {/* PR #249: Follow-up assistant — recorded record gaps and
-          follow-ups from recent appointments. Rules-based, read-only,
-          links only. Sits under the snapshot so Today stays on top. */}
-      <FollowUpAssistantCard assistant={followUpAssistant} />
-      <SuppliesExpiringCard items={expiringSupplies} today={todayLocal} />
-
-      <NeedsAttention
-        isOwner={isOwner}
-        intakesAwaitingReviewCount={intakesAwaitingReviewCount}
-        activeServicesCount={activeServicesCount}
-        paymentStatus={paymentStatus}
-      />
-
-      {isOwner && bookingReadiness && (
-        <BookingSetupCard
-          readiness={bookingReadiness}
-          studioSlug={studio.slug}
-          appOrigin={getRequiredAppOrigin()}
-        />
-      )}
-
-      <BirthdaysThisMonth
-        birthdays={birthdaysThisMonth}
-        today={todayLocal}
-        accentColor={studio.birthday_reminder_color}
-      />
 
       {/* PR #250 Pilot Love Loop V1: a quiet, optional "Pilot learning"
           card near the bottom (well below Today). Manual mailto only —
@@ -594,6 +707,7 @@ function AppointmentRow({
   intakeStatus,
   linkedSession,
   paymentState,
+  prepMemory,
   tz,
   timeFormat,
 }: {
@@ -605,6 +719,11 @@ function AppointmentRow({
   intakeStatus: ClientIntakeForm["status"] | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   paymentState: AppointmentPaymentState;
+  // Dashboard V2 Part 2A: the #517 previous-treatment model for THIS
+  // appointment, already built by the page from one batched read. Keyed by
+  // APPOINTMENT id upstream, so two same-client appointments each get their own
+  // boundary and one client can never receive another's memory.
+  prepMemory: { memory: AppointmentPrepMemory | null; unavailable: boolean };
   tz: string;
   timeFormat: TimeFormat;
 }) {
@@ -775,6 +894,19 @@ function AppointmentRow({
                   ))}
                 </span>
               )}
+              {/* Dashboard V2 Part 2A: the previous treatment in place. Compact
+                  by default — one line naming the visit — and expandable to the
+                  complete #517 card without leaving Today. Rendered only for a
+                  client who HAS history, so a first visit stays a single calm
+                  relationship line. */}
+              {workflow.hasHistory && (
+                <TodayTreatmentMemory
+                  clientId={appt.client_id}
+                  clientName={appt.client?.name ?? "this client"}
+                  memory={prepMemory.memory}
+                  unavailable={prepMemory.unavailable}
+                />
+              )}
             </div>
           )}
         </div>
@@ -884,162 +1016,6 @@ function IntakePill({
 }
 
 // ---------------------------------------------------------------------------
-// Needs attention
-// ---------------------------------------------------------------------------
-type PaymentStatusForDashboard = {
-  hasAccount: boolean;
-  livemode: boolean | null;
-  onboardingCompleted: boolean;
-  payoutsEnabled: boolean;
-};
-
-function NeedsAttention({
-  isOwner,
-  intakesAwaitingReviewCount,
-  activeServicesCount,
-  paymentStatus,
-}: {
-  isOwner: boolean;
-  intakesAwaitingReviewCount: number;
-  activeServicesCount: number;
-  paymentStatus: PaymentStatusForDashboard | null;
-}) {
-  // tone drives the color accent. "urgent" items block or interrupt the
-  // daily workflow (unreviewed intakes, no bookable services) → amber.
-  // "soft" items are optional Phase-1 nudges (Stripe) → calm neutral.
-  const items: Array<{
-    key: string;
-    title: string;
-    body: string;
-    tone: "urgent" | "soft";
-    href?: string;
-    cta?: string;
-  }> = [];
-
-  if (intakesAwaitingReviewCount > 0) {
-    items.push({
-      key: "intake-review",
-      title: `${intakesAwaitingReviewCount} ${
-        intakesAwaitingReviewCount === 1 ? "intake" : "intakes"
-      } awaiting review`,
-      body: "Open the client to read the submitted answers and mark reviewed.",
-      tone: "urgent",
-      href: "/clients",
-      cta: "Open clients",
-    });
-  }
-
-  if (isOwner && activeServicesCount === 0) {
-    items.push({
-      key: "no-services",
-      title: "No services yet",
-      body: "Clients can't book until at least one active service exists.",
-      tone: "urgent",
-      href: "/settings/services",
-      cta: "Add a service",
-    });
-  }
-
-  if (isOwner && paymentStatus) {
-    if (!paymentStatus.hasAccount) {
-      // Soft nudge only; not flagged red. Phase 1 booking does not
-      // require Stripe.
-      items.push({
-        key: "stripe-not-connected",
-        title: "Stripe not connected yet",
-        body: "Public booking still works without it. Connect when you're ready to accept payments.",
-        tone: "soft",
-        href: "/settings/payments",
-        cta: "Open Payments",
-      });
-    } else if (!paymentStatus.onboardingCompleted) {
-      items.push({
-        key: "stripe-incomplete",
-        title: "Stripe setup not finished",
-        body: "A few details are still needed. Continue setup when you have a minute.",
-        tone: "soft",
-        href: "/settings/payments",
-        cta: "Continue setup",
-      });
-    } else if (!paymentStatus.payoutsEnabled) {
-      items.push({
-        key: "stripe-payouts",
-        title: "Payout setup needs attention",
-        body: "Stripe is connected, but payouts aren't ready yet.",
-        tone: "soft",
-        href: "/settings/payments",
-        cta: "Open Payments",
-      });
-    }
-  }
-
-  if (items.length === 0) return null;
-
-  const hasUrgent = items.some((i) => i.tone === "urgent");
-
-  return (
-    <section className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <h2 className="text-lg font-medium">Needs attention</h2>
-        {hasUrgent && (
-          <span
-            aria-hidden
-            className="inline-block h-2 w-2 rounded-full bg-amber-500"
-          />
-        )}
-      </div>
-      <ul className="flex flex-col gap-2">
-        {items.map((item) => {
-          const urgent = item.tone === "urgent";
-          return (
-            <li
-              key={item.key}
-              className={
-                urgent
-                  ? "flex flex-wrap items-start justify-between gap-3 rounded-lg border border-amber-300 border-l-4 border-l-amber-500 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:border-l-amber-500 dark:bg-amber-950/30"
-                  : "flex flex-wrap items-start justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/50"
-              }
-            >
-              <div className="min-w-0 flex-1">
-                <p
-                  className={
-                    urgent
-                      ? "text-sm font-medium text-amber-900 dark:text-amber-200"
-                      : "text-sm font-medium"
-                  }
-                >
-                  {item.title}
-                </p>
-                <p
-                  className={
-                    urgent
-                      ? "mt-0.5 text-xs text-amber-800 dark:text-amber-300/80"
-                      : "mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
-                  }
-                >
-                  {item.body}
-                </p>
-              </div>
-              {item.href && item.cta && (
-                <Link
-                  href={item.href}
-                  className={
-                    urgent
-                      ? "rounded-md border border-amber-400 bg-white/70 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-white dark:border-amber-700 dark:bg-transparent dark:text-amber-200 dark:hover:bg-amber-950/50"
-                      : "rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
-                  }
-                >
-                  {item.cta}
-                </Link>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
@@ -1123,6 +1099,16 @@ async function countActiveServices(studioId: string): Promise<number> {
   const services = await getActiveServices(studioId);
   return services.length;
 }
+
+// Display-safe payment posture for the To-do model's `payment_setup` item.
+// Declared here, beside its loader: it is a DATA shape, and it outlived the
+// inline "Needs attention" component that Part 2B replaced.
+type PaymentStatusForDashboard = {
+  hasAccount: boolean;
+  livemode: boolean | null;
+  onboardingCompleted: boolean;
+  payoutsEnabled: boolean;
+};
 
 async function loadPaymentStatus(
   supabase: Awaited<ReturnType<typeof createClient>>,

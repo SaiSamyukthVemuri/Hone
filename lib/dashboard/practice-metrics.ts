@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
+import { addDays, startOfWeek, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
 import {
   getClientProcedureRecords,
   type ClientProcedureRecord,
@@ -22,7 +22,7 @@ export function isDashboardPeriod(v: string | undefined): v is DashboardPeriod {
 }
 
 // Pure: resolve the studio-local date range for a period. `todayLocal`
-// is the studio-local YYYY-MM-DD. Weeks start Monday; ranges are
+// is the studio-local YYYY-MM-DD. Weeks start SUNDAY; ranges are
 // [startLocal, endLocalExclusive).
 export function resolvePeriodRange(
   todayLocal: string,
@@ -36,11 +36,24 @@ export function resolvePeriodRange(
     };
   }
   if (period === "week") {
-    // Day-of-week of the local date; anchor at noon UTC so the UTC
-    // calendar day matches the local date string regardless of host tz.
-    const dow = new Date(`${todayLocal}T12:00:00Z`).getUTCDay(); // 0=Sun
-    const sinceMonday = (dow + 6) % 7;
-    const startLocal = addDays(todayLocal, -sinceMonday);
+    // SUNDAY -> SATURDAY, delegated to the SAME helper the practitioner
+    // calendar uses (lib/booking/tz.startOfWeek: "the Sunday on or before").
+    //
+    // This used to roll its own Monday anchor —
+    //   const dow = new Date(`${todayLocal}T12:00:00Z`).getUTCDay();
+    //   const sinceMonday = (dow + 6) % 7;
+    // — which made the dashboard's "this week" and the calendar's week differ
+    // by a FULL WEEK every Sunday: Sunday was day 7 of the metrics week and
+    // day 1 of the calendar week. Chloe reported this. The two are now one
+    // boundary, and deliberately ONE algorithm: a second copy is how they
+    // drifted apart in the first place.
+    //
+    // startOfWeek() takes the same noon-UTC anchoring this code used, so the
+    // studio-local date string semantics are unchanged — only the anchor day
+    // moves. Ranges stay [startLocal, endLocalExclusive) over local date
+    // STRINGS, never "start + 168 hours", so DST is handled by the existing
+    // utcInstantFromLocal() conversion exactly as before.
+    const startLocal = startOfWeek(todayLocal);
     return {
       startLocal,
       endLocalExclusive: addDays(startLocal, 7),
@@ -118,6 +131,22 @@ export type ProcedureActionMetrics = {
   incompleteRecords: number;
   missingProbeLots: number;
   aftercareNotMarked: number;
+  // Dashboard V2 Part 2B. Records incomplete for a reason NO per-item To-do
+  // covers: client DOB / phone / email / address, the operator, or a record
+  // with no treatment area at all.
+  //
+  // Why this exists. `incompleteRecords` is a UNION that also counts the
+  // aftercare and probe-lot gaps, and those two are now surfaced as their own
+  // per-client, per-session To-do items by the missing-records assistant. A
+  // To-do list built from `incompleteRecords` would therefore ask for the same
+  // unresolved work twice, in two different units (a count over the 100 most
+  // recent PROCEDURE RECORDS here vs a row per SESSION there) and over two
+  // different windows. This is the same-loop, no-new-query complement:
+  // everything `incompleteRecords` counts EXCEPT the two itemized gaps.
+  //
+  // `incompleteRecords` itself is unchanged — it remains the honest
+  // completeness figure for any reporting surface that wants the union.
+  recordsMissingDetails: number;
 };
 
 // Pure: completeness sweep over generated procedure records (the same
@@ -131,21 +160,25 @@ export function summarizeProcedureCompleteness(
   let incomplete = 0;
   let missingLots = 0;
   let aftercareNotMarked = 0;
+  let missingDetails = 0;
   for (const r of records) {
     const areaLotsMissing = r.areas.filter(
       (a) => !a.probeLotNumber?.trim(),
     ).length;
     missingLots += areaLotsMissing;
     if (!r.aftercareExplainedAt) aftercareNotMarked += 1;
-    const missingAny =
+    // The non-itemized half of the union, computed in the SAME pass so the two
+    // can never drift and no extra read is issued.
+    const detailsMissing =
       !r.dateOfBirth ||
       !r.phone?.trim() ||
       !r.email?.trim() ||
       !r.address?.trim() ||
       !r.operatorName ||
-      r.areas.length === 0 ||
-      areaLotsMissing > 0 ||
-      !r.aftercareExplainedAt;
+      r.areas.length === 0;
+    if (detailsMissing) missingDetails += 1;
+    const missingAny =
+      detailsMissing || areaLotsMissing > 0 || !r.aftercareExplainedAt;
     if (missingAny) incomplete += 1;
   }
   return {
@@ -153,6 +186,7 @@ export function summarizeProcedureCompleteness(
     incompleteRecords: incomplete,
     missingProbeLots: missingLots,
     aftercareNotMarked,
+    recordsMissingDetails: missingDetails,
   };
 }
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // 0171 — structural contract for the public reschedule command.
@@ -37,15 +36,12 @@ const SIGS: Record<string, string> = {
   reschedule_appointment_v2: "(uuid, text, timestamptz, text, boolean, text)",
 };
 
-describe("0171 — migration state", () => {
-  // The CENTRAL tripwire. Only the current maximum migration's own test carries
-  // it (CLAUDE.md §2); when 0172 lands, this block moves there and this file
-  // drops it.
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0171")).toBe(true);
-    expect(versionsAbove("0171")).toEqual([]);
-  });
-});
+// 0172 superseded 0171 as the repository maximum. Per CLAUDE.md §2, ONLY the
+// current maximum migration's own test may assert isRepoMax — an older
+// per-migration test that keeps the pin turns every subsequent migration into a
+// mechanical sweep, which is exactly how 0163/0164/0165 each went red after
+// push. The "nothing above me" tripwire is served centrally by the current
+// maximum's test (tests/migrations/0172-appointment-dml-revocation.test.ts).
 
 describe("0171 — declares exactly the three intended functions", () => {
   it("creates only the reschedule candidate helper, validator and command", () => {
