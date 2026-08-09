@@ -349,7 +349,6 @@ test.describe("live consent forms in the intake", () => {
     await page.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByText(TREATMENT_BODY)).toBeVisible();
     await page.getByTestId("intake-consent-agree").check();
-    await page.getByTestId("intake-consent-photo-denied").check();
     await page.getByRole("button", { name: "Submit intake" }).click();
     await page.waitForURL("**/intake/thank-you");
 
@@ -359,10 +358,9 @@ test.describe("live consent forms in the intake", () => {
     expect(row?.responses).not.toHaveProperty("ack_electrolysis_nature");
     expect(row?.responses).not.toHaveProperty("electrolysis_acknowledgement");
     const consent = storedConsent(row)!;
-    expect(consent.forms).toHaveLength(2);
-    expect(
-      consent.forms.find((f) => f.form_type === "photo_consent")!.response,
-    ).toBe("denied");
+    // Treatment only — photo consent is collected in the portal now.
+    expect(consent.forms).toHaveLength(1);
+    expect(consent.forms[0].form_type).toBe("treatment_consent");
   });
 
   test("C. a form edited mid-review is refused, then completes against the current version", async ({

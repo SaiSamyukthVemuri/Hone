@@ -123,7 +123,10 @@ test.describe("practitioner View intake shows recorded consent", () => {
 
     // --- the real journey, not a deep link
     await page.goto(`/clients/${clientId}`);
-    await page.getByRole("link", { name: "Health & Forms" }).click();
+    // The desktop profile tabs are <button>s driving a ?tab= query param, not
+    // links — the mobile control is a <select>. Both are the same nav.
+    await page.getByRole("button", { name: "Health & Forms" }).click();
+    await expect(page).toHaveURL(/tab=health/);
     await page.getByRole("link", { name: /View intake/ }).click();
     await page.waitForURL(`**/clients/${clientId}/intake`);
 
