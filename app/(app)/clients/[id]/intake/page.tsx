@@ -31,6 +31,10 @@ import {
   readAssistedEntry,
 } from "@/lib/intake/entry-provenance";
 import {
+  REVIEW_ANSWER_COPY,
+  reviewAnswerState,
+} from "@/lib/intake/review-answers";
+import {
   deriveIntakeReviewFlags,
   MODALITY_WORDING,
   type IntakeReviewFlag,
@@ -50,7 +54,11 @@ function optionLabel(q: Question, value: string): string {
 
 function renderResponse(q: Question, value: unknown, notes: unknown): React.ReactNode {
   if (value === undefined || value === null || value === "") {
-    return <span className="text-neutral-400">Not answered</span>;
+    return (
+      <span className="text-neutral-400">
+        {REVIEW_ANSWER_COPY.unanswered}
+      </span>
+    );
   }
   if (q.type === "multi_select") {
     if (!Array.isArray(value) || value.length === 0) {
@@ -370,16 +378,39 @@ export default async function ClientIntakePage({
             </summary>
             <div className="border-t border-neutral-200 px-5 py-5 dark:border-neutral-800">
               <dl className="grid grid-cols-1 gap-x-8 gap-y-5 text-sm md:grid-cols-2">
-                {s.questions.map((q) => (
-                  <div key={q.key} className="flex flex-col gap-1">
-                    <dt className="text-xs font-medium text-neutral-500">
-                      {q.label}
-                    </dt>
-                    <dd className="text-neutral-900 dark:text-neutral-100">
-                      {renderResponse(q, responses[q.key], responses[`${q.key}_notes`])}
-                    </dd>
-                  </div>
-                ))}
+                {s.questions.map((q) => {
+                  // Every question still gets a row — the reviewer sees the
+                  // whole form, not a form with holes in it — but WHAT the row
+                  // says is decided by the projection, which distinguishes an
+                  // answer from "you were never asked this" and from "this
+                  // record predates the question". See lib/intake/review-answers.
+                  const state = reviewAnswerState(q, responses, intake.status);
+                  return (
+                    <div key={q.key} className="flex flex-col gap-1">
+                      <dt className="text-xs font-medium text-neutral-500">
+                        {q.label}
+                      </dt>
+                      <dd className="text-neutral-900 dark:text-neutral-100">
+                        {state === "answered" ? (
+                          renderResponse(
+                            q,
+                            responses[q.key],
+                            responses[`${q.key}_notes`],
+                          )
+                        ) : (
+                          // Deliberately does NOT fall through to
+                          // renderResponse: for a non-applicable question a
+                          // stale value may still be sitting in the jsonb, and
+                          // rendering it would present an answer the client
+                          // retracted as if it still stood.
+                          <span className="text-neutral-400">
+                            {REVIEW_ANSWER_COPY[state]}
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  );
+                })}
               </dl>
             </div>
           </details>

@@ -120,9 +120,23 @@ const CHART_MODALITIES: Record<string, ReadonlyArray<IntakeModality>> = {
   // Hepatitis and AIDS/HIV (the intake's single blood-borne option covers
   // both rows) → thermolysis + continuous/galvanic.
   "medical_conditions:blood_borne": ["thermolysis", "galvanic"],
-  // Diabetes — the intake has one generic "diabetes" answer (no T1 / T2 /
-  // gestational subtype), so surface the conservative UNION of all three
-  // diabetes chart rows for review since the type is unknown.
+  // Diabetes — the conservative UNION of all three diabetes chart rows.
+  //
+  // The intake now DOES collect a Type 1 / Type 2 subtype (`diabetes_type`),
+  // and this mapping deliberately continues to ignore it. Two reasons, both
+  // load-bearing:
+  //
+  //   * Narrowing which modalities are flagged based on the client's diabetes
+  //     type would be a clinical judgement. Hone surfaces intake answers for
+  //     review; it does not decide treatment, and no one has approved a
+  //     per-type rule.
+  //   * Every intake submitted before the subtype existed has no type at all,
+  //     and gestational diabetes — a chart row in its own right — is not one of
+  //     the two options offered. Keying off the subtype would quietly flag those
+  //     records differently from each other for no clinically stated reason.
+  //
+  // So the union stands, and the subtype is information for the practitioner to
+  // read on the review grid rather than an input to this table.
   "medical_conditions:diabetes": [
     "thermolysis",
     "galvanic",

@@ -133,6 +133,34 @@ const CONDITIONS: ReadonlyArray<Option> = [
   { value: NONE_VALUE, label: "None of these apply to me" },
 ];
 
+// Diabetes / thyroid subtype answer sets.
+//
+// These are the CHILD questions of two `medical_conditions` options. The parent
+// question and its option values are deliberately untouched — "diabetes" and
+// "thyroid" mean exactly what they meant before, and every historical answer
+// keeps its meaning. What is new is that a client who selects one is now asked
+// which type, because "diabetes" alone was not clinically useful.
+//
+// The value tokens are the canonical enum; the labels are display only. Server
+// validation admits ONLY these values (findInvalidChoiceAnswers), so the stored
+// answer can never be free text.
+//
+// SCOPE NOTE, deliberate: these are the two option sets Chloe asked for. They do
+// not cover every clinical case — gestational diabetes has no home here, and a
+// client who does not know their type must pick one of the two or leave the
+// intake incomplete. That is a product decision to revisit with Chloe, not one
+// to paper over by inventing an option she did not ask for. Nothing in Hone
+// infers a type from medication, age, notes or any other answer.
+const DIABETES_TYPES: ReadonlyArray<Option> = [
+  { value: "type_1", label: "Type 1" },
+  { value: "type_2", label: "Type 2" },
+];
+
+const THYROID_TYPES: ReadonlyArray<Option> = [
+  { value: "hypothyroidism", label: "Hypothyroidism" },
+  { value: "hyperthyroidism", label: "Hyperthyroidism" },
+];
+
 const METAL_ALLERGY_TYPES: ReadonlyArray<Option> = [
   { value: "nickel", label: "Nickel" },
   { value: "stainless_steel", label: "Stainless steel" },
@@ -412,6 +440,39 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
         label: "Do any of the following apply to you?",
         options: CONDITIONS,
         required: true,
+      },
+      // Diabetes / thyroid subtype. Same shape as the metal-implants and
+      // recent-surgery follow-ups directly below: a child of ONE option of the
+      // `medical_conditions` multi_select, shown only when that option is
+      // selected. Placed immediately after the parent so the detail appears
+      // where the client just answered.
+      //
+      // Labels are deliberately SELF-CONTAINED rather than the bare "Type" of
+      // the original sketch. The practitioner review grid renders a question's
+      // label without the parent question above it, so a lone "Type" reads as
+      // nothing at all there — the same reason `active_cold_sore` was rewritten
+      // from "Are you currently experiencing one?".
+      {
+        key: "diabetes_type",
+        type: "single_select",
+        label: "Which type of diabetes?",
+        options: DIABETES_TYPES,
+        required: true,
+        conditional: {
+          whenKey: "medical_conditions",
+          whenEquals: ["diabetes"],
+        },
+      },
+      {
+        key: "thyroid_type",
+        type: "single_select",
+        label: "Which type of thyroid condition?",
+        options: THYROID_TYPES,
+        required: true,
+        conditional: {
+          whenKey: "medical_conditions",
+          whenEquals: ["thyroid"],
+        },
       },
       {
         key: "metal_implants_location",
@@ -815,6 +876,62 @@ export function findMissingRequiredAnswers(
     }
   }
   return missing;
+}
+
+// Server-side CHOICE-VALUE check. Companion to findMissingRequiredAnswers:
+// that one asks "is there an answer?", this one asks "is the answer one of the
+// answers we offered?".
+//
+// It exists because the response sanitizer (lib/intake/responses.ts) is a KEY
+// whitelist that copies values through untouched — by design and by long
+// standing — so nothing before this point stops a crafted payload writing
+// `diabetes_type: "whatever I like"` into a clinical record. Hiding the control
+// in the browser is not a validation.
+//
+// SCOPED TO single_select ON PURPOSE, and the reason is a fact about this
+// repository rather than a preference. Across the whole history of
+// lib/intake/questions.ts exactly ONE option value has ever been removed from an
+// option set: "keloid", from the multi_select CONDITIONS list. So a strict
+// membership rule over multi_select answers could permanently wedge the submit
+// of an in-progress intake saved before that removal — a real client, unable to
+// finish, with no way to clear a value the wizard no longer renders. No
+// single_select has ever lost a value, so the same rule over single_select
+// cannot strand anyone. Widening this to multi_select needs that legacy value
+// dealt with first; it is not a free change.
+//
+// Unanswered is NOT invalid here — absence is findMissingRequiredAnswers' job,
+// and an optional question left blank must stay legal. Conditionally-hidden
+// questions are skipped for the same reason they are skipped there.
+//
+// Pure compute; no I/O. Like findMissingRequiredAnswers it must only ever run
+// on a WRITE path — an already-submitted intake is never re-validated, which is
+// what keeps a historical record valid when today's option set has moved on.
+export function findInvalidChoiceAnswers(
+  responses: Record<string, unknown>,
+): string[] {
+  const invalid: string[] = [];
+  for (const step of INTAKE_STEPS) {
+    for (const q of step.questions) {
+      if (q.type !== "single_select" || !q.options) continue;
+      if (!isConditionalSatisfied(responses, q.conditional)) continue;
+      const value = responses[q.key];
+      // Absent / cleared: not this function's concern. "Absent" is defined
+      // EXACTLY as isAnswerProvided defines it — a trimmed empty string —
+      // so a whitespace-only value is reported as missing by that gate rather
+      // than as invalid by this one. Two gates disagreeing about what counts
+      // as an answer is how a value ends up rejected by both and fixable by
+      // neither.
+      if (value === undefined || value === null) continue;
+      if (typeof value === "string" && value.trim() === "") continue;
+      if (
+        typeof value !== "string" ||
+        !q.options.some((o) => o.value === value)
+      ) {
+        invalid.push(q.key);
+      }
+    }
+  }
+  return invalid;
 }
 
 // ---------------------------------------------------------------------------

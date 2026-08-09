@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
 import {
+  findInvalidChoiceAnswers,
   findMissingRequiredAnswers,
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
@@ -233,6 +234,31 @@ export async function submitIntakeAction(payload: {
       ok: false,
       error:
         "Please answer all required questions before submitting your intake.",
+    };
+  }
+
+  // Server-side CHOICE-VALUE check, immediately after the required check and on
+  // the same terms: this write path only, never a re-validation of an intake
+  // that is already submitted (that case returned above).
+  //
+  // The required check above proves an answer EXISTS. It does not prove the
+  // answer is one we offered — the response sanitizer is a key whitelist that
+  // passes values through untouched, so without this a crafted payload could
+  // put arbitrary text where a clinical enum belongs (e.g. a diabetes type of
+  // anything at all) and the review surface would render it as the client's
+  // answer. Not relying on the browser having only drawn two buttons is the
+  // entire point.
+  //
+  // Draft saves stay permissive by design — the same posture the consent draft
+  // takes a few lines down. A draft is never authoritative; THIS is the gate,
+  // and it re-checks the whole merged map, so a bad value planted by an earlier
+  // save is caught here rather than waved through.
+  const invalidChoices = findInvalidChoiceAnswers(merged);
+  if (invalidChoices.length > 0) {
+    return {
+      ok: false,
+      error:
+        "Please choose one of the listed options for every question before submitting your intake.",
     };
   }
 
