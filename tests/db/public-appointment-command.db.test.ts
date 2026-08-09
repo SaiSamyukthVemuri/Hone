@@ -472,21 +472,55 @@ describe("privileges", () => {
     expect(SIG).toContain("uuid");
   });
 
-  it("THIS PR does not revoke any appointment table grant", async () => {
+  it("migration 0172 has revoked every appointment write verb from both browser roles", async () => {
+    // Was "THIS PR does not revoke any appointment table grant", asserting TRUE
+    // while the revocation was still a later PR. That PR is B3 / migration 0172
+    // and it has now landed, so the expectation inverts.
+    //
+    // All seven revoked verbs are probed, not just the three the old test knew
+    // about: a partial revoke that left TRUNCATE or MAINTAIN behind would
+    // otherwise pass here. The full behavioural proof — including the
+    // privilege-vs-RLS message discriminator, which an ACL read cannot give —
+    // lives in tests/db/appointment-boundary-revocation.db.test.ts.
     const r = await adminQuery(
       `select r.rolname,
               has_table_privilege(r.oid,'public.appointments','INSERT') ins,
               has_table_privilege(r.oid,'public.appointments','UPDATE') upd,
-              has_table_privilege(r.oid,'public.appointments','DELETE') del
+              has_table_privilege(r.oid,'public.appointments','DELETE') del,
+              has_table_privilege(r.oid,'public.appointments','TRUNCATE') trunc,
+              has_table_privilege(r.oid,'public.appointments','REFERENCES') refs,
+              has_table_privilege(r.oid,'public.appointments','TRIGGER') trig,
+              has_table_privilege(r.oid,'public.appointments','MAINTAIN') maint,
+              has_table_privilege(r.oid,'public.appointments','SELECT') sel
          from pg_roles r where r.rolname in ('anon','authenticated') order by 1`,
     );
-    // Deliberately still TRUE — the revocation is a LATER PR, after every
-    // remaining appointment writer has migrated to a reviewed command.
+    // The old loop was vacuously green on an empty result set. It happened to be
+    // safe, but this is the assertion the whole migration rests on.
+    expect(r.rowCount, "both browser roles must be probed").toBe(2);
     for (const row of r.rows) {
-      expect(row.ins).toBe(true);
-      expect(row.upd).toBe(true);
-      expect(row.del).toBe(true);
+      expect(row.ins, `${row.rolname} INSERT`).toBe(false);
+      expect(row.upd, `${row.rolname} UPDATE`).toBe(false);
+      expect(row.del, `${row.rolname} DELETE`).toBe(false);
+      expect(row.trunc, `${row.rolname} TRUNCATE`).toBe(false);
+      expect(row.refs, `${row.rolname} REFERENCES`).toBe(false);
+      expect(row.trig, `${row.rolname} TRIGGER`).toBe(false);
+      expect(row.maint, `${row.rolname} MAINTAIN`).toBe(false);
+      // SELECT is deliberately RETAINED — ~22 authenticated read sites depend on
+      // it, and its survival is what makes `revoke all` forbidden.
+      expect(row.sel, `${row.rolname} SELECT must be retained`).toBe(true);
     }
+  });
+
+  it("0172 left the public booking command's own privileges untouched", async () => {
+    // 0172 revokes TABLE privileges from browser roles only. If it had reached
+    // the function layer, this command would stop working in production.
+    const r = await adminQuery(
+      `select has_function_privilege('service_role', p.oid, 'EXECUTE') svc
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname='public' and p.proname='create_public_appointment'`,
+    );
+    expect(r.rowCount).toBe(1);
+    expect(r.rows[0].svc).toBe(true);
   });
 });
 
