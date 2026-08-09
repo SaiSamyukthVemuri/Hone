@@ -61,15 +61,18 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps all 62 specs, and the targeted lane still selects 28", () => {
+  it("the manifest still maps all 63 specs, and the targeted lane still selects 28", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
     // 58 since practitioner-assisted-intake.spec.ts joined the intake group
     // (57 after PR #518 added intake-electrolysis-acknowledgement.spec.ts).
+    // 63 once BOTH intake-review-consent-visibility.spec.ts (production)
+    // and intake-diabetes-thyroid-subtypes.spec.ts (this branch) are mapped —
+    // the refresh conflict was two additions to the same group, not a rename.
     // The count is deliberate: it is the tripwire for a spec that lands on
     // disk without being mapped, which would silently never run.
-    expect(mapped).toHaveLength(62);
+    expect(mapped).toHaveLength(63);
     // The exact selection that was cancelled twice at the old 10-minute ceiling.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(28);
   });

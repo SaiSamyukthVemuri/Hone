@@ -73,6 +73,10 @@ export const BROWSER_GROUPS = {
       // recorded intake consent AND the current portal photo status, which no
       // helper test could prove because the gap was a mounting location.
       "intake-review-consent-visibility.spec.ts",
+      // The diabetes / thyroid subtype conditionals: absent until the parent
+      // condition is reported, required once it is, hidden again on retraction,
+      // and read back truthfully on the practitioner review grid.
+      "intake-diabetes-thyroid-subtypes.spec.ts",
     ],
   },
   portal: {
