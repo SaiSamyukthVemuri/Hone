@@ -157,8 +157,47 @@ universal invariant** — several tables deliberately deviate (see "Deliberate e
 2. `drop policy if exists "<name>_member_read" on …; create policy "<name>_member_read" on … for select using (public.is_studio_member(studio_id));`
 3. Stricter policies for INSERT / UPDATE / DELETE based on the table's role:
    - **Owner-only ALL** for studio configuration tables (`studios`, `services`, `availability_defaults`, `blockouts`).
-   - **Member INSERT** for tables practitioners write to in normal workflow (`appointments` indirectly via RPC; `studio_timed_blocks` directly via PR #140 policy).
-   - **Service-role-only write** for tables the action layer or webhook layer manages (`client_payment_methods`, `manual_fee_charge_attempts`, `appointment_audit`, `stripe_events`, `client_consent_signatures`).
+   - **Member INSERT** for tables practitioners write to in normal workflow (`studio_timed_blocks` directly via PR #140 policy).
+   - **Service-role-only write** for tables the action layer or webhook layer manages (`client_payment_methods`, `manual_fee_charge_attempts`, `stripe_events`, `client_consent_signatures`).
+   - **Member SELECT only, all writes via command** for `appointments` and `appointment_audit` — see the note below.
+
+> **`appointments` / `appointment_audit` — the boundary, and its status.**
+> Until migration `0172` these two tables had **never** received a `GRANT` or a
+> `REVOKE` in any migration, so `anon` and `authenticated` both still held the
+> Supabase default `arwdDxtm` — INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES,
+> TRIGGER and (PostgreSQL 17) MAINTAIN — and `appointment_audit_member_insert`
+> permitted a member to append a forged audit row for their own studio. The two
+> bullets above described the *intent*, not the enforced posture.
+>
+> Migration `0172` (appointment boundary B3) revokes every one of those verbs
+> from both browser roles on both tables, retaining **SELECT only**; replaces the
+> `FOR ALL` `appointments_member_all` policy with a SELECT-only
+> `appointments_member_select` (`TO authenticated`, reusing
+> `public.is_studio_member(studio_id)` verbatim — a role narrowing that is
+> behaviourally inert, since `anon` read zero rows under either policy); and
+> drops `appointment_audit_member_insert`. `service_role` and `postgres` are
+> untouched. `appointment_audit_member_read` is preserved unchanged; its
+> `studio_id` redesign is later work.
+>
+> **Two things this does NOT establish, stated here because the obvious short
+> summary of it would be wrong:**
+>
+> 1. *Not* "every appointment write goes through a command." **Seven direct
+>    `service_role` PostgREST `UPDATE`s remain** in `app/(app)/calendar/actions.ts`
+>    and `app/(app)/calendar/postcare-auto-send.ts`, touching only
+>    `postcare_email_*` bookkeeping columns. They are inside the boundary and
+>    frozen by `tests/security/appointment-direct-dml-guard.test.ts`; retiring
+>    them is later work and must not be skipped on the strength of this page.
+> 2. *Not* "no member can cause a write to appointments." **Foreign-key
+>    referential actions are not privilege-checked** — see L23 in
+>    `docs/production/known-limitations.md`.
+>
+> ⚠️ **`0172` is NOT MERGED and NOT APPLIED.** It exists only on the
+> `security/appointment-dml-b3-0172` branch (draft PR #532) and is proven on a
+> fresh local chain. Hosted state remains as declared in
+> `docs/production/migration-state.json` — that record, not this page, is the
+> authority on what production has applied. Until the push, production still
+> carries the open posture described in the first paragraph.
 4. No DELETE policy unless deliberate. Soft-archive via `status` columns is the default retirement path.
 
 `public.is_studio_member(studio_id uuid) returns boolean` is `SECURITY DEFINER` and looks at `public.practitioners` for an `active` row matching the calling auth user.

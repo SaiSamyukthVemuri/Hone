@@ -1279,18 +1279,25 @@ describe("T5.5 direct service_role status writes are not audited (open invariant
 // cannot be modified or removed by an authenticated member. It does NOT prove
 // the table is append-only-and-trustworthy, because it is not:
 //
-//   `authenticated` still holds the INSERT table grant, and
-//   `appointment_audit_member_insert` (0010:291-299) has a WITH CHECK that
-//   constrains only `appointment_id`. Nothing constrains `actor_type`,
+//   `authenticated` held the INSERT table grant, and
+//   `appointment_audit_member_insert` (0010:291-299) had a WITH CHECK that
+//   constrained only `appointment_id`. Nothing constrained `actor_type`,
 //   `actor_id`, `action`, `details` or `created_at`, and `actor_id` has no FK.
-//   So a member can APPEND a forged row today — that is P1-3 in the boundary
-//   audit, and it is closed by B3 / migration 0172 (revoke INSERT and drop the
-//   INSERT policy), not by anything in B2.
+//   So a member could APPEND a forged row — that is P1-3 in the boundary audit.
 //
-// The UPDATE/DELETE refusal proven below is also NOT a privilege refusal
-// today: `authenticated` holds those verbs too. It is RLS default-deny — 0010
-// creates only SELECT and INSERT policies — so the rows are simply invisible
-// to the statement. 0172 is what turns it into a privilege refusal.
+// B2 SHIPPED BEFORE THAT WAS CLOSED. It is closed now: B3 / migration 0172
+// revoked INSERT, UPDATE and DELETE from `anon` and `authenticated` on this
+// table and dropped `appointment_audit_member_insert`. The forged-append case
+// is proven refused in tests/db/appointment-boundary-revocation.db.test.ts.
+//
+// WHAT CHANGED FOR THE BLOCK BELOW. The UPDATE/DELETE refusal used to be RLS
+// default-deny — `authenticated` held those verbs, 0010 created only SELECT and
+// INSERT policies, so the statements matched no rows and returned rowCount 0
+// without erroring. After 0172 they are refused at the PRIVILEGE layer and
+// RAISE. The assertions therefore move from "zero rows affected" to "42501",
+// and each write runs in its own transaction: a raised error aborts the
+// surrounding transaction, so issuing both writes in one `asUser` callback
+// would report 25P02 for the second and prove nothing about it.
 
 describe("T5.6 appointment_audit rows cannot be UPDATEd or DELETEd by a member", () => {
   it("a member can READ the row (positive control) but neither UPDATE nor DELETE it", async () => {
@@ -1309,39 +1316,46 @@ describe("T5.6 appointment_audit rows cannot be UPDATEd or DELETEd by a member",
     );
     const rowId = auditId.rows[0].id as string;
 
-    // NOT service_role: that bypasses RLS entirely and would make this test
-    // measure nothing. This is the authenticated member path.
-    const observed = await asUser(f.ownerUserId, async (q) => {
-      // Positive control — the row IS readable, so a later empty result means
-      // RLS refused the write, not that the query or the identity was broken.
-      const read = await q(
-        `select id, action from public.appointment_audit where id = $1`,
-        [rowId],
-      );
+    // NOT service_role: that bypasses RLS entirely and retains every privilege,
+    // so it would make this test measure nothing. This is the authenticated
+    // member path.
+    //
+    // Positive control FIRST, in its own transaction — the row IS readable, so
+    // a refusal below is about the write verb and not about the query shape or
+    // a broken identity.
+    const read = await asUser(f.ownerUserId, (q) =>
+      q(`select id, action from public.appointment_audit where id = $1`, [rowId]),
+    );
+    expect(read.rowCount).toBe(1);
+    expect(read.rows[0].action).toBe("cancelled");
 
-      const upd = await q(
-        `update public.appointment_audit set action = 'tampered' where id = $1`,
-        [rowId],
-      );
-      const del = await q(`delete from public.appointment_audit where id = $1`, [
-        rowId,
-      ]);
-      return {
-        readCount: read.rowCount,
-        readAction: read.rows[0]?.action as string | undefined,
-        updCount: upd.rowCount,
-        delCount: del.rowCount,
-      };
-    });
+    /** Run one write as the member and report how it failed, or null. */
+    const attempt = async (sql: string): Promise<{ code?: string; message?: string } | null> => {
+      try {
+        await asUser(f.ownerUserId, (q) => q(sql, [rowId]));
+        return null;
+      } catch (e) {
+        return e as { code?: string; message?: string };
+      }
+    };
 
-    expect(observed.readCount).toBe(1);
-    expect(observed.readAction).toBe("cancelled");
-    // RLS default-denies a command with no matching policy — 0010 creates only
-    // SELECT and INSERT policies for this table. Depending on the request shape
-    // that surfaces as an error or as zero affected rows; either is acceptable,
-    // the DURABLE state is what is asserted next.
-    expect(observed.updCount).toBe(0);
-    expect(observed.delCount).toBe(0);
+    for (const [label, sql] of [
+      ["UPDATE", `update public.appointment_audit set action = 'tampered' where id = $1`],
+      ["DELETE", `delete from public.appointment_audit where id = $1`],
+    ] as const) {
+      const failure = await attempt(sql);
+      // Before 0172 this returned rowCount 0 and `failure` would be null.
+      expect(failure, `${label} must be refused, not silently affect zero rows`).not.toBeNull();
+      expect(failure!.code, `${label} SQLSTATE`).toBe("42501");
+      // An RLS WITH CHECK violation raises 42501 too, so the message is the
+      // only thing that proves this is the privilege layer.
+      expect(failure!.message, `${label} must be a PRIVILEGE denial`).toMatch(
+        /permission denied/i,
+      );
+      expect(failure!.message, `${label} must not be an RLS refusal`).not.toMatch(
+        /row-level security/i,
+      );
+    }
 
     // The authority: asUser COMMITS on success, so if either statement had
     // taken effect it would be visible here.
