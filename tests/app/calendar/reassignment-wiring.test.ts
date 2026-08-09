@@ -89,7 +89,11 @@ describe("Item 7 notification — truthful per-kind copy", () => {
     expect(NOTIFY).toMatch(/Your appointment time and practitioner have changed\./);
     expect(NOTIFY).toMatch(/Your appointment time has changed\./); // plain move unchanged
     // Includes the display name, never a practitioner id.
-    expect(NOTIFY).toMatch(/practitioner:practitioners\(display_name\)/);
+    // B5/0174: the embed must name its FK — appointments gained three
+    // practitioner-attribution FKs, so a bare `practitioners(...)` embed now
+    // raises PGRST201 at runtime. Pinned WITH the constraint name so a
+    // silent revert to the ambiguous form fails here.
+    expect(NOTIFY).toMatch(/practitioner:practitioners!appointments_practitioner_same_studio_fk\(display_name\)/);
     expect(NOTIFY).not.toMatch(/practitioner_id/);
   });
 });

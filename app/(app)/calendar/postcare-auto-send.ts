@@ -117,7 +117,7 @@ export async function autoSendPostcareOnComplete(
     const { data: appt, error: loadErr } = await admin
       .from("appointments")
       .select(
-        "id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, client:clients(name, email), service:services(name, modality), studio:studios(id, name, owner_email, timezone, postcare_delivery_mode, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners(display_name)",
+        "id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, client:clients(name, email), service:services(name, modality), studio:studios(id, name, owner_email, timezone, postcare_delivery_mode, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
       )
       .eq("id", appointmentId)
       .eq("studio_id", studioId)

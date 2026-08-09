@@ -153,7 +153,7 @@ export default async function DashboardPage({
   const { data: apptRows, error: apptErr } = await supabase
     .from("appointments")
     .select(
-      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, allergies, pronouns), service:services(id, name, modality), practitioner:practitioners(id, display_name, color)",
+      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, allergies, pronouns), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
     )
     .eq("studio_id", studio.id)
     .gte("starts_at", startUtc.toISOString())
