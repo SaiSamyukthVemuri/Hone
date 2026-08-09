@@ -14,7 +14,11 @@ const FORMS = read("app/(app)/records/record-forms.tsx");
 const PAGE = read("app/(app)/records/page.tsx");
 const QUERIES = read("lib/record-keeping/queries.ts");
 const DASH = read("app/(app)/dashboard/page.tsx");
-const CARD = read("app/(app)/dashboard/supplies-expiring.tsx");
+// Dashboard V2 Part 2B retired the standalone "Supplies expiring" card. The
+// same expiring items now flow through the ONE normalized To-do model and
+// render in the single To-do list, so these pins follow them there.
+const MODEL = read("lib/dashboard/todo-model.ts");
+const LIST = read("app/(app)/dashboard/todo-list.tsx");
 const PRINT = read("app/(app)/records/print/page.tsx");
 const EXPORT = read("app/(app)/settings/data/actions.ts");
 
@@ -94,13 +98,18 @@ describe("dashboard 'Supplies expiring' card is studio-scoped", () => {
     expect(body).toMatch(/\.lte\("expiry_date", horizon\)/);
     expect(body).not.toMatch(/lot_number/);
   });
-  it("dashboard fetches it scoped to the current studio + renders the card", () => {
+  it("dashboard fetches it scoped to the current studio + feeds the To-do model", () => {
     expect(DASH).toMatch(/getExpiringSterileItems\(studio\.id, todayLocal\)/);
-    expect(DASH).toMatch(/<SuppliesExpiringCard items=\{expiringSupplies\} today=\{todayLocal\}/);
+    expect(DASH).toMatch(/supplies: expiringSupplies/);
+    expect(DASH).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
+    expect(DASH).not.toMatch(/SuppliesExpiringCard/);
   });
-  it("the card renders nothing when empty (no clutter) and never shows lot numbers", () => {
-    expect(CARD).toMatch(/if \(items\.length === 0\) return null/);
-    expect(CARD).not.toMatch(/lot_number/);
+  it("a non-expiring supply produces no row (no clutter) and lot numbers never surface", () => {
+    // The "neutral" state is skipped outright, which is the model-level
+    // equivalent of the retired card's `items.length === 0 => return null`.
+    expect(MODEL).toMatch(/if \(state === "neutral"\) continue;/);
+    expect(MODEL).not.toMatch(/lot_number/);
+    expect(LIST).not.toMatch(/lot_number/);
   });
 });
 
@@ -127,7 +136,7 @@ describe("no migration / schema / RLS change", () => {
   });
   it("the new expiry helper + dashboard card contain no DB/DDL at all", () => {
     const EXPIRY = read("lib/record-keeping/expiry.ts");
-    for (const src of [EXPIRY, CARD]) {
+    for (const src of [EXPIRY, MODEL, LIST]) {
       expect(src).not.toMatch(/alter table|create table|create policy|drop policy|\.rpc\(|\.from\(/i);
     }
   });

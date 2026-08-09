@@ -17,6 +17,8 @@ function read(rel: string): string {
 const SNAPSHOT = read("app/(app)/dashboard/practice-snapshot.tsx");
 const HELPER = read("lib/dashboard/clients-needing-attention.ts");
 const PAGE = read("app/(app)/dashboard/page.tsx");
+const MODEL = read("lib/dashboard/todo-model.ts");
+const LIST = read("app/(app)/dashboard/todo-list.tsx");
 
 function session(
   id: string,
@@ -148,27 +150,47 @@ describe("buildClientsNeedingAttention", () => {
 });
 
 describe("placement + UI", () => {
-  it("the card sits in the Action needed section alongside the existing cards", () => {
-    const action = SNAPSHOT.slice(SNAPSHOT.indexOf("Action needed"));
-    expect(action).toMatch(/Clients needing attention/);
-    expect(action).toMatch(/Incomplete procedure records/);
-    expect(action).toMatch(/Missing probe lot numbers/);
-    expect(action).toMatch(/Aftercare not marked/);
-    expect(action).toMatch(/Based on recorded watch notes and next-visit plans\./);
+  // Dashboard V2 Part 2B: "Clients needing attention" is no longer its own card
+  // inside the Practice Snapshot. Its clients now flow through the ONE
+  // normalized To-do model as `treatment_memory` rows and render in the single
+  // To-do list. The inclusion rules and the loader are unchanged; these pins
+  // follow the rendering to where it actually lives.
+  it("attention clients reach the unified To-do list as treatment_memory rows", () => {
+    expect(MODEL).toMatch(/input\.attention\.clients/);
+    expect(MODEL).toMatch(/treatment_memory:\$\{c\.clientId\}/);
+    expect(PAGE).toMatch(/attention: clientsNeedingAttention/);
+    expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
   });
 
-  it("list rows carry name, date, badges, preview, and Open client link", () => {
-    expect(SNAPSHOT).toMatch(/Watch note/);
-    expect(SNAPSHOT).toMatch(/Plan for next visit/);
-    expect(SNAPSHOT).toMatch(/Latest recorded reaction:/);
-    expect(SNAPSHOT).toMatch(/Latest tolerance:/);
-    expect(SNAPSHOT).toMatch(/href=\{`\/clients\/\$\{c\.clientId\}`\}/);
-    expect(SNAPSHOT).toMatch(/\+ \{attention\.totalClients - attention\.clients\.length\} more/);
+  it("every inclusion signal still reaches the row, and so does the tolerance context", () => {
+    expect(MODEL).toMatch(/Watch note/);
+    expect(MODEL).toMatch(/Plan for next visit/);
+    expect(MODEL).toMatch(/Latest recorded reaction:/);
+    expect(MODEL).toMatch(/Latest tolerance:/);
   });
 
-  it("empty state uses the required wording (no all-clear claims)", () => {
-    expect(SNAPSHOT).toMatch(/Nothing flagged from recorded treatment history\./);
-    expect(SNAPSHOT).not.toMatch(/[Aa]ll clear|[Aa]ll clients are safe|[Nn]o issues/);
+  it("the row still links to that client, and the overflow count survives", () => {
+    expect(MODEL).toMatch(/href: `\/clients\/\$\{c\.clientId\}`/);
+    // The retired card's "+ N more" affordance.
+    expect(MODEL).toMatch(/totalClients - input\.attention\.clients\.length/);
+    expect(LIST).toMatch(/more not shown/);
+  });
+
+  it("the snapshot no longer carries an attention surface at all", () => {
+    // The duplicate is gone by construction, not by ordering. Assert on
+    // RENDERED surface and on the data dependency — a prose mention in a
+    // comment is not an attention surface, and asserting on prose would make
+    // this test fail for a documentation edit.
+    expect(SNAPSHOT).not.toMatch(/<h[23][^>]*>\s*Action needed/);
+    expect(SNAPSHOT).not.toMatch(/Clients needing attention</);
+    expect(SNAPSHOT).not.toMatch(/ClientsNeedingAttention/);
+    expect(SNAPSHOT).not.toMatch(/export function ActionNeeded/);
+  });
+
+  it("empty state uses calm wording and makes no all-clear claim", () => {
+    expect(LIST).toMatch(/Nothing to do right now/);
+    expect(LIST).not.toMatch(/[Aa]ll clear|[Aa]ll clients are safe|[Nn]o issues/);
+    expect(MODEL).not.toMatch(/[Aa]ll clear|[Aa]ll clients are safe/);
   });
 
   it("no new top-level nav item; not in Record Keeping", () => {
@@ -186,7 +208,10 @@ describe("data/performance + safety", () => {
   });
 
   it("no unsafe wording", () => {
-    for (const src of [SNAPSHOT.slice(SNAPSHOT.indexOf("Action needed")), HELPER]) {
+    // Previously sliced SNAPSHOT from "Action needed" — an index that no
+    // longer exists, so the sweep silently degraded to one character. Point it
+    // at the surfaces that actually render this now.
+    for (const src of [MODEL, LIST, HELPER]) {
       for (const p of [
         /diagnos/i,
         /unsafe/i,

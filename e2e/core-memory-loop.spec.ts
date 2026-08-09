@@ -222,14 +222,16 @@ test("core memory loop: booking to next-appointment memory", async ({
       page.getByRole("heading", { name: "Daily prep brief" }),
     ).toHaveCount(0);
 
-    // PR #249: the rules-based Follow-up assistant renders on the
-    // dashboard too (its bounded studio-scoped loader runs against the
-    // real local DB — exercising the recent-sessions / completed-appt /
-    // intake reads). The section heading is present whether it has
-    // recorded gaps or shows the calm empty state.
+    // PR #249's rules-based assistant still runs on the dashboard (its
+    // bounded studio-scoped loader exercises the recent-sessions /
+    // completed-appt / intake reads against the real local DB). Dashboard V2
+    // Part 2B retired its standalone card: its gaps now render as rows of the
+    // ONE To do list, so assert on the section that owns them. The heading is
+    // present whether there are gaps or the calm empty state.
+    await expect(page.getByRole("heading", { name: "To do" })).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Follow-up assistant" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
 
     // PR #250 Pilot Love Loop V1: the dashboard shows the "Pilot learning"
     // card and the agentic cards carry a quiet "Was this useful?" prompt.
@@ -245,7 +247,8 @@ test("core memory loop: booking to next-appointment memory", async ({
     expect(href).not.toMatch(
       /client|phone|address|tolerance|probe|aftercare|exposure|stripe|payment|token|audit/i,
     );
-    // The Follow-up assistant card carries the quiet feedback prompt.
+    // The prompt that lived on the retired Follow-up assistant card now sits
+    // at the foot of the To do section — same pilot surface id, still once.
     await expect(page.getByText("Was this useful?").first()).toBeVisible();
   });
 

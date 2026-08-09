@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
@@ -167,28 +167,50 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
     throw new Error("unbalanced <section> around the To do heading");
   }
 
-  it.each([
-    ["Action needed", "<ActionNeeded"],
-    ["Follow-up assistant", "<FollowUpAssistantCard"],
-    ["Supplies expiring", "<SuppliesExpiringCard"],
-    ["Needs attention", "<NeedsAttention"],
-  ])("%s is CONTAINED by the To do section element", (_label, marker) => {
-    expect(todoSection()).toContain(marker);
+  // Dashboard V2 Part 2B: the four children became ONE list fed by ONE model.
+  it("the ONE To-do list is CONTAINED by the To do section element", () => {
+    expect(todoSection()).toContain("<DashboardTodoList");
   });
 
-  it("the To do section really encloses all four, and stops before Birthdays", () => {
+  it("there is exactly ONE To-do list, rendered once", () => {
+    expect(DASH.match(/<DashboardTodoList/g) ?? []).toHaveLength(1);
+  });
+
+  it("the four independent visible sub-sections are GONE", () => {
+    // This is the Part 2B contract. Their data still reaches the practitioner
+    // — through the normalized model — but not as four peer surfaces.
+    for (const marker of [
+      "<ActionNeeded",
+      "<FollowUpAssistantCard",
+      "<SuppliesExpiringCard",
+      "<NeedsAttention",
+    ]) {
+      expect(DASH, `${marker} must no longer be rendered`).not.toContain(marker);
+    }
+    // ...and the components themselves are deleted, not merely unreferenced.
+    for (const f of [
+      "app/(app)/dashboard/follow-up-assistant.tsx",
+      "app/(app)/dashboard/supplies-expiring.tsx",
+    ]) {
+      expect(existsSync(join(process.cwd(), f)), `${f} should be deleted`).toBe(
+        false,
+      );
+    }
+  });
+
+  it("the To do section still stops before Birthdays", () => {
     const sec = todoSection();
     // Non-trivial span: a dissolved section would be a few characters long.
-    expect(sec.length).toBeGreaterThan(400);
+    expect(sec.length).toBeGreaterThan(200);
     expect(sec).not.toContain("<BirthdaysThisMonth");
     expect(sec).not.toContain("<PracticeSnapshot");
   });
 
   it("the To do section is UNCONDITIONAL — no role or flag can empty it", () => {
-    // A mutation wrapping the section in `{isOwner && ...}` removed Action
-    // needed, Follow-up, Supplies AND Needs attention for every non-owner
-    // practitioner, and this file stayed green. The heading must not sit behind
-    // a guard, and neither may its four children.
+    // A mutation wrapping the section in `{isOwner && ...}` removed the whole
+    // To-do surface for every non-owner practitioner, and this file stayed
+    // green. The heading must not sit behind a guard, and neither may the list.
+    // (Owner-ONLY *rows* are filtered inside the model, where they belong.)
     const sec = todoSection();
     // The gate lives OUTSIDE the element — `{isOwner && <section ...>}` — so
     // looking only inside the section misses it entirely. That mutation was
@@ -205,52 +227,61 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
     expect(beforeHeading, "the To do heading must not be conditionally rendered").not.toMatch(
       /\{\s*[A-Za-z0-9_.!]+\s*&&/,
     );
-    for (const marker of [
-      "<ActionNeeded",
-      "<FollowUpAssistantCard",
-      "<SuppliesExpiringCard",
-      "<NeedsAttention",
-    ]) {
+    for (const marker of ["<DashboardTodoList"]) {
       const line = sec.slice(sec.lastIndexOf("\n", sec.indexOf(marker)), sec.indexOf(marker));
       expect(line, `${marker} must not be gated`).not.toMatch(/&&/);
     }
   });
 
-  it("To do owns the only h2 in the group — its children are h3", () => {
-    // One heading level for the group, so the four surfaces read as items of
-    // one list rather than four competing sections. Asserted on the SOURCE of
-    // each child component, not on the page.
-    for (const [file, heading] of [
-      ["app/(app)/dashboard/practice-snapshot.tsx", "Action needed"],
-      ["app/(app)/dashboard/follow-up-assistant.tsx", "Follow-up assistant"],
-      ["app/(app)/dashboard/supplies-expiring.tsx", "Supplies expiring"],
-    ] as const) {
-      const src = readFileSync(join(process.cwd(), file), "utf8");
-      expect(src, `${heading} must be an h3`).toMatch(
-        new RegExp(`<h3[^>]*>${heading}</h3>`),
-      );
-      expect(src, `${heading} must not be an h2`).not.toMatch(
-        new RegExp(`<h2[^>]*>${heading}</h2>`),
-      );
-    }
-    // "Needs attention" is declared inline in the page.
-    expect(DASH).toMatch(/<h3[^>]*>Needs attention<\/h3>/);
-    expect(DASH).not.toMatch(/<h2[^>]*>Needs attention<\/h2>/);
+  it("To do owns the only heading in the group — the list adds NO sub-headings", () => {
+    // Part 1 gave the four children h3s so they read as items of one group.
+    // Part 2B removes the competing headings altogether: one list, one grammar.
+    const list = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/todo-list.tsx"),
+      "utf8",
+    );
+    expect(list).not.toMatch(/<h[1-6]/);
+    const sec = todoSection();
+    expect(sec.match(/<h2/g) ?? []).toHaveLength(1);
+    expect(sec).not.toMatch(/<h3/);
   });
 
-  it("the duplicate attention surface is gone: Action needed left the snapshot", () => {
-    // The dashboard used to carry TWO attention surfaces describing the same
-    // class of work — "Action needed" inside the reporting snapshot and
-    // "Needs attention" as a peer section below it.
+  it("the duplicate attention surfaces are gone from the snapshot entirely", () => {
     const snapshot = readFileSync(
       join(process.cwd(), "app/(app)/dashboard/practice-snapshot.tsx"),
       "utf8",
     );
-    // PracticeSnapshot no longer takes or renders `attention`.
+    // PracticeSnapshot never takes or renders `attention`...
     expect(snapshot).toMatch(/export function PracticeSnapshot\(\{\s*\n\s*metrics,\s*\n\s*livemode/);
     expect(DASH).not.toMatch(/<PracticeSnapshot[^/]*attention=/);
-    // ...and ActionNeeded is a separate export that does.
-    expect(snapshot).toMatch(/export function ActionNeeded\(\{/);
+    // ...and ActionNeeded no longer exists at all — Part 2B retired it.
+    expect(snapshot).not.toMatch(/export function ActionNeeded/);
+    expect(snapshot).not.toMatch(/ClientsNeedingAttention/);
+  });
+
+  it("every row grammar question is answered by the ONE model", () => {
+    // subject (who/what) · reason (why unresolved) · action (what next).
+    const model = readFileSync(
+      join(process.cwd(), "lib/dashboard/todo-model.ts"),
+      "utf8",
+    );
+    for (const field of ["subject", "reason", "action"]) {
+      expect(model, `the model must define ${field}`).toMatch(
+        new RegExp(`${field}[?]?:`),
+      );
+    }
+    const list = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/todo-list.tsx"),
+      "utf8",
+    );
+    for (const field of [
+      "item.subject.label",
+      "item.reason",
+      "item.action.label",
+      "item.action.href",
+    ]) {
+      expect(list, `the list must render ${field}`).toContain(field);
+    }
   });
 });
 
@@ -263,6 +294,9 @@ describe("dashboard hierarchy — no new data loading", () => {
     ["getMissingRecordsAssistant", /getMissingRecordsAssistant\(/g],
     ["getExpiringSterileItems", /getExpiringSterileItems\(/g],
     ["getClientBirthdaysForMonth", /getClientBirthdaysForMonth\(/g],
+    // Part 2B: the normalizer is pure and must be invoked exactly once. More
+    // than one call would mean the page rebuilt the same list twice.
+    ["buildDashboardTodo", /buildDashboardTodo\(/g],
   ])("%s is called exactly once", (_name, re) => {
     expect(DASH.match(re) ?? []).toHaveLength(1);
   });
@@ -292,10 +326,8 @@ describe("dashboard hierarchy — no new data loading", () => {
 describe("dashboard hierarchy — nothing operational was removed", () => {
   it.each([
     "<OnboardingSurface",
-    "<ActionNeeded",
-    "<FollowUpAssistantCard",
-    "<SuppliesExpiringCard",
-    "<NeedsAttention",
+    // Part 2B: the four To-do sub-sections collapsed into this single list.
+    "<DashboardTodoList",
     "<BookingSetupCard",
     "<BirthdaysThisMonth",
     "<PracticeSnapshot",

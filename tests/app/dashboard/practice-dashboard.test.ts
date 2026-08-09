@@ -151,6 +151,8 @@ describe("summarizeProcedureCompleteness", () => {
       incompleteRecords: 0,
       missingProbeLots: 0,
       aftercareNotMarked: 0,
+      // Part 2B: the non-itemized half of `incompleteRecords`.
+      recordsMissingDetails: 0,
     });
   });
 
@@ -250,13 +252,52 @@ describe("service value wording (live payments disabled)", () => {
 });
 
 describe("action metrics + Today section", () => {
-  it("action cards render and link into Record Keeping procedures", () => {
-    expect(SNAPSHOT).toMatch(/Incomplete procedure records/);
-    expect(SNAPSHOT).toMatch(/Missing probe lot numbers/);
-    expect(SNAPSHOT).toMatch(/Aftercare not marked/);
+  it("the three action COUNT TILES are gone; their work is itemized instead", () => {
+    // Dashboard V2 Part 2B. The tiles asked for the same unresolved work the
+    // missing-records assistant already itemizes per client, over a different
+    // window and in a different unit (a count of PROCEDURE RECORDS vs a row per
+    // SESSION). Aftercare and probe-lot are now per-client To-do rows; the
+    // remainder — the part no per-item row covers — became ONE roll-up row.
+    const MODEL = read("lib/dashboard/todo-model.ts");
+    expect(SNAPSHOT).not.toMatch(/Incomplete procedure records/);
+    expect(SNAPSHOT).not.toMatch(/Missing probe lot numbers/);
+    expect(SNAPSHOT).not.toMatch(/href="\/records\?section=procedures"/);
+    // The capability the tiles uniquely carried is preserved, once.
+    expect(MODEL).toMatch(/records_details:studio/);
+    expect(MODEL).toMatch(/missing client or operator details/);
+    expect(MODEL).toMatch(/href: "\/records\?section=procedures"/);
     expect(
-      SNAPSHOT.match(/href="\/records\?section=procedures"/g)?.length,
-    ).toBe(3);
+      MODEL.match(/records_details:studio/g)?.length,
+      "the roll-up must be emitted exactly once",
+    ).toBe(1);
+  });
+
+  it("recordsMissingDetails excludes the two itemized gaps", () => {
+    // Aftercare-only and probe-lot-only records are counted by
+    // `incompleteRecords` but MUST NOT be counted by the roll-up, or the
+    // dashboard asks for the same work twice.
+    const aftercareOnly = summarizeProcedureCompleteness([
+      record({ aftercareExplainedAt: null }),
+    ]);
+    expect(aftercareOnly.incompleteRecords).toBe(1);
+    expect(aftercareOnly.aftercareNotMarked).toBe(1);
+    expect(aftercareOnly.recordsMissingDetails).toBe(0);
+
+    const lotOnly = summarizeProcedureCompleteness([
+      record({
+        areas: [
+          { name: "Chin", probeLabel: "F3", probeLotNumber: null, minutesPerformed: 15, machineFrequency: null },
+        ],
+      }),
+    ]);
+    expect(lotOnly.incompleteRecords).toBe(1);
+    expect(lotOnly.missingProbeLots).toBe(1);
+    expect(lotOnly.recordsMissingDetails).toBe(0);
+
+    // ...but a demographic/operator gap IS the roll-up's job.
+    const details = summarizeProcedureCompleteness([record({ dateOfBirth: null })]);
+    expect(details.incompleteRecords).toBe(1);
+    expect(details.recordsMissingDetails).toBe(1);
   });
 
   it("clients-with-watch-notes is explicitly deferred (not silently dropped)", () => {

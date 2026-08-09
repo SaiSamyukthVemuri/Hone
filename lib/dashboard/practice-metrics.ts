@@ -131,6 +131,22 @@ export type ProcedureActionMetrics = {
   incompleteRecords: number;
   missingProbeLots: number;
   aftercareNotMarked: number;
+  // Dashboard V2 Part 2B. Records incomplete for a reason NO per-item To-do
+  // covers: client DOB / phone / email / address, the operator, or a record
+  // with no treatment area at all.
+  //
+  // Why this exists. `incompleteRecords` is a UNION that also counts the
+  // aftercare and probe-lot gaps, and those two are now surfaced as their own
+  // per-client, per-session To-do items by the missing-records assistant. A
+  // To-do list built from `incompleteRecords` would therefore ask for the same
+  // unresolved work twice, in two different units (a count over the 100 most
+  // recent PROCEDURE RECORDS here vs a row per SESSION there) and over two
+  // different windows. This is the same-loop, no-new-query complement:
+  // everything `incompleteRecords` counts EXCEPT the two itemized gaps.
+  //
+  // `incompleteRecords` itself is unchanged — it remains the honest
+  // completeness figure for any reporting surface that wants the union.
+  recordsMissingDetails: number;
 };
 
 // Pure: completeness sweep over generated procedure records (the same
@@ -144,21 +160,25 @@ export function summarizeProcedureCompleteness(
   let incomplete = 0;
   let missingLots = 0;
   let aftercareNotMarked = 0;
+  let missingDetails = 0;
   for (const r of records) {
     const areaLotsMissing = r.areas.filter(
       (a) => !a.probeLotNumber?.trim(),
     ).length;
     missingLots += areaLotsMissing;
     if (!r.aftercareExplainedAt) aftercareNotMarked += 1;
-    const missingAny =
+    // The non-itemized half of the union, computed in the SAME pass so the two
+    // can never drift and no extra read is issued.
+    const detailsMissing =
       !r.dateOfBirth ||
       !r.phone?.trim() ||
       !r.email?.trim() ||
       !r.address?.trim() ||
       !r.operatorName ||
-      r.areas.length === 0 ||
-      areaLotsMissing > 0 ||
-      !r.aftercareExplainedAt;
+      r.areas.length === 0;
+    if (detailsMissing) missingDetails += 1;
+    const missingAny =
+      detailsMissing || areaLotsMissing > 0 || !r.aftercareExplainedAt;
     if (missingAny) incomplete += 1;
   }
   return {
@@ -166,6 +186,7 @@ export function summarizeProcedureCompleteness(
     incompleteRecords: incomplete,
     missingProbeLots: missingLots,
     aftercareNotMarked,
+    recordsMissingDetails: missingDetails,
   };
 }
 
