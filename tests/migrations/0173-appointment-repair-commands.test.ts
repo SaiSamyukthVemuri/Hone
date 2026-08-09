@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // 0173 — APPOINTMENT BOUNDARY B4 source contract.
@@ -52,6 +53,24 @@ const FUNCTIONS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
+
+describe("0173 — migration state", () => {
+  // The CENTRAL tripwire, moved here from
+  // tests/migrations/0172-appointment-dml-revocation.test.ts when B4 landed.
+  // Only the current maximum migration's own test carries it (CLAUDE.md §2);
+  // an older per-migration test that keeps the pin turns every subsequent
+  // migration into a mechanical sweep, which is exactly how 0163, 0164 and 0165
+  // each went red after push.
+  //
+  // 0173 is B4's ONLY migration. The L23 closure it also carries was briefly
+  // drafted as a companion 0174 and withdrawn, because the canonical
+  // appointment-DML program reserves 0174 for B5, 0175 for B6, 0176 for B7 and
+  // 0177 for B8. When B5's 0174 lands, this block moves there.
+  it("is the current repository maximum", () => {
+    expect(isRepoMax("0173")).toBe(true);
+    expect(versionsAbove("0173")).toEqual([]);
+  });
+});
 
 describe("0173 — declares exactly the intended functions", () => {
   it("creates the four helpers and the two commands, and nothing else", () => {
@@ -320,8 +339,16 @@ describe("0173 — scope: B5-B8 are not absorbed", () => {
     expect(s).not.toContain("add column");
   });
 
-  it("does not touch services or practitioners (that is 0174)", () => {
-    for (const stmt of EXECUTABLE) {
+  it("GROUPS 1-4 touch ONLY the repair commands — services/practitioners are confined to GROUP 5", () => {
+    // 0173 does close L23, but that work is confined to GROUP 5 so it stays
+    // independently auditable. The repair-command groups must not reach the
+    // parent tables or touch a policy at all; if they ever do, the two subjects
+    // have started to blur and the file has stopped being reviewable in parts.
+    const g5 = CODE.indexOf("revoke delete on table public.services");
+    expect(g5, "GROUP 5 must exist").toBeGreaterThan(-1);
+    const commandGroups = CODE.slice(0, g5);
+
+    for (const stmt of commandGroups.split(";").map((x) => x.trim()).filter(Boolean)) {
       const s = stmt.toLowerCase();
       if (/^(grant|revoke)\b/.test(s) && /\bon\s+table\b/.test(s)) {
         expect(s).not.toMatch(/public\.(services|practitioners)\b/);
@@ -329,5 +356,12 @@ describe("0173 — scope: B5-B8 are not absorbed", () => {
       expect(s).not.toMatch(/^drop\s+policy/);
       expect(s).not.toMatch(/^create\s+policy/);
     }
+  });
+
+  it("does not absorb B5's 0174 — no such migration is created here", () => {
+    // The L23 closure was briefly drafted as a companion 0174. 0174 belongs to
+    // B5 (attribution + audit integrity); the full ownership assertion lives in
+    // tests/migrations/0173-parent-delete-l23-closure.test.ts.
+    expect(PROSE).toMatch(/0174/);
   });
 });

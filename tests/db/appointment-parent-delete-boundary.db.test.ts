@@ -1,4 +1,9 @@
-// APPOINTMENT BOUNDARY B4 companion — behavioural suite for migration 0174 (L23).
+// APPOINTMENT BOUNDARY B4 — behavioural suite for 0173 GROUP 5 (L23).
+//
+// This closure was briefly drafted as a companion migration 0174 and withdrawn:
+// the canonical appointment-DML program reserves 0174 for B5 (attribution +
+// audit integrity), 0175 for B6, 0176 for B7 and 0177 for B8. B4 ships ONE
+// migration, 0173, whose GROUP 5 carries L23.
 //
 // L23: 0172 closed DIRECT DML on `appointments`, but a FOREIGN-KEY REFERENTIAL
 // ACTION runs as the CONSTRAINT's owner and consults neither the table ACL nor
@@ -22,12 +27,12 @@
 // .github/workflows/ci.yml precisely because a later CLI ships a `postgres`-role
 // `pg_default_acl` that never grants anon/authenticated SELECT/INSERT/UPDATE/
 // DELETE on migration-created tables at all. On such a stack this entire file
-// would pass green while proving nothing whatsoever about 0174.
+// would pass green while proving nothing whatsoever about GROUP 5.
 //
-// So the central test RESTORES the pre-0174 world inside a rolled-back
+// So the central test RESTORES the pre-GROUP-5 world inside a rolled-back
 // transaction — re-granting DELETE and recreating the FOR ALL policy — and
 // proves the appointment lineage really IS nulled that way. Only then is the
-// post-0174 refusal evidence of anything.
+// post-GROUP-5 refusal evidence of anything.
 
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -87,8 +92,8 @@ async function seedServiceAndAppointment(
 
 // ---------------------------------------------------------------------------
 
-describe("0174 — the L23 hazard is real (two-way self-test)", () => {
-  it("RESTORING the pre-0174 grant + policy really does null appointments.service_id", async () => {
+describe("0173 GROUP 5 — the L23 hazard is real (two-way self-test)", () => {
+  it("RESTORING the pre-GROUP-5 grant + policy really does null appointments.service_id", async () => {
     // This is the control that makes every other test in this file meaningful.
     // If this ever stops nulling the column, the refusals below are proving
     // nothing and this suite must be re-examined before it is trusted.
@@ -96,7 +101,7 @@ describe("0174 — the L23 hazard is real (two-way self-test)", () => {
     const { serviceId, appointmentId } = await seedServiceAndAppointment(studio);
 
     const observed = await inRolledBackTx(async (q) => {
-      // Put the world back exactly as it was before 0174.
+      // Put the world back exactly as it was before GROUP 5.
       await q(`grant delete on table public.services to authenticated`);
       await q(`drop policy if exists "services_member_all" on public.services`);
       await q(
@@ -121,10 +126,10 @@ describe("0174 — the L23 hazard is real (two-way self-test)", () => {
       };
     });
 
-    expect(observed.deleted, "the member's DELETE must succeed pre-0174").toBe(1);
+    expect(observed.deleted, "the member's DELETE must succeed pre-GROUP-5").toBe(1);
     expect(
       observed.serviceId,
-      "the FK referential action must null the lineage pre-0174",
+      "the FK referential action must null the lineage pre-GROUP-5",
     ).toBeNull();
 
     // And the rollback really did undo it.
@@ -136,7 +141,7 @@ describe("0174 — the L23 hazard is real (two-way self-test)", () => {
   });
 });
 
-describe("0174 — the privilege layer", () => {
+describe("0173 GROUP 5 — the privilege layer", () => {
   for (const table of ["services", "practitioners"] as const) {
     it(`${table}: DELETE is revoked from anon and authenticated`, async () => {
       const r = await adminQuery(
@@ -151,8 +156,8 @@ describe("0174 — the privilege layer", () => {
     });
 
     it(`${table}: SELECT / INSERT / UPDATE are untouched for authenticated`, async () => {
-      // The revoke must be surgical. If this ever goes false, 0174 has taken
-      // the settings pages down with it.
+      // The revoke must be surgical. If this ever goes false, GROUP 5 has
+      // taken the settings pages down with it.
       const r = await adminQuery(
         `select has_table_privilege('authenticated', $1, 'SELECT') sel,
                 has_table_privilege('authenticated', $1, 'INSERT') ins,
@@ -174,7 +179,7 @@ describe("0174 — the privilege layer", () => {
   }
 });
 
-describe("0174 — the policy layer", () => {
+describe("0173 GROUP 5 — the policy layer", () => {
   it("no DELETE-capable policy remains on services or practitioners", async () => {
     const r = await adminQuery(
       `select tablename::text tbl, policyname::text pol, cmd::text
@@ -221,7 +226,7 @@ describe("0174 — the policy layer", () => {
   });
 });
 
-describe("0174 — appointment lineage is no longer reachable through a parent delete", () => {
+describe("0173 GROUP 5 — appointment lineage is no longer reachable through a parent delete", () => {
   it("a MEMBER can no longer null appointments.service_id", async () => {
     const studio = await seedStudio("l23-service");
     const member = await seedMember(studio, "l23-service-m");
@@ -238,7 +243,7 @@ describe("0174 — appointment lineage is no longer reachable through a parent d
 
     expect(failure, "the member's DELETE must fail").not.toBeNull();
     // 42501 is shared by the privilege and RLS layers; the message is the only
-    // discriminator, and 0174's enforcement is the PRIVILEGE.
+    // discriminator, and GROUP 5's enforcement is the PRIVILEGE.
     expect(failure?.code).toBe("42501");
     expect(failure?.message ?? "").toMatch(/permission denied for table services/i);
 
@@ -294,9 +299,9 @@ describe("0174 — appointment lineage is no longer reachable through a parent d
     // L23 is an ON DELETE story, but ON UPDATE is the same mechanism: a
     // referential action runs as the constraint's owner and consults neither
     // the ACL nor RLS. `authenticated` still holds UPDATE on services and
-    // practitioners (0174 deliberately kept it — that is how the settings pages
+    // practitioners (GROUP 5 deliberately kept it — that is how the settings pages
     // work), so an ON UPDATE CASCADE on either parent key would reopen exactly
-    // the hazard 0174 just closed, by a different verb. Every FK is currently
+    // the hazard GROUP 5 just closed, by a different verb. Every FK is currently
     // NO ACTION; this pins it.
     const r = await adminQuery(
       `select c.conname, c.confupdtype::text
@@ -314,9 +319,9 @@ describe("0174 — appointment lineage is no longer reachable through a parent d
     ).toHaveLength(0);
   });
 
-  it("the two CASCADE parents remain default-denied (unchanged by 0174)", async () => {
+  it("the two CASCADE parents remain default-denied (unchanged by GROUP 5)", async () => {
     // clients + studios were already denied at the RLS layer by 0087 and 0001;
-    // 0174 does not touch them. Pinned so a DELETE policy appearing on either
+    // GROUP 5 does not touch them. Pinned so a DELETE policy appearing on either
     // fails CI rather than silently widening the edge to "the appointment
     // disappears".
     const r = await adminQuery(
@@ -329,7 +334,7 @@ describe("0174 — appointment lineage is no longer reachable through a parent d
   });
 });
 
-describe("0174 — the product workflows it must not break", () => {
+describe("0173 GROUP 5 — the product workflows it must not break", () => {
   it("a member can still read, create and UPDATE a service", async () => {
     const studio = await seedStudio("l23-crud");
     const member = await seedMember(studio, "l23-crud-m");
@@ -411,7 +416,7 @@ describe("0174 — the product workflows it must not break", () => {
   });
 });
 
-describe("0174 — 0172's boundary is not disturbed", () => {
+describe("0173 GROUP 5 — 0172's boundary is not disturbed", () => {
   it("direct appointment DML remains denied for both browser roles", async () => {
     const studio = await seedStudio("l23-appt-dml");
     const { appointmentId } = await seedServiceAndAppointment(studio);

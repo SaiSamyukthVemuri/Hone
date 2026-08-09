@@ -56,13 +56,15 @@ const ROW_DML = ["insert", "update", "delete"] as const;
 
 // ---------------------------------------------------------------------------
 
-// 0174 superseded 0172 as the repository maximum when B4 landed (0173 the
-// repair commands, 0174 the L23 parent-delete closure). Per CLAUDE.md §2, ONLY
-// the current maximum migration's own test may assert isRepoMax — an older
-// per-migration test that keeps the pin turns every subsequent migration into a
-// mechanical sweep, which is exactly how 0163/0164/0165 each went red after
-// push. The "nothing above me" tripwire is served centrally by the current
-// maximum's test (tests/migrations/0174-parent-delete-revocation.test.ts).
+// 0173 superseded 0172 as the repository maximum when B4 landed. B4 ships ONE
+// migration: 0173 carries both the repair commands and, in its GROUP 5, the L23
+// parent-delete closure. (That closure was briefly drafted as a companion 0174
+// and withdrawn — 0174 is reserved for B5.) Per CLAUDE.md §2, ONLY the current
+// maximum migration's own test may assert isRepoMax — an older per-migration
+// test that keeps the pin turns every subsequent migration into a mechanical
+// sweep, which is exactly how 0163/0164/0165 each went red after push. The
+// "nothing above me" tripwire is served centrally by the current maximum's test
+// (tests/migrations/0173-appointment-repair-commands.test.ts).
 //
 // This file's own contract is unchanged: 0172 is applied-frozen in B3 and B4
 // does not edit a single byte of it.

@@ -655,14 +655,14 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
     }
   });
 
-  // SUPERSEDED BY B4 / MIGRATION 0174.
+  // SUPERSEDED BY B4 / MIGRATION 0173 (GROUP 5).
   //
   // When B3 shipped, this assertion read "a member CAN still null
   // appointments.service_id by deleting the service — recorded, not fixed", and
   // that was the truth at 0172: L23 was documented, deliberately left open, and
   // pinned here so it could not be forgotten.
   //
-  // 0174 closed it — `revoke delete on public.services from anon, authenticated`
+  // 0173's GROUP 5 closed it — `revoke delete on public.services from anon, authenticated`
   // plus the 0087-style policy split. The reproduction below therefore now
   // stops at the member's DELETE, and this test asserts the CLOSURE instead of
   // the hazard. It is deliberately kept in this file rather than deleted: the
@@ -672,8 +672,8 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
   //
   // 0172 itself is untouched by B4 — not one byte. The full L23 treatment,
   // including the two-way self-test that proves the hazard was real before
-  // 0174, lives in tests/db/appointment-parent-delete-boundary.db.test.ts.
-  it("a member can NO LONGER null appointments.service_id by deleting the service (0174)", async () => {
+  // GROUP 5, lives in tests/db/appointment-parent-delete-boundary.db.test.ts.
+  it("a member can NO LONGER null appointments.service_id by deleting the service (0173 GROUP 5)", async () => {
     // Reproduced end to end, then rolled back. asUser COMMITS on success, so
     // this runs through asRole (which always rolls back) with a member identity
     // supplied explicitly.
@@ -712,7 +712,7 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
       INSUFFICIENT_PRIVILEGE,
     );
 
-    // ...and after 0174 the INDIRECT route is refused too. Separate
+    // ...and after 0173's GROUP 5 the INDIRECT route is refused too. Separate
     // transaction: the failed statement above aborts its own.
     const after = await asRole("authenticated", async (q) => {
       await q(`select set_config('request.jwt.claims', $1, true)`, [
@@ -728,7 +728,7 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
     });
     expect(
       after,
-      "0174 revoked DELETE on services, so the parent delete is refused at the privilege layer",
+      "0173 GROUP 5 revoked DELETE on services, so the parent delete is refused at the privilege layer",
     ).toBe(INSUFFICIENT_PRIVILEGE);
 
     // The lineage survived: the FK's ON DELETE SET NULL never fired, because
