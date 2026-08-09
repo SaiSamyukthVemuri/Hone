@@ -270,7 +270,23 @@ update public.appointments a
   from (
     select aa.appointment_id,
            min(aa.actor_id::text)::uuid as actor_id,
-           min(aa.created_at)           as at,
+           -- F5: the LATEST qualifying event, not the earliest.
+           --
+           -- The runtime writes `outside_availability_authorized_at = v_now` on
+           -- EVERY authorising move and clears it when the flag flips false, so
+           -- the column means "when the override standing today was authorised".
+           -- min() would have meant "when it was FIRST authorised" — a different
+           -- claim, and the only place in this file where that divergence is
+           -- reachable: 3.3/3.4 exclude any appointment with more than one
+           -- qualifying row (`count(*)`), while this block deliberately admits
+           -- ONE actor with several events (`count(distinct actor_id)`) so a
+           -- repeat authorisation by the same owner still resolves. Admitting
+           -- several events is exactly what makes "which one?" a live question.
+           --
+           -- Safe against actor/timestamp decorrelation: n = 1 guarantees a
+           -- single distinct actor, so max() cannot pair one actor's id with
+           -- another's timestamp. Ambiguity (n > 1) still yields NULL below.
+           max(aa.created_at)           as at,
            count(distinct aa.actor_id)  as n
       from public.appointment_audit aa
       join public.practitioners pr

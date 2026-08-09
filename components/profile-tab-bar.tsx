@@ -19,7 +19,11 @@ const TABS: ReadonlyArray<{ value: ProfileTab; label: string }> = [
   { value: "treatment", label: "Treatment Plans" },
   { value: "messages", label: "Messages" },
   { value: "health", label: "Health & Forms" },
-  { value: "consultation", label: "Consultation" },
+  // LABEL ONLY. The tab VALUE stays "consultation": it is the ?tab= query
+  // parameter, and existing deep links (the appointment consultation CTA, the
+  // Overview cards) plus their tests depend on it. Chloe could not tell that
+  // skin/hair analysis lived behind a tab named only "Consultation".
+  { value: "consultation", label: "Consultation & Skin/Hair" },
   { value: "personal", label: "Personal Notes" },
 ];
 

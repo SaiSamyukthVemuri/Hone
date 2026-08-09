@@ -307,9 +307,10 @@ describe("dashboard hierarchy — no new data loading", () => {
     expect(DASH).toMatch(/\.from\("appointments"\)/);
     expect(DASH.match(/\.from\("appointments"\)/g) ?? []).toHaveLength(1);
     expect(DASH).toMatch(
-      // B5/0174: `practitioners` is now reachable by four FKs from
-      // appointments, so the embed must name the ASSIGNMENT one or PostgREST
-      // returns PGRST201 and the dashboard 500s.
+      // PRE-0174 COMPATIBILITY: after 0174 `practitioners` is reachable by
+      // four FKs from `appointments`, so the embed must name the ASSIGNMENT
+      // one or PostgREST returns PGRST201 and the dashboard 500s. Valid on
+      // 0173 too, which is what makes the app-first order safe.
       /client:clients\([^)]*\), service:services\([^)]*\), practitioner:practitioners!appointments_practitioner_same_studio_fk\(/,
     );
   });

@@ -89,11 +89,15 @@ describe("Item 7 notification — truthful per-kind copy", () => {
     expect(NOTIFY).toMatch(/Your appointment time and practitioner have changed\./);
     expect(NOTIFY).toMatch(/Your appointment time has changed\./); // plain move unchanged
     // Includes the display name, never a practitioner id.
-    // B5/0174: the embed must name its FK — appointments gained three
-    // practitioner-attribution FKs, so a bare `practitioners(...)` embed now
-    // raises PGRST201 at runtime. Pinned WITH the constraint name so a
-    // silent revert to the ambiguous form fails here.
-    expect(NOTIFY).toMatch(/practitioner:practitioners!appointments_practitioner_same_studio_fk\(display_name\)/);
+    // PRE-0174 COMPATIBILITY: 0174 gives `appointments` three more FKs to
+    // `practitioners`, after which a bare `practitioners(...)` embed raises
+    // PGRST201 at runtime. The qualified form is valid on BOTH schemas
+    // (`appointments_practitioner_same_studio_fk` exists since 0151), which is
+    // why it ships before the migration. Pinned WITH the constraint name so a
+    // silent revert to the ambiguous form fails here rather than in production.
+    expect(NOTIFY).toMatch(
+      /practitioner:practitioners!appointments_practitioner_same_studio_fk\(display_name\)/,
+    );
     expect(NOTIFY).not.toMatch(/practitioner_id/);
   });
 });

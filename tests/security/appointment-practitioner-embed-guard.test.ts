@@ -35,6 +35,31 @@ import { readdirSync, statSync } from "node:fs";
 // matters beyond B5: B6, B7 and B8 all touch this table, and ANY future
 // migration that adds a second FK between two tables reintroduces the hazard
 // for whatever embed already existed.
+//
+// SHIPPED AHEAD OF 0174, DELIBERATELY. The qualified form is valid on the
+// CURRENT schema too — `appointments_practitioner_same_studio_fk` has existed
+// since 0151 — so naming the constraint is backward compatible. Deploying the
+// app first means the migration never lands on code that cannot express an
+// unambiguous embed. Migration-first would put PGRST201 in production.
+//
+// KNOWN LIMITS, verified against this production tree rather than assumed, and
+// left as P3 follow-ups instead of being fixed here (this is an emergency
+// ordering shim, not a static-analysis project):
+//
+//   * ROOTS omits `scripts/`. Checked: `scripts/` currently contains zero
+//     `.from("appointments")` calls and zero practitioner embeds, so nothing
+//     escapes today. A future script that queried appointments would not be
+//     covered.
+//   * The scan is FILE-LOCAL, so a select string held in one file and used with
+//     `.from("appointments")` in another would not be attributed. Checked: the
+//     only shared-looking constant (`BASE` in lib/booking/queries.ts) is a
+//     function-local const in the same file as its query.
+//   * It does not model the REVERSE ambiguity (`practitioners` embedding
+//     `appointments`). Checked: there are currently zero such runtime embeds.
+//
+// Each of those is a real gap in the ABSTRACTION, not in today's coverage. If
+// any of the three conditions stops being true, widen the guard in the same
+// change that introduces the call site.
 
 const ROOTS = ["app", "lib", "components"] as const;
 const REPO = join(__dirname, "..", "..");

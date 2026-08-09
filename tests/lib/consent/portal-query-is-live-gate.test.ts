@@ -219,3 +219,50 @@ describe("portal sign action (app/portal/consent-actions.ts)", () => {
     expect(PORTAL_CONSENT).not.toMatch(/allowedFormTypes/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 2026-08-09. Photo consent moved OUT of the intake and is now collected only
+// in the client portal, which makes two more helpers portal-eligibility
+// claims — and both must use the same boundary as the portal itself.
+//
+// `status = 'active'` alone is not portal visibility: migration 0072's CHECK
+// (NOT is_live OR status='active') still permits active + is_live=false, a
+// form the owner activated and deliberately hid. Telling a practitioner such a
+// form is "not completed" blames the client for something they cannot reach.
+describe("practitioner-facing photo-consent status uses the PORTAL boundary", () => {
+  const photoView =
+    QUERIES.match(
+      /export async function getPortalPhotoConsentsForPractitionerView[\s\S]*?\n\}/,
+    )?.[0] ?? "";
+  const imagesState =
+    QUERIES.match(
+      /export async function getPhotoConsentStateForClient[\s\S]*?\n\}/,
+    )?.[0] ?? "";
+
+  it("the View-intake portal status filters is_live = true", () => {
+    expect(photoView).not.toBe("");
+    expect(photoView).toMatch(/\.eq\("is_live",\s*true\)/);
+    expect(photoView).toMatch(/\.eq\("status",\s*"active"\)/);
+  });
+
+  it("the Treatment-Images photo status filters is_live = true", () => {
+    // Shipped in #405 filtering on status alone, which predates the
+    // portal-collection contract.
+    expect(imagesState).not.toBe("");
+    expect(imagesState).toMatch(/\.eq\("is_live",\s*true\)/);
+    expect(imagesState).toMatch(/\.eq\("status",\s*"active"\)/);
+  });
+
+  it("the View-intake status does NOT collapse live forms with limit(1)", () => {
+    // One row per live photo template. A `.limit(1)` here would silently drop
+    // a real consent record.
+    expect(photoView).not.toMatch(/\.limit\(1\)/);
+    expect(photoView).not.toMatch(/maybeSingle\(\)/);
+  });
+
+  it("it orders templates like the portal does, not by version", () => {
+    // created_at ASC, matching getActiveConsentTemplatesForPortal. Ordering by
+    // version across DIFFERENT templates would imply a ranking between them.
+    expect(photoView).toMatch(/\.order\("created_at",\s*\{\s*ascending:\s*true\s*\}\)/);
+  });
+});

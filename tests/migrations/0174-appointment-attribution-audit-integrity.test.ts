@@ -344,6 +344,48 @@ describe("0174 — backfill never invents an actor", () => {
     expect(canceller!).toMatch(/a\.status = 'cancelled'/);
   });
 
+  // F5. The runtime writes `outside_availability_authorized_at = v_now` on every
+  // authorising move and clears it when the flag flips false, so the column means
+  // "when the override standing today was authorised". The backfill must agree.
+  //
+  // This is the ONLY backfill where the question is reachable: 3.3/3.4 exclude
+  // any appointment with more than one qualifying row (`count(*)`), while the
+  // override block deliberately admits ONE actor with several events
+  // (`count(distinct actor_id)`) so a repeat authorisation still resolves.
+  it("F5 — the override backfill takes the LATEST qualifying event, never the earliest", () => {
+    const ovr = BACKFILLS.find((b) =>
+      /outside_availability_authorized_by_practitioner_id = ev\.actor_id/.test(b),
+    );
+    expect(ovr).toBeDefined();
+    // max(), and specifically NOT min(): a min() here would record when the
+    // override was FIRST authorised, contradicting the runtime semantic.
+    expect(ovr!, "must select the latest qualifying event").toMatch(
+      /max\(aa\.created_at\)/,
+    );
+    expect(ovr!, "min() would mean 'first authorised', not 'authorised'").not.toMatch(
+      /min\(aa\.created_at\)/,
+    );
+    // Ambiguity is still NULL, and the actor is still the single distinct one —
+    // n = 1 is what stops max() pairing one actor's id with another's timestamp.
+    expect(ovr!).toMatch(/count\(distinct aa\.actor_id\)/);
+    expect(ovr!).toMatch(/ev\.n = 1/);
+    expect(ovr!).toMatch(/min\(aa\.actor_id::text\)::uuid/);
+  });
+
+  it("F5 — the creator/canceller backfills are NOT changed by it", () => {
+    // They exclude repeats outright (`count(*)`) and write no timestamp, so the
+    // latest-vs-earliest question cannot arise there. Pinned so a future sweep
+    // does not "consistently" apply max() where it would change meaning.
+    const others = BACKFILLS.filter((b) =>
+      /(created_by_practitioner_id|cancelled_by_practitioner_id) = ev\.actor_id/.test(b),
+    );
+    expect(others.length).toBe(2);
+    for (const b of others) {
+      expect(b).toMatch(/count\(\*\)/);
+      expect(b).not.toMatch(/max\(aa\.created_at\)/);
+    }
+  });
+
   it("the override backfill derives 'owner' from the command gate, and only for flagged rows", () => {
     const ovr = BACKFILLS.find((b) =>
       /outside_availability_authorized_by_practitioner_id = ev\.actor_id/.test(b),

@@ -22,6 +22,8 @@ import {
 } from "@/lib/sessions/appointment-prep-memory";
 import type { AppointmentPrepLoad } from "@/lib/sessions/last-treatment-loader";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
+import { ConsultationNotesCard } from "@/components/consultation-notes-card";
+import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
@@ -285,6 +287,13 @@ export default async function AppointmentDetailPage({
   // appointment id.
   let linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null =
     null;
+  // Latest consultation + skin/hair note for this client. Reuses the SAME
+  // helper the client profile already calls — no new query shape, no second
+  // note model, and no write path. Only the head of each kind is read; the
+  // full dated history stays on the Consultation tab.
+  let clinicalNotesSummary: Awaited<
+    ReturnType<typeof getClinicalNotesSummary>
+  > | null = null;
 
   if (data.client) {
     const clientId = data.client.id;
@@ -295,6 +304,7 @@ export default async function AppointmentDetailPage({
       plansRes,
       lastTreatment,
       linkedSessionRes,
+      clinicalNotesRes,
     ] = await Promise.all([
       getPinnedNotesForClient(studio.id, clientId),
       getClientTags(studio.id, clientId),
@@ -337,6 +347,14 @@ export default async function AppointmentDetailPage({
         .order("started_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // Latest consultation + skin/hair note. It depends on NOTHING else in
+      // this block — only `clientId`, which is already in hand — so it belongs
+      // INSIDE this parallel wave. Awaiting it after the wave added a whole
+      // extra round-trip to every appointment render, including the
+      // electrolysis and laser visits where the card goes on to render
+      // nothing. Same helper the client profile calls: no new query shape, no
+      // second note model, no write path.
+      getClinicalNotesSummary(clientId),
     ]);
 
     pinnedNotes = pinnedRes;
@@ -351,6 +369,8 @@ export default async function AppointmentDetailPage({
     linkedSession = (linkedSessionRes.data ?? null) as
       | Pick<Session, "id" | "started_at" | "modality">
       | null;
+
+    clinicalNotesSummary = clinicalNotesRes;
 
     // The complete pre-visit view model: every treated area with laterality,
     // the complete per-area setup, the outcomes kept separate from that setup,
@@ -443,6 +463,19 @@ export default async function AppointmentDetailPage({
           appointmentId={id}
           clientId={data.client?.id ?? null}
           linkedSession={linkedSession}
+        />
+      )}
+
+      {/* Consultation + skin/hair notes. Rendered AFTER ChartSessionCard on
+          purpose: a consultation may still include a short electrolysis test
+          treatment (the same product fact the postcare section below encodes),
+          so charting must remain reachable rather than being replaced by the
+          notes CTA. Read-only; the write path is unchanged. */}
+      {!isCancelled && (
+        <ConsultationNotesCard
+          clientId={data.client?.id ?? null}
+          isConsultation={data.service?.modality === "consultation"}
+          summary={clinicalNotesSummary}
         />
       )}
 

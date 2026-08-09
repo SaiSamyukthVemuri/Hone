@@ -10,10 +10,15 @@
 //                       form." Unchecked by default. The intake cannot be
 //                       submitted until every live treatment consent is
 //                       checked.
-//   photo_consent     : an Accept / Deny choice with NO default. BOTH answers
-//                       complete the form. Denying photo use must never block
-//                       an intake submission — the requirement is that the
-//                       client ANSWERS the question, not that they agree.
+//
+// PHOTO CONSENT IS NO LONGER COLLECTED HERE (Chloe, 2026-08-09). It was, from
+// #529 until this change. It moved to the client portal — its Accept/Deny
+// ceremony is unchanged there, and both answers still complete the form — for
+// a product reason, not a technical one: no photographs are taken at the
+// consultation, and asking on the intake made clients fear otherwise.
+//
+// The module still READS photo records, because intakes submitted in that
+// window hold real answers. See the two form-type sets below.
 //
 // WHAT THIS IS NOT
 // ----------------
@@ -33,11 +38,40 @@
 // server-only. Keep it that way: importing the hash helper here would drag
 // node:crypto into the public client bundle.
 
-// The form types the intake surfaces. Deliberately NOT every type in the
-// `consent_form_templates` CHECK constraint: card_authorization is a payment
-// artefact, and general / policy_acknowledgement have no product contract
-// requiring them inside intake. Widening this set is a product decision, not a
-// refactor.
+// TWO SETS, AND THE DIFFERENCE BETWEEN THEM IS THE WHOLE POINT.
+//
+// These started as one constant doing two jobs: deciding what the intake
+// COLLECTS, and deciding what a stored record may be READ BACK as. That is
+// safe only while the two never diverge — and they diverged the moment photo
+// consent moved to the portal. Narrowing the single constant would have
+// silently deleted every historical photo answer from the practitioner's
+// review, because the read-back parser rejects an unknown form_type.
+//
+// So: COLLECTED may narrow freely. READABLE may only ever grow.
+
+// What the intake asks the client for, TODAY.
+//
+// Photo consent was removed here (Chloe, 2026-08-09): photos are not taken at
+// the consultation, and asking for photo consent on the intake implied to
+// clients that they might be. It is NOT retired — it lives in the client
+// portal, which is now its only collection surface, with explicit Accept/Deny.
+//
+// Deliberately NOT every type in the `consent_form_templates` CHECK
+// constraint: card_authorization is a payment artefact, and general /
+// policy_acknowledgement have no product contract requiring them inside
+// intake. Widening this set is a product decision, not a refactor.
+export const INTAKE_CONSENT_COLLECTED_FORM_TYPES = [
+  "treatment_consent",
+] as const;
+
+// Every form type an intake record may LEGITIMATELY contain, including types
+// the intake has stopped collecting. Read-back only — never used to decide
+// what to show a client.
+//
+// `photo_consent` stays here forever: intakes submitted while photo consent
+// was collected in the intake (PR #529 → this PR) hold real client answers,
+// and an "Accepted"/"Denied" a client actually gave must keep rendering.
+// REMOVING A TYPE FROM THIS LIST DESTROYS HISTORY.
 export const INTAKE_CONSENT_FORM_TYPES = [
   "treatment_consent",
   "photo_consent",
@@ -45,12 +79,26 @@ export const INTAKE_CONSENT_FORM_TYPES = [
 
 export type IntakeConsentFormType = (typeof INTAKE_CONSENT_FORM_TYPES)[number];
 
+// Readable: is this a form type a STORED record may carry? Used by the parsers.
 export function isIntakeConsentFormType(
   value: unknown,
 ): value is IntakeConsentFormType {
   return (
     typeof value === "string" &&
     (INTAKE_CONSENT_FORM_TYPES as ReadonlyArray<string>).includes(value)
+  );
+}
+
+// Collected: does the intake still ask for this form type? Used by the
+// server-side resolver and by the carry-forward rule below.
+export function isIntakeConsentCollectedFormType(
+  value: unknown,
+): value is IntakeConsentFormType {
+  return (
+    typeof value === "string" &&
+    (INTAKE_CONSENT_COLLECTED_FORM_TYPES as ReadonlyArray<string>).includes(
+      value,
+    )
   );
 }
 
@@ -94,6 +142,77 @@ export type IntakeConsentResponsesRecord = {
   version: number;
   forms: IntakeConsentFormRecord[];
 };
+
+// CARRY-FORWARD: the stored records this intake must keep even though it no
+// longer collects them.
+//
+// Both consent writers REBUILD the stored record by iterating the studio's
+// currently-live intake forms. That is what keeps the snapshot server-owned —
+// and it also means anything no longer resolved simply stops being written.
+// Without this, the first draft save or submit after photo consent moved to
+// the portal would silently erase a photo answer the client had already given,
+// which is exactly the "history quietly disappears" failure this whole feature
+// is supposed to prevent.
+//
+// So: any well-formed stored form whose type is no longer COLLECTED is
+// returned verbatim and re-attached by the writer. Verbatim matters — the
+// snapshot is the text the client actually read, and re-deriving it from
+// today's template would rewrite history. Nothing here validates against a
+// live template, because there deliberately is no longer one to validate
+// against.
+//
+// Only NON-collected types are carried. A treatment record still goes through
+// the full live-template + hash check every time; this is not a bypass.
+export function retainedHistoricalConsentForms(
+  storedResponses: Record<string, unknown> | null | undefined,
+): IntakeConsentFormRecord[] {
+  const map =
+    storedResponses &&
+    typeof storedResponses === "object" &&
+    !Array.isArray(storedResponses)
+      ? (storedResponses as Record<string, unknown>)
+      : {};
+  const raw = map[INTAKE_CONSENT_RESPONSES.id];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const formsRaw = (raw as Record<string, unknown>).forms;
+  if (!Array.isArray(formsRaw)) return [];
+
+  const out: IntakeConsentFormRecord[] = [];
+  for (const entry of formsRaw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const r = entry as Record<string, unknown>;
+    // Readable but no longer collected — that is precisely the carry-forward
+    // set. A record the intake still collects is rebuilt normally.
+    if (!isIntakeConsentFormType(r.form_type)) continue;
+    if (isIntakeConsentCollectedFormType(r.form_type)) continue;
+    // Shape-check every field we re-store, so a malformed entry is dropped
+    // rather than carried forward as though it were a real answer.
+    if (typeof r.template_id !== "string") continue;
+    if (r.response !== "accepted" && r.response !== "denied") continue;
+    if (typeof r.title_snapshot !== "string") continue;
+    if (typeof r.body_snapshot !== "string") continue;
+    if (typeof r.template_hash !== "string") continue;
+    if (!Number.isFinite(Number(r.template_version))) continue;
+    const record: IntakeConsentFormRecord = {
+      template_id: r.template_id,
+      form_type: r.form_type,
+      template_version: Number(r.template_version),
+      title_snapshot: r.title_snapshot,
+      body_snapshot: r.body_snapshot,
+      template_hash: r.template_hash,
+      response: r.response,
+      response_label_snapshot:
+        typeof r.response_label_snapshot === "string"
+          ? r.response_label_snapshot
+          : null,
+    };
+    // Preserve the completion stamp exactly. Re-stamping it with "now" would
+    // turn a months-old answer into one given today.
+    if (typeof r.responded_at === "string") record.responded_at = r.responded_at;
+    out.push(record);
+  }
+  return out;
+}
 
 // What the BROWSER sends. Four fields, all of them claims or comparands:
 //
@@ -182,6 +301,14 @@ export function normalizeIntakeConsentClaims(
 // built from the SNAPSHOT the client actually read — never from today's
 // template row, which the studio may have edited since.
 export type IntakeConsentFormView = {
+  // The template this answer was given against. Carried through to the review
+  // surface because it is the ONLY honest evidence of consent LINEAGE: editing
+  // a consent template is `update ... where id = $id` with `version + 1` on the
+  // SAME row (app/(app)/settings/consent/actions.ts), so a template_id is a
+  // stable logical consent question across every version, and a DIFFERENT
+  // template_id is a genuinely different question. Supersession is decided on
+  // this and never on "a portal answer exists, therefore this is old".
+  templateId: string;
   formType: IntakeConsentFormType;
   titleSnapshot: string;
   bodySnapshot: string;
@@ -215,7 +342,15 @@ function readFormRecord(value: unknown): IntakeConsentFormView | null {
   if (typeof raw.body_snapshot !== "string") return null;
   const version = Number(raw.template_version);
   if (!Number.isFinite(version)) return null;
+  // template_id is REQUIRED by the stored shape (IntakeConsentFormRecord) and
+  // by the carry-forward rule, both of which reject a record without it. A
+  // record missing it cannot have its lineage reasoned about, so it is not a
+  // record we can render an honest provenance claim for.
+  if (typeof raw.template_id !== "string" || raw.template_id.length === 0) {
+    return null;
+  }
   return {
+    templateId: raw.template_id,
     formType: raw.form_type,
     titleSnapshot: raw.title_snapshot,
     bodySnapshot: raw.body_snapshot,
@@ -304,6 +439,67 @@ export const INTAKE_CONSENT_REVIEW_COPY = {
   // they are looking at the text the client actually read.
   historicalNote:
     "Shows the form text and version the client read at the time, not the current version.",
+  // Provenance. The two consent sources are never merged into one claim: an
+  // answer given inside the intake and an answer signed in the portal are
+  // different events, and a practitioner reading a contradiction must be able
+  // to see which is which.
+  recordedInIntake: "Recorded with this intake",
+
+  // ---- CURRENT-FIRST INFORMATION ARCHITECTURE (Chloe, 2026-08-09) ----------
+  //
+  // #545 put the historical intake answer FIRST, with its full legal body
+  // expanded inline, and the current portal status underneath. A client who
+  // accepted photos at intake and then denied them in the portal therefore read
+  // as "Photo Consent — Accepted ... <legal text> ... Photo Consent — Consent
+  // denied": two answers with equal visual authority. Chloe: "consent was both
+  // accepted and denied", "this should not be possible".
+  //
+  // The records are both real and BOTH ARE KEPT. What changes is authority and
+  // order: exactly one CURRENT answer per consent question at the top, prior
+  // answers demoted into a collapsed history, and legal wording on demand.
+  currentHeading: "Current consent",
+  historyHeading: "Previous consent history",
+  // Sits under the current block so the practitioner knows the history exists
+  // without it competing for attention.
+  historyToggle: "Show previous consent history",
+  // Provenance for a prior intake answer. Never says "current".
+  previousResponse: "Previous response",
+  // ONLY rendered when lineage is proven: the same template_id carries a newer
+  // portal answer. Never inferred from "some portal answer exists".
+  supersededByPortal: "Superseded by a newer portal response",
+  // Same template_id, but we cannot prove the portal answer is the newer of the
+  // two (the intake record carries no responded_at). Truthful and weaker.
+  alsoAnsweredInPortal: "Also answered in the client portal",
+  // A prior answer to a form the portal does not currently run, or to a
+  // different template entirely. Not superseded — just no longer collected here.
+  noLongerCollected: "Photo consent is no longer collected in the intake",
+  // Disclosure labels. The review page is a scan surface, not a document
+  // viewer, so every full body sits behind one of these.
+  // Native <details>/<summary> supplies the open/closed affordance, so one
+  // static label each — no second "Hide …" string to keep in sync.
+  viewRecordedForm: "View recorded form",
+  viewPreviousForm: "View previous form",
+} as const;
+
+// Practitioner copy for the CURRENT portal photo-consent status. Same
+// vocabulary discipline as the intake copy: a denial is a completed answer,
+// never "unsigned" or "missing", and nothing here says "approved".
+export const PORTAL_PHOTO_CONSENT_COPY = {
+  granted: "Consent granted",
+  denied: "Consent denied",
+  notCompleted: "Not completed",
+  // Signed an older version than the studio's current template: a real answer,
+  // but not to the text now in force.
+  needsReview: "Needs review",
+  completedInPortal: "Completed in client portal",
+  // Provenance line for the CURRENT block. Deliberately shorter and more
+  // operational than "Completed in client portal": the practitioner is not
+  // being told where a form lives, they are being told this is the answer that
+  // stands right now.
+  currentPortalResponse: "Current portal response",
+  notCompletedHint: "The client has not answered this form in their portal yet.",
+  needsReviewHint:
+    "The client answered an earlier version of this form. Ask them to complete the current one.",
 } as const;
 
 // Display label for one stored form. Treatment consent reads "Acknowledged";

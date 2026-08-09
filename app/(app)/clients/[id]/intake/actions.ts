@@ -13,6 +13,7 @@ import {
 import { sendIntakeUpdateRequestToClient } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import {
+  findInvalidChoiceAnswers,
   PRACTITIONER_ENTERABLE_STEPS,
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
@@ -106,6 +107,14 @@ const ASSISTED_STALE =
 // UI bug or a crafted request surfaces instead of half-succeeding.
 const ASSISTED_CLIENT_OWNED =
   "The final confirmations are completed by the client themselves. Use Hand to client to finish this intake.";
+
+// A single-choice answer that is not one of the offered options. The editor
+// cannot produce this — it renders the option list — so reaching it means a
+// crafted request or a genuine bug, and either way the value must not land in a
+// clinical record. Refused rather than silently dropped, for the same reason
+// the client-owned boundary above is.
+const ASSISTED_INVALID_CHOICE =
+  "One of the answers is not one of the available options. Refresh and record that answer again.";
 
 // Structured, PII-free log for a sanitized failure. Never logs responses,
 // practitioner notes, client identity, or the raw row — only the event, the
@@ -781,6 +790,21 @@ export async function saveAssistedIntakeStepAction(payload: {
   // other client-owned key already present survive untouched — `answers`
   // cannot contain them.
   const merged: Record<string, unknown> = { ...loaded.responses, ...answers };
+
+  // Same choice-value check the client's own submit runs, so the assisted path
+  // cannot be the soft way in. Run over the MERGED map for the same reason the
+  // submit gate is: what matters is what would be stored, not what was posted.
+  //
+  // Incompleteness is fine here and must stay fine — an assisted save is a
+  // work-in-progress by definition, and findInvalidChoiceAnswers ignores absent
+  // answers. Only a value that is present and not on the list is refused.
+  const invalidChoices = findInvalidChoiceAnswers(merged);
+  if (invalidChoices.length > 0) {
+    logIntakeActionFailure("assisted_invalid_choice_rejected", {
+      message: `rejected ${invalidChoices.length} out-of-range choice answer(s)`,
+    });
+    return { ok: false, error: ASSISTED_INVALID_CHOICE };
+  }
 
   // Provenance is derived HERE, on the server, from the session. Nothing in
   // `payload` reaches it. started_at / started_by are preserved from any
