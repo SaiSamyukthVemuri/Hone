@@ -213,10 +213,41 @@ describe("read-only and RLS-scoped", () => {
     // query and therefore a second failure to classify. Both sites, and ONLY
     // these two, may log — and both are held to the redaction contract above.
     const code = codeOnly(LOADER);
-    expect((code.match(/console\./g) ?? []).length).toBe(2);
+    // FOUR sites now: the per-client loader's candidate + block reads, and the
+    // batched companion's. The count is not the contract — the REDACTION is,
+    // and it is asserted for every one of them below.
+    expect((code.match(/console\./g) ?? []).length).toBe(4);
+    // Every one of them is console.error(JSON.stringify({...})) — never a bare
+    // string, never the raw PostgREST message.
     expect((code.match(/console\.error\(\s*JSON\.stringify\(\{/g) ?? []).length).toBe(
-      2,
+      4,
     );
+    // The redaction contract is asserted for EVERY log site, not just the one
+    // Session 1D happened to add — that is what actually protects the pipeline
+    // when a new read (and so a new failure to classify) appears.
+    // Bounded to the LOG OBJECT itself. A fixed-width slice runs past the
+    // closing brace into ordinary code and flags identifiers that were never
+    // logged — which is a false positive, not a redaction failure.
+    const logSites = [...code.matchAll(/console\.error\(\s*JSON\.stringify\(\{/g)].map(
+      (m) => {
+        const rest = code.slice(m.index!);
+        const end = rest.indexOf("}),");
+        return rest.slice(0, end === -1 ? 500 : end);
+      },
+    );
+    expect(logSites).toHaveLength(4);
+    for (const site of logSites) {
+      expect(site).toMatch(/code:/);
+      // Either the companion's `input.studioId` or selectFromCandidates' bare
+      // `studioId` param — what matters is that the studio is named and that
+      // it is an identifier, never an interpolated payload.
+      expect(site).toMatch(/studio_id: (input\.)?studioId,/);
+      for (const banned of ["client_id", "clientId", "session_id", "sessionId"]) {
+        expect(site, `log site must not carry ${banned}`).not.toMatch(
+          new RegExp(`${banned}\\b`),
+        );
+      }
+    }
     const prepLog = code
       .slice(code.indexOf("appointment_prep_sessions_read_failed"))
       .slice(0, 500);

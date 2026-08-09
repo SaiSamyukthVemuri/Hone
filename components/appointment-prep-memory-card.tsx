@@ -114,9 +114,26 @@ function NoteGroup({
 export function AppointmentPrepMemoryCard({
   clientId,
   memory,
+  // EMBEDDED variant (Dashboard V2 Part 2A). The card is unchanged in content —
+  // every field family still renders — but when it lives INSIDE another
+  // section's disclosure it must not bring its own chrome or its own heading
+  // rank with it:
+  //
+  //   * heading: "Last treatment" is an h2 on the appointment page, where it IS
+  //     a top-level section. Inside a Today row it is a detail of that row, so
+  //     it renders as an h4 under the row's h3. Heading LEVEL, not nesting,
+  //     defines the accessibility outline.
+  //   * chrome: the standalone card draws its own border and padding; nested in
+  //     an already-bordered disclosure that doubles every edge on a phone.
+  //
+  // Deliberately NOT a second component: forking 400 lines of clinical
+  // presentation is how two surfaces start disagreeing about what a treatment
+  // looked like.
+  embedded = false,
 }: {
   clientId: string;
   memory: AppointmentPrepMemory;
+  embedded?: boolean;
 }) {
   const fullChartHref = `/clients/${clientId}/sessions/${memory.sessionId}`;
   // A prior visit can be genuinely charted and still carry no settings blocks —
@@ -130,14 +147,24 @@ export function AppointmentPrepMemoryCard({
   return (
     <section
       data-testid="appointment-prep-memory"
-      className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+      className={
+        embedded
+          ? "flex flex-col gap-4"
+          : "flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+      }
     >
       {/* ---- HEADLINE: zero taps ---- */}
       <header className="flex flex-col gap-1">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-            Last treatment
-          </h2>
+          {embedded ? (
+            <h4 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Last treatment
+            </h4>
+          ) : (
+            <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+              Last treatment
+            </h2>
+          )}
           <Link
             href={fullChartHref}
             data-testid="prep-full-chart-link"

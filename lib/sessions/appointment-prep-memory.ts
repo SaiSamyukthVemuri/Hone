@@ -797,3 +797,57 @@ function areaPartsFor(block: PointOfCareBlock): string[] {
   const legacyName = trimmedOrNull(block.block_name);
   return legacyName ? [legacyName] : [];
 }
+
+// ---------------------------------------------------------------------------
+// THE ONE MAPPING from a loaded treatment to this model's input.
+// ---------------------------------------------------------------------------
+//
+// Both surfaces that show a previous treatment — the calendar appointment page
+// and the Today row — need the same fifteen lines of "which loaded field feeds
+// which model field", including the two that are easy to get quietly wrong:
+// the legacy `session_notes` passthrough, and `hasLiveElectrolysisEntries`,
+// which is what tells a pre-0019 entry-only electrolysis visit apart from a
+// laser one when there are no blocks.
+//
+// It lives here, once. A second copy is how two surfaces start disagreeing
+// about what a visit looked like — and the disagreement would be invisible,
+// because both would still render something plausible.
+//
+// Structurally typed on purpose: this module is pure and client-safe, so it
+// must not import the server-only loader to name its return type.
+export function prepMemoryInputFromTreatment(selected: {
+  session: {
+    id: string;
+    started_at: string;
+    modality: string;
+    session_notes?: string | null;
+    next_session_note?: string | null;
+    laser_entries?: ReadonlyArray<PrepLaserEntry> | null;
+    electrolysis_entries?: ReadonlyArray<PrepOrphanEntry> | null;
+  };
+  blocks: ReadonlyArray<PointOfCareBlock>;
+  supersededByEmptySession: boolean;
+}): AppointmentPrepMemoryInput {
+  return {
+    session: {
+      id: selected.session.id,
+      started_at: selected.session.started_at,
+      modality: selected.session.modality,
+      // Legacy, and the only render of this column anywhere in the product:
+      // sessions.session_notes has no surviving writer, so the text on existing
+      // rows can never be recreated once a surface stops showing it.
+      session_notes: selected.session.session_notes ?? null,
+      next_session_note: selected.session.next_session_note ?? null,
+    },
+    blocks: selected.blocks,
+    laserEntries: selected.session.laser_entries ?? null,
+    // Pre-0019 electrolysis charted straight into entries with no block, so
+    // this is the ONLY channel that narrative has. Passes that do belong to a
+    // block arrive through that block instead and are skipped there.
+    electrolysisEntries: selected.session.electrolysis_entries ?? null,
+    supersededByEmptySession: selected.supersededByEmptySession,
+    hasLiveElectrolysisEntries: (
+      selected.session.electrolysis_entries ?? []
+    ).some((e) => e.deleted_at == null),
+  };
+}
