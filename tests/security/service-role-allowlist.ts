@@ -32,6 +32,20 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/calendar/appointment-repair-actions.ts",
+    purpose:
+      "APPOINTMENT BOUNDARY B4 — governed appointment repair: revert_appointment_outcome (owner-only terminal -> confirmed) and set_appointment_notes (member notes correction).",
+    // The scopeGuard is the RPC NAME rather than the generic
+    // `getCurrentPractitionerWithStudio` that appears in nearly every
+    // authenticated action, following the PR B1 tightening applied to
+    // move-appointment-actions.ts. If this file ever stops going through the
+    // governed command — for example by reintroducing a direct appointments
+    // UPDATE — the allowlist test fails rather than silently continuing to
+    // vouch for a justification that is no longer true.
+    why: "Both actions resolve the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and pass the server-derived studio.id + practitioner.user_id; the browser never supplies a studio_id, practitioner_id, user_id or role. All writes go through revert_appointment_outcome / set_appointment_notes (service_role-only; EXECUTE revoked from public/anon/authenticated in 0173), which independently re-derive the actor's membership and role from (studio_id, user_id), scope the appointment lookup by BOTH id and studio_id, and own every lifecycle decision — terminality, the 72h audit-anchored repair window, the five blocking-dependent classes and the 23P01 slot collision. This file performs no appointment DML of its own.",
+    scopeGuard: "revert_appointment_outcome",
+  },
+  {
     path: "app/(app)/calendar/move-appointment-actions.ts",
     purpose: "Practitioner Move/reassign appointment — authorized available-slot lookup + the atomic move (move_or_reassign_appointment).",
     // PR B1 CORRECTION. This entry previously named `practitioner_move_appointment`

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminQuery,
+  asRole,
   closePool,
   seedStudio,
   userQuery,
@@ -128,12 +129,69 @@ describe("0151: cross-studio references are rejected (23503)", () => {
     ).rejects.toMatchObject({ code: "23503" });
   });
 
-  it("(2-5 app path) an authenticated Alpha owner is likewise blocked (RLS passes, FK fails)", async () => {
-    // RLS WITH CHECK is_studio_member(A) passes (own studio_id); the composite FK
-    // still rejects the Beta client_id -> defense-in-depth beyond the app command.
+  // -------------------------------------------------------------------------
+  // T4.1 — the FK is defence in depth for the role that ACTUALLY writes.
+  //
+  // This used to be proven on the authenticated app path ("RLS WITH CHECK
+  // passes, the FK still fails"). Migration 0172 removed that path: an
+  // authenticated INSERT is now refused at the privilege layer and never
+  // reaches the FK, so the old test could no longer prove what it claimed.
+  //
+  // Flipping its expected SQLSTATE from 23503 to 42501 would have DESTROYED the
+  // FK coverage — a privilege refusal proves nothing about the constraint. The
+  // proof is therefore re-pointed at `service_role`, which is the role the
+  // command layer actually writes as, and which 0172 deliberately leaves
+  // untouched. That is a STRONGER guarantee than the old one: service_role
+  // carries BYPASSRLS, so nothing but the constraint itself can be stopping it.
+  // -------------------------------------------------------------------------
+  it("(T4.1) service_role — the role the command layer writes as — is still blocked by the composite FK", async () => {
     const { start, end } = nextSlot();
     await expect(
-      userQuery(
+      asRole("service_role", (q) =>
+        q(
+          `insert into public.appointments
+             (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
+              duration_minutes, status, cancellation_token_hash)
+           values (gen_random_uuid(), $1, null, $2, null, $3::timestamptz, $4::timestamptz,
+                   60, 'confirmed', $5)`,
+          [A.studioId, B.clientId, start, end, hash64()],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "23503" });
+    void isFk;
+  });
+
+  it("(T4.1b) service_role CAN insert the same-studio row — so 23503 above is the FK, not a lost privilege", async () => {
+    // Two-way self-test. Without it, a service_role revoke would turn the test
+    // above green for entirely the wrong reason (42501 is not 23503, but a
+    // future widening of the expectation would hide it).
+    const { start, end } = nextSlot();
+    await expect(
+      asRole("service_role", (q) =>
+        q(
+          `insert into public.appointments
+             (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
+              duration_minutes, status, cancellation_token_hash)
+           values (gen_random_uuid(), $1, null, $2, null, $3::timestamptz, $4::timestamptz,
+                   60, 'confirmed', $5)`,
+          [A.studioId, A.clientId, start, end, hash64()],
+        ),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("(T4.5) an authenticated Alpha owner can no longer insert AT ALL — refused by privilege, before the FK", async () => {
+    // The case 0172 closes. Before it, RLS WITH CHECK is_studio_member(A)
+    // PASSED here (own studio_id) and only the composite FK stopped the forged
+    // Beta client_id. Now the statement never reaches either.
+    //
+    // 42501 is asserted with its MESSAGE, because an RLS WITH CHECK violation
+    // raises the very same SQLSTATE — /permission denied/ vs /row-level
+    // security/ is the only thing that tells them apart.
+    const { start, end } = nextSlot();
+    let failure: { code?: string; message?: string } | null = null;
+    try {
+      await userQuery(
         A.userId,
         `insert into public.appointments
            (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
@@ -141,9 +199,40 @@ describe("0151: cross-studio references are rejected (23503)", () => {
          values (gen_random_uuid(), $1, null, $2, null, $3::timestamptz, $4::timestamptz,
                  60, 'confirmed', $5)`,
         [A.studioId, B.clientId, start, end, hash64()],
-      ),
-    ).rejects.toMatchObject({ code: "23503" });
-    void isFk;
+      );
+    } catch (e) {
+      failure = e as { code?: string; message?: string };
+    }
+    expect(failure, "the insert must be refused").not.toBeNull();
+    expect(failure!.code).toBe("42501");
+    expect(failure!.message, "a PRIVILEGE denial").toMatch(/permission denied/i);
+    expect(failure!.message, "NOT an RLS denial wearing the same SQLSTATE").not.toMatch(
+      /row-level security/i,
+    );
+  });
+
+  it("(T4.5b) the same authenticated owner is refused even for a fully VALID same-studio row", async () => {
+    // Removes the last doubt that the refusal is about the forged reference:
+    // this row would satisfy every FK and every RLS predicate. The privilege is
+    // simply gone.
+    const { start, end } = nextSlot();
+    let failure: { code?: string; message?: string } | null = null;
+    try {
+      await userQuery(
+        A.userId,
+        `insert into public.appointments
+           (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
+            duration_minutes, status, cancellation_token_hash)
+         values (gen_random_uuid(), $1, null, $2, null, $3::timestamptz, $4::timestamptz,
+                 60, 'confirmed', $5)`,
+        [A.studioId, A.clientId, start, end, hash64()],
+      );
+    } catch (e) {
+      failure = e as { code?: string; message?: string };
+    }
+    expect(failure, "a valid same-studio row must ALSO be refused now").not.toBeNull();
+    expect(failure!.code).toBe("42501");
+    expect(failure!.message).toMatch(/permission denied/i);
   });
 });
 

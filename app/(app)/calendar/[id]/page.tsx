@@ -25,6 +25,16 @@ import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { AppointmentLifecycleActions } from "../AppointmentLifecycleActions";
+// APPOINTMENT BOUNDARY B4 (migration 0173). The governed repair surfaces that
+// replace the operational hatch 0172 closed: owner-only outcome correction and
+// the member-authorized appointment-notes correction.
+import { AppointmentOutcomeRepair } from "../AppointmentOutcomeRepair";
+import { AppointmentNotesEditor } from "../AppointmentNotesEditor";
+import { loadAppointmentRepairStateAction } from "../appointment-repair-actions";
+import type {
+  RevertibleStatus,
+  AppointmentRepairState,
+} from "../appointment-repair-contract";
 import { AppointmentCheckoutCell } from "@/components/appointment-checkout-cell";
 import { getAppointmentPaymentStates } from "@/lib/billing/appointment-payment-state";
 import { calendarReturnHref } from "../calendar-return";
@@ -210,6 +220,25 @@ export default async function AppointmentDetailPage({
   // reads as "Done"; the stored status stays confirmed so Mark no-show stays
   // available. Computed at render time; no timer.
   const displayStatus = appointmentDisplayStatus(data.status, data.ends_at);
+
+  // APPOINTMENT BOUNDARY B4. Outcome repair eligibility, resolved SERVER-SIDE
+  // so the surface can explain a block instead of rendering a control that the
+  // command would inevitably refuse. Loaded ONLY for an owner looking at a
+  // terminal appointment — a member never sees the surface and never pays for
+  // the lookup. `revert_appointment_outcome` re-derives the owner check in SQL
+  // regardless of what is rendered here.
+  const isTerminalOutcome =
+    typedStatus === "completed"
+    || typedStatus === "no_show"
+    || typedStatus === "cancelled";
+  // The loader takes ONLY the appointment id: it re-reads the appointment
+  // scoped by (id, studio_id) and derives the status from the database itself,
+  // so neither this page nor a direct caller can steer it with a status the row
+  // does not have.
+  const repairState: AppointmentRepairState | null =
+    isOwner && isTerminalOutcome
+      ? await loadAppointmentRepairStateAction(id)
+      : null;
 
   // Briefing reads — every additional fetch below is read-only,
   // scoped to the authenticated practitioner's studio via RLS, and
@@ -440,6 +469,20 @@ export default async function AppointmentDetailPage({
         </section>
       )}
 
+      {/* APPOINTMENT BOUNDARY B4 (0173). The reverse edge. Shown only to an
+          owner, only for a terminal outcome, and only where the repair is
+          actually reachable — when it is blocked the component explains why
+          rather than offering a control that would fail. This is the surface
+          that makes AppointmentLifecycleActions' "cannot be undone from this
+          screen" no longer the end of the story. */}
+      {repairState && isTerminalOutcome && (
+        <AppointmentOutcomeRepair
+          appointmentId={id}
+          status={typedStatus as RevertibleStatus}
+          repairState={repairState}
+        />
+      )}
+
       {/* Quick checkout (Chloe): take payment for a completed appointment right
           here, without navigating into charting. The modal reuses the existing
           session-payment card + actions; charting is independent. */}
@@ -651,16 +694,15 @@ export default async function AppointmentDetailPage({
         />
       )}
 
-      {data.notes && (
-        <section className="rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-            Appointment notes
-          </h2>
-          <p className="mt-2 whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
-            {data.notes}
-          </p>
-        </section>
-      )}
+      {/* APPOINTMENT BOUNDARY B4 (0173). Previously a read-only block that was
+          hidden entirely when empty. Appointment notes were written once at
+          booking time and, after 0172 revoked authenticated UPDATE on
+          `appointments`, could not be corrected at all. Now any active member
+          can fix them through the governed command. The section renders even
+          when empty so the "Add notes" affordance exists; the clinical /
+          client-safe hierarchy elsewhere on this page is unchanged — this is
+          the OPERATIONAL booking note, not a clinical record. */}
+      <AppointmentNotesEditor appointmentId={id} notes={data.notes ?? null} />
 
       {/* PR #163 (migration 0069). Practitioner-facing attribution
           row. The "How did you hear about us?" answer the client
