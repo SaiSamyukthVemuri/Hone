@@ -108,7 +108,7 @@ export default async function AppointmentDetailPage({
   const { data, error } = await supabase
     .from("appointments")
     .select(
-      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners(id, display_name, color)",
+      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
     )
     .eq("id", id)
     .eq("studio_id", studio.id)

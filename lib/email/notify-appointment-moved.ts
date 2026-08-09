@@ -64,7 +64,7 @@ export async function notifyAppointmentMoved(
     const { data } = await admin
       .from("appointments")
       .select(
-        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone), practitioner:practitioners(display_name)",
+        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
       )
       .eq("id", input.appointmentId)
       .eq("studio_id", input.studioId)

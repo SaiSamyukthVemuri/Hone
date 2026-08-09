@@ -1042,7 +1042,7 @@ export async function sendPostcareEmailAction(
   const { data: appt, error: lookupErr } = await admin
     .from("appointments")
     .select(
-      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners(id, display_name)",
+      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name)",
     )
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
