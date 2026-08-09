@@ -277,14 +277,25 @@ describe("dashboard wiring (source pins)", () => {
     join(process.cwd(), "app/(app)/dashboard/page.tsx"),
     "utf8",
   );
-  const CARD = readFileSync(
-    join(process.cwd(), "app/(app)/dashboard/follow-up-assistant.tsx"),
+  // Dashboard V2 Part 2B: the standalone "Follow-up assistant" card is gone.
+  // Its items now flow through the ONE normalized To-do model and render in
+  // the single To-do list. The loader and the item contract are unchanged, so
+  // these pins moved to the surfaces that actually carry them.
+  const LIST = readFileSync(
+    join(process.cwd(), "app/(app)/dashboard/todo-list.tsx"),
+    "utf8",
+  );
+  const MODEL = readFileSync(
+    join(process.cwd(), "lib/dashboard/todo-model.ts"),
     "utf8",
   );
 
-  it("the dashboard loads the assistant and renders the card", () => {
+  it("the dashboard loads the assistant and feeds it to the ONE To-do model", () => {
     expect(PAGE).toMatch(/getMissingRecordsAssistant\(/);
-    expect(PAGE).toMatch(/<FollowUpAssistantCard assistant=\{followUpAssistant\}/);
+    expect(PAGE).toMatch(/assistant: followUpAssistant/);
+    expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
+    // ...and the retired card is really gone, not merely unrendered.
+    expect(PAGE).not.toMatch(/FollowUpAssistantCard/);
   });
 
   it("the existing Daily Prep Brief and Today next actions stay intact", () => {
@@ -295,13 +306,23 @@ describe("dashboard wiring (source pins)", () => {
     expect(PAGE).toMatch(/resolveNextAction\(/);
   });
 
-  it("the card renders the section title and a calm empty state", () => {
-    expect(CARD).toMatch(/Follow-up assistant/);
-    expect(CARD).toMatch(/Record gaps and follow-ups from recent appointments\./);
-    expect(CARD).toMatch(/Nothing needs follow-up right now\./);
+  it("every assistant gap type still reaches the unified list", () => {
+    // The five types are mapped 1:1 onto To-do kinds; a dropped mapping would
+    // silently stop surfacing that gap.
+    for (const t of ["charting", "aftercare", "probe_lot", "intake", "follow_up"]) {
+      expect(MODEL, `${t} is not mapped into the To-do model`).toMatch(
+        new RegExp(`${t}:`),
+      );
+    }
   });
 
-  it("the card is link-only (no form/button action, no fetch)", () => {
-    expect(CARD).not.toMatch(/<form|<button|onClick|action=|fetch\(/);
+  it("the list renders one calm empty state, and the assistant's own actions", () => {
+    expect(LIST).toMatch(/Nothing to do right now/);
+    // The action label/href come straight off the item; nothing is re-derived.
+    expect(MODEL).toMatch(/href: item\.href, label: item\.actionLabel/);
+  });
+
+  it("the unified list stays link-only (no form/button action, no fetch)", () => {
+    expect(LIST).not.toMatch(/<form|<button|onClick|action=|fetch\(/);
   });
 });

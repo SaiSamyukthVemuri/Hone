@@ -133,16 +133,12 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
     join(process.cwd(), "app/(app)/dashboard/page.tsx"),
     "utf8",
   );
-  const FOLLOWUP = readFileSync(
-    join(process.cwd(), "app/(app)/dashboard/follow-up-assistant.tsx"),
-    "utf8",
-  );
 
   it("the dashboard renders the Pilot learning card and keeps the agentic cards", () => {
     expect(PAGE).toMatch(/<PilotLearningCard \/>/);
     // The Daily Prep Brief card is retired into the combined Today workflow.
     expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
-    expect(PAGE).toMatch(/<FollowUpAssistantCard assistant=\{followUpAssistant\}/);
+    expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
   });
 
   it("the two intended surfaces carry the feedback prompt; nothing else", () => {
@@ -151,6 +147,12 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
     // Today section — ONCE, never once per appointment card.
     const prompts = PAGE.match(/<PilotFeedbackPrompt surface="daily_prep" \/>/g) ?? [];
     expect(prompts).toHaveLength(1);
-    expect(FOLLOWUP).toMatch(/<PilotFeedbackPrompt surface="follow_up_assistant"/);
+    // Dashboard V2 Part 2B retired the standalone Follow-up assistant card;
+    // the prompt moved to the foot of the unified To do section. The SURFACE
+    // ID is deliberately unchanged so pilot feedback stays comparable across
+    // the restructure — and it must still appear exactly ONCE.
+    const followUp =
+      PAGE.match(/<PilotFeedbackPrompt surface="follow_up_assistant" \/>/g) ?? [];
+    expect(followUp).toHaveLength(1);
   });
 });
