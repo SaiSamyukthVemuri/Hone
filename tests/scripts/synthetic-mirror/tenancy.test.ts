@@ -190,6 +190,10 @@ describe("provider side effects are structurally impossible", () => {
     "scripts/synthetic-mirror/plan.mjs",
     "scripts/synthetic-mirror/profile.mjs",
     "scripts/synthetic-mirror/writer.mjs",
+    "scripts/synthetic-mirror/plan-schema.mjs",
+    "scripts/synthetic-mirror/plan-digest.mjs",
+    "scripts/synthetic-mirror/verify-plan.mjs",
+    "scripts/synthetic-mirror/export.mjs",
   ].map((rel) => [rel, codeOf(rel)] as const);
 
   it("imports no email, SMS, Stripe, Google or webhook module", () => {
@@ -277,16 +281,29 @@ describe("dashboard coverage — every To-do kind is accounted for", () => {
   // The mirror exists to exercise the dashboard, so a NEW TodoKind must not be
   // able to appear without someone deciding how the mirror covers it. This map
   // is the decision record; the test fails if a kind is added and left out.
-  const COVERAGE: Record<TodoKind, "covered" | "deliberately-excluded"> = {
+  //
+  // CORRECTED BY MEASUREMENT. An earlier version of this map claimed 8 of 11
+  // "covered" on the strength of the generator alone. Applying a plan to an
+  // isolated database and running the REAL loaders showed otherwise:
+  //   - `aftercare` and `probe_lot` were unreachable, because the
+  //     missing-records assistant gates both on `hasTreatmentArea` and the
+  //     generator produced no session_blocks at all;
+  //   - `follow_up` was unreachable, because every synthetic client was given a
+  //     future booking (the source's `clients_with_upcoming` was ignored);
+  //   - `records_details` was never covered — it needs procedure-record
+  //     fixtures that are not generated.
+  // The first three are now fixed and verified against a database; the fourth
+  // is recorded honestly as not-covered rather than left as an aspiration.
+  const COVERAGE: Record<TodoKind, "covered" | "deliberately-excluded" | "not-yet-covered"> = {
     intake_review: "covered",          // intake rows with status 'submitted'
     charting: "covered",               // completed appointment with no session
-    aftercare: "covered",              // sessions with aftercare_..._at NULL
-    probe_lot: "covered",              // sessions without a probe lot
+    aftercare: "covered",              // session + block, aftercare_..._at NULL
+    probe_lot: "covered",              // session block with probe_lot_number NULL
     intake_incomplete: "covered",      // intake rows with status 'in_progress'
     follow_up: "covered",              // next_session_note + nothing booked
     treatment_memory: "covered",       // watch/plan/reaction on newest session
-    records_details: "covered",        // clients with details left null
-    supply_expiry: "deliberately-excluded",  // record-keeping fixtures are a follow-up
+    records_details: "not-yet-covered",      // needs procedure-record fixtures
+    supply_expiry: "not-yet-covered",        // needs sterile-inventory fixtures
     payment_setup: "deliberately-excluded",  // studio-level; Stripe is LIVE in prod
     no_services: "deliberately-excluded",    // would break booking studio-wide
   };
@@ -299,9 +316,18 @@ describe("dashboard coverage — every To-do kind is accounted for", () => {
     expect(Object.keys(COVERAGE).sort()).toEqual([...kinds].sort());
   });
 
-  it("covers the majority of kinds, so the To-do list renders multiple kinds", () => {
-    const covered = Object.values(COVERAGE).filter((v) => v === "covered");
-    expect(covered.length).toBeGreaterThanOrEqual(8);
+  it("covers exactly the seven kinds proven reachable against a real database", () => {
+    const covered = Object.entries(COVERAGE)
+      .filter(([, v]) => v === "covered")
+      .map(([k]) => k)
+      .sort();
+    // This list is the empirical result, not an aspiration: it is the set the
+    // local execution proof observed in the canonical To-do output once the
+    // display cap was lifted.
+    expect(covered).toEqual([
+      "aftercare", "charting", "follow_up", "intake_incomplete",
+      "intake_review", "probe_lot", "treatment_memory",
+    ]);
   });
 
   it("has a client cohort for each covered client-level kind", () => {

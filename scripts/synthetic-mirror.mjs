@@ -11,6 +11,7 @@
  *   npm run synthetic-mirror:dry-run    full plan + outbound-safety report
  *   npm run synthetic-mirror:sync       plan + the write-path boundary report
  *   npm run synthetic-mirror:reset      count what a governed reset could delete
+ *   npm run synthetic-mirror:export-plan -- --out <file>   write an execution plan
  *
  * THIS TOOL PERFORMS NO DATABASE WRITES. Every command is read-only. Executing
  * the plan would need direct row creation in `sessions` / `appointments`, which
@@ -36,6 +37,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import {
   MirrorRefusal,
   assertMutationAllowed,
@@ -47,6 +49,8 @@ import {
 } from "./synthetic-mirror/config.mjs";
 import { buildProfileSql, foldProfile, PROFILE_KEYS } from "./synthetic-mirror/profile.mjs";
 import { buildPlan, isNoOpPlan, totalAppointments } from "./synthetic-mirror/plan.mjs";
+import { buildPlanDocument } from "./synthetic-mirror/export.mjs";
+import { verifyPlan } from "./synthetic-mirror/verify-plan.mjs";
 import { ORDINAL_CEILING, syntheticIdSet } from "./synthetic-mirror/identity.mjs";
 import {
   buildAppointmentRows,
@@ -400,6 +404,119 @@ function cmdReset(config, argv) {
   }
 }
 
+/**
+ * EXPORT-PLAN — the handover to a future executor.
+ *
+ * Writes a FILE. Filesystem output is the whole point: this repository decides
+ * WHAT a synthetic population should be, and something outside it decides
+ * whether to write that. The plan is verified BEFORE it is written, so an
+ * unexecutable plan never reaches disk to be picked up later.
+ *
+ * Source-profile input is either a production aggregate read (the default) or
+ * `--profile <file>`, a previously exported 12-key count object. The second
+ * form exists so a plan can be built for an ISOLATED LOCAL target without any
+ * production link at all — which is exactly how the Phase-2 proof runs.
+ */
+function cmdExportPlan(config, argv) {
+  const outIdx = argv.indexOf("--out");
+  if (outIdx === -1 || !argv[outIdx + 1]) {
+    throw new MirrorRefusal("export-plan requires --out <file>");
+  }
+  const outPath = argv[outIdx + 1];
+
+  const problems = configProblems(config);
+  if (problems.length > 0) {
+    throw new MirrorRefusal(`configuration refused:\n  - ${problems.join("\n  - ")}`);
+  }
+
+  // --- source profile ---------------------------------------------------
+  const profIdx = argv.indexOf("--profile");
+  let profile;
+  if (profIdx !== -1 && argv[profIdx + 1]) {
+    const raw = JSON.parse(readFileSync(argv[profIdx + 1], "utf8"));
+    profile = foldProfile(
+      Object.entries(raw).map(([k, n]) => ({ k, n })),
+    );
+    head("SOURCE (from file — aggregate counts only)");
+  } else {
+    profile = foldProfile(dbRows(buildProfileSql(config.sourceStudioId)));
+    head("SOURCE (aggregate only — no row is ever selected)");
+  }
+  for (const k of PROFILE_KEYS) info(k, String(profile[k]));
+
+  // --- target binding ---------------------------------------------------
+  let practitionerId = config.targetPractitionerId;
+  let serviceIds = config.targetServiceIds;
+  if (!practitionerId) {
+    const rows = dbRows(
+      `select p.id::text as id from public.practitioners p
+        where p.studio_id = ${q(config.targetStudioId)} and p.role = 'owner' and p.active limit 1`,
+    );
+    if (rows.length !== 1) throw new MirrorRefusal("no active owner practitioner in target studio");
+    practitionerId = rows[0].id;
+  }
+  if (serviceIds.length === 0) {
+    serviceIds = dbRows(
+      `select id::text as id from public.services where studio_id = ${q(config.targetStudioId)} order by id`,
+    ).map((r) => r.id);
+  }
+
+  // --- target census (already-synthetic rows) ---------------------------
+  const censusIdx = argv.indexOf("--assume-empty-target");
+  const census =
+    censusIdx !== -1
+      ? { syntheticClients: 0, syntheticAppointments: 0, syntheticSessions: 0, syntheticIntakes: 0 }
+      : (() => {
+          const c = targetCensus(config);
+          return {
+            syntheticClients: c.client.synthetic,
+            syntheticAppointments: c.appointment.synthetic,
+            syntheticSessions: c.session.synthetic,
+            syntheticIntakes: c.intake.synthetic,
+          };
+        })();
+
+  const now = Date.now();
+  const doc = buildPlanDocument({
+    sourceProfile: profile,
+    targetCensus: census,
+    targetStudioId: config.targetStudioId,
+    practitionerId,
+    serviceIds,
+    anchorMs: now,
+    generatedAt: new Date(now).toISOString(),
+  });
+
+  // --- verify BEFORE writing -------------------------------------------
+  head("PLAN VERIFICATION");
+  const violations = verifyPlan(doc, {
+    targetStudioId: config.targetStudioId,
+    sourceStudioId: config.sourceStudioId,
+    practitionerId,
+    serviceIds,
+  });
+  if (violations.length > 0) {
+    for (const x of violations) line(`  REFUSE  ${x}`);
+    throw new MirrorRefusal(`plan failed verification (${violations.length} violation(s)) — nothing written`);
+  }
+  line("  PASS   plan satisfies every closed-schema and safety rule");
+
+  writeFileSync(outPath, `${JSON.stringify(doc, null, 2)}\n`, "utf8");
+
+  head("EXPORTED");
+  info("file", outPath);
+  info("schema_version", String(doc.schema_version));
+  info("plan_id (sha256, integrity only)", doc.plan_id);
+  for (const [k, n] of Object.entries(doc.body.expected_counts)) info(`rows: ${k}`, String(n));
+  line();
+  line("  plan_id is an unkeyed content digest. It proves reproducibility and");
+  line("  detects accidental corruption. It is NOT a signature and proves nothing");
+  line("  about authorship — the executor re-derives every id regardless.");
+  line();
+  line("  This wrote a FILE. No database was modified.");
+  return doc;
+}
+
 // ---------------------------------------------------------------------------
 // Entry
 // ---------------------------------------------------------------------------
@@ -416,8 +533,9 @@ function main() {
     else if (command === "dry-run") cmdDryRun(config);
     else if (command === "sync") cmdSync(config, argv);
     else if (command === "reset") cmdReset(config, argv);
+    else if (command === "export-plan") cmdExportPlan(config, argv);
     else {
-      line(`unknown command "${command}" — expected status | dry-run | sync | reset`);
+      line(`unknown command "${command}" — expected status | dry-run | sync | reset | export-plan`);
       process.exit(2);
     }
   } catch (err) {

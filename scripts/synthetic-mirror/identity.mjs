@@ -54,6 +54,7 @@ export const SYNTHETIC_ENTITIES = Object.freeze([
   "client",
   "appointment",
   "session",
+  "session_block",
   "intake",
   "sterile_item",
 ]);

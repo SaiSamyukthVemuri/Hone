@@ -20,6 +20,10 @@ const MIRROR_FILES = [
   "scripts/synthetic-mirror/plan.mjs",
   "scripts/synthetic-mirror/profile.mjs",
   "scripts/synthetic-mirror/writer.mjs",
+  "scripts/synthetic-mirror/plan-schema.mjs",
+  "scripts/synthetic-mirror/plan-digest.mjs",
+  "scripts/synthetic-mirror/verify-plan.mjs",
+  "scripts/synthetic-mirror/export.mjs",
 ];
 
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
@@ -38,7 +42,11 @@ function codeOf(rel: string): string {
   return read(rel)
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/(^|[^:])\/\/.*$/gm, "$1")
-    .replace(/export const FORBIDDEN_IDENTIFIERS[\s\S]*?\]\);/, " ");
+    .replace(/export const FORBIDDEN_IDENTIFIERS[\s\S]*?\]\);/, " ")
+    // plan-schema.mjs defines FORBIDDEN_PLAN_KEYS, so it necessarily NAMES
+    // every term this grep bans. Strip the declaration for the same reason the
+    // one above is stripped: the ban list is not a violation of itself.
+    .replace(/export const FORBIDDEN_PLAN_KEYS[\s\S]*?\]\);/, " ");
 }
 
 describe("synthetic mirror — the source read is aggregate-only", () => {
@@ -178,9 +186,18 @@ describe("synthetic mirror — no source identity is retained anywhere", () => {
   it("the source is only ever reachable through the aggregate profile statement", () => {
     const cli = read("scripts/synthetic-mirror.mjs");
     const sourceUses = cli.match(/sourceStudioId/g) ?? [];
-    // config plumbing + the single profile read + the reset refusal check.
-    expect(sourceUses.length).toBeLessThanOrEqual(4);
-    expect(cli).toContain("buildProfileSql(config.sourceStudioId)");
+    // Config plumbing, the profile reads (dry-run + export-plan), the reset
+    // refusal check and the verifier binding. The bound exists so a NEW use of
+    // the source studio id has to be noticed and justified, not to freeze a
+    // number — but every read of the source must still go through
+    // buildProfileSql, which is asserted next.
+    expect(sourceUses.length).toBeLessThanOrEqual(8);
+    const sqlReads = cli.match(/dbRows\(\s*buildProfileSql\(config\.sourceStudioId\)\s*\)/g) ?? [];
+    const anySourceSql = cli.match(/config\.sourceStudioId/g) ?? [];
+    expect(sqlReads.length).toBeGreaterThan(0);
+    // No statement may interpolate the source studio id except the aggregate one.
+    expect(cli).not.toMatch(/`[^`]*\$\{q\(config\.sourceStudioId\)\}[^`]*`/);
+    expect(anySourceSql.length).toBeGreaterThanOrEqual(sqlReads.length);
   });
 
   it("no mirror module reads a photo, token, payment or provider identifier", () => {

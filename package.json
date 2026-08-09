@@ -32,7 +32,8 @@
     "synthetic-mirror:status": "node --env-file=.env.local scripts/synthetic-mirror.mjs status",
     "synthetic-mirror:dry-run": "node --env-file=.env.local scripts/synthetic-mirror.mjs dry-run",
     "synthetic-mirror:sync": "node --env-file=.env.local scripts/synthetic-mirror.mjs sync",
-    "synthetic-mirror:reset": "node --env-file=.env.local scripts/synthetic-mirror.mjs reset"
+    "synthetic-mirror:reset": "node --env-file=.env.local scripts/synthetic-mirror.mjs reset",
+    "synthetic-mirror:export-plan": "node --env-file=.env.local scripts/synthetic-mirror.mjs export-plan"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.66.0",

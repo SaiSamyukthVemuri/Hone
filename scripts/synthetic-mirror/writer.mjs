@@ -83,6 +83,12 @@ export function buildAppointmentRows(opts) {
     fromOrdinal,
     count,
     anchorMs,
+    // How many DISTINCT clients may hold a future confirmed booking. The source
+    // profile carries this as `clients_with_upcoming` and it was previously
+    // ignored, so every synthetic client received one. That was unfaithful
+    // (Willow: 31 of 50) and it silently disabled the `follow_up` To-do kind,
+    // whose entire condition is "has a plan note and nothing booked".
+    clientsWithUpcoming,
   } = opts;
   if (clientIds.length === 0 || count <= 0) return [];
 
@@ -97,6 +103,12 @@ export function buildAppointmentRows(opts) {
   for (let i = 0; i < count; i += 1) {
     const ordinal = fromOrdinal + i;
     const status = sequence[ordinal % sequence.length];
+    // Future confirmed bookings are confined to a leading slice of clients so
+    // the remainder genuinely have nothing booked.
+    const bookableIds =
+      status === "confirmed" && Number.isInteger(clientsWithUpcoming)
+        ? clientIds.slice(0, Math.max(1, Math.min(clientsWithUpcoming, clientIds.length)))
+        : clientIds;
     const durations = [30, 45, 60, 90];
     const duration = pick(durations, ordinal);
     const bufferMinutes = 15;
@@ -115,7 +127,7 @@ export function buildAppointmentRows(opts) {
     rows.push({
       id: deriveSyntheticId(studioId, "appointment", ordinal),
       studio_id: studioId,
-      client_id: pick(clientIds, ordinal),
+      client_id: pick(bookableIds, ordinal),
       practitioner_id: practitionerId,
       service_id: serviceIds.length > 0 ? pick(serviceIds, ordinal) : null,
       starts_at: new Date(startMs).toISOString(),
@@ -136,12 +148,29 @@ export function buildAppointmentRows(opts) {
 
 /** Build synthetic session rows (the charting surface). */
 export function buildSessionRows(opts) {
-  const { studioId, clientIds, practitionerId, mix, fromOrdinal, count, anchorMs } = opts;
+  const {
+    studioId, clientIds, practitionerId, mix, fromOrdinal, count, anchorMs,
+    // Completed appointments available to be charted, as {id, client_id}.
+    // Sessions previously carried no appointment_id at all, so EVERY completed
+    // appointment looked uncharted: 38 appointments produced 57 charting gaps,
+    // which saturated the missing-records assistant's six-item cap and hid
+    // every other To-do kind behind it. Linking most of them — and deliberately
+    // leaving a residue unlinked — is a realistic backlog rather than a
+    // pathological one.
+    chartableAppointments = [],
+  } = opts;
   if (clientIds.length === 0 || count <= 0) return [];
+
+  const UNCHARTED_RESIDUE = 10;
+  const linkable = chartableAppointments.slice(
+    0,
+    Math.max(0, chartableAppointments.length - UNCHARTED_RESIDUE),
+  );
 
   const rows = [];
   for (let i = 0; i < count; i += 1) {
     const ordinal = fromOrdinal + i;
+    const linked = i < linkable.length ? linkable[i] : null;
     // Paint the two gap dimensions independently, matching the source's ratios.
     const missingAftercare = ordinal % Math.max(1, count) < mix.missingAftercare;
     const withNextNote = (ordinal * 7) % Math.max(1, count) < mix.withNextNote;
@@ -150,7 +179,9 @@ export function buildSessionRows(opts) {
     rows.push({
       id: deriveSyntheticId(studioId, "session", ordinal),
       studio_id: studioId,
-      client_id: pick(clientIds, ordinal),
+      // A linked session MUST belong to its appointment's client.
+      client_id: linked ? linked.client_id : pick(clientIds, ordinal),
+      appointment_id: linked ? linked.id : null,
       practitioner_id: practitionerId,
       modality: ordinal % 5 === 0 ? "laser" : "electrolysis",
       started_at: startedAt.toISOString(),
@@ -187,6 +218,44 @@ export function buildIntakeRows(opts) {
     });
   }
   return rows;
+}
+
+/**
+ * Build synthetic session_block rows — the recorded TREATMENT AREAS.
+ *
+ * These are not decoration. The missing-records assistant gates BOTH the
+ * `aftercare` and `probe_lot` To-do kinds on `hasTreatmentArea`, i.e. on the
+ * session owning at least one block, so a session with no block yields no
+ * aftercare gap however unmarked its aftercare is. Without these rows two of
+ * the kinds this mirror exists to exercise were unreachable — and a
+ * generator-level coverage map could never have shown that. Only running the
+ * real loaders against real rows did.
+ *
+ * `caution_for_next_session`, `reaction_type` and `tolerance_rating` also feed
+ * the clients-needing-attention list, which is what gives `treatment_memory`
+ * watch notes and notable reactions rather than plan notes alone.
+ */
+export function buildSessionBlockRows(opts) {
+  const { studioId, sessions } = opts;
+  const areas = ["chin", "upper_lip", "jawline", "neck", "cheeks"];
+  return sessions.map((session, ordinal) => {
+    // Probe lot recorded on most blocks and deliberately missing on some, so
+    // the probe_lot gap appears at a realistic rate rather than never or always.
+    const probeMissing = ordinal % 4 === 0;
+    return {
+      id: deriveSyntheticId(studioId, "session_block", ordinal),
+      studio_id: studioId,
+      session_id: session.id,
+      primary_area: pick(areas, ordinal),
+      probe_lot_number: probeMissing ? null : `TEST-LOT-${String(1000 + ordinal)}`,
+      probe_lot_confirmed: !probeMissing,
+      caution_for_next_session: ordinal % 7 === 0,
+      caution_note: ordinal % 7 === 0 ? SAFE_NOTES.watch : null,
+      reaction_type: ordinal % 9 === 0 ? "swelling" : null,
+      reaction_notes: ordinal % 9 === 0 ? SAFE_NOTES.reduceNext : null,
+      tolerance_rating: 3 + (ordinal % 3),
+    };
+  });
 }
 
 /**

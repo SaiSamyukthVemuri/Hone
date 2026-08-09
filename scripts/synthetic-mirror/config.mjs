@@ -28,6 +28,12 @@ export const ENV = Object.freeze({
   sourceStudioId: "SYNTHETIC_MIRROR_SOURCE_STUDIO_ID",
   targetStudioId: "SYNTHETIC_MIRROR_TARGET_STUDIO_ID",
   operatorEmail: "SYNTHETIC_MIRROR_OPERATOR_EMAIL",
+  // Target FK binding. Server-side pinned exactly like the studio ids: these
+  // are configuration, never an interactive argument, so no caller can point a
+  // plan at a practitioner or service belonging to another studio. When absent
+  // and a production link is available they are RESOLVED by read instead.
+  targetPractitionerId: "SYNTHETIC_MIRROR_TARGET_PRACTITIONER_ID",
+  targetServiceIds: "SYNTHETIC_MIRROR_TARGET_SERVICE_IDS",
 });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,6 +55,11 @@ export function loadConfig(env = process.env) {
     sourceStudioId: env[ENV.sourceStudioId] ?? null,
     targetStudioId: env[ENV.targetStudioId] ?? null,
     operatorEmail: env[ENV.operatorEmail] ?? null,
+    targetPractitionerId: env[ENV.targetPractitionerId] ?? null,
+    targetServiceIds: (env[ENV.targetServiceIds] ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
   };
 }
 
