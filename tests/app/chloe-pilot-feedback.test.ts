@@ -196,10 +196,22 @@ describe("5. dashboard: worklist first", () => {
     expect(v2).toBeLessThan(today);
   });
 
-  it("PR #236 Today actions and the snapshot are untouched", () => {
+  it("PR #236 Today actions are untouched, and the snapshot still renders the same metrics", () => {
     expect(DASH).toMatch(/resolveNextAction\(\{/);
     expect(DASH).toMatch(/\{nextAction\.label\}/);
-    expect(DASH).toMatch(/<PracticeSnapshot metrics=\{practiceMetrics\} attention=\{clientsNeedingAttention\} livemode=\{inferStripeLivemode\(\)\} \/>/);
+    // Dashboard V2 Part 1 split the snapshot's "Action needed" block out into
+    // <ActionNeeded>, which now renders under the To do heading. The snapshot
+    // keeps its metrics and its livemode gate and simply no longer takes
+    // `attention`; the SAME `clientsNeedingAttention` value is still loaded
+    // once and still rendered — by the other component.
+    expect(DASH).toMatch(
+      /<PracticeSnapshot metrics=\{practiceMetrics\} livemode=\{inferStripeLivemode\(\)\} \/>/,
+    );
+    expect(DASH).toMatch(
+      /<ActionNeeded metrics=\{practiceMetrics\} attention=\{clientsNeedingAttention\} \/>/,
+    );
+    // Loaded exactly once — the split must not have introduced a second read.
+    expect(DASH.match(/getClientsNeedingAttention\(/g) ?? []).toHaveLength(1);
   });
 });
 

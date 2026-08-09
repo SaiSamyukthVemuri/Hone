@@ -30,7 +30,7 @@ import {
   type TimeFormat,
 } from "@/lib/booking/tz";
 import { FormattedToday } from "@/components/formatted-date-time";
-import { PracticeSnapshot } from "./practice-snapshot";
+import { ActionNeeded, PracticeSnapshot } from "./practice-snapshot";
 import {
   getPracticeDashboardMetrics,
   isDashboardPeriod,
@@ -489,10 +489,80 @@ export default async function DashboardPage({
       </section>
 
 
+      {/* ===================================================================
+          TO DO — Dashboard V2 Part 1.
+          ===================================================================
+          One heading over the actionable work that had accumulated as four
+          separate peer sections between Today and Birthdays: "Action needed"
+          (inside the Practice Snapshot), "Follow-up assistant", "Supplies
+          expiring" and "Needs attention". A practitioner could not tell which
+          of those wanted an action and which was reporting.
+
+          This is a HIERARCHY change, not a data change. Every child keeps its
+          own component, props, loader and behaviour; their headings drop from
+          h2 to h3 so this section owns the only h2. No loader was rewritten and
+          no query was added — `clientsNeedingAttention` and `practiceMetrics`
+          were already loaded above for the snapshot.
+
+          Part 2 unifies these into one To-do model with a shared
+          who / why-unresolved / action row grammar. Until then the remaining
+          duplication is deliberate and documented, not accidental. */}
+      <section className="flex flex-col gap-6">
+        <h2 className="text-lg font-medium">To do</h2>
+
+        {/* PR #214/#208: record-completeness + treatment-memory attention.
+            Lifted out of the Practice Snapshot so it sits with the work it
+            asks for rather than under reporting. */}
+        <ActionNeeded metrics={practiceMetrics} attention={clientsNeedingAttention} />
+
+        {/* PR #249: Follow-up assistant — recorded record gaps and
+            follow-ups from recent appointments. Rules-based, read-only,
+            links only. */}
+        <FollowUpAssistantCard assistant={followUpAssistant} />
+        <SuppliesExpiringCard items={expiringSupplies} today={todayLocal} />
+
+        <NeedsAttention
+          isOwner={isOwner}
+          intakesAwaitingReviewCount={intakesAwaitingReviewCount}
+          activeServicesCount={activeServicesCount}
+          paymentStatus={paymentStatus}
+        />
+      </section>
+
+      {/* Relationship context, BELOW the operational work — never above it. */}
+      <BirthdaysThisMonth
+        birthdays={birthdaysThisMonth}
+        today={todayLocal}
+        accentColor={studio.birthday_reminder_color}
+      />
+
+      {/* ===================================================================
+          Secondary — reporting and setup, below the operational hierarchy.
+          ===================================================================
+          PR #208's practice snapshot (period filter + appointment counts +
+          service value + test-mode payment posture). It is REPORTING, so it is
+          demoted below Today / To do / Birthdays rather than removed: the
+          owner-only Financials route that will eventually own service value and
+          payment posture does not exist yet, and deleting the only surface that
+          shows them before their replacement exists would destroy working
+          functionality. Nothing here was recomputed, renamed or duplicated —
+          the only change to its numbers in this PR is the Sunday week
+          boundary correction in resolvePeriodRange. */}
+      <PracticeSnapshot metrics={practiceMetrics} livemode={inferStripeLivemode()} />
+
+      {isOwner && bookingReadiness && (
+        <BookingSetupCard
+          readiness={bookingReadiness}
+          studioSlug={studio.slug}
+          appOrigin={getRequiredAppOrigin()}
+        />
+      )}
+
       {/* PR #215: setup/readiness checklist entry point. A normal
-          link card, never a blocking modal. PR #238: shown here, under
-          Today, only while auto-detected steps remain; the full
-          checklist always lives on /getting-started. */}
+          link card, never a blocking modal. PR #238: shown only while
+          auto-detected steps remain; the full checklist always lives on
+          /getting-started. Demoted out of the operational flow — setup is not
+          daily work. */}
       {!onboardingV2On && !setupComplete && (
         <Link
           href="/getting-started"
@@ -505,39 +575,6 @@ export default async function DashboardPage({
           </span>
         </Link>
       )}
-
-      {/* PR #208: practice snapshot (period filter + appointment
-          counts + service value + test-mode payment posture + action
-          cards). Read-only; never labeled revenue while live payments
-          are disabled. */}
-      <PracticeSnapshot metrics={practiceMetrics} attention={clientsNeedingAttention} livemode={inferStripeLivemode()} />
-
-      {/* PR #249: Follow-up assistant — recorded record gaps and
-          follow-ups from recent appointments. Rules-based, read-only,
-          links only. Sits under the snapshot so Today stays on top. */}
-      <FollowUpAssistantCard assistant={followUpAssistant} />
-      <SuppliesExpiringCard items={expiringSupplies} today={todayLocal} />
-
-      <NeedsAttention
-        isOwner={isOwner}
-        intakesAwaitingReviewCount={intakesAwaitingReviewCount}
-        activeServicesCount={activeServicesCount}
-        paymentStatus={paymentStatus}
-      />
-
-      {isOwner && bookingReadiness && (
-        <BookingSetupCard
-          readiness={bookingReadiness}
-          studioSlug={studio.slug}
-          appOrigin={getRequiredAppOrigin()}
-        />
-      )}
-
-      <BirthdaysThisMonth
-        birthdays={birthdaysThisMonth}
-        today={todayLocal}
-        accentColor={studio.birthday_reminder_color}
-      />
 
       {/* PR #250 Pilot Love Loop V1: a quiet, optional "Pilot learning"
           card near the bottom (well below Today). Manual mailto only —
@@ -980,7 +1017,7 @@ function NeedsAttention({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <h2 className="text-lg font-medium">Needs attention</h2>
+        <h3 className="text-base font-medium">Needs attention</h3>
         {hasUrgent && (
           <span
             aria-hidden

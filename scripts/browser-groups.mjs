@@ -175,12 +175,22 @@ const PATH_TO_GROUP = [
   { group: "intake", patterns: [/intake/i] },
   { group: "portal", patterns: [/portal/i, /pinned[-_]?note/i, /personal[-_]?note/i] },
   { group: "booking", patterns: [/booking/i, /appointments?/i, /reschedule/i, /\bbook\b/i, /treatment-plans/i] },
-  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i] },
+  // `dashboard` maps here because the specs that actually exercise the
+  // dashboard — combined-today-workflow and dashboard-memory-visibility — live
+  // in this group. Added when Dashboard V2 Part 1 reordered the page and CI
+  // selected NO group for it: `app/(app)/dashboard/**` matched no pattern, and
+  // the unattributable-code fail-safe below only fires when the diff selects
+  // ZERO groups overall. One unrelated file in the same commit (a calendar test)
+  // was enough to defeat it, so a full restructure of the dashboard would have
+  // shipped with only the always-on smoke spec covering it.
+  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i, /dashboard/i] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   { group: "owner_admin", patterns: [/onboarding/i, /invitation/i, /invite/i, /\badmin\b/i, /practitioner/i, /studio/i, /import/i] },
   { group: "marketing", patterns: [/^app\/\(marketing\)/, /marketing/i] },
   { group: "google", patterns: [/google[-_]?calendar/i] },
-  { group: "responsive", patterns: [/mobile/i, /responsive/i] },
+  // The dashboard is the primary mobile surface — Today must stay first and
+  // tappable — and mobile-ux.spec.ts is the only spec that asserts that.
+  { group: "responsive", patterns: [/mobile/i, /responsive/i, /dashboard/i] },
 ];
 
 /** All spec files for a set of group names, deduplicated and sorted. */

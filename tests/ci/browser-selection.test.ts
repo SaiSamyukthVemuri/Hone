@@ -74,6 +74,29 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(28);
   });
 
+  it("a dashboard change selects the specs that actually exercise the dashboard", () => {
+    // Regression guard for a real gap found while building Dashboard V2 Part 1:
+    // `app/(app)/dashboard/**` matched NO pattern in PATH_TO_GROUP, and the
+    // unattributable-code fail-safe only fires when the diff selects ZERO
+    // groups. A single unrelated file in the same commit was therefore enough
+    // to defeat it — a full restructure of the dashboard page would have run
+    // with only the always-on smoke spec covering it.
+    const s = selectBrowserGroups(["app/(app)/dashboard/page.tsx"]);
+    expect(s.extended, "a dashboard change is attributable, not a full matrix").toBe(false);
+    // sessions holds combined-today-workflow + dashboard-memory-visibility;
+    // responsive holds mobile-ux, the only spec asserting the mobile hierarchy.
+    expect([...s.groups].sort()).toEqual(["responsive", "sessions", "smoke"]);
+    const specs = specsForGroups(s.groups) ?? [];
+    for (const spec of [
+      "combined-today-workflow.spec.ts",
+      "dashboard-memory-visibility.spec.ts",
+      "mobile-ux.spec.ts",
+      "core-memory-loop.spec.ts",
+    ]) {
+      expect(specs, `${spec} must cover a dashboard change`).toContain(spec);
+    }
+  });
+
   it("targeted coverage is still ONE shard and extended still FOUR", () => {
     expect(plan("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts").browser.sharded).toBe(false);
     expect(plan("e2e/helpers/seed.ts").browser.sharded).toBe(true);
