@@ -301,6 +301,14 @@ export function normalizeIntakeConsentClaims(
 // built from the SNAPSHOT the client actually read — never from today's
 // template row, which the studio may have edited since.
 export type IntakeConsentFormView = {
+  // The template this answer was given against. Carried through to the review
+  // surface because it is the ONLY honest evidence of consent LINEAGE: editing
+  // a consent template is `update ... where id = $id` with `version + 1` on the
+  // SAME row (app/(app)/settings/consent/actions.ts), so a template_id is a
+  // stable logical consent question across every version, and a DIFFERENT
+  // template_id is a genuinely different question. Supersession is decided on
+  // this and never on "a portal answer exists, therefore this is old".
+  templateId: string;
   formType: IntakeConsentFormType;
   titleSnapshot: string;
   bodySnapshot: string;
@@ -334,7 +342,15 @@ function readFormRecord(value: unknown): IntakeConsentFormView | null {
   if (typeof raw.body_snapshot !== "string") return null;
   const version = Number(raw.template_version);
   if (!Number.isFinite(version)) return null;
+  // template_id is REQUIRED by the stored shape (IntakeConsentFormRecord) and
+  // by the carry-forward rule, both of which reject a record without it. A
+  // record missing it cannot have its lineage reasoned about, so it is not a
+  // record we can render an honest provenance claim for.
+  if (typeof raw.template_id !== "string" || raw.template_id.length === 0) {
+    return null;
+  }
   return {
+    templateId: raw.template_id,
     formType: raw.form_type,
     titleSnapshot: raw.title_snapshot,
     bodySnapshot: raw.body_snapshot,
@@ -428,12 +444,41 @@ export const INTAKE_CONSENT_REVIEW_COPY = {
   // different events, and a practitioner reading a contradiction must be able
   // to see which is which.
   recordedInIntake: "Recorded with this intake",
-  portalHeading: "Current portal consent status",
-  // Photo consent moved to the portal, so the intake's own photo answers are
-  // historical by definition. Says so plainly rather than letting an old
-  // answer read as current.
-  photoMovedNote:
-    "Photo consent is completed in the client portal. Any photo answer above was recorded when the intake still asked for it.",
+
+  // ---- CURRENT-FIRST INFORMATION ARCHITECTURE (Chloe, 2026-08-09) ----------
+  //
+  // #545 put the historical intake answer FIRST, with its full legal body
+  // expanded inline, and the current portal status underneath. A client who
+  // accepted photos at intake and then denied them in the portal therefore read
+  // as "Photo Consent — Accepted ... <legal text> ... Photo Consent — Consent
+  // denied": two answers with equal visual authority. Chloe: "consent was both
+  // accepted and denied", "this should not be possible".
+  //
+  // The records are both real and BOTH ARE KEPT. What changes is authority and
+  // order: exactly one CURRENT answer per consent question at the top, prior
+  // answers demoted into a collapsed history, and legal wording on demand.
+  currentHeading: "Current consent",
+  historyHeading: "Previous consent history",
+  // Sits under the current block so the practitioner knows the history exists
+  // without it competing for attention.
+  historyToggle: "Show previous consent history",
+  // Provenance for a prior intake answer. Never says "current".
+  previousResponse: "Previous response",
+  // ONLY rendered when lineage is proven: the same template_id carries a newer
+  // portal answer. Never inferred from "some portal answer exists".
+  supersededByPortal: "Superseded by a newer portal response",
+  // Same template_id, but we cannot prove the portal answer is the newer of the
+  // two (the intake record carries no responded_at). Truthful and weaker.
+  alsoAnsweredInPortal: "Also answered in the client portal",
+  // A prior answer to a form the portal does not currently run, or to a
+  // different template entirely. Not superseded — just no longer collected here.
+  noLongerCollected: "Photo consent is no longer collected in the intake",
+  // Disclosure labels. The review page is a scan surface, not a document
+  // viewer, so every full body sits behind one of these.
+  // Native <details>/<summary> supplies the open/closed affordance, so one
+  // static label each — no second "Hide …" string to keep in sync.
+  viewRecordedForm: "View recorded form",
+  viewPreviousForm: "View previous form",
 } as const;
 
 // Practitioner copy for the CURRENT portal photo-consent status. Same
@@ -447,6 +492,11 @@ export const PORTAL_PHOTO_CONSENT_COPY = {
   // but not to the text now in force.
   needsReview: "Needs review",
   completedInPortal: "Completed in client portal",
+  // Provenance line for the CURRENT block. Deliberately shorter and more
+  // operational than "Completed in client portal": the practitioner is not
+  // being told where a form lives, they are being told this is the answer that
+  // stands right now.
+  currentPortalResponse: "Current portal response",
   notCompletedHint: "The client has not answered this form in their portal yet.",
   needsReviewHint:
     "The client answered an earlier version of this form. Ask them to complete the current one.",

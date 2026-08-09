@@ -27,6 +27,8 @@ import {
   intakeConsentResponseLabel,
   readIntakeConsentResponses,
 } from "@/lib/intake/consent-forms";
+import { buildConsentReviewModel } from "@/lib/intake/consent-review-model";
+import { IntakeConsentRecordViewer } from "@/components/intake-consent-record-viewer";
 import {
   getPortalPhotoConsentsForPractitionerView,
   type PortalPhotoConsentView,
@@ -865,88 +867,75 @@ function IntakeConsentFormsSummary({
   portalPhotos: PortalPhotoConsentView[];
 }) {
   const view = readIntakeConsentResponses(responses, status);
+  // ONE current answer per consent question, prior answers demoted to history.
+  // The partition and the supersession proof live in the pure model so they are
+  // unit-testable without a browser; this component only renders the result.
+  const model = buildConsentReviewModel({
+    intakeForms: view.state === "recorded" ? view.forms : [],
+    portalPhotos,
+  });
+  const hasCurrent =
+    model.currentIntakeForms.length > 0 || model.currentPortalPhotos.length > 0;
 
   return (
     <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
         {INTAKE_CONSENT_REVIEW_COPY.heading}
       </h2>
-      <div className="mt-3 flex flex-col gap-4 text-sm text-neutral-800 dark:text-neutral-200">
-        {view.state === "recorded" &&
-          view.forms.map((form, i) => (
-            <div
-              key={`${form.formType}-${i}`}
-              className="flex flex-col gap-1"
-              data-testid="intake-review-consent-form"
-            >
-              <p className="font-medium">{form.titleSnapshot}</p>
-              <p className="font-medium text-neutral-700 dark:text-neutral-300">
-                {intakeConsentResponseLabel(form)}
-              </p>
-              {form.responseLabelSnapshot && (
-                <p className="text-neutral-700 dark:text-neutral-300">
-                  {form.responseLabelSnapshot}
-                </p>
-              )}
-              <p className="whitespace-pre-wrap break-words text-neutral-700 dark:text-neutral-300">
-                {form.bodySnapshot}
-              </p>
-              <p className="text-xs text-neutral-500">
-                {INTAKE_CONSENT_REVIEW_COPY.recordedInIntake}
-                {" · "}Version {form.templateVersion}
-                {form.respondedAtIso && (
-                  <>
-                    {" · "}
-                    <FormattedDateTime iso={form.respondedAtIso} />
-                  </>
-                )}
-              </p>
-            </div>
-          ))}
-        {view.state === "no_record" && (
-          <p className="text-neutral-600 dark:text-neutral-400">
-            {INTAKE_CONSENT_REVIEW_COPY.noRecord}
-          </p>
-        )}
-        {view.state === "none_recorded" && (
-          <p className="text-neutral-600 dark:text-neutral-400">
-            {INTAKE_CONSENT_REVIEW_COPY.noneRecorded}
-          </p>
-        )}
-        {view.state === "unreadable" && (
-          <p className="text-neutral-600 dark:text-neutral-400">
-            {INTAKE_CONSENT_REVIEW_COPY.unreadable}
-          </p>
-        )}
-      </div>
-      {view.state === "recorded" && (
-        <p className="mt-3 text-xs text-neutral-500">
-          {INTAKE_CONSENT_REVIEW_COPY.historicalNote}
-        </p>
-      )}
-      <p className="mt-3 text-xs text-neutral-500">
-        {INTAKE_CONSENT_REVIEW_COPY.caveat}
-      </p>
 
-      {/* CURRENT portal photo-consent status — a DIFFERENT source, kept in its
-          own block on purpose.
-          The two are never merged: an answer given inside the intake is a
-          historical event, and the portal signature is what stands today. A
-          client who denied photos at intake and later granted them in the
-          portal must read as exactly that, not as one overwritten answer.
-
-          ONE ROW PER LIVE FORM. Collapsing several live photo forms into a
-          single status would drop a real consent record — and picking the
-          "highest version" across different template ids would do it silently,
-          since version is a template's own history and not a ranking between
-          templates. */}
-      {portalPhotos.length > 0 && (
-        <div className="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+      {/* ================= 1 · CURRENT CONSENT =================
+          Highest visual priority, and FIRST in the DOM so it is also first at
+          a phone width where everything stacks. Every row is compact by
+          design: title, the answer, where the answer came from, when. The
+          legal wording is one click away and never inline — that combination
+          is what makes "can this client's photos be taken?" a sub-second
+          question instead of a reading exercise. */}
+      {hasCurrent && (
+        <div className="mt-3" data-testid="consent-current-block">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-            {INTAKE_CONSENT_REVIEW_COPY.portalHeading}
+            {INTAKE_CONSENT_REVIEW_COPY.currentHeading}
           </h3>
-          <div className="mt-2 flex flex-col gap-4">
-            {portalPhotos.map((photo) => (
+          <div className="mt-2 flex flex-col gap-4 text-sm text-neutral-800 dark:text-neutral-200">
+            {/* Intake-owned and still current: treatment consent. */}
+            {model.currentIntakeForms.map((form, i) => (
+              <div
+                key={`${form.formType}-${i}`}
+                className="flex flex-col gap-1"
+                data-testid="intake-review-consent-form"
+                data-form-type={form.formType}
+              >
+                <p className="font-medium">{form.titleSnapshot}</p>
+                <p
+                  data-testid="consent-current-status"
+                  className="font-medium text-neutral-700 dark:text-neutral-300"
+                >
+                  {intakeConsentResponseLabel(form)}
+                </p>
+                <p className="text-xs text-neutral-500">
+                  {INTAKE_CONSENT_REVIEW_COPY.recordedInIntake}
+                  {" · "}Version {form.templateVersion}
+                  {form.respondedAtIso && (
+                    <>
+                      {" · "}
+                      <FormattedDateTime iso={form.respondedAtIso} />
+                    </>
+                  )}
+                </p>
+                <IntakeConsentRecordViewer
+                  form={form}
+                  label={INTAKE_CONSENT_REVIEW_COPY.viewRecordedForm}
+                />
+              </div>
+            ))}
+
+            {/* Portal-owned and current: photo consent.
+                ONE ROW PER LIVE TEMPLATE — #545's multi-form correction, kept
+                exactly. Two live photo forms are two separate questions;
+                collapsing them into a single granted/denied would drop a real
+                consent record, and ranking them by `version` would do it
+                silently, since version is a template's own history and not a
+                ranking between templates. */}
+            {model.currentPortalPhotos.map((photo) => (
               <div
                 key={photo.templateId}
                 data-testid="review-portal-photo-consent"
@@ -963,7 +952,7 @@ function IntakeConsentFormsSummary({
                 </p>
                 {photo.record?.signed_at ? (
                   <p className="text-xs text-neutral-500">
-                    {PORTAL_PHOTO_CONSENT_COPY.completedInPortal}
+                    {PORTAL_PHOTO_CONSENT_COPY.currentPortalResponse}
                     {" · "}
                     <FormattedDateTime iso={photo.record.signed_at} />
                     {" · "}Version {photo.record.template_version}
@@ -991,11 +980,103 @@ function IntakeConsentFormsSummary({
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs text-neutral-500">
-            {INTAKE_CONSENT_REVIEW_COPY.photoMovedNote}
-          </p>
         </div>
       )}
+
+      <div className="mt-3 flex flex-col gap-4 text-sm text-neutral-800 dark:text-neutral-200">
+        {view.state === "no_record" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.noRecord}
+          </p>
+        )}
+        {view.state === "none_recorded" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.noneRecorded}
+          </p>
+        )}
+        {view.state === "unreadable" && (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {INTAKE_CONSENT_REVIEW_COPY.unreadable}
+          </p>
+        )}
+      </div>
+      {/* ================= 3 · PREVIOUS CONSENT HISTORY =================
+          Immutable. Nothing here is deleted, rewritten or relabelled — an
+          Accepted the client really gave still reads "Accepted", with its own
+          version and timestamp. What changed is that it can no longer be
+          mistaken for the operative answer: it is below the current block,
+          collapsed by default, and every entry states its provenance.
+
+          A client accepting at T1 and denying at T2 is a legitimate change of
+          mind and BOTH records survive. The thing that is now impossible is
+          the screen presenting them as two simultaneously current answers. */}
+      {model.history.length > 0 && (
+        <details
+          className="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800"
+          data-testid="consent-history-block"
+        >
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">
+            {INTAKE_CONSENT_REVIEW_COPY.historyToggle}
+          </summary>
+          <div className="mt-3 flex flex-col gap-4 text-sm">
+            {model.history.map((entry, i) => (
+              <div
+                key={`${entry.form.formType}-${i}`}
+                className="flex flex-col gap-1"
+                data-testid="consent-history-entry"
+                data-form-type={entry.form.formType}
+                data-provenance={entry.provenance}
+              >
+                <p className="font-medium">{entry.form.titleSnapshot}</p>
+                <p className="text-xs uppercase tracking-wider text-neutral-500">
+                  {INTAKE_CONSENT_REVIEW_COPY.previousResponse}
+                </p>
+                <p
+                  data-testid="consent-history-status"
+                  className="font-medium text-neutral-700 dark:text-neutral-300"
+                >
+                  {intakeConsentResponseLabel(entry.form)}
+                </p>
+                <p className="text-xs text-neutral-500">
+                  {INTAKE_CONSENT_REVIEW_COPY.recordedInIntake}
+                  {" · "}Version {entry.form.templateVersion}
+                  {entry.form.respondedAtIso && (
+                    <>
+                      {" · "}
+                      <FormattedDateTime iso={entry.form.respondedAtIso} />
+                    </>
+                  )}
+                </p>
+                {/* Provenance, and ONLY what the records prove. "Superseded"
+                    requires the SAME template_id carrying a demonstrably newer
+                    portal answer; a portal answer merely existing somewhere
+                    proves nothing about this record. */}
+                <p
+                  data-testid="consent-history-provenance"
+                  className="text-xs text-neutral-500"
+                >
+                  {entry.provenance === "superseded_by_portal"
+                    ? INTAKE_CONSENT_REVIEW_COPY.supersededByPortal
+                    : entry.provenance === "also_answered_in_portal"
+                      ? INTAKE_CONSENT_REVIEW_COPY.alsoAnsweredInPortal
+                      : INTAKE_CONSENT_REVIEW_COPY.noLongerCollected}
+                </p>
+                <IntakeConsentRecordViewer
+                  form={entry.form}
+                  label={INTAKE_CONSENT_REVIEW_COPY.viewPreviousForm}
+                />
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-neutral-500">
+            {INTAKE_CONSENT_REVIEW_COPY.historicalNote}
+          </p>
+        </details>
+      )}
+
+      <p className="mt-3 text-xs text-neutral-500">
+        {INTAKE_CONSENT_REVIEW_COPY.caveat}
+      </p>
     </section>
   );
 }
