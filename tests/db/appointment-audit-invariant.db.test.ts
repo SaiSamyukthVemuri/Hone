@@ -273,9 +273,17 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     "public_cancel_appointment_with_token",
     "reschedule_appointment", // legacy v1 — installed, not driven by B2
     "reschedule_appointment_v2",
+    // B4 / 0173. The repair commands write audit rows through the shared
+    // `write_appointment_audit` helper rather than inlining the INSERT, so the
+    // census grows by exactly ONE even though TWO commands landed:
+    // `revert_appointment_outcome` and `set_appointment_notes` both `perform`
+    // this helper, and neither one's prosrc contains the insert text. That is
+    // the centralisation working as intended — a future B5 audit change has one
+    // insertion point to migrate, and this list stays legible.
+    "write_appointment_audit",
   ];
 
-  it("exactly these nine functions insert into public.appointment_audit", async () => {
+  it("exactly these ten functions insert into public.appointment_audit", async () => {
     const r = await adminQuery(
       `select p.proname
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -306,7 +314,17 @@ describe("the set of installed appointment_audit writers is pinned", () => {
   });
 
   it("the eight commands B2 drives are a strict subset of the installed writers", () => {
-    const DRIVEN = EXPECTED_WRITERS.filter((n) => n !== "reschedule_appointment");
+    const DRIVEN = EXPECTED_WRITERS.filter(
+      (n) =>
+        n !== "reschedule_appointment" &&
+        // B4 / 0173. `write_appointment_audit` is a shared INSERT helper, not a
+        // lifecycle command: it takes an already-decided action + details and
+        // has no gates of its own, so B2 does not — and should not — drive it.
+        // Its callers (revert_appointment_outcome, set_appointment_notes) are
+        // B4 commands with their own suite,
+        // tests/db/appointment-repair-commands.db.test.ts.
+        n !== "write_appointment_audit",
+    );
     expect(DRIVEN).toHaveLength(8);
     for (const d of DRIVEN) expect(EXPECTED_WRITERS).toContain(d);
   });

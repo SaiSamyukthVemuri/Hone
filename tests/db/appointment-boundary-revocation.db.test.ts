@@ -655,7 +655,25 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
     }
   });
 
-  it("a member CAN still null appointments.service_id by deleting the service — recorded, not fixed", async () => {
+  // SUPERSEDED BY B4 / MIGRATION 0173 (GROUP 5).
+  //
+  // When B3 shipped, this assertion read "a member CAN still null
+  // appointments.service_id by deleting the service — recorded, not fixed", and
+  // that was the truth at 0172: L23 was documented, deliberately left open, and
+  // pinned here so it could not be forgotten.
+  //
+  // 0173's GROUP 5 closed it — `revoke delete on public.services from anon, authenticated`
+  // plus the 0087-style policy split. The reproduction below therefore now
+  // stops at the member's DELETE, and this test asserts the CLOSURE instead of
+  // the hazard. It is deliberately kept in this file rather than deleted: the
+  // direct-vs-indirect contrast is what makes the boundary comprehensible, and
+  // a future migration that re-granted parent DELETE would light this up right
+  // next to the revocations it belongs with.
+  //
+  // 0172 itself is untouched by B4 — not one byte. The full L23 treatment,
+  // including the two-way self-test that proves the hazard was real before
+  // GROUP 5, lives in tests/db/appointment-parent-delete-boundary.db.test.ts.
+  it("a member can NO LONGER null appointments.service_id by deleting the service (0173 GROUP 5)", async () => {
     // Reproduced end to end, then rolled back. asUser COMMITS on success, so
     // this runs through asRole (which always rolls back) with a member identity
     // supplied explicitly.
@@ -694,21 +712,34 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
       INSUFFICIENT_PRIVILEGE,
     );
 
-    // ...the indirect route is not. Separate transaction: the failed statement
-    // above aborts its own.
+    // ...and after 0173's GROUP 5 the INDIRECT route is refused too. Separate
+    // transaction: the failed statement above aborts its own.
     const after = await asRole("authenticated", async (q) => {
       await q(`select set_config('request.jwt.claims', $1, true)`, [
         JSON.stringify({ sub: A.userId, role: "authenticated" }),
       ]);
-      const del = await q(`delete from public.services where id = $1`, [serviceId]);
-      const read = await q(`select service_id from public.appointments where id = $1`, [targetId]);
-      return { deleted: del.rowCount, serviceId: read.rows[0]?.service_id ?? null };
+      let parent: string | null = null;
+      try {
+        await q(`delete from public.services where id = $1`, [serviceId]);
+      } catch (e) {
+        parent = (e as { code?: string }).code ?? null;
+      }
+      return parent;
     });
-    expect(after.deleted, "a member may delete a service (services_member_all is FOR ALL)").toBe(1);
     expect(
-      after.serviceId,
-      "and the FK's ON DELETE SET NULL wrote appointments without any privilege on it",
-    ).toBeNull();
+      after,
+      "0173 GROUP 5 revoked DELETE on services, so the parent delete is refused at the privilege layer",
+    ).toBe(INSUFFICIENT_PRIVILEGE);
+
+    // The lineage survived: the FK's ON DELETE SET NULL never fired, because
+    // the delete that would have triggered it never happened.
+    const lineage = await adminQuery(
+      `select service_id from public.appointments where id = $1`,
+      [targetId],
+    );
+    expect(lineage.rows[0].service_id, "appointment lineage intact").toBe(
+      serviceId,
+    );
 
     await adminQuery(`delete from public.appointments where id = $1`, [targetId]);
     await adminQuery(`delete from public.services where id = $1`, [serviceId]);
