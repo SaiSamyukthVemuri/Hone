@@ -15,7 +15,15 @@ import {
 import {
   REVIEW_ANSWER_COPY,
   reviewAnswerState,
+  type ReviewAnswerState,
 } from "@/lib/intake/review-answers";
+
+// What the reviewer actually READS for a given state. The "answered" case has
+// no fixed copy — the stored answer is rendered — so it is named as such rather
+// than indexed out of a map that deliberately does not contain it.
+function reviewerSees(state: ReviewAnswerState): string {
+  return state === "answered" ? "<the stored answer>" : REVIEW_ANSWER_COPY[state];
+}
 
 // Diabetes / thyroid subtype conditionals.
 //
@@ -327,7 +335,7 @@ describe("5. the practitioner review tells the truth about what is known", () =>
       "reviewed",
     );
     expect(state).toBe("not_applicable");
-    expect(REVIEW_ANSWER_COPY[state]).toBe("Not applicable");
+    expect(reviewerSees(state)).toBe("Not applicable");
   });
 
   it("does NOT present a stale type as the client's answer", () => {
@@ -356,7 +364,7 @@ describe("5. the practitioner review tells the truth about what is known", () =>
     for (const status of ["submitted", "reviewed"] as const) {
       const state = reviewAnswerState(q("diabetes_type"), legacy, status);
       expect(state, status).toBe("not_collected");
-      expect(REVIEW_ANSWER_COPY[state]).toBe("Not collected on this intake");
+      expect(reviewerSees(state)).toBe("Not collected on this intake");
     }
   });
 
@@ -364,7 +372,7 @@ describe("5. the practitioner review tells the truth about what is known", () =>
     const legacy = withConditions("diabetes", "thyroid");
     for (const key of ["diabetes_type", "thyroid_type"]) {
       const state = reviewAnswerState(q(key), legacy, "reviewed");
-      const copy = REVIEW_ANSWER_COPY[state as "not_collected"];
+      const copy = reviewerSees(state);
       for (const invented of [
         "Type 1",
         "Type 2",
@@ -385,7 +393,7 @@ describe("5. the practitioner review tells the truth about what is known", () =>
       "in_progress",
     );
     expect(state).toBe("unanswered");
-    expect(REVIEW_ANSWER_COPY[state]).toBe("Not answered");
+    expect(reviewerSees(state)).toBe("Not answered");
   });
 
   it("keeps an optional unanswered question out of 'never collected'", () => {

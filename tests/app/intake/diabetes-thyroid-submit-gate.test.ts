@@ -263,6 +263,12 @@ describe("2. the browser does not decide what is a valid type", () => {
   });
 
   it("refuses a non-string value", async () => {
+    // Refused by the REQUIRED check rather than the choice check — a
+    // single_select answer that is not a string is not a provided answer at
+    // all, so it never reaches the membership test. Verified by negative
+    // control: disabling the choice gate leaves this case still refused.
+    // Recorded here because a reader would otherwise assume this proves the
+    // choice gate, and it does not.
     const res = await submitIntakeAction({
       token: "good",
       responses: completeAnswers({
