@@ -231,7 +231,7 @@ export async function getAppointmentsForRange(
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
   const BASE =
-    "*, practitioner:practitioners(id, color), client:clients(id, name), ";
+    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color), client:clients(id, name), ";
   const runSelect = (serviceEmbed: string) =>
     supabase
       .from("appointments")

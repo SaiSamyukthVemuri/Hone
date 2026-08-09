@@ -33,8 +33,12 @@ import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 //   3. leaving it blank BLOCKS the step through the real required-field UX;
 //   4. RETRACTING the parent hides the control and stops rendering the stale
 //      value — the browser half of the non-authoritative-stale-child rule;
-//   5. the chosen values PERSIST through the current live consent flow,
-//      including a photo DENIAL, to a successful submission;
+//   5. the chosen values PERSIST through the current intake submission —
+//      which now completes on TREATMENT consent alone, because photo consent
+//      moved to the client portal. This spec deliberately does NOT exercise
+//      photo consent in either place: the subtype contract is what is under
+//      test, and the portal's Accept/Deny ceremony has its own proof in
+//      e2e/portal-consent-signing-integrity.spec.ts;
 //   6. the practitioner review surface RENDERS both subtypes truthfully.
 //
 // DATABASE STATE IS THE ORACLE for what was stored, exactly as the sibling
@@ -51,13 +55,11 @@ const MOBILE = { width: 390, height: 844 };
 
 const TREATMENT_BODY =
   "WILLOW TREATMENT CONSENT. Electrolysis permanently removes hair by treating each follicle individually. I understand a course of treatment is required and that results vary.";
-const PHOTO_BODY =
-  "WILLOW PHOTO CONSENT. We photograph treatment areas to track progress. You may accept or decline; declining does not affect your treatment in any way.";
 
 // Mirrors what practitioner-side template management writes.
 async function seedLiveTemplate(
   studioId: string,
-  formType: "treatment_consent" | "photo_consent",
+  formType: "treatment_consent",
   title: string,
   body: string,
 ): Promise<void> {
@@ -109,7 +111,6 @@ test.describe("diabetes / thyroid subtypes through the real intake UI", () => {
     // this studio has, so a shared studio would leak another test's forms in.
     const seed = await seedE2eStudio();
     await seedLiveTemplate(seed.studioId, "treatment_consent", "Treatment Consent", TREATMENT_BODY);
-    await seedLiveTemplate(seed.studioId, "photo_consent", "Photo Consent", PHOTO_BODY);
 
     const { clientId } = await seedE2eClient(seed);
     const intakeId = await seedE2eIntake(
@@ -203,11 +204,13 @@ test.describe("diabetes / thyroid subtypes through the real intake UI", () => {
       await page.getByRole("button", { name: "Continue" }).click();
     }
 
-    // --- (6) the CURRENT live consent flow, with a photo DENIAL
+    // --- (6) the CURRENT live consent flow: TREATMENT ONLY.
+    // Photo consent is no longer collected here, so there is nothing to deny;
+    // seeding a photo template merely to answer it would be testing a path the
+    // product removed.
     await expect(page.getByRole("heading", { name: "Consent forms" })).toBeVisible();
     await expect(page.getByText(TREATMENT_BODY)).toBeVisible();
     await page.getByTestId("intake-consent-agree").check();
-    await page.getByTestId("intake-consent-photo-denied").check();
 
     await page.getByRole("button", { name: "Submit intake" }).click();
     await page.waitForURL("**/intake/thank-you");
@@ -225,9 +228,11 @@ test.describe("diabetes / thyroid subtypes through the real intake UI", () => {
     const consent = row?.responses[INTAKE_CONSENT_RESPONSES.id] as {
       forms: Array<Record<string, unknown>>;
     };
-    expect(
-      consent.forms.find((f) => f.form_type === "photo_consent")!.response,
-    ).toBe("denied");
+    // Treatment only, and no photo answer invented for a question the client
+    // was never asked.
+    expect(consent.forms).toHaveLength(1);
+    expect(consent.forms[0].form_type).toBe("treatment_consent");
+    expect(JSON.stringify(consent)).not.toContain("photo_consent");
 
     // --- (7) the practitioner reads back exactly what the client chose,
     // as LABELS rather than raw enum tokens.

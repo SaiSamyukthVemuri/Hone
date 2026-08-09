@@ -69,6 +69,10 @@ export const BROWSER_GROUPS = {
       // required treatment checkbox, photo Accept/Deny (both completing), and
       // the stale-template refusal.
       "intake-live-consent-forms.spec.ts",
+      // Chloe's actual route (Client -> Health & Forms -> View intake): the
+      // recorded intake consent AND the current portal photo status, which no
+      // helper test could prove because the gap was a mounting location.
+      "intake-review-consent-visibility.spec.ts",
       // The diabetes / thyroid subtype conditionals: absent until the parent
       // condition is reported, required once it is, hidden again on retraction,
       // and read back truthfully on the practitioner review grid.

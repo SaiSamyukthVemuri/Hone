@@ -187,7 +187,7 @@ export default async function SessionDetailPage({
     const { data: apptRow, error: apptErr } = await supabaseForDefault
       .from("appointments")
       .select(
-        "duration_minutes, status, starts_at, ends_at, postcare_email_sent_at, postcare_email_failed_at, postcare_email_claimed_at, postcare_email_send_attempts, service:services(name, price_cents, modality), practitioner:practitioners(display_name)",
+        "duration_minutes, status, starts_at, ends_at, postcare_email_sent_at, postcare_email_failed_at, postcare_email_claimed_at, postcare_email_send_attempts, service:services(name, price_cents, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
       )
       .eq("id", linkedAppointmentId)
       .eq("studio_id", studio.id)

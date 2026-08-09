@@ -23,8 +23,11 @@ import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 //
 // WHAT THESE PROVE
 //   A. the primary product journey: real studio text, an unticked treatment
-//      checkbox that blocks submission, and a photo DENIAL that completes the
-//      form and submits successfully;
+//      checkbox that blocks submission, and — since photo consent moved to the
+//      client portal (Chloe, 2026-08-09) — a live photo template that is
+//      neither rendered nor required here. The photo Accept/Deny ceremony, and
+//      the rule that a DENIAL completes the form, are proven in the portal:
+//      e2e/portal-consent-signing-integrity.spec.ts;
 //   C. the stale-template race: a client answering v1 after the studio
 //      published v2 is refused, and completes after reviewing v2.
 //
@@ -161,7 +164,7 @@ async function assertNoHorizontalOverflow(page: Page): Promise<void> {
 
 // ---------------------------------------------------------------------------
 test.describe("live consent forms in the intake", () => {
-  test("A. real studio forms: treatment blocks until ticked, photo DENY completes and submits", async ({
+  test("A. real studio forms: treatment blocks until ticked; a live photo form is NOT shown or required", async ({
     page,
   }) => {
     await page.setViewportSize(MOBILE);
@@ -189,7 +192,13 @@ test.describe("live consent forms in the intake", () => {
       page.getByRole("heading", { name: "Consent forms" }),
     ).toBeVisible();
     await expect(page.getByText(TREATMENT_BODY)).toBeVisible();
-    await expect(page.getByText(PHOTO_BODY)).toBeVisible();
+    // PHOTO CONSENT IS GONE FROM THE INTAKE (Chloe, 2026-08-09). The template
+    // is still live for the portal — it is seeded above — so this asserts the
+    // intake EXCLUDES it, not that the studio stopped using it. Neither its
+    // body nor its controls reach the client here.
+    await expect(page.getByText(PHOTO_BODY)).toHaveCount(0);
+    await expect(page.getByTestId("intake-consent-photo-accepted")).toHaveCount(0);
+    await expect(page.getByTestId("intake-consent-photo-denied")).toHaveCount(0);
     // Nothing on this surface asks for a signature.
     const body = (await page.locator("body").innerText()).toLowerCase();
     expect(body).not.toContain("signature");
@@ -199,8 +208,6 @@ test.describe("live consent forms in the intake", () => {
     // --- nothing is pre-answered
     const agree = page.getByTestId("intake-consent-agree");
     await expect(agree).not.toBeChecked();
-    await expect(page.getByTestId("intake-consent-photo-accepted")).not.toBeChecked();
-    await expect(page.getByTestId("intake-consent-photo-denied")).not.toBeChecked();
     await assertNoHorizontalOverflow(page);
 
     // --- submitting with the treatment box unticked does NOT submit
@@ -208,15 +215,14 @@ test.describe("live consent forms in the intake", () => {
     await expect(page.getByTestId("intake-consent-error").first()).toBeVisible();
     expect((await getIntakeRow(intakeId))?.status).toBe("in_progress");
 
-    // --- tick treatment, choose DENY for photo
+    // --- tick treatment and submit; no photo answer is possible or needed
     await agree.check();
     await expect(agree).toBeChecked();
-    await page.getByTestId("intake-consent-photo-denied").check();
 
     await page.getByRole("button", { name: "Submit intake" }).click();
     await page.waitForURL("**/intake/thank-you");
 
-    // --- the DENIAL did not block the submission
+    // --- a live photo template did NOT block the submission
     const row = await getIntakeRow(intakeId);
     expect(row?.status).toBe("submitted");
     expect(row?.submitted_at).not.toBeNull();
@@ -224,15 +230,14 @@ test.describe("live consent forms in the intake", () => {
     // --- and the stored record is truthful, with server-owned snapshots
     const consent = storedConsent(row)!;
     expect(consent.version).toBe(1);
-    expect(consent.forms).toHaveLength(2);
-    const treatment = consent.forms.find(
-      (f) => f.form_type === "treatment_consent",
-    )!;
-    const photo = consent.forms.find((f) => f.form_type === "photo_consent")!;
+    // ONLY treatment. No photo answer was invented for a question the client
+    // was never asked — absence is not denial.
+    expect(consent.forms).toHaveLength(1);
+    const treatment = consent.forms[0];
+    expect(treatment.form_type).toBe("treatment_consent");
     expect(treatment.response).toBe("accepted");
     expect(treatment.body_snapshot).toBe(TREATMENT_BODY);
-    expect(photo.response).toBe("denied");
-    expect(photo.body_snapshot).toBe(PHOTO_BODY);
+    expect(JSON.stringify(consent)).not.toContain("photo_consent");
     // A server clock stamped these, and no signature field exists anywhere.
     expect(typeof treatment.responded_at).toBe("string");
     expect(JSON.stringify(consent)).not.toContain("signature_name");
@@ -279,11 +284,11 @@ test.describe("live consent forms in the intake", () => {
       page.getByRole("heading", { name: "Consent forms" }),
     ).toBeVisible();
     const completed = page.getByTestId("intake-consent-already-completed");
-    await expect(completed).toHaveCount(2);
-    // ...the photo denial is shown as Denied, not reset to unanswered...
-    await expect(
-      page.locator('[data-testid="intake-consent-already-completed"][data-response="denied"]'),
-    ).toHaveCount(1);
+    // ONE, not two: the photo form is no longer an intake form at all, so only
+    // the treatment completion is credited here. The client's portal photo
+    // DENIAL is untouched and is asserted on the DB below — and it is shown to
+    // the practitioner by e2e/intake-review-consent-visibility.spec.ts.
+    await expect(completed).toHaveCount(1);
     // ...and NO duplicate control is offered for either form.
     await expect(page.getByTestId("intake-consent-agree")).toHaveCount(0);
     await expect(page.getByTestId("intake-consent-photo-accepted")).toHaveCount(0);
@@ -347,7 +352,6 @@ test.describe("live consent forms in the intake", () => {
     await page.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByText(TREATMENT_BODY)).toBeVisible();
     await page.getByTestId("intake-consent-agree").check();
-    await page.getByTestId("intake-consent-photo-denied").check();
     await page.getByRole("button", { name: "Submit intake" }).click();
     await page.waitForURL("**/intake/thank-you");
 
@@ -357,10 +361,9 @@ test.describe("live consent forms in the intake", () => {
     expect(row?.responses).not.toHaveProperty("ack_electrolysis_nature");
     expect(row?.responses).not.toHaveProperty("electrolysis_acknowledgement");
     const consent = storedConsent(row)!;
-    expect(consent.forms).toHaveLength(2);
-    expect(
-      consent.forms.find((f) => f.form_type === "photo_consent")!.response,
-    ).toBe("denied");
+    // Treatment only — photo consent is collected in the portal now.
+    expect(consent.forms).toHaveLength(1);
+    expect(consent.forms[0].form_type).toBe("treatment_consent");
   });
 
   test("C. a form edited mid-review is refused, then completes against the current version", async ({

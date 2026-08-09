@@ -79,7 +79,7 @@ async function loadAppointmentsForWindow(opts: {
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners(display_name, email)",
+      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
     )
     .eq("status", "confirmed")
     .is(opts.notSentColumn, null)
