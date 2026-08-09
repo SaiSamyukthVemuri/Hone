@@ -541,6 +541,17 @@ export async function loadLastChartedTreatmentForClient(input: {
 // must not be reintroduced by a batching optimisation.
 
 export type PrepMemoryRequest = {
+  /**
+   * The caller's identity for THIS request, and the key of the returned map.
+   *
+   * Required, and deliberately not defaulted to `clientId`. A client can have
+   * two appointments in one day, and each carries its own `before` and its own
+   * exclusion — so the ANSWER differs per appointment even though the client is
+   * the same. Keying anything by clientId makes the second request silently
+   * overwrite the first and hands both appointments one answer. The dashboard
+   * passes the appointment id.
+   */
+  requestKey: string;
   clientId: string;
   /** Exclusive upper bound on started_at — this appointment's starts_at. */
   before?: string | null;
@@ -553,9 +564,10 @@ export async function loadLastChartedTreatmentsForClients(input: {
   requests: ReadonlyArray<PrepMemoryRequest>;
   /** Candidate window per client. Defaults to the shared charted-session limit. */
   limitPerClient?: number;
+  /** Keyed by `requestKey` — NOT by clientId. See PrepMemoryRequest. */
 }): Promise<Map<string, AppointmentPrepLoad>> {
   const out = new Map<string, AppointmentPrepLoad>();
-  const requests = input.requests.filter((r) => Boolean(r.clientId));
+  const requests = input.requests.filter((r) => Boolean(r.clientId) && Boolean(r.requestKey));
   if (requests.length === 0) return out;
 
   const perClient = Math.max(1, input.limitPerClient ?? DEFAULT_CHARTED_SESSION_LIMIT);
@@ -602,7 +614,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
       }),
     );
     for (const r of requests) {
-      out.set(r.clientId, {
+      out.set(r.requestKey, {
         treatment: null,
         unavailable: true,
         narrative: { plan: null, legacySessionNotes: null },
@@ -625,11 +637,17 @@ export async function loadLastChartedTreatmentsForClients(input: {
     else byClient.set(cid, [row]);
   }
 
-  // THE SHARED SELECTOR, per client. Pure — no I/O in this loop.
-  const candidatesByClient = new Map<string, AppointmentPrepSession[]>();
+  // THE SHARED SELECTOR, applied ONCE PER REQUEST — not once per client.
+  //
+  // Two requests can name the same client and still deserve different answers,
+  // because `before` and `excludeAppointmentId` belong to the APPOINTMENT.
+  // Keying this map by clientId let the second request overwrite the first, so
+  // a client with a morning and an afternoon booking saw one memory on both
+  // rows. Pure — no I/O in this loop.
+  const candidatesByRequest = new Map<string, AppointmentPrepSession[]>();
   for (const r of requests) {
-    candidatesByClient.set(
-      r.clientId,
+    candidatesByRequest.set(
+      r.requestKey,
       chartedSessionCandidates(byClient.get(r.clientId) ?? [], {
         before: r.before,
         excludeAppointmentId: r.excludeAppointmentId,
@@ -638,9 +656,11 @@ export async function loadLastChartedTreatmentsForClients(input: {
     );
   }
 
-  // ONE block read for every candidate of every client.
+  // ONE block read for the UNION of every request's candidates. Two requests
+  // over the same client overlap heavily; the Set collapses them, so per-request
+  // evaluation never becomes a per-request query.
   const allCandidateIds = [
-    ...new Set([...candidatesByClient.values()].flat().map((c) => c.id)),
+    ...new Set([...candidatesByRequest.values()].flat().map((c) => c.id)),
   ];
   let blocksBySession = new Map<string, RawBlock[]>();
   let blocksUnavailable = false;
@@ -672,7 +692,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
   }
 
   for (const r of requests) {
-    const candidates = candidatesByClient.get(r.clientId) ?? [];
+    const candidates = candidatesByRequest.get(r.requestKey) ?? [];
     // Narrative is resolved from the candidates already held, independently of
     // the block read — so it survives "nothing charted" and "blocks failed".
     const narrative = {
@@ -681,18 +701,18 @@ export async function loadLastChartedTreatmentsForClients(input: {
     };
 
     if (blocksUnavailable) {
-      out.set(r.clientId, { treatment: null, unavailable: true, narrative });
+      out.set(r.requestKey, { treatment: null, unavailable: true, narrative });
       continue;
     }
     if (candidates.length === 0) {
       // Truthful: with a truncated window we did not prove there is nothing.
-      out.set(r.clientId, { treatment: null, unavailable: truncated, narrative });
+      out.set(r.requestKey, { treatment: null, unavailable: truncated, narrative });
       continue;
     }
 
     const selected = pickNewestChartedSession(candidates, blocksBySession);
     if (!selected) {
-      out.set(r.clientId, { treatment: null, unavailable: false, narrative });
+      out.set(r.requestKey, { treatment: null, unavailable: false, narrative });
       continue;
     }
 
@@ -713,7 +733,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
       }),
     );
 
-    out.set(r.clientId, {
+    out.set(r.requestKey, {
       treatment: {
         session: selected,
         blocks,

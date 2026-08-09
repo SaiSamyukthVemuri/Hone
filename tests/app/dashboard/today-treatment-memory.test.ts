@@ -212,6 +212,20 @@ describe("the Today row wires it correctly", () => {
   it("builds one request per appointment, carrying that appointment's bounds", () => {
     expect(DASH).toMatch(/before: a\.starts_at/);
     expect(DASH).toMatch(/excludeAppointmentId: a\.id/);
+    // The APPOINTMENT is the request identity. Without it, two bookings for one
+    // client collide in the loader's result map and both rows show the same
+    // memory — a real bug this shape prevents.
+    expect(DASH).toMatch(/requestKey: a\.id/);
+  });
+
+  it("looks the load up by APPOINTMENT id, never by client id", () => {
+    // The other half of the same bug: even with distinct requests, reading the
+    // result back by `appt.client_id` hands both of a client's appointments
+    // whichever entry was written last.
+    expect(DASH).toMatch(/prepLoads\.get\(appt\.id\)/);
+    expect(DASH, "a client-keyed lookup would collide").not.toMatch(
+      /prepLoads\.get\(appt\.client_id\)/,
+    );
   });
 
   it("loads the whole day in ONE batched call — no loop, no per-row await", () => {

@@ -100,7 +100,12 @@ function block(sessionId: string): Row {
 
 async function run(
   tables: Record<string, Row[]>,
-  requests: Array<{ clientId: string; before?: string | null; excludeAppointmentId?: string | null }>,
+  requests: Array<{
+    requestKey?: string;
+    clientId: string;
+    before?: string | null;
+    excludeAppointmentId?: string | null;
+  }>,
   opts?: { limitPerClient?: number },
 ) {
   const issued: Issued[] = [];
@@ -109,7 +114,9 @@ async function run(
   );
   const out = await loadLastChartedTreatmentsForClients({
     studioId: STUDIO,
-    requests,
+    // Cases that are ABOUT one appointment per client key by clientId for
+    // readability; the same-client cases pass an explicit appointment key.
+    requests: requests.map((r) => ({ requestKey: r.requestKey ?? r.clientId, ...r })),
     ...opts,
   });
   return { out, issued };
@@ -189,10 +196,20 @@ describe("batched prep memory — each appointment keeps its OWN boundary", () =
     expect(out.get(ALICE)?.treatment?.session.id).toBe("s-early");
   });
 
-  it("two appointments for the SAME client resolve independently", async () => {
-    // The batch is keyed by client, so the caller must be able to ask for two
-    // different bounds. This proves the loader honours the LAST request's bound
-    // per client — and it is why the dashboard folds results per APPOINTMENT.
+  it("TWO appointments for the SAME client, in ONE batch, resolve independently", async () => {
+    // THE REGRESSION THIS FILE EXISTS FOR.
+    //
+    // An earlier version keyed both the candidate map and the result map by
+    // clientId, so two requests for the same client overwrote each other and
+    // both appointments received whichever was written last. The dashboard then
+    // read `prepLoads.get(appt.client_id)`, so a client with a morning and an
+    // afternoon appointment saw ONE answer on both rows — the afternoon
+    // appointment's previous treatment shown against the morning one.
+    //
+    // The previous test for this ran the two requests in SEPARATE loader
+    // invocations, which is precisely the case that cannot collide. It passed
+    // throughout. One invocation, two requests, is the only shape that proves
+    // it.
     const rows = {
       sessions: [
         session({ id: "s-mid", client_id: ALICE, started_at: "2026-02-15T10:00:00Z" }),
@@ -200,10 +217,58 @@ describe("batched prep memory — each appointment keeps its OWN boundary", () =
       ],
       session_blocks: [block("s-mid"), block("s-early")],
     };
-    const early = await run(rows, [{ clientId: ALICE, before: "2026-02-01T00:00:00Z" }]);
-    expect(early.out.get(ALICE)?.treatment?.session.id).toBe("s-early");
-    const late = await run(rows, [{ clientId: ALICE, before: "2026-03-01T00:00:00Z" }]);
-    expect(late.out.get(ALICE)?.treatment?.session.id).toBe("s-mid");
+    const { out } = await run(rows, [
+      { requestKey: "appt-early", clientId: ALICE, before: "2026-02-01T00:00:00Z" },
+      { requestKey: "appt-late", clientId: ALICE, before: "2026-03-01T00:00:00Z" },
+    ]);
+
+    // Asserted SIMULTANEOUSLY from one batch — the whole point.
+    expect(out.get("appt-early")?.treatment?.session.id).toBe("s-early");
+    expect(out.get("appt-late")?.treatment?.session.id).toBe("s-mid");
+    // ...and they are genuinely different answers, not one value read twice.
+    expect(out.get("appt-early")?.treatment?.session.id).not.toBe(
+      out.get("appt-late")?.treatment?.session.id,
+    );
+    expect(out.size).toBe(2);
+  });
+
+  it("TWO same-client requests with different exclusions cannot affect each other", async () => {
+    // The same collision through the other per-request field. Each appointment
+    // must exclude ITS OWN linked session and no one else's.
+    const rows = {
+      sessions: [
+        session({ id: "s-a", client_id: ALICE, started_at: "2026-02-15T10:00:00Z", appointment_id: "appt-a" }),
+        session({ id: "s-b", client_id: ALICE, started_at: "2026-01-01T10:00:00Z", appointment_id: "appt-b" }),
+      ],
+      session_blocks: [block("s-a"), block("s-b")],
+    };
+    const { out } = await run(rows, [
+      // Excluding its own session s-a leaves s-b as the prior treatment.
+      { requestKey: "appt-a", clientId: ALICE, excludeAppointmentId: "appt-a" },
+      // Excluding its own session s-b leaves the NEWER s-a.
+      { requestKey: "appt-b", clientId: ALICE, excludeAppointmentId: "appt-b" },
+    ]);
+    expect(out.get("appt-a")?.treatment?.session.id).toBe("s-b");
+    expect(out.get("appt-b")?.treatment?.session.id).toBe("s-a");
+    expect(out.size).toBe(2);
+  });
+
+  it("a same-client batch still issues only the two waves", async () => {
+    const rows = {
+      sessions: [
+        session({ id: "s-mid", client_id: ALICE, started_at: "2026-02-15T10:00:00Z" }),
+        session({ id: "s-early", client_id: ALICE, started_at: "2026-01-01T10:00:00Z" }),
+      ],
+      session_blocks: [block("s-mid"), block("s-early")],
+    };
+    const { issued } = await run(rows, [
+      { requestKey: "appt-early", clientId: ALICE, before: "2026-02-01T00:00:00Z" },
+      { requestKey: "appt-late", clientId: ALICE, before: "2026-03-01T00:00:00Z" },
+    ]);
+    // Per-request evaluation must NOT have become a per-request query.
+    expect(issued.map((q) => q.table)).toEqual(["sessions", "session_blocks"]);
+    // The client is read ONCE even though two requests name it.
+    expect(issued[0].filters.filter((f) => f === "in:client_id")).toHaveLength(1);
   });
 
   it("this appointment's OWN linked session is never its own previous treatment", async () => {

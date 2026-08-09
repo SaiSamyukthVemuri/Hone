@@ -344,20 +344,27 @@ export default async function DashboardPage({
   const prepLoads = await loadLastChartedTreatmentsForClients({
     studioId: studio.id,
     requests: visibleAppointments.map((a) => ({
+      // The APPOINTMENT is the unit of identity, not the client. A client with
+      // two bookings today gets two requests with two different boundaries and
+      // must get back two different answers.
+      requestKey: a.id,
       clientId: a.client_id,
       before: a.starts_at,
       excludeAppointmentId: a.id,
     })),
   });
 
-  // Pure fold into the shared model — no I/O, one entry per APPOINTMENT so a
-  // client is never handed another appointment's boundary.
+  // Pure fold into the shared model — no I/O. `prepLoads` is ALREADY keyed by
+  // appointment id (the requestKey passed above), so this reads its own key and
+  // never re-derives one from the client. An earlier version looked the load up
+  // by `appt.client_id`, which handed both of a client's appointments whichever
+  // answer was written last.
   const prepMemoryByAppointment = new Map<
     string,
     { memory: AppointmentPrepMemory | null; unavailable: boolean }
   >();
   for (const appt of visibleAppointments) {
-    const load = prepLoads.get(appt.client_id);
+    const load = prepLoads.get(appt.id);
     if (!load) {
       prepMemoryByAppointment.set(appt.id, { memory: null, unavailable: false });
       continue;
