@@ -74,6 +74,49 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(28);
   });
 
+  it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
+    // The real gap, found while building Dashboard V2 Part 1. The fail-safe
+    // used to run only when the WHOLE diff selected zero groups, so a single
+    // co-changed attributable file cancelled the safety net for every file that
+    // was not attributable.
+    //
+    // Measured at the time: `app/(app)/dashboard/page.tsx` alone correctly
+    // selected extended, but that same file plus one calendar test selected
+    // `calendar` + `smoke` — the restructured dashboard entirely uncovered,
+    // because something ELSE in the commit happened to be attributable.
+    //
+    // The first attempt at a fix was to add a `/dashboard/i` pattern. That was
+    // WRONG and is deliberately not what shipped: attributing the path made a
+    // dashboard-only change NARROWER than before (24 specs instead of all of
+    // them). Unattributable code must widen, never narrow.
+    const alone = selectBrowserGroups(["app/(app)/dashboard/page.tsx"]);
+    expect(alone.extended, "unattributable app code alone").toBe(true);
+
+    const withFriend = selectBrowserGroups([
+      "app/(app)/dashboard/page.tsx",
+      "tests/app/calendar/week-starts-sunday.test.ts",
+    ]);
+    expect(
+      withFriend.extended,
+      "an attributable co-changed file must NOT cancel the fail-safe",
+    ).toBe(true);
+    expect(withFriend.reason).toMatch(/failing safe to extended/);
+  });
+
+  it("attributable app code still narrows, so the fail-safe did not swallow targeting", () => {
+    // The two-way self-test. Without this, 'always extended' would also pass
+    // the assertion above and the whole targeting system would be dead.
+    const s = selectBrowserGroups(["app/(app)/clients/[id]/sessions/[sessionId]/actions.ts"]);
+    expect(s.extended).toBe(false);
+    expect([...s.groups].sort()).toEqual(["sessions", "smoke"]);
+  });
+
+  it("docs-only still needs no browser at all", () => {
+    const s = selectBrowserGroups(["docs/13_BACKLOG_AND_DECISIONS.md"]);
+    expect(s.extended).toBe(false);
+    expect(s.groups).toEqual([]);
+  });
+
   it("targeted coverage is still ONE shard and extended still FOUR", () => {
     expect(plan("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts").browser.sharded).toBe(false);
     expect(plan("e2e/helpers/seed.ts").browser.sharded).toBe(true);

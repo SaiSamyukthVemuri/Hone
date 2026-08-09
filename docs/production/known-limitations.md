@@ -242,27 +242,32 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Next gate** | Only if an in-transaction hard-delete path is ever built. The fix would be to null `session_block_id` before deleting the parent, or to delete the image rows first. |
 | **Blocks** | Nothing. Explicitly **not** a blocker for migration 0160, which is now applied. **This limitation remains OPEN.** |
 
-## L23 — foreign-key referential actions still write `appointments` for a caller holding no privilege on it
+## L23 — foreign-key referential actions still write `appointments` for a caller holding no privilege on it — **CLOSED 2026-08-09 (migration `0173`)**
+
+> The heading above is preserved verbatim as the historical title of this limitation.
+> **It describes the state BEFORE migration `0173`. It is no longer true in production.**
 
 | Field | Value |
 |---|---|
-| **Recorded** | 2026-08-08, by the adversarial review of appointment boundary B3 (migration `0172`, draft PR #532). |
+| **Recorded** | 2026-08-08, by the adversarial review of appointment boundary B3 (migration `0172`, PR #532 — since **merged and applied to production on 2026-08-09**). |
 | **Impact** | A referential action executes as the **constraint's** owner and consults neither the table ACL nor RLS (`appointments` is not `FORCE ROW LEVEL SECURITY`). So `0172`'s revoke — which correctly stops all **direct** DML — does not stop a member from causing a write to `appointments` by deleting a **parent** row. Two paths are reachable from a logged-in browser session: **(a)** any studio member may `DELETE` a `services` row (`services_member_all` is `FOR ALL`), and `appointments_service_same_studio_fk` `ON DELETE SET NULL` nulls `appointments.service_id`; **(b)** an owner may `DELETE` a `practitioners` row ("practitioners: owners delete"), and `appointments_practitioner_same_studio_fk` nulls `appointments.practitioner_id`. The appointment loses its service (pricing, duration provenance, calendar colour) or its practitioner attribution. **The write is entirely silent**: no `appointment_audit` row, no `updated_at` touch, no `sync_version` bump, no Google Calendar outbox enqueue — undetectable by every mechanism the product has. |
 | **Evidence** | Reproduced on the local `0172` chain as role `authenticated` with a real member's `request.jwt.claims`: the direct `update public.appointments set service_id = null` is refused `42501 permission denied for table appointments`, while `delete from public.services where id = …` succeeds and the appointment's `service_id` reads null immediately after. The owner/practitioner path reproduces the same way. `pg_constraint.confdeltype` on `appointments` measured as `{client:c, studio:c, practitioner:n, service:n, rescheduled_from:n, rescheduled_to:n}`. |
 | **Bounded by** | **Row DELETION is not reachable.** The two `ON DELETE CASCADE` parents — `clients` and `studios` — carry **no DELETE policy at all**, so RLS default-denies the parent delete and the cascade never fires (measured: `DELETE 0` for both as a member). The reachable damage is therefore limited to two columns being nulled, never an appointment or audit row disappearing. |
 | **Current mitigation** | None at the database layer. Materially: **the product never deletes a service or a practitioner** — the settings UI hides/deactivates instead (`show_studio_service`), and there is no `.delete()` against either table anywhere in `app/` or `lib/`. This is an unused capability held by a browser role, not a path the application exercises. Both bounds are pinned by tests in `tests/db/appointment-boundary-revocation.db.test.ts`, so a new `CASCADE`, or a DELETE policy appearing on `clients`/`studios`, fails CI rather than silently widening this. |
 | **Owner** | Sam |
-| **Next gate** | Belongs to the later appointment-boundary work, **not** to `0172` — closing it means changing grants or FK actions on `services` and `practitioners`, and `0172`'s whole value is being exactly two tables wide and provably no-op for the deployed application. Options, in preference order: revoke `DELETE` on `services`/`practitioners` from `authenticated` (they are already never deleted by the app); or re-point the two FKs to `ON DELETE NO ACTION` so the parent delete fails loudly instead of silently mutating. |
-| **Blocks** | **Not a blocker for `0172`.** `0172` strictly reduces the attack surface and introduces none of this — the paths predate it and are unchanged by it. It is recorded here because `0172` is what makes the remaining edge worth naming. |
+| **Status** | ✅ **CLOSED / RESOLVED in production by migration `0173`, applied 2026-08-09T12:06:37Z→12:06:47Z (hosted max `0172` → `0173`).** Closed **BY AUTHORITY BOUNDARY**, not by changing referential semantics: `GROUP 5` of `0173` revoked `DELETE` on `public.services` and `public.practitioners` from `anon` and `authenticated`, and removed the DELETE policy residue — `services_member_all` (`FOR ALL`) replaced by explicit `services_member_select` / `_insert` / `_update` (`TO authenticated`, `is_studio_member(studio_id)` reused verbatim), and `"practitioners: owners delete"` dropped outright. Verified read-only after the apply: `anon` and `authenticated` hold **no DELETE** on either parent while `authenticated` **retains** SELECT/INSERT/UPDATE on both; **zero DELETE-capable policies** remain on either table; the practitioners members-read / owners-insert / owners-update policies are preserved unchanged; and `service_role` + `postgres` retain DELETE for maintenance. **THE FOREIGN KEYS THEMSELVES WERE NOT CHANGED** — `appointments_service_same_studio_fk` and `appointments_practitioner_same_studio_fk` are still `ON DELETE SET NULL`, and every appointment parent FK is still `ON UPDATE NO ACTION`. The referential action remains privilege-blind exactly as described above; what changed is that no browser role can any longer trigger the parent delete that fires it. The repair commands in `0173`'s other groups are installed `service_role`-only; **PR #534, which carries the application code, remains unmerged**, so nothing in the deployed app calls them yet. |
+| **Next gate** | Belongs to the later appointment-boundary work, **not** to `0172` — closing it means changing grants or FK actions on `services` and `practitioners`, and `0172`'s whole value is being exactly two tables wide and provably no-op for the deployed application. Options, in preference order: revoke `DELETE` on `services`/`practitioners` from `authenticated` (they are already never deleted by the app); or re-point the two FKs to `ON DELETE NO ACTION` so the parent delete fails loudly instead of silently mutating. **`0173`'s GROUP 5 takes the FIRST option and additionally removes the policy residue** — it drops the standalone `"practitioners: owners delete"` policy and splits the `services_member_all` `FOR ALL` policy into explicit `select`/`insert`/`update` policies with no DELETE (the `0087` pattern). Both layers move because a privilege alone can be re-granted out of band by platform tooling, and the surviving `FOR ALL` policy would then reopen this silently. FK referential semantics are deliberately **unchanged** — the authority layer is where this belongs, and altering `ON DELETE` actions would be a schema change with real migration risk and no additional security gain. A census taken for B4 re-confirmed the premise: **zero** runtime hard-deletes of `services` or `practitioners` across every `.delete()` call site in `app/`, `lib/` and `components/`, and no SQL function in 172 prior migrations deletes from either table. Every FK on an appointment parent is additionally `ON UPDATE NO ACTION`, so there is no update-cascade sibling to this hazard — now pinned by a test, because `authenticated` deliberately keeps UPDATE on both parents. |
+| **Blocks** | **Nothing — closed.** It was never a blocker for `0172`, which shipped 2026-08-09 and strictly reduced the attack surface without introducing any of this; the paths predated it. `0173` closed the edge itself. |
 
 ## L19 — `TRUNCATE` is still granted broadly outside the clinical tables, and two session links are not same-client validated
 
 > The heading above is preserved verbatim as the historical title of this
 > limitation (and is pinned by `tests/migrations/0160-immutable-clinical-lineage.test.ts`).
-> **Part (a) NARROWS BY TWO TABLES once migration `0172` is applied.** `0172`
-> (appointment boundary B3) revokes `TRUNCATE`, `REFERENCES`, `TRIGGER` and
-> `MAINTAIN` — as well as INSERT/UPDATE/DELETE — from `anon` and `authenticated`
-> on `public.appointments` and `public.appointment_audit`.
+> **Part (a) NARROWED BY TWO TABLES on 2026-08-09, when migration `0172` was
+> applied to production.** `0172` (appointment boundary B3) revokes `TRUNCATE`,
+> `REFERENCES`, `TRIGGER` and `MAINTAIN` — as well as INSERT/UPDATE/DELETE —
+> from `anon` and `authenticated` on `public.appointments` and
+> `public.appointment_audit`.
 >
 > Measured on the local `0172` chain, so the scale is not overstated: **24 of 86
 > `public` tables now deny `TRUNCATE` to `authenticated`, up from 22.** The "nine
@@ -274,11 +279,19 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 > `record_keeping_audit_events`, do still carry the default grant, and the
 > repo-wide sweep under **Next gate** is still the fix. Part (b) is untouched.
 >
-> ⚠️ **`0172` is NOT APPLIED to production, and NOT MERGED.** It exists only on
-> the `security/appointment-dml-b3-0172` branch (draft PR #532) and is proven on
-> a fresh local chain. The hosted migration max in
-> `docs/production/migration-state.json` is the authority and has not moved.
-> Until that push, L19(a) remains open in production at its original breadth.
+> ✅ **`0172` IS MERGED AND APPLIED.** PR #532 merged 2026-08-09T02:21:27Z;
+> `0172` applied to production 2026-08-09T02:41:35Z→02:41:45Z, hosted migration
+> max `0171` → **`0172`** (reconciled into
+> `docs/production/migration-state.json` by PR #538, which remains the
+> authority). Verified read-only after the apply: on BOTH `appointments` and
+> `appointment_audit`, `anon` and `authenticated` retain `SELECT` and hold none
+> of INSERT/UPDATE/DELETE/`TRUNCATE`/`REFERENCES`/`TRIGGER`/`MAINTAIN`.
+>
+> **L19(a) is therefore NARROWED, NOT CLOSED.** The two appointment tables are
+> done; the repo-wide breadth described in the Impact cell is untouched, and the
+> two tables named there — `session_audit` and `record_keeping_audit_events` —
+> **still carry the default `TRUNCATE` grant in production**. The repo-wide
+> sweep under **Next gate** remains the fix. Part (b) is untouched.
 
 | Field | Value |
 |---|---|

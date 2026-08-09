@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // 0172 — APPOINTMENT BOUNDARY B3 source contract.
@@ -57,19 +56,18 @@ const ROW_DML = ["insert", "update", "delete"] as const;
 
 // ---------------------------------------------------------------------------
 
-describe("0172 — migration state", () => {
-  // The CENTRAL tripwire, moved here from
-  // tests/migrations/0171-public-reschedule-command.test.ts when 0172 landed.
-  // Only the current maximum migration's own test carries it (CLAUDE.md §2);
-  // an older per-migration test that keeps the pin turns every subsequent
-  // migration into a mechanical sweep, which is exactly how 0163, 0164 and 0165
-  // each went red after push. When 0173 lands, this block moves there and this
-  // file drops it.
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0172")).toBe(true);
-    expect(versionsAbove("0172")).toEqual([]);
-  });
-});
+// 0173 superseded 0172 as the repository maximum when B4 landed. B4 ships ONE
+// migration: 0173 carries both the repair commands and, in its GROUP 5, the L23
+// parent-delete closure. (That closure was briefly drafted as a companion 0174
+// and withdrawn — 0174 is reserved for B5.) Per CLAUDE.md §2, ONLY the current
+// maximum migration's own test may assert isRepoMax — an older per-migration
+// test that keeps the pin turns every subsequent migration into a mechanical
+// sweep, which is exactly how 0163/0164/0165 each went red after push. The
+// "nothing above me" tripwire is served centrally by the current maximum's test
+// (tests/migrations/0173-appointment-repair-commands.test.ts).
+//
+// This file's own contract is unchanged: 0172 is applied-frozen in B3 and B4
+// does not edit a single byte of it.
 
 describe("0172 — GROUP 1/2: row DML revoked from both browser roles on both tables", () => {
   for (const table of TABLES) {
@@ -503,13 +501,34 @@ describe("0172 — the two applied migrations it supersedes are left byte-identi
   });
 });
 
-describe("0172 — production truth is NOT advanced by this PR", () => {
-  it("the canonical hosted record still reads 0171 — 0172 is UNAPPLIED", () => {
-    // Hosted state is DECLARED, not derived. It moves only after an
-    // independently authorized production push, which this PR is not.
-    const rec = JSON.parse(
-      readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
-    );
-    expect(rec.hosted_migration_max).toBe("0171");
+describe("0172 — its production apply remains a frozen historical fact", () => {
+  // HISTORY OF THIS BLOCK. It first asserted hosted_migration_max === "0171"
+  // ("truth is NOT advanced by this PR"). After the authorized 0172 apply it was
+  // inverted to "0172". 0173 has since been applied too, so the CURRENT hosted
+  // state is no longer this migration's to pin — that moved to
+  // tests/migrations/0173-appointment-repair-commands.test.ts, matching the
+  // CLAUDE.md §2 rule that only the current maximum carries current-state pins.
+  //
+  // What survives here is the part that must NEVER decay: 0172's apply is a
+  // recorded production fact, and its bytes are frozen. If either changes, a
+  // production apply record has been falsified.
+  const rec = JSON.parse(
+    readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
+  );
+
+  it("0172's applied bytes are frozen and still recorded in the hosted record", async () => {
+    const { createHash } = await import("node:crypto");
+    const bytes = readFileSync(join(__dirname, "..", "..", FILE));
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    expect(sha).toBe("b89b0d47a70ea2d4a7574bcc4223081cfe1d527394b3ef8b6d4c82bb090f42f1");
+    // The record carries it forward as a superseded-but-frozen apply fact.
+    expect(rec.hosted_note).toContain(sha);
+  });
+
+  it("0172 is applied, and is no longer claimed as the hosted maximum", () => {
+    // Applied — so the record must never regress below it...
+    expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(172);
+    // ...but 0173 superseded it, so this file must not pin the current max.
+    expect(rec.hosted_migration_max).not.toBe("0171");
   });
 });

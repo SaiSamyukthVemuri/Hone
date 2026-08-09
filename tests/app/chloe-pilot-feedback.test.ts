@@ -159,7 +159,8 @@ describe("5. dashboard: worklist first", () => {
   it("Today renders before the snapshot and every secondary card", () => {
     const today = DASH.indexOf('<h2 className="text-lg font-medium">Today</h2>');
     const snapshot = DASH.indexOf("<PracticeSnapshot");
-    const attention = DASH.indexOf("<NeedsAttention");
+    // Part 2B: the four To-do sub-sections became one list.
+    const attention = DASH.indexOf("<DashboardTodoList");
     const booking = DASH.indexOf("<BookingSetupCard");
     const birthdays = DASH.indexOf("<BirthdaysThisMonth");
     expect(today).toBeGreaterThan(-1);
@@ -196,10 +197,22 @@ describe("5. dashboard: worklist first", () => {
     expect(v2).toBeLessThan(today);
   });
 
-  it("PR #236 Today actions and the snapshot are untouched", () => {
+  it("PR #236 Today actions are untouched, and the snapshot still renders the same metrics", () => {
     expect(DASH).toMatch(/resolveNextAction\(\{/);
     expect(DASH).toMatch(/\{nextAction\.label\}/);
-    expect(DASH).toMatch(/<PracticeSnapshot metrics=\{practiceMetrics\} attention=\{clientsNeedingAttention\} livemode=\{inferStripeLivemode\(\)\} \/>/);
+    // Part 1 split "Action needed" out of the snapshot; Part 2B retired that
+    // component entirely and folded its data into the ONE To-do model. The
+    // snapshot keeps its metrics and its livemode gate; the SAME
+    // `clientsNeedingAttention` value is still loaded once and still rendered
+    // — now as treatment_memory rows in the unified list.
+    expect(DASH).toMatch(
+      /<PracticeSnapshot metrics=\{practiceMetrics\} livemode=\{inferStripeLivemode\(\)\} \/>/,
+    );
+    expect(DASH).not.toMatch(/<ActionNeeded/);
+    expect(DASH).toMatch(/attention: clientsNeedingAttention/);
+    expect(DASH).toMatch(/<DashboardTodoList todo=\{dashboardTodo\} \/>/);
+    // Loaded exactly once — the split must not have introduced a second read.
+    expect(DASH.match(/getClientsNeedingAttention\(/g) ?? []).toHaveLength(1);
   });
 });
 

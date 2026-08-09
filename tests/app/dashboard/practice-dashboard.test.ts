@@ -34,20 +34,31 @@ describe("resolvePeriodRange", () => {
     });
   });
 
-  it("week starts Monday (2026-06-11 is a Thursday)", () => {
+  // Dashboard V2 Part 1: the reporting week moved from a Monday anchor to the
+  // calendar's SUNDAY anchor, so these two cases invert. 2026-06-11 is a
+  // Thursday; its week now runs Sun 2026-06-07 .. Sat 2026-06-13.
+  // Full boundary coverage — Sunday/Monday/Saturday, rollover, month, year,
+  // leap day, DST, and a 365-day agreement check against the calendar helper —
+  // lives in tests/lib/dashboard/practice-metrics-week.test.ts.
+  it("week starts Sunday (2026-06-11 is a Thursday)", () => {
     expect(resolvePeriodRange("2026-06-11", "week")).toEqual({
-      startLocal: "2026-06-08",
-      endLocalExclusive: "2026-06-15",
+      startLocal: "2026-06-07",
+      endLocalExclusive: "2026-06-14",
       label: "this week",
     });
   });
 
-  it("a Monday starts its own week; Sunday belongs to the prior Monday", () => {
-    expect(resolvePeriodRange("2026-06-08", "week").startLocal).toBe(
-      "2026-06-08",
+  it("a Sunday starts its own week; the following Saturday belongs to it", () => {
+    // 2026-06-07 is a Sunday, 2026-06-13 the Saturday that closes its week.
+    expect(resolvePeriodRange("2026-06-07", "week").startLocal).toBe(
+      "2026-06-07",
     );
+    expect(resolvePeriodRange("2026-06-13", "week").startLocal).toBe(
+      "2026-06-07",
+    );
+    // ...and the NEXT Sunday rolls over rather than extending it.
     expect(resolvePeriodRange("2026-06-14", "week").startLocal).toBe(
-      "2026-06-08",
+      "2026-06-14",
     );
   });
 
@@ -140,6 +151,8 @@ describe("summarizeProcedureCompleteness", () => {
       incompleteRecords: 0,
       missingProbeLots: 0,
       aftercareNotMarked: 0,
+      // Part 2B: the non-itemized half of `incompleteRecords`.
+      recordsMissingDetails: 0,
     });
   });
 
@@ -239,13 +252,52 @@ describe("service value wording (live payments disabled)", () => {
 });
 
 describe("action metrics + Today section", () => {
-  it("action cards render and link into Record Keeping procedures", () => {
-    expect(SNAPSHOT).toMatch(/Incomplete procedure records/);
-    expect(SNAPSHOT).toMatch(/Missing probe lot numbers/);
-    expect(SNAPSHOT).toMatch(/Aftercare not marked/);
+  it("the three action COUNT TILES are gone; their work is itemized instead", () => {
+    // Dashboard V2 Part 2B. The tiles asked for the same unresolved work the
+    // missing-records assistant already itemizes per client, over a different
+    // window and in a different unit (a count of PROCEDURE RECORDS vs a row per
+    // SESSION). Aftercare and probe-lot are now per-client To-do rows; the
+    // remainder — the part no per-item row covers — became ONE roll-up row.
+    const MODEL = read("lib/dashboard/todo-model.ts");
+    expect(SNAPSHOT).not.toMatch(/Incomplete procedure records/);
+    expect(SNAPSHOT).not.toMatch(/Missing probe lot numbers/);
+    expect(SNAPSHOT).not.toMatch(/href="\/records\?section=procedures"/);
+    // The capability the tiles uniquely carried is preserved, once.
+    expect(MODEL).toMatch(/records_details:studio/);
+    expect(MODEL).toMatch(/missing client or operator details/);
+    expect(MODEL).toMatch(/href: "\/records\?section=procedures"/);
     expect(
-      SNAPSHOT.match(/href="\/records\?section=procedures"/g)?.length,
-    ).toBe(3);
+      MODEL.match(/records_details:studio/g)?.length,
+      "the roll-up must be emitted exactly once",
+    ).toBe(1);
+  });
+
+  it("recordsMissingDetails excludes the two itemized gaps", () => {
+    // Aftercare-only and probe-lot-only records are counted by
+    // `incompleteRecords` but MUST NOT be counted by the roll-up, or the
+    // dashboard asks for the same work twice.
+    const aftercareOnly = summarizeProcedureCompleteness([
+      record({ aftercareExplainedAt: null }),
+    ]);
+    expect(aftercareOnly.incompleteRecords).toBe(1);
+    expect(aftercareOnly.aftercareNotMarked).toBe(1);
+    expect(aftercareOnly.recordsMissingDetails).toBe(0);
+
+    const lotOnly = summarizeProcedureCompleteness([
+      record({
+        areas: [
+          { name: "Chin", probeLabel: "F3", probeLotNumber: null, minutesPerformed: 15, machineFrequency: null },
+        ],
+      }),
+    ]);
+    expect(lotOnly.incompleteRecords).toBe(1);
+    expect(lotOnly.missingProbeLots).toBe(1);
+    expect(lotOnly.recordsMissingDetails).toBe(0);
+
+    // ...but a demographic/operator gap IS the roll-up's job.
+    const details = summarizeProcedureCompleteness([record({ dateOfBirth: null })]);
+    expect(details.incompleteRecords).toBe(1);
+    expect(details.recordsMissingDetails).toBe(1);
   });
 
   it("clients-with-watch-notes is explicitly deferred (not silently dropped)", () => {
