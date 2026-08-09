@@ -192,12 +192,25 @@ universal invariant** — several tables deliberately deviate (see "Deliberate e
 >    referential actions are not privilege-checked** — see L23 in
 >    `docs/production/known-limitations.md`.
 >
-> ⚠️ **`0172` is NOT MERGED and NOT APPLIED.** It exists only on the
-> `security/appointment-dml-b3-0172` branch (draft PR #532) and is proven on a
-> fresh local chain. Hosted state remains as declared in
-> `docs/production/migration-state.json` — that record, not this page, is the
-> authority on what production has applied. Until the push, production still
-> carries the open posture described in the first paragraph.
+> ✅ **`0172` IS MERGED AND APPLIED.** PR #532 merged 2026-08-09T02:21:27Z as
+> `ac3af8490d52928f3a8ecc50c5c5abaac242de45`; `0172` applied to production
+> 2026-08-09T02:41:35Z→02:41:45Z, hosted max `0171` → **`0172`**. Verified
+> read-only on both `appointments` and `appointment_audit`: `anon` and
+> `authenticated` retain **SELECT** and are false on all seven of
+> INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN, while
+> **`service_role` remains the governed write authority** with all eight
+> privileges (as does `postgres`). `appointments_member_select` is present and
+> `appointments_member_all` absent; `appointment_audit_member_read` is present
+> and `appointment_audit_member_insert` absent. Business data was unchanged
+> across the apply — Probe 6 identical before and after, including
+> `max(appointments.updated_at)`. `docs/production/migration-state.json` and
+> `docs/production/migration-ledger.md` remain the authority on hosted state;
+> this page describes the shape, not the record.
+>
+> ⚠️ **Point 2 above is still LIVE.** `0172` closed DIRECT DML only. L23 —
+> foreign-key referential actions reaching `appointments` through parent deletes
+> — remains **OPEN in production**. Its closure is B4's `0173` GROUP 5, which is
+> **NOT merged and NOT applied**.
 4. No DELETE policy unless deliberate. Soft-archive via `status` columns is the default retirement path.
 
 `public.is_studio_member(studio_id uuid) returns boolean` is `SECURITY DEFINER` and looks at `public.practitioners` for an `active` row matching the calling auth user.
