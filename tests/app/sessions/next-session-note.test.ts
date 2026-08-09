@@ -141,10 +141,17 @@ describe("surfacing: the latest previous note appears when charting", () => {
     // rather than folded into a combined watch/plan band. The loop this file
     // pins — written while charting, read before the next visit — is unchanged;
     // only the surface that reads it is richer.
-    expect(APPOINTMENT_PAGE).toMatch(/buildAppointmentPrepMemory\(\{/);
+    // The literal input object moved into the shared mapper
+    // (prepMemoryInputFromTreatment) when the dashboard became a second
+    // consumer of this model; the page still builds through the same builder.
     expect(APPOINTMENT_PAGE).toMatch(
-      /next_session_note: selected\.session\.next_session_note \?\? null/,
+      /buildAppointmentPrepMemory\(\s*prepMemoryInputFromTreatment\(selected\),?\s*\)/,
     );
+    // ...and the plan passthrough is pinned where it now lives — the shared
+    // mapper — so it protects the dashboard's copy of this surface too.
+    expect(
+      readFileSync(path.join(ROOT, "lib/sessions/appointment-prep-memory.ts"), "utf8"),
+    ).toMatch(/next_session_note: selected\.session\.next_session_note \?\? null/);
     const CARD = readFileSync(
       path.join(ROOT, "components/appointment-prep-memory-card.tsx"),
       "utf8",

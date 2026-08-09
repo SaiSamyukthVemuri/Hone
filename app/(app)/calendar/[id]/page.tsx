@@ -15,6 +15,7 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { loadLastChartedTreatmentForClient } from "@/lib/sessions/last-treatment-loader";
 import {
   buildAppointmentPrepMemory,
+  prepMemoryInputFromTreatment,
   buildPrepProvenanceModel,
   type AppointmentPrepMemory,
   type PrepNarrativeRenderItem,
@@ -334,32 +335,9 @@ export default async function AppointmentDetailPage({
     prepNarrative = lastTreatment.narrative;
     if (lastTreatment.treatment) {
       const selected = lastTreatment.treatment;
-      prepMemory = buildAppointmentPrepMemory({
-        session: {
-          id: selected.session.id,
-          started_at: selected.session.started_at,
-          modality: selected.session.modality,
-          // Legacy, and the only render of this column anywhere in the product:
-          // sessions.session_notes has no surviving writer, so the text on
-          // existing rows can never be recreated once a surface stops showing
-          // it.
-          session_notes: selected.session.session_notes ?? null,
-          next_session_note: selected.session.next_session_note ?? null,
-        },
-        blocks: selected.blocks,
-        laserEntries: selected.session.laser_entries ?? null,
-        // Pre-0019 electrolysis charted straight into entries with no block, so
-        // this is the ONLY channel that narrative has. Passes that do belong to
-        // a block arrive through that block instead and are skipped there.
-        electrolysisEntries: selected.session.electrolysis_entries ?? null,
-        supersededByEmptySession: selected.supersededByEmptySession,
-        // The plan source is deliberately decoupled from the treatment source:
-        // the instruction most likely to change today is the most RECENT one,
-        // and it can live on a session that never got charted.
-        hasLiveElectrolysisEntries: (
-          selected.session.electrolysis_entries ?? []
-        ).some((e) => e.deleted_at == null),
-      });
+      prepMemory = buildAppointmentPrepMemory(
+        prepMemoryInputFromTreatment(selected),
+      );
     }
   }
 

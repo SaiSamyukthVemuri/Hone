@@ -44,6 +44,13 @@ import {
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
+import { loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
+import {
+  buildAppointmentPrepMemory,
+  prepMemoryInputFromTreatment,
+  type AppointmentPrepMemory,
+} from "@/lib/sessions/appointment-prep-memory";
+import { TodayTreatmentMemory } from "./today-treatment-memory";
 import {
   buildTodayWorkflow,
   todayWorkflowByAppointment,
@@ -323,6 +330,46 @@ export default async function DashboardPage({
     visibleAppointments.map((a) => a.client_id),
   );
 
+  // Dashboard V2 Part 2A: the FULL previous treatment for every returning
+  // client of the day, from the SAME #517 authority the appointment page uses.
+  //
+  // ONE batched call for the whole day — two round-trips total, independent of
+  // how many appointments there are. Calling the per-client loader inside the
+  // map below would be an N+1 that grows with the studio's schedule, which is
+  // why the batched companion exists.
+  //
+  // Each request carries its OWN appointment boundary: `before` is that
+  // appointment's starts_at, and `excludeAppointmentId` keeps a session already
+  // linked to today's visit from being presented as its own previous treatment.
+  const prepLoads = await loadLastChartedTreatmentsForClients({
+    studioId: studio.id,
+    requests: visibleAppointments.map((a) => ({
+      clientId: a.client_id,
+      before: a.starts_at,
+      excludeAppointmentId: a.id,
+    })),
+  });
+
+  // Pure fold into the shared model — no I/O, one entry per APPOINTMENT so a
+  // client is never handed another appointment's boundary.
+  const prepMemoryByAppointment = new Map<
+    string,
+    { memory: AppointmentPrepMemory | null; unavailable: boolean }
+  >();
+  for (const appt of visibleAppointments) {
+    const load = prepLoads.get(appt.client_id);
+    if (!load) {
+      prepMemoryByAppointment.set(appt.id, { memory: null, unavailable: false });
+      continue;
+    }
+    prepMemoryByAppointment.set(appt.id, {
+      memory: load.treatment
+        ? buildAppointmentPrepMemory(prepMemoryInputFromTreatment(load.treatment))
+        : null,
+      unavailable: load.unavailable,
+    });
+  }
+
   // ONE combined Today workflow (Chloe: "Today and the Daily Prep Brief are
   // redundant"). A pure helper turns facts already loaded above — visible
   // appointments, the Before Today previews, the linked-session charting state,
@@ -471,6 +518,12 @@ export default async function DashboardPage({
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "no_session"}
+                  prepMemory={
+                    prepMemoryByAppointment.get(appt.id) ?? {
+                      memory: null,
+                      unavailable: false,
+                    }
+                  }
                   tz={studio.timezone}
                   timeFormat={resolveTimeFormat(studio)}
                 />
@@ -631,6 +684,7 @@ function AppointmentRow({
   intakeStatus,
   linkedSession,
   paymentState,
+  prepMemory,
   tz,
   timeFormat,
 }: {
@@ -642,6 +696,11 @@ function AppointmentRow({
   intakeStatus: ClientIntakeForm["status"] | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   paymentState: AppointmentPaymentState;
+  // Dashboard V2 Part 2A: the #517 previous-treatment model for THIS
+  // appointment, already built by the page from one batched read. Keyed by
+  // APPOINTMENT id upstream, so two same-client appointments each get their own
+  // boundary and one client can never receive another's memory.
+  prepMemory: { memory: AppointmentPrepMemory | null; unavailable: boolean };
   tz: string;
   timeFormat: TimeFormat;
 }) {
@@ -811,6 +870,19 @@ function AppointmentRow({
                     </span>
                   ))}
                 </span>
+              )}
+              {/* Dashboard V2 Part 2A: the previous treatment in place. Compact
+                  by default — one line naming the visit — and expandable to the
+                  complete #517 card without leaving Today. Rendered only for a
+                  client who HAS history, so a first visit stays a single calm
+                  relationship line. */}
+              {workflow.hasHistory && (
+                <TodayTreatmentMemory
+                  clientId={appt.client_id}
+                  clientName={appt.client?.name ?? "this client"}
+                  memory={prepMemory.memory}
+                  unavailable={prepMemory.unavailable}
+                />
               )}
             </div>
           )}

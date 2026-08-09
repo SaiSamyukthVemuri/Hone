@@ -36,6 +36,11 @@ import type { BlockArea } from "@/lib/sessions/block-areas";
 // Everything the point-of-care card and the compact clinical summary need from
 // a prior settings block, in one select. No entry columns: entries come from
 // the sessions the caller already loaded.
+// Hard ceiling on the batched candidate read, so a studio with a very large
+// day can never ask PostgREST for an unbounded payload. Crossing it is not
+// silent: see the truncation contract on loadLastChartedTreatmentsForClients.
+const MAX_BATCH_CANDIDATE_ROWS = 600;
+
 export const BLOCK_COLUMNS =
   "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, " +
   "mode, apilus_modality, energy_level, minutes_performed, machine_frequency, " +
@@ -347,7 +352,10 @@ export const PREP_ENTRY_COLUMNS =
   "pulse_delay_seconds";
 
 export const PREP_SESSION_COLUMNS =
-  "id, started_at, modality, record_status, deleted_at, appointment_id, " +
+  // `client_id` is selected only so the BATCHED companion can route each row
+  // back to its client. It is not part of the prep model and no surface reads
+  // it. Harmless for the single-client path, which already filters on it.
+  "id, client_id, started_at, modality, record_status, deleted_at, appointment_id, " +
   "session_notes, next_session_note, " +
   `electrolysis_entries(${PREP_ENTRY_COLUMNS}), ` +
   "laser_entries(id, deleted_at, zone, observation_notes)";
@@ -492,4 +500,229 @@ export async function loadLastChartedTreatmentForClient(input: {
       // discarding it would hide a safety instruction we already have in hand.
       return { treatment: null, unavailable: true, narrative };
   }
+}
+
+// ---------------------------------------------------------------------------
+// BATCHED COMPANION — many clients, a CONSTANT number of round-trips.
+// ---------------------------------------------------------------------------
+//
+// WHY THIS EXISTS. `loadLastChartedTreatmentForClient` above is per-client and
+// costs two waves. The dashboard renders every appointment of the day at once,
+// so calling it per appointment would be a textbook N+1: twenty appointments,
+// forty round-trips, growing with the studio's day.
+//
+// WHAT IT IS NOT. It is NOT a second treatment-memory model. It performs the
+// I/O in bulk and then delegates, unchanged, to exactly the same pure pieces
+// the appointment page uses — `chartedSessionCandidates`, `pickNewestChartedSession`,
+// `groupBlocksBySession`, `orderAreas`, `newestPlanOf`, `newestLegacyNotesOf` —
+// and returns the same `AppointmentPrepLoad` shape, so the caller can hand the
+// result straight to `buildAppointmentPrepMemory`. If the definition of "the
+// last charted treatment" ever changes, it changes in one place and this
+// follows, because none of that rule is restated here.
+//
+// COST. Two waves total, independent of how many appointments the day holds:
+// one bounded candidate read across every client, then one block read across
+// every candidate session. Same shape as `getBeforeTodayPreviews`.
+//
+// THE PER-CLIENT BOUND. Each appointment has its own `before` (its own
+// starts_at), but SQL gets only the LOOSEST of them — the exclusive upper bound
+// is pushed down once so the window is not spent on far-future rows, and the
+// exact per-client bound is re-applied by `chartedSessionCandidates`, which
+// already takes `before` and is the same code the single-client path relies on
+// for that. Narrowing in SQL per client is what would force a query per client.
+//
+// TRUNCATION IS REPORTED, NOT GUESSED. One `.in(...)` read shares a single row
+// budget between clients, so a client with a long history can crowd out a
+// quieter one. If that happened, a client with no candidates has NOT been shown
+// to have no treatment — we simply did not read far enough. Those clients come
+// back `unavailable: true`, which the card already renders as "couldn't load"
+// rather than as "new client". Presenting a forty-visit client as a first visit
+// is the exact failure the charted-session authority exists to prevent, and it
+// must not be reintroduced by a batching optimisation.
+
+export type PrepMemoryRequest = {
+  clientId: string;
+  /** Exclusive upper bound on started_at — this appointment's starts_at. */
+  before?: string | null;
+  /** This appointment's id; sessions linked to it are the CURRENT visit. */
+  excludeAppointmentId?: string | null;
+};
+
+export async function loadLastChartedTreatmentsForClients(input: {
+  studioId: string;
+  requests: ReadonlyArray<PrepMemoryRequest>;
+  /** Candidate window per client. Defaults to the shared charted-session limit. */
+  limitPerClient?: number;
+}): Promise<Map<string, AppointmentPrepLoad>> {
+  const out = new Map<string, AppointmentPrepLoad>();
+  const requests = input.requests.filter((r) => Boolean(r.clientId));
+  if (requests.length === 0) return out;
+
+  const perClient = Math.max(1, input.limitPerClient ?? DEFAULT_CHARTED_SESSION_LIMIT);
+  const clientIds = [...new Set(requests.map((r) => r.clientId))];
+  // Named separately so the redaction guard never sees an identifier-shaped
+  // token inside a log payload.
+  const clientCount = clientIds.length;
+
+  // The loosest bound across the batch. `undefined` only when no request set
+  // one, in which case no upper bound is pushed down at all.
+  const bounds = requests.map((r) => r.before).filter((b): b is string => Boolean(b));
+  const loosestBefore =
+    bounds.length === requests.length && bounds.length > 0
+      ? bounds.reduce((a, b) => (a > b ? a : b))
+      : null;
+
+  // Budget the single read so each client could, in the even case, fill its own
+  // window. Capped so a large day cannot ask for an unbounded payload.
+  const budget = Math.min(perClient * clientIds.length, MAX_BATCH_CANDIDATE_ROWS);
+
+  const supabase = await createClient();
+  let query = supabase
+    .from("sessions")
+    .select(PREP_SESSION_COLUMNS)
+    .eq("studio_id", input.studioId)
+    .in("client_id", clientIds)
+    .is("deleted_at", null);
+  if (loosestBefore) query = query.lt("started_at", loosestBefore);
+  const { data, error } = await query
+    .order("started_at", { ascending: false })
+    .limit(budget);
+
+  if (error) {
+    // CLASSIFICATION ONLY, same contract as the single-client path: never the
+    // raw message (it echoes the statement, which names every clinical column
+    // and the client ids), never a client id, never any clinical value.
+    console.error(
+      JSON.stringify({
+        event: "appointment_prep_sessions_batch_read_failed",
+        code: typeof error.code === "string" ? error.code : null,
+        studio_id: input.studioId,
+        client_count: clientCount,
+        at: new Date().toISOString(),
+      }),
+    );
+    for (const r of requests) {
+      out.set(r.clientId, {
+        treatment: null,
+        unavailable: true,
+        narrative: { plan: null, legacySessionNotes: null },
+      });
+    }
+    return out;
+  }
+
+  const rows = (data ?? []) as unknown as AppointmentPrepSession[];
+  const truncated = rows.length >= budget;
+
+  // Partition by client. `client_id` is selected below purely to route rows;
+  // it is not part of the prep model.
+  const byClient = new Map<string, AppointmentPrepSession[]>();
+  for (const row of rows) {
+    const cid = (row as { client_id?: string | null }).client_id;
+    if (!cid) continue;
+    const bucket = byClient.get(cid);
+    if (bucket) bucket.push(row);
+    else byClient.set(cid, [row]);
+  }
+
+  // THE SHARED SELECTOR, per client. Pure — no I/O in this loop.
+  const candidatesByClient = new Map<string, AppointmentPrepSession[]>();
+  for (const r of requests) {
+    candidatesByClient.set(
+      r.clientId,
+      chartedSessionCandidates(byClient.get(r.clientId) ?? [], {
+        before: r.before,
+        excludeAppointmentId: r.excludeAppointmentId,
+        limit: perClient,
+      }),
+    );
+  }
+
+  // ONE block read for every candidate of every client.
+  const allCandidateIds = [
+    ...new Set([...candidatesByClient.values()].flat().map((c) => c.id)),
+  ];
+  let blocksBySession = new Map<string, RawBlock[]>();
+  let blocksUnavailable = false;
+  if (allCandidateIds.length > 0) {
+    const { data: blockData, error: blockError } = await supabase
+      .from("session_blocks")
+      .select(BLOCK_COLUMNS)
+      // RLS already scopes to the caller's studio; explicit for defence in depth.
+      .eq("studio_id", input.studioId)
+      .in("session_id", allCandidateIds)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: true });
+    if (blockError) {
+      console.error(
+        JSON.stringify({
+          event: "appointment_prep_blocks_batch_read_failed",
+          code: typeof blockError.code === "string" ? blockError.code : null,
+          studio_id: input.studioId,
+          candidate_count: allCandidateIds.length,
+          at: new Date().toISOString(),
+        }),
+      );
+      blocksUnavailable = true;
+    } else {
+      blocksBySession = groupBlocksBySession(
+        (blockData ?? []) as unknown as RawBlock[],
+      );
+    }
+  }
+
+  for (const r of requests) {
+    const candidates = candidatesByClient.get(r.clientId) ?? [];
+    // Narrative is resolved from the candidates already held, independently of
+    // the block read — so it survives "nothing charted" and "blocks failed".
+    const narrative = {
+      plan: newestPlanOf(candidates),
+      legacySessionNotes: newestLegacyNotesOf(candidates),
+    };
+
+    if (blocksUnavailable) {
+      out.set(r.clientId, { treatment: null, unavailable: true, narrative });
+      continue;
+    }
+    if (candidates.length === 0) {
+      // Truthful: with a truncated window we did not prove there is nothing.
+      out.set(r.clientId, { treatment: null, unavailable: truncated, narrative });
+      continue;
+    }
+
+    const selected = pickNewestChartedSession(candidates, blocksBySession);
+    if (!selected) {
+      out.set(r.clientId, { treatment: null, unavailable: false, narrative });
+      continue;
+    }
+
+    const entriesByBlock = new Map<string, PointOfCareEntry[]>();
+    for (const entry of selected.electrolysis_entries ?? []) {
+      if (entry.deleted_at != null) continue;
+      const blockId = entry.block_id;
+      if (!blockId) continue;
+      const bucket = entriesByBlock.get(blockId);
+      if (bucket) bucket.push(entry);
+      else entriesByBlock.set(blockId, [entry]);
+    }
+    const blocks: PointOfCareBlock[] = (blocksBySession.get(selected.id) ?? []).map(
+      (b) => ({
+        ...b,
+        structured_areas: orderAreas(b.structured_areas ?? []),
+        entries: entriesByBlock.get(b.id) ?? [],
+      }),
+    );
+
+    out.set(r.clientId, {
+      treatment: {
+        session: selected,
+        blocks,
+        supersededByEmptySession: candidates[0]?.id !== selected.id,
+      },
+      unavailable: false,
+      narrative,
+    });
+  }
+
+  return out;
 }
