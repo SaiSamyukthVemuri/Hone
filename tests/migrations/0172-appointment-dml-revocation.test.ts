@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // 0172 — APPOINTMENT BOUNDARY B3 source contract.
@@ -57,19 +56,16 @@ const ROW_DML = ["insert", "update", "delete"] as const;
 
 // ---------------------------------------------------------------------------
 
-describe("0172 — migration state", () => {
-  // The CENTRAL tripwire, moved here from
-  // tests/migrations/0171-public-reschedule-command.test.ts when 0172 landed.
-  // Only the current maximum migration's own test carries it (CLAUDE.md §2);
-  // an older per-migration test that keeps the pin turns every subsequent
-  // migration into a mechanical sweep, which is exactly how 0163, 0164 and 0165
-  // each went red after push. When 0173 lands, this block moves there and this
-  // file drops it.
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0172")).toBe(true);
-    expect(versionsAbove("0172")).toEqual([]);
-  });
-});
+// 0174 superseded 0172 as the repository maximum when B4 landed (0173 the
+// repair commands, 0174 the L23 parent-delete closure). Per CLAUDE.md §2, ONLY
+// the current maximum migration's own test may assert isRepoMax — an older
+// per-migration test that keeps the pin turns every subsequent migration into a
+// mechanical sweep, which is exactly how 0163/0164/0165 each went red after
+// push. The "nothing above me" tripwire is served centrally by the current
+// maximum's test (tests/migrations/0174-parent-delete-revocation.test.ts).
+//
+// This file's own contract is unchanged: 0172 is applied-frozen in B3 and B4
+// does not edit a single byte of it.
 
 describe("0172 — GROUP 1/2: row DML revoked from both browser roles on both tables", () => {
   for (const table of TABLES) {
