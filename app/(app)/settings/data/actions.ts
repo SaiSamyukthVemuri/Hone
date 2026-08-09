@@ -4,6 +4,12 @@ import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { rowsToCsv } from "@/lib/csv";
+import {
+  buildClinicalNoteExportRows,
+  CLINICAL_NOTES_CSV_FILENAME,
+  CLINICAL_NOTES_CSV_HEADERS,
+  type ClinicalNoteExportSource,
+} from "@/lib/export/clinical-notes";
 import { mergeReactionIntoChips } from "@/lib/observation-chips";
 import {
   blockAreasLabel,
@@ -62,6 +68,10 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     disinfectantsRes,
     exposureIncidentsRes,
     auditEventsRes,
+    // The authoritative append-only clinical narrative (0126/0127):
+    // consultation + skin_hair_analysis. Visible and printable in the product
+    // but absent from this export until now.
+    clinicalNotesRes,
   ] = await Promise.all([
     supabase
       .from("clients")
@@ -195,6 +205,30 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       )
       .eq("studio_id", studio.id)
       .order("created_at", { ascending: false }),
+    // client_clinical_notes — consultation + skin_hair_analysis.
+    //
+    // TENANCY, twice: the explicit studio filter below AND the 0126
+    // `client_clinical_notes_member_select` RLS policy
+    // (`is_studio_member(studio_id)`), because this read goes through the same
+    // authenticated `createClient()` every other table above uses. No
+    // service-role client, no cross-studio lookup, no widening.
+    //
+    // EVERY ROW, deliberately. The table is append-only and a correction is a
+    // NEW row pointing at the one it supersedes, so `.limit()` or any
+    // latest-per-client collapse would drop real clinical history. There is no
+    // deleted_at / withdrawn column to filter — unlike `sessions` above.
+    //
+    // Ordered by the clinical event time, with `id` as a deterministic
+    // tiebreak so two notes sharing a backdated occurred_at export in a stable
+    // order rather than whatever the planner returns.
+    supabase
+      .from("client_clinical_notes")
+      .select(
+        "id, client_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id, created_at",
+      )
+      .eq("studio_id", studio.id)
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: true }),
   ]);
 
   for (const r of [
@@ -214,6 +248,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     disinfectantsRes,
     exposureIncidentsRes,
     auditEventsRes,
+    clinicalNotesRes,
   ]) {
     if (r.error) {
       return {
@@ -743,6 +778,22 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     ),
   );
 
+  // The clinical narrative. Shaped by the pure builder so history retention,
+  // lineage and author attribution are unit-testable; serialized through the
+  // SAME rowsToCsv chokepoint as every other file, so the formula-injection
+  // neutralization and RFC-4180 quoting in lib/csv.ts apply unchanged. Note
+  // bodies routinely contain commas, quotation marks and line breaks.
+  zip.file(
+    CLINICAL_NOTES_CSV_FILENAME,
+    rowsToCsv(
+      CLINICAL_NOTES_CSV_HEADERS,
+      buildClinicalNoteExportRows(
+        (clinicalNotesRes.data ?? []) as ClinicalNoteExportSource[],
+        { clientNameById, practitionerNameById },
+      ),
+    ),
+  );
+
   const generatedAt = new Date().toISOString();
   const readme = `Hone Data Export
 Generated: ${generatedAt}
@@ -764,6 +815,7 @@ Files included:
 - record_keeping_disinfectants.csv: Disinfectant preparation log — name, concentration, prepared/discarded/discard-due dates, operator, notes.
 - record_keeping_exposure_incidents.csv: Exposure-incident log (OWNER-ONLY). Contains sensitive personal information about the exposed person (name, address, phone) and incident details.
 - record_keeping_audit_events.csv: Record-keeping change history — record type/id, action, which fields changed, who made the change, and when. (Reduced: it does not include the before/after value snapshots.)
+- client_clinical_notes.csv: The clinical narrative for every client — consultation notes and skin/hair analyses, with the authoring practitioner, the treatment areas tagged, when the note describes (occurred_at) and when it was recorded (created_at). FULL HISTORY: these records are append-only, so a correction appears as its own row whose supersedes_note_id points at the note it revised, and the superseded note is kept.
 
 IMPORTANT — SENSITIVE DATA: This ZIP now includes record-keeping / inspection data, including an exposure-incident log with personal information about exposed individuals. Store, transmit, and dispose of this export securely, and only share it with parties who are authorized to receive it (e.g. an inspector). Only a studio owner can generate this export.
 
@@ -802,6 +854,7 @@ hello@hone.care
         "appointments.csv",
         "treatment_plans.csv",
         "treatment_plan_stages.csv",
+        "client_clinical_notes.csv",
         "README.txt",
       ],
       row_counts: {
@@ -814,6 +867,7 @@ hello@hone.care
         appointments: appointmentRows.length,
         treatment_plans: treatmentPlanRows.length,
         treatment_plan_stages: treatmentPlanStageRows.length,
+        client_clinical_notes: (clinicalNotesRes.data ?? []).length,
       },
     },
   });
