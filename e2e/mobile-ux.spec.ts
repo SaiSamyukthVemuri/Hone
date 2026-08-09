@@ -382,7 +382,9 @@ test("mobile: shell, core pages, calendar touch safety", async ({
       "Treatment Plans",
       "Messages",
       "Health & Forms",
-      "Consultation",
+      // Renamed so the skin/hair analysis stops being invisible behind a tab
+      // named only "Consultation". The tab VALUE is unchanged.
+      "Consultation & Skin/Hair",
       "Personal Notes",
     ]);
     // 16px-safe: the focused select must not trigger iOS page zoom.
