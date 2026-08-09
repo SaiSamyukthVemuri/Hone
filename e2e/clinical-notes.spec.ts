@@ -161,10 +161,12 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
     expect(box!.height).toBeGreaterThanOrEqual(44);
     await cta.click();
     await expect(page).toHaveURL(new RegExp(`/clients/${clientId}\\?tab=consultation`));
-    // ...and that tab now says what it holds.
-    await expect(
-      page.getByRole("button", { name: "Consultation & Skin/Hair" }),
-    ).toBeVisible();
+    // ...and that tab now says what it holds. This journey runs at MOBILE
+    // width, where the profile tabs are a <select> rather than the desktop
+    // <button> row — so assert the option, not a button.
+    await expect(page.locator("select").first()).toContainText(
+      "Consultation & Skin/Hair",
+    );
   });
 });
 
