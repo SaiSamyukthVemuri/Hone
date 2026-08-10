@@ -104,7 +104,12 @@ describe("0174 — migration state", () => {
     // to 0175 when B6 landed. 0174 keeps a narrower, still-true claim: exactly
     // one migration sits above it.
     expect(isRepoMax("0174")).toBe(false);
-    expect(versionsAbove("0174")).toEqual(["0175"]);
+    // Asserted as "at least one above" rather than an exact list: this block's
+    // subject is 0174's own history, and pinning the exact set means every
+    // future migration re-breaks a test that has nothing to do with it. It has
+    // already had to move three times.
+    expect(versionsAbove("0174").length).toBeGreaterThanOrEqual(1);
+    expect(versionsAbove("0174")).toContain("0175");
   });
 
   it("consumes exactly ONE number — B6 took 0175, B7/B8 still reserved", () => {
@@ -112,7 +117,8 @@ describe("0174 — migration state", () => {
     // expected to exist; 0176 and 0177 remain reserved for B7 and B8.
     expect(countVersion("0174")).toBe(1);
     expect(countVersion("0175")).toBe(1);
-    expect(countVersion("0176")).toBe(0);
+    // B7 spent 0176; 0177 remains reserved for B8.
+    expect(countVersion("0176")).toBe(1);
     expect(countVersion("0177")).toBe(0);
     // 0178 is the PARKED Phase-2 practitioner identity work, developed on
     // another branch. B5 must not create it either.
@@ -140,8 +146,11 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     // subject is 0174's history rather than the current head.
     expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(175);
     // Repo and hosted agree again: nothing is pending above the applied max.
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
-    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
+    // Repo and hosted agreed after 0175 was applied. B7 has now authored 0176,
+    // so they legitimately diverge again by exactly one UNAPPLIED migration —
+    // the same shape 0175 itself was in before its apply ceremony.
+    expect(isRepoMax(rec.hosted_migration_max)).toBe(false);
+    expect(versionsAbove(rec.hosted_migration_max)).toEqual(["0176"]);
   });
 
   it("the record carries the sha256 of the exact 0174 bytes that were applied", async () => {

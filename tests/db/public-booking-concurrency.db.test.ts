@@ -333,7 +333,29 @@ describe("no deadlock in the reverse direction", () => {
     // excludes. Substituting it would have inverted the test's meaning and
     // failed for the right reason at the wrong assertion. Its own ordering is
     // covered by tests/db/public-reschedule-command.db.test.ts.
-    expect(r.rowCount).toBe(4);
+    // B7 / 0176: the census selects by NAME, and
+    // public_cancel_appointment_with_token is now OVERLOADED — the 7-argument
+    // atomic command plus the fail-closed 5-argument compatibility shim. So the
+    // row count is five while the writer SET is still four.
+    //
+    // Asserted as identity rather than as a number: a bare count of 5 would be
+    // satisfied by an unrelated fifth lifecycle writer appearing, which is
+    // exactly what this tripwire exists to catch. Both cancel overloads take
+    // studios -> appointments and neither acquires the advisory lock, so the
+    // premise is unchanged; the loop below now proves it for five bodies.
+    expect(new Set(r.rows.map((row) => row.proname))).toEqual(
+      new Set([
+        "public_cancel_appointment_with_token",
+        "practitioner_cancel_appointment",
+        "mark_appointment_complete",
+        "mark_appointment_no_show",
+      ]),
+    );
+    expect(
+      r.rows.filter((row) => row.proname === "public_cancel_appointment_with_token"),
+      "the cancel command is overloaded exactly twice (7-arg command + 5-arg shim)",
+    ).toHaveLength(2);
+    expect(r.rowCount).toBe(5);
     for (const row of r.rows) {
       expect(
         row.prosrc,
