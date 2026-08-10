@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { publicCancelAppointmentAction } from "./actions";
 import {
   CANCELLATION_REASONS,
@@ -25,9 +26,18 @@ type Props = {
   // no acknowledged_policy field; the server-side action mirrors
   // the same predicate against the resolved studio row.
   requiresAcknowledgement: boolean;
+  // B7 / 0176. Server-generated hash of the EXACT policy snapshot this
+  // page rendered. Posted back unchanged; the browser neither supplies
+  // policy text nor computes the authoritative hash.
+  presentedPolicyHash: string;
 };
 
-export function CancelForm({ token, requiresAcknowledgement }: Props) {
+export function CancelForm({
+  token,
+  requiresAcknowledgement,
+  presentedPolicyHash,
+}: Props) {
+  const router = useRouter();
   // PR #144. The free-form textarea has been replaced with a
   // structured dropdown ("" means "no reason picked"), an optional
   // note textarea, and an optional follow-up permission checkbox.
@@ -124,12 +134,31 @@ export function CancelForm({ token, requiresAcknowledgement }: Props) {
       // entirely; sending an unsolicited 'true' would be misleading.
       fd.set("acknowledged_policy", "true");
     }
+    // ALWAYS posted, including for a studio with no policy, where it is the
+    // hash of the empty snapshot. Sending it only when a policy exists would
+    // leave the "policy added after render" case with nothing to compare.
+    fd.set("presented_policy_hash", presentedPolicyHash);
     startTransition(async () => {
       const r = await publicCancelAppointmentAction(fd);
       if (!r.ok) {
-        // The mutation surface uses the same generic collapse as the
-        // fetch surface. The error string is whatever the action
-        // chose to surface; the UI does not branch on it.
+        // B7 / 0176. Exactly ONE outcome is branched on, and it is not a
+        // token state: the studio edited its policy while this page was
+        // open. A changed policy can never be silently accepted, and it
+        // must not be retried automatically — the client has to see the
+        // NEW text and consent to it.
+        //
+        // So: clear the acknowledgement, tell them plainly what happened,
+        // and refresh the server component so the policy card re-renders
+        // with the current text and a fresh presented hash. The next
+        // submit is a genuine second consent, not a replay of the first.
+        if (r.code === "policy_changed") {
+          setAcknowledged(false);
+          setError(r.error);
+          router.refresh();
+          return;
+        }
+        // Everything else uses the same generic collapse as the fetch
+        // surface. The UI does not branch on it.
         setError(r.error);
         return;
       }

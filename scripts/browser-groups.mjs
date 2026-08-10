@@ -83,6 +83,9 @@ export const BROWSER_GROUPS = {
     description: "client portal and tokenised links",
     specs: [
       "appointment-token-hash.spec.ts",
+      // B7 / 0176: the only browser proof that a policy edited between render
+      // and submit is refused, re-presented, and requires a SECOND consent.
+      "public-cancel-policy-change.spec.ts",
       // PR #526: the only browser proof of the consent render -> comparand
       // -> submit chain (stale-form refusal + photo deny).
       "portal-consent-signing-integrity.spec.ts",

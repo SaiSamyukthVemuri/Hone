@@ -67,12 +67,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     );
     // 58 since practitioner-assisted-intake.spec.ts joined the intake group
     // (57 after PR #518 added intake-electrolysis-acknowledgement.spec.ts).
-    // 63 once BOTH intake-review-consent-visibility.spec.ts (production)
-    // and intake-diabetes-thyroid-subtypes.spec.ts (this branch) are mapped —
-    // the refresh conflict was two additions to the same group, not a rename.
-    // The count is deliberate: it is the tripwire for a spec that lands on
-    // disk without being mapped, which would silently never run.
-    expect(mapped).toHaveLength(63);
+    // 64 with B7's public-cancel-policy-change.spec.ts mapped into `portal`
+    // (63 before it). The count is deliberate: it is the tripwire for a spec
+    // that lands on disk without being mapped, which would silently never run.
+    expect(mapped).toHaveLength(64);
     // The exact selection that was cancelled twice at the old 10-minute ceiling.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(28);
   });
