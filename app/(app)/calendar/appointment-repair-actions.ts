@@ -73,6 +73,13 @@ const REVERT_MESSAGES: Record<string, string> = {
     "A fee has already been charged for this appointment.",
   blocked_postcare_sent:
     "Aftercare has already been emailed to this client for this appointment.",
+  // B8 / 0177. A postcare send has been claimed and has not settled, so an
+  // aftercare email may be with the provider right now. Correcting the outcome
+  // underneath it would email aftercare for a visit that is no longer
+  // completed. Describes the SITUATION and the next step; the claim token and
+  // the five-minute window are internal and are never surfaced.
+  blocked_postcare_in_flight:
+    "Postcare is currently being sent or its send status is unresolved. Refresh before correcting this appointment outcome.",
   slot_conflict:
     "That time is now booked by another appointment, so this one cannot be restored.",
 };

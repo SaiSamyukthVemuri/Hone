@@ -3,6 +3,14 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { sendPostcareEmailAction } from "./actions";
+import {
+  PostcareSendFooter,
+  PostcareSendOutcomeNotice,
+  postcareAutoCloses,
+  postcareConfirmAvailable,
+  runPostcareSend,
+  type PostcareSendOutcome,
+} from "./postcare-send-presenter";
 
 // Manual postcare send + preview modal.
 //
@@ -59,47 +67,48 @@ export function PostcareSendButton({
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
   const [treatmentPerformed, setTreatmentPerformed] = useState(false);
-  // After a successful send the modal switches to a "Sent" confirmation
-  // state instead of closing instantly. The trigger button reload
-  // (parent server-component re-renders alreadySentAt) is the durable
-  // signal; this transient state is the immediate "yes, it went"
-  // feedback the practitioner asked for during the Willow retest.
-  const [justSent, setJustSent] = useState(false);
+  // B8 / 0177 review. This was a sent-boolean plus a separate error string,
+  // which structurally could not express the third outcome: the provider
+  // accepted the email and only the settlement failed. That pair forced the
+  // case into the error branch, whose copy invites a retry that would duplicate
+  // a real email. The outcome is now a closed union owned by
+  // ./postcare-send-presenter, and every affordance derives from it.
+  const [outcome, setOutcome] = useState<PostcareSendOutcome>({ kind: "idle" });
 
-  // Briefly stay on the "Sent" view so the practitioner reads it, then
-  // close the modal. The next page render shows the updated "Last sent"
-  // timestamp on the trigger.
+  // Briefly stay on the confirmation view so the practitioner reads it, then
+  // close. ONLY an ordinary success auto-closes — the provider-accepted /
+  // unrecorded state must stay on screen until it is dismissed, because it is
+  // the one state that asks the practitioner to do something (refresh) rather
+  // than reporting a finished fact.
   useEffect(() => {
-    if (!justSent) return;
+    if (!postcareAutoCloses(outcome)) return;
     const handle = window.setTimeout(() => {
       setOpen(false);
-      setJustSent(false);
+      setOutcome({ kind: "idle" });
     }, 1800);
     return () => window.clearTimeout(handle);
-  }, [justSent]);
+  }, [outcome]);
 
   const isResend = alreadySentAt != null;
   const buttonLabel = isResend ? "Resend postcare" : "Send postcare";
   const canConfirm =
     !pending &&
-    !justSent &&
+    postcareConfirmAvailable(outcome) &&
     (!requiresConsultationConfirmation || treatmentPerformed);
 
   function openModal() {
-    setError(null);
     setTreatmentPerformed(false);
-    setJustSent(false);
+    setOutcome({ kind: "idle" });
     setOpen(true);
   }
   function closeModal() {
     if (pending) return;
     setOpen(false);
-    setJustSent(false);
+    setOutcome({ kind: "idle" });
   }
   function confirm() {
-    setError(null);
+    setOutcome({ kind: "idle" });
     startTransition(async () => {
       const fd = new FormData();
       fd.set("appointment_id", appointmentId);
@@ -113,21 +122,19 @@ export function PostcareSendButton({
           treatmentPerformed ? "true" : "false",
         );
       }
-      const r = await sendPostcareEmailAction(fd);
-      if (!r.ok) {
-        setError(r.error);
-        return;
-      }
-      // DURABLE state, not just the transient confirmation. The modal's
-      // "Sent" view is immediate feedback; this re-renders the server
-      // component so the parent settles on the provider-confirmed
-      // postcare_email_sent_at and the trigger becomes "Resend postcare".
-      // Only a successful provider handoff refreshes — a failure leaves the
-      // modal open with its error, and nothing claims the email was sent.
-      router.refresh();
-      // Stay in the modal in a confirmation state so the send does not
-      // look silent. The useEffect above closes it shortly after.
-      setJustSent(true);
+      // ONE call, no retry. The presenter also owns WHEN the server component
+      // is re-rendered: on an ordinary success so the trigger settles on the
+      // provider-confirmed postcare_email_sent_at, and — the P1 fix — on the
+      // provider-accepted/unrecorded outcome too, so the practitioner sees the
+      // fresh server-rendered claim state instead of guessing at it. An
+      // ordinary failure does not refresh: nothing changed and nothing claims
+      // the email was sent.
+      setOutcome(
+        await runPostcareSend(
+          { send: sendPostcareEmailAction, refresh: () => router.refresh() },
+          fd,
+        ),
+      );
     });
   }
 
@@ -195,13 +202,13 @@ export function PostcareSendButton({
               <p className="text-xs text-neutral-500">
                 {isResend
                   ? "This will send the postcare email to the client again. Each send is recorded."
-                  : "Review the email before sending. The client will receive this immediately."}
+                  : "Review the email before sending. It is handed to the email provider immediately."}
               </p>
             </header>
             <pre className="flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-800 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
               {previewText}
             </pre>
-            {requiresConsultationConfirmation && !justSent && (
+            {requiresConsultationConfirmation && outcome.kind === "idle" && (
               <label className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
                 <input
                   type="checkbox"
@@ -215,50 +222,18 @@ export function PostcareSendButton({
                 </span>
               </label>
             )}
-            {/* Explicit success confirmation. Replaces the previous
-                silent close so the practitioner knows the email
-                actually went. The trigger button on the parent page
-                will re-render with the updated "Last sent" timestamp
-                on the next render. */}
-            {justSent && (
-              <div
-                role="status"
-                className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm font-medium text-emerald-900 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-100"
-              >
-                Postcare sent. The client will receive it within a
-                minute. This window will close automatically.
-              </div>
-            )}
-            {error && (
-              <p className="text-sm text-red-700 dark:text-red-300">
-                Could not send. {error} Try again, or check the
-                client&rsquo;s email on their profile.
-              </p>
-            )}
-            <footer className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeModal}
-                disabled={pending}
-                className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium disabled:opacity-50 dark:border-neutral-700"
-              >
-                {justSent ? "Close" : "Cancel"}
-              </button>
-              {!justSent && (
-                <button
-                  type="button"
-                  onClick={confirm}
-                  disabled={!canConfirm}
-                  className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-950"
-                >
-                  {pending
-                    ? "Sending..."
-                    : isResend
-                      ? "Confirm resend"
-                      : "Send postcare"}
-                </button>
-              )}
-            </footer>
+            {/* Every outcome — success, provider-accepted-but-unrecorded, and
+                ordinary failure — is rendered by the presenter, so the copy and
+                the affordances cannot drift apart from the classification. */}
+            <PostcareSendOutcomeNotice outcome={outcome} />
+            <PostcareSendFooter
+              outcome={outcome}
+              pending={pending}
+              canConfirm={canConfirm}
+              isResend={isResend}
+              onCancel={closeModal}
+              onConfirm={confirm}
+            />
           </div>
         </div>
       )}

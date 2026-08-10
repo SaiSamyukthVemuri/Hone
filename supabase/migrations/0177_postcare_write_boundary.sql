@@ -27,10 +27,24 @@
 --   no TRUNCATE/REFERENCES/TRIGGER/MAINTAIN, and ZERO column-level UPDATE.
 --   The B1 direct-appointment-writer census goes 7 -> 0.
 --
+-- ONE B4 INTEGRATION RULE TRAVELS WITH THE CLAIM
+--   Introducing a claim introduces a state B4/0173 has never seen: an
+--   appointment with an external email in flight. 0173's repair command asks
+--   `appointment_has_blocking_dependents` whether reopening an outcome is safe,
+--   and that helper only knew about a COMPLETED postcare send. A claim that has
+--   not settled yet was invisible to it, so an owner could reopen the visit in
+--   the window between claim and settlement and the send would still land.
+--   This file therefore REPLACES that one helper — same five blocker classes,
+--   same order, plus `postcare_in_flight`. See the section below.
+--
 -- WHAT THIS FILE DELIBERATELY DOES NOT TOUCH
 --   * `snapshot_appointment_buffer()` — STANDING PROHIBITION. Production
 --     carries out-of-band GUC behaviour there that this repository's migration
 --     source does not represent. Not created, replaced, dropped or referenced.
+--   * 0173 itself. It is applied production history and its bytes stay frozen;
+--     the helper is REPLACED from here, and `revert_appointment_outcome` and
+--     `set_appointment_notes` are not re-emitted at all — they already call the
+--     helper by name, so they pick the new class up without being touched.
 --   * B6/0175's transition matrix, mark_appointment_complete, the transition
 --     guard, the updated_at trigger and the capacity trigger.
 --   * B7/0176's cancellation commands and the policy acknowledgement.
@@ -58,9 +72,14 @@ set local lock_timeout = '5s';
 -- Wins, or does not win, the right to call the email provider.
 --
 -- AUTHORITY. The command is service_role-callable, but service_role is a
--- transport identity, not a business actor — so the DATABASE authenticates the
--- practitioner: `p_actor_practitioner_id` must be an ACTIVE practitioner of
--- `p_studio_id`. Any active same-studio practitioner may send postcare; the
+-- transport identity, not a business actor. The call site authenticates the
+-- HUMAN and resolves the practitioner server-side; the database then VALIDATES
+-- that supplied server-resolved practitioner is active and same-studio —
+-- `p_actor_practitioner_id` must be an ACTIVE practitioner of `p_studio_id`.
+-- Neither half is sufficient alone, and neither is weakened by saying so:
+-- a transport role cannot name an arbitrary actor and have it honoured, and a
+-- call site cannot skip the membership check by asserting one.
+-- Any active same-studio practitioner may send postcare; the
 -- appointment's own practitioner assignment is deliberately NOT required,
 -- because that matches the studio-member operational boundary the product
 -- already has, and narrowing it here would be a silent behaviour change.
@@ -298,6 +317,135 @@ comment on function public.settle_postcare_send(uuid, uuid, timestamptz, boolean
 revoke execute on function public.settle_postcare_send(uuid, uuid, timestamptz, boolean, boolean)
   from public, anon, authenticated;
 grant execute on function public.settle_postcare_send(uuid, uuid, timestamptz, boolean, boolean)
+  to service_role;
+
+-- ---------------------------------------------------------------------------
+-- B4 INTEGRATION — an UNRESOLVED postcare claim blocks OUTCOME REPAIR
+-- ---------------------------------------------------------------------------
+-- THE RACE THIS CLOSES, in the order it actually happens:
+--
+--     1. the appointment is `completed`
+--     2. claim_postcare_send wins and COMMITS
+--     3. postcare_email_claimed_at is populated
+--     4. the provider call is in flight
+--     5. the owner invokes revert_appointment_outcome
+--     6. the blocking-dependents helper checks sent_at but NOT claimed_at
+--     7. completed -> confirmed succeeds
+--     8. the provider accepts
+--     9. settle_postcare_send still holds the EXACT token and stamps sent_at
+--
+-- The result is an appointment sitting at `confirmed` for which aftercare has
+-- been emailed — a communication for a visit Hone has just reopened, which
+-- breaks the completed-only contract the claim command exists to enforce.
+--
+-- WHY NOT FIX IT IN SETTLEMENT. The obvious alternative is to make a SUCCESS
+-- settlement refuse once the appointment is no longer completed. That is worse.
+-- By step 8 the email has physically left; discarding the evidence would make
+-- Hone LESS truthful about what its client received, and would recreate exactly
+-- the overclaim/underclaim problem B8 was built to remove. The lifecycle change
+-- must be blocked BEFORE it happens, which is here.
+--
+-- WHY `is not null` AND NOTHING ELSE. Not "younger than five minutes". The
+-- five-minute window governs who may RECLAIM a send; it says nothing about
+-- whether an external side effect resolved. A claim that went stale is a send
+-- whose outcome Hone never learned — the most, not the least, dangerous state
+-- to reopen an appointment underneath. Conservative by construction: a FAILURE
+-- settlement and a SUCCESS settlement both clear `postcare_email_claimed_at`,
+-- so the block lifts the moment the send resolves either way.
+--
+-- ORDER IS PRESERVED EXACTLY. The five existing classes keep their 0173
+-- sequence and their 0173 predicates; `postcare_in_flight` is appended LAST.
+-- That ordering is load-bearing for a resend: a resend claim sets claimed_at
+-- while sent_at is already non-null, and the practitioner must still be told
+-- the authoritative thing — aftercare has ALREADY been emailed — so
+-- `postcare_sent` continues to win.
+--
+-- CREATE OR REPLACE preserves the function's owner and ACL, but the EXECUTE
+-- posture is re-stated below anyway: the 0169 doctrine is to name every verb
+-- rather than rely on what a replace happens to keep.
+create or replace function public.appointment_has_blocking_dependents(
+  p_appointment_id uuid,
+  p_studio_id      uuid
+)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  -- A reschedule successor: reverting resurrects a duplicate booking that the
+  -- 23P01 exclusion cannot see, because the successor is at another time.
+  if exists (
+    select 1 from public.appointments a
+     where a.id = p_appointment_id
+       and a.studio_id = p_studio_id
+       and a.rescheduled_to_appointment_id is not null
+  ) then
+    return 'rescheduled';
+  end if;
+
+  -- An undeleted clinical session already hangs off this appointment.
+  if exists (
+    select 1 from public.sessions s
+     where s.appointment_id = p_appointment_id
+       and s.studio_id = p_studio_id
+       and s.deleted_at is null
+  ) then
+    return 'linked_session';
+  end if;
+
+  -- Money moved (or is disputed) against this appointment.
+  if exists (
+    select 1 from public.appointment_payments ap
+     where ap.appointment_id = p_appointment_id
+       and ap.studio_id = p_studio_id
+       and ap.payment_status <> 'method_saved'
+  ) then
+    return 'payment_state';
+  end if;
+
+  -- A manual fee was attempted against this appointment.
+  if exists (
+    select 1 from public.manual_fee_charge_attempts m
+     where m.appointment_id = p_appointment_id
+       and m.studio_id = p_studio_id
+  ) then
+    return 'manual_fee';
+  end if;
+
+  -- The client has already been emailed postcare for this visit.
+  if exists (
+    select 1 from public.appointments a
+     where a.id = p_appointment_id
+       and a.studio_id = p_studio_id
+       and a.postcare_email_sent_at is not null
+  ) then
+    return 'postcare_sent';
+  end if;
+
+  -- B8/0177 — NEW. A postcare send is claimed and has not settled. The email
+  -- may be with the provider right now; reopening the outcome underneath it
+  -- would produce aftercare for a visit that is no longer completed.
+  if exists (
+    select 1 from public.appointments a
+     where a.id = p_appointment_id
+       and a.studio_id = p_studio_id
+       and a.postcare_email_claimed_at is not null
+  ) then
+    return 'postcare_in_flight';
+  end if;
+
+  return null;
+end;
+$$;
+
+comment on function public.appointment_has_blocking_dependents(uuid, uuid) is
+  'Returns the first blocking-dependent class preventing safe outcome reversal (rescheduled, linked_session, payment_state, manual_fee, postcare_sent, postcare_in_flight), or NULL. Order is fixed so the code is deterministic when several apply; B8/0177 appended postcare_in_flight LAST so an already-sent visit still reports postcare_sent during a resend. Service-role only.';
+
+revoke execute on function public.appointment_has_blocking_dependents(uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function public.appointment_has_blocking_dependents(uuid, uuid)
   to service_role;
 
 -- ---------------------------------------------------------------------------

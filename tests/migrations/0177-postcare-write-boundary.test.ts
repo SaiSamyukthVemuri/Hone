@@ -29,6 +29,12 @@ const SETTLE =
   EXEC.match(
     /create or replace function public\.settle_postcare_send[\s\S]*?\n\$\$;/,
   )?.[0] ?? "";
+// The ONE pre-existing object 0177 is permitted to replace. Everything else
+// from 0173 / B6 / B7 stays untouched, which the scope suite below pins.
+const BLOCKING =
+  EXEC.match(
+    /create or replace function public\.appointment_has_blocking_dependents[\s\S]*?\n\$\$;/,
+  )?.[0] ?? "";
 
 describe("0177 — migration state", () => {
   it("is the current repository maximum and consumes exactly one number", () => {
@@ -179,6 +185,110 @@ describe("0177 — settle_postcare_send", () => {
   });
 });
 
+describe("0177 — the ONE permitted B4 helper replacement", () => {
+  // Independent-review P1-2. A claim that has not settled is an unresolved
+  // EXTERNAL side effect, and 0173's blocking-dependents helper could not see
+  // it: it checked postcare_email_sent_at only. An owner could therefore reopen
+  // a completed appointment in the window between claim and settlement, and the
+  // aftercare email would still land — for a visit that is no longer completed.
+  //
+  // 0173 is applied production history and stays frozen, so the narrow fix
+  // ships here. This suite pins BOTH halves: that the replacement happens, and
+  // that it is the ONLY thing 0177 replaces.
+
+  it("replaces appointment_has_blocking_dependents with the exact 0173 signature", () => {
+    expect(BLOCKING).not.toBe("");
+    expect(BLOCKING).toMatch(/p_appointment_id uuid/);
+    expect(BLOCKING).toMatch(/p_studio_id\s+uuid/);
+    expect(BLOCKING).toMatch(/returns text/);
+    // Same posture as 0173: a read-only helper, definer, pinned search_path.
+    expect(BLOCKING).toMatch(/\bstable\b/);
+    expect(BLOCKING).toMatch(/security definer/);
+    expect(BLOCKING).toMatch(/set search_path = pg_catalog, pg_temp/);
+  });
+
+  it("carries all FIVE existing blocker classes, in the 0173 order", () => {
+    const order = [...BLOCKING.matchAll(/return '([a-z_]+)'/g)].map((m) => m[1]);
+    expect(order).toEqual([
+      "rescheduled",
+      "linked_session",
+      "payment_state",
+      "manual_fee",
+      "postcare_sent",
+      // ...and the new class is appended LAST, which is load-bearing: during a
+      // resend both postcare classes match, and the practitioner must still be
+      // told the stronger fact — aftercare has ALREADY been emailed.
+      "postcare_in_flight",
+    ]);
+  });
+
+  it("preserves each existing class's predicate verbatim", () => {
+    // A replacement that kept the NAMES but quietly changed a WHERE clause
+    // would pass an order assertion. These are the 0173 predicates.
+    expect(BLOCKING).toMatch(/a\.rescheduled_to_appointment_id is not null/);
+    expect(BLOCKING).toMatch(/from public\.sessions s[\s\S]*?s\.deleted_at is null/);
+    expect(BLOCKING).toMatch(
+      /from public\.appointment_payments ap[\s\S]*?ap\.payment_status <> 'method_saved'/,
+    );
+    expect(BLOCKING).toMatch(/from public\.manual_fee_charge_attempts m/);
+    expect(BLOCKING).toMatch(/a\.postcare_email_sent_at is not null/);
+    // Every branch stays studio-scoped.
+    expect((BLOCKING.match(/studio_id = p_studio_id/g) ?? []).length).toBe(6);
+  });
+
+  it("adds the new class on an UNCONDITIONAL claim, not a fresh-claim window", () => {
+    // The five-minute window governs who may RECLAIM a send. It says nothing
+    // about whether the external side effect resolved, and a claim that went
+    // stale is the state whose outcome Hone never learned — the most dangerous
+    // one to reopen an appointment underneath, not the least.
+    expect(BLOCKING).toMatch(/a\.postcare_email_claimed_at is not null/);
+    expect(BLOCKING).not.toMatch(/5 minutes|interval/);
+    expect(BLOCKING).toMatch(/return 'postcare_in_flight'/);
+  });
+
+  it("re-states the service-role-only EXECUTE posture rather than assuming it", () => {
+    // CREATE OR REPLACE preserves the ACL, but the 0169 doctrine is to name
+    // every verb rather than depend on what a replace happens to keep.
+    expect(SQL).toMatch(
+      /revoke execute on function public\.appointment_has_blocking_dependents\(uuid, uuid\)\s*\n?\s*from public, anon, authenticated;/,
+    );
+    expect(SQL).toMatch(
+      /grant execute on function public\.appointment_has_blocking_dependents\(uuid, uuid\)\s*\n?\s*to service_role;/,
+    );
+  });
+
+  it("updates the function comment to name the new class", () => {
+    const c =
+      SQL.match(
+        /comment on function public\.appointment_has_blocking_dependents\(uuid, uuid\) is[\s\S]*?;/,
+      )?.[0] ?? "";
+    expect(c).toContain("postcare_in_flight");
+    expect(c).toContain("postcare_sent");
+  });
+
+  it("replaces NOTHING ELSE from 0173 — the two commands are untouched", () => {
+    // They call the helper BY NAME, so they pick the new class up without being
+    // re-emitted. Re-emitting them would drag 0173's whole body into an
+    // unapplied migration for no reason and widen the blast radius.
+    expect(EXEC).not.toMatch(/function public\.revert_appointment_outcome/);
+    expect(EXEC).not.toMatch(/function public\.set_appointment_notes/);
+    expect(EXEC).not.toMatch(/function public\.appointment_actor_role/);
+    expect(EXEC).not.toMatch(/function public\.lock_appointment_for_command/);
+    expect(EXEC).not.toMatch(/function public\.write_appointment_audit/);
+  });
+
+  it("0177 defines exactly THREE functions", () => {
+    const defined = [...EXEC.matchAll(/create or replace function public\.(\w+)/g)]
+      .map((m) => m[1])
+      .sort();
+    expect(defined).toEqual([
+      "appointment_has_blocking_dependents",
+      "claim_postcare_send",
+      "settle_postcare_send",
+    ]);
+  });
+});
+
 describe("0177 — privilege closure", () => {
   it("revokes UPDATE on exactly the six postcare columns from service_role", () => {
     const revoke = SQL.match(/revoke update \([\s\S]*?\) on table public\.appointments from service_role;/)?.[0] ?? "";
@@ -251,7 +361,12 @@ describe("0177 — scope discipline", () => {
 
   it("performs NO data mutation at apply time", () => {
     // The DML inside function BODIES runs per call, never at migration apply.
-    const outside = EXEC.split(CLAIM).join("").split(SETTLE).join("");
+    const outside = EXEC.split(CLAIM)
+      .join("")
+      .split(SETTLE)
+      .join("")
+      .split(BLOCKING)
+      .join("");
     for (const verb of ["insert into", "delete from"]) {
       expect(outside.toLowerCase()).not.toContain(verb);
     }

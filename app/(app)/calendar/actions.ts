@@ -993,34 +993,39 @@ async function dispatchBookingEmails(p: DispatchParams) {
 // removed in PR #72), does NOT depend on display-derived "done", and
 // does NOT rely on payment.
 //
-// Race-safety on first send: the action does a single conditional
-// UPDATE WHERE postcare_email_sent_at IS NULL. Postgres serializes
-// per-row UPDATEs; one of N concurrent first-send clicks finds 1 row
-// updated and proceeds, the rest find 0 and short-circuit with
-// "Postcare has already been sent." sent_at is set + attempts is
-// incremented in the same statement so a race-loser cannot also send.
+// B8 / 0177 — THIS ACTION WRITES NO APPOINTMENT COLUMN.
 //
-// Resend semantics: the practitioner has already confirmed via the
-// client-side modal; the resend path is an unconditional UPDATE that
-// increments attempts + bumps sent_at. A double-click on the modal's
-// Confirm Resend button is mitigated by the button's "Sending…"
-// disabled state during the in-flight transition; the spec accepts
-// this as the resend trade-off.
+// It used to own four direct UPDATEs on the six postcare columns: a
+// conditional first-send claim, an unconditional resend claim, and the two
+// settlement writes. All four are gone, and service_role no longer holds even
+// column-level UPDATE on `public.appointments` to reissue them. The shape is
+// now a two-command state machine:
 //
-// Trade-off (documented): on a first-send Resend-API failure, sent_at
-// is still set to the claim timestamp. The practitioner sees the
-// appointment with a sent_at + a returned error and can use the
-// Resend path explicitly. We chose this over a two-step claim/commit
-// because (a) a separate "in-flight" column would expand the schema
-// surface for marginal benefit, and (b) Resend failures are rare; the
-// resend path is the recovery primitive.
-// PR #311: a postcare claim older than this is stale and reclaimable (the
-// sender process died between the claim and the outcome write). Mirrors the
-// reminder-cron 5-minute stale-claim window.
+//     claim_postcare_send  ->  provider call  ->  settle_postcare_send
+//
+// SQL owns every rule that used to live in a WHERE clause here: the
+// completed-only gate, first-send vs resend, the five-minute stale window, the
+// attempt counter, the actor's active same-studio membership, and the claim
+// timestamp itself. Race-safety is no longer "Postgres serialises per-row
+// UPDATEs and one click wins" — the claim command hands exactly one caller a
+// token, and settlement only writes while that token still matches. That closed
+// a real gap: the old resend path bumped the claim unconditionally, so two
+// concurrent resends could BOTH reach the provider, mitigated only by a
+// disabled button.
+//
+// The old documented trade-off is retired with the code that needed it: sent_at
+// is no longer stamped at claim time, so a provider failure can no longer leave
+// a false "sent" behind.
+//
+// Provider truth and persisted truth stay distinct. A provider success whose
+// settlement does not commit is neither a success nor a failure, and is
+// reported as `provider_sent_status_unrecorded` rather than being flattened
+// into either.
 
-// PR #311: SAFE/GENERIC postcare failure category stored in
-// postcare_email_last_error. NEVER the raw Resend payload, client email/name,
-// health/treatment data, or exception details — just a practitioner-facing hint.
+// SAFE/GENERIC practitioner copy. The provider payload never reaches it: for a
+// settlement the safe text is derived in SQL from the retryable boolean alone,
+// and the map below covers only the command's REFUSAL vocabulary. Never the raw
+// Resend payload, client email/name, health/treatment data, or exception detail.
 // B8 / 0177. Maps the command's result vocabulary to safe practitioner copy.
 // Every value here is a REFUSAL: the provider has not been called and nothing
 // has been written.
@@ -1066,11 +1071,13 @@ export async function sendPostcareEmailAction(
     return { ok: false, error: "Inactive practitioners cannot send postcare." };
   }
 
-  // Use the admin client for the join + claim so we get the full studio
-  // postcare text + service modality + client email in one round-trip
-  // and so the conditional UPDATE writes through (RLS would also allow
-  // a member-scoped client, but the existing email-sending actions in
-  // this file all use the admin client and we keep the pattern).
+  // The admin client is used for the join so the full studio postcare text,
+  // the service modality and the client email arrive in one round-trip, and
+  // because the two 0177 commands are service_role-only. It is NOT needed to
+  // "write through" any longer — this action issues no appointment UPDATE at
+  // all, and service_role holds no UPDATE grant to issue one with. RLS would
+  // also permit a member-scoped read here; the existing email-sending actions
+  // in this file all use the admin client and we keep the pattern.
   const { createAdminClient } = await import("@/lib/supabase/admin-server");
   const admin = createAdminClient();
   const { data: appt, error: lookupErr } = await admin

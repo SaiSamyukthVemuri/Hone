@@ -7,10 +7,12 @@ import type { Studio } from "@/lib/types/database";
 //
 // Design guarantees (SaaS-ready):
 //   * SHARES the appointments.postcare_email_* claim columns with the manual
-//     sender, so the two paths are MUTUALLY IDEMPOTENT — postcare is sent at
-//     most once even if auto + manual both run.
-//   * NEVER sends for cancelled/no_show — the claim UPDATE requires
-//     status = 'completed'.
+//     sender — and since B8/0177 shares the COMMANDS that write them, so the
+//     two paths are MUTUALLY IDEMPOTENT by construction rather than by two
+//     hand-matched UPDATE predicates. Postcare is sent at most once even if
+//     auto + manual both run.
+//   * NEVER sends for cancelled/no_show — claim_postcare_send refuses any
+//     status other than 'completed', in SQL, for both paths.
 //   * Reuses the EXISTING SAFE postcare email (studio settings only; no
 //     clinical/intake data). No new email variant, no health data.
 //   * FAIL-SOFT: never throws. A send failure must never fail appointment
@@ -105,9 +107,11 @@ export async function autoSendPostcareOnComplete(
   appointmentId: string,
   studioId: string,
   // B8 / 0177: the SERVER-RESOLVED practitioner completing the appointment.
-  // The database authenticates the actor, so auto-send needs a real one — and
-  // both completion call sites already have it. Inventing a system actor would
-  // have put an identity in the boundary that no human is accountable for.
+  // The call site authenticates the human; the database then VALIDATES that
+  // this practitioner is active and same-studio. Auto-send therefore needs a
+  // real one, and both completion call sites already have it. Inventing a
+  // system actor would have put an identity in the boundary that no human is
+  // accountable for.
   actorPractitionerId: string,
   deps?: {
     admin?: AdminLike;
@@ -147,14 +151,17 @@ export async function autoSendPostcareOnComplete(
     });
     if (!gate.ok) return logOutcome(appointmentId, gate.reason);
 
-    // Idempotent FIRST-SEND claim (mirrors the manual sendPostcareEmailAction):
-    // only a COMPLETED, not-yet-sent appointment with no fresh claim is claimed.
-    // .select("id") proves exactly one row was won, so a duplicate completion
-    // (or a concurrent manual send) cannot double-send. The status='completed'
-    // filter is the belt-and-suspenders guard against cancelled/no_show.
-    // B8 / 0177 — CLAIM THROUGH THE COMMAND. The database owns the claim
-    // timestamp, the attempt counter, the five-minute stale window, the
-    // completed-only rule and the actor check; this helper owns none of them.
+    // B8 / 0177 — CLAIM THROUGH THE COMMAND, never a direct UPDATE.
+    //
+    // The database owns the claim timestamp, the attempt counter, the
+    // five-minute stale window, the completed-only rule and the actor check;
+    // this helper owns none of them. Exactly one caller wins the claim, so a
+    // duplicate completion — or a concurrent MANUAL send, which runs the same
+    // command — cannot double-send. `p_is_resend: false` makes this a
+    // first-send claim: an appointment that already has a real
+    // postcare_email_sent_at is refused, never silently re-emailed.
+    // The return is a row set, not an affected-row count; `result` is the
+    // outcome and `claimed_at` is the token settlement must present.
     const { data: claimRows, error: claimErr } = await admin.rpc(
       "claim_postcare_send",
       {

@@ -594,15 +594,20 @@ export async function sendNoShowFollowupToClient(params: {
 }
 
 
-// Postcare email sender (manual practitioner-triggered, v1). Pure
-// renderer-around-template: takes already-loaded studio + appointment
-// + service context and dispatches via Resend. Bookkeeping (sent_at +
-// send_attempts) is intentionally handled by the calling action via a
-// single conditional UPDATE that serves as both the first-send atomic
-// claim AND the attempts increment. record_email_attempt is NOT used
-// for postcare because its set-sent_at-only-on-success semantic cannot
-// be combined atomically with a first-send race-protection claim; see
-// the audit + commit message for the trade-off.
+// Postcare email sender — RENDER + PROVIDER ONLY, for both the manual and the
+// automatic path. Pure renderer-around-template: takes already-loaded studio +
+// appointment + service context and dispatches via Resend. It reports whether
+// the provider accepted, and whether a failure is retryable. That is all.
+//
+// It performs NO bookkeeping. Since B8 / 0177 the claim and the settlement are
+// owned by the database commands `claim_postcare_send` and
+// `settle_postcare_send`, which the CALLERS invoke around this function:
+// claim, then this call, then settle under the claim's exact token. Nothing
+// here may write a postcare column, and no caller may derive one from this
+// return value — the DB clock stamps sent_at, and the safe last_error is
+// derived in SQL from the retryable boolean so no provider payload (which can
+// carry recipient addresses and vendor internals) reaches a field
+// practitioners read. record_email_attempt is still NOT used for postcare.
 export async function sendPostcareToClient(params: {
   clientName: string;
   clientEmail: string;

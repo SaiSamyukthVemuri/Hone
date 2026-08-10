@@ -75,8 +75,18 @@ describe("scope guard: read-only, action + schema untouched", () => {
     // The status surfaces do not import or call the send action on render.
     expect(TIMELINE).not.toMatch(/sendPostcareEmailAction/);
     expect(QUERIES).not.toMatch(/sendPostcareEmailAction/);
-    // The button still calls the SAME action only inside its confirm handler.
-    expect(BUTTON).toMatch(/const r = await sendPostcareEmailAction\(fd\)/);
+    // The button still reaches the SAME action, and only from its confirm
+    // handler. B8/0177 review moved the CALL one level down: confirm() hands
+    // the action to runPostcareSend as a dependency, which is what makes
+    // "exactly one send, never a retry" drivable by a test with a mocked
+    // action (tests/app/calendar/b8-postcare-provider-unrecorded.test.ts).
+    // The property this guard exists for is unchanged — there is still exactly
+    // one send path and it is still triggered only by an explicit confirm — so
+    // it is restated against the wiring that now exists.
+    const confirm = BUTTON.match(/function confirm\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
+    expect(confirm).not.toBe("");
+    expect(confirm).toMatch(/send: sendPostcareEmailAction/);
+    expect((BUTTON.match(/sendPostcareEmailAction/g) ?? []).length).toBe(2); // import + the one use
     // sanity: the action file still exports the unchanged action.
     expect(ACTIONS).toMatch(/sendPostcareEmailAction/);
   });
