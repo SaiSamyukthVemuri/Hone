@@ -34,9 +34,11 @@ describe("0175 — migration state", () => {
     expect(countVersion("0175")).toBe(1);
   });
 
-  it("consumes exactly ONE number — B7 took 0176, 0177 still reserved for B8", () => {
+  it("consumes exactly ONE number", () => {
+    // No successor reservation is pinned here. "0177 still reserved" went red
+    // the moment B8 authored it — the same stale-owner defect 0174's test hit
+    // three times. A successor's number is that successor's own test's job.
     expect(countVersion("0176")).toBe(1);
-    expect(countVersion("0177")).toBe(0);
   });
 });
 
