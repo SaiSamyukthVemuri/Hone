@@ -71,7 +71,7 @@ export default async function DataSettingsPage() {
 
       <DataCard
         title="Export your data"
-        body="Download a portable copy of your supported studio records as a ZIP. Every listed source is exported in full, with a manifest.json stating the row count for each file. This is not a transactional database backup and does not replace Hone's disaster-recovery backups."
+        body="Download a portable copy of your supported studio records as a ZIP. Reads are paginated to exhaustion, so no file is silently truncated, and manifest.json records how many rows each file received. It is not point-in-time consistent and is not a transactional database backup — it does not replace Hone's disaster-recovery backups."
       >
         <div className="flex flex-col gap-5">
           <div>
@@ -117,8 +117,8 @@ export default async function DataSettingsPage() {
                 information about the exposed person — handle securely
               </li>
               <li>
-                manifest.json: the exported row count for every file, so you
-                can confirm the export is complete
+                manifest.json: how many rows were exported to each file, plus
+                whichever source-side count checks were available
               </li>
             </ul>
           </div>

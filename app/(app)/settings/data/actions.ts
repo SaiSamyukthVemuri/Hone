@@ -10,11 +10,7 @@ import {
   CLINICAL_NOTES_CSV_HEADERS,
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
-import {
-  fetchAllRows,
-  csvDataRowCount,
-  EXPORT_PAGE_SIZE,
-} from "@/lib/export/paginate";
+import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
 import { mergeReactionIntoChips } from "@/lib/observation-chips";
 import {
   blockAreasLabel,
@@ -373,9 +369,30 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   const zip = new JSZip();
 
+  // Manifest row counts, taken from the EXACT row collection handed to
+  // rowsToCsv — never from the serialized bytes.
+  //
+  // `csvCell` deliberately emits RFC-4180 quoted fields that PRESERVE embedded
+  // CR/LF, so one multiline clinical note, session note or comment is a single
+  // logical record spanning several physical lines. Counting newlines would
+  // therefore over-report every file containing a multiline note — and it would
+  // over-report it in the very artifact whose job is to tell the owner how much
+  // data they have. `rows.length` is the record count by construction, so this
+  // needs no CSV parser and cannot disagree with what was written.
+  const manifestCounts: Record<string, number> = {};
+  const countedCsv = (
+    name: string,
+    headers: ReadonlyArray<string>,
+    rows: ReadonlyArray<Record<string, unknown>>,
+  ): string => {
+    manifestCounts[name] = rows.length;
+    return rowsToCsv(headers, rows);
+  };
+
   zip.file(
     "clients.csv",
-    rowsToCsv(
+    countedCsv(
+      "clients.csv",
       [
         "id",
         "name",
@@ -396,7 +413,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "sessions.csv",
-    rowsToCsv(
+    countedCsv(
+      "sessions.csv",
       [
         "id",
         "client_id",
@@ -517,7 +535,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "electrolysis_entries.csv",
-    rowsToCsv(
+    countedCsv(
+      "electrolysis_entries.csv",
       [
         // Existing columns kept in their original order for compatibility.
         "id",
@@ -574,7 +593,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "laser_entries.csv",
-    rowsToCsv(
+    countedCsv(
+      "laser_entries.csv",
       [
         "id",
         "session_id",
@@ -592,7 +612,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "practitioners.csv",
-    rowsToCsv(
+    countedCsv(
+      "practitioners.csv",
       ["id", "display_name", "email", "role", "active", "created_at"],
       practitionersRes.data ?? [],
     ),
@@ -600,7 +621,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "client_pricing.csv",
-    rowsToCsv(
+    countedCsv(
+      "client_pricing.csv",
       ["id", "client_id", "service_name", "price_cents", "notes", "effective_from"],
       pricingRes.data ?? [],
     ),
@@ -650,7 +672,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "appointments.csv",
-    rowsToCsv(
+    countedCsv(
+      "appointments.csv",
       [
         "id",
         "client_id",
@@ -710,7 +733,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "treatment_plans.csv",
-    rowsToCsv(
+    countedCsv(
+      "treatment_plans.csv",
       [
         "id",
         "client_id",
@@ -756,7 +780,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "treatment_plan_stages.csv",
-    rowsToCsv(
+    countedCsv(
+      "treatment_plan_stages.csv",
       [
         "id",
         "plan_id",
@@ -782,7 +807,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // so no image path / binary / payment field can slip in.
   zip.file(
     "record_keeping_sterile_items.csv",
-    rowsToCsv(
+    countedCsv(
+      "record_keeping_sterile_items.csv",
       [
         "id",
         "date_purchased",
@@ -802,7 +828,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   zip.file(
     "record_keeping_disinfectants.csv",
-    rowsToCsv(
+    countedCsv(
+      "record_keeping_disinfectants.csv",
       [
         "id",
         "date_prepared",
@@ -824,7 +851,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // Owner-only (0088 RLS + the action's owner gate). Contains sensitive PII.
   zip.file(
     "record_keeping_exposure_incidents.csv",
-    rowsToCsv(
+    countedCsv(
+      "record_keeping_exposure_incidents.csv",
       [
         "id",
         "incident_date",
@@ -847,7 +875,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // No `changes` value-snapshot JSON, no free-form `metadata` (see load above).
   zip.file(
     "record_keeping_audit_events.csv",
-    rowsToCsv(
+    countedCsv(
+      "record_keeping_audit_events.csv",
       [
         "id",
         "record_type",
@@ -869,7 +898,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // bodies routinely contain commas, quotation marks and line breaks.
   zip.file(
     CLINICAL_NOTES_CSV_FILENAME,
-    rowsToCsv(
+    countedCsv(
+      CLINICAL_NOTES_CSV_FILENAME,
       CLINICAL_NOTES_CSV_HEADERS,
       buildClinicalNoteExportRows(
         (clinicalNotesRes.data ?? []) as ClinicalNoteExportSource[],
@@ -919,26 +949,31 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     table: string;
     fetched: number;
     expected: number | null;
+    error?: string;
   }> = [
     {
       table: "clients",
       fetched: (clientsRes.data ?? []).length,
       expected: clientsCount.error ? null : clientsCount.count,
+      error: clientsCount.error?.message,
     },
     {
       table: "sessions",
       fetched: (sessionsRes.data ?? []).length,
       expected: sessionsCount.error ? null : sessionsCount.count,
+      error: sessionsCount.error?.message,
     },
     {
       table: "appointments",
       fetched: (appointmentsRes.data ?? []).length,
       expected: appointmentsCount.error ? null : appointmentsCount.count,
+      error: appointmentsCount.error?.message,
     },
     {
       table: "client_clinical_notes",
       fetched: (clinicalNotesRes.data ?? []).length,
       expected: notesCount.error ? null : notesCount.count,
+      error: notesCount.error?.message,
     },
   ];
 
@@ -960,15 +995,28 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // ---------------------------------------------------------------------
   // MANIFEST
   //
-  // Row counts are derived from the CSV text ALREADY IN THE ZIP, not from the
-  // in-memory arrays, so the manifest cannot drift from what was actually
-  // written — and every file is covered automatically, including any added
-  // later without touching this block.
+  // Counts come from `countedCsv`, i.e. the exact row collection handed to
+  // rowsToCsv for each file. An earlier version counted newlines in the
+  // serialized bytes, which is wrong: csvCell emits RFC-4180 quoted fields that
+  // KEEP embedded CR/LF, so one multiline clinical note is a single record
+  // spread over several physical lines and every affected file was
+  // over-reported.
+  //
+  // A file written without `countedCsv` would be missing here rather than
+  // silently wrong, so the guard below fails the export instead of shipping an
+  // incomplete manifest.
   // ---------------------------------------------------------------------
-  const csvRowCounts: Record<string, number> = {};
-  for (const [name, entry] of Object.entries(zip.files)) {
-    if (!name.endsWith(".csv") || entry.dir) continue;
-    csvRowCounts[name] = csvDataRowCount(await entry.async("string"));
+  const writtenCsvNames = Object.entries(zip.files)
+    .filter(([name, entry]) => name.endsWith(".csv") && !entry.dir)
+    .map(([name]) => name);
+  const uncounted = writtenCsvNames.filter((n) => !(n in manifestCounts));
+  if (uncounted.length > 0) {
+    return {
+      ok: false,
+      error:
+        `Export aborted: ${uncounted.join(", ")} was written without a recorded ` +
+        `row count, so the manifest would be incomplete.`,
+    };
   }
 
   const manifest = {
@@ -978,24 +1026,44 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     studio_id: studio.id,
     studio_name: studio.name,
     page_size: EXPORT_PAGE_SIZE,
-    files: csvRowCounts,
-    completeness_checks: countChecks.map((c) => ({
+    // Rows ACTUALLY EXPORTED into each file. This is a record of what was
+    // written — on its own it does not prove the file matches the database.
+    files: manifestCounts,
+    // Source-side checks, recorded SEPARATELY from the counts above and never
+    // merged into them. `status` is explicit in all three directions so a
+    // failed count query can never read as a passed one.
+    source_count_checks: countChecks.map((c) => ({
       table: c.table,
       exported_rows: c.fetched,
       studio_row_count: c.expected,
-      verified: c.expected !== null,
+      status:
+        c.expected === null
+          ? "unavailable"
+          : c.expected === c.fetched
+            ? "matched"
+            : "mismatched",
+      ...(c.expected === null
+        ? {
+            unavailable_reason:
+              c.error ??
+              "The source count query did not return a count; completeness was NOT verified against the database for this table.",
+          }
+        : {}),
     })),
-    not_count_verified: {
+    source_count_not_available: {
       tables: ["electrolysis_entries", "laser_entries"],
       reason:
         "Neither table carries studio_id; RLS reaches them through the parent session, " +
-        "so no safe studio-scoped count query exists. Completeness is protected by the " +
-        "verified sessions count they are filtered against.",
+        "so no safe studio-scoped count query exists. Their rows are filtered against the " +
+        "exported session ids, so their completeness follows the sessions check above.",
     },
-    note:
-      "A portable copy of supported Hone studio records. Tables are read independently, " +
-      "not as one point-in-time database snapshot, so this is not a transactional database " +
-      "backup and does not replace Hone or provider disaster-recovery backups.",
+    completeness_contract: [
+      "Every supported source is read with pagination to exhaustion; a failed page fails the whole export rather than producing a partial file.",
+      "`files` records the number of rows actually exported to each CSV.",
+      "`source_count_checks` records what could be compared against the database, and says so explicitly when a check was unavailable.",
+      "This export is NOT point-in-time transactionally consistent: each table is read independently, so rows written during the export may appear in some files and not others.",
+      "It is therefore not a transactional database backup and does not replace Hone's or our infrastructure provider's disaster-recovery backups.",
+    ],
   };
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
 
@@ -1007,13 +1075,14 @@ This is a portable copy of the supported Hone studio records listed below. Every
 listed source is exported in full — reads are paginated, and the export refuses
 rather than hand over a partial file.
 
-WHAT THIS IS NOT: it is not a transactional database backup. The tables are read
-independently rather than as one point-in-time snapshot, and it does not include
-uploaded images, payment records, or authentication data. It does not replace
-Hone's or our infrastructure provider's disaster-recovery backups.
+WHAT THIS IS NOT: it is not a transactional database backup and it is NOT
+point-in-time consistent. Each table is read independently, so records written
+while the export runs may appear in some files and not others. It also does not
+include uploaded images, payment records, or authentication data, and it does not
+replace Hone's or our infrastructure provider's disaster-recovery backups.
 
 Files included:
-- manifest.json: Export format/version, generation time, studio, and the exported row count for every CSV. Use it to confirm the export is complete.
+- manifest.json: Export format/version, generation time, studio, the number of rows actually exported to each CSV, and — recorded separately — whichever source-side count checks were available. It records what was exported; it is not by itself proof that the export matches the database at any single instant.
 - clients.csv: Client master list with names, contact info, allergies, skin notes, Fitzpatrick type, emergency contacts.
 - sessions.csv: One row per session: client, performer, started_at, ended_at, price_paid_cents, session_notes.
 - electrolysis_entries.csv: Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), structured observation chips, and free-text comments.

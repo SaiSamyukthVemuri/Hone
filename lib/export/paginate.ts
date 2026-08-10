@@ -88,18 +88,6 @@ export async function fetchAllRows<T>(
 }
 
 /**
- * Data-row count for a CSV file already written into the export.
- *
- * The manifest counts the bytes that are actually in the ZIP rather than the
- * in-memory arrays, so it cannot drift from what was written. Blank lines are
- * ignored (a trailing newline is not a row) and the header is excluded.
- */
-export function csvDataRowCount(text: string): number {
-  const lines = text.split("\n").filter((l) => l.length > 0);
-  return Math.max(0, lines.length - 1);
-}
-
-/**
  * Contract check for the ordering a paginated read depends on.
  *
  * Pagination over a non-unique sort is not "slightly wrong" — it can duplicate

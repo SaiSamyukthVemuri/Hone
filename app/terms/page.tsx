@@ -209,10 +209,10 @@ export default function TermsOfServicePage() {
       <P>
         On termination of your account, you may export Your Data. Client Data
         is then archived and removed from everyday use. We do not currently
-        operate an automatic timed purge, so permanent erasure is actioned on
-        written request to <strong>privacy@hone.care</strong> through our
-        deletion process, except where retention is required by law or by
-        professional record-retention obligations.
+        operate an automatic timed purge. We review permanent-deletion requests
+        sent to <strong>privacy@hone.care</strong> and respond based on what can
+        be deleted, subject to applicable legal and professional
+        record-retention requirements.
       </P>
 
       <H3 id="dpa-audit">7.8 Audit</H3>
@@ -510,9 +510,9 @@ export default function TermsOfServicePage() {
       <P>
         After termination we may archive Your Data and remove it from everyday
         use. We do not currently guarantee a fixed timetable for permanent
-        erasure or for the expiry of backup copies; permanent deletion is
-        actioned on written request through our deletion process, subject to
-        legal and professional record-retention obligations. Export Your Data
+        erasure or for the expiry of backup copies; we review permanent-deletion
+        requests and respond based on what can be deleted, subject to applicable
+        legal and professional record-retention requirements. Export Your Data
         before you terminate if you need your own copy.
       </P>
 

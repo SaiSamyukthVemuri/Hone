@@ -72,7 +72,71 @@ describe("#6 — retention promises match current capability", () => {
   });
 
   it("legal / professional retention obligations are acknowledged", () => {
-    expect(PRIVACY).toMatch(/record-retention obligation|required to\s*\n?\s*retain/i);
+    expect(PRIVACY).toMatch(/record-retention/i);
+  });
+
+  it("neither document claims a documented deletion PROCESS that does not exist", () => {
+    // There is no operator deletion runbook in docs/runbooks/ — they are all
+    // migration rollouts — so "actioned through our deletion process" was
+    // itself an overclaim, just a smaller one than the 30/90-day promise.
+    for (const [name, src] of [
+      ["privacy", PRIVACY],
+      ["terms", TERMS],
+    ] as const) {
+      expect(src, `${name} must not cite a deletion process`).not.toMatch(
+        /our deletion process/i,
+      );
+    }
+  });
+
+  it("both use the conservative review-and-respond wording instead", () => {
+    // JSX reflows prose freely, so every gap here must tolerate a line break —
+    // a guard that a re-wrap can disarm is not a guard.
+    const reviewAndRespond =
+      /review\s+permanent-deletion\s+requests[\s\S]{0,90}respond\s+based\s+on\s+what\s+can\s+be\s+deleted/i;
+    expect(PRIVACY).toMatch(reviewAndRespond);
+    expect(TERMS).toMatch(reviewAndRespond);
+  });
+
+  it("no replacement deadline was invented", () => {
+    // The point of #6 was not "pick a different number".
+    expect(PRIVACY).not.toMatch(/within \d+ days of (deletion|termination|request)/i);
+  });
+});
+
+describe("#4b — the manifest does not overclaim completeness", () => {
+  const ACTIONS = DATA_ACTIONS;
+
+  it("nothing says the manifest alone confirms the export is complete", () => {
+    for (const [name, src] of [
+      ["data page", DATA_PAGE],
+      ["ZIP README", ACTIONS],
+    ] as const) {
+      expect(src, `${name} must not claim manifest proves completeness`).not.toMatch(
+        /confirm the export is complete/i,
+      );
+    }
+  });
+
+  it("the manifest separates rows-exported from source-side checks", () => {
+    expect(ACTIONS).toMatch(/files: manifestCounts/);
+    expect(ACTIONS).toMatch(/source_count_checks/);
+    // The old key name merged the two ideas into one word.
+    expect(ACTIONS).not.toMatch(/completeness_checks:/);
+  });
+
+  it("a failed count query reads as 'unavailable', never as verified", () => {
+    expect(ACTIONS).toMatch(/"unavailable"/);
+    expect(ACTIONS).toMatch(/unavailable_reason/);
+    // A boolean `verified` flag could be read as "false = mismatch"; the
+    // three-way status cannot be misread that way.
+    expect(ACTIONS).not.toMatch(/verified: c\.expected !== null/);
+  });
+
+  it("point-in-time inconsistency is stated, not implied", () => {
+    expect(ACTIONS).toMatch(/NOT\s*\n?\s*point-in-time consistent|not point-in-time/i);
+    expect(ACTIONS).toMatch(/completeness_contract/);
+    expect(DATA_PAGE).toMatch(/not point-in-time consistent/i);
   });
 });
 

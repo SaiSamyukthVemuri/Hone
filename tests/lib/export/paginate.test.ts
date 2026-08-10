@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   fetchAllRows,
-  csvDataRowCount,
   assertDeterministicOrder,
   EXPORT_PAGE_SIZE,
   type PageResult,
@@ -163,22 +162,6 @@ describe("E5 — a failed page fails the whole read", () => {
     });
     expect(data).toBeNull();
     expect(error?.message).toMatch(/refusing to return a partial table/);
-  });
-});
-
-describe("E6 — manifest row counts match the CSV actually written", () => {
-  it("counts data rows, excluding the header and any trailing newline", () => {
-    expect(csvDataRowCount("id,name\na,1\nb,2\n")).toBe(2);
-    expect(csvDataRowCount("id,name\n")).toBe(0);
-    expect(csvDataRowCount("id,name")).toBe(0);
-    expect(csvDataRowCount("")).toBe(0);
-  });
-
-  it("a 1001-row export manifests 1001, not 1000", () => {
-    const csv = ["id,name", ...makeRows(1001).map((r) => `${r.id},${r.name}`)].join(
-      "\n",
-    );
-    expect(csvDataRowCount(csv)).toBe(1001);
   });
 });
 

@@ -353,15 +353,18 @@ export default function PrivacyPolicyPage() {
         When a practitioner closes their account, their data is retained so the
         account can be recovered and so we can meet our legal and
         record-keeping obligations. Practitioners may request deletion in
-        writing at <strong>privacy@hone.care</strong>, and we will action it
-        through our deletion process.
+        writing at <strong>privacy@hone.care</strong>. We review
+        permanent-deletion requests and respond based on what can be deleted,
+        subject to applicable legal and professional record-retention
+        requirements.
       </P>
       <P>
         When a client is deleted by their practitioner in Hone, the record is{" "}
         <strong>archived</strong> — marked as deleted and hidden from everyday
         use, but retained for audit and clinical-record purposes. Archiving is
         not the same as permanent erasure: the record remains in our systems,
-        and in backups, until it is deleted through our deletion process.
+        and in backups, unless and until it is permanently deleted following a
+        request we have reviewed and actioned.
       </P>
       <P>
         We do not currently operate an automatic timed purge that permanently
