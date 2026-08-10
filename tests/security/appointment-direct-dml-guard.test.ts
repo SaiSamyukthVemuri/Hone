@@ -93,75 +93,17 @@ const SUCCESS_COLUMNS = [
 const MANUAL = "app/(app)/calendar/actions.ts";
 const AUTO = "app/(app)/calendar/postcare-auto-send.ts";
 
-const ALLOWED: ReadonlyArray<Descriptor & { why: string }> = [
-  {
-    file: MANUAL,
-    fn: "sendPostcareEmailAction",
-    op: "update",
-    table: APPOINTMENTS,
-    columns: CLAIM_COLUMNS,
-    why:
-      "First-send claim. Guarded on postcare_email_sent_at IS NULL plus a stale-claim " +
-      "window and proved with .select('id'), so concurrent first sends cannot both win.",
-  },
-  {
-    file: MANUAL,
-    fn: "sendPostcareEmailAction",
-    op: "update",
-    table: APPOINTMENTS,
-    columns: CLAIM_COLUMNS,
-    why:
-      "Resend claim. Same three columns, but UNCONDITIONAL — scoped only by id + " +
-      "studio_id. This is audit finding P2-6 (the browser-supplied `is_resend` flag " +
-      "reaches it); PR B8 replaces both branches with a command. Frozen, not blessed.",
-  },
-  {
-    file: MANUAL,
-    fn: "sendPostcareEmailAction",
-    op: "update",
-    table: APPOINTMENTS,
-    columns: FAILURE_COLUMNS,
-    why:
-      "Provider failure. Records a FIXED generic last_error from safePostcareLastError() " +
-      "— never the raw provider payload — and clears the claim so the send stays retryable.",
-  },
-  {
-    file: MANUAL,
-    fn: "sendPostcareEmailAction",
-    op: "update",
-    table: APPOINTMENTS,
-    columns: SUCCESS_COLUMNS,
-    why:
-      "Provider success. Stamps sent_at only after the provider accepted, and clears " +
-      "the failure state + claim.",
-  },
-  {
-    file: AUTO,
-    fn: "autoSendPostcareOnComplete",
-    op: "update",
-    table: APPOINTMENTS,
-    columns: CLAIM_COLUMNS,
-    why:
-      "Auto-send claim on completion. Carries the .eq('status','completed') predicate the " +
-      "manual first-send path lacks (audit finding P3-14).",
-  },
-  {
-    file: AUTO,
-    fn: "autoSendPostcareOnComplete",
-    op: "update",
-    table: APPOINTMENTS,
-    columns: FAILURE_COLUMNS,
-    why: "Auto-send provider failure. Generic last_error, claim cleared, sent_at untouched.",
-  },
-  {
-    file: AUTO,
-    fn: "autoSendPostcareOnComplete",
-    op: "update",
-    table: APPOINTMENTS,
-    columns: SUCCESS_COLUMNS,
-    why: "Auto-send provider success. Stamps sent_at, clears failure state + claim.",
-  },
-];
+// B8 / 0177 — THE EXCEPTION IS CLOSED. This list previously held the seven
+// direct postcare writers B5/0174 deliberately allowed while the boundary was
+// being built (four in sendPostcareEmailAction, three in
+// autoSendPostcareOnComplete). 0177 replaced them with claim_postcare_send and
+// settle_postcare_send and revoked service_role's column-level UPDATE, so there
+// is no longer any reviewed direct writer at all.
+//
+// Adding an entry here is now a deliberate re-opening of a closed boundary and
+// requires the same scrutiny the original exception got.
+const ALLOWED: ReadonlyArray<Descriptor & { why: string }> = [];
+
 
 /**
  * Every column the postcare bookkeeping family owns. Pinned from the migration
@@ -588,18 +530,57 @@ describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", (
     ).toBeGreaterThan(100);
   });
 
-  it("it finds EXACTLY the seven known appointment writers", () => {
+  it("it finds ZERO direct appointment writers — and that zero is REAL", () => {
+    // The census used to assert SEVEN, and "zero would mean the analyzer is
+    // broken" was the honest warning attached to it. B8 makes zero the correct
+    // answer, which removes that safety net: a broken analyzer and a clean tree
+    // now look identical.
+    //
+    // So zero is only asserted alongside two live positive controls: the walk
+    // still finds >100 Supabase write sites overall (above), and the analyzer
+    // still resolves writes to OTHER tables. If both of those hold and
+    // `appointments` yields nothing, the tree really is clean.
     expect(
       APPT_SITES,
-      "expected exactly 7 direct `appointments` write sites.\nFound:\n" +
+      "expected ZERO direct `appointments` write sites after B8 / 0177.\nFound:\n" +
         describeSites(APPT_SITES) +
-        "\n\nZERO would mean the analyzer is broken, not that the repository is clean.",
-    ).toHaveLength(7);
+        "\n\nEvery appointment mutation must go through a governed SECURITY DEFINER " +
+        "command. If this is a deliberate re-opening of the boundary, add a reviewed " +
+        "ALLOWED entry with a justification.",
+    ).toHaveLength(0);
+
+    // POSITIVE CONTROL: the analyzer is demonstrably still able to resolve a
+    // table-qualified write. A census that resolved nothing would report a
+    // clean `appointments` tree for the wrong reason.
+    const resolvedElsewhere = ALL_SITES.filter((s) => s.tableResolved && s.table !== APPOINTMENTS);
+    expect(
+      resolvedElsewhere.length,
+      "the analyzer resolved no writes to ANY table, so its zero for " +
+        "`appointments` proves nothing.",
+    ).toBeGreaterThan(20);
   });
 
-  it("it sees both known writer files, each with its expected share", () => {
-    expect(APPT_SITES.filter((s) => s.file === MANUAL)).toHaveLength(4);
-    expect(APPT_SITES.filter((s) => s.file === AUTO)).toHaveLength(3);
+  it("T30/T31/T32 — both former writer files now contain ZERO direct writers", () => {
+    // T30 + T31: sendPostcareEmailAction held four (first-send claim, resend
+    // claim, failure settle, success settle). T32: autoSendPostcareOnComplete
+    // held three (claim, failure settle, success settle). All seven are gone.
+    //
+    // The files are still scanned — they remain in the analyzer's runtime tree
+    // — so a reintroduced writer in either one is caught here, not merely
+    // absent from a list.
+    expect(
+      APPT_SITES.filter((s) => s.file === MANUAL),
+      "sendPostcareEmailAction must write appointments only through the commands",
+    ).toHaveLength(0);
+    expect(
+      APPT_SITES.filter((s) => s.file === AUTO),
+      "autoSendPostcareOnComplete must write appointments only through the commands",
+    ).toHaveLength(0);
+    // Positive control: both files are genuinely still in the scanned tree.
+    const scanned = new Set(ALL_SITES.map((s) => s.file));
+    expect(scanned.has(MANUAL) || scanned.has(AUTO), "former writer files still scanned").toBe(
+      true,
+    );
   });
 
   it("it resolves every appointment writer's table AND payload (nothing silently skipped)", () => {
@@ -653,7 +634,10 @@ describe("T2.1 — the appointment writer census is frozen", () => {
   it("every appointment writer is an UPDATE — the app creates and deletes nothing directly", () => {
     // Creation goes through create_internal_appointment_v2 / create_public_appointment;
     // there is no appointment DELETE anywhere in the product (audit §4, workflow 12).
-    expect(APPT_SITES.map((s) => s.op).sort()).toEqual(Array(7).fill("update"));
+    // After B8 there is no direct appointment DML of ANY kind — not UPDATE,
+    // and (as always) not INSERT or DELETE. Stated as the empty set so a
+    // reintroduced writer of any operation fails here.
+    expect(APPT_SITES.map((s) => s.op).sort()).toEqual([]);
   });
 });
 
@@ -695,8 +679,11 @@ describe("T2.2 — direct writers may touch postcare bookkeeping columns and not
       "postcare_email_send_attempts",
       "postcare_email_sent_at",
     ]);
+    // The six columns still EXIST — they are the postcare bookkeeping family —
+    // but after B8 no runtime writer touches them directly. Only
+    // settle_postcare_send / claim_postcare_send write them, inside SQL.
     const used = new Set(APPT_SITES.flatMap((s) => s.columns));
-    expect([...used].sort()).toEqual([...POSTCARE_BOOKKEEPING_COLUMNS].sort());
+    expect([...used].sort(), "no direct writer may touch postcare columns").toEqual([]);
   });
 });
 
@@ -835,9 +822,12 @@ describe("T2.6 — every direct appointment writer runs as service_role", () => 
     }
   });
 
-  it("every writer's receiver resolves to createAdminClient(), in its own scope", () => {
+  it("there is no appointment write chain left whose receiver could be resolved", () => {
+    // This block used to prove all SEVEN receivers were createAdminClient().
+    // With zero writers the property inverts: there is no chain at all, so
+    // there is no receiver to be wrong about.
     const proofs = files.flatMap((f) => receiverProofs(f, TABLES));
-    expect(proofs, "receiver resolution found no appointment write chains").toHaveLength(7);
+    expect(proofs, "no direct appointment write chain may remain").toHaveLength(0);
 
     for (const p of proofs) {
       expect(p.receiver, `${p.file}:${p.line} — receiver is not a plain identifier`).not
@@ -889,7 +879,7 @@ describe("T2.7 — no authenticated-client writer for either appointment table",
   it("no runtime module writes either appointment table through the cookie client", () => {
     const filesWithApptWrites = [...new Set([...APPT_SITES, ...AUDIT_SITES].map((s) => s.file))];
     // Belt: the census already proves the file set is exactly the two known ones.
-    expect(filesWithApptWrites.sort()).toEqual([MANUAL, AUTO].sort());
+    expect(filesWithApptWrites, "T33: no runtime file writes appointments directly").toEqual([]);
 
     // FAIL CLOSED. Stating this as "no receiver is an authenticated factory"
     // alone passes VACUOUSLY when the receiver cannot be resolved at all — a
@@ -956,6 +946,6 @@ describe("appointment direct-DML census — the report", () => {
         `\n  variable-table writers in tree:   ${UNRESOLVED_TABLE_SITES.length}` +
         `\n  total Supabase write sites:       ${ALL_SITES.length}\n`,
     );
-    expect(APPT_SITES).toHaveLength(7);
+    expect(APPT_SITES).toHaveLength(0);
   });
 });
