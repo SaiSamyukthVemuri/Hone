@@ -44,17 +44,19 @@ const GENERIC_FAILURE = "Something went wrong. Please refresh and try again.";
 
 export type MarkAppointmentCompleteControlProps = {
   appointmentId: string;
-  endsAt: string;
+  // B6: EXPLICIT completion is gated on the appointment having STARTED, not
+  // ended. No-show keeps its own ends_at rule and its own control.
+  startsAt: string;
   // Rendered beside the button when the appointment has not ended yet.
-  notEndedHint?: string;
+  notStartedHint?: string;
   // Full-width, one-column layout for the charting surface at 390px.
   block?: boolean;
 };
 
 export function MarkAppointmentCompleteControl({
   appointmentId,
-  endsAt,
-  notEndedHint = "Available after the appointment ends",
+  startsAt,
+  notStartedHint = "Available once the appointment has started",
   block = false,
 }: MarkAppointmentCompleteControlProps) {
   const router = useRouter();
@@ -63,21 +65,24 @@ export function MarkAppointmentCompleteControl({
   const [hint, setHint] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
 
-  const endsAtMs = new Date(endsAt).getTime();
+  const startsAtMs = new Date(startsAt).getTime();
 
   // Tick when the end time is reached so the button enables itself without the
   // practitioner refreshing. One timeout aimed at ends_at; none if already past.
   // Called unconditionally — no early return may precede a hook.
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   useEffect(() => {
-    if (!Number.isFinite(endsAtMs)) return;
-    const remaining = endsAtMs - Date.now();
+    if (!Number.isFinite(startsAtMs)) return;
+    const remaining = startsAtMs - Date.now();
     if (remaining <= 0) return;
     const t = window.setTimeout(() => setNowTick(Date.now()), remaining + 250);
     return () => window.clearTimeout(t);
-  }, [endsAtMs]);
+  }, [startsAtMs]);
 
-  const hasEnded = Number.isFinite(endsAtMs) && endsAtMs <= nowTick;
+  // Truthful name: this is 'the visit has begun', not 'the visit has ended'.
+  // Inclusive boundary, matching mark_appointment_complete's `starts_at > now()`
+  // refusal — exactly starts_at is eligible.
+  const canComplete = Number.isFinite(startsAtMs) && startsAtMs <= nowTick;
 
   // Opens the dialog. NO request is sent here.
   function openConfirm() {
@@ -125,12 +130,12 @@ export function MarkAppointmentCompleteControl({
       <button
         type="button"
         data-testid="mark-appointment-complete"
-        disabled={pending || !hasEnded}
+        disabled={pending || !canComplete}
         onClick={openConfirm}
         title={
-          hasEnded
+          canComplete
             ? "Mark this appointment completed. You will be asked to confirm."
-            : "Appointment can be marked completed after the appointment has ended."
+            : "Appointment can be marked completed once it has started."
         }
         className={`inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900 ${
           block ? "w-full" : ""
@@ -138,9 +143,9 @@ export function MarkAppointmentCompleteControl({
       >
         Mark completed
       </button>
-      {!hasEnded && (
-        <p data-testid="mark-complete-not-ended" className="text-xs text-neutral-500">
-          {notEndedHint}
+      {!canComplete && (
+        <p data-testid="mark-complete-not-started" className="text-xs text-neutral-500">
+          {notStartedHint}
         </p>
       )}
       {hint && <p className="text-xs text-green-600 dark:text-green-400">{hint}</p>}

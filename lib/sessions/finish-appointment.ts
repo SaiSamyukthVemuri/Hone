@@ -32,9 +32,10 @@ export type FinishCompletionState =
   // No appointment is linked to this session at all.
   | { kind: "unlinked" }
   // Linked, confirmed, but the appointment has not ended yet.
-  | { kind: "before_end"; endsAt: string }
+  // B6: renamed from before_end — explicit completion waits for the START.
+  | { kind: "before_start"; startsAt: string }
   // Linked, confirmed, ended — the completion action is offered.
-  | { kind: "ready"; appointmentId: string; endsAt: string }
+  | { kind: "ready"; appointmentId: string; startsAt: string }
   | { kind: "completed" }
   | { kind: "cancelled" }
   | { kind: "no_show" };
@@ -66,6 +67,10 @@ export type FinishAppointmentInput = {
   appointment: {
     id: string;
     status: string;
+    // B6: explicit completion is keyed on startsAt. endsAt is retained because
+    // it remains the clock for no-show and for the session-start auto-complete
+    // path, neither of which moved.
+    startsAt: string | null;
     endsAt: string | null;
   } | null;
   clientEmail: string | null;
@@ -110,13 +115,15 @@ function resolveCompletion(
     default:
       break;
   }
-  const endsAtMs = appt.endsAt ? new Date(appt.endsAt).getTime() : Number.NaN;
+  // EXPLICIT completion readiness is startsAt-keyed (B6). No-show eligibility
+  // is a different question with a different clock and is not computed here.
+  const startsAtMs = appt.startsAt ? new Date(appt.startsAt).getTime() : Number.NaN;
   // Unparseable end time: treat as not-yet-ended. The server RPC is the real
   // gate; showing an enabled button we cannot justify would be worse.
-  if (!Number.isFinite(endsAtMs) || endsAtMs > input.nowMs) {
-    return { kind: "before_end", endsAt: appt.endsAt ?? "" };
+  if (!Number.isFinite(startsAtMs) || startsAtMs > input.nowMs) {
+    return { kind: "before_start", startsAt: appt.startsAt ?? "" };
   }
-  return { kind: "ready", appointmentId: appt.id, endsAt: appt.endsAt ?? "" };
+  return { kind: "ready", appointmentId: appt.id, startsAt: appt.startsAt ?? "" };
 }
 
 function resolvePostcare(input: FinishAppointmentInput): FinishPostcareState {
@@ -183,8 +190,8 @@ export function completionLabel(state: FinishCompletionState): string {
   switch (state.kind) {
     case "unlinked":
       return "No booked appointment linked";
-    case "before_end":
-      return "Available after the appointment ends";
+    case "before_start":
+      return "Available once the appointment has started";
     case "ready":
       return "Ready to mark completed";
     case "completed":

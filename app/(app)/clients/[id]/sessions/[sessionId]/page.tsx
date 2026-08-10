@@ -277,6 +277,7 @@ export default async function SessionDetailPage({
       ? {
           id: linkedAppointmentId as string,
           status: finishAppt.status ?? "",
+          startsAt: finishAppt.startsAt,
           endsAt: finishAppt.endsAt,
         }
       : null,
@@ -822,11 +823,11 @@ export default async function SessionDetailPage({
           {!isFinalized &&
             linkedAppointmentId &&
             (finishState.completion.kind === "ready" ||
-              finishState.completion.kind === "before_end") && (
+              finishState.completion.kind === "before_start") && (
               <MarkAppointmentCompleteControl
                 appointmentId={linkedAppointmentId}
-                endsAt={finishState.completion.endsAt}
-                notEndedHint="You can mark it completed once the appointment end time passes — this updates on its own."
+                startsAt={finishState.completion.startsAt}
+                notStartedHint="You can mark it completed once the appointment start time passes — this updates on its own."
                 block
               />
             )}
