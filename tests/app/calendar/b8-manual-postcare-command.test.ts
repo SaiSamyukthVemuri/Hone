@@ -21,6 +21,12 @@ const PRACTITIONER = "cccccccc-1111-2222-3333-444444444444";
 type RpcCall = { fn: string; args: Record<string, unknown> };
 
 const state: {
+  // ONE ORDERED TRANSCRIPT. The per-kind arrays below prove WHAT was called and
+  // with which arguments; they cannot prove the provider ran BETWEEN the claim
+  // and the settlement — two separate arrays each in order are consistent with
+  // provider-then-claim-then-settle. This records every orchestration step in a
+  // single sequence so the ordering itself is assertable.
+  events: string[];
   rpc: RpcCall[];
   directDml: string[];
   provider: Array<Record<string, unknown>>;
@@ -30,6 +36,7 @@ const state: {
   row: Record<string, unknown> | null;
   allowDirectDml: boolean;
 } = {
+  events: [],
   rpc: [],
   directDml: [],
   provider: [],
@@ -90,6 +97,7 @@ vi.mock("@/lib/email/send-appointment", async (orig) => {
   return {
     ...actual,
     sendPostcareToClient: async (args: Record<string, unknown>) => {
+      state.events.push("provider");
       state.provider.push(args);
       return state.providerResult;
     },
@@ -106,6 +114,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       q.or = () => q;
       q.maybeSingle = async () => ({ data: state.row, error: null });
       const forbid = (op: string) => {
+        state.events.push(`direct:${op}`);
         state.directDml.push(`${table}.${op}`);
         if (!state.allowDirectDml) {
           throw new Error(`B8: direct ${op} on ${table} is forbidden after 0177`);
@@ -126,6 +135,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       return q;
     },
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      state.events.push(fn === "claim_postcare_send" ? "claim" : "settle");
       state.rpc.push({ fn, args });
       if (fn === "claim_postcare_send") {
         return state.claim.data !== undefined || state.claim.error !== undefined
@@ -152,6 +162,7 @@ const claims = () => state.rpc.filter((c) => c.fn === "claim_postcare_send");
 const settles = () => state.rpc.filter((c) => c.fn === "settle_postcare_send");
 
 beforeEach(() => {
+  state.events = [];
   state.rpc = [];
   state.directDml = [];
   state.provider = [];
@@ -169,6 +180,9 @@ describe("B8 manual — the governed happy path", () => {
     const res = await sendPostcareEmailAction(fd());
 
     expect(res.ok, JSON.stringify(res)).toBe(true);
+    // THE ORDERING ASSERTION. Exactly these three steps, in exactly this order,
+    // with nothing else interleaved.
+    expect(state.events).toEqual(["claim", "provider", "settle"]);
     expect(state.rpc.map((c) => c.fn)).toEqual([
       "claim_postcare_send",
       "settle_postcare_send",
@@ -212,6 +226,7 @@ describe("B8 manual — refusals never reach the provider", () => {
     const res = await sendPostcareEmailAction(fd());
 
     expect(res.ok).toBe(false);
+    expect(state.events, "a refusal ends after the claim").toEqual(["claim"]);
     expect(state.provider, "provider must not run on a refusal").toHaveLength(0);
     expect(settles(), "nothing to settle").toHaveLength(0);
     expect(state.directDml).toEqual([]);
@@ -267,7 +282,9 @@ describe("B8 manual — provider truth is not persisted truth", () => {
       // Must not invite an immediate retry — that would duplicate a real email.
       expect(res.error).not.toMatch(/try again now|resend now/i);
     }
-    // Exactly one send, one settlement attempt, no repair.
+    // Exactly one send, one settlement attempt, and NOTHING after it — no
+    // retry, no second settlement under a new token, no direct repair.
+    expect(state.events).toEqual(["claim", "provider", "settle"]);
     expect(state.provider).toHaveLength(1);
     expect(settles()).toHaveLength(1);
     expect(state.directDml).toEqual([]);
@@ -295,6 +312,7 @@ describe("B8 manual — eligibility gates run BEFORE any claim", () => {
     });
     const res = await sendPostcareEmailAction(fd());
     expect(res.ok).toBe(false);
+    expect(state.events, "no orchestration step may run").toEqual([]);
     expect(claims()).toHaveLength(0);
     expect(state.provider).toHaveLength(0);
   });
@@ -318,6 +336,7 @@ describe("B8 manual — eligibility gates run BEFORE any claim", () => {
     });
     const res = await sendPostcareEmailAction(fd());
     expect(res.ok).toBe(false);
+    expect(state.events).toEqual([]);
     expect(claims()).toHaveLength(0);
     expect(state.provider).toHaveLength(0);
   });
@@ -328,6 +347,7 @@ describe("B8 manual — eligibility gates run BEFORE any claim", () => {
     state.row = row;
     const res = await sendPostcareEmailAction(fd());
     expect(res.ok).toBe(false);
+    expect(state.events).toEqual([]);
     expect(claims()).toHaveLength(0);
     expect(state.provider).toHaveLength(0);
   });
@@ -357,6 +377,9 @@ describe("B8 deployment skew — STATE A: new app, old (0176) database", () => {
       state.directDml,
       "the action must not fall back to a direct appointment write",
     ).toEqual([]);
+    // The transcript shows the whole orchestration: a fallback would appear as
+    // `direct:update` here even though the fake would have let it succeed.
+    expect(state.events).toEqual(["claim"]);
     // And it leaks nothing about the deployment state.
     if (res.ok === false) {
       expect(res.error).not.toMatch(/PGRST|schema cache|migration|deploy/i);
