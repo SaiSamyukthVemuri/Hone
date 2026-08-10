@@ -123,6 +123,73 @@ test.describe("public cancellation — a policy edited mid-flight fails closed",
     expect(ackRow.snapshot).toBe(POLICY_B);
   });
 
+  test("NONE -> policy added after render is refused, then re-presented with a checkbox", async ({
+    page,
+  }) => {
+    // Distinct from the A -> B case, and not redundant with it. Here the page
+    // renders NO policy at all, so it posts the EMPTY-snapshot hash and shows no
+    // acknowledgement checkbox. The action used to answer "acknowledgement
+    // required" from its own policy read, which would invite the client to tick
+    // a box for text they had never seen. The DATABASE must answer
+    // policy_changed instead, and this proves the action does not intercept it.
+    const seed = await seedE2eStudio();
+    await setPolicy(seed.studioId, null);
+    await bookAppointment(page, seed);
+
+    const clientId = (await getClientIdByEmail(seed.studioId, seed.clientEmail))!;
+    const appointments = await getAppointmentsForClient(seed.studioId, clientId);
+    const appointmentId = appointments[0].id;
+    const token = await getCancellationToken(seed.studioId, appointmentId);
+
+    // 1-3. no policy card, no acknowledgement checkbox.
+    await page.goto(`/cancel/${token}`);
+    await expect(page.getByRole("button", { name: /cancel appointment/i })).toBeVisible();
+    await expect(page.getByText(POLICY_B)).toHaveCount(0);
+    const ack = page.getByRole("checkbox", { name: /policy|policies|acknowledge/i });
+    await expect(ack).toHaveCount(0);
+
+    // 4-6. the studio adds a policy AFTER this page rendered; the client submits
+    // from the page they already have open.
+    await setPolicy(seed.studioId, POLICY_B);
+    await page.getByRole("button", { name: /cancel appointment/i }).click();
+
+    // 7. refused via the policy_changed path, with zero side effects.
+    await expect(
+      page.getByText(/policies changed while you were on this page/i),
+    ).toBeVisible({ timeout: 15_000 });
+    const mid = await apptState(appointmentId);
+    expect(mid.status).toBe("confirmed");
+    const midCounts = await counts(appointmentId);
+    expect(midCounts.audits).toBe(0);
+    expect(midCounts.acks).toBe(0);
+
+    // 8-11. the surface refreshes: the new policy appears, and so does the
+    // checkbox — unchecked, because consent to text never shown cannot exist.
+    await expect(page.getByText(POLICY_B)).toBeVisible({ timeout: 15_000 });
+    await expect(ack).toBeVisible();
+    await expect(ack).not.toBeChecked();
+
+    // 12-14. explicit second consent, then the evidence names the policy that
+    // was actually displayed.
+    await ack.check();
+    await page.getByRole("button", { name: /cancel appointment/i }).click();
+    await expect(page.getByText(/cancelled/i).first()).toBeVisible({ timeout: 15_000 });
+
+    expect((await apptState(appointmentId)).status).toBe("cancelled");
+    const after = await counts(appointmentId);
+    expect(after.audits).toBe(1);
+    expect(after.acks).toBe(1);
+    const ackRow = (
+      await sql<{ snapshot: string }>(
+        `select cancellation_policy_text_snapshot as snapshot
+           from public.appointment_policy_acknowledgements
+          where appointment_id = $1`,
+        [appointmentId],
+      )
+    )[0];
+    expect(ackRow.snapshot).toBe(POLICY_B);
+  });
+
   test("an unchanged policy still cancels normally, with evidence", async ({ page }) => {
     const seed = await seedE2eStudio();
     await setPolicy(seed.studioId, POLICY_A);
