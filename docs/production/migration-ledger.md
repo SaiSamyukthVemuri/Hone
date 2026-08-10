@@ -907,3 +907,38 @@ neither deploy order can show a wrong message.
   115, appointment_audit 0 — identical before and after. No Twin mutation command was executed.
 - At apply time production application source was `6cffaaf9` and exact-head CI `31382337578` was
   11/11 success. Public health after apply: `hone.care` `/`, `/login`, `/portal/login` all 200.
+
+## 0176 — public cancellation + policy acknowledgement atomicity (applied 2026-08-10T15:21:18Z–15:21:29Z)
+
+`sha256 4ed5ad84168d6c6f9a8372709b737990af57a5dde08a4e56a7a983308951af20`, applied from B7 head
+`92675cd9` (PR #553, **UNMERGED at apply time**). 11 seconds, exit 0, dry run listed only 0176.
+
+**Deliberately MIGRATION-FIRST — the opposite of B6's order, and the reason is the design.** 0176
+*narrows* what the legacy five-argument command may do, so applying it first makes the old
+application **fail closed** (policy-bearing cancellations refused, zero mutation) rather than bypass
+evidence. App-first would have been unsafe: the new route no longer writes the acknowledgement, so a
+new app against a 0175 database would have cancelled with **no evidence** — which is exactly why the
+earlier `PGRST202 → legacy` fallback was removed in final review.
+
+- **Applied into a measured quiet window.** Preflight had found real live traffic on this path (most
+  recent cancellation 14:36Z; one in the prior hour), so the gate was re-checked 42 seconds before
+  apply: **zero** cancellations in the preceding 5 minutes, zero lock waiters, zero
+  idle-in-transaction, oldest transaction 0s.
+- **Zero application-row mutation, measured two ways:** appointments **310 → 310** (156/90/58/6
+  unchanged), audit **263 → 263**, acknowledgements **14 → 14**, reservations **256 → 256**, outbox
+  **1 → 1**, payments **24 → 24** — and **zero** appointments rows carry `updated_at` after the apply
+  start, which B6's own `BEFORE UPDATE` trigger would have stamped. 0176 is function DDL only.
+- **The hardened five-argument shim is live and verified.** Its body is no longer the legacy
+  `a7070010…`; it is `076ca485…`, locks the studio, answers `ack_required`, and contains **no**
+  `UPDATE appointments`, **no** audit insert and **no** acknowledgement insert. The seven-argument
+  command (`c44c3af5…`) locks studios before appointments, re-derives the policy hash, compares it
+  **unconditionally**, and inserts the acknowledgement inside its own transaction. Both are
+  `service_role` EXECUTE only.
+- **Dependencies byte-identical across the apply:** reservation sync `5eb87185…`, Google outbound
+  `f8d175f3…`, and `snapshot_appointment_buffer` `05c86bba…` / 1053 / `current_setting` present.
+  0176 changed no trigger and has zero executable references to the buffer function.
+- **Fail-closed window: 15:21:29Z → 15:24:59Z — 3 minutes 30 seconds**, with **zero** client-token
+  cancellation events inside it, so no client met the temporary refusal. #553 merged as `7850e6aa`
+  (parents `0196e099` + `92675cd9`); Production deployment `5834833066` at that exact SHA succeeded;
+  `/`, `/login`, `/portal/login` all 200.
+- **Synthetic Twin preserved exactly:** appointments 141, reservations 115, acknowledgements 0.
