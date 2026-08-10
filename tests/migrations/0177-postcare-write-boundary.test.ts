@@ -428,3 +428,83 @@ describe("0177 — scope discipline", () => {
     expect(outside).toMatch(/revoke update \(/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PRODUCTION TRUTH — 0177 was APPLIED on 2026-08-10.
+//
+// Per CLAUDE.md §2 the CURRENT maximum migration's own test is the one that
+// carries the repo/hosted tripwire, and hosted state is DECLARED (never derived
+// from filenames) in docs/production/migration-state.json. This block is where
+// that lives for 0177; it is deliberately the only place that asserts the
+// rest-state relationship, so there is no second source of truth.
+//
+// WHEN 0178 IS AUTHORED, THE FIRST TEST BELOW GOES RED. That is the hand-off,
+// not a defect: repo max moves to 0178 while hosted stays 0177 until it is
+// applied. The amendment is the same one 0174 received — convert the equality
+// to a FLOOR (`>= 177`) and let 0178's own test carry the tripwire. Do NOT
+// instead weaken it here and leave two owners.
+// ---------------------------------------------------------------------------
+describe("0177 — production truth: APPLIED 2026-08-10", () => {
+  const rec = JSON.parse(
+    readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
+  );
+  const LEDGER = readFileSync(
+    join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
+    "utf8",
+  );
+
+  it("the declared hosted max is 0177 — repository and production agree, nothing pending", () => {
+    expect(rec.hosted_migration_max).toBe("0177");
+    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
+  });
+
+  it("the record carries the sha256 of the exact 0177 bytes that were applied", async () => {
+    // THE FREEZE. If this hash ever changes, an applied migration has been
+    // edited and a recorded production apply fact has been falsified. A future
+    // semantic change is 0178+, never a rewrite of these bytes.
+    const { createHash } = await import("node:crypto");
+    const bytes = readFileSync(join(__dirname, "..", "..", FILE));
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    expect(sha).toBe("a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744");
+    expect(rec.hosted_note).toContain(sha);
+  });
+
+  it("the record states the privilege closure that B8 exists to produce", () => {
+    // The one outcome a reader must be able to trust without opening a psql
+    // session: after 0177 there is no appointment write grant left to revoke.
+    expect(rec.hosted_note).toMatch(/SELECT ONLY/);
+    expect(rec.hosted_note).toMatch(/COLUMN-LEVEL UPDATE GRANTS ARE ZERO/);
+    expect(rec.hosted_note).toMatch(/7 -> 0/);
+  });
+
+  it("the ledger's CURRENT STATE block describes 0177, not a superseded boundary", () => {
+    // The stale header this reconciliation fixed said "post-0173 apply" long
+    // after 0174-0176 had landed, so the top of the canonical ledger contradicted
+    // its own later entries.
+    const current = LEDGER.slice(
+      LEDGER.indexOf("## Current state"),
+      LEDGER.indexOf("## Previous state"),
+    );
+    expect(current).toContain("post-0177 apply");
+    expect(current).toContain("0177_postcare_write_boundary.sql");
+    expect(current).toContain("a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744");
+    expect(current).toContain("2358082737ef47e30d68883dedbbfea930590d8f");
+    // hosted == repo, and the next number is free.
+    expect(current).toMatch(/hosted == repo/);
+    expect(current).toMatch(/0178/);
+    // ...and it no longer claims an older migration is the current boundary.
+    expect(current).not.toMatch(/post-0173 apply/);
+  });
+
+  it("the ledger carries a 0177 rollout entry with the app-first evidence", () => {
+    const entry = LEDGER.slice(LEDGER.indexOf("## 0177 — APPOINTMENT BOUNDARY B8"));
+    expect(entry).not.toBe("");
+    expect(entry).toMatch(/APP-FIRST/);
+    expect(entry).toMatch(/2358082737ef47e30d68883dedbbfea930590d8f/);
+    expect(entry).toMatch(/appointments \*\*312 → 312\*\*/);
+    expect(entry).toMatch(/postcare_in_flight last/i);
+    expect(entry).toMatch(/be4b3ac1/); // snapshot buffer unchanged
+    expect(entry).toMatch(/B8 CLOSED/);
+  });
+});
