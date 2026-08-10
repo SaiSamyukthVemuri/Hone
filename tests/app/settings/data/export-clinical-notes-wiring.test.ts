@@ -76,8 +76,12 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
   });
 
   it("the CSV is added to the ZIP through the shared rowsToCsv chokepoint", () => {
+    // The chokepoint is unchanged; it is now reached through `countedCsv`,
+    // the wrapper that records the manifest row count from the exact row
+    // collection before delegating to rowsToCsv. Escaping the wrapper would
+    // leave this file out of the manifest, which the export now refuses.
     expect(CODE).toMatch(
-      /zip\.file\(\s*CLINICAL_NOTES_CSV_FILENAME,\s*rowsToCsv\(\s*CLINICAL_NOTES_CSV_HEADERS,\s*buildClinicalNoteExportRows\(/,
+      /zip\.file\(\s*CLINICAL_NOTES_CSV_FILENAME,\s*countedCsv\(\s*CLINICAL_NOTES_CSV_FILENAME,\s*CLINICAL_NOTES_CSV_HEADERS,\s*buildClinicalNoteExportRows\(/,
     );
   });
 

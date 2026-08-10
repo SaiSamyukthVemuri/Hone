@@ -207,9 +207,12 @@ export default function TermsOfServicePage() {
 
       <H3 id="dpa-return-or-deletion">7.7 Return or deletion</H3>
       <P>
-        On termination of your account, we will delete Client Data within 30
-        days, except where retention is required by law. You may request
-        immediate deletion in writing.
+        On termination of your account, you may export Your Data. Client Data
+        is then archived and removed from everyday use. We do not currently
+        operate an automatic timed purge. We review permanent-deletion requests
+        sent to <strong>privacy@hone.care</strong> and respond based on what can
+        be deleted, subject to applicable legal and professional
+        record-retention requirements.
       </P>
 
       <H3 id="dpa-audit">7.8 Audit</H3>
@@ -255,21 +258,28 @@ export default function TermsOfServicePage() {
 
       <H2 id="payment-and-billing">8. Payment and billing</H2>
       <P>
-        Pricing for paid plans is published at hone.care/pricing. Pricing may
-        change with 30 days&rsquo; notice to existing subscribers.
+        Hone is currently operated as a supervised pilot.{" "}
+        <strong>
+          There is no automated Hone subscription billing system at this time.
+        </strong>{" "}
+        Any fees for your use of Hone are agreed directly with you as a
+        participating studio, and invoiced or collected by arrangement. We do
+        not currently charge studios on a recurring subscription, and no
+        Hone-to-studio subscription, plan, or entitlement is created,
+        enforced, or cancelled automatically by the product.
       </P>
       <P>
-        Subscriptions are billed in advance. Payment processing is handled by
-        Stripe; we do not store full payment card details.
+        Automated subscription billing may be introduced later. If it is, we
+        will publish the applicable pricing and give existing studios at least
+        30 days&rsquo; notice before it begins to apply to them, and these
+        Terms will be updated at the same time.
       </P>
       <P>
-        Refunds are at our discretion. We generally provide refunds for
-        service outages or billing errors but not for subscription periods
-        after you have used the service.
-      </P>
-      <P>
-        If your payment fails, we may suspend your account after notice and an
-        opportunity to update payment details.
+        <strong>This section is about what your studio pays Hone.</strong> It
+        is separate from the payments your studio takes from its own clients
+        through Stripe, which are governed by your own Stripe agreement and by
+        the policies you set for your clients. Nothing in this section changes
+        how client payments, refunds, or fees work.
       </P>
 
       <H2 id="termination">9. Termination</H2>
@@ -280,16 +290,23 @@ export default function TermsOfServicePage() {
       <P>We may suspend or terminate your account if:</P>
       <UL>
         <li>You violate these Terms</li>
-        <li>You fail to pay</li>
-        <li>Required by law</li>
         <li>
-          We discontinue the service (with at least 90 days notice for paid
-          accounts)
+          You fail to pay any fees separately agreed with us (see section{" "}
+          <a href="#payment-and-billing" className="underline">
+            8
+          </a>
+          )
         </li>
+        <li>Required by law</li>
+        <li>We discontinue the service (with at least 90 days notice)</li>
       </UL>
       <P>
-        On termination, you may export Your Data within 30 days. After that,
-        Your Data may be deleted from active systems.
+        On termination, you may export Your Data. After that, Your Data may be
+        archived and removed from everyday use, subject to section{" "}
+        <a href="#data-export" className="underline">
+          16
+        </a>
+        .
       </P>
 
       <H2 id="disclaimers">10. Disclaimers</H2>
@@ -491,9 +508,12 @@ export default function TermsOfServicePage() {
         restructuring.
       </P>
       <P>
-        After 30 days from termination, we may delete Your Data from active
-        systems. Backups containing Your Data are purged within 90 days of
-        termination.
+        After termination we may archive Your Data and remove it from everyday
+        use. We do not currently guarantee a fixed timetable for permanent
+        erasure or for the expiry of backup copies; we review permanent-deletion
+        requests and respond based on what can be deleted, subject to applicable
+        legal and professional record-retention requirements. Export Your Data
+        before you terminate if you need your own copy.
       </P>
 
       <H2 id="changes-to-these-terms">17. Changes to these Terms</H2>
