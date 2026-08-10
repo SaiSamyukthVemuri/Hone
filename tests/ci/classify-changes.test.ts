@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
-import { classify } from "../../scripts/classify-changes.mjs";
+import { classify, highestTier } from "../../scripts/classify-changes.mjs";
 
 // Path-classification is proved here rather than by pushing fake commits to
 // trigger every CI lane. These cases ARE the acceptance criteria.
 
-type Result = Record<string, boolean | number>;
+type Result = Record<string, boolean | number | string | string[]>;
 const c = (...files: string[]) => classify(files) as Result;
+const tier = (...files: string[]) => c(...files).baselineRiskTier;
+const reasons = (...files: string[]) => c(...files).riskReasons as string[];
 
 describe("classifier — docs-only PRs", () => {
   it("a docs + apply-record change is docs_only and triggers nothing expensive", () => {
@@ -141,5 +143,105 @@ describe("classifier — output contract", () => {
       expect(typeof r[k], `${k} must be boolean`).toBe("boolean");
     }
     expect(typeof r.changed_file_count).toBe("number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Baseline risk tier — ENGINEERING_STANDARDS.md.
+//
+// These cases pin DETERMINISTIC PATH EVIDENCE only. They deliberately prove
+// nothing about semantics: a T1 verdict here is a starting point for review,
+// never a licence to skip it.
+// ---------------------------------------------------------------------------
+
+describe("classifier — baseline risk tier", () => {
+  it("a docs-only diff is T0", () => {
+    expect(tier("docs/production/migration-ledger.md", "README.md")).toBe("T0");
+  });
+
+  it("ordinary presentational UI is T1", () => {
+    expect(tier("components/client-form.tsx")).toBe("T1");
+  });
+
+  it("a business workflow change is T2", () => {
+    expect(tier("lib/booking/slots.ts")).toBe("T2");
+  });
+
+  it("a migration is T3", () => {
+    expect(tier("supabase/migrations/0177_example.sql")).toBe("T3");
+  });
+
+  for (const [label, file] of [
+    ["payment authority", "lib/billing/session-payment-charge.ts"],
+    ["security boundary", "lib/security/rls-helpers.ts"],
+    ["authentication", "app/(auth)/login/page.tsx"],
+    ["service-role client", "lib/supabase/admin.ts"],
+    ["public token route", "app/book/[slug]/page.tsx"],
+  ] as const) {
+    it(`a ${label} change is T3`, () => {
+      expect(tier(file)).toBe("T3");
+    });
+  }
+
+  it("resolves the highest tier regardless of the order rules matched in", () => {
+    // Path fixtures alone CANNOT prove this: every T3 rule currently precedes
+    // every T2 rule, so "first match wins" would satisfy each case below and
+    // only break when a T3 rule is later appended under the T2 block. Proving
+    // the max rule needs the ordering the fixtures cannot produce.
+    const h = highestTier as (t: string[]) => string;
+    expect(h(["T1", "T3"])).toBe("T3");
+    expect(h(["T3", "T1"])).toBe("T3");
+    expect(h(["T2", "T3"])).toBe("T3");
+    expect(h(["T1", "T2"])).toBe("T2");
+    expect(h(["T1", "T1"])).toBe("T1");
+  });
+
+  it("T1 + T3 resolves to T3 — the highest deterministic tier wins", () => {
+    expect(tier("components/client-form.tsx", "supabase/migrations/0177_example.sql")).toBe("T3");
+  });
+
+  it("T2 + T3 resolves to T3 — the highest deterministic tier wins", () => {
+    expect(tier("lib/booking/slots.ts", "lib/security/rls-helpers.ts")).toBe("T3");
+  });
+
+  it("emits deterministic reasons naming only the winning tier's failure classes", () => {
+    const r = reasons("supabase/migrations/0177_example.sql", "lib/billing/session-payment-charge.ts");
+    expect(r).toEqual([
+      "database migration or DB test surface changed",
+      "payment authority path changed",
+    ]);
+    // Same file set, different order in, identical reasons out.
+    expect(reasons("lib/billing/session-payment-charge.ts", "supabase/migrations/0177_example.sql")).toEqual(r);
+    // A lower-tier signal never dilutes the explanation of a T3 verdict.
+    expect(reasons("lib/booking/slots.ts", "supabase/migrations/0177_example.sql")).toEqual([
+      "database migration or DB test surface changed",
+    ]);
+  });
+
+  it("reasons never contain a character that would corrupt $GITHUB_OUTPUT", () => {
+    // The CLI renders riskReasons as `key=a; b` on ONE line, so a newline in a
+    // reason would inject a bogus output key. Commas and semicolons would make
+    // the joined list ambiguous.
+    for (const rule of ["docs/x.md", "components/a.tsx", "lib/booking/a.ts", "supabase/migrations/1_a.sql", "app/api/cron/x/route.ts", "package.json"]) {
+      for (const reason of reasons(rule)) {
+        expect(reason, `"${reason}" must stay a single unambiguous field`).not.toMatch(/[\n,;]/);
+      }
+    }
+  });
+
+  it("a full-matrix trigger is NOT silently promoted to T3", () => {
+    // Regression guard: classify() sets every lane boolean true when the full
+    // matrix is forced. Deriving the tier from those expanded lanes instead of
+    // the raw path hits would report a dependency bump as a payment + migration
+    // + security change, and T3 ceremony would bleed into trivial work.
+    const r = c("package.json");
+    expect(r.full_matrix_required).toBe(true);
+    expect(r.payment).toBe(true);
+    expect(r.baselineRiskTier).toBe("T2");
+    expect(r.riskReasons).toEqual(["shared build or runtime configuration changed"]);
+  });
+
+  it("an undetectable diff fails safe to T3", () => {
+    expect(tier()).toBe("T3");
   });
 });
