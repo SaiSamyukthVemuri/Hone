@@ -516,6 +516,55 @@ describe("T25-T28 — a superseded sender returning late", () => {
 });
 
 // ---------------------------------------------------------------------------
+describe("ROUND TRIP — the claim token must survive the real serialization path", () => {
+  it("a token serialized through JSON still settles its own claim", async () => {
+    // THE DEFECT THIS EXISTS TO CATCH. In production the token does not travel
+    // as a pg Date: PostgREST serializes it to JSON, the route holds a string,
+    // and it is sent back as a string. A microsecond-precision timestamptz is
+    // silently rounded somewhere on that path, so settlement compares a value
+    // that can never equal the stored one — every send would report
+    // stale_claim and NOTHING would ever be recorded as sent.
+    //
+    // A static `date_trunc` grep cannot prove this. Only a real round trip can,
+    // which is why the mutant that restores raw now() must turn THIS test red.
+    const f = await seedStudio("b8-roundtrip");
+    const a = await seedAppt(f);
+
+    const c = await claim(f, a);
+    expect(c.result).toBe("claimed");
+
+    // Force the value through the exact shape the application receives: JSON
+    // out, string in. JSON.stringify renders a Date as an ISO-8601 string with
+    // millisecond precision — the same lossy step PostgREST performs.
+    const overTheWire = JSON.parse(JSON.stringify({ t: c.claimed_at })).t as string;
+    expect(typeof overTheWire).toBe("string");
+
+    const settled = await settle(f, a, overTheWire, true);
+
+    expect(settled.result, "the round-tripped token must settle its own claim").toBe(
+      "settled",
+    );
+    expect((await row(a)).postcare_email_sent_at).not.toBeNull();
+  });
+
+  it("and the stored value is exactly what the round trip carried", async () => {
+    // Guards the other direction: the token is not merely accepted, it is the
+    // same instant. A settle that matched loosely would defeat the stale-claim
+    // protection the whole design rests on.
+    const f = await seedStudio("b8-roundtrip2");
+    const a = await seedAppt(f);
+    const c = await claim(f, a);
+    const overTheWire = JSON.parse(JSON.stringify({ t: c.claimed_at })).t as string;
+
+    // NOT String(...): that rendering is second-precision and would compare two
+    // millisecond values as equal after truncating both — the assertion would
+    // pass without proving anything about precision.
+    const stored = (await row(a)).postcare_email_claimed_at as unknown as Date;
+    expect(new Date(stored).getTime()).toBe(new Date(overTheWire).getTime());
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe("T29 — every new timestamp is the database's", () => {
   it("T29 — neither command accepts a caller-supplied state timestamp", async () => {
     const claimArgs = (
