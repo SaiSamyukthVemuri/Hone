@@ -117,18 +117,54 @@ describe("0174 — migration state", () => {
   });
 });
 
-describe("0174 — production truth: authored, NOT applied", () => {
+describe("0174 — production truth: APPLIED 2026-08-10", () => {
   const rec = JSON.parse(
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("hosted stays 0173 while repo moves to 0174 — exactly one pending migration", () => {
-    // The whole point of B5's stop condition. `hosted_migration_max` is a
-    // statement about PRODUCTION; B5 performed zero production access and
-    // applied nothing, so it must still read 0173 and 0174 must show as
-    // pending. A green CI run is not an apply.
-    expect(rec.hosted_migration_max).toBe("0173");
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(false);
+  it("hosted is 0174 and nothing is pending — repo and production agree", () => {
+    // This block previously asserted the opposite (hosted 0173, one pending)
+    // and was the stop condition for B5's authoring phase. 0174 was applied to
+    // production on 2026-08-10T00:36:44Z-00:36:54Z, so the canonical record now
+    // states that. `hosted_migration_max` is a statement about PRODUCTION, not
+    // about this repository: it moved because an apply happened, not because a
+    // file landed.
+    expect(rec.hosted_migration_max).toBe("0174");
+    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+  });
+
+  it("the record carries the sha256 of the exact 0174 bytes that were applied", async () => {
+    // THE FREEZE. If this hash ever changes, an applied migration has been
+    // edited and a recorded production apply fact has been falsified. A future
+    // semantic change is 0175+, never a rewrite of these bytes.
+    const { createHash } = await import("node:crypto");
+    const bytes = readFileSync(join(__dirname, "..", "..", FILE));
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    expect(sha).toBe("479dc58dd76d6030bc33bd83fb30b0a7f930ca58330067bb98a3f6c16a949bbc");
+    expect(rec.hosted_note).toContain(sha);
+  });
+
+  it("earlier applies stay recorded — 0173, 0172 and 0171 checksums are not dropped", () => {
+    // A new apply record supersedes its predecessor; it does not erase the
+    // frozen history behind it.
+    expect(rec.hosted_note).toContain(
+      "04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb",
+    );
+    expect(rec.hosted_note).toContain(
+      "b89b0d47a70ea2d4a7574bcc4223081cfe1d527394b3ef8b6d4c82bb090f42f1",
+    );
+    expect(rec.hosted_note).toContain(
+      "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6",
+    );
+  });
+
+  it("records the apply facts that measurement, not assumption, established", () => {
+    // Cardinality was measured either side of the apply, and the PostgREST
+    // probe is recorded as NOT RUN rather than quietly claimed.
+    expect(rec.hosted_note).toContain("appointments 308 -> 308");
+    expect(rec.hosted_note).toContain("appointment_audit 260 -> 260");
+    expect(rec.hosted_note).toContain("convalidated=false");
+    expect(rec.hosted_note).toContain("PostgREST live-credential probe NOT RUN");
   });
 });
 
