@@ -264,7 +264,10 @@ describe("U5 — ordinary failures keep their existing copy", () => {
     });
     expect(html).toContain(POSTCARE_ERROR_PREFIX);
     expect(html).toContain("This client has no email on file.");
-    expect(html).toContain(POSTCARE_ERROR_SUFFIX.replace(/'/g, "&#x27;"));
+    expect(html).toContain(POSTCARE_ERROR_SUFFIX);
+    // The apostrophe stays typographic (U+2019), as it was when this was JSX
+    // text carrying `&rsquo;` — a straight quote would be escaped to &#x27;.
+    expect(html).toContain("client’s email");
   });
 
   it("idle renders nothing at all", () => {

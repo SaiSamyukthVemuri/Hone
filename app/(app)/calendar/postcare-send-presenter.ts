@@ -61,8 +61,9 @@ export const POSTCARE_UNRECORDED_NOTICE =
   "Refresh this page to see the current state before taking any further action.";
 
 export const POSTCARE_ERROR_PREFIX = "Could not send.";
+// U+2019, matching the `&rsquo;` this copy carried as JSX text.
 export const POSTCARE_ERROR_SUFFIX =
-  "Try again, or check the client's email on their profile.";
+  "Try again, or check the client’s email on their profile.";
 
 /**
  * Map a server action result to the outcome the surface may render.

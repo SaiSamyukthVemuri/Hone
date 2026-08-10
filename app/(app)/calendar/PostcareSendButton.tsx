@@ -208,7 +208,12 @@ export function PostcareSendButton({
             <pre className="flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-800 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
               {previewText}
             </pre>
-            {requiresConsultationConfirmation && outcome.kind === "idle" && (
+            {/* Shown exactly while a send is still offerable. Tied to the same
+                predicate as the Confirm button so the attestation cannot
+                disappear out from under a control that still requires it —
+                after an ordinary failure the practitioner must be able to see
+                and re-tick it. */}
+            {requiresConsultationConfirmation && postcareConfirmAvailable(outcome) && (
               <label className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
                 <input
                   type="checkbox"
