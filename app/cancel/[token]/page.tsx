@@ -4,7 +4,10 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
-import { hasAnyPolicy } from "@/lib/booking/policy-acknowledgement";
+import {
+  buildPolicySnapshot,
+  hasAnyPolicy,
+} from "@/lib/booking/policy-acknowledgement";
 import { fetchAppointmentForCancelAction } from "./actions";
 import { CancelForm } from "./CancelForm";
 
@@ -93,8 +96,29 @@ export default async function CancelAppointmentPage({
                   the same predicate against the resolved studio
                   row; the prop here is the page hint that keeps the
                   UI honest. */}
+              {/* B7 / 0176. Hash EXACTLY the policy this render is about
+                  to display, and post it back as a server-generated
+                  hidden field. The command re-derives the current hash
+                  under a studio row lock and refuses on mismatch, so a
+                  policy edited between render and submit can never be
+                  acknowledged as though it had been read.
+
+                  The hash is computed UNCONDITIONALLY — including when
+                  the studio has no policy at all, where it is the hash
+                  of the empty snapshot. That is what lets the command
+                  catch a policy ADDED or REMOVED mid-flight; reschedule
+                  only needed the has-policy case, cancellation needs
+                  both directions. The browser never supplies policy
+                  text and never computes the authoritative hash. */}
               <CancelForm
                 token={token}
+                presentedPolicyHash={
+                  buildPolicySnapshot({
+                    cancellationPolicyText:
+                      result.summary.cancellationPolicyText,
+                    noShowPolicyText: result.summary.noShowPolicyText,
+                  }).policySnapshotHash
+                }
                 requiresAcknowledgement={hasAnyPolicy({
                   cancellationPolicyText:
                     result.summary.cancellationPolicyText,

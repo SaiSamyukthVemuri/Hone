@@ -8,10 +8,6 @@ import { sendCancellationEmail } from "@/lib/email/send-appointment";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import {
-  buildPolicySnapshot,
-  hasAnyPolicy,
-} from "@/lib/booking/policy-acknowledgement";
-import {
   CANCELLATION_NOTE_MAX_LENGTH,
   getCancellationReasonLabel,
   isCancellationReasonValue,
@@ -40,6 +36,9 @@ const INVALID_REASON_ERROR =
 // existence of a real appointment row cannot be probed via
 // shape-of-error comparisons or via the initial-page-load surface.
 // Internal errors are logged server-side.
+const POLICY_CHANGED_ERROR =
+  "The studio's appointment policies changed while you were on this page. Please refresh, review them again, and confirm.";
+
 const PUBLIC_CANCEL_GENERIC_ERROR =
   "This cancellation link is no longer valid. Please contact the studio if you need assistance.";
 
@@ -96,7 +95,11 @@ async function resolveAppointmentIdFromToken(
 // "unknown token".
 export type PublicCancelResult =
   | { ok: true }
-  | { ok: false; error: string };
+  // B7 / 0176. `code` is a STABLE machine value for the one outcome the UI must
+  // treat specially: the studio's policy changed while the client was reading
+  // it. Everything else keeps the public collapse rule, so `code` is absent and
+  // no bearer-token state is distinguishable from the outside.
+  | { ok: false; code?: "policy_changed"; error: string };
 
 export async function publicCancelAppointmentAction(
   formData: FormData,
@@ -117,6 +120,10 @@ export async function publicCancelAppointmentAction(
   // without the field. The server-side decision is the source of
   // truth; the page hint just keeps the UI honest.
   const acknowledged = strOrEmpty(formData.get("acknowledged_policy"));
+  // B7 / 0176. Server-generated on the page, posted back unchanged. Never
+  // trusted as TEXT — only compared, inside the command, against a hash the
+  // database re-derives from the policy it has locked.
+  const presentedPolicyHash = strOrEmpty(formData.get("presented_policy_hash"));
   if (!token) {
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
   }
@@ -172,51 +179,23 @@ export async function publicCancelAppointmentAction(
 
   const admin = createAdminClient();
 
-  // PR #133. Cheap pre-RPC lookup of just the studio's policy text so
-  // we can decide whether to require acknowledgement. Studios with no
-  // policy text on file accept the cancel without the field and skip
-  // the acknowledgement row insert below. This lookup goes against
-  // the appointments + joined studios row by resolved appointment id;
-  // it does not consume any token, does not mutate, and is bounded.
-  // If the lookup fails we collapse to the generic public error
-  // because something is structurally off with the resolved row.
-  const { data: policyCheck, error: policyErr } = await admin
-    .from("appointments")
-    .select(
-      "studio:studios(cancellation_policy_text, no_show_policy_text)",
-    )
-    .eq("id", resolved.appointment_id)
-    .maybeSingle();
-  if (policyErr) {
-    logInternal("public_cancel_policy_lookup_failed", {
-      code: policyErr.code,
-      message: policyErr.message,
-    });
-    return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
-  }
-  type PolicyJoin = {
-    studio:
-      | {
-          cancellation_policy_text: string | null;
-          no_show_policy_text: string | null;
-        }
-      | Array<{
-          cancellation_policy_text: string | null;
-          no_show_policy_text: string | null;
-        }>
-      | null;
-  };
-  const policyRow = (policyCheck ?? null) as PolicyJoin | null;
-  const policyStudio = Array.isArray(policyRow?.studio)
-    ? (policyRow?.studio[0] ?? null)
-    : (policyRow?.studio ?? null);
-  const requiresAck = hasAnyPolicy({
-    cancellationPolicyText: policyStudio?.cancellation_policy_text,
-    noShowPolicyText: policyStudio?.no_show_policy_text,
-  });
-  if (requiresAck && acknowledged !== "true") {
-    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
-  }
+  // B7 / 0176 — THE PRE-RPC POLICY LOOKUP AND ack GATE USED TO LIVE HERE.
+  //
+  // They re-read the studio's CURRENT policy and refused early when it required
+  // an acknowledgement the form had not sent. That made the ACTION a second
+  // policy authority, and it hid a case the command must decide: a page that
+  // rendered NO policy, a studio that ADDS one, and a submit carrying the
+  // empty-snapshot hash. The action would answer "acknowledgement required" and
+  // the client would tick a box for text they had still never been shown; the
+  // command answers `policy_changed`, which forces the new policy to be
+  // re-presented and consented to afresh.
+  //
+  // The lookup had no other remaining purpose once the detached acknowledgement
+  // writer was deleted, so it is gone rather than merely bypassed. The PAGE
+  // still uses hasAnyPolicy() for presentation — whether to draw the checkbox —
+  // but presentation is not authorisation. The database decides between
+  // cancelled / ack_required / policy_changed, under the studio row lock, from
+  // the policy it has locked.
 
   // P0-3: route the actual status mutation through the SECURITY DEFINER
   // RPC public_cancel_appointment_with_token. The RPC is terminal-safe
@@ -249,6 +228,12 @@ export async function publicCancelAppointmentAction(
   // them into appointment_audit.details inside the same transaction
   // as the status flip. The 2-arg variant remains in the DB during
   // the deploy window and is no longer called from this action.
+  // B7 / 0176. The atomic command: token check, policy presentation proof,
+  // status flip, audit row and the policy acknowledgement all commit together.
+  // The acknowledgement is NO LONGER written by this route — see the deleted
+  // post-commit block below `apptStudio` for what used to happen and why it was
+  // wrong (its failure was logged and swallowed, so a cancellation could exist
+  // with no evidence).
   const { data: rpcRows, error: rpcErr } = await admin.rpc(
     "public_cancel_appointment_with_token",
     {
@@ -257,8 +242,35 @@ export async function publicCancelAppointmentAction(
       p_reason_label: reasonLabel,
       p_note: noteValue,
       p_follow_up_allowed: followUpAllowed,
+      p_acknowledged_policy: acknowledged === "true",
+      p_presented_policy_hash: presentedPolicyHash,
     },
   );
+
+  // DEPLOYMENT-SKEW — FAIL CLOSED, NEVER FALL BACK.
+  //
+  // B7 is MIGRATION-FIRST: 0176 is applied, the hardened five-argument shim is
+  // verified live, and only then does this application deploy. If that order is
+  // ever reversed, the seven-argument command does not exist yet and PostgREST
+  // answers PGRST202 (measured: it does NOT silently resolve to the five-arg
+  // overload with the extra arguments ignored).
+  //
+  // An earlier revision of this file "handled" that by calling the OLD 5-arg
+  // command. That was the B7 defect wearing a fallback's clothes: this route no
+  // longer writes the acknowledgement, so an old-DB cancellation would have
+  // committed the status flip and the audit row with NO acknowledgement and NO
+  // presentation-hash comparison — exactly the evidence hole B7 exists to
+  // close, reintroduced for the duration of a deploy window.
+  //
+  // So there is no fallback. PGRST202 produces ZERO mutation and the generic
+  // public copy, which leaks neither that the token resolved nor that a
+  // deployment is in progress. The cost is a bounded AVAILABILITY window for
+  // cancellations if the order is reversed; there is no INTEGRITY window.
+  if (rpcErr?.code === "PGRST202") {
+    logInternal("public_cancel_command_unavailable", { code: rpcErr.code });
+    return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
+  }
+
   if (rpcErr) {
     logInternal("public_cancel_rpc_error", { code: rpcErr.code, message: rpcErr.message });
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
@@ -267,6 +279,15 @@ export async function publicCancelAppointmentAction(
   if (!outcome) {
     logInternal("public_cancel_rpc_empty", {});
     return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
+  }
+  // The ONE outcome that must not collapse: the client needs to be told to
+  // re-read the policy, and the UI must reset the checkbox and re-render. It is
+  // not a token-state signal, so it leaks nothing about token validity.
+  if (outcome.result === "policy_changed") {
+    return { ok: false, code: "policy_changed", error: POLICY_CHANGED_ERROR };
+  }
+  if (outcome.result === "ack_required") {
+    return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
   }
   if (outcome.result !== "cancelled") {
     // Public-facing collapse rule (Blocker 2): 'invalid_token',
@@ -357,32 +378,19 @@ export async function publicCancelAppointmentAction(
     // policy text on file. A studio with no policy never produced
     // an acknowledgement on the UI side either; we mirror that
     // here so the table only carries meaningful rows.
-    if (apptStudio && requiresAck) {
-      const snapshot = buildPolicySnapshot({
-        cancellationPolicyText: apptStudio.cancellation_policy_text,
-        noShowPolicyText: apptStudio.no_show_policy_text,
-      });
-      const { error: ackErr } = await admin
-        .from("appointment_policy_acknowledgements")
-        .insert({
-          studio_id: apptRow.studio_id,
-          appointment_id: resolved.appointment_id,
-          client_id: apptRow.client_id,
-          action: "cancel",
-          cancellation_policy_text_snapshot:
-            snapshot.cancellationPolicyTextSnapshot,
-          no_show_policy_text_snapshot:
-            snapshot.noShowPolicyTextSnapshot,
-          policy_snapshot_hash: snapshot.policySnapshotHash,
-        });
-      if (ackErr) {
-        logInternal("public_cancel_policy_ack_insert_failed", {
-          code: ackErr.code,
-          message: ackErr.message,
-          appointmentId: resolved.appointment_id,
-        });
-      }
-    }
+    // B7 / 0176 — THE ACKNOWLEDGEMENT WRITE USED TO LIVE HERE.
+    //
+    // It ran AFTER the RPC had already committed the cancellation, and its
+    // error was logged and swallowed, so a cancelled appointment could exist
+    // with no acknowledgement row — precisely the evidence a late-cancellation
+    // fee dispute turns on. It also re-read the CURRENT policy, so a studio
+    // edit between render and submit produced signed evidence for text the
+    // client never saw.
+    //
+    // Both are now impossible: the acknowledgement is inserted inside
+    // public_cancel_appointment_with_token, in the same transaction as the
+    // status flip and the audit row, from the policy the command locked and
+    // proved equal to what was displayed. Nothing is written here.
 
     const { data: owner } = await admin
       .from("practitioners")
