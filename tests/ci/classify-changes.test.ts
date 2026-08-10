@@ -177,6 +177,11 @@ describe("classifier — baseline risk tier", () => {
     ["authentication", "app/(auth)/login/page.tsx"],
     ["service-role client", "lib/supabase/admin.ts"],
     ["public token route", "app/book/[slug]/page.tsx"],
+    // CONTRIBUTING.md lists app/calendar-feed/[token] among the public token
+    // routes. It serves studio calendar data to an unauthenticated bearer, so
+    // it must not sit in the workflow tier alongside ordinary calendar code.
+    ["calendar feed token route", "app/calendar-feed/[token]/route.ts"],
+    ["calendar feed token helper", "lib/calendar-feed/token.ts"],
   ] as const) {
     it(`a ${label} change is T3`, () => {
       expect(tier(file)).toBe("T3");

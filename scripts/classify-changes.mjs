@@ -81,7 +81,10 @@ const TIER_RULES = [
     // is attacker-supplied here, which is why these fail conservatively.
     tier: "T3",
     reason: "public or token-authenticated route changed",
-    patterns: [/^app\/(book|cancel|reschedule|manage|portal|intake)\//, /^lib\/(portal|intake)\//],
+    patterns: [
+      /^app\/(book|cancel|reschedule|manage|portal|intake|calendar-feed)\//,
+      /^lib\/(portal|intake|calendar-feed)\//,
+    ],
   },
   {
     tier: "T3",
@@ -92,9 +95,8 @@ const TIER_RULES = [
     tier: "T2",
     reason: "business workflow path changed",
     patterns: [
-      /^lib\/(booking|calendar|calendar-feed|sessions|treatment-plans|treatment-time|clinical-notes|consent|clients|onboarding|import|conversion)\//,
+      /^lib\/(booking|calendar|sessions|treatment-plans|treatment-time|clinical-notes|consent|clients|onboarding|import|conversion)\//,
       /^app\/\(app\)\/calendar\//,
-      /^app\/calendar-feed\//,
     ],
   },
   {
