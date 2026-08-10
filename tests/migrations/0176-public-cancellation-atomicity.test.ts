@@ -35,14 +35,17 @@ const SHIM5 =
   )?.[0] ?? "";
 
 describe("0176 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0176")).toBe(true);
-    expect(versionsAbove("0176")).toEqual([]);
+  it("is no longer the repository maximum — B8 spent 0177 above it", () => {
+    // Per CLAUDE.md only the CURRENT max may assert isRepoMax; that role passed
+    // to 0177 when B8 landed.
+    expect(isRepoMax("0176")).toBe(false);
     expect(countVersion("0176")).toBe(1);
   });
 
-  it("leaves 0177 reserved for B8", () => {
-    expect(countVersion("0177")).toBe(0);
+  it("consumes exactly one number and pins no successor's", () => {
+    // 0177 is B8's to defend; asserting it here made this file a second, stale
+    // owner that every future boundary would have to edit.
+    expect(countVersion("0176")).toBe(1);
   });
 });
 

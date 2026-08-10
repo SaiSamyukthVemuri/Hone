@@ -35,76 +35,114 @@ const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 // ---------------------------------------------------------------------------
 // Action: claim / success / failure
 // ---------------------------------------------------------------------------
-describe("sendPostcareEmailAction: claim via claimed_at, not sent_at", () => {
-  it("first send claims postcare_email_claimed_at (NOT sent_at) before the provider call", () => {
-    // The claim UPDATE sets claimed_at + last_attempt_at + attempts, guarded by
-    // sent_at IS NULL, and does NOT set sent_at in the claim.
-    expect(ACTION_CODE).toMatch(/postcare_email_claimed_at: nowIso/);
-    expect(ACTION_CODE).toMatch(/postcare_email_last_attempt_at: nowIso/);
-    expect(ACTION_CODE).toMatch(/\.is\("postcare_email_sent_at", null\)/);
-    expect(ACTION_CODE).toMatch(/\.select\("id"\)/);
-    // The claim precedes the provider send.
-    const claimIdx = ACTION_CODE.indexOf("postcare_email_claimed_at: nowIso");
-    const sendIdx = ACTION_CODE.indexOf("sendPostcareToClient(");
-    expect(claimIdx).toBeGreaterThan(-1);
-    expect(sendIdx).toBeGreaterThan(claimIdx);
+// ---------------------------------------------------------------------------
+// B8 / 0177 — the action's postcare contract, restated for the ACTUAL
+// architecture.
+//
+// These previously asserted three direct `.update()` payloads on `appointments`
+// (claim columns, success columns, failure columns). Those statements are gone:
+// the columns are written inside claim_postcare_send / settle_postcare_send.
+// Asserting them here would have pinned an architecture the code no longer has,
+// so the claims are restated against the boundary that actually exists.
+//
+// SCOPE: this is a SOURCE-CONTRACT suite — it reads the action's text. The
+// behavioural coverage lives in the DB matrix (42/42) and the auto RPC suite.
+// ---------------------------------------------------------------------------
+
+describe("sendPostcareEmailAction: claims through the command, never directly", () => {
+  it("writes NO appointment column itself — the six live only in SQL now", () => {
+    for (const col of [
+      "postcare_email_claimed_at",
+      "postcare_email_last_attempt_at",
+      "postcare_email_send_attempts",
+      "postcare_email_sent_at",
+      "postcare_email_failed_at",
+      "postcare_email_last_error",
+    ]) {
+      // A read (`.select(...)`) may still name a column; an ASSIGNMENT may not.
+      expect(ACTION_CODE, `${col} must not be assigned in TypeScript`).not.toMatch(
+        new RegExp(`${col}\\s*:`),
+      );
+    }
+    expect(ACTION_CODE).not.toMatch(/\.update\(/);
   });
 
-  it("has a stale-claim guard (reclaimable ~5 min)", () => {
-    expect(ACTIONS).toMatch(/POSTCARE_CLAIM_STALE_MS = 5 \* 60_000/);
-    expect(ACTION_CODE).toMatch(/postcare_email_claimed_at\.is\.null,postcare_email_claimed_at\.lt\.\$\{staleCutoffIso\}/);
+  it("claims via claim_postcare_send, exactly once, before the provider", () => {
+    expect(count(ACTION_CODE, /claim_postcare_send/g)).toBe(1);
+    const claim = ACTION_CODE.indexOf("claim_postcare_send");
+    const provider = ACTION_CODE.indexOf("sendPostcareToClient");
+    expect(claim).toBeGreaterThan(-1);
+    expect(provider).toBeGreaterThan(-1);
+    expect(claim, "the claim must precede the provider call").toBeLessThan(provider);
   });
 
-  it("increments send_attempts on every attempt (first send + resend)", () => {
-    expect(count(ACTION_CODE, /postcare_email_send_attempts: previousAttempts \+ 1/g)).toBe(2);
-    expect(count(ACTION_CODE, /postcare_email_last_attempt_at: nowIso/g)).toBe(2);
+  it("generates no clock value for any postcare state", () => {
+    // The stale window, the attempt counter and every state timestamp are the
+    // database's. A JS clock here would reintroduce exactly the drift B8 removed.
+    expect(ACTION_CODE).not.toMatch(/POSTCARE_CLAIM_STALE_MS/);
+    // A `new Date().toISOString()` DOES remain, on log `timestamp:` fields.
+    // That is observability metadata, not appointment state, so the assertion
+    // targets the thing that matters: no generated clock value is ever passed
+    // to the commands or assigned to a postcare column.
+    const afterClaim = ACTION_CODE.slice(ACTION_CODE.indexOf("claim_postcare_send"));
+    const fabricatedState = afterClaim.match(/new Date\(\)\.toISOString\(\)/g) ?? [];
+    const logTimestamps = afterClaim.match(/timestamp: new Date\(\)\.toISOString\(\)/g) ?? [];
+    expect(
+      fabricatedState.length,
+      "every remaining generated timestamp must be a log field, not postcare state",
+    ).toBe(logTimestamps.length);
+  });
+
+  it("forwards the DB-issued token unchanged into settlement", () => {
+    // Re-deriving it would round microseconds away and settlement would miss
+    // its own claim, so nothing would ever be recorded as sent.
+    expect(ACTION_CODE).toMatch(/const claimToken = claim\.claimed_at;/);
+    expect(count(ACTION_CODE, /p_claimed_at: claimToken/g)).toBe(2);
+    expect(ACTION_CODE).not.toMatch(/p_claimed_at: new Date/);
+    expect(ACTION_CODE).not.toMatch(/p_claimed_at: .*toISOString/);
   });
 });
 
-describe("sendPostcareEmailAction: sent_at only AFTER provider success", () => {
-  it("sets sent_at only in the success branch, after the provider result is ok", () => {
-    const sendIdx = ACTION_CODE.indexOf("sendPostcareToClient(");
-    const sentIdx = ACTION_CODE.indexOf("postcare_email_sent_at: nowIso");
-    // The ONLY sent_at write happens after the provider call.
-    expect(sentIdx).toBeGreaterThan(sendIdx);
-    expect(count(ACTION_CODE, /postcare_email_sent_at: nowIso/g)).toBe(1);
-    // Success write clears failure state + claim.
-    expect(ACTION_CODE).toMatch(
-      /postcare_email_sent_at: nowIso,\s*postcare_email_failed_at: null,\s*postcare_email_last_error: null,\s*postcare_email_claimed_at: null/,
+describe("sendPostcareEmailAction: settlement is the only writer", () => {
+  it("settles success and failure through the command, with the retryable flag", () => {
+    expect(count(ACTION_CODE, /settle_postcare_send/g)).toBe(2);
+    expect(ACTION_CODE).toMatch(/p_success: true/);
+    expect(ACTION_CODE).toMatch(/p_success: false/);
+    expect(ACTION_CODE).toMatch(/p_retryable: result\.retryable/);
+  });
+
+  it("sends no provider text to the database", () => {
+    // The safe operator-facing copy is derived in SQL from `retryable` alone.
+    expect(ACTION_CODE).not.toMatch(/p_error|p_message|p_last_error/);
+    expect(ACTION_CODE).not.toMatch(/safePostcareLastError/);
+  });
+
+  it("provider success whose settlement fails is NOT reported as sent", () => {
+    // Provider truth and persisted truth are different facts.
+    expect(ACTION_CODE).toMatch(/provider_sent_status_unrecorded/);
+    const code = ACTION_CODE.indexOf("provider_sent_status_unrecorded");
+    const okTrue = ACTION_CODE.lastIndexOf("return { ok: true };");
+    expect(code).toBeGreaterThan(-1);
+    expect(okTrue).toBeGreaterThan(-1);
+    expect(code, "the unrecorded-status branch must guard the success return").toBeLessThan(
+      okTrue,
     );
   });
-});
 
-describe("sendPostcareEmailAction: provider failure is honest", () => {
-  it("failure sets failed_at + safe last_error + clears claim, and does NOT set sent_at", () => {
-    // The failure branch is between `if (!result.ok)` and the success write
-    // (`successWriteErr`); slice on code, not comments (codeOnly strips those).
-    const failStart = ACTION_CODE.indexOf("if (!result.ok)");
-    const successStart = ACTION_CODE.indexOf("successWriteErr");
-    expect(failStart).toBeGreaterThan(-1);
-    expect(successStart).toBeGreaterThan(failStart);
-    const fb = ACTION_CODE.slice(failStart, successStart);
-    expect(fb).toMatch(/postcare_email_failed_at: nowIso/);
-    expect(fb).toMatch(/postcare_email_last_error: safePostcareLastError\(result\.retryable\)/);
-    expect(fb).toMatch(/postcare_email_claimed_at: null/);
-    // The failure branch never stamps sent_at (preserves a prior real send on
-    // resend; leaves first-send "not sent").
-    expect(fb).not.toMatch(/postcare_email_sent_at: nowIso/);
+  it("refusals are mapped to safe copy and never reach the provider", () => {
+    expect(ACTION_CODE).toMatch(/postcareClaimRefusalCopy/);
+    expect(ACTION_CODE).toMatch(/claim\.result !== "claimed"/);
+    // The refusal return sits before the provider call.
+    const refusal = ACTION_CODE.indexOf("postcareClaimRefusalCopy(claim.result)");
+    const provider = ACTION_CODE.indexOf("sendPostcareToClient");
+    expect(refusal).toBeLessThan(provider);
   });
 
-  it("last_error is SAFE/GENERIC — never raw provider payload or client PII", () => {
-    expect(ACTIONS).toMatch(/function safePostcareLastError/);
-    expect(ACTIONS).toMatch(/Temporary email provider error\. Try again\./);
-    expect(ACTIONS).toMatch(/The email provider rejected the send\. Try again\./);
-    // Never stores result.error (raw), client email/name, or a stringified payload.
-    expect(ACTION_CODE).not.toMatch(/postcare_email_last_error:\s*result\.error/);
-    expect(ACTION_CODE).not.toMatch(/postcare_email_last_error:[^,]*(client\.|clientEmail|clientName|JSON\.stringify)/);
+  it("the completed-only refusal has truthful copy", () => {
+    expect(ACTIONS).toMatch(/case "not_completed":/);
+    expect(ACTIONS).toMatch(/once the appointment is completed/i);
   });
 });
-
-// ---------------------------------------------------------------------------
-// UI states
-// ---------------------------------------------------------------------------
 describe("postcare UI states (PostcareSendButton)", () => {
   it("sent → 'Postcare sent'; not-sent → 'Not sent yet'; sending → 'Sending…'", () => {
     expect(BUTTON).toMatch(/Postcare sent/);

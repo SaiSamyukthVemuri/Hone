@@ -68,7 +68,7 @@ async function maybeMarkAppointmentCompletedOnSessionStart(args: {
       const { autoSendPostcareOnComplete } = await import(
         "@/app/(app)/calendar/postcare-auto-send"
       );
-      await autoSendPostcareOnComplete(args.appointmentId, args.studioId);
+      await autoSendPostcareOnComplete(args.appointmentId, args.studioId, args.practitionerId);
     }
   } catch (err) {
     console.error(

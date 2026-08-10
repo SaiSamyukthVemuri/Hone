@@ -15,16 +15,25 @@ const SETTINGS_FORM = read("app/(app)/settings/studio/PostcareSettingsForm.tsx")
 const STUDIO_ACTION = read("app/(app)/settings/studio/actions.ts");
 
 describe("auto-send helper — safe, idempotent, studio-scoped", () => {
-  it("claim requires status=completed + not-already-sent, and is studio-scoped", () => {
-    expect(HELPER).toMatch(/\.eq\("status", "completed"\)/); // never cancelled/no_show
-    expect(HELPER).toMatch(/\.is\("postcare_email_sent_at", null\)/); // no duplicate
-    expect(HELPER).toMatch(/\.eq\("studio_id", studioId\)/); // studio isolation
-    expect(HELPER).toMatch(/\.select\("id"\)/); // proves exactly one row claimed
+  it("B8 / 0177: the claim's rules moved INTO the database", () => {
+    // These previously asserted the helper's own `.eq("status","completed")`,
+    // `.is("postcare_email_sent_at", null)` and `.eq("studio_id", …)` filters.
+    // claim_postcare_send now owns the completed-only rule, the already-sent
+    // rule, the studio scope and the actor check, so asserting them here would
+    // pin an architecture the helper no longer has.
+    expect(HELPER).toMatch(/claim_postcare_send/);
+    expect(HELPER).toMatch(/p_studio_id: studioId/);
+    expect(HELPER).toMatch(/p_actor_practitioner_id: actorPractitionerId/);
+    expect(HELPER).not.toMatch(/\.eq\("status", "completed"\)/);
   });
-  it("records success (sent_at) and failure (failed_at) on the shared columns", () => {
-    expect(HELPER).toMatch(/postcare_email_sent_at: nowIso/);
-    expect(HELPER).toMatch(/postcare_email_failed_at: nowIso/);
-    expect(HELPER).toMatch(/postcare_email_last_error: safeAutoLastError/);
+  it("B8 / 0177: success and failure are SETTLED, never written here", () => {
+    expect(HELPER).toMatch(/settle_postcare_send/);
+    expect(HELPER).toMatch(/p_success: true/);
+    expect(HELPER).toMatch(/p_success: false/);
+    // The safe operator copy is derived in SQL from p_retryable alone.
+    expect(HELPER).toMatch(/p_retryable: result\.retryable/);
+    expect(HELPER).not.toMatch(/postcare_email_sent_at: nowIso/);
+    expect(HELPER).not.toMatch(/safeAutoLastError/);
   });
   it("is fail-soft (try/catch → never throws) and reuses the existing safe email", () => {
     expect(HELPER).toMatch(/} catch \(err\) \{/);
@@ -38,12 +47,15 @@ describe("auto-send helper — safe, idempotent, studio-scoped", () => {
 describe("completion hooks call auto-send after the RPC succeeds (fail-soft)", () => {
   it("markAppointmentCompleteAction auto-sends after mark_appointment_complete", () => {
     const idx = CAL_ACTIONS.indexOf('rpc("mark_appointment_complete"');
-    const hookIdx = CAL_ACTIONS.indexOf("autoSendPostcareOnComplete(appointmentId, studio.id)");
+    // B8 threads the server-resolved practitioner as a third argument.
+    const hookIdx = CAL_ACTIONS.indexOf(
+      "autoSendPostcareOnComplete(appointmentId, studio.id, practitioner.id)",
+    );
     expect(idx).toBeGreaterThan(-1);
     expect(hookIdx).toBeGreaterThan(idx); // called after the RPC
   });
   it("session-start auto-complete also triggers auto-send (only when the RPC did not error)", () => {
-    expect(SESSION_ACTIONS).toMatch(/} else \{[\s\S]*autoSendPostcareOnComplete\(args\.appointmentId, args\.studioId\)/);
+    expect(SESSION_ACTIONS).toMatch(/} else \{[\s\S]*autoSendPostcareOnComplete\(args\.appointmentId, args\.studioId, args\.practitionerId\)/);
   });
 });
 

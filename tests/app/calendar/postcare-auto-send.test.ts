@@ -4,6 +4,9 @@ import {
   autoSendPostcareOnComplete,
 } from "@/app/(app)/calendar/postcare-auto-send";
 
+// B8 / 0177: the server-resolved practitioner the database authenticates.
+const ACTOR = "11111111-2222-3333-4444-555555555555";
+
 // No real email is ever sent: the pure gate is data-only, and the orchestration
 // tests inject a fake admin client + a fake sender.
 
@@ -40,309 +43,247 @@ describe("shouldAutoSendPostcare — eligibility gate", () => {
   });
 });
 
-// Minimal chainable + thenable fake Supabase admin client. Load chain ends at
-// maybeSingle(); the claim update chain ends at select("id"); record-write
-// chains end at eq() and are awaited directly.
+// ===========================================================================
+// B8 / 0177 — ORCHESTRATION against the REAL architecture.
 //
-// PR B1 REPAIR. The previous fake was vacuous in two ways that mattered:
-//
-//   b.from = () => b;   // discarded the TABLE NAME
-//   b.eq   = () => b;   // discarded every FILTER, including the tenant scope
-//
-// so it could not distinguish a write to `appointments` from a write to any
-// other table, and could not notice `.eq("studio_id", studioId)` disappearing.
-// Those are the two properties that make these three service-role writes safe:
-// they are the only direct `appointments` DML left in the application (frozen
-// by tests/security/appointment-direct-dml-guard.test.ts), and the tenant
-// predicate is the sole thing keeping a service-role client — which bypasses
-// RLS entirely — inside one studio.
-//
-// The fake now records one Chain per `.from(...)` call, with its table, its
-// operation, its payload and every predicate in order.
+// The pre-B8 suite modelled three direct `.update()` chains on `appointments`.
+// Those no longer exist: the helper now calls claim_postcare_send, then the
+// provider, then settle_postcare_send. Emulating the old chains would have
+// tested an architecture the code no longer has — so the fake records an RPC
+// TRANSCRIPT and the assertions are about sequencing and arguments.
+// ===========================================================================
 
-type Chain = {
-  table: string;
-  op: "select" | "update" | null;
-  payload: Record<string, unknown> | null;
-  /** `.eq(column, value)` in call order. */
-  eq: Array<[string, unknown]>;
-  /** `.is(column, value)` in call order. */
-  is: Array<[string, unknown]>;
-  /** `.or(filterString)` in call order. */
-  or: string[];
-};
+type RpcCall = { fn: string; args: Record<string, unknown> };
 
-function fakeAdmin(cfg: {
-  appt: unknown;
-  claimRows: unknown[];
-  updates: Record<string, unknown>[];
-  chains?: Chain[];
+const APPT = "aaaaaaaa-0000-0000-0000-000000000001";
+const STUDIO = "bbbbbbbb-0000-0000-0000-000000000002";
+/** What the database returns as the claim token: millisecond precision. */
+const CLAIM_TOKEN = "2026-08-10T15:04:05.123+00:00";
+
+function eligibleRow() {
+  return {
+    id: APPT,
+    status: "completed",
+    starts_at: "2026-08-10T12:00:00.000Z",
+    postcare_email_sent_at: null,
+    postcare_email_send_attempts: 0,
+    client: { name: "Client", email: "c@example.com" },
+    service: { name: "Electrolysis", modality: "electrolysis" },
+    studio: {
+      id: STUDIO,
+      name: "Studio",
+      owner_email: "o@example.com",
+      timezone: "America/Toronto",
+      postcare_delivery_mode: "auto_on_complete",
+      postcare_aftercare_text: "Ice the area.",
+      postcare_warning_signs_text: null,
+      postcare_product_recommendations_text: null,
+      postcare_review_url: null,
+      postcare_review_prompt_text: null,
+      postcare_contact_email: null,
+    },
+    practitioner: { display_name: "Prac" },
+  };
+}
+
+/**
+ * A fake admin whose ONLY mutation surface is `rpc`. If production code ever
+ * reintroduces a direct write, `.update()` is not implemented and the test
+ * fails loudly rather than silently passing.
+ */
+function fakeAdmin(opts: {
+  row?: Record<string, unknown> | null;
+  claim?: { data?: unknown; error?: unknown };
+  settle?: { data?: unknown; error?: unknown };
+  calls: RpcCall[];
 }) {
-  let pendingClaim = false;
-  const chains = cfg.chains ?? [];
-  let cur: Chain | null = null;
-  const b: Record<string, unknown> = {};
-
-  b.from = (table: string) => {
-    cur = { table, op: null, payload: null, eq: [], is: [], or: [] };
-    chains.push(cur);
-    return b;
-  };
-  b.select = () => {
-    // `.select("id")` after `.update(...)` is the claim proof, not a read — do
-    // not let it relabel the chain's operation.
-    if (cur && cur.op === null) cur.op = "select";
-    if (pendingClaim) {
-      pendingClaim = false;
-      return Promise.resolve({ data: cfg.claimRows, error: null });
-    }
-    return b;
-  };
-  b.update = (payload: Record<string, unknown>) => {
-    cfg.updates.push(payload);
-    if (cur) {
-      cur.op = "update";
-      cur.payload = payload;
-    }
-    // The claim update is the only one that sets send_attempts.
-    pendingClaim = payload.postcare_email_send_attempts !== undefined;
-    return b;
-  };
-  b.eq = (column: string, value: unknown) => {
-    cur?.eq.push([column, value]);
-    return b;
-  };
-  b.is = (column: string, value: unknown) => {
-    cur?.is.push([column, value]);
-    return b;
-  };
-  b.or = (filter: string) => {
-    cur?.or.push(filter);
-    return b;
-  };
-  b.maybeSingle = () => Promise.resolve({ data: cfg.appt, error: null });
-  b.then = (resolve: (v: unknown) => void) => resolve({ data: null, error: null });
-  return b as unknown as { from: (t: string) => unknown };
-}
-
-/** The only columns these writers may touch. Mirrors the static guard. */
-const POSTCARE_COLUMNS = new Set([
-  "postcare_email_claimed_at",
-  "postcare_email_failed_at",
-  "postcare_email_last_attempt_at",
-  "postcare_email_last_error",
-  "postcare_email_send_attempts",
-  "postcare_email_sent_at",
-]);
-
-const APPOINTMENT_ID = "a1";
-const STUDIO_ID = "s1";
-
-/** Every predicate assertion these three writers must satisfy, in one place. */
-function expectScopedToAppointment(chain: Chain) {
-  expect(chain.table, "every postcare chain must target `appointments`").toBe(
-    "appointments",
-  );
-  expect(
-    chain.eq,
-    `chain (${chain.op}) lost its appointment-id predicate`,
-  ).toContainEqual(["id", APPOINTMENT_ID]);
-  expect(
-    chain.eq,
-    `chain (${chain.op}) lost its .eq("studio_id", …) tenant predicate. This client ` +
-      "bypasses RLS; the predicate IS the tenant boundary.",
-  ).toContainEqual(["studio_id", STUDIO_ID]);
-}
-
-const ELIGIBLE_APPT = {
-  status: "completed",
-  starts_at: "2026-06-03T18:30:00Z",
-  postcare_email_sent_at: null,
-  postcare_email_send_attempts: 0,
-  client: { name: "Client", email: "c@example.com" },
-  service: { name: "Electrolysis", modality: "electrolysis" },
-  studio: {
-    id: "s1",
-    name: "Studio",
-    owner_email: "o@example.com",
-    timezone: "America/Toronto",
-    postcare_delivery_mode: "auto_on_complete",
-    postcare_aftercare_text: "Ice the area.",
-    postcare_warning_signs_text: null,
-    postcare_product_recommendations_text: null,
-    postcare_review_url: null,
-    postcare_review_prompt_text: null,
-    postcare_contact_email: null,
-  },
-  practitioner: { display_name: "Practitioner" },
-};
-
-describe("autoSendPostcareOnComplete — orchestration (fail-soft, idempotent)", () => {
-  it("NEVER throws (fail-soft) — a db failure returns 'threw', not an exception", async () => {
-    const admin = { from: () => { throw new Error("db down"); } };
-    await expect(autoSendPostcareOnComplete("a1", "s1", { admin })).resolves.toBe("threw");
-  });
-
-  it("manual mode → skipped_mode, no send, no claim update", async () => {
-    const send = vi.fn();
-    const updates: Record<string, unknown>[] = [];
-    const admin = fakeAdmin({
-      appt: { ...ELIGIBLE_APPT, studio: { ...ELIGIBLE_APPT.studio, postcare_delivery_mode: "manual" } },
-      claimRows: [],
-      updates,
-    });
-    expect(await autoSendPostcareOnComplete("a1", "s1", { admin, sendPostcare: send })).toBe("skipped_mode");
-    expect(send).not.toHaveBeenCalled();
-    expect(updates).toHaveLength(0);
-  });
-
-  it("eligible + claim won + provider ok → sent; stamps sent_at", async () => {
-    const send = vi.fn().mockResolvedValue({ ok: true });
-    const updates: Record<string, unknown>[] = [];
-    const admin = fakeAdmin({ appt: ELIGIBLE_APPT, claimRows: [{ id: "a1" }], updates });
-    expect(await autoSendPostcareOnComplete("a1", "s1", { admin, sendPostcare: send })).toBe("sent");
-    expect(send).toHaveBeenCalledOnce();
-    expect(updates.some((u) => u.postcare_email_sent_at)).toBe(true);
-  });
-
-  it("eligible + claim won + provider fails → failed; records failed_at, NOT sent_at", async () => {
-    const send = vi.fn().mockResolvedValue({ ok: false, retryable: true, error: "boom" });
-    const updates: Record<string, unknown>[] = [];
-    const admin = fakeAdmin({ appt: ELIGIBLE_APPT, claimRows: [{ id: "a1" }], updates });
-    expect(await autoSendPostcareOnComplete("a1", "s1", { admin, sendPostcare: send })).toBe("failed");
-    expect(updates.some((u) => u.postcare_email_failed_at)).toBe(true);
-    expect(updates.some((u) => u.postcare_email_sent_at)).toBe(false);
-  });
-
-  it("claim returns no row (already sent / duplicate completion) → not_claimed, no send", async () => {
-    const send = vi.fn();
-    const updates: Record<string, unknown>[] = [];
-    const admin = fakeAdmin({ appt: ELIGIBLE_APPT, claimRows: [], updates });
-    expect(await autoSendPostcareOnComplete("a1", "s1", { admin, sendPostcare: send })).toBe("not_claimed");
-    expect(send).not.toHaveBeenCalled();
-  });
-});
-
-// ===========================================================================
-// PR B1 — the two properties the old fake could not see.
-// ===========================================================================
-//
-// These writes run as `service_role`, which bypasses RLS completely. Nothing in
-// the database confines them to one studio or one appointment; the `.eq()`
-// predicates are the entire boundary. Migration 0172 revokes `authenticated`
-// DML on `appointments` precisely BECAUSE these seven writers are service-role
-// and correctly scoped — so a silent loss of scope here would undermine the
-// premise the revoke rests on.
-
-describe("autoSendPostcareOnComplete — table and tenant scope (PR B1)", () => {
-  async function runSuccessPath() {
-    const chains: Chain[] = [];
-    const updates: Record<string, unknown>[] = [];
-    const admin = fakeAdmin({
-      appt: ELIGIBLE_APPT,
-      claimRows: [{ id: APPOINTMENT_ID }],
-      updates,
-      chains,
-    });
-    const outcome = await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, {
-      admin,
-      sendPostcare: vi.fn().mockResolvedValue({ ok: true }),
-    });
-    return { chains, updates, outcome };
-  }
-
-  it("every chain — load, claim and success stamp — targets `appointments`", async () => {
-    const { chains, outcome } = await runSuccessPath();
-    expect(outcome).toBe("sent");
-    expect(chains).toHaveLength(3);
-    expect(chains.map((c) => c.table)).toEqual([
-      "appointments",
-      "appointments",
-      "appointments",
-    ]);
-    expect(chains.map((c) => c.op)).toEqual(["select", "update", "update"]);
-  });
-
-  it("every chain is scoped to BOTH the appointment id and the studio id", async () => {
-    const { chains } = await runSuccessPath();
-    for (const c of chains) expectScopedToAppointment(c);
-  });
-
-  it("the claim additionally requires status='completed' and an unsent, unclaimed row", async () => {
-    const { chains } = await runSuccessPath();
-    const claim = chains[1];
-    // The belt-and-suspenders guard the MANUAL path does not have (audit P3-14).
-    expect(claim.eq).toContainEqual(["status", "completed"]);
-    expect(claim.is).toContainEqual(["postcare_email_sent_at", null]);
-    expect(claim.or.join(" ")).toContain("postcare_email_claimed_at");
-  });
-
-  it("both writes touch only postcare bookkeeping columns", async () => {
-    const { chains } = await runSuccessPath();
-    for (const c of chains.filter((x) => x.op === "update")) {
-      const cols = Object.keys(c.payload ?? {});
-      expect(cols.length).toBeGreaterThan(0);
-      for (const col of cols) {
-        expect(
-          POSTCARE_COLUMNS.has(col),
-          `postcare writer must not write \`${col}\` — scheduling, lifecycle and ` +
-            "tenancy columns belong to the reviewed SQL commands",
-        ).toBe(true);
+  const row = opts.row === undefined ? eligibleRow() : opts.row;
+  return {
+    from: () => {
+      const q: Record<string, unknown> = {};
+      q.select = () => q;
+      q.eq = () => q;
+      q.maybeSingle = async () => ({ data: row, error: row ? null : { code: "PGRST116" } });
+      q.update = () => {
+        throw new Error("B8: production must not write appointments directly");
+      };
+      return q;
+    },
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      opts.calls.push({ fn, args });
+      if (fn === "claim_postcare_send") {
+        return (
+          opts.claim ?? {
+            data: [{ result: "claimed", claimed_at: CLAIM_TOKEN, send_attempts: 1 }],
+            error: null,
+          }
+        );
       }
+      return opts.settle ?? { data: [{ result: "settled" }], error: null };
+    },
+  } as never;
+}
+
+const okSender = () => vi.fn(async () => ({ ok: true as const }));
+const failSender = (retryable: boolean) =>
+  vi.fn(async () => ({ ok: false as const, retryable, error: "provider exploded" }));
+
+describe("autoSendPostcareOnComplete — governed claim/settle orchestration", () => {
+  it("AUTO-1/AUTO-2 — an ineligible appointment never claims, sends or settles", async () => {
+    for (const [label, patch, expected] of [
+      ["manual mode", { postcare_delivery_mode: "manual" }, "skipped_mode"],
+      ["not completed", null, "skipped_not_completed"],
+    ] as const) {
+      const calls: RpcCall[] = [];
+      const send = okSender();
+      const row = eligibleRow();
+      if (patch) Object.assign(row.studio, patch);
+      else row.status = "confirmed";
+
+      const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+        admin: fakeAdmin({ row, calls }),
+        sendPostcare: send as never,
+      });
+
+      expect(out, label).toBe(expected);
+      expect(calls, `${label}: no RPC`).toHaveLength(0);
+      expect(send, `${label}: no provider`).not.toHaveBeenCalled();
     }
-    // The success stamp is the one that may set sent_at.
-    expect(Object.keys(chains[2].payload ?? {})).toContain("postcare_email_sent_at");
   });
 
-  it("the failure path is scoped identically and never stamps sent_at", async () => {
-    const chains: Chain[] = [];
-    const updates: Record<string, unknown>[] = [];
-    const admin = fakeAdmin({
-      appt: ELIGIBLE_APPT,
-      claimRows: [{ id: APPOINTMENT_ID }],
-      updates,
-      chains,
+  it("AUTO-3/AUTO-11/AUTO-12 — claim, provider, settle: sequence, actor and token", async () => {
+    const calls: RpcCall[] = [];
+    const send = okSender();
+    const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+      admin: fakeAdmin({ calls }),
+      sendPostcare: send as never,
     });
-    const outcome = await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, {
-      admin,
-      sendPostcare: vi.fn().mockResolvedValue({ ok: false, retryable: true, error: "boom" }),
-    });
-    expect(outcome).toBe("failed");
-    expect(chains).toHaveLength(3);
-    for (const c of chains) expectScopedToAppointment(c);
-    expect(Object.keys(chains[2].payload ?? {})).not.toContain("postcare_email_sent_at");
-    expect(chains[2].payload).toHaveProperty("postcare_email_failed_at");
+
+    expect(out).toBe("sent");
+    expect(calls.map((c) => c.fn)).toEqual(["claim_postcare_send", "settle_postcare_send"]);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // AUTO-11 — the SERVER-RESOLVED practitioner reaches the database, not a
+    // synthetic actor and not the appointment's own practitioner guessed here.
+    expect(calls[0].args.p_actor_practitioner_id).toBe(ACTOR);
+    expect(calls[0].args.p_is_resend).toBe(false);
+
+    // AUTO-12 — the token is forwarded EXACTLY. Re-deriving it through a Date
+    // would round microseconds away and settlement would miss its own claim.
+    expect(calls[1].args.p_claimed_at).toBe(CLAIM_TOKEN);
+    expect(calls[1].args.p_success).toBe(true);
   });
 
-  it("the recorded last_error is the fixed safe string, never the provider's text", async () => {
-    const chains: Chain[] = [];
-    const admin = fakeAdmin({
-      appt: ELIGIBLE_APPT,
-      claimRows: [{ id: APPOINTMENT_ID }],
-      updates: [],
-      chains,
-    });
-    await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, {
-      admin,
-      sendPostcare: vi
-        .fn()
-        .mockResolvedValue({ ok: false, retryable: true, error: "SMTP 550 c@example.com" }),
-    });
-    const recorded = String(chains[2].payload?.postcare_email_last_error ?? "");
-    expect(recorded.length).toBeGreaterThan(0);
-    expect(recorded).not.toContain("SMTP");
-    expect(recorded).not.toContain("@example.com");
-  });
-
-  it("a load that finds nothing performs no write at all", async () => {
-    const chains: Chain[] = [];
-    const admin = fakeAdmin({ appt: null, claimRows: [], updates: [], chains });
-    expect(
-      await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, {
-        admin,
-        sendPostcare: vi.fn(),
+  it("AUTO-4 — a lost claim never reaches the provider", async () => {
+    const calls: RpcCall[] = [];
+    const send = okSender();
+    const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+      admin: fakeAdmin({
+        calls,
+        claim: { data: [{ result: "already_claimed", claimed_at: null }], error: null },
       }),
-    ).toBe("load_error");
-    expect(chains.filter((c) => c.op === "update")).toHaveLength(0);
+      sendPostcare: send as never,
+    });
+    expect(out).toBe("not_claimed");
+    expect(send).not.toHaveBeenCalled();
+    expect(calls.map((c) => c.fn)).toEqual(["claim_postcare_send"]);
+  });
+
+  it("AUTO-5 — a MISSING command (old DB) fails soft and never sends", async () => {
+    // The app-first deployment window. There is deliberately no direct-UPDATE
+    // fallback, so this must end before the provider.
+    const calls: RpcCall[] = [];
+    const send = okSender();
+    const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+      admin: fakeAdmin({
+        calls,
+        claim: { data: null, error: { code: "PGRST202", message: "not found in schema cache" } },
+      }),
+      sendPostcare: send as never,
+    });
+    expect(out).toBe("not_claimed");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("AUTO-6/AUTO-13 — provider failure settled durably reports `failed` and forwards retryable", async () => {
+    for (const retryable of [true, false]) {
+      const calls: RpcCall[] = [];
+      const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+        admin: fakeAdmin({ calls }),
+        sendPostcare: failSender(retryable) as never,
+      });
+      expect(out).toBe("failed");
+      expect(calls[1].args.p_success).toBe(false);
+      expect(calls[1].args.p_retryable, `retryable=${retryable}`).toBe(retryable);
+      expect(calls[1].args.p_claimed_at).toBe(CLAIM_TOKEN);
+    }
+  });
+
+  it("AUTO-7/AUTO-8 — a provider failure that does NOT persist is settle_failed, not failed", async () => {
+    for (const settle of [
+      { data: null, error: { code: "57014" } },
+      { data: [{ result: "stale_claim" }], error: null },
+    ]) {
+      const calls: RpcCall[] = [];
+      const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+        admin: fakeAdmin({ calls, settle }),
+        sendPostcare: failSender(true) as never,
+      });
+      // `failed` would assert a database state that does not exist.
+      expect(out).toBe("settle_failed");
+    }
+  });
+
+  it("AUTO-9/AUTO-10 — provider SUCCESS whose settlement does not persist is never `sent`", async () => {
+    // The email is out, but Hone has no durable sent_at. Reporting `sent` would
+    // be a lie about persisted state; reporting `failed` would be a different
+    // lie about the provider.
+    for (const settle of [
+      { data: null, error: { code: "57014" } },
+      { data: [{ result: "stale_claim" }], error: null },
+    ]) {
+      const calls: RpcCall[] = [];
+      const send = okSender();
+      const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+        admin: fakeAdmin({ calls, settle }),
+        sendPostcare: send as never,
+      });
+      expect(out).toBe("settle_failed");
+      expect(out).not.toBe("sent");
+      // Exactly one send: no retry under a different token.
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(calls.map((c) => c.fn)).toEqual(["claim_postcare_send", "settle_postcare_send"]);
+    }
+  });
+
+  it("AUTO-14 — never throws into appointment completion, whatever the admin does", async () => {
+    const exploding = {
+      from: () => {
+        throw new Error("database on fire");
+      },
+      rpc: async () => {
+        throw new Error("database on fire");
+      },
+    } as never;
+    // The property is that it RESOLVES — a throw here would propagate into
+    // mark-complete / start-session and undo an appointment completion because
+    // an email helper failed. The exact outcome value matters less than the
+    // absence of a throw, so assert both without over-pinning.
+    const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+      admin: exploding,
+    });
+    expect(typeof out).toBe("string");
+    expect(out).not.toBe("sent");
+  });
+
+  it("production writes appointments ONLY through the commands", async () => {
+    // The fake throws on `.update()`, so a reintroduced direct writer surfaces
+    // here rather than passing silently.
+    const calls: RpcCall[] = [];
+    await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+      admin: fakeAdmin({ calls }),
+      sendPostcare: okSender() as never,
+    });
+    expect(calls.every((c) => c.fn.endsWith("_postcare_send"))).toBe(true);
   });
 });
