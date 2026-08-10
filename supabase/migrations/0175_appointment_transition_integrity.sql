@@ -23,8 +23,12 @@
 --   * `mark_appointment_no_show` — no-show stays gated on `ends_at`. The
 --     asymmetry is the point: completion is a practitioner asserting treatment
 --     finished; no-show is the booked opportunity having fully elapsed.
---   * `create_or_claim_charge_attempt` — dormant, zero application callers,
---     and its stale `ends_at` guard is P3 dead-code cleanup owned elsewhere.
+--   * `create_or_claim_charge_attempt` — NOT a dormant installed function.
+--     It was created by 0032 and DROPPED by 0103; nothing of that name exists
+--     in the current schema, so there is no `ends_at` guard there for B6 to
+--     leave alone. The live charge-attempt paths are the per-flow claim
+--     functions `claim_session_payment_charge_attempt` and
+--     `claim_manual_fee_charge_attempt`, and B6 touches neither.
 --   * `public_cancel_appointment_with_token` — B7 / 0176.
 --   * postcare writers and the six-column service_role grant — B8 / 0177.
 --

@@ -214,8 +214,13 @@ describe("0175 — E: three legacy RPCs dropped by EXACT signature", () => {
 });
 
 describe("0175 — scope discipline: nothing from B7, B8 or payments", () => {
-  it("does not touch the dormant charge-attempt RPC", () => {
+  it("executes nothing against any charge-attempt function", () => {
+    // create_or_claim_charge_attempt is not dormant — 0032 created it and 0103
+    // dropped it, so no such function exists to touch. The live paths are the
+    // per-flow claim functions, which B6 also leaves alone.
     expect(EXEC).not.toMatch(/create_or_claim_charge_attempt/);
+    expect(EXEC).not.toMatch(/claim_session_payment_charge_attempt/);
+    expect(EXEC).not.toMatch(/claim_manual_fee_charge_attempt/);
   });
 
   it("does not touch public cancellation — B7 / 0176 owns that", () => {
