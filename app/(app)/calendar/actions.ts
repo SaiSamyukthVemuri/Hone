@@ -1133,7 +1133,6 @@ export async function sendPostcareEmailAction(
     };
   }
 
-  const previousSentAt = appt.postcare_email_sent_at;
 
   // B8 / 0177 — CLAIM THE SEND IN THE DATABASE.
   //

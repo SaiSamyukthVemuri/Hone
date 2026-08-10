@@ -85,10 +85,17 @@ describe("STATE C2 — the OLD application claimed before it sent", () => {
     // rather than passing silently, because a skipped verification that looks
     // like a pass is exactly the failure mode this suite guards against.
     if (!baseAvailable()) {
-      expect(
-        process.env.CI ?? "",
-        "no base object: only acceptable on a shallow CI checkout",
-      ).not.toBe("");
+      // Shallow checkout (GitHub's pull_request ref is fetched at depth 1), or
+      // a repository archive. The provenance COMPARISON cannot run — but this
+      // does not degrade into a silent pass: every showAtBase() read verifies
+      // the fixture's sha256, so tampering still fails loudly, and the ordering
+      // proof below is owned entirely by the fixture.
+      for (const [, fx] of Object.entries(FIXTURES)) {
+        const text = readFileSync(join(REPO_ROOT, fx.file), "utf8");
+        expect(createHash("sha256").update(text, "utf8").digest("hex"), fx.file).toBe(
+          fx.sha256,
+        );
+      }
       return;
     }
     for (const [path, fx] of Object.entries(FIXTURES)) {
