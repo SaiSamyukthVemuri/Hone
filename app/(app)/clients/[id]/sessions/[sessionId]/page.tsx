@@ -796,9 +796,10 @@ export default async function SessionDetailPage({
 
         {/* 3. APPOINTMENT COMPLETED — only when a booked appointment is linked
             (by sessions.appointment_id, never by client). Uses THE shared
-            completion control, so the end-time gate, the accessible
-            confirmation, single-flight and the audit row are the same ones the
-            calendar surface has always used. No-show is deliberately absent. */}
+            completion control, so the start-time gate (B6 / 0175), the
+            accessible confirmation, single-flight and the audit row are the
+            same ones the calendar surface has always used. No-show is
+            deliberately absent — it stays gated on ends_at. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Appointment completed
@@ -813,13 +814,14 @@ export default async function SessionDetailPage({
           >
             {completionLabel(finishState.completion)}
           </span>
-          {/* Mounted for BOTH before_end and ready. The shared control owns the
-              disabled state AND the timer that re-enables the button the moment
-              ends_at passes — mounting it only when already "ready" meant the
-              timer never ran, so the button could not appear without a manual
-              refresh, while the copy claimed it would update on its own. The
-              control renders its own authoritative helper text when not ended,
-              so there is no second explanation and no second timer. */}
+          {/* Mounted for BOTH before_start and ready. The shared control owns
+              the disabled state AND the timer that re-enables the button the
+              moment starts_at passes — mounting it only when already "ready"
+              meant the timer never ran, so the button could not appear without
+              a manual refresh, while the copy claimed it would update on its
+              own. The control renders its own authoritative helper text when
+              not started, so there is no second explanation and no second
+              timer. */}
           {!isFinalized &&
             linkedAppointmentId &&
             (finishState.completion.kind === "ready" ||

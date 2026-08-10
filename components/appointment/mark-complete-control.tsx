@@ -37,7 +37,7 @@ export const COMPLETE_CONFIRM_MESSAGE =
   "Mark this appointment completed? This marks the appointment completed and allows the session to be charged after charting.";
 
 // Safe, fixed fallback. The server action already maps every RPC failure to a
-// curated, non-technical string (e.g. "This appointment hasn't ended yet.");
+// curated, non-technical string (e.g. "This appointment hasn't started yet.");
 // this is used only if an action ever returns an empty error. No raw DB or
 // provider text ever reaches this surface.
 const GENERIC_FAILURE = "Something went wrong. Please refresh and try again.";
@@ -47,7 +47,7 @@ export type MarkAppointmentCompleteControlProps = {
   // B6: EXPLICIT completion is gated on the appointment having STARTED, not
   // ended. No-show keeps its own ends_at rule and its own control.
   startsAt: string;
-  // Rendered beside the button when the appointment has not ended yet.
+  // Rendered beside the button when the appointment has not started yet.
   notStartedHint?: string;
   // Full-width, one-column layout for the charting surface at 390px.
   block?: boolean;
@@ -67,8 +67,8 @@ export function MarkAppointmentCompleteControl({
 
   const startsAtMs = new Date(startsAt).getTime();
 
-  // Tick when the end time is reached so the button enables itself without the
-  // practitioner refreshing. One timeout aimed at ends_at; none if already past.
+  // Tick when the START time is reached so the button enables itself without
+  // the practitioner refreshing. One timeout aimed at starts_at; none if past.
   // Called unconditionally — no early return may precede a hook.
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   useEffect(() => {
