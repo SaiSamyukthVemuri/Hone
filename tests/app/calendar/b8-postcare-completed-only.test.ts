@@ -24,9 +24,21 @@ const SESSION = "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx";
 
 describe("B8 — PostcareSection gates the send control on completion", () => {
   const src = read(SECTION);
+  // CODE ONLY. The component deliberately DOCUMENTS the old `!= null` bug so
+  // the next reader knows why the branch looks the way it does — and a naive
+  // grep cannot tell that prose from a live condition. Asserting the absence of
+  // a pattern must therefore read code, not comments.
+  const code = src
+    .split("\n")
+    .filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l) && !/^\s*\{?\/\*/.test(l))
+    .join("\n");
 
-  it("accepts a server-derived appointmentStatus", () => {
-    expect(src).toMatch(/appointmentStatus\?: string \| null;/);
+  it("REQUIRES a server-derived appointmentStatus", () => {
+    // Required, not optional. An optional prop makes `undefined` mean "no
+    // opinion", so a future mount that simply omits it would silently restore
+    // the pre-B8 behaviour — and TypeScript would not complain.
+    expect(src).toMatch(/appointmentStatus: string \| null;/);
+    expect(src, "the prop must not be optional").not.toMatch(/appointmentStatus\?:/);
   });
 
   it("renders the completed-only explanation instead of the send control", () => {
@@ -46,13 +58,36 @@ describe("B8 — PostcareSection gates the send control on completion", () => {
     );
   });
 
-  it("only 'completed' reaches the send control", () => {
-    // The comparison is explicit and positive — `!== "completed"` — so a new
-    // lifecycle status added later is refused by default rather than silently
-    // admitted.
+  it("only 'completed' reaches the send control — and NULL does not escape", () => {
+    // THE GAP THIS TEST MISSED ONCE. An earlier branch read
+    // `appointmentStatus != null && appointmentStatus !== "completed"`, which
+    // let a NULL status fall through to an enabled Send. The old assertion
+    // still passed, because it merely checked that the substring
+    // `!== "completed"` appeared somewhere — it never examined what else
+    // guarded the branch. Checking for a fragment is not checking a condition.
     expect(src).toMatch(/props\.appointmentStatus !== "completed"/);
-    expect(src).not.toMatch(/appointmentStatus === "confirmed"/);
-    expect(src).not.toMatch(/appointmentStatus !== "cancelled"/);
+    expect(
+      code,
+      "a `!= null` guard would let an unresolved status reach the send control",
+    ).not.toMatch(/appointmentStatus != null/);
+    expect(code).not.toMatch(/appointmentStatus !== null/);
+    expect(code).not.toMatch(/appointmentStatus \?\? "completed"/);
+    expect(code).not.toMatch(/appointmentStatus === "confirmed"/);
+    expect(code).not.toMatch(/appointmentStatus !== "cancelled"/);
+  });
+
+  it("a NULL status FAILS CLOSED, and is not inferred from anything else", () => {
+    // The session page passes `apptContext?.status ?? null`, so a failed
+    // context read yields null. That must mean "no send button", never
+    // "assume finished". And the status must not be reconstructed from
+    // sent_at or any other proxy.
+    const gate = code.match(/aftercareConfigured && props\.appointmentStatus !== "completed"/);
+    expect(gate, "the gate must be a bare inequality with no null exemption").not.toBeNull();
+    // The status must not be reconstructed from a proxy. Scoped to the gate's
+    // own line rather than the whole file, where the props list legitimately
+    // mentions both names.
+    const gateLine = code.split("\n").find((l) => l.includes('appointmentStatus !== "completed"')) ?? "";
+    expect(gateLine).not.toMatch(/postcareEmailSentAt|sent_at/);
   });
 
   it("configuration and no-email states still take precedence", () => {
@@ -65,7 +100,7 @@ describe("B8 — PostcareSection gates the send control on completion", () => {
     expect(noEmail, "no-email state is reported first").toBeLessThan(gate);
     // The completed-only branch is guarded by aftercareConfigured, so an
     // unconfigured studio falls through to its own explanation.
-    expect(src).toMatch(/aftercareConfigured &&\s*\n\s*props\.appointmentStatus != null/);
+    expect(src).toMatch(/aftercareConfigured && props\.appointmentStatus !== "completed"/);
   });
 });
 

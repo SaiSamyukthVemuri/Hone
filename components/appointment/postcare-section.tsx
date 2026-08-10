@@ -48,7 +48,12 @@ export function PostcareSection(props: {
   // status other than 'completed' — so this exists to keep the SURFACE
   // truthful, not to enforce anything. Offering an enabled Send that the
   // command will refuse is a worse experience than not offering it.
-  appointmentStatus?: string | null;
+  //
+  // REQUIRED, not optional, and that is the whole point. An optional prop makes
+  // `undefined` mean "no opinion", and an omitted prop would then silently
+  // restore the pre-B8 behaviour at any future mount point. Both existing
+  // mounts already supply it.
+  appointmentStatus: string | null;
 }) {
   const preview = buildPostcareEmail({
     clientName: props.clientName,
@@ -90,13 +95,19 @@ export function PostcareSection(props: {
         >
           Postcare unavailable — no client email
         </p>
-      ) : aftercareConfigured &&
-        props.appointmentStatus != null &&
-        props.appointmentStatus !== "completed" ? (
-        // B8 / 0177. Postcare is completed-only. Configuration problems are
-        // reported ABOVE this deliberately: a studio that has not set postcare
-        // up should be told so now, not told to come back after completing the
-        // visit and only then discover it.
+      ) : aftercareConfigured && props.appointmentStatus !== "completed" ? (
+        // B8 / 0177. Postcare is completed-only, and this branch FAILS CLOSED.
+        //
+        // An earlier version read `appointmentStatus != null && !== "completed"`,
+        // which let a NULL status fall through to an enabled Send — the exact
+        // opposite of what its own test claimed. A status the surface could not
+        // resolve is not evidence that the visit is finished, so anything that
+        // is not literally "completed" (null, a failed context read, a
+        // lifecycle value added later) lands here.
+        //
+        // Configuration problems are reported ABOVE this deliberately: a studio
+        // that has not set postcare up should be told so now, not told to come
+        // back after completing the visit and only then discover it.
         <p
           data-testid="postcare-not-completed"
           className="text-sm text-neutral-700 dark:text-neutral-300"
