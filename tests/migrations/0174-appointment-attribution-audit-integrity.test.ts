@@ -146,11 +146,17 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     // subject is 0174's history rather than the current head.
     expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(175);
     // Repo and hosted agree again: nothing is pending above the applied max.
-    // Repo and hosted agreed after 0175 was applied. B7 has now authored 0176,
-    // so they legitimately diverge again by exactly one UNAPPLIED migration —
-    // the same shape 0175 itself was in before its apply ceremony.
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(false);
-    expect(versionsAbove(rec.hosted_migration_max)).toEqual(["0176"]);
+    // This assertion has now tracked three states in turn: hosted 0174 with
+    // 0175 pending, hosted 0175 with 0176 pending, and — after B7's
+    // migration-first apply — repo and hosted agreeing again at 0176.
+    //
+    // So it stops pinning a particular divergence and states the invariant that
+    // actually matters: whatever production has applied, nothing in the repo
+    // sits above it unapplied at rest. An authoring branch legitimately breaks
+    // that temporarily and says so in ITS OWN migration's test; this block is
+    // about 0174's history and should not have to move for every successor.
+    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
   });
 
   it("the record carries the sha256 of the exact 0174 bytes that were applied", async () => {
