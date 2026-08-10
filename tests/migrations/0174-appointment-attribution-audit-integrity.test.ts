@@ -112,17 +112,22 @@ describe("0174 — migration state", () => {
     expect(versionsAbove("0174")).toContain("0175");
   });
 
-  it("consumes exactly ONE number — B6 took 0175, B7/B8 still reserved", () => {
-    // B5 must not spend more than its own number. 0175 is now B6's and is
-    // expected to exist; 0176 and 0177 remain reserved for B7 and B8.
+  it("consumes exactly ONE number", () => {
+    // The durable claim, and the only one that is 0174's business: B5 spent
+    // exactly its own number and did not smear across a neighbour.
     expect(countVersion("0174")).toBe(1);
-    expect(countVersion("0175")).toBe(1);
-    // B7 spent 0176; 0177 remains reserved for B8.
-    expect(countVersion("0176")).toBe(1);
-    expect(countVersion("0177")).toBe(0);
-    // 0178 is the PARKED Phase-2 practitioner identity work, developed on
-    // another branch. B5 must not create it either.
-    expect(countVersion("0178")).toBe(0);
+
+    // WHAT THIS DELIBERATELY NO LONGER ASSERTS: that 0177, 0178, ... are still
+    // unspent. Those were "still reserved for B7/B8" pins, and each one turned
+    // this file red the moment the next boundary migration was authored — the
+    // same defect as the repo/hosted equality assertion below, found by running
+    // the historical block against a temporary local 0177.
+    //
+    // A successor's number is the successor's own test to defend
+    // (`0176-…test.ts` asserts 0177 is free, and 0177's will assert 0178).
+    // 0174 asserting it created a second, stale owner that had to be edited by
+    // every future boundary — which is exactly what this amendment exists to
+    // stop.
   });
 });
 
@@ -145,18 +150,26 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     // Asserted as a floor, so the NEXT apply does not re-break a test whose
     // subject is 0174's history rather than the current head.
     expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(175);
-    // Repo and hosted agree again: nothing is pending above the applied max.
-    // This assertion has now tracked three states in turn: hosted 0174 with
-    // 0175 pending, hosted 0175 with 0176 pending, and — after B7's
-    // migration-first apply — repo and hosted agreeing again at 0176.
+    // NOTHING ABOUT THE CURRENT REPO/HOSTED RELATIONSHIP IS ASSERTED HERE, and
+    // that omission is the point.
     //
-    // So it stops pinning a particular divergence and states the invariant that
-    // actually matters: whatever production has applied, nothing in the repo
-    // sits above it unapplied at rest. An authoring branch legitimately breaks
-    // that temporarily and says so in ITS OWN migration's test; this block is
-    // about 0174's history and should not have to move for every successor.
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
-    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
+    // Earlier revisions of this block pinned, in turn: hosted 0173; hosted 0174
+    // with exactly ["0175"] above; hosted 0175 with exactly ["0176"] above; and
+    // then isRepoMax(hosted) === true. Every one of them went red the moment
+    // the NEXT boundary migration was authored — four edits to a test whose
+    // subject is 0174's production history and which has no stake in what
+    // number the repository is currently working on.
+    //
+    // The last of those was self-contradictory: its own comment said an
+    // authoring branch legitimately breaks repo/hosted equality, and then it
+    // asserted that equality anyway. 0177 would have broken it immediately.
+    //
+    // Current repo/hosted/pending truth is owned by `npm run migration:state`,
+    // by the CURRENT migration's own migration-state test, and by
+    // docs/production/migration-state.json. This block owns one thing: that
+    // 0174's apply is still truthfully recorded. The floor assertion above is
+    // enough for that — a hosted max BELOW 0174 would mean the record had been
+    // falsified, and anything at or above it is somebody else's business.
   });
 
   it("the record carries the sha256 of the exact 0174 bytes that were applied", async () => {
