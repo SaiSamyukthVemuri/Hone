@@ -26,6 +26,34 @@ import { randomUUID } from "node:crypto";
 //   * the (studio_id, stripe_account_id, stripe_livemode) FK target still
 //     works after the PK swap
 
+// FIXTURE ISOLATION (repeat-run safety).
+//
+// `studio_payment_settings_stripe_account_id_key` is UNIQUE (stripe_account_id)
+// GLOBALLY — not per studio. This suite used to hard-code `acct_harness_test_1`
+// and friends, so the first run persisted those ids against that run's studio
+// and every later run against the SAME database seeded a NEW studio and then
+// collided: the claim could not be completed, and the downstream
+// client_stripe_customers FK had no (studio, account, mode) tuple to point at.
+// It passed on a freshly reset DB and failed on the second run, which is the
+// worst shape for a test — green in CI, red for whoever runs it locally twice.
+//
+// Every synthetic Stripe account id is therefore derived from ONE run-unique
+// namespace. Nothing here deletes rows: isolation comes from identity, so two
+// namespaces (and two concurrent runs) can coexist in one database. The product
+// constraint is untouched — this suite still proves it, using a collision it
+// creates deliberately INSIDE its own namespace rather than inheriting one from
+// a previous run.
+const NS = randomUUID().slice(0, 8);
+const ACCT = {
+  test1: `acct_harness_${NS}_test_1`,
+  test2: `acct_harness_${NS}_test_2`,
+  live1: `acct_harness_${NS}_live_1`,
+  dupe: `acct_harness_${NS}_dupe`,
+  // Must NEVER exist: the dangling-FK probe. Namespaced so it cannot be
+  // accidentally created by another suite or an earlier run.
+  absent: `acct_harness_${NS}_absent`,
+} as const;
+
 let s: SeededStudio;
 
 beforeAll(async () => {
@@ -95,7 +123,7 @@ describe("provisioning: existing test binding no longer blocks live", () => {
     await complete(
       testClaim.attempt_id!,
       testClaim.out_processing_claim_token!,
-      "acct_harness_test_1",
+      ACCT.test1,
       false,
     );
 
@@ -109,15 +137,15 @@ describe("provisioning: existing test binding no longer blocks live", () => {
     await complete(
       liveClaim.attempt_id!,
       liveClaim.out_processing_claim_token!,
-      "acct_harness_live_1",
+      ACCT.live1,
       true,
     );
 
     // 3) Both mode rows coexist; the test row is untouched.
     const rows = await settingsRows(s.studioId);
     expect(rows.map((r) => [r.stripe_livemode, r.stripe_account_id])).toEqual([
-      [false, "acct_harness_test_1"],
-      [true, "acct_harness_live_1"],
+      [false, ACCT.test1],
+      [true, ACCT.live1],
     ]);
   });
 
@@ -125,12 +153,12 @@ describe("provisioning: existing test binding no longer blocks live", () => {
     const again = await claim(s.studioId, false);
     expect(again.already_provisioned).toBe(true);
     expect(again.should_execute_stripe_call).toBe(false);
-    expect(again.out_stripe_account_id).toBe("acct_harness_test_1");
+    expect(again.out_stripe_account_id).toBe(ACCT.test1);
     expect(again.out_stripe_livemode).toBe(false);
 
     const liveAgain = await claim(s.studioId, true);
     expect(liveAgain.already_provisioned).toBe(true);
-    expect(liveAgain.out_stripe_account_id).toBe("acct_harness_live_1");
+    expect(liveAgain.out_stripe_account_id).toBe(ACCT.live1);
   });
 
   it("same-mode duplicate settings row is refused by the (studio, mode) unique", async () => {
@@ -138,8 +166,8 @@ describe("provisioning: existing test binding no longer blocks live", () => {
       adminQuery(
         `insert into public.studio_payment_settings
            (studio_id, stripe_account_id, stripe_livemode)
-         values ($1, 'acct_harness_dupe', false)`,
-        [s.studioId],
+         values ($1, $2, false)`,
+        [s.studioId, ACCT.dupe],
       ),
     ).rejects.toThrow(/studio_payment_settings_studio_mode_uniq/);
   });
@@ -161,7 +189,7 @@ describe("sync_studio_account_status: current-mode row only", () => {
   it("updates the live row without touching the test row", async () => {
     await adminQuery(
       `select public.sync_studio_account_status($1, $2, $3, $4, $5, $6, $7)`,
-      [s.studioId, "acct_harness_live_1", true, "enabled", true, true, new Date().toISOString()],
+      [s.studioId, ACCT.live1, true, "enabled", true, true, new Date().toISOString()],
     );
     const rows = await settingsRows(s.studioId);
     const test = rows.find((r) => r.stripe_livemode === false)!;
@@ -178,7 +206,7 @@ describe("sync_studio_account_status: current-mode row only", () => {
     await expect(
       adminQuery(
         `select public.sync_studio_account_status($1, $2, $3, $4, $5, $6, $7)`,
-        [s.studioId, "acct_harness_test_1", true, "enabled", true, true, null],
+        [s.studioId, ACCT.test1, true, "enabled", true, true, null],
       ),
     ).rejects.toThrow(/stripe_account_id mismatch/);
   });
@@ -208,7 +236,7 @@ describe("get_studio_payment_settings_display: mode-scoped, owner-gated", () => 
     const fresh = await seedStudio("mode-scope-display");
     // Give the fresh studio a TEST binding only.
     const c = await claim(fresh.studioId, false);
-    await complete(c.attempt_id!, c.out_processing_claim_token!, "acct_harness_test_2", false);
+    await complete(c.attempt_id!, c.out_processing_claim_token!, ACCT.test2, false);
     const live = await userQuery(
       fresh.userId,
       `select * from public.get_studio_payment_settings_display($1, $2)`,
@@ -241,8 +269,8 @@ describe("require_card_on_file: null-mode placeholder (Option A)", () => {
     expect(placeholder.require_card_on_file).toBe(true);
     expect(placeholder.stripe_account_id).toBeNull();
     // Mode rows untouched.
-    expect(rows.find((r) => r.stripe_livemode === false)!.stripe_account_id).toBe("acct_harness_test_1");
-    expect(rows.find((r) => r.stripe_livemode === true)!.stripe_account_id).toBe("acct_harness_live_1");
+    expect(rows.find((r) => r.stripe_livemode === false)!.stripe_account_id).toBe(ACCT.test1);
+    expect(rows.find((r) => r.stripe_livemode === true)!.stripe_account_id).toBe(ACCT.live1);
 
     // Second call UPDATES the same placeholder (NULLS NOT DISTINCT), no dupe.
     await adminQuery(
@@ -274,8 +302,13 @@ describe("downstream FK target survives the PK swap", () => {
       adminQuery(
         `insert into public.client_stripe_customers
            (client_id, studio_id, stripe_account_id, stripe_livemode, stripe_customer_id)
-         values ($1, $2, 'acct_harness_live_1', true, $3)`,
-        [s.clientId, s.studioId, `cus_harness_${randomUUID().slice(0, 8)}`],
+         values ($1, $2, $4, true, $3)`,
+        [
+          s.clientId,
+          s.studioId,
+          `cus_harness_${randomUUID().slice(0, 8)}`,
+          ACCT.live1,
+        ],
       ),
     ).resolves.toBeDefined();
     // And a dangling tuple is still refused.
@@ -283,8 +316,13 @@ describe("downstream FK target survives the PK swap", () => {
       adminQuery(
         `insert into public.client_stripe_customers
            (client_id, studio_id, stripe_account_id, stripe_livemode, stripe_customer_id)
-         values ($1, $2, 'acct_does_not_exist', true, $3)`,
-        [s.clientId, s.studioId, `cus_harness_${randomUUID().slice(0, 8)}`],
+         values ($1, $2, $4, true, $3)`,
+        [
+          s.clientId,
+          s.studioId,
+          `cus_harness_${randomUUID().slice(0, 8)}`,
+          ACCT.absent,
+        ],
       ),
     ).rejects.toThrow(/foreign key|fk/i);
   });
