@@ -350,15 +350,36 @@ export default function PrivacyPolicyPage() {
         </li>
       </UL>
       <P>
-        When a practitioner closes their account, we retain data for 30 days to
-        allow account recovery, then delete it. Practitioners may request
-        immediate deletion in writing.
+        When a practitioner closes their account, their data is retained so the
+        account can be recovered and so we can meet our legal and
+        record-keeping obligations. Practitioners may request deletion in
+        writing at <strong>privacy@hone.care</strong>. We review
+        permanent-deletion requests and respond based on what can be deleted,
+        subject to applicable legal and professional record-retention
+        requirements.
       </P>
       <P>
-        When a client is deleted by their practitioner in Hone, their record is
-        soft-deleted (marked as deleted but retained for audit purposes) for 30
-        days, then hard-deleted from active systems. Backups are purged within
-        90 days.
+        When a client is deleted by their practitioner in Hone, the record is{" "}
+        <strong>archived</strong> — marked as deleted and hidden from everyday
+        use, but retained for audit and clinical-record purposes. Archiving is
+        not the same as permanent erasure: the record remains in our systems,
+        and in backups, unless and until it is permanently deleted following a
+        request we have reviewed and actioned.
+      </P>
+      <P>
+        We do not currently operate an automatic timed purge that permanently
+        erases archived records or expires backup copies on a fixed schedule.
+        Requests for permanent deletion are handled case by case through the
+        process above, or through your practitioner where they are the
+        controller of the record.
+      </P>
+      <P>
+        Deletion can also be constrained by law and by professional
+        record-retention obligations. Electrolysis and laser treatment records
+        are clinical records, and practitioners are frequently required to
+        retain them for a minimum period. Where such an obligation applies, we
+        will retain the data for as long as it requires and delete it
+        afterwards.
       </P>
 
       <H2 id="security">10. Security</H2>

@@ -98,6 +98,34 @@ Endpoint: `/api/twilio/inbound-sms`.
 | `/api/cron/calendar-sync` | **Vercel Cron, `vercel.json`, `30 9 * * *`** (daily, B2.3-c3, after reconciliation). **DORMANT:** `worker_enabled=false` → the claim RPC returns zero rows and mutates nothing → no-work. The **first scheduled run doubles as the B2.3-c2 no-work production validation** (Vercel Cron auto-supplies the production `CRON_SECRET`). Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
 | `/api/cron/no-show-check` | **intentionally NOT scheduled** (disabled, non-mutating stub). |
 
+### Reminder scheduler: CODE is proven, PRODUCTION OPERATION is not — **OPEN**
+
+These are two different claims and the repository can only substantiate one of
+them. Conflating them is how a silently dead reminder job would go unnoticed:
+every test would stay green, because the tests prove the route, not the caller.
+
+| Layer | Status | Evidence |
+|---|---|---|
+| **CODE** | ✅ implemented and tested | The route, the ≤15-minute cadence invariant (`tests/lib/cron/reminder-schedule.test.ts` proves every minute offset 0–59 is covered at 15-min cadence and that hourly + a 30-min window fails), the `vercel.json` config pin (`tests/app/cron-config.test.ts`), claim/record idempotency, the 3-strike cap and the exhaustion alert. |
+| **PRODUCTION OPERATION** | ⚠️ **OPEN — requires externally verified evidence** | **None in this repository.** The schedule lives in a third-party dashboard (`cron-job.org`) that no test, migration, or CI lane can observe. `vercel.json` deliberately does **not** own it, so a green deploy proves nothing about whether reminders are firing. |
+
+**This finding stays OPEN until every item below is evidenced.** Nothing here
+has been checked against the live scheduler; do not record it as verified on the
+strength of the code being correct.
+
+- [ ] External scheduler account identified, and its **owner named** (who can log in, and who takes over if they are unavailable).
+- [ ] The reminder job **exists and is enabled** (not paused).
+- [ ] Exact URL correct: `https://hone.care/api/cron/appointment-reminders`.
+- [ ] Cadence **≤ 15 minutes** — the 2h window is only 30 minutes wide, so an hourly job silently misses roughly half of all appointment minute offsets.
+- [ ] `Authorization: Bearer $CRON_SECRET` configured on the job, and the value matches the production `CRON_SECRET`.
+- [ ] **Recent successful executions visible** in the scheduler's own history (HTTP 200s, at the expected cadence, not a wall of failures).
+- [ ] **One authenticated production response checked by hand** and its JSON body inspected (`ok: true`, plausible `scanned`/`sent`/`skipped` counts).
+- [ ] Operator **alerting/monitoring ownership named** — who is paged when reminders stop, and where `reminder_send_exhausted` alerts land.
+- [ ] **No second competing scheduler** exists — a duplicate job doubles the load against the claim RPC and burns the 3-strike budget faster. (The claim RPC makes a duplicate *safe*, not *harmless*.)
+
+Until this checklist is complete, treat client reminder delivery as
+**unverified in production** in any launch-readiness or audit statement.
+
 **Reminder schedule/window compatibility (why every 15 min):** a reminder window `W` minutes wide, sampled by a cron firing every `P` minutes, is only missable when `W < P` (a closed window of width `≥ P` always contains a point of the `P`-minute grid). The 24h window is `[23h, 25h]` (120 min, safe at any cadence). The 2h window is `[105, 135]` (30 min) — at the old assumed **hourly** cadence (`P = 60`) a 30-min window silently misses ~half of all appointment minute offsets; at every-15-minutes (`P = 15`) `W = 30 = 2·P`, so every appointment is eligible at least once **and** a single skipped fire still leaves a grid point in-window. So the external scheduler MUST be configured at ≤15-minute cadence (the `reminder-schedule` invariant assumes it). `tests/lib/cron/reminder-schedule.test.ts` proves every minute offset 0–59 is covered at 15-min cadence and that the hourly + 30-min combination fails; `tests/app/cron-config.test.ts` pins the `vercel.json` config + the required cadence. **Max-attempt posture:** after a reminder fails `MAX_ATTEMPTS` (3) it is filtered out of the window query; PR #258 emits a `reminder_send_exhausted` ops alert (warning) with non-sensitive metadata only (studio_id, appointment_id, reminder_type, attempt_count, retryable, reason — no client email/phone/notes/token/free-text). The route also re-checks appointment `status='confirmed'` immediately before sending (both the email and SMS passes) so a reminder is never sent for an appointment cancelled after the window query. *(Point-in-time note; supervised live session payments are now live for approved studios — see [docs/production/current-state.md](./production/current-state.md).)*
 
 Routes:

@@ -271,6 +271,15 @@ Transactional email via Resend (confirmation, reminder, postcare, portal) is liv
 fail-soft. **Postcare auto-send is deployed but defaults to `manual`** — opt-in per studio,
 skipped if the Resend key or postcare text is missing.
 
+⚠️ **Appointment reminders: code proven, production operation UNVERIFIED (OPEN).** The
+reminder route and its ≤15-minute cadence invariant are implemented and tested, but the
+schedule is owned by an **external scheduler outside this repository** — `vercel.json`
+deliberately does not register it, so neither CI nor a successful deploy says anything
+about whether reminders are actually firing. Do not claim reminder delivery is verified in
+production until the operational checklist in
+[docs/08_EMAIL_SMS_AND_CRON.md](../08_EMAIL_SMS_AND_CRON.md) ("Reminder scheduler: CODE is
+proven, PRODUCTION OPERATION is not") is complete.
+
 **SMS is pilot scale only**, env-gated on `TWILIO_*` with a per-studio toggle and per-client
 consent, STOP/HELP handled. Broad-SaaS SMS (A2P/10DLC registration, sender strategy, rate
 limiting) is **not built**.

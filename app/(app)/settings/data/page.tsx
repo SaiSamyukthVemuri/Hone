@@ -57,15 +57,21 @@ export default async function DataSettingsPage() {
         </p>
         <p className="max-w-[680px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
           All client records, session notes, and pricing belong to you. Hone
-          stores this data in Canada on your behalf. You can export everything
-          at any time, import existing records from CSV (coming soon), or delete
-          everything permanently (coming soon).
+          uses third-party infrastructure that may process this data outside
+          Canada — see the{" "}
+          <a href="/privacy" className="underline">
+            Privacy Policy
+          </a>{" "}
+          for current hosting and subprocessors. You can download a portable
+          copy of your supported studio records at any time, import existing
+          records from CSV (coming soon), or delete everything permanently
+          (coming soon).
         </p>
       </section>
 
       <DataCard
         title="Export your data"
-        body="Download a ZIP of your studio data. During the pilot, use this as a backup after a real charting day."
+        body="Download a portable copy of your supported studio records as a ZIP. Reads are paginated to exhaustion, so no file is silently truncated, and manifest.json records how many rows each file received. It is not point-in-time consistent and is not a transactional database backup — it does not replace Hone's disaster-recovery backups."
       >
         <div className="flex flex-col gap-5">
           <div>
@@ -98,6 +104,22 @@ export default async function DataSettingsPage() {
                 and plan notes
               </li>
               <li>Treatment plan schedule stages</li>
+              <li>
+                Consultation notes &amp; skin/hair analyses: the full
+                append-only clinical narrative, including superseded revisions
+              </li>
+              <li>
+                Record-keeping logs: sterile supplies, disinfectants, and the
+                record-keeping change history
+              </li>
+              <li>
+                Exposure-incident log (owner-only): contains personal
+                information about the exposed person — handle securely
+              </li>
+              <li>
+                manifest.json: how many rows were exported to each file, plus
+                whichever source-side count checks were available
+              </li>
             </ul>
           </div>
 
@@ -115,8 +137,9 @@ export default async function DataSettingsPage() {
             <span className="font-medium text-neutral-800 dark:text-neutral-200">
               Pilot tip:
             </span>{" "}
-            after your first real charting day, download an export and keep it
-            as a backup.
+            after your first real charting day, download an export and keep
+            your own copy of it somewhere safe. It is a portable record of your
+            studio data, not a substitute for Hone&rsquo;s own backups.
           </p>
 
           <ExportButton />
@@ -138,7 +161,12 @@ export default async function DataSettingsPage() {
       </DataCard>
 
       <p className="text-xs text-neutral-500">
-        Data hosted in Canada. Encrypted at rest. Exportable any time.
+        Encrypted at rest. Exportable at any time. Hosting and subprocessors,
+        including where data is processed, are listed in the{" "}
+        <a href="/privacy" className="underline">
+          Privacy Policy
+        </a>
+        .
       </p>
     </div>
   );
