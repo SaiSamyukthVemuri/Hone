@@ -71,31 +71,47 @@ describe("AppointmentLifecycleActions: Mark completed gating", () => {
     expect(CALENDAR).toMatch(/if \(status !== "confirmed"\) return null;/);
   });
 
-  it("the Mark completed button is disabled when pending OR !hasEnded", () => {
+  it("the Mark completed button is disabled when pending OR !canComplete", () => {
     const block =
       COMPONENT.match(
         /<button[\s\S]{0,2000}onClick=\{openConfirm\}[\s\S]{0,2000}Mark completed/,
       )?.[0] ?? "";
-    expect(block).toMatch(/disabled=\{pending \|\| !hasEnded\}/);
+    expect(block).toMatch(/disabled=\{pending \|\| !canComplete\}/);
   });
 
   it("the disabled-title copy matches the future-appointment guidance", () => {
-    // PR #180 patch. Original copy ("after the start time") was
-    // inaccurate -- the gate is ends_at <= now() (the RPC requires
-    // the appointment to have ENDED, not merely started). Corrected
-    // copy is pinned here.
+    // HISTORY, because the copy has now moved twice and the reason matters.
+    // PR #180 corrected an inaccurate "after the start time" to "after the
+    // appointment has ended", because the RPC then required ends_at <= now().
+    // B6 / 0175 changed the RULE itself: mark_appointment_complete now refuses
+    // only while `starts_at > now()`, so the honest copy is once again about
+    // STARTING. The earlier wording was wrong for its rule; this one matches.
     const block =
       COMPONENT.match(
         /onClick=\{openConfirm\}[\s\S]{0,2000}Mark completed/,
       )?.[0] ?? "";
     expect(block).toMatch(
-      /Appointment can be marked completed after the appointment has ended\./,
+      /Appointment can be marked completed once it has started\./,
     );
   });
 
-  it("hasEnded is computed from endsAtMs <= nowTick (already-ended check)", () => {
-    expect(COMPONENT).toMatch(/const hasEnded = /);
-    expect(COMPONENT).toMatch(/endsAtMs <= nowTick/);
+  it("canComplete is computed from startsAtMs <= nowTick (already-started check)", () => {
+    // The variable was renamed deliberately: a `hasEnded` holding starts_at
+    // semantics is the exact trap this pin exists to prevent.
+    expect(COMPONENT).toMatch(/const canComplete = /);
+    expect(COMPONENT).toMatch(/startsAtMs <= nowTick/);
+    expect(COMPONENT).not.toMatch(/const hasEnded = /);
+  });
+
+  it("NO-SHOW keeps its own ends_at clock — the two never share a variable", () => {
+    // B6 moved completion only. If a future edit rekeys no-show to startsAt,
+    // a booked-but-not-yet-elapsed appointment could be marked no-show.
+    expect(CALENDAR).toMatch(/const hasEnded = Number\.isFinite\(endsAtMs\) && endsAtMs <= nowTick;/);
+    const noShow =
+      CALENDAR.match(/onClick=\{runNoShow\}[\s\S]{0,1200}Mark no-show/)?.[0] ?? "";
+    expect(noShow).not.toBe("");
+    expect(CALENDAR).toMatch(/disabled=\{pending \|\| !hasEnded\}/);
+    expect(CALENDAR).not.toMatch(/startsAtMs/);
   });
 });
 

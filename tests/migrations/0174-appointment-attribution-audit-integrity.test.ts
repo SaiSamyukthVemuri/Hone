@@ -99,16 +99,19 @@ describe("0174 — migration state", () => {
   // The CENTRAL tripwire, moved here from
   // tests/migrations/0173-appointment-repair-commands.test.ts when B5 landed.
   // Only the current maximum migration's own test carries it (CLAUDE.md §2).
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0174")).toBe(true);
-    expect(versionsAbove("0174")).toEqual([]);
+  it("is no longer the repository maximum — B6 spent 0175 above it", () => {
+    // Per CLAUDE.md only the CURRENT max may assert isRepoMax; that role passed
+    // to 0175 when B6 landed. 0174 keeps a narrower, still-true claim: exactly
+    // one migration sits above it.
+    expect(isRepoMax("0174")).toBe(false);
+    expect(versionsAbove("0174")).toEqual(["0175"]);
   });
 
-  it("consumes exactly ONE number — 0175 stays reserved for B6", () => {
-    // B5 must not spend B6's number. Every later boundary migration
-    // (0175 B6, 0176 B7, 0177 B8) shifts by one if it does.
+  it("consumes exactly ONE number — B6 took 0175, B7/B8 still reserved", () => {
+    // B5 must not spend more than its own number. 0175 is now B6's and is
+    // expected to exist; 0176 and 0177 remain reserved for B7 and B8.
     expect(countVersion("0174")).toBe(1);
-    expect(countVersion("0175")).toBe(0);
+    expect(countVersion("0175")).toBe(1);
     expect(countVersion("0176")).toBe(0);
     expect(countVersion("0177")).toBe(0);
     // 0178 is the PARKED Phase-2 practitioner identity work, developed on
@@ -118,19 +121,27 @@ describe("0174 — migration state", () => {
 });
 
 describe("0174 — production truth: APPLIED 2026-08-10", () => {
+  const LEDGER = readFileSync(
+    join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
+    "utf8",
+  );
+
   const rec = JSON.parse(
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("hosted is 0174 and nothing is pending — repo and production agree", () => {
-    // This block previously asserted the opposite (hosted 0173, one pending)
-    // and was the stop condition for B5's authoring phase. 0174 was applied to
-    // production on 2026-08-10T00:36:44Z-00:36:54Z, so the canonical record now
-    // states that. `hosted_migration_max` is a statement about PRODUCTION, not
-    // about this repository: it moved because an apply happened, not because a
-    // file landed.
-    expect(rec.hosted_migration_max).toBe("0174");
+  it("the 0174 apply stays RECORDED even though 0175 superseded it as hosted max", () => {
+    // This block has now asserted three different current-state values in turn:
+    // hosted 0173 (B5 authoring), hosted 0174 with 0175 pending (B6 authoring),
+    // and now hosted 0175. `hosted_migration_max` is a statement about
+    // PRODUCTION, not about this repository — it moves when an apply happens,
+    // never when a file lands. 0175 (B6) was applied 2026-08-10T11:56:35Z.
+    // Asserted as a floor, so the NEXT apply does not re-break a test whose
+    // subject is 0174's history rather than the current head.
+    expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(175);
+    // Repo and hosted agree again: nothing is pending above the applied max.
     expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
   });
 
   it("the record carries the sha256 of the exact 0174 bytes that were applied", async () => {
@@ -159,12 +170,19 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
   });
 
   it("records the apply facts that measurement, not assumption, established", () => {
-    // Cardinality was measured either side of the apply, and the PostgREST
-    // probe is recorded as NOT RUN rather than quietly claimed.
-    expect(rec.hosted_note).toContain("appointments 308 -> 308");
-    expect(rec.hosted_note).toContain("appointment_audit 260 -> 260");
-    expect(rec.hosted_note).toContain("convalidated=false");
-    expect(rec.hosted_note).toContain("PostgREST live-credential probe NOT RUN");
+    // These claims moved from the current-state note to the LEDGER when 0175
+    // superseded 0174 as hosted max. They are asserted at their new home rather
+    // than dropped: cardinality was measured either side of the apply, and the
+    // PostgREST probe is recorded as NOT RUN rather than quietly claimed.
+    // (The line breaks are real — the ledger wraps, so match across whitespace.)
+    expect(LEDGER).toMatch(/appointments \*\*308 → 308\*\*/);
+    expect(LEDGER).toMatch(/appointment_audit\s+\*\*260 → 260\*\*/);
+    expect(LEDGER).toMatch(/`appointment_audit_actor_id_type_ck` is intentionally `NOT VALID`/);
+    expect(LEDGER).toMatch(/PostgREST live-credential probe: NOT RUN/);
+    // The frozen 0174 checksum stays in the CURRENT record regardless.
+    expect(rec.hosted_note).toContain(
+      "479dc58dd76d6030bc33bd83fb30b0a7f930ca58330067bb98a3f6c16a949bbc",
+    );
   });
 });
 

@@ -497,6 +497,7 @@ export default async function AppointmentDetailPage({
           <AppointmentLifecycleActions
             appointmentId={id}
             status={typedStatus}
+            startsAt={data.starts_at}
             endsAt={data.ends_at}
           />
         </section>

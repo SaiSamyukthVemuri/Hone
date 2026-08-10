@@ -243,16 +243,18 @@ describe("scope containment", () => {
 // ---------------------------------------------------------------------------
 // Corrections: the three blockers found on the first head.
 // ---------------------------------------------------------------------------
-describe("BLOCKER 1: the end-time control is mounted before the end too", () => {
-  it("mounts MarkAppointmentCompleteControl for BOTH before_end and ready", () => {
+describe("BLOCKER 1: the completion control is mounted before it is usable too", () => {
+  it("mounts MarkAppointmentCompleteControl for BOTH before_start and ready", () => {
     const finish = PAGE.slice(
       PAGE.indexOf('data-testid="finish-appointment"'),
       PAGE.indexOf('id="session-payment"'),
     );
     // Mounting only on "ready" meant the self-enabling timer never ran, so the
-    // button could not appear when ends_at passed without a manual refresh.
+    // button could not appear when the boundary passed without a manual
+    // refresh. B6 moved that boundary from ends_at to starts_at; the mounting
+    // rule is unchanged, so the pre-boundary state is now "before_start".
     expect(finish).toMatch(/completion\.kind === "ready" \|\|/);
-    expect(finish).toMatch(/completion\.kind === "before_end"/);
+    expect(finish).toMatch(/completion\.kind === "before_start"/);
     expect(finish).toContain("<MarkAppointmentCompleteControl");
     // ...and there is exactly ONE mount, so there is exactly one timer.
     expect((finish.match(/<MarkAppointmentCompleteControl/g) ?? []).length).toBe(1);
@@ -265,14 +267,14 @@ describe("BLOCKER 1: the end-time control is mounted before the end too", () => 
     );
     expect(finish).not.toMatch(/setTimeout|setInterval|useEffect/);
     // The helper text is passed to the control, not rendered a second time.
-    expect(finish).toMatch(/notEndedHint=/);
+    expect(finish).toMatch(/notStartedHint=/);
     expect((finish.match(/updates on its own/g) ?? []).length).toBe(1);
   });
 
   it("the shared control owns the disabled state and the timer", () => {
-    expect(CONTROL).toMatch(/disabled=\{pending \|\| !hasEnded\}/);
+    expect(CONTROL).toMatch(/disabled=\{pending \|\| !canComplete\}/);
     expect(CONTROL).toMatch(/window\.setTimeout\(\(\) => setNowTick/);
-    expect(CONTROL).toMatch(/data-testid="mark-complete-not-ended"/);
+    expect(CONTROL).toMatch(/data-testid="mark-complete-not-started"/);
   });
 });
 

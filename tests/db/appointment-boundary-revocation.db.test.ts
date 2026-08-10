@@ -855,7 +855,33 @@ describe("0172 — no trigger or function drift", () => {
       [[...TABLES]],
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
-    expect(byTable.appointments, "appointments non-internal triggers").toBe(7);
+    // B6 / 0175 UPGRADED FROM A COUNT TO A NAMED SET.
+    //
+    // This asserted `appointments === 7`. B6 legitimately adds two triggers, and
+    // bumping 7 -> 9 would have kept the weakest possible form of the guard: a
+    // count cannot tell an intended addition from a swap, and cannot say which
+    // trigger vanished. Since the property being protected is "no trigger drift
+    // on the security-relevant tables", the identities are named — exactly as
+    // this same test already does for appointment_audit below.
+    const apptTriggers = await adminQuery(
+      `select g.tgname from pg_trigger g
+        where g.tgrelid = 'public.appointments'::regclass and not g.tgisinternal
+        order by g.tgname`,
+    );
+    expect(apptTriggers.rows.map((x) => x.tgname as string)).toEqual([
+      "appointments_enforce_buffer_trg",
+      // B6 / 0175: refuses illegal lifecycle edges. Writes no audit row.
+      "appointments_enforce_transition_trg",
+      "appointments_set_capacity_enabled_trg",
+      // B6 / 0175: DB-authoritative updated_at. Writes no audit row.
+      "appointments_set_updated_at_trg",
+      "appointments_snapshot_buffer_trg",
+      "appointments_sync_calendar_reservation_trg",
+      "appointments_sync_version_bump_trg",
+      "appointments_zzz_outbound_enqueue_delete_trg",
+      "appointments_zzz_outbound_enqueue_trg",
+    ]);
+    expect(byTable.appointments, "appointments non-internal triggers").toBe(9);
     // B5/0174 added EXACTLY TWO triggers to appointment_audit, and they are
     // named here rather than counted loosely so a third one cannot arrive
     // unnoticed. Neither writes an audit EVENT — one derives trusted FIELDS at

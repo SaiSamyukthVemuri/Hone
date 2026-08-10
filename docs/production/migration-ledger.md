@@ -853,3 +853,57 @@ bare PostgREST embed raises `PGRST201`. The qualification shipped ahead of it as
 
 Trust this ledger plus `supabase migration list --linked` — never historical prose, and never
 one document as evidence for another.
+
+## 0175 — appointment transition integrity + early completion (applied 2026-08-10T11:56:35Z–11:56:45Z)
+
+`sha256 7a00f67159a31dcdf90db8a35521ba26f258980b415ddd1aea214e63f4af3ad1`, applied from B6 head
+`8ed5115f` (PR #551, **UNMERGED and still DRAFT at apply time**). 10 seconds, exit 0, dry run listed
+only 0175. Two benign `does not exist, skipping` NOTICEs from the migration's own re-run-safe
+`drop trigger if exists` guards.
+
+**Database-first was safe here because 0175 only WIDENS when completion is legal** (`ends_at` →
+`starts_at`). The shipped application still gates its button on `ends_at`, so until the app deploys
+the database merely permits a case the UI never requests. The reverse order would have offered a
+button the database refused. The action's error map already recognises **both** refusal strings, so
+neither deploy order can show a wrong message.
+
+- **The artifact was frozen before apply.** The comment-stripped **executable** sha256
+  `73e14c484b214a62671dacc49b4363af13fbc7b9d05ea6a97b567b69f52a989f` is identical at `590e399b`,
+  `a710cb88` and `8ed5115f` — proof the final review amendment changed comments only.
+- **Zero application-row mutation, measured two ways:** appointments **310 → 310** (157/90/57/6
+  unchanged), reservations **257 → 257**, appointment_audit **262 → 262**, Google outbox **1 → 1**,
+  payment attempts **24 → 24**; and — stronger than count equality — **zero** appointments rows carry
+  `updated_at` after the apply start and **zero** audit rows were created. 0175's own new
+  `BEFORE UPDATE` trigger would have stamped anything it touched. It is DDL only.
+- **Transition matrix enumerated against the live catalog:** exactly **six** edges
+  (`confirmed→completed/cancelled/no_show`, `completed/cancelled/no_show→confirmed`) and nothing
+  else — evaluated as a pure immutable predicate, with **no appointment row touched**. The guard has
+  no GUC bypass, no `service_role` exception, and writes no audit row; neither does `set_updated_at()`.
+- **Capacity trigger narrowed, function untouched:** it now watches only `studio_id,
+  practitioner_id`; `set_appointment_capacity_enabled()` is byte-identical across the apply
+  (`md5 93e3f569…` before and after). 0175 changed the *trigger*, never the function. Triggers 7 → 9.
+- **Legacy retirement complete:** all three exact legacy signatures absent, all three successors
+  present. Audit writers **10 → 9**, losing exactly `reschedule_appointment`.
+- **Standing prohibition honoured and now quantified.** `snapshot_appointment_buffer()` is unchanged
+  across the apply — `md5 05c86bbac73661e739eab98f2f1d6f06`, length 1053, `current_setting` present.
+  Preflight measured why this matters: the repo-derived local build is `md5 06810efa…`, length 892,
+  with **no** `current_setting`. Production's body is 161 bytes longer and carries GUC behaviour this
+  repository's migration source cannot reproduce, so re-emitting it from repo source would **delete
+  live production behaviour**. 0175 has zero executable references to it.
+- **Privileges unchanged, no broadening:** anon/authenticated SELECT on 62 columns, no DML, no
+  EXECUTE (so `PUBLIC` holds none); service_role EXECUTE plus column-level UPDATE on exactly the six
+  B8/0177 postcare columns — no seventh — and no table-level DML.
+- **Why the reservation layer is what matters here:** both `no_overlapping_appointments_*` exclusions
+  carry `WHERE status = 'confirmed'`, so they stop covering a row the instant it completes. After an
+  early completion, `studio_calendar_reservations` is the **only** authority still holding the booked
+  tail — and production's `sync_appointment_to_calendar_reservation()` keeps the reservation for
+  `status in ('confirmed','completed')`, verified in the live catalog before apply.
+- **Reservation integrity:** 0 orphaned, 0 malformed, 0 duplicate identities, 0 terminal rows holding
+  a reservation, 0 **future-dated** active appointments missing one. The 12 completed appointments
+  without a reservation are pre-existing and were deliberately **not** repaired: all past-dated, with
+  monthly coverage 0/3 May → 7/13 Jun → 22/25 Jul → **49/49 Aug** — a historical backfill boundary
+  already closed, holding no future capacity.
+- **Synthetic Twin preserved exactly:** appointments 141 (75 confirmed / 40 completed), reservations
+  115, appointment_audit 0 — identical before and after. No Twin mutation command was executed.
+- At apply time production application source was `6cffaaf9` and exact-head CI `31382337578` was
+  11/11 success. Public health after apply: `hone.care` `/`, `/login`, `/portal/login` all 200.

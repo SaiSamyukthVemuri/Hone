@@ -40,6 +40,10 @@ import { markAppointmentNoShowAction } from "./actions";
 export type AppointmentLifecycleActionsProps = {
   appointmentId: string;
   status: "confirmed" | "completed" | "cancelled" | "no_show";
+  // B6: two clocks, deliberately. startsAt gates explicit completion; endsAt
+  // still gates no-show, because a no-show is the booked opportunity having
+  // fully elapsed rather than a practitioner asserting treatment finished.
+  startsAt: string;
   endsAt: string;
 };
 
@@ -54,6 +58,7 @@ const GENERIC_FAILURE = "Something went wrong. Please refresh and try again.";
 export function AppointmentLifecycleActions({
   appointmentId,
   status,
+  startsAt,
   endsAt,
 }: AppointmentLifecycleActionsProps) {
   const router = useRouter();
@@ -78,6 +83,8 @@ export function AppointmentLifecycleActions({
   // Terminal states render nothing. AFTER the hooks, so hook order is stable.
   if (status !== "confirmed") return null;
 
+  // NO-SHOW ONLY. Explicit completion has its own startsAt rule inside
+  // MarkAppointmentCompleteControl; the two must never share a variable again.
   const hasEnded = Number.isFinite(endsAtMs) && endsAtMs <= nowTick;
 
   function runNoShow() {
@@ -117,8 +124,8 @@ export function AppointmentLifecycleActions({
         {/* THE shared completion control — identical here and in charting. */}
         <MarkAppointmentCompleteControl
           appointmentId={appointmentId}
-          endsAt={endsAt}
-          notEndedHint="Available after the appointment end time."
+          startsAt={startsAt}
+          notStartedHint="Available once the appointment has started."
         />
         <button
           type="button"

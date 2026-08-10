@@ -3,11 +3,24 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 (migration 0147) — the OLD create_internal_appointment signature is
-// now a deployment-compatible wrapper around v2. A stale deployment (or a second
-// service-role adapter) that still calls the 9-arg command gets EVERY v2 guarantee:
-// authoritative duration, per-practitioner working hours, owner-only custom length,
-// booking pause, and the GiST collision authority. Studio B, cap ON, UTC.
+// B6 / 0175 — REFRAMED, NOT DELETED.
+//
+// This suite was written for migration 0147, when the old 9-arg
+// create_internal_appointment became a deployment-compatible wrapper around v2.
+// B6 RETIRED that wrapper after a zero-caller census, so its forwarding
+// contract no longer exists and the "stale deployment" premise is void.
+//
+// What does NOT go away is the set of guarantees the wrapper existed to prove,
+// several of which are covered nowhere else: v2's duration AUTHORITY (a
+// non-owner may not send an override at all; an owner may, within shape),
+// invalid_service, per-practitioner working hours on booking, booking pause,
+// and the GiST collision authority. Those are properties of the governed
+// command, so the suite now exercises v2 directly.
+//
+// The one thing deliberately dropped is the wrapper's argument FORWARDING —
+// there is no wrapper left to forward. tests/migrations/0175-* pins the exact
+// DROP and tests/db/appointment-transition-integrity.db.test.ts proves the
+// function is absent, so no third copy is added here. Studio B, cap ON, UTC.
 
 let B: SynthStudio;
 let serviceId: string;
@@ -46,14 +59,22 @@ afterAll(async () => {
   await closePool();
 });
 
-// The OLD 9-arg command (what a pre-v2 deployment calls).
+// v2 directly, preserving the retired wrapper's duration MAPPING so each test
+// keeps its original meaning: the wrapper forwarded an override ONLY when the
+// requested length differed from the service default, and passed null when it
+// matched. Collapsing that to "always send the override" would turn every
+// member booking into not_authorized and silently destroy these tests.
+const SERVICE_DEFAULT_MINUTES = 30;
 const legacyBook = (actor: string, target: string, start: string, durationMinutes: number) =>
   adminQuery(
-    `select * from public.create_internal_appointment($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,null)`,
-    [B.studioId, actor, target, B.clientId, serviceId, start, durationMinutes, hash64()],
+    `select * from public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,null,$8,false)`,
+    [
+      B.studioId, actor, target, B.clientId, serviceId, start, hash64(),
+      durationMinutes === SERVICE_DEFAULT_MINUTES ? null : durationMinutes,
+    ],
   ).then((r) => r.rows[0] as { result: string; appointment_id: string | null; ends_at: string | null });
 
-describe("0147 — old create_internal_appointment routes through v2 (deployment skew)", () => {
+describe("v2 duration authority, hours, pause and collision (was: 0147 wrapper skew)", () => {
   it("duration == service default → normal booking (authoritative default applied)", async () => {
     const r = await legacyBook(member(), member(), T("10:00"), 30);
     expect(r.result).toBe("created");

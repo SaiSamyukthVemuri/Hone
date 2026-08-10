@@ -321,3 +321,77 @@ describe("Stage I — parallel isolation + targeted cleanup", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stage J — B6 / 0175: early completion and session-payment eligibility.
+//
+// This is the LIVE-HELPER proof. tests/lib/billing/b6-early-completion-payment-
+// eligibility.test.ts is a SOURCE-CONTRACT proof and says so; it reasons about
+// the resolver's text rather than running it. Here the real resolver runs
+// against real seeded rows, with nothing mocked, so the two are different kinds
+// of evidence and neither stands in for the other.
+//
+// The question B6 raises: completion is now legal from starts_at, so a session
+// can be charged while its appointment's booked interval is still running. Does
+// that open a payment path that was previously closed? It must not — the
+// appointment gate is a LIFECYCLE gate, and it was never an ends_at gate.
+describe("Stage J — B6 early completion does not change payment eligibility", () => {
+  it("an EARLY-completed appointment (completed before ends_at) is eligible", async () => {
+    const s = await seedEligibleQuickCheckoutScenario({ label: "b6-early" });
+    try {
+      // Straddle now(): started 10 minutes ago, still 50 minutes of booked
+      // interval left, already completed. This is exactly the state B6 makes
+      // reachable and nothing else could produce.
+      await adminQuery(
+        `update public.appointments
+            set starts_at = now() - interval '10 minutes',
+                ends_at   = now() + interval '50 minutes'
+          where id = $1`,
+        [s.appointmentId],
+      );
+      const straddles = await adminQuery(
+        `select (starts_at < now() and ends_at > now()) as mid_visit, status
+           from public.appointments where id = $1`,
+        [s.appointmentId],
+      );
+      // Guard against a vacuous pass: if the fixture were not mid-visit, this
+      // would just be re-testing the ordinary ended-appointment case.
+      expect(straddles.rows[0].mid_visit, "fixture must be mid-visit").toBe(true);
+      expect(straddles.rows[0].status).toBe("completed");
+
+      const elig = await resolve(s.studioId, s.sessionId!);
+      expect(elig.eligible, reasons(elig)).toBe(true);
+    } finally {
+      await cleanupPaymentScenario(s.studioId);
+    }
+  });
+
+  it("the SAME mid-visit appointment left CONFIRMED is refused for lifecycle, not for its clock", async () => {
+    const s = await seedEligibleQuickCheckoutScenario({
+      label: "b6-confirmed",
+      appointmentStatus: "confirmed",
+    });
+    try {
+      await adminQuery(
+        `update public.appointments
+            set starts_at = now() - interval '10 minutes',
+                ends_at   = now() + interval '50 minutes'
+          where id = $1`,
+        [s.appointmentId],
+      );
+      const elig = await resolve(s.studioId, s.sessionId!);
+      expect(elig.eligible).toBe(false);
+      if (elig.eligible === false) {
+        const joined = elig.blockingReasons.join(" | ");
+        // Refused because the appointment is not COMPLETED — the same reason it
+        // would give for a confirmed appointment at any other time. The refusal
+        // must not mention ending/elapsing, which would mean an ends_at rule had
+        // crept into the payment path.
+        expect(joined).toMatch(/Appointment is not completed/i);
+        expect(joined).not.toMatch(/has not ended|not yet ended|still in progress/i);
+      }
+    } finally {
+      await cleanupPaymentScenario(s.studioId);
+    }
+  });
+});

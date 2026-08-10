@@ -1783,6 +1783,11 @@ export async function seedE2eEndedAppointmentSession(
     // Ends shortly in the FUTURE, so a test can watch the completion control's
     // own timer cross ends_at without reloading.
     endsInSeconds?: number;
+    // STARTS shortly in the future (B6 / 0175): completion is gated on
+    // starts_at, not ends_at, so watching the control self-enable means
+    // watching its timer cross the START. Takes precedence over the two
+    // ends-relative options.
+    startsInSeconds?: number;
     clientEmail?: string | null;
     charted?: boolean;
     aftercareExplained?: boolean;
@@ -1814,13 +1819,17 @@ export async function seedE2eEndedAppointmentSession(
   );
   const hoursAgo = opts.endedHoursAgo ?? 2;
   const starts =
-    opts.endsInSeconds != null
-      ? new Date(Date.now() - 30 * 60 * 1000).toISOString()
-      : new Date(Date.now() - (hoursAgo + 1) * 3600 * 1000).toISOString();
+    opts.startsInSeconds != null
+      ? new Date(Date.now() + opts.startsInSeconds * 1000).toISOString()
+      : opts.endsInSeconds != null
+        ? new Date(Date.now() - 30 * 60 * 1000).toISOString()
+        : new Date(Date.now() - (hoursAgo + 1) * 3600 * 1000).toISOString();
   const ends =
-    opts.endsInSeconds != null
-      ? new Date(Date.now() + opts.endsInSeconds * 1000).toISOString()
-      : new Date(Date.now() - hoursAgo * 3600 * 1000).toISOString();
+    opts.startsInSeconds != null
+      ? new Date(Date.now() + (opts.startsInSeconds + 60 * 60) * 1000).toISOString()
+      : opts.endsInSeconds != null
+        ? new Date(Date.now() + opts.endsInSeconds * 1000).toISOString()
+        : new Date(Date.now() - hoursAgo * 3600 * 1000).toISOString();
   const appointmentId = await seedConfirmedAppointment(
     seed.studioId,
     prac.id,

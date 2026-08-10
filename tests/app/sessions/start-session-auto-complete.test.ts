@@ -46,6 +46,28 @@ describe("startSessionAction: PR #180 auto-mark-completed helper", () => {
     expect(ACTIONS).toMatch(/args\.status !== "confirmed"/);
   });
 
+  // B6 / 0175 — THE ASYMMETRY THAT MAKES EARLY COMPLETION SAFE.
+  //
+  // 0175 loosened mark_appointment_complete to `starts_at > now()`, so the RPC
+  // itself would now accept a mid-visit appointment. The AUTOMATIC path must
+  // not take advantage of that: starting to chart at 14:20 on a 14:00-15:00
+  // visit must not silently complete the appointment, and must not fire
+  // postcare as a side effect of that completion.
+  //
+  // The guard lives HERE, in the action, before the RPC is ever called — which
+  // is why loosening the RPC could not change this path. Pinned so a future
+  // "consistency" edit cannot align the two boundaries.
+  it("T19/T20 — the AUTO path still requires the appointment to have ENDED", () => {
+    expect(ACTIONS).toMatch(/endsAtMs > Date\.now\(\)/);
+    // The auto path must never key off starts_at.
+    expect(ACTIONS).not.toMatch(/startsAtMs/);
+    // And the skip must happen BEFORE the RPC call, not after.
+    const guardAt = ACTIONS.indexOf("endsAtMs > Date.now()");
+    const rpcAt = ACTIONS.indexOf('rpc("mark_appointment_complete"');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(rpcAt).toBeGreaterThan(guardAt);
+  });
+
   it("the helper skips future appointments (endsAtMs > Date.now())", () => {
     expect(ACTIONS).toMatch(/endsAtMs > Date\.now\(\)/);
   });

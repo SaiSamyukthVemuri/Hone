@@ -15,14 +15,18 @@ import {
 // one workflow — and prove it decides only what to SHOW, never what is allowed.
 
 const NOW = Date.parse("2026-07-31T15:00:00Z");
-const ENDED = "2026-07-31T14:30:00Z";
-const NOT_ENDED = "2026-07-31T15:30:00Z";
+// B6: explicit completion is keyed on the appointment having STARTED. These
+// fixtures are named for that, and every appointment carries BOTH clocks so a
+// test can never accidentally prove the completion rule using ends_at.
+const STARTED = "2026-07-31T14:30:00Z";
+const NOT_STARTED = "2026-07-31T15:30:00Z";
+const ENDED = "2026-07-31T14:45:00Z";
 
 function input(over: Partial<FinishAppointmentInput> = {}): FinishAppointmentInput {
   return {
     chartedBlockCount: 1,
     aftercareExplainedAt: null,
-    appointment: { id: "appt-1", status: "confirmed", endsAt: ENDED },
+    appointment: { id: "appt-1", status: "confirmed", startsAt: STARTED, endsAt: ENDED },
     clientEmail: "client@example.test",
     postcareConfigured: true,
     isOwner: true,
@@ -79,7 +83,7 @@ describe("3. risks & aftercare explained", () => {
     const s = resolveFinishAppointmentState(
       input({
         aftercareExplainedAt: null,
-        appointment: { id: "a", status: "completed", endsAt: ENDED },
+        appointment: { id: "a", status: "completed", startsAt: STARTED, endsAt: ENDED },
         postcareSentAt: "2026-07-31T14:45:00Z",
       }),
     );
@@ -89,22 +93,22 @@ describe("3. risks & aftercare explained", () => {
 });
 
 describe("4-8. completion state, keyed to the appointment", () => {
-  it("confirmed BEFORE the end time is not offerable", () => {
+  it("confirmed BEFORE the start time is not offerable", () => {
     const s = resolveFinishAppointmentState(
-      input({ appointment: { id: "a", status: "confirmed", endsAt: NOT_ENDED } }),
+      input({ appointment: { id: "a", status: "confirmed", startsAt: NOT_STARTED, endsAt: NOT_STARTED } }),
     );
-    expect(s.completion.kind).toBe("before_end");
-    expect(completionLabel(s.completion)).toBe("Available after the appointment ends");
+    expect(s.completion.kind).toBe("before_start");
+    expect(completionLabel(s.completion)).toBe("Available once the appointment has started");
   });
 
-  it("confirmed AFTER the end time is offerable, carrying the appointment id", () => {
+  it("confirmed AFTER the start time is offerable, carrying the appointment id", () => {
     const s = resolveFinishAppointmentState(input());
-    expect(s.completion).toEqual({ kind: "ready", appointmentId: "appt-1", endsAt: ENDED });
+    expect(s.completion).toEqual({ kind: "ready", appointmentId: "appt-1", startsAt: STARTED });
   });
 
   it("completed is terminal — no action", () => {
     const s = resolveFinishAppointmentState(
-      input({ appointment: { id: "a", status: "completed", endsAt: ENDED } }),
+      input({ appointment: { id: "a", status: "completed", startsAt: STARTED, endsAt: ENDED } }),
     );
     expect(s.completion.kind).toBe("completed");
     expect(completionLabel(s.completion)).toBe("Completed");
@@ -112,14 +116,14 @@ describe("4-8. completion state, keyed to the appointment", () => {
 
   it("cancelled is terminal — no action", () => {
     const s = resolveFinishAppointmentState(
-      input({ appointment: { id: "a", status: "cancelled", endsAt: ENDED } }),
+      input({ appointment: { id: "a", status: "cancelled", startsAt: STARTED, endsAt: ENDED } }),
     );
     expect(s.completion.kind).toBe("cancelled");
   });
 
   it("no_show is terminal — no action", () => {
     const s = resolveFinishAppointmentState(
-      input({ appointment: { id: "a", status: "no_show", endsAt: ENDED } }),
+      input({ appointment: { id: "a", status: "no_show", startsAt: STARTED, endsAt: ENDED } }),
     );
     expect(s.completion.kind).toBe("no_show");
   });
@@ -137,9 +141,9 @@ describe("4-8. completion state, keyed to the appointment", () => {
 
   it("an unparseable end time fails CLOSED (not offerable)", () => {
     const s = resolveFinishAppointmentState(
-      input({ appointment: { id: "a", status: "confirmed", endsAt: null } }),
+      input({ appointment: { id: "a", status: "confirmed", startsAt: null, endsAt: null } }),
     );
-    expect(s.completion.kind).toBe("before_end");
+    expect(s.completion.kind).toBe("before_start");
   });
 });
 
@@ -254,19 +258,44 @@ describe("18-19. purity and the injected clock", () => {
     );
   });
 
-  it("the boundary AT ends_at counts as ended (inclusive)", () => {
-    const endsAt = "2026-07-31T15:00:00Z";
+  // B6: the boundary moved from ends_at to starts_at, and stayed INCLUSIVE.
+  // Exactly starts_at is ready; one millisecond earlier is not. This mirrors
+  // mark_appointment_complete's `starts_at > now()` refusal, so the presenter
+  // cannot offer a button the database would reject.
+  it("the boundary AT starts_at counts as started (inclusive)", () => {
+    const startsAt = "2026-07-31T15:00:00Z";
+    const endsAt = "2026-07-31T16:00:00Z";
     const exactly = resolveFinishAppointmentState(
-      input({ appointment: { id: "a", status: "confirmed", endsAt }, nowMs: Date.parse(endsAt) }),
+      input({
+        appointment: { id: "a", status: "confirmed", startsAt, endsAt },
+        nowMs: Date.parse(startsAt),
+      }),
     );
     expect(exactly.completion.kind).toBe("ready");
     const oneMsBefore = resolveFinishAppointmentState(
       input({
-        appointment: { id: "a", status: "confirmed", endsAt },
-        nowMs: Date.parse(endsAt) - 1,
+        appointment: { id: "a", status: "confirmed", startsAt, endsAt },
+        nowMs: Date.parse(startsAt) - 1,
       }),
     );
-    expect(oneMsBefore.completion.kind).toBe("before_end");
+    expect(oneMsBefore.completion.kind).toBe("before_start");
+  });
+
+  // The rule that makes B6 safe: a visit that has begun but NOT ended is
+  // explicitly completable. Under the old ends_at rule this was "before_end".
+  it("MID-VISIT — started but not ended is READY (the whole point of B6)", () => {
+    const s = resolveFinishAppointmentState(
+      input({
+        appointment: {
+          id: "a",
+          status: "confirmed",
+          startsAt: "2026-07-31T14:30:00Z",
+          endsAt: "2026-07-31T15:30:00Z",
+        },
+        nowMs: Date.parse("2026-07-31T15:00:00Z"),
+      }),
+    );
+    expect(s.completion.kind).toBe("ready");
   });
 
   it("reads no clock of its own", () => {
