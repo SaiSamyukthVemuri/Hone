@@ -117,13 +117,14 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await expectNoHorizontalScroll(page);
     });
 
-    test("pre-end: the button is MOUNTED and disabled, then enables itself when ends_at passes — no reload", async ({
+    test("pre-start: the button is MOUNTED and disabled, then enables itself when starts_at passes — no reload", async ({
       page,
     }) => {
       const seed = await seedE2eStudio();
-      // Ends in ~6 seconds, so the real timer can be observed crossing it.
+      // B6 / 0175 moved the completion gate from ends_at to starts_at, so the
+      // timer to observe is the one crossing the START. Starts in ~6 seconds.
       const s = await seedE2eEndedAppointmentSession(seed, {
-        endsInSeconds: 6,
+        startsInSeconds: 6,
       });
       await loginAsOwner(page, seed);
       await openSession(page, s.clientId, s.sessionId);
@@ -134,7 +135,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const button = page.getByTestId("mark-appointment-complete");
       await expect(button).toBeVisible();
       await expect(button).toBeDisabled();
-      await expect(page.getByTestId("mark-complete-not-ended")).toHaveText(
+      await expect(page.getByTestId("mark-complete-not-started")).toHaveText(
         /updates on its own/,
       );
 
@@ -142,17 +143,19 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const url = page.url();
       await expect(button).toBeEnabled({ timeout: 20_000 });
       expect(page.url()).toBe(url);
-      await expect(page.getByTestId("mark-complete-not-ended")).toHaveCount(0);
+      await expect(page.getByTestId("mark-complete-not-started")).toHaveCount(0);
     });
 
-    test("pre-end appointment: exit still available", async ({ page }) => {
+    test("pre-start appointment: exit still available", async ({ page }) => {
       const seed = await seedE2eStudio();
+      // endedHoursAgo: -2 ends two hours from now, so it has not STARTED
+      // either — still the disabled case under B6's starts_at gate.
       const s = await seedE2eEndedAppointmentSession(seed, { endedHoursAgo: -2 });
       await loginAsOwner(page, seed);
       await openSession(page, s.clientId, s.sessionId);
 
       await expect(page.getByTestId("finish-completion-status")).toHaveText(
-        "Available after the appointment ends",
+        "Available once the appointment has started",
       );
       await expect(page.getByTestId("mark-appointment-complete")).toBeDisabled();
       // The safe exit is still there.

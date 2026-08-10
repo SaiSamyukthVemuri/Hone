@@ -340,9 +340,17 @@ describe("0173 — revert_appointment_outcome: status gates", () => {
   it("a stale expected status cannot overwrite a concurrent real change", async () => {
     const studio = await seedStudio("b4-stale");
     const appt = await seedAppointment(studio, { status: "completed" });
-    // Someone else moved it to cancelled after the page was rendered.
+    // Someone else already reverted it after the page was rendered.
+    //
+    // B6 / 0175 NOTE: this fixture used to simulate the concurrent change as
+    // completed -> cancelled. That edge is now REFUSED by the transition guard
+    // (it can no longer occur in production at all), so the fixture was
+    // manufacturing an impossible state to test a real rule. Reverting to
+    // confirmed is a LEGAL concurrent change and exercises exactly the same
+    // optimistic-concurrency property: a caller holding a stale
+    // expected_status must be refused rather than overwrite what happened.
     await adminQuery(
-      `update public.appointments set status = 'cancelled' where id = $1`,
+      `update public.appointments set status = 'confirmed' where id = $1`,
       [appt],
     );
     await expectRefusal(

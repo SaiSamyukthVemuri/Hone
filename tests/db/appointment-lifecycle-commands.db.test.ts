@@ -373,9 +373,17 @@ describe("T6.3 mark_appointment_complete — status and time gates", () => {
     },
   );
 
-  it("refuses a CONFIRMED appointment whose ends_at is still in the future", async () => {
-    // Valid source status, so the status gate passes and the ends_at gate at
-    // 0032:4082 is the control actually under test.
+  it("refuses a CONFIRMED appointment that has not STARTED yet", async () => {
+    // B6 / 0175 SUPERSESSION. This pinned the old `ends_at <= now()` gate. B6
+    // moved explicit completion to `starts_at`, so the rule under test is now
+    // "the visit must have begun". The invariant this test actually protects is
+    // unchanged and still exercised: a not-yet-eligible appointment is refused
+    // AND nothing on the row moves.
+    //
+    // `when: "future"` places starts_at in the future, so it is ineligible
+    // under either rule. The newly-legal middle case — started but not ended —
+    // is proven in tests/db/appointment-transition-integrity.db.test.ts (T3)
+    // rather than duplicated here.
     const id = await mkAppt({ studio: A, when: "future" });
     const before = await snapshot(id);
 
@@ -383,10 +391,10 @@ describe("T6.3 mark_appointment_complete — status and time gates", () => {
       markComplete(id, A.studioId, A.practitionerId),
     ).rejects.toMatchObject({
       code: "P0002",
-      message: "appointment has not yet ended",
+      message: "appointment has not started yet",
     });
 
-    expectUnchanged(before, await snapshot(id), "T6.3 future appointment");
+    expectUnchanged(before, await snapshot(id), "T6.3 not-yet-started appointment");
   });
 
   it("positive control: a PAST CONFIRMED appointment becomes completed with exactly one marked_complete audit row", async () => {

@@ -1417,15 +1417,13 @@ describe("0171 — privilege boundary", () => {
     },
   );
 
-  it("leaves the LEGACY reschedule_appointment in place for deployment skew", async () => {
-    const r = await adminQuery(
-      `select has_function_privilege('service_role', p.oid, 'EXECUTE') as svc
-         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.proname = 'reschedule_appointment'`,
-    );
-    expect(r.rows).toHaveLength(1);
-    expect(r.rows[0].svc).toBe(true);
-  });
+  // RETIRED (B6 / 0175). This asserted the legacy v1 `reschedule_appointment`
+  // remained INSTALLED for deployment skew. B6 dropped it by exact signature
+  // after a zero-caller census, so the claim is not merely false — the object
+  // it referred to is gone. The exact DROP is pinned in
+  // tests/migrations/0175-appointment-transition-integrity.test.ts and its
+  // absence is proven in tests/db/appointment-transition-integrity.db.test.ts,
+  // so no replacement assertion is added here.
 
   it("after 0172 the appointments table leaves both browser roles with SELECT only", async () => {
     // Was "revokes NOTHING from the appointments table". 0171 itself still
