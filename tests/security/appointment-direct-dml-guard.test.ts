@@ -576,11 +576,33 @@ describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", (
       APPT_SITES.filter((s) => s.file === AUTO),
       "autoSendPostcareOnComplete must write appointments only through the commands",
     ).toHaveLength(0);
-    // Positive control: both files are genuinely still in the scanned tree.
-    const scanned = new Set(ALL_SITES.map((s) => s.file));
-    expect(scanned.has(MANUAL) || scanned.has(AUTO), "former writer files still scanned").toBe(
-      true,
+    // ANTI-VACUITY, IN THREE LAYERS. An earlier version of this control asked
+    // `scanned.has(MANUAL) || scanned.has(AUTO)` over the WRITE-site set, which
+    // was wrong twice: `||` proves at-least-one rather than both, and the write
+    // set is exactly what B8 emptied for these two files — so a file that
+    // correctly contains zero writes is absent from it, and the control could
+    // pass while neither file was being read at all.
+    //
+    // Layer 1: the runtime enumeration still yields both files.
+    const runtimeFiles = new Set(
+      runtimeSourceFiles().map((abs) => abs.slice(REPO_ROOT.length + 1).split("\\").join("/")),
     );
+    expect(runtimeFiles.has(MANUAL), `${MANUAL} must still be enumerated`).toBe(true);
+    expect(runtimeFiles.has(AUTO), `${AUTO} must still be enumerated`).toBe(true);
+
+    // Layer 2: the appointment-specific PARSER still observes real
+    // `.from("appointments")` calls in each file — they both still READ the
+    // table. So the parser is demonstrably reaching and understanding this
+    // source, not silently failing on it.
+    for (const f of [MANUAL, AUTO]) {
+      expect(
+        FROM_CALLS.filter((c) => c.file === f && c.table === APPOINTMENTS).length,
+        `the parser must still see appointment .from() calls in ${f}`,
+      ).toBeGreaterThan(0);
+    }
+
+    // Layer 3 is the assertion above: zero MUTATIONS. Together these three mean
+    // the tree is clean, not that the analyzer went blind.
   });
 
   it("it resolves every appointment writer's table AND payload (nothing silently skipped)", () => {
@@ -595,7 +617,7 @@ describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", (
 });
 
 describe("T2.1 — the appointment writer census is frozen", () => {
-  it("every direct `appointments` writer is one of the seven reviewed sites", () => {
+  it("no direct `appointments` writer exists outside the reviewed set (now empty)", () => {
     const allowedKeys = new Set(ALLOWED.map((d) => sortKey(d)));
     const undeclared = APPT_SITES.filter((s) => !allowedKeys.has(sortKey(descriptorOf(s))));
     expect(

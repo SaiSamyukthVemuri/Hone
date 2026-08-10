@@ -43,6 +43,12 @@ export function PostcareSection(props: {
   // the page with no explanation. The state is now explicit and shared, so
   // neither surface can quietly drop it.
   clientEmail?: string | null;
+  // B8 / 0177: the appointment's lifecycle status, server-derived by both
+  // callers. The DATABASE is the authority — claim_postcare_send refuses any
+  // status other than 'completed' — so this exists to keep the SURFACE
+  // truthful, not to enforce anything. Offering an enabled Send that the
+  // command will refuse is a worse experience than not offering it.
+  appointmentStatus?: string | null;
 }) {
   const preview = buildPostcareEmail({
     clientName: props.clientName,
@@ -83,6 +89,19 @@ export function PostcareSection(props: {
           className="text-sm text-neutral-700 dark:text-neutral-300"
         >
           Postcare unavailable — no client email
+        </p>
+      ) : aftercareConfigured &&
+        props.appointmentStatus != null &&
+        props.appointmentStatus !== "completed" ? (
+        // B8 / 0177. Postcare is completed-only. Configuration problems are
+        // reported ABOVE this deliberately: a studio that has not set postcare
+        // up should be told so now, not told to come back after completing the
+        // visit and only then discover it.
+        <p
+          data-testid="postcare-not-completed"
+          className="text-sm text-neutral-700 dark:text-neutral-300"
+        >
+          Available after the appointment is completed.
         </p>
       ) : aftercareConfigured ? (
         <>
