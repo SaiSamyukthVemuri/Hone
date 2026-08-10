@@ -2,32 +2,33 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// T8 / T9 — B6 makes an early-completed appointment payment-eligible, and it
-// does so WITHOUT any payment-runtime change.
+// T8 / T9 — SOURCE-CONTRACT proof (this file does NOT execute the helper).
 //
-// HONEST SCOPE. getSessionPaymentEligibility is an async server function that
-// reads several tables; executing it here would mean rebuilding most of a
-// studio fixture to re-prove code this suite does not own. What B6 actually
-// needs to establish is narrower and is fully decidable from the live helper's
-// own source: its appointment gate is keyed on STATUS and on nothing else.
+// B6 makes an early-completed appointment payment-eligible, and does so with no
+// payment-runtime change. This file reads the live helper's SOURCE and asserts
+// one structural property: its appointment gate is keyed on STATUS and on
+// nothing else. That is a claim about the code's shape, not about its runtime
+// behaviour, and it is deliberately not described as more than that.
 //
-// The proof therefore composes two facts, each proven where it lives:
+// THE BEHAVIOURAL PROOF LIVES ELSEWHERE, and it does run the real function:
+// tests/db/quick-checkout-eligibility.db.test.ts "Stage J" invokes the actual
+// getSessionPaymentEligibility against real seeded rows — a mid-visit
+// appointment (started, not yet ended) that is already completed resolves
+// ELIGIBLE, and the same mid-visit appointment left confirmed is refused for
+// LIFECYCLE rather than for its clock. Nothing is mocked there.
 //
-//   1. HERE — the live helper admits an appointment iff status === 'completed',
-//      and consults no end-time anywhere;
-//   2. tests/db/appointment-transition-integrity.db.test.ts — B6 makes
-//      status = 'completed' reachable from starts_at onward (T2/T3), and
-//      leaves it 'confirmed' before then (T1).
-//
-// Together: early-completed => eligible (T8); started-but-still-confirmed =>
-// refused (T9). Neither half is asserted twice, and neither is assumed.
+// Keeping both is deliberate: the live test proves what happens, this one
+// proves WHY — that no end-time check exists in the gate at all, which a
+// passing behavioural case cannot demonstrate on its own. Read together with
+// tests/db/appointment-transition-integrity.db.test.ts (T1/T2/T2b/T3), which
+// establishes when 'completed' becomes reachable.
 
 const SRC = readFileSync(
   join(process.cwd(), "lib/billing/session-payment-eligibility.ts"),
   "utf8",
 );
 
-describe("T8/T9 — the live payment gate is status-keyed, so early completion just works", () => {
+describe("T8/T9 (SOURCE CONTRACT) — the payment gate is status-keyed, with no end-time check", () => {
   it("T8 — admits the appointment ONLY when its status is 'completed'", () => {
     expect(SRC).toMatch(/appointmentSummary\.status !== "completed"/);
   });
