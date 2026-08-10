@@ -12,6 +12,19 @@ import { randomUUID } from "node:crypto";
 // active LIVE card simultaneously (required by the mode-scoped webhook
 // pre-flip); a same-mode duplicate active card is still refused.
 
+// FIXTURE ISOLATION (repeat-run safety) — same defect and same remedy as
+// tests/db/mode-scoped-connect-provisioning.db.test.ts.
+// `studio_payment_settings_stripe_account_id_key` is UNIQUE GLOBALLY on
+// stripe_account_id, so hard-coded `acct_cpm_*` ids bound this suite to
+// whichever studio ran first: green on a fresh database, duplicate-key on the
+// second run. Every synthetic id is derived from one run-unique namespace, so
+// the suite is repeatable without deleting anything and two namespaces coexist.
+const NS = randomUUID().slice(0, 8);
+const ACCT_TEST = `acct_cpm_${NS}_test`;
+const ACCT_LIVE = `acct_cpm_${NS}_live`;
+const CUS_TEST = `cus_cpm_${NS}_test`;
+const CUS_LIVE = `cus_cpm_${NS}_live`;
+
 let s: SeededStudio;
 
 beforeAll(async () => {
@@ -19,8 +32,8 @@ beforeAll(async () => {
   // Lineage prerequisites for client_payment_methods rows: a settings
   // binding + a client_stripe_customers row per mode (0032/0058 FKs).
   for (const [acct, mode, cus] of [
-    ["acct_cpm_test", false, "cus_cpm_test"],
-    ["acct_cpm_live", true, "cus_cpm_live"],
+    [ACCT_TEST, false, CUS_TEST],
+    [ACCT_LIVE, true, CUS_LIVE],
   ] as const) {
     await adminQuery(
       `insert into public.studio_payment_settings (studio_id, stripe_account_id, stripe_livemode)
@@ -41,8 +54,8 @@ afterAll(async () => {
 });
 
 async function insertActiveCard(mode: boolean, setupIntent: string) {
-  const acct = mode ? "acct_cpm_live" : "acct_cpm_test";
-  const cus = mode ? "cus_cpm_live" : "cus_cpm_test";
+  const acct = mode ? ACCT_LIVE : ACCT_TEST;
+  const cus = mode ? CUS_LIVE : CUS_TEST;
   return adminQuery(
     `insert into public.client_payment_methods
        (studio_id, client_id, stripe_account_id, stripe_livemode, stripe_customer_id,
