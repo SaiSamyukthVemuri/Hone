@@ -10,6 +10,11 @@ import {
   CLINICAL_NOTES_CSV_HEADERS,
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
+import {
+  fetchAllRows,
+  csvDataRowCount,
+  EXPORT_PAGE_SIZE,
+} from "@/lib/export/paginate";
 import { mergeReactionIntoChips } from "@/lib/observation-chips";
 import {
   blockAreasLabel,
@@ -73,138 +78,202 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // but absent from this export until now.
     clinicalNotesRes,
   ] = await Promise.all([
-    supabase
-      .from("clients")
-      .select(
-        "id, name, pronouns, date_of_birth, fitzpatrick_type, allergies, skin_notes, emergency_contact_name, emergency_contact_phone, email, phone, created_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("name", { ascending: true }),
-    supabase
-      .from("sessions")
-      .select(
-        "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at",
-      )
-      .eq("studio_id", studio.id)
-      .is("deleted_at", null)
-      .order("started_at", { ascending: false }),
-    supabase
-      .from("electrolysis_entries")
-      .select(
-        "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
-      )
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("laser_entries")
-      .select(
-        "id, session_id, zone, session_number, equipment_params, observation_notes, created_at",
-      )
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("practitioners")
-      .select("id, display_name, email, role, active, created_at")
-      .eq("studio_id", studio.id)
-      .eq("active", true)
-      .order("display_name", { ascending: true }),
-    supabase
-      .from("client_pricing")
-      .select("id, client_id, service_name, price_cents, notes, effective_from")
-      .eq("studio_id", studio.id)
-      .order("effective_from", { ascending: false }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("clients")
+        .select(
+          "id, name, pronouns, date_of_birth, fitzpatrick_type, allergies, skin_notes, emergency_contact_name, emergency_contact_phone, email, phone, created_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("sessions")
+        .select(
+          "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at",
+        )
+        .eq("studio_id", studio.id)
+        .is("deleted_at", null)
+        .order("started_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("electrolysis_entries")
+        .select(
+          "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("laser_entries")
+        .select(
+          "id, session_id, zone, session_number, equipment_params, observation_notes, created_at",
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("practitioners")
+        .select("id, display_name, email, role, active, created_at")
+        .eq("studio_id", studio.id)
+        .eq("active", true)
+        .order("display_name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("client_pricing")
+        .select("id, client_id, service_name, price_cents, notes, effective_from")
+        .eq("studio_id", studio.id)
+        .order("effective_from", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Read-only lookup of the structured area + probe metadata that lives on
     // session_blocks (migrations 0039 / 0041). Merged onto each electrolysis
     // entry by block_id below so the export carries the structured probe and
     // area now collected by the one-page charting form. Includes deleted
     // blocks so any entry's block_id still resolves.
-    supabase
-      .from("session_blocks")
-      .select(
-        "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, reaction_type",
-      )
-      .eq("studio_id", studio.id),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("session_blocks")
+        .select(
+          "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, reaction_type",
+        )
+        .eq("studio_id", studio.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Appointments (read-only). Studio-scoped. cancellation_token and the
     // internal scheduling snapshots (buffer_minutes_snapshot,
     // blocked_ends_at) are deliberately NOT selected — backup of human
     // booking data only, never opaque tokens or trigger-managed mechanics.
-    supabase
-      .from("appointments")
-      .select(
-        "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("starts_at", { ascending: false }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("appointments")
+        .select(
+          "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("starts_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Treatment plans (read-only). Studio-scoped. budget_notes /
     // practitioner_notes live on this table and ARE plan data; private
     // warnings + personal notes live on the separate client_personal_notes
     // table and are never read here.
-    supabase
-      .from("treatment_plans")
-      .select(
-        "id, client_id, name, primary_area, treatment_areas, estimated_timeline_months_min, estimated_timeline_months_max, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("created_at", { ascending: false }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("treatment_plans")
+        .select(
+          "id, client_id, name, primary_area, treatment_areas, estimated_timeline_months_min, estimated_timeline_months_max, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Treatment plan stages (read-only). studio_id is denormalized on this
     // child table (migration 0034), so a direct studio-scoped read is safe.
-    supabase
-      .from("treatment_plan_stages")
-      .select(
-        "id, plan_id, sort_order, name, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit, notes, created_at, updated_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("plan_id", { ascending: true })
-      .order("sort_order", { ascending: true }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("treatment_plan_stages")
+        .select(
+          "id, plan_id, sort_order, name, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit, notes, created_at, updated_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("plan_id", { ascending: true })
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Name-resolution maps (read-only). All services and ALL practitioners
     // (including inactive) so appointment/plan rows can show a readable
     // name beside the stored ID even when the referenced row is inactive.
-    supabase
-      .from("services")
-      .select("id, name")
-      .eq("studio_id", studio.id),
-    supabase
-      .from("practitioners")
-      .select("id, display_name")
-      .eq("studio_id", studio.id),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("services")
+        .select("id, name")
+        .eq("studio_id", studio.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("practitioners")
+        .select("id, display_name")
+        .eq("studio_id", studio.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // PR #312: record-keeping / inspection tables (read-only). Studio-scoped
     // + read through the SAME RLS client, so exposure incidents (and their
     // audit rows) remain OWNER-ONLY per migration 0088 — enforced twice: the
     // action's role==="owner" gate above AND the owner-only RLS SELECT policy.
     // No image binaries / storage paths / payment tables here.
-    supabase
-      .from("record_keeping_sterile_items")
-      .select(
-        "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, notes, created_by_practitioner_id, created_at, updated_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("date_purchased", { ascending: false }),
-    supabase
-      .from("record_keeping_disinfectants")
-      .select(
-        "id, date_prepared, disinfectant_name, concentration, date_discarded, discard_due_date, operator_practitioner_id, operator_name, notes, created_by_practitioner_id, created_at, updated_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("date_prepared", { ascending: false }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("record_keeping_sterile_items")
+        .select(
+          "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, notes, created_by_practitioner_id, created_at, updated_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("date_purchased", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("record_keeping_disinfectants")
+        .select(
+          "id, date_prepared, disinfectant_name, concentration, date_discarded, discard_due_date, operator_practitioner_id, operator_name, notes, created_by_practitioner_id, created_at, updated_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("date_prepared", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Exposure incidents carry sensitive PII (exposed-person name/address/
     // phone). SELECT is owner-only (0088); the RLS client returns them ONLY
     // because this action runs as the owner. Never switch to the admin client.
-    supabase
-      .from("record_keeping_exposure_incidents")
-      .select(
-        "id, incident_date, exposed_person_full_name, exposed_person_address, exposed_person_phone, exposure_details, action_taken, staff_involved_name, notes, created_by_practitioner_id, created_at, updated_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("incident_date", { ascending: false }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("record_keeping_exposure_incidents")
+        .select(
+          "id, incident_date, exposed_person_full_name, exposed_person_address, exposed_person_phone, exposure_details, action_taken, staff_involved_name, notes, created_by_practitioner_id, created_at, updated_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("incident_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Audit events: REDUCED export (PR #312). We export the record identity +
     // action + changed-field NAMES + actor + timestamp only. The full `changes`
     // value-snapshot JSON and free-form `metadata` are DELIBERATELY NOT selected
     // — that avoids duplicating exposure-incident PII into a second file.
-    supabase
-      .from("record_keeping_audit_events")
-      .select(
-        "id, record_type, record_id, action, changed_fields, actor_practitioner_id, actor_display_name, created_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("created_at", { ascending: false }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("record_keeping_audit_events")
+        .select(
+          "id, record_type, record_id, action, changed_fields, actor_practitioner_id, actor_display_name, created_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // client_clinical_notes — consultation + skin_hair_analysis.
     //
     // TENANCY, twice: the explicit studio filter below AND the 0126
@@ -221,14 +290,17 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Ordered by the clinical event time, with `id` as a deterministic
     // tiebreak so two notes sharing a backdated occurred_at export in a stable
     // order rather than whatever the planner returns.
-    supabase
-      .from("client_clinical_notes")
-      .select(
-        "id, client_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id, created_at",
-      )
-      .eq("studio_id", studio.id)
-      .order("occurred_at", { ascending: false })
-      .order("id", { ascending: true }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("client_clinical_notes")
+        .select(
+          "id, client_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id, created_at",
+        )
+        .eq("studio_id", studio.id)
+        .order("occurred_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
   for (const r of [
@@ -366,12 +438,24 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // Migration 0128: the structured multi-area set per block, so the export
   // records EVERY treated area + laterality — not just the legacy first-area
   // projection in block_primary_area/block_side. Studio-scoped, ordered.
-  const areaRowsRes = await supabase
-    .from("session_block_areas")
-    .select("session_block_id, area, laterality, display_order")
-    .eq("studio_id", studio.id)
-    .order("display_order", { ascending: true })
-    .order("created_at", { ascending: true });
+  const areaRowsRes = await fetchAllRows<{
+    session_block_id: string;
+    area: string;
+    laterality: Laterality;
+    display_order: number;
+  }>((from, to) =>
+    supabase
+      .from("session_block_areas")
+      .select("session_block_id, area, laterality, display_order")
+      .eq("studio_id", studio.id)
+      .order("display_order", { ascending: true })
+      .order("created_at", { ascending: true })
+      // `id` is not selected, but ordering by it is still valid and is what
+      // makes the page boundary deterministic: display_order + created_at
+      // repeat freely across blocks.
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   const areasByBlock = new Map<string, BlockArea[]>();
   for (const r of (areaRowsRes.data ?? []) as Array<{
     session_block_id: string;
@@ -794,14 +878,142 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     ),
   );
 
+  // ---------------------------------------------------------------------
+  // COMPLETENESS VERIFICATION
+  //
+  // `fetchAllRows` already loops to exhaustion, so truncation is structurally
+  // impossible rather than merely unlikely. This is the independent second
+  // opinion: a HEAD count (`count: "exact", head: true` transfers no rows) for
+  // every studio-scoped source, compared against what we actually fetched. A
+  // mismatch means something changed underneath the export or a page was lost,
+  // and we REFUSE rather than hand over a plausible-looking ZIP.
+  //
+  // `electrolysis_entries` and `laser_entries` are deliberately absent: neither
+  // carries `studio_id` (RLS reaches them through the parent session), so there
+  // is no safe studio-scoped count to compare against. Their completeness is
+  // instead protected by the sessions count below — they are filtered against
+  // the session id set, which is the amplification this whole change fixes.
+  // ---------------------------------------------------------------------
+  const [clientsCount, sessionsCount, appointmentsCount, notesCount] =
+    await Promise.all([
+      supabase
+        .from("clients")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studio.id),
+      supabase
+        .from("sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studio.id)
+        .is("deleted_at", null),
+      supabase
+        .from("appointments")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studio.id),
+      supabase
+        .from("client_clinical_notes")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studio.id),
+    ]);
+
+  const countChecks: Array<{
+    table: string;
+    fetched: number;
+    expected: number | null;
+  }> = [
+    {
+      table: "clients",
+      fetched: (clientsRes.data ?? []).length,
+      expected: clientsCount.error ? null : clientsCount.count,
+    },
+    {
+      table: "sessions",
+      fetched: (sessionsRes.data ?? []).length,
+      expected: sessionsCount.error ? null : sessionsCount.count,
+    },
+    {
+      table: "appointments",
+      fetched: (appointmentsRes.data ?? []).length,
+      expected: appointmentsCount.error ? null : appointmentsCount.count,
+    },
+    {
+      table: "client_clinical_notes",
+      fetched: (clinicalNotesRes.data ?? []).length,
+      expected: notesCount.error ? null : notesCount.count,
+    },
+  ];
+
+  const countMismatch = countChecks.find(
+    (c) => c.expected !== null && c.expected !== c.fetched,
+  );
+  if (countMismatch) {
+    return {
+      ok: false,
+      error:
+        `Export aborted: ${countMismatch.table} returned ${countMismatch.fetched} rows ` +
+        `but the studio holds ${countMismatch.expected}. No partial export was produced. ` +
+        `Please try again.`,
+    };
+  }
+
   const generatedAt = new Date().toISOString();
+
+  // ---------------------------------------------------------------------
+  // MANIFEST
+  //
+  // Row counts are derived from the CSV text ALREADY IN THE ZIP, not from the
+  // in-memory arrays, so the manifest cannot drift from what was actually
+  // written — and every file is covered automatically, including any added
+  // later without touching this block.
+  // ---------------------------------------------------------------------
+  const csvRowCounts: Record<string, number> = {};
+  for (const [name, entry] of Object.entries(zip.files)) {
+    if (!name.endsWith(".csv") || entry.dir) continue;
+    csvRowCounts[name] = csvDataRowCount(await entry.async("string"));
+  }
+
+  const manifest = {
+    export_format: "hone.studio-export",
+    export_format_version: 1,
+    generated_at: generatedAt,
+    studio_id: studio.id,
+    studio_name: studio.name,
+    page_size: EXPORT_PAGE_SIZE,
+    files: csvRowCounts,
+    completeness_checks: countChecks.map((c) => ({
+      table: c.table,
+      exported_rows: c.fetched,
+      studio_row_count: c.expected,
+      verified: c.expected !== null,
+    })),
+    not_count_verified: {
+      tables: ["electrolysis_entries", "laser_entries"],
+      reason:
+        "Neither table carries studio_id; RLS reaches them through the parent session, " +
+        "so no safe studio-scoped count query exists. Completeness is protected by the " +
+        "verified sessions count they are filtered against.",
+    },
+    note:
+      "A portable copy of supported Hone studio records. Tables are read independently, " +
+      "not as one point-in-time database snapshot, so this is not a transactional database " +
+      "backup and does not replace Hone or provider disaster-recovery backups.",
+  };
+  zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+
   const readme = `Hone Data Export
 Generated: ${generatedAt}
 Studio: ${studio.name}
 
-This export contains all client records, sessions, entries, appointments, and treatment plans for your studio.
+This is a portable copy of the supported Hone studio records listed below. Every
+listed source is exported in full — reads are paginated, and the export refuses
+rather than hand over a partial file.
+
+WHAT THIS IS NOT: it is not a transactional database backup. The tables are read
+independently rather than as one point-in-time snapshot, and it does not include
+uploaded images, payment records, or authentication data. It does not replace
+Hone's or our infrastructure provider's disaster-recovery backups.
 
 Files included:
+- manifest.json: Export format/version, generation time, studio, and the exported row count for every CSV. Use it to confirm the export is complete.
 - clients.csv: Client master list with names, contact info, allergies, skin notes, Fitzpatrick type, emergency contacts.
 - sessions.csv: One row per session: client, performer, started_at, ended_at, price_paid_cents, session_notes.
 - electrolysis_entries.csv: Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), structured observation chips, and free-text comments.
