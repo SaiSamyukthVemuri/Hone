@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
-import { adminQuery, asRole, closePool, seedStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, closePool, seedStudio } from "./helpers/harness";
 
 // ===========================================================================
 // APPOINTMENT BOUNDARY B6 — migration 0175 behavioural proof, fresh chain.
@@ -78,14 +78,55 @@ describe("T1-T3 — explicit completion is gated on starts_at, inclusively", () 
     expect((await row(a)).status).toBe("confirmed");
   });
 
-  it("T2 — EXACTLY starts_at is allowed (inclusive boundary)", async () => {
-    // starts_at = now() at insert; by the time the RPC runs the clock has
-    // advanced past it, which is precisely the `starts_at > now()` refusal
-    // being false. A `>=` refusal would make this fail.
+  it("T2 — a moment AFTER starts_at is allowed", async () => {
+    // Honest about its own reach: starts_at = now() at INSERT, and by the time
+    // the RPC runs the clock has advanced, so this proves the just-past case.
+    // Exact boundary equality is T2b's job, not this test's.
     const f = await seedStudio("b6-t2");
     const a = await seedAppointment(f, "0 seconds");
     await markComplete(f, a);
     expect((await row(a)).status).toBe("completed");
+  });
+
+  it("T2b — EXACTLY starts_at is allowed, proven by transaction-time equality", async () => {
+    // The inclusive boundary can only be tested where starts_at is genuinely
+    // EQUAL to the now() the function observes. Inside one transaction now() is
+    // transaction_timestamp() and does not advance between statements, so the
+    // insert and mark_appointment_complete see the same instant — real equality
+    // rather than "a few milliseconds ago".
+    //
+    // This is the test that distinguishes `starts_at > now()` from
+    // `starts_at >= now()`; every other completion test would stay green if the
+    // boundary silently became exclusive.
+    const f = await seedStudio("b6-t2b");
+    const id = randomUUID();
+    const { onBoundary, status } = await adminTx(async (q) => {
+      const ins = await q(
+        `insert into public.appointments
+           (id, studio_id, practitioner_id, client_id, starts_at, ends_at,
+            duration_minutes, status, cancellation_token_hash,
+            buffer_minutes_snapshot, blocked_ends_at)
+         values ($1, $2, $3, $4, now(), now() + interval '60 minutes',
+                 60, 'confirmed', $5, 15, now() + interval '75 minutes')
+         returning (starts_at = now()) as on_boundary`,
+        [id, f.studioId, f.practitionerId, f.clientId, tokenHash()],
+      );
+      await q(`select public.mark_appointment_complete($1, $2, $3)`, [
+        id,
+        f.studioId,
+        f.practitionerId,
+      ]);
+      const st = await q(`select status from public.appointments where id = $1`, [id]);
+      return {
+        onBoundary: ins.rows[0].on_boundary as boolean,
+        status: st.rows[0].status as string,
+      };
+    });
+
+    // Guard against a vacuous pass: if the fixture were not exactly on the
+    // boundary, "completed" would prove nothing about inclusivity.
+    expect(onBoundary, "fixture must sit EXACTLY on starts_at").toBe(true);
+    expect(status).toBe("completed");
   });
 
   it("T3 — started but NOT ended is allowed — the point of B6", async () => {
@@ -117,27 +158,137 @@ describe("T4-T7 — completing early does not touch the booking", () => {
     }
   });
 
-  it("T6/T7 — the booked interval still reserves its tail after early completion", async () => {
-    // A 60-minute visit completed 10 minutes in must still hold the remaining
-    // 50 minutes plus its buffer: capacity is a property of the booking, not
-    // of how long treatment actually took.
+  it("T6/T7 — the reservation survives early completion and REALLY refuses a conflicting booking in the remaining tail", async () => {
+    // Timestamps surviving on the appointment row prove nothing about capacity:
+    // capacity is held by public.studio_calendar_reservations, and the row that
+    // holds it is rewritten by appointments_sync_calendar_reservation_trg on
+    // every status change. That trigger keeps the reservation for
+    // status in ('confirmed','completed') and DELETES it otherwise, so early
+    // completion sits one word away from silently releasing the booked tail.
+    // This asserts the tail by making a real competing booking fail on it.
     const f = await seedStudio("b6-t6");
-    const a = await seedAppointment(f, "-10 minutes", 60);
-    await markComplete(f, a);
-    const r = await row(a);
+    const a = await seedAppointment(f, "-10 minutes", 90); // started, 80 min left
 
-    // The reserved window still extends past now().
-    const stillReserved = await adminQuery(
-      `select (blocked_ends_at > now()) as reserved,
-              (ends_at > now())         as not_yet_ended
-         from public.appointments where id = $1`,
-      [a],
+    // (2) Capture the appointment AND the actual reservation representing it.
+    const before = await row(a);
+    const resBefore = (
+      await adminQuery(
+        `select id, studio_id, practitioner_id, resource_key, source_kind,
+                starts_at, ends_at
+           from public.studio_calendar_reservations
+          where source_kind = 'appointment' and source_id = $1`,
+        [a],
+      )
+    ).rows;
+    expect(resBefore, "the booking must hold exactly one reservation").toHaveLength(1);
+    const rk = String(resBefore[0].resource_key);
+
+    // (3) Complete it early.
+    await markComplete(f, a);
+
+    // (4) The SAME reservation row still exists, on the same resource, over the
+    // same interval. Same id — not deleted and re-created, which would also
+    // have surrendered ordering/identity.
+    const resAfter = (
+      await adminQuery(
+        `select id, studio_id, practitioner_id, resource_key, source_kind,
+                starts_at, ends_at
+           from public.studio_calendar_reservations
+          where source_kind = 'appointment' and source_id = $1`,
+        [a],
+      )
+    ).rows;
+    expect(resAfter).toHaveLength(1);
+    for (const col of [
+      "id",
+      "studio_id",
+      "practitioner_id",
+      "resource_key",
+      "starts_at",
+      "ends_at",
+    ] as const) {
+      expect(String(resAfter[0][col]), `reservation.${col} must not move`).toBe(
+        String(resBefore[0][col]),
+      );
+    }
+    // ...and it still covers the FUTURE portion of the booked interval.
+    const covers = await adminQuery(
+      `select (ends_at > now()) as tail_is_future from public.studio_calendar_reservations where id = $1`,
+      [resAfter[0].id],
     );
-    expect(stillReserved.rows[0].reserved).toBe(true);
-    expect(stillReserved.rows[0].not_yet_ended).toBe(true);
-    expect(new Date(String(r.blocked_ends_at)).getTime()).toBeGreaterThan(
-      new Date(String(r.ends_at)).getTime() - 1,
+    expect(covers.rows[0].tail_is_future).toBe(true);
+
+    // (5)+(6) A competing reservation for the SAME resource, overlapping the
+    // future part of the tail, must be refused by the real conflict mechanism —
+    // the GiST exclusion constraint, named explicitly so a future schema change
+    // that drops it cannot leave this test passing for the wrong reason.
+    let resErr: { code?: string; constraint?: string } = {};
+    try {
+      await adminQuery(
+        `insert into public.studio_calendar_reservations
+           (studio_id, practitioner_id, resource_key, source_kind, source_id, starts_at, ends_at)
+         values ($1, $2, $3, 'timed_block', gen_random_uuid(),
+                 now() + interval '20 minutes', now() + interval '40 minutes')`,
+        [f.studioId, f.practitionerId, rk],
+      );
+      throw new Error("competing reservation was ACCEPTED — the tail was released");
+    } catch (e) {
+      resErr = e as { code?: string; constraint?: string };
+    }
+    expect(resErr.code, "must be an exclusion violation").toBe("23P01");
+    expect(resErr.constraint).toBe(
+      "no_overlapping_calendar_reservations_per_resource",
     );
+
+    // ...and a competing APPOINTMENT over the same tail is refused too, so the
+    // defence holds end-to-end and not merely in the reservation table.
+    //
+    // MEASURED, and the reason matters: it is refused by the RESERVATION
+    // exclusion, not by an appointment-level one. Both appointment exclusions
+    // (no_overlapping_appointments_studio_wide / _per_practitioner) carry
+    // `WHERE status = 'confirmed'`, so they stop covering this row the instant
+    // it completes. After an early completion the calendar reservation is the
+    // ONLY thing still holding the booked tail — which is exactly why B6 had to
+    // be checked here. Had sync_appointment_to_calendar_reservation() not
+    // listed 'completed' alongside 'confirmed', completing early would have
+    // released the tail outright and no appointment-level constraint would
+    // have noticed.
+    let apptErr: { code?: string; constraint?: string } = {};
+    try {
+      await seedAppointment(f, "20 minutes", 20);
+      throw new Error("competing appointment was ACCEPTED — the tail was released");
+    } catch (e) {
+      apptErr = e as { code?: string; constraint?: string };
+    }
+    expect(apptErr.code).toBe("23P01");
+    expect(apptErr.constraint).toBe(
+      "no_overlapping_calendar_reservations_per_resource",
+    );
+
+    // (7) The completed appointment and its reservation are untouched by the
+    // two refused attempts.
+    const after = await row(a);
+    expect(after.status).toBe("completed");
+    for (const col of [
+      "starts_at",
+      "ends_at",
+      "duration_minutes",
+      "buffer_minutes_snapshot",
+      "blocked_ends_at",
+    ] as const) {
+      expect(String(after[col]), `${col} must not move`).toBe(String(before[col]));
+    }
+    const resFinal = (
+      await adminQuery(
+        `select id, resource_key, starts_at, ends_at
+           from public.studio_calendar_reservations
+          where source_kind = 'appointment' and source_id = $1`,
+        [a],
+      )
+    ).rows;
+    expect(resFinal).toHaveLength(1);
+    expect(String(resFinal[0].id)).toBe(String(resBefore[0].id));
+    expect(String(resFinal[0].ends_at)).toBe(String(resBefore[0].ends_at));
   });
 });
 
