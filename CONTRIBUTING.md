@@ -43,18 +43,22 @@ GitHub Actions runs the same set automatically on every PR and every push to `cl
 
 CI does NOT replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./docs/12_SMOKE_TESTS.md). Browser flows (Stripe Elements, portal sign-in, public booking), real Resend / Twilio sends, real Stripe test charges, and live webhook delivery cannot be exercised in CI; they live in manual smoke.
 
+## Engineering standards
+
+[ENGINEERING_STANDARDS.md](./ENGINEERING_STANDARDS.md) is the canonical engineering operating standard. Read it once; it takes a few minutes. It is not restated here or in `CLAUDE.md`.
+
+The rule it exists to enforce: **validation depth follows risk, not habit.** Determine the baseline risk tier (T0–T3) before choosing how much to prove, then apply semantic judgment on top of it.
+
+- `npm run ci:plan` reports a **baseline** tier from `scripts/classify-changes.mjs`. It is deterministic path evidence, not semantic proof — it cannot see what a file *does*.
+- **Escalate** when the actual behaviour crosses a higher-risk boundary, even if the paths look ordinary.
+- **Never de-escalate** on the strength of an automated classification.
+- Do not apply T3 ceremony to T0/T1 work without naming the higher-risk failure class it catches. Safety and speed are both requirements.
+
 ## PR template
 
-`.github/pull_request_template.md` (PR #147) is the required body for every new PR. Do not delete sections. Fill them honestly. The template captures:
+`.github/pull_request_template.md` is the required body for every new PR. Fill it honestly; a T1 PR should take about a minute. The template captures the risk tier and any semantic escalation, high-risk considerations where applicable, the proof that was run, production access and migration state, and — optionally — engineering friction worth recording as evidence for future tooling.
 
-- Type of change and risk level.
-- Documentation update (or an explicit "no docs update needed" with a reason).
-- Security checklist.
-- Payment checklist (when applicable).
-- Stripe grep gates.
-- Validation status.
-- Smoke tests run, and what could not be verified.
-- Deployment notes.
+Security, payment and Stripe grep-gate expectations are owned by this file (below) and enforced mechanically by `scripts/check-stripe-gates.mjs`; the template deliberately does not restate them.
 
 ## Documentation discipline
 
