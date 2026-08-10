@@ -5,19 +5,32 @@ import type { Studio } from "@/lib/types/database";
 // postcare_delivery_mode = 'auto_on_complete', postcare is sent automatically
 // after an appointment is marked complete — no manual "Send postcare" click.
 //
-// Design guarantees (SaaS-ready):
-//   * SHARES the appointments.postcare_email_* claim columns with the manual
-//     sender — and since B8/0177 shares the COMMANDS that write them, so the
-//     two paths are MUTUALLY IDEMPOTENT by construction rather than by two
-//     hand-matched UPDATE predicates. Postcare is sent at most once even if
-//     auto + manual both run.
+// Design guarantees, stated as what is actually PROVEN:
+//   * ONE LIVE CLAIM, NOT EXACTLY-ONCE DELIVERY. Auto and manual share the
+//     appointments.postcare_email_* columns and — since B8/0177 — the COMMANDS
+//     that write them, so concurrent auto/manual attempts contend for a single
+//     DB claim and at most ONE live claim may reach the provider at a time.
+//     That is a database property and it is all this is.
+//
+//     It is NOT global exactly-once external delivery, and must not be
+//     described as such. A transaction cannot make Postgres and an email
+//     provider atomic. The documented non-atomicity is provider-success +
+//     settlement-uncertain: the message is out, `postcare_email_sent_at` was
+//     never written, and the claim is left to go stale. A later reclaim is
+//     then legitimate and CAN produce a second external send — which is
+//     exactly why that outcome is reported as its own `settle_failed` rather
+//     than as `sent` or `failed`, and why the manual surface refuses to invite
+//     an immediate retry.
 //   * NEVER sends for cancelled/no_show — claim_postcare_send refuses any
 //     status other than 'completed', in SQL, for both paths.
 //   * Reuses the EXISTING SAFE postcare email (studio settings only; no
 //     clinical/intake data). No new email variant, no health data.
 //   * FAIL-SOFT: never throws. A send failure must never fail appointment
-//     completion. Failures are recorded (failed_at + safe last_error) and
-//     resendable from the appointment page.
+//     completion. A provider failure is ATTEMPTED to be durably settled
+//     (failed_at + safe last_error) and is then resendable from the
+//     appointment page — but the settlement itself can fail, and when it
+//     cannot be confirmed the outcome is `settle_failed`, not `failed`.
+//     "Failures are recorded" would assert a row state that may not exist.
 //   * Studio-scoped: every query filters studio_id.
 
 

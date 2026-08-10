@@ -86,8 +86,14 @@ describe("0177 — claim_postcare_send", () => {
     expect(CLAIM).toMatch(/claimed_at\s+timestamptz/);
   });
 
-  it("authenticates an ACTIVE, SAME-STUDIO practitioner in the database", () => {
-    // service_role is a transport identity, not a business actor.
+  it("validates the supplied server-resolved practitioner is ACTIVE and SAME-STUDIO", () => {
+    // Deliberately NOT "authenticates". service_role is a transport identity,
+    // so the database cannot verify who is behind the connection: the trusted
+    // call site authenticates the human and resolves the practitioner, and the
+    // command validates that supplied id, rejecting inactive and cross-studio
+    // actors. A service_role caller could still name a different active
+    // same-studio practitioner — the residual trust lives in the call site, and
+    // the title used to claim otherwise.
     expect(CLAIM).toMatch(/from public\.practitioners p/);
     expect(CLAIM).toMatch(/p\.studio_id = p_studio_id/);
     expect(CLAIM).toMatch(/p\.active = true/);
@@ -266,15 +272,61 @@ describe("0177 — the ONE permitted B4 helper replacement", () => {
     expect(c).toContain("postcare_sent");
   });
 
-  it("replaces NOTHING ELSE from 0173 — the two commands are untouched", () => {
+  it("REDEFINES nothing else from 0173 — the two commands keep their bodies", () => {
     // They call the helper BY NAME, so they pick the new class up without being
     // re-emitted. Re-emitting them would drag 0173's whole body into an
     // unapplied migration for no reason and widen the blast radius.
-    expect(EXEC).not.toMatch(/function public\.revert_appointment_outcome/);
-    expect(EXEC).not.toMatch(/function public\.set_appointment_notes/);
-    expect(EXEC).not.toMatch(/function public\.appointment_actor_role/);
-    expect(EXEC).not.toMatch(/function public\.lock_appointment_for_command/);
-    expect(EXEC).not.toMatch(/function public\.write_appointment_audit/);
+    for (const fn of [
+      "revert_appointment_outcome",
+      "set_appointment_notes",
+      "appointment_actor_role",
+      "lock_appointment_for_command",
+      "write_appointment_audit",
+    ]) {
+      expect(
+        EXEC,
+        `0177 must not redefine ${fn}`,
+      ).not.toMatch(new RegExp(`create or replace function public\\.${fn}`));
+      // ...and no body was smuggled in under another DDL verb either.
+      expect(EXEC).not.toMatch(new RegExp(`(create|drop|alter) function public\\.${fn}`));
+    }
+    // set_appointment_notes is not mentioned by 0177 in ANY form.
+    expect(EXEC).not.toMatch(/public\.set_appointment_notes/);
+  });
+
+  it("touches revert_appointment_outcome ONLY through a standalone COMMENT ON", () => {
+    // The single intentional exception. 0173 is frozen, but its catalog
+    // description now says "five ... blocking-dependent classes", which pg's
+    // own \df+ / pg_description would keep reporting. A comment is DDL, so the
+    // truthful fix is a comment — not a redefinition.
+    const mentions = [...EXEC.matchAll(/public\.revert_appointment_outcome/g)];
+    expect(mentions).toHaveLength(1);
+    expect(EXEC).toMatch(
+      /comment on function public\.revert_appointment_outcome\(uuid, uuid, uuid, text, text\) is/,
+    );
+  });
+
+  it("the updated catalog description states SIX classes and names the new one", () => {
+    const c =
+      SQL.match(
+        /comment on function public\.revert_appointment_outcome\(uuid, uuid, uuid, text, text\) is[\s\S]*?';/,
+      )?.[0] ?? "";
+    expect(c).not.toBe("");
+    expect(c).toContain("six independent blocking-dependent classes");
+    expect(c).not.toContain("five independent blocking-dependent classes");
+    expect(c).toContain("postcare_in_flight");
+    // Every other clause of the 0173 description is preserved verbatim, so the
+    // comment stays a full contract rather than becoming a changelog entry.
+    for (const clause of [
+      "completed/no_show/cancelled -> confirmed",
+      "Owner-only, studio- and appointment-scoped, expected-status concurrency",
+      "72h window anchored to the audit event that established the current outcome (absent baseline REFUSES)",
+      "23P01 mapped to slot_conflict",
+      "Exactly one audit row on success, none on refusal",
+      "Service-role only.",
+    ]) {
+      expect(c, `preserved clause missing: ${clause}`).toContain(clause);
+    }
   });
 
   it("0177 defines exactly THREE functions", () => {

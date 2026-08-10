@@ -1145,9 +1145,19 @@ export async function sendPostcareEmailAction(
   //
   // This replaces two direct UPDATEs (first-send claim and resend claim). The
   // database now owns the claim timestamp, the attempt counter and the stale
-  // window, and it authenticates the practitioner itself — service_role is
-  // transport, not authority. Nothing below generates a timestamp for a
-  // postcare column, and no branch here may write one.
+  // window. Nothing below generates a timestamp for a postcare column, and no
+  // branch here may write one.
+  //
+  // WHO THE ACTOR IS, stated exactly. THIS CALL SITE authenticates the human —
+  // getCurrentPractitionerWithStudio() above requires an active practitioner
+  // membership — and resolves `practitioner.id` server-side; the browser never
+  // supplies it. service_role is transport, so the database cannot verify who
+  // is behind the connection: what `claim_postcare_send` does is VALIDATE the
+  // supplied identity, rejecting an inactive or cross-studio practitioner. It
+  // does not bind that id to the authenticated session, and a service_role
+  // caller could name a different active same-studio practitioner. The residual
+  // trust therefore lives here, in the call site, which is why the actor is
+  // resolved from the session and never accepted from the request.
   //
   // The resend path is materially safer than what it replaces: it used to bump
   // the claim unconditionally, so two concurrent resends could BOTH reach the

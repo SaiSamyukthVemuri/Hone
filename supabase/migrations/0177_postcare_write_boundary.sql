@@ -42,9 +42,13 @@
 --     carries out-of-band GUC behaviour there that this repository's migration
 --     source does not represent. Not created, replaced, dropped or referenced.
 --   * 0173 itself. It is applied production history and its bytes stay frozen;
---     the helper is REPLACED from here, and `revert_appointment_outcome` and
---     `set_appointment_notes` are not re-emitted at all — they already call the
---     helper by name, so they pick the new class up without being touched.
+--     the helper is REPLACED from here, and neither `revert_appointment_outcome`
+--     nor `set_appointment_notes` is REDEFINED — they already call the helper by
+--     name, so they pick the new class up without being touched. The one
+--     exception is metadata, not logic: `revert_appointment_outcome`'s catalog
+--     COMMENT said "five ... classes" and is corrected to six by a standalone
+--     COMMENT ON at the end of the B4 section. No body, no signature, no
+--     privilege change.
 --   * B6/0175's transition matrix, mark_appointment_complete, the transition
 --     guard, the updated_at trigger and the capacity trigger.
 --   * B7/0176's cancellation commands and the policy acknowledgement.
@@ -71,14 +75,26 @@ set local lock_timeout = '5s';
 -- ---------------------------------------------------------------------------
 -- Wins, or does not win, the right to call the email provider.
 --
--- AUTHORITY. The command is service_role-callable, but service_role is a
--- transport identity, not a business actor. The call site authenticates the
--- HUMAN and resolves the practitioner server-side; the database then VALIDATES
--- that supplied server-resolved practitioner is active and same-studio —
--- `p_actor_practitioner_id` must be an ACTIVE practitioner of `p_studio_id`.
--- Neither half is sufficient alone, and neither is weakened by saying so:
--- a transport role cannot name an arbitrary actor and have it honoured, and a
--- call site cannot skip the membership check by asserting one.
+-- AUTHORITY, STATED PRECISELY BECAUSE THE IMPRECISE VERSION IS FLATTERING.
+--
+-- This command does NOT authenticate anybody. It is service_role-callable, and
+-- service_role is a transport identity: the TRUSTED CALL SITE authenticates the
+-- human, resolves the practitioner server-side, and supplies that id. What the
+-- database does is VALIDATE the supplied identity — `p_actor_practitioner_id`
+-- must be an ACTIVE practitioner of `p_studio_id` — and reject an inactive or
+-- cross-studio actor outright.
+--
+-- WHAT THIS IS NOT. There is no cryptographic or session binding between the
+-- supplied practitioner id and the authenticated human under service_role. A
+-- caller already holding service_role CAN name a different active same-studio
+-- practitioner, and this validation will accept it. That is a real residual
+-- trust in the call site, and it is the same posture every other governed
+-- appointment command carries; describing it as the database "authenticating
+-- the practitioner" would overstate what the boundary actually buys.
+--
+-- WHAT IT DOES BUY, which is not nothing: a service_role caller cannot invent an
+-- actor, act for a deactivated practitioner, or reach across studios, and the
+-- membership rule cannot be skipped by a call site that simply asserts it.
 -- Any active same-studio practitioner may send postcare; the
 -- appointment's own practitioner assignment is deliberately NOT required,
 -- because that matches the studio-member operational boundary the product
@@ -447,6 +463,22 @@ revoke execute on function public.appointment_has_blocking_dependents(uuid, uuid
   from public, anon, authenticated;
 grant execute on function public.appointment_has_blocking_dependents(uuid, uuid)
   to service_role;
+
+-- CATALOG TRUTH FOR THE CALLER, WITHOUT REDEFINING IT.
+--
+-- `revert_appointment_outcome` gains a sixth refusal — `blocked_postcare_in_flight`
+-- — purely because it calls the helper above by name. Its BODY is correct and
+-- is deliberately not re-emitted here: reproducing it would drag 0173's logic
+-- into an unapplied migration, and hand-retyping an applied function body is
+-- exactly the mistake B5 recorded.
+--
+-- But its COMMENT is now false. It says "five independent blocking-dependent
+-- classes", and `\df+`, pg_description and every catalog-driven doc reader will
+-- keep saying five. A comment is DDL, so the honest fix is a standalone
+-- COMMENT ON — no CREATE OR REPLACE, no body, no signature change, no
+-- privilege change. The rest of the description is preserved verbatim.
+comment on function public.revert_appointment_outcome(uuid, uuid, uuid, text, text) is
+  'Governed reverse lifecycle edge: completed/no_show/cancelled -> confirmed. Owner-only, studio- and appointment-scoped, expected-status concurrency, 72h window anchored to the audit event that established the current outcome (absent baseline REFUSES), six independent blocking-dependent classes (B8/0177 added postcare_in_flight, an unresolved postcare claim, so an outcome cannot be reopened while an aftercare email may still be with the provider), 23P01 mapped to slot_conflict. Exactly one audit row on success, none on refusal. Service-role only.';
 
 -- ---------------------------------------------------------------------------
 -- REMOVE B5's TEMPORARY SIX-COLUMN EXCEPTION
