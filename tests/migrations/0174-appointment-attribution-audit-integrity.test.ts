@@ -121,24 +121,27 @@ describe("0174 — migration state", () => {
 });
 
 describe("0174 — production truth: APPLIED 2026-08-10", () => {
+  const LEDGER = readFileSync(
+    join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
+    "utf8",
+  );
+
   const rec = JSON.parse(
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("hosted is 0174, and B6's 0175 is the one migration pending above it", () => {
-    // This block previously asserted the opposite (hosted 0173, one pending)
-    // and was the stop condition for B5's authoring phase. 0174 was applied to
-    // production on 2026-08-10T00:36:44Z-00:36:54Z, so the canonical record now
-    // states that. `hosted_migration_max` is a statement about PRODUCTION, not
-    // about this repository: it moved because an apply happened, not because a
-    // file landed.
-    expect(rec.hosted_migration_max).toBe("0174");
-    // Repo and hosted agreed until B6 authored 0175. They now legitimately
-    // diverge by exactly one UNAPPLIED migration — which is the expected
-    // state for an authored-but-not-applied boundary migration, and is the
-    // same shape 0174 itself was in before its apply ceremony.
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(false);
-    expect(versionsAbove(rec.hosted_migration_max)).toEqual(["0175"]);
+  it("the 0174 apply stays RECORDED even though 0175 superseded it as hosted max", () => {
+    // This block has now asserted three different current-state values in turn:
+    // hosted 0173 (B5 authoring), hosted 0174 with 0175 pending (B6 authoring),
+    // and now hosted 0175. `hosted_migration_max` is a statement about
+    // PRODUCTION, not about this repository — it moves when an apply happens,
+    // never when a file lands. 0175 (B6) was applied 2026-08-10T11:56:35Z.
+    // Asserted as a floor, so the NEXT apply does not re-break a test whose
+    // subject is 0174's history rather than the current head.
+    expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(175);
+    // Repo and hosted agree again: nothing is pending above the applied max.
+    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
   });
 
   it("the record carries the sha256 of the exact 0174 bytes that were applied", async () => {
@@ -167,12 +170,19 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
   });
 
   it("records the apply facts that measurement, not assumption, established", () => {
-    // Cardinality was measured either side of the apply, and the PostgREST
-    // probe is recorded as NOT RUN rather than quietly claimed.
-    expect(rec.hosted_note).toContain("appointments 308 -> 308");
-    expect(rec.hosted_note).toContain("appointment_audit 260 -> 260");
-    expect(rec.hosted_note).toContain("convalidated=false");
-    expect(rec.hosted_note).toContain("PostgREST live-credential probe NOT RUN");
+    // These claims moved from the current-state note to the LEDGER when 0175
+    // superseded 0174 as hosted max. They are asserted at their new home rather
+    // than dropped: cardinality was measured either side of the apply, and the
+    // PostgREST probe is recorded as NOT RUN rather than quietly claimed.
+    // (The line breaks are real — the ledger wraps, so match across whitespace.)
+    expect(LEDGER).toMatch(/appointments \*\*308 → 308\*\*/);
+    expect(LEDGER).toMatch(/appointment_audit\s+\*\*260 → 260\*\*/);
+    expect(LEDGER).toMatch(/`appointment_audit_actor_id_type_ck` is intentionally `NOT VALID`/);
+    expect(LEDGER).toMatch(/PostgREST live-credential probe: NOT RUN/);
+    // The frozen 0174 checksum stays in the CURRENT record regardless.
+    expect(rec.hosted_note).toContain(
+      "479dc58dd76d6030bc33bd83fb30b0a7f930ca58330067bb98a3f6c16a949bbc",
+    );
   });
 });
 

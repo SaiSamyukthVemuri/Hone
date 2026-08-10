@@ -98,13 +98,15 @@ describe("0173 — production truth (applied 2026-08-09)", () => {
     "utf8",
   );
 
-  it("the 0173 apply stays RECORDED even though 0174 superseded it as hosted max", () => {
-    // This previously asserted hosted_migration_max === "0173". 0174 was
-    // applied 2026-08-10, so the CURRENT-STATE field legitimately moved. What
-    // must never move is the historical fact: 0173's exact applied bytes stay
-    // named in the current record, and its full narrative lives in the ledger.
-    // A supersession records a newer apply; it does not erase an older one.
-    expect(rec.hosted_migration_max).toBe("0174");
+  it("the 0173 apply stays RECORDED even though later applies superseded it as hosted max", () => {
+    // This previously asserted hosted_migration_max === "0173", then "0174".
+    // 0175 (B6) was applied 2026-08-10T11:56Z, so the CURRENT-STATE field has
+    // legitimately moved twice. What must never move is the historical fact:
+    // 0173's exact applied bytes stay named in the current record, and its full
+    // narrative lives in the ledger. A supersession records a newer apply; it
+    // does not erase an older one. Asserted as a floor rather than an equality
+    // so the next apply does not re-break a test about 0173's history.
+    expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(175);
     expect(rec.hosted_note).toContain(
       "04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb",
     );
