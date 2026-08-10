@@ -807,5 +807,49 @@ Superseded claims you may still encounter in dated material:
   from the single controlled Google Calendar validation on 2026-07-18. See
   [capability-register.md](./capability-register.md) §9.
 
+## 0173 — appointment repair commands (applied 2026-08-09T12:06:37Z–12:06:47Z)
+
+Superseded as the CURRENT hosted max by 0174, but the apply itself is history and is
+preserved here verbatim. `sha256 04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb`,
+applied from B4 head `0f2d58ee` (PR #534, **UNMERGED at apply time** — a deliberate database-first
+apply so the B4 UI/server actions deployed against RPCs that already existed).
+
+- **Non-mutating:** probes immediately before (12:05:57Z) and after (12:09:30Z) were identical on
+  every field — appointments 153 (71 confirmed / 31 cancelled / 47 completed / 4 no_show),
+  appointment_audit 241, policy acknowledgements 13, calendar reservations 128 — and
+  `max(appointments.updated_at) unchanged` at 2026-08-09 10:12:00.700758+00.
+- **service_role ONLY:** all six functions SECURITY DEFINER, owner postgres,
+  `search_path=pg_catalog, pg_temp`, EXECUTE granted to service_role only (PUBLIC, anon and
+  authenticated all false). **NO RPC WAS INVOKED AGAINST PRODUCTION** — the posture was proven by
+  catalog introspection alone, because invoking a repair command would itself be a mutation.
+- **L23 CLOSED BY AUTHORITY BOUNDARY:** anon and authenticated hold no DELETE on `public.services`
+  or `public.practitioners`; zero DELETE-capable policies remain on either.
+  **FOREIGN-KEY REFERENTIAL SEMANTICS ARE DELIBERATELY UNCHANGED** — L23 was closed by removing the
+  browser's authority to trigger a parent delete, not by altering referential actions.
+
+## 0174 — appointment attribution + audit integrity (applied 2026-08-10T00:36:44Z–00:36:54Z)
+
+`sha256 479dc58dd76d6030bc33bd83fb30b0a7f930ca58330067bb98a3f6c16a949bbc`, applied from B5 head
+`d8cde5bd` (PR #542, **UNMERGED at apply time**). Database-first was mandatory here and
+migration-first was forbidden: 0174 takes `appointments → practitioners` from one FK to four, so a
+bare PostgREST embed raises `PGRST201`. The qualification shipped ahead of it as **#546**.
+
+- **Zero business-data movement, measured:** appointments **308 → 308**, appointment_audit
+  **260 → 260**. 0174 updates attribution columns only.
+- **Durability:** `appointment_audit_appointment_id_fkey` is `ON DELETE SET NULL` (not cascade), so
+  an audit row outlives its appointment; `appointment_audit_studio_fk` is `RESTRICT`; tenant RLS
+  reads `appointment_audit.studio_id`, so orphaned rows stay tenant-authorizable.
+- **`appointment_audit_actor_id_type_ck` is intentionally `NOT VALID`** and was **not** validated in
+  the apply ceremony. Historical violations measured read-only as **0** before and after, so it may
+  be eligible for a future explicit validation migration — a separate decision. No row repaired.
+- **service_role:** SELECT only on both tables; its sole write authority is column-level UPDATE on
+  exactly the six B8 postcare columns; EXECUTE on `write_appointment_audit` revoked. Proven by
+  catalog introspection — no RPC invoked, no production row mutated to test it.
+- **Synthetic Twin preserved exactly:** 50 / 50 / 141 / 65 / 65 / 4, 115 reservations, 52
+  record-keeping audit rows, 0 appointment_audit, 0 Google outbox, attribution 0/0/0 — correct,
+  since the Twin's appointments carry no audit history for 0174 to attribute from.
+- **PostgREST live-credential probe: NOT RUN.** No approved read-only REST credential existed and
+  none was introduced; the guarantee rests on the live #546 shim, the four validated FKs, and CI.
+
 Trust this ledger plus `supabase migration list --linked` — never historical prose, and never
 one document as evidence for another.

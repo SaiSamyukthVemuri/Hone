@@ -5,6 +5,7 @@ import {
   asRole,
   asUser,
   closePool,
+  purgeAppointmentAudit,
   seedStudio,
   type SeededStudio,
 } from "./helpers/harness";
@@ -106,10 +107,21 @@ function expectPrivilegeDenial(f: Failure | null, what: string): void {
 let A: SeededStudio;
 let apptId: string;
 let auditId: string;
+let serviceId: string;
 
 beforeAll(async () => {
   A = await seedStudio("appt-b3");
   await adminQuery(`update public.studios set buffer_minutes = 0 where id = $1`, [A.studioId]);
+
+  // B5/0174: the governed-path positive control drives the REAL booking
+  // command, which needs a real active service.
+  const svc = await adminQuery(
+    `insert into public.services (id, studio_id, name, default_duration_minutes, active)
+     values (gen_random_uuid(), $1, 'B3 boundary service', 60, true)
+     returning id`,
+    [A.studioId],
+  );
+  serviceId = svc.rows[0].id as string;
 
   // A real appointment + audit row, written through the admin path, so the
   // SELECT-retention proofs below have something to actually read. If the
@@ -143,11 +155,11 @@ afterAll(async () => {
   // leaving forged appointments and forged audit rows permanently in the shared
   // local stack. That is precisely the run where an engineer is debugging, and
   // the pollution would outlive the red test. Clean up unconditionally.
-  await adminQuery(
-    `delete from public.appointment_audit
-      where appointment_id in (select id from public.appointments where studio_id = $1)`,
-    [A.studioId],
-  );
+  // B5/0174: appointment_audit is structurally append-only, so even the
+  // superuser harness cannot DELETE from it directly. `purgeAppointmentAudit`
+  // is the owner-only fixture bypass (it disables the append-only trigger,
+  // deletes, re-enables) and exists nowhere outside the test harness.
+  await purgeAppointmentAudit(A.studioId);
   await adminQuery(`delete from public.appointments where studio_id = $1`, [A.studioId]);
   await closePool();
 });
@@ -186,10 +198,15 @@ describe("0172 — MAINTAIN is genuinely supported here, so its absence means so
 
     // Positive control: a role that DOES hold MAINTAIN reads true, proving the
     // false readings above are a revocation and not a probe that always says no.
+    //
+    // B5/0174 moved this control off service_role, which no longer holds
+    // MAINTAIN on either appointment table (0174 GROUP 10.1 / 10.3). `postgres`
+    // — the table owner and migration channel — still does, and is deliberately
+    // out of scope for the whole B-series, so it is the stable control.
     const control = await adminQuery(
-      `select has_table_privilege('service_role','public.appointments','MAINTAIN') p`,
+      `select has_table_privilege('postgres','public.appointments','MAINTAIN') p`,
     );
-    expect(control.rows[0].p, "service_role must still hold MAINTAIN").toBe(true);
+    expect(control.rows[0].p, "postgres must still hold MAINTAIN").toBe(true);
   });
 });
 
@@ -402,39 +419,85 @@ describe("0172 — the maintenance and definition verbs are behaviourally gone",
 // T1.7 — service_role is untouched
 // ---------------------------------------------------------------------------
 
-describe("0172 — service_role is UNCHANGED, because the command layer runs as it", () => {
+// B5/0174 REPLACED THIS BLOCK'S PREMISE, DELIBERATELY.
+//
+// 0172 left service_role holding `arwdDxtm` on both tables and this suite
+// asserted that as a FEATURE — "the command layer runs as it". That was true of
+// B3 and it is no longer true of the program: 0174 GROUP 10 narrows
+// service_role to SELECT on both tables, plus one temporary column-level UPDATE
+// grant that B8/0177 removes.
+//
+// The old assertion is not merely relaxed here — it is INVERTED, because
+// leaving it as "retains every verb" and marking it skipped would have left the
+// suite claiming a posture the schema no longer has.
+describe("B5/0174 — service_role is NARROWED to SELECT (+ the temporary B8 postcare exception)", () => {
   for (const table of TABLES) {
-    it(`${table}: service_role retains every verb it held before 0172`, async () => {
+    it(`${table}: service_role RETAINS SELECT`, async () => {
       const r = await adminQuery(
-        `select ${["SELECT", ...REVOKED_VERBS]
-          .map((v, i) => `has_table_privilege('service_role', $1, '${v}') p${i}`)
-          .join(", ")}`,
+        `select has_table_privilege('service_role', $1, 'SELECT') p`,
         [`public.${table}`],
       );
-      ["SELECT", ...REVOKED_VERBS].forEach((verb, i) => {
-        expect(r.rows[0][`p${i}`], `service_role must RETAIN ${verb} on ${table}`).toBe(true);
+      expect(r.rows[0].p, `service_role must retain SELECT on ${table}`).toBe(true);
+    });
+
+    it(`${table}: service_role holds NONE of INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN at table level`, async () => {
+      const r = await adminQuery(
+        `select ${REVOKED_VERBS.map(
+          (v, i) => `has_table_privilege('service_role', $1, '${v}') p${i}`,
+        ).join(", ")}`,
+        [`public.${table}`],
+      );
+      REVOKED_VERBS.forEach((verb, i) => {
+        expect(
+          r.rows[0][`p${i}`],
+          `service_role must NOT hold ${verb} on ${table} after 0174`,
+        ).toBe(false);
       });
     });
   }
 
-  it("service_role can still write an appointment and its audit row", async () => {
-    // The end-to-end point of the whole programme: the governed path works
-    // while the direct browser path does not.
-    const r = await asRole("service_role", (q) =>
-      q(
-        `insert into public.appointments
-           (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
-            duration_minutes, status, cancellation_token_hash)
-         values (gen_random_uuid(), $1, null, $2, null,
-                 '2033-08-01T10:00:00Z'::timestamptz, '2033-08-01T11:00:00Z'::timestamptz,
-                 60, 'confirmed', $3)
-         returning id`,
-        [A.studioId, A.clientId, hash64()],
-      ),
-    );
-    expect(r.rows[0].id).toBeTruthy();
-    // asRole rolls back, so nothing above persists — the proof is that the
-    // statement was ACCEPTED, not that a row survives.
+  it("service_role can no longer INSERT an appointment directly", async () => {
+    const failure = await asRole("service_role", async (q) => {
+      try {
+        await q(
+          `insert into public.appointments
+             (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
+              duration_minutes, status, cancellation_token_hash)
+           values (gen_random_uuid(), $1, null, $2, null,
+                   '2033-08-01T10:00:00Z'::timestamptz, '2033-08-01T11:00:00Z'::timestamptz,
+                   60, 'confirmed', $3)`,
+          [A.studioId, A.clientId, hash64()],
+        );
+        return null;
+      } catch (e) {
+        return e as { code?: string };
+      }
+    });
+    expect(failure, "the direct insert must be refused").not.toBeNull();
+    expect(failure!.code).toBe(INSUFFICIENT_PRIVILEGE);
+  });
+
+  it("the governed command layer still works — it runs as its postgres OWNER, not as service_role", async () => {
+    // The end-to-end point of the whole programme, restated for B5: removing
+    // service_role's table DML does NOT disable the commands, because a
+    // SECURITY DEFINER function executes with its owner's privileges. Without
+    // this positive control the block above would pass equally well on a
+    // database where appointments had simply stopped working.
+    const observed = await asRole("service_role", async (q) => {
+      const r = await q(
+        `select * from public.create_internal_appointment_v2(
+           $1, $2, $2, $3, $4, now() + interval '40 days', $5, null, null, false)`,
+        [A.studioId, A.practitionerId, A.clientId, serviceId, hash64()],
+      );
+      const n = await q(
+        `select count(*)::int n from public.appointment_audit
+          where appointment_id = $1`,
+        [r.rows[0].appointment_id],
+      );
+      return { result: r.rows[0].result as string, audit: n.rows[0].n as number };
+    });
+    expect(observed.result, "the governed create must succeed").toBe("created");
+    expect(observed.audit, "and emit exactly one semantic audit row").toBe(1);
   });
 
   it("postgres (the migration channel and table owner) is unchanged", async () => {
@@ -545,12 +608,16 @@ describe("0172 — the policy set is exactly the intended shape", () => {
     );
     expect(r.rows.map((x) => x.polname)).toEqual(["appointment_audit_member_read"]);
     expect(r.rows[0].polcmd).toBe("r");
-    // B3 does NOT rewrite this predicate; its studio_id redesign is B5/0174.
-    // Pinned to the EXACT normalised text: /is_studio_member/ + /appointment_id/
-    // would both still match a predicate widened to `... OR true`.
+    // B5/0174 REWROTE this predicate onto the row's own studio_id. The old
+    // form reached the tenant THROUGH the appointment, which silently drops
+    // every orphaned row once appointment_id may be NULL — NULL is not IN
+    // anything — so the parent-delete durability 0174 buys would have been
+    // invisible to the only role that should see it.
+    //
+    // Still pinned to the EXACT normalised text: /is_studio_member/ alone would
+    // also match a predicate widened to `... OR true`.
     expect(r.rows[0].qual.replace(/\s+/g, " ").trim()).toBe(
-      "(appointment_id IN ( SELECT appointments.id FROM appointments " +
-        "WHERE is_studio_member(appointments.studio_id)))",
+      "is_studio_member(studio_id)",
     );
   });
 
@@ -624,8 +691,16 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
         where conrelid='public.appointments'::regclass and contype='f'
         order by conname`,
     );
-    // c = CASCADE, n = SET NULL. A new 'c' on a parent a member can delete
-    // would turn "a column is nulled" into "the appointment row disappears".
+    // c = CASCADE, n = SET NULL, r = RESTRICT. A new 'c' on a parent a member
+    // can delete would turn "a column is nulled" into "the appointment row
+    // disappears".
+    //
+    // B5/0174 added THREE practitioner-attribution FKs, all RESTRICT. The
+    // asymmetry against `appointments_practitioner_same_studio_fk` ('n') is
+    // deliberate and is the whole durability argument: the ASSIGNED
+    // practitioner is current operational state and may be vacated, but who
+    // CREATED, who CANCELLED and who AUTHORISED an override is history and may
+    // not be silently nulled to make a practitioner delete convenient.
     expect(Object.fromEntries(r.rows.map((x) => [x.conname, x.confdeltype]))).toEqual({
       appointments_client_same_studio_fk: "c",
       appointments_practitioner_same_studio_fk: "n",
@@ -633,6 +708,10 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
       appointments_rescheduled_to_appointment_id_fkey: "n",
       appointments_service_same_studio_fk: "n",
       appointments_studio_id_fkey: "c",
+      // B5 / 0174
+      appointments_created_by_practitioner_same_studio_fk: "r",
+      appointments_cancelled_by_practitioner_same_studio_fk: "r",
+      appointments_outside_availability_authorizer_same_studio_fk: "r",
     });
   });
 
@@ -777,7 +856,22 @@ describe("0172 — no trigger or function drift", () => {
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
     expect(byTable.appointments, "appointments non-internal triggers").toBe(7);
-    expect(byTable.appointment_audit ?? 0, "appointment_audit non-internal triggers").toBe(0);
+    // B5/0174 added EXACTLY TWO triggers to appointment_audit, and they are
+    // named here rather than counted loosely so a third one cannot arrive
+    // unnoticed. Neither writes an audit EVENT — one derives trusted FIELDS at
+    // INSERT, the other refuses mutation. `appointments` is deliberately
+    // unchanged at 7: 0174 adds no trigger to it at all.
+    expect(byTable.appointment_audit ?? 0, "appointment_audit non-internal triggers").toBe(2);
+
+    const named = await adminQuery(
+      `select g.tgname from pg_trigger g
+        where g.tgrelid = 'public.appointment_audit'::regclass and not g.tgisinternal
+        order by g.tgname`,
+    );
+    expect(named.rows.map((x) => x.tgname)).toEqual([
+      "appointment_audit_append_only",
+      "appointment_audit_derive_trusted_fields_trg",
+    ]);
   });
 
   it("is_studio_member was not rewritten and is still authenticated-executable", async () => {

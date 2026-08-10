@@ -294,15 +294,40 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     expect(r.rows.map((x) => x.proname as string)).toEqual(EXPECTED_WRITERS);
   });
 
-  it("no TRIGGER writes appointment_audit — every row is written explicitly by a command", async () => {
-    // The premise behind T5.5. If a trigger ever ships, T5.5's expected failure
-    // becomes a pass and this assertion is where that change announces itself.
+  it("no TRIGGER writes appointment_audit — every ROW is still written explicitly by a command", async () => {
+    // RESTATED AT B5/0174, because the old form ("appointment_audit has zero
+    // triggers") is now false while the property it was protecting is
+    // untouched.
+    //
+    // The property is: no trigger INVENTS AN AUDIT EVENT. 0174 added two
+    // triggers to appointment_audit, and neither inserts a row — one derives
+    // trusted FIELDS on a row a command is already inserting, the other refuses
+    // mutation. So the assertion moves from "no triggers exist" to the thing
+    // that actually matters: nothing on either table INSERTS into
+    // appointment_audit.
+    //
+    // This is also the guard against the architecture 0174's header explicitly
+    // rejected — a generic `appointments` UPDATE trigger that infers a business
+    // action from an arbitrary row change and writes an audit event from it.
     const t = await adminQuery(
-      `select tgname from pg_trigger
-        where tgrelid = 'public.appointment_audit'::regclass and not tgisinternal`,
+      `select g.tgname, p.prosrc
+         from pg_trigger g join pg_proc p on p.oid = g.tgfoid
+        where g.tgrelid = 'public.appointment_audit'::regclass and not g.tgisinternal
+        order by g.tgname`,
     );
-    expect(t.rowCount).toBe(0);
+    expect(t.rows.map((r) => r.tgname)).toEqual([
+      "appointment_audit_append_only",
+      "appointment_audit_derive_trusted_fields_trg",
+    ]);
+    for (const row of t.rows) {
+      expect(
+        /insert\s+into\s+(public\.)?appointment_audit/i.test(row.prosrc as string),
+        `${row.tgname} must not INSERT an audit event`,
+      ).toBe(false);
+    }
 
+    // Unchanged and still load-bearing: appointments carries no trigger that
+    // touches appointment_audit at all.
     const onAppointments = await adminQuery(
       `select t.tgname
          from pg_trigger t join pg_proc p on p.oid = t.tgfoid
@@ -1152,19 +1177,26 @@ describe("T5.4 audit created_at is a server transaction timestamp", () => {
     },
   );
 
-  it("the bracket discriminates: a real command lands inside it, a back-dated forgery does not", async () => {
-    // Negative control for the it.each above, built to be a real control:
-    //   * it runs an ACTUAL command, so the same code path is measured;
-    //   * the forged row is inserted inside the SAME bracket as that command,
-    //     so both are judged by one measurement rather than two;
-    //   * the offset is 60 SECONDS, not 30 days. Thirty days would fall outside
-    //     any bracket narrower than a month and so would prove nothing about
-    //     tightness. Sixty seconds is far outside a bracket that is normally
-    //     single-digit milliseconds, but close enough that a tolerance widened
-    //     to "de-flake" the suite would be caught here.
+  it("B5/0174: a back-dated INSERT is SILENTLY OVERWRITTEN — both rows land inside the bracket", async () => {
+    // THE PREMISE OF THIS TEST INVERTED AT B5/0174, and the inversion is the
+    // assertion.
     //
-    // `created_at` is a plain writable column with only a default (0010:224),
-    // so the forged INSERT genuinely succeeds — that is the point.
+    // Before 0174, `created_at` was a plain writable column with only a default
+    // (0010:224), so a forged INSERT kept its chosen timestamp — and PR #521
+    // §16.8 row 7 showed that a forged row therefore WINS the
+    // `order by created_at desc limit 1` that drives the cancellation-insight
+    // card, making this UI-reachable content control rather than mere
+    // record forgery.
+    //
+    // 0174's BEFORE INSERT derive trigger now overwrites the caller's value
+    // with the database clock unconditionally. Note it OVERWRITES rather than
+    // REJECTS: the caller gets no error and cannot even distinguish "my
+    // timestamp was honoured" from "mine was discarded", which is strictly
+    // safer than a refusal that leaks the rule.
+    //
+    // The bracket is still the measuring instrument, and the 60-second offset
+    // is still deliberate: a trigger that had silently stopped firing would put
+    // the forged row 60 seconds BEFORE `before`, and this test would go red.
     const f = await seedFixture("t54-backdate");
     const a = await mkAppt(f, { startsAt: at(47, 9) });
 
@@ -1190,8 +1222,13 @@ describe("T5.4 audit created_at is a server transaction timestamp", () => {
     // The command-written row is inside the bracket...
     expect(real.created_at.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(real.created_at.getTime()).toBeLessThanOrEqual(after.getTime());
-    // ...and the back-dated one is not, under the identical bracket.
-    expect(forged.created_at.getTime()).toBeLessThan(before.getTime());
+    // ...and so is the row that ASKED to be 60 seconds old. Back-dating is no
+    // longer expressible.
+    expect(
+      forged.created_at.getTime(),
+      "a back-dated INSERT must be dragged forward to the database clock",
+    ).toBeGreaterThanOrEqual(before.getTime());
+    expect(forged.created_at.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 });
 
@@ -1199,93 +1236,161 @@ describe("T5.4 audit created_at is a server transaction timestamp", () => {
 // T5.5 — KNOWN OPEN INVARIANT: a direct service_role write is UNAUDITED
 // ===========================================================================
 
-describe("T5.5 direct service_role status writes are not audited (open invariant)", () => {
+describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed command audits once", () => {
   // ---------------------------------------------------------------------
-  // OWNERSHIP NOTE — read before "fixing" the expected failure below.
+  // B5 / 0174 REPLACED THIS BLOCK'S PREMISE. It is not an `it.fails` that
+  // was flipped to `it` — the old body could not be reused at all, and
+  // leaving it would have been worse than deleting it.
   //
-  // PR #521 §14.4 T5.5 says this test "flips to a normal it() in B5". B5's
-  // documented scope (§12.2) adds audit-row integrity and append-only
-  // enforcement — it does NOT add a trigger that audits every direct
-  // appointment mutation, and only such a trigger could make this pass.
+  // WHAT THE OLD CONTRACT SAID (B2, migration 0173 and earlier):
+  //   "a direct service_role status UPDATE succeeds but writes no audit
+  //    row"  — shipped as an it.fails() expected failure whose stated goal
+  //    was that such a write SHOULD write an audit row.
   //
-  // That contradiction is NOT resolved here. B2 does not invent an audit
-  // trigger, does not silently drop the test, and does not edit PR #521.
-  // It is recorded in the B2 PR body and left for the canonical scope to
-  // settle. Until then this ships as a labelled expected failure.
+  // WHY THAT GOAL WAS WRONG, and was never going to be met:
+  //   the only way to audit an arbitrary direct UPDATE is a generic
+  //   `appointments` trigger that INFERS a business action from a row diff.
+  //   0174's header rejects that architecture explicitly: it yields
+  //   duplicated, low-quality events with no reason, no source and a guessed
+  //   action, and it makes the semantic command layer non-authoritative.
+  //
+  // WHAT B5 DID INSTEAD — close the write rather than audit it:
+  //   0174 GROUP 10 revokes service_role's table-level INSERT/UPDATE/DELETE
+  //   on public.appointments. The premise of the old test ("the direct write
+  //   really does succeed") is therefore FALSE on this schema, which is why
+  //   the old PASSING CONTROL had to go too — it asserted the bypass exists.
+  //
+  // The eight assertions below are the replacement contract, in order.
   // ---------------------------------------------------------------------
 
-  it("PASSING CONTROL: the direct write really does succeed and really does write no audit row", async () => {
-    // Without this, the it.fails() below could be passing for the wrong
-    // reason — e.g. because the UPDATE itself threw. This proves the premise:
-    // the mutation lands, and the audit table stays empty.
-    const f = await seedFixture("t55-control");
+  it("1-4: the raw write is REFUSED by privilege, and neither the row nor the audit trail moves", async () => {
+    const f = await seedFixture("t55-denied");
     const a = await mkAppt(f, { startsAt: at(-12, 9) });
     expect(await auditCount(a.id)).toBe(0);
 
-    const observed = await asRole("service_role", async (q) => {
-      const upd = await q(
-        `update public.appointments set status = 'completed', updated_at = now()
-          where id = $1`,
-        [a.id],
-      );
-      const status = await q(
-        `select status from public.appointments where id = $1`,
-        [a.id],
-      );
-      const audit = await q(
-        `select count(*)::int as n from public.appointment_audit where appointment_id = $1`,
-        [a.id],
-      );
-      return {
-        rowCount: upd.rowCount,
-        status: status.rows[0].status as string,
-        audit: audit.rows[0].n as number,
-      };
-    });
+    const rowBefore = await adminQuery(
+      `select to_jsonb(x.*) j from public.appointments x where x.id = $1`,
+      [a.id],
+    );
 
-    // The write is genuinely permitted and genuinely applied...
-    expect(observed.rowCount).toBe(1);
-    expect(observed.status).toBe("completed");
-    // ...and produces no audit row. No trigger writes appointment_audit; every
-    // row in that table is written explicitly by a command.
-    expect(observed.audit).toBe(0);
-  });
-
-  it.fails(
-    "EXPECTED FAILURE (open invariant): a direct service_role status update should write an audit row",
-    async () => {
-      const f = await seedFixture("t55-intent");
-      const a = await mkAppt(f, { startsAt: at(-13, 9) });
-      const before = await auditCount(a.id);
-
-      const after = await asRole("service_role", async (q) => {
+    const failure = await asRole("service_role", async (q) => {
+      try {
         await q(
           `update public.appointments set status = 'completed', updated_at = now()
             where id = $1`,
           [a.id],
         );
-        const r = await q(
-          `select count(*)::int as n from public.appointment_audit where appointment_id = $1`,
+        return null;
+      } catch (e) {
+        return e as { code?: string; message?: string };
+      }
+    });
+
+    // (1) refused, and (2) it is a genuine PRIVILEGE denial — not an RLS
+    // refusal wearing the same 42501, and not a trigger raising it.
+    expect(failure, "the raw service_role status UPDATE must be refused").not.toBeNull();
+    expect(failure!.code).toBe("42501");
+    expect(failure!.message).toMatch(/permission denied for table appointments/i);
+    expect(failure!.message).not.toMatch(/row-level security/i);
+
+    // (3) the appointment row is byte-identical...
+    const rowAfter = await adminQuery(
+      `select to_jsonb(x.*) j from public.appointments x where x.id = $1`,
+      [a.id],
+    );
+    expect(JSON.stringify(rowAfter.rows[0].j)).toBe(
+      JSON.stringify(rowBefore.rows[0].j),
+    );
+    // (4) ...and no audit row appeared either.
+    expect(await auditCount(a.id)).toBe(0);
+  });
+
+  it("5-6: the GOVERNED equivalent succeeds and emits EXACTLY ONE semantic audit row", async () => {
+    // Without this the block above would pass equally well on a database where
+    // appointments had simply stopped working. The command is the replacement
+    // for the capability that was just denied.
+    const f = await seedFixture("t55-governed");
+    const a = await mkAppt(f, { startsAt: at(-14, 9) });
+    expect(await auditCount(a.id)).toBe(0);
+
+    // mark_appointment_complete RETURNS void — success is proven by the row
+    // and the audit delta below, never by a return code.
+    await adminQuery(`select public.mark_appointment_complete($1,$2,$3)`, [
+      a.id,
+      f.studioId,
+      f.ownerId,
+    ]);
+
+    const status = await adminQuery(
+      `select status from public.appointments where id = $1`,
+      [a.id],
+    );
+    expect(status.rows[0].status).toBe("completed");
+
+    // EXACTLY one, asserted as an array length so a duplicate cannot hide, and
+    // the action is the SEMANTIC one — not a generic "status changed".
+    const rows = await auditRows(a.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe("marked_complete");
+    expect(rows[0].actor_type).toBe("practitioner");
+    expect(rows[0].actor_id).toBe(f.ownerId);
+  });
+
+  it("7: the TEMPORARY B8 postcare exception still works — and only for its six columns", async () => {
+    // 0174 GROUP 10.2. This grant is what keeps the seven direct postcare
+    // writers alive until B8/0177 replaces them; if it were missing, postcare
+    // email would break silently in production.
+    const f = await seedFixture("t55-postcare");
+    const a = await mkAppt(f, { startsAt: at(-15, 9) });
+
+    const ok = await asRole("service_role", async (q) => {
+      const r = await q(
+        `update public.appointments
+            set postcare_email_claimed_at      = now(),
+                postcare_email_last_attempt_at = now(),
+                postcare_email_send_attempts   = 1,
+                postcare_email_sent_at         = now(),
+                postcare_email_failed_at       = null,
+                postcare_email_last_error      = null
+          where id = $1`,
+        [a.id],
+      );
+      return r.rowCount;
+    });
+    expect(ok, "the six postcare columns must remain writable").toBe(1);
+
+    // A seventh column smuggled into the SAME statement fails the WHOLE
+    // statement — this is enforced by PostgreSQL column privileges, not by
+    // convention, so it cannot drift.
+    const smuggled = await asRole("service_role", async (q) => {
+      try {
+        await q(
+          `update public.appointments
+              set postcare_email_sent_at = now(), status = 'completed'
+            where id = $1`,
           [a.id],
         );
-        return r.rows[0].n as number;
-      });
+        return null;
+      } catch (e) {
+        return e as { code?: string };
+      }
+    });
+    expect(smuggled, "a seventh column must not ride along").not.toBeNull();
+    expect(smuggled!.code).toBe("42501");
+  });
 
-      // Fails today: `after` is `before`. Replacing it.fails with it turns this
-      // suite red, which is the point — the goal lives in the suite, not in prose.
-      //
-      // CAVEAT, deliberately recorded: it.fails is satisfied by ANY throw, not
-      // only by this assertion. If a future migration revoked service_role's
-      // UPDATE on public.appointments, the statement above would raise, the
-      // body would throw, and vitest would still report "expected fail" — i.e.
-      // green — while telling you nothing about the audit invariant. That is
-      // exactly why the PASSING CONTROL above is not optional: it independently
-      // proves the UPDATE succeeds (rowCount 1, status 'completed') AND that no
-      // audit row appears, so the only thing left for this test to fail on is
-      // the assertion below.
-      expect(after).toBe(before + 1);
-    },
-  );
+  it("8: B3's browser posture is untouched by any of the above", async () => {
+    const r = await adminQuery(
+      `select has_table_privilege('authenticated','public.appointments','SELECT') s,
+              has_table_privilege('authenticated','public.appointments','UPDATE') u,
+              has_table_privilege('anon','public.appointments','SELECT') s2,
+              has_table_privilege('anon','public.appointments','UPDATE') u2`,
+    );
+    expect(r.rows[0].s, "authenticated keeps SELECT").toBe(true);
+    expect(r.rows[0].u, "authenticated still has no UPDATE").toBe(false);
+    expect(r.rows[0].s2, "anon keeps SELECT").toBe(true);
+    expect(r.rows[0].u2, "anon still has no UPDATE").toBe(false);
+  });
 });
 
 // ===========================================================================

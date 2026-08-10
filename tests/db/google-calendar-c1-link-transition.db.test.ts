@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, asRole, seedStudio, closePool, type SeededStudio } from "./helpers/harness";
+import { adminQuery, purgeAppointmentAudit, asRole, seedStudio, closePool, type SeededStudio } from "./helpers/harness";
 
 // Google Calendar — Phase B2.3-c1 (migration 0132). DB behavioural proof of:
 //  * the corrected enqueue placeholder version semantics (last_hone_version=0);
@@ -101,7 +101,8 @@ afterAll(async () => {
   await adminQuery(`delete from public.appointments where studio_id=$1`, [studio.studioId]).catch(() => {});
   await adminQuery(`delete from public.calendar_connection_secrets where studio_id=$1`, [studio.studioId]).catch(() => {});
   await adminQuery(`delete from public.calendar_connections where studio_id=$1`, [studio.studioId]).catch(() => {});
-  await adminQuery(`delete from public.studios where id=$1`, [studio.studioId]).catch(() => {});
+  await purgeAppointmentAudit(studio.studioId).catch(() => {});
+  await adminQuery(`delete from public.studios where id = $1`, [studio.studioId]).catch(() => {});
   await closePool();
 });
 beforeEach(async () => {

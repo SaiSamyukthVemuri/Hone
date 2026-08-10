@@ -144,30 +144,63 @@ describe("0151: cross-studio references are rejected (23503)", () => {
   // untouched. That is a STRONGER guarantee than the old one: service_role
   // carries BYPASSRLS, so nothing but the constraint itself can be stopping it.
   // -------------------------------------------------------------------------
-  it("(T4.1) service_role — the role the command layer writes as — is still blocked by the composite FK", async () => {
+  // -------------------------------------------------------------------------
+  // RE-POINTED A SECOND TIME AT B5 / 0174, for exactly the reason recorded
+  // above when B3 re-pointed it the first time.
+  //
+  // B3 moved this proof from `authenticated` to `service_role` because 0172
+  // revoked the browser roles' INSERT and a privilege refusal proves nothing
+  // about a CONSTRAINT. 0174 GROUP 10.1 now revokes service_role's INSERT too,
+  // so the same argument applies one level up: the proof moves to `postgres`,
+  // the table owner and migration channel, which is the only role that still
+  // holds INSERT and which also carries BYPASSRLS — so, again, nothing but the
+  // constraint itself can be stopping it.
+  //
+  // The privilege posture that forced this move is NOT left implicit: T4.1c
+  // below pins it, so "the FK proof moved" and "service_role lost INSERT" are
+  // two separate, independently failing assertions rather than one conflated
+  // green.
+  // -------------------------------------------------------------------------
+  it("(T4.1) postgres — the only role that can still INSERT — is blocked by the composite FK", async () => {
     const { start, end } = nextSlot();
     await expect(
-      asRole("service_role", (q) =>
-        q(
-          `insert into public.appointments
-             (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
-              duration_minutes, status, cancellation_token_hash)
-           values (gen_random_uuid(), $1, null, $2, null, $3::timestamptz, $4::timestamptz,
-                   60, 'confirmed', $5)`,
-          [A.studioId, B.clientId, start, end, hash64()],
-        ),
+      adminQuery(
+        `insert into public.appointments
+           (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
+            duration_minutes, status, cancellation_token_hash)
+         values (gen_random_uuid(), $1, null, $2, null, $3::timestamptz, $4::timestamptz,
+                 60, 'confirmed', $5)`,
+        [A.studioId, B.clientId, start, end, hash64()],
       ),
     ).rejects.toMatchObject({ code: "23503" });
     void isFk;
   });
 
-  it("(T4.1b) service_role CAN insert the same-studio row — so 23503 above is the FK, not a lost privilege", async () => {
-    // Two-way self-test. Without it, a service_role revoke would turn the test
+  it("(T4.1b) postgres CAN insert the same-studio row — so 23503 above is the FK, not a lost privilege", async () => {
+    // Two-way self-test. Without it, a privilege revoke would turn the test
     // above green for entirely the wrong reason (42501 is not 23503, but a
     // future widening of the expectation would hide it).
     const { start, end } = nextSlot();
     await expect(
-      asRole("service_role", (q) =>
+      adminQuery(
+        `insert into public.appointments
+           (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
+            duration_minutes, status, cancellation_token_hash)
+         values (gen_random_uuid(), $1, null, $2, null, $3::timestamptz, $4::timestamptz,
+                 60, 'confirmed', $5)`,
+        [A.studioId, A.clientId, start, end, hash64()],
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("(T4.1c) B5/0174: service_role is refused BEFORE the FK is consulted — by privilege", async () => {
+    // The reason T4.1 had to move. Asserted with the MESSAGE as well as the
+    // SQLSTATE, because an RLS WITH CHECK violation raises 42501 too and only
+    // /permission denied/ vs /row-level security/ separates them.
+    const { start, end } = nextSlot();
+    let failure: { code?: string; message?: string } | null = null;
+    try {
+      await asRole("service_role", (q) =>
         q(
           `insert into public.appointments
              (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at,
@@ -176,8 +209,14 @@ describe("0151: cross-studio references are rejected (23503)", () => {
                    60, 'confirmed', $5)`,
           [A.studioId, A.clientId, start, end, hash64()],
         ),
-      ),
-    ).resolves.toBeDefined();
+      );
+    } catch (e) {
+      failure = e as { code?: string; message?: string };
+    }
+    expect(failure, "service_role must no longer INSERT appointments").not.toBeNull();
+    expect(failure!.code).toBe("42501");
+    expect(failure!.message).toMatch(/permission denied for table appointments/i);
+    expect(failure!.message).not.toMatch(/row-level security/i);
   });
 
   it("(T4.5) an authenticated Alpha owner can no longer insert AT ALL — refused by privilege, before the FK", async () => {
@@ -339,16 +378,43 @@ describe("0151: exactly one FK per parent (13) + correct definitions (7,15)", ()
     return r.rows.map((x) => x.def as string);
   }
 
-  it("(13) exactly one appointments FK to each of clients / services / practitioners", async () => {
+  it("(13) exactly one appointments FK to each of clients / services — and FOUR to practitioners after B5", async () => {
     expect(await fkDefs("clients")).toHaveLength(1);
     expect(await fkDefs("services")).toHaveLength(1);
-    expect(await fkDefs("practitioners")).toHaveLength(1);
+    // B5/0174 added three PRACTITIONER-ATTRIBUTION FKs alongside the single
+    // ASSIGNMENT FK that 0151 created: created_by, cancelled_by and the
+    // outside-hours authoriser. All four are composite same-studio FKs; the
+    // assignment one is ON DELETE SET NULL and the three attribution ones are
+    // ON DELETE RESTRICT, which is asserted below.
+    const prac = await fkDefs("practitioners");
+    expect(prac).toHaveLength(4);
+  });
+
+  it("(B5) the three attribution FKs are composite same-studio and RESTRICT", async () => {
+    const defs = await fkDefs("practitioners");
+    const byCol = (col: string) =>
+      defs.find((d) => d.includes(`FOREIGN KEY (${col}, studio_id)`));
+
+    for (const col of [
+      "created_by_practitioner_id",
+      "cancelled_by_practitioner_id",
+      "outside_availability_authorized_by_practitioner_id",
+    ]) {
+      const d = byCol(col);
+      expect(d, `${col} must have a composite same-studio FK`).toBeDefined();
+      expect(d!).toMatch(/REFERENCES practitioners\(id, studio_id\)/);
+      // RESTRICT, NOT SET NULL: attribution is history and must not be silently
+      // vacated to make a practitioner delete convenient.
+      expect(d!).toMatch(/ON DELETE RESTRICT/);
+    }
   });
 
   it("(7,15) each is the composite (child_id, studio_id) FK with the mirrored ON DELETE action", async () => {
     const [client] = await fkDefs("clients");
     const [service] = await fkDefs("services");
-    const [prac] = await fkDefs("practitioners");
+    const prac = (await fkDefs("practitioners")).find((d) =>
+      d.includes("FOREIGN KEY (practitioner_id, studio_id)"),
+    )!;
     expect(client).toMatch(/FOREIGN KEY \(client_id, studio_id\) REFERENCES clients\(id, studio_id\)/);
     expect(client).toMatch(/ON DELETE CASCADE/);
     expect(service).toMatch(/FOREIGN KEY \(service_id, studio_id\) REFERENCES services\(id, studio_id\)/);

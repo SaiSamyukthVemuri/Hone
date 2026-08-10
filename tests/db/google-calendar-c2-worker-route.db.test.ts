@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, closePool, resolveLocalDbUrl, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, purgeAppointmentAudit, closePool, resolveLocalDbUrl, seedStudio, type SeededStudio } from "./helpers/harness";
 import {
   drainCalendarSyncQueue,
   toClaimedJob,
@@ -236,7 +236,8 @@ afterAll(async () => {
   await adminQuery(`delete from public.appointments where studio_id=$1`, [studio.studioId]).catch(() => {});
   await adminQuery(`delete from public.calendar_connection_secrets where studio_id=$1`, [studio.studioId]).catch(() => {});
   await adminQuery(`delete from public.calendar_connections where studio_id=$1`, [studio.studioId]).catch(() => {});
-  await adminQuery(`delete from public.studios where id=$1`, [studio.studioId]).catch(() => {});
+  await purgeAppointmentAudit(studio.studioId).catch(() => {});
+  await adminQuery(`delete from public.studios where id = $1`, [studio.studioId]).catch(() => {});
   await closePool();
 });
 beforeEach(async () => {

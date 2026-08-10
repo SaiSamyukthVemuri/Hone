@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminQuery,
+  purgeAppointmentAudit,
   asRole,
   closePool,
   seedStudio,
@@ -152,7 +153,8 @@ describe("studio_onboarding — parent CASCADE", () => {
       `insert into public.studio_onboarding (studio_id) values ($1)`,
       [s.studioId],
     );
-    await adminQuery(`delete from public.studios where id = $1`, [s.studioId]);
+    await purgeAppointmentAudit(s.studioId).catch(() => {});
+  await adminQuery(`delete from public.studios where id = $1`, [s.studioId]);
     const read = await adminQuery(
       `select 1 from public.studio_onboarding where studio_id = $1`,
       [s.studioId],

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // 0173 — APPOINTMENT BOUNDARY B4 source contract.
@@ -65,15 +65,20 @@ describe("0173 — migration state", () => {
   // 0173 is B4's ONLY migration. The L23 closure it also carries was briefly
   // drafted as a companion 0174 and withdrawn, because the canonical
   // appointment-DML program reserves 0174 for B5, 0175 for B6, 0176 for B7 and
-  // 0177 for B8. When B5's 0174 lands, this block moves there.
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0173")).toBe(true);
-    expect(versionsAbove("0173")).toEqual([]);
-  });
-
-  it("0174 does not exist — that number belongs to B5", () => {
+  // 0177 for B8.
+  //
+  // THAT MOVE HAS NOW HAPPENED. B5 landed 0174, so the `isRepoMax` tripwire and
+  // the "nothing above me" pin live in
+  // tests/migrations/0174-appointment-attribution-audit-integrity.test.ts.
+  // Keeping them here would turn every future migration into a mechanical
+  // sweep, which is exactly how 0163, 0164 and 0165 each went red after push
+  // (CLAUDE.md §2).
+  it("0173 is still exactly one file, and B5 took 0174 rather than renumbering it", () => {
+    expect(countVersion("0173")).toBe(1);
     const dir = join(__dirname, "..", "..", "supabase", "migrations");
-    expect(readdirSync(dir).filter((f) => f.startsWith("0174"))).toEqual([]);
+    expect(readdirSync(dir).filter((f) => f.startsWith("0174"))).toEqual([
+      "0174_appointment_attribution_and_audit_integrity.sql",
+    ]);
   });
 });
 
@@ -88,10 +93,22 @@ describe("0173 — production truth (applied 2026-08-09)", () => {
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("the canonical hosted record reads 0173 — hosted == repo, nothing pending", () => {
-    expect(rec.hosted_migration_max).toBe("0173");
-    expect(rec.hosted_applied_at).toBe("2026-08-09T12:06:47Z");
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+  const LEDGER = readFileSync(
+    join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
+    "utf8",
+  );
+
+  it("the 0173 apply stays RECORDED even though 0174 superseded it as hosted max", () => {
+    // This previously asserted hosted_migration_max === "0173". 0174 was
+    // applied 2026-08-10, so the CURRENT-STATE field legitimately moved. What
+    // must never move is the historical fact: 0173's exact applied bytes stay
+    // named in the current record, and its full narrative lives in the ledger.
+    // A supersession records a newer apply; it does not erase an older one.
+    expect(rec.hosted_migration_max).toBe("0174");
+    expect(rec.hosted_note).toContain(
+      "04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb",
+    );
+    expect(LEDGER).toMatch(/0173 — appointment repair commands \(applied 2026-08-09/);
   });
 
   it("the record carries the sha256 of the exact 0173 bytes that were applied", async () => {
@@ -113,16 +130,20 @@ describe("0173 — production truth (applied 2026-08-09)", () => {
     );
   });
 
-  it("the note records the apply as non-mutating, service_role-only and database-first", () => {
-    expect(rec.hosted_note).toMatch(/max\(appointments\.updated_at\) unchanged/i);
-    expect(rec.hosted_note).toMatch(/service_role ONLY/);
-    expect(rec.hosted_note).toMatch(/NO RPC WAS INVOKED AGAINST PRODUCTION/);
-    expect(rec.hosted_note).toMatch(/UNMERGED at apply time/);
+  it("the LEDGER records the 0173 apply as non-mutating, service_role-only and database-first", () => {
+    // These claims moved from the current-state note to the ledger when 0174
+    // superseded it. They are asserted at their new home rather than dropped —
+    // losing them would have quietly deleted evidence about a production apply.
+    expect(LEDGER).toMatch(/max\(appointments\.updated_at\) unchanged/i);
+    expect(LEDGER).toMatch(/service_role ONLY/);
+    expect(LEDGER).toMatch(/NO RPC WAS INVOKED AGAINST PRODUCTION/);
+    expect(LEDGER).toMatch(/UNMERGED at apply time/);
   });
 
   it("L23 is recorded as closed by AUTHORITY, with FK semantics untouched", () => {
-    expect(rec.hosted_note).toMatch(/L23 CLOSED BY AUTHORITY BOUNDARY/);
-    expect(rec.hosted_note).toMatch(
+    // Same relocation: the security claim itself is unchanged and still proven.
+    expect(LEDGER).toMatch(/L23 CLOSED BY AUTHORITY BOUNDARY/);
+    expect(LEDGER).toMatch(
       /FOREIGN-KEY REFERENTIAL SEMANTICS ARE DELIBERATELY UNCHANGED/,
     );
     const lim = readFileSync(

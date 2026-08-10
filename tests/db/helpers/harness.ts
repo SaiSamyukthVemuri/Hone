@@ -99,6 +99,30 @@ export type UserQuery = (
   params?: unknown[],
 ) => Promise<QueryResult>;
 
+// Run several admin statements inside ONE transaction on ONE connection, so
+// they share a single `now()`. `adminQuery` is autocommit — each call is its
+// own transaction with its own transaction timestamp — which is fine for
+// seeding but wrong whenever a test's meaning depends on two statements
+// observing the SAME clock (B4's repair window measures "exactly 72 hours"
+// between an audit row's created_at and the command's now()).
+// Commits on success, rolls back if `fn` throws.
+export async function adminTx<T>(
+  fn: (query: UserQuery) => Promise<T>,
+): Promise<T> {
+  const client: PoolClient = await getPool().connect();
+  try {
+    await client.query("begin");
+    const result = await fn((text, params = []) => client.query(text, params));
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // Run `fn` as an authenticated app user. Each call gets its own
 // transaction on a pooled connection with:
 //   set local role authenticated;
@@ -253,6 +277,127 @@ export async function seedLegacyRecordStatus(
       "alter table public.sessions enable trigger sessions_guard_retired_finalization",
     );
   }
+}
+
+// ===========================================================================
+// B5 / 0174 — appointment_audit TEST-ONLY fixtures
+// ===========================================================================
+//
+// 0174 made `public.appointment_audit` structurally append-only and made its
+// `created_at` database-derived at INSERT:
+//
+//   * appointment_audit_derive_trusted_fields_trg (BEFORE INSERT) overwrites
+//     any caller-supplied created_at with now();
+//   * appointment_audit_append_only (BEFORE UPDATE OR DELETE) refuses every
+//     mutation except the ON DELETE SET NULL detach.
+//
+// Both are exactly the point of B5, so neither may be softened to suit tests.
+// But some suites legitimately need HISTORICAL audit rows — B4's 72-hour repair
+// window is measured from `appointment_audit.created_at DESC`, so proving the
+// boundary requires a row that really is 72 hours old.
+//
+// The three helpers below are the sanctioned way to build that state, and they
+// follow `seedLegacyRecordStatus` above verbatim: disable the trigger as the
+// table OWNER, write, re-enable in a `finally`. That capability belongs to the
+// migration channel alone — `anon`, `authenticated` and `service_role` cannot
+// reach it, and after 0174 service_role holds no INSERT/UPDATE/DELETE on the
+// table at all.
+//
+// *** WHY THERE IS NO RPC FOR THIS ***
+// It would have been easier to ship a `set_appointment_audit_created_at()`
+// SECURITY DEFINER function and call it from tests. That is precisely what B5
+// must not do: a production-reachable "choose an arbitrary audit timestamp"
+// entry point would hand back the caller-controlled created_at that 0174 exists
+// to remove, and would re-open the forgery that wins the cancellation-insight
+// card's `order by created_at desc limit 1`. The bypass lives in the test
+// harness, runs as the owner, and ships in no migration.
+
+const AUDIT_DERIVE_TRG = "appointment_audit_derive_trusted_fields_trg";
+const AUDIT_APPEND_ONLY_TRG = "appointment_audit_append_only";
+
+async function withAuditTriggerDisabled<T>(
+  trigger: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  await adminQuery(
+    `alter table public.appointment_audit disable trigger ${trigger}`,
+  );
+  try {
+    return await fn();
+  } finally {
+    await adminQuery(
+      `alter table public.appointment_audit enable trigger ${trigger}`,
+    );
+  }
+}
+
+// Insert an appointment_audit row with a REAL historical created_at, bypassing
+// the derive trigger. `createdAtSql` is a trusted SQL interval/timestamp
+// expression written by the test (e.g. "now() - interval '10 days'"), never
+// user input.
+export async function seedHistoricalAppointmentAudit(opts: {
+  appointmentId: string;
+  actorType: "practitioner" | "client" | "system";
+  actorId: string | null;
+  action: string;
+  details?: Record<string, unknown>;
+  createdAtSql: string;
+  studioId?: string;
+}): Promise<void> {
+  await withAuditTriggerDisabled(AUDIT_DERIVE_TRG, async () => {
+    // studio_id is NOT NULL and the derive trigger is off, so it is resolved
+    // here from the parent appointment — the same value the trigger would have
+    // derived, never a caller-chosen tenant.
+    await adminQuery(
+      `insert into public.appointment_audit
+         (appointment_id, studio_id, actor_type, actor_id, actor_practitioner_id,
+          action, details, created_at)
+       values (
+         $1,
+         coalesce($6::uuid, (select a.studio_id from public.appointments a where a.id = $1)),
+         $2, $3,
+         case when $2 = 'practitioner' then $3::uuid end,
+         $4, $5::jsonb, ${opts.createdAtSql})`,
+      [
+        opts.appointmentId,
+        opts.actorType,
+        opts.actorId,
+        opts.action,
+        JSON.stringify(opts.details ?? {}),
+        opts.studioId ?? null,
+      ],
+    );
+  });
+}
+
+// Move an EXISTING audit row's created_at, bypassing the append-only trigger.
+// Used by the B4 repair-window boundary tests, which need "exactly 72 hours"
+// and "72 hours + 1 microsecond" measured against the same transaction clock.
+export async function backdateAppointmentAudit(
+  appointmentId: string,
+  action: string,
+  intervalSql: string,
+): Promise<void> {
+  await withAuditTriggerDisabled(AUDIT_APPEND_ONLY_TRG, async () => {
+    await adminQuery(
+      `update public.appointment_audit
+          set created_at = now() - ${intervalSql}
+        where appointment_id = $1 and action = $2`,
+      [appointmentId, action],
+    );
+  });
+}
+
+// Remove appointment_audit rows for a studio, bypassing the append-only
+// trigger. Fixture teardown ONLY — 0174 deliberately leaves no runtime path
+// that can delete an audit row, including for service_role.
+export async function purgeAppointmentAudit(studioId: string): Promise<void> {
+  await withAuditTriggerDisabled(AUDIT_APPEND_ONLY_TRG, async () => {
+    await adminQuery(
+      `delete from public.appointment_audit where studio_id = $1`,
+      [studioId],
+    );
+  });
 }
 
 // Seed a session (electrolysis) for a studio's client; returns ids.

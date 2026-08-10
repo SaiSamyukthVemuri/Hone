@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, purgeAppointmentAudit, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // Practitioner "Move appointment" — DB integration proof (migration 0133,
 // public.practitioner_move_appointment). LOCAL disposable Supabase only (CI db lane).
@@ -112,14 +112,14 @@ beforeAll(async () => {
   await adminQuery(`update public.studios set buffer_minutes=0 where id=$1`, [studio.studioId]);
 });
 afterAll(async () => {
-  await adminQuery(`delete from public.appointment_audit where appointment_id in (select id from public.appointments where studio_id=$1)`, [studio.studioId]).catch(() => {});
+  await purgeAppointmentAudit(studio.studioId);
   await adminQuery(`delete from public.sessions where studio_id=$1`, [studio.studioId]).catch(() => {});
   await adminQuery(`delete from public.appointments where studio_id=$1`, [studio.studioId]).catch(() => {});
   await adminQuery(`delete from public.studio_calendar_reservations where studio_id=$1`, [studio.studioId]).catch(() => {});
   await closePool();
 });
 beforeEach(async () => {
-  await adminQuery(`delete from public.appointment_audit where appointment_id in (select id from public.appointments where studio_id=$1)`, [studio.studioId]);
+  await purgeAppointmentAudit(studio.studioId);
   await adminQuery(`delete from public.sessions where studio_id=$1`, [studio.studioId]);
   await adminQuery(`delete from public.appointments where studio_id=$1`, [studio.studioId]);
   await adminQuery(`delete from public.studio_calendar_reservations where studio_id=$1`, [studio.studioId]);
@@ -294,7 +294,8 @@ describe("authorization + movability guards (closed result set)", () => {
       expect(new Date((await apptRow(a.id)).starts_at).toISOString()).toBe(new Date(a.startsAt).toISOString());
     } finally {
       await adminQuery(`delete from public.appointments where studio_id=$1`, [other.studioId]).catch(() => {});
-      await adminQuery(`delete from public.studios where id=$1`, [other.studioId]).catch(() => {});
+      await purgeAppointmentAudit(other.studioId).catch(() => {});
+  await adminQuery(`delete from public.studios where id = $1`, [other.studioId]).catch(() => {});
     }
   });
 
@@ -344,7 +345,8 @@ describe("authorization + movability guards (closed result set)", () => {
       // other-studio practitioner isn't authorized for THIS studio -> not_authorized fires first (auth before lookup)
       expect(["not_authorized", "appointment_not_found"]).toContain(r.result);
     } finally {
-      await adminQuery(`delete from public.studios where id=$1`, [other.studioId]).catch(() => {});
+      await purgeAppointmentAudit(other.studioId).catch(() => {});
+  await adminQuery(`delete from public.studios where id = $1`, [other.studioId]).catch(() => {});
     }
   });
 });
