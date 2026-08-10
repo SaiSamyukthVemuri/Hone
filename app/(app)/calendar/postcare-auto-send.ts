@@ -18,11 +18,19 @@ import type { Studio } from "@/lib/types/database";
 //     resendable from the appointment page.
 //   * Studio-scoped: every query filters studio_id.
 
-const POSTCARE_CLAIM_STALE_MS = 5 * 60_000;
 
 export type PostcareAutoOutcome =
+  // B8 / 0177: `sent` means provider success AND settle_postcare_send returned
+  // `settled`. Provider truth and persisted truth are different facts, and the
+  // outcome vocabulary must not blur them — a send Hone cannot record is not a
+  // send Hone can claim.
   | "sent"
+  // Provider FAILED and that failure was durably recorded.
   | "failed"
+  // Provider succeeded but the settlement did not persist. The email is out;
+  // Hone has no durable sent_at. Deliberately its own outcome rather than being
+  // folded into `sent` (a lie) or `failed` (also a lie).
+  | "settle_failed"
   | "not_claimed"
   | "skipped_mode"
   | "skipped_not_completed"
@@ -53,12 +61,6 @@ export function shouldAutoSendPostcare(a: {
   if (!a.aftercareText || a.aftercareText.trim().length === 0)
     return { ok: false, reason: "skipped_no_aftercare" };
   return { ok: true };
-}
-
-function safeAutoLastError(retryable: boolean): string {
-  return retryable
-    ? "Automatic postcare send failed (temporary). Resend it from the appointment page."
-    : "Automatic postcare send failed. Resend it from the appointment page.";
 }
 
 function pickOne<T>(v: T | T[] | null | undefined): T | null {
@@ -196,26 +198,46 @@ export async function autoSendPostcareOnComplete(
       // sent_at — a failed first send stays "not sent".
       // Settle the failure under the exact token. Safe copy is derived in SQL
       // from `retryable` alone; no provider text crosses this boundary.
-      await admin.rpc("settle_postcare_send", {
+      const { data: fRows, error: fErr } = await admin.rpc("settle_postcare_send", {
         p_appointment_id: appointmentId,
         p_studio_id: studioId,
         p_claimed_at: claimToken,
         p_success: false,
         p_retryable: result.retryable ?? false,
       });
+      const fSettled = (Array.isArray(fRows) ? fRows[0] : fRows) as
+        | { result: string }
+        | null
+        | undefined;
+      if (fErr || fSettled?.result !== "settled") {
+        // The send failed AND the failure did not persist. Reporting `failed`
+        // would assert a DB state that does not exist. No repair, no retry
+        // under another token — the claim goes stale and becomes reclaimable.
+        return logOutcome(appointmentId, "settle_failed");
+      }
       return logOutcome(appointmentId, "failed");
     }
 
     // Provider success — now (and only now) stamp sent_at and clear failure +
     // claim. The appointment page's existing status UI reflects this.
     // Settle the success under the exact token. The DB clock stamps sent_at.
-    await admin.rpc("settle_postcare_send", {
+    const { data: sRows, error: sErr } = await admin.rpc("settle_postcare_send", {
       p_appointment_id: appointmentId,
       p_studio_id: studioId,
       p_claimed_at: claimToken,
       p_success: true,
       p_retryable: false,
     });
+    const sSettled = (Array.isArray(sRows) ? sRows[0] : sRows) as
+      | { result: string }
+      | null
+      | undefined;
+    if (sErr || sSettled?.result !== "settled") {
+      // THE EMAIL IS OUT, but Hone has no durable sent_at. `sent` would be a
+      // lie and `failed` would be a different lie. No direct repair and no
+      // second settlement under another token.
+      return logOutcome(appointmentId, "settle_failed");
+    }
     return logOutcome(appointmentId, "sent");
   } catch (err) {
     // FAIL-SOFT: a postcare auto-send failure must NEVER fail appointment

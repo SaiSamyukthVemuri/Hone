@@ -4,6 +4,9 @@ import {
   autoSendPostcareOnComplete,
 } from "@/app/(app)/calendar/postcare-auto-send";
 
+// B8 / 0177: the server-resolved practitioner the database authenticates.
+const ACTOR = "11111111-2222-3333-4444-555555555555";
+
 // No real email is ever sent: the pure gate is data-only, and the orchestration
 // tests inject a fake admin client + a fake sender.
 
@@ -180,7 +183,7 @@ const ELIGIBLE_APPT = {
 describe("autoSendPostcareOnComplete — orchestration (fail-soft, idempotent)", () => {
   it("NEVER throws (fail-soft) — a db failure returns 'threw', not an exception", async () => {
     const admin = { from: () => { throw new Error("db down"); } };
-    await expect(autoSendPostcareOnComplete("a1", "s1", { admin })).resolves.toBe("threw");
+    await expect(autoSendPostcareOnComplete("a1", "s1", ACTOR, { admin })).resolves.toBe("threw");
   });
 
   it("manual mode → skipped_mode, no send, no claim update", async () => {
@@ -191,7 +194,7 @@ describe("autoSendPostcareOnComplete — orchestration (fail-soft, idempotent)",
       claimRows: [],
       updates,
     });
-    expect(await autoSendPostcareOnComplete("a1", "s1", { admin, sendPostcare: send })).toBe("skipped_mode");
+    expect(await autoSendPostcareOnComplete("a1", "s1", ACTOR, { admin, sendPostcare: send })).toBe("skipped_mode");
     expect(send).not.toHaveBeenCalled();
     expect(updates).toHaveLength(0);
   });
@@ -200,7 +203,7 @@ describe("autoSendPostcareOnComplete — orchestration (fail-soft, idempotent)",
     const send = vi.fn().mockResolvedValue({ ok: true });
     const updates: Record<string, unknown>[] = [];
     const admin = fakeAdmin({ appt: ELIGIBLE_APPT, claimRows: [{ id: "a1" }], updates });
-    expect(await autoSendPostcareOnComplete("a1", "s1", { admin, sendPostcare: send })).toBe("sent");
+    expect(await autoSendPostcareOnComplete("a1", "s1", ACTOR, { admin, sendPostcare: send })).toBe("sent");
     expect(send).toHaveBeenCalledOnce();
     expect(updates.some((u) => u.postcare_email_sent_at)).toBe(true);
   });
@@ -209,7 +212,7 @@ describe("autoSendPostcareOnComplete — orchestration (fail-soft, idempotent)",
     const send = vi.fn().mockResolvedValue({ ok: false, retryable: true, error: "boom" });
     const updates: Record<string, unknown>[] = [];
     const admin = fakeAdmin({ appt: ELIGIBLE_APPT, claimRows: [{ id: "a1" }], updates });
-    expect(await autoSendPostcareOnComplete("a1", "s1", { admin, sendPostcare: send })).toBe("failed");
+    expect(await autoSendPostcareOnComplete("a1", "s1", ACTOR, { admin, sendPostcare: send })).toBe("failed");
     expect(updates.some((u) => u.postcare_email_failed_at)).toBe(true);
     expect(updates.some((u) => u.postcare_email_sent_at)).toBe(false);
   });
@@ -218,7 +221,7 @@ describe("autoSendPostcareOnComplete — orchestration (fail-soft, idempotent)",
     const send = vi.fn();
     const updates: Record<string, unknown>[] = [];
     const admin = fakeAdmin({ appt: ELIGIBLE_APPT, claimRows: [], updates });
-    expect(await autoSendPostcareOnComplete("a1", "s1", { admin, sendPostcare: send })).toBe("not_claimed");
+    expect(await autoSendPostcareOnComplete("a1", "s1", ACTOR, { admin, sendPostcare: send })).toBe("not_claimed");
     expect(send).not.toHaveBeenCalled();
   });
 });
@@ -244,7 +247,7 @@ describe("autoSendPostcareOnComplete — table and tenant scope (PR B1)", () => 
       updates,
       chains,
     });
-    const outcome = await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, {
+    const outcome = await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, ACTOR, {
       admin,
       sendPostcare: vi.fn().mockResolvedValue({ ok: true }),
     });
@@ -303,7 +306,7 @@ describe("autoSendPostcareOnComplete — table and tenant scope (PR B1)", () => 
       updates,
       chains,
     });
-    const outcome = await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, {
+    const outcome = await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, ACTOR, {
       admin,
       sendPostcare: vi.fn().mockResolvedValue({ ok: false, retryable: true, error: "boom" }),
     });
@@ -322,7 +325,7 @@ describe("autoSendPostcareOnComplete — table and tenant scope (PR B1)", () => 
       updates: [],
       chains,
     });
-    await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, {
+    await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, ACTOR, {
       admin,
       sendPostcare: vi
         .fn()
@@ -338,7 +341,7 @@ describe("autoSendPostcareOnComplete — table and tenant scope (PR B1)", () => 
     const chains: Chain[] = [];
     const admin = fakeAdmin({ appt: null, claimRows: [], updates: [], chains });
     expect(
-      await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, {
+      await autoSendPostcareOnComplete(APPOINTMENT_ID, STUDIO_ID, ACTOR, {
         admin,
         sendPostcare: vi.fn(),
       }),

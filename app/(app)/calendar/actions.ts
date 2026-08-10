@@ -525,7 +525,11 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
 
 export type AppointmentStateActionResult =
   | { ok: true }
-  | { ok: false; error: string };
+  // B8 / 0177. `code` distinguishes one outcome the UI must not render as an
+  // ordinary failure: the provider ACCEPTED the email but Hone could not record
+  // the send. Neither "sent" nor "failed" is true, and inviting an immediate
+  // retry would risk a duplicate email.
+  | { ok: false; code?: "provider_sent_status_unrecorded"; error: string };
 
 // P0-1 + P0-3: practitioner-initiated mark complete. Calls the
 // service-role-only RPC public.mark_appointment_complete (introduced by
@@ -1013,7 +1017,6 @@ async function dispatchBookingEmails(p: DispatchParams) {
 // PR #311: a postcare claim older than this is stale and reclaimable (the
 // sender process died between the claim and the outcome write). Mirrors the
 // reminder-cron 5-minute stale-claim window.
-const POSTCARE_CLAIM_STALE_MS = 5 * 60_000;
 
 // PR #311: SAFE/GENERIC postcare failure category stored in
 // postcare_email_last_error. NEVER the raw Resend payload, client email/name,
@@ -1041,12 +1044,6 @@ function postcareClaimRefusalCopy(result: string): string {
 // Bounded structured logging: codes and ids only, never provider payloads.
 function logPostcare(event: string, fields: Record<string, unknown>): void {
   console.error(JSON.stringify({ event, ...fields, timestamp: new Date().toISOString() }));
-}
-
-function safePostcareLastError(retryable: boolean): string {
-  return retryable
-    ? "Temporary email provider error. Try again."
-    : "The email provider rejected the send. Try again.";
 }
 
 export async function sendPostcareEmailAction(
@@ -1217,7 +1214,9 @@ export async function sendPostcareEmailAction(
         event: "send_postcare_email_failed",
         appointmentId,
         retryable: result.retryable,
-        error: result.error,
+        // Bounded: retryable category only. A raw provider error can carry the
+        // recipient address and vendor internals, and the DB stores only the
+        // safe derived copy — operational logging matches that posture.
         timestamp: new Date().toISOString(),
       }),
     );
@@ -1296,6 +1295,19 @@ export async function sendPostcareEmailAction(
   }
 
   revalidatePath(`/calendar/${appointmentId}`);
+  if (successWriteErr) {
+    // PROVIDER TRUTH != PERSISTED TRUTH. The provider accepted the message, so
+    // this is not a failed send and the practitioner must not be nudged into
+    // sending again — that would duplicate a real email. But settlement did not
+    // commit, so there is no durable sent_at and the ordinary green "Postcare
+    // sent" confirmation would be false.
+    return {
+      ok: false,
+      code: "provider_sent_status_unrecorded",
+      error:
+        "The email provider accepted the message, but Hone could not record the send status. Refresh before trying again.",
+    };
+  }
   return { ok: true };
 }
 
