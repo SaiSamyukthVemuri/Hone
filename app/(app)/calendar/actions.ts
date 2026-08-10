@@ -528,13 +528,15 @@ export type AppointmentStateActionResult =
   | { ok: false; error: string };
 
 // P0-1 + P0-3: practitioner-initiated mark complete. Calls the
-// service-role-only RPC public.mark_appointment_complete (defined in
-// migration 0032) which:
+// service-role-only RPC public.mark_appointment_complete (introduced by
+// migration 0032, redefined by B6 / 0175) which:
 //   * verifies the practitioner is active in the studio,
 //   * locks the appointment FOR UPDATE,
 //   * refuses any source state other than 'confirmed',
-//   * refuses if ends_at is in the future,
+//   * refuses if starts_at is in the future — B6 moved the temporal gate from
+//     ends_at to starts_at, so a visit that has BEGUN may be completed early,
 //   * writes the appointment_audit row atomically.
+// Completing early does not release capacity: the booked interval is untouched.
 export async function markAppointmentCompleteAction(
   formData: FormData,
 ): Promise<AppointmentStateActionResult> {
@@ -564,6 +566,16 @@ export async function markAppointmentCompleteAction(
       }),
     );
     // Map known structural failures to user-friendly messages.
+    //
+    // B6 / 0175's refusal. Checked FIRST so the current rule wins.
+    if (rpcErr.message?.includes("has not started yet")) {
+      return { ok: false, error: "This appointment hasn't started yet." };
+    }
+    // Pre-0175 refusal ('appointment has not yet ended', migration 0032).
+    // Retained ONLY for deployment/rollback skew, where application code that
+    // knows about B6 can briefly run against a database that does not. It
+    // describes the rule that database is actually enforcing, so it stays
+    // truthful there; it is never used to explain the 0175 refusal above.
     if (rpcErr.message?.includes("not yet ended")) {
       return { ok: false, error: "This appointment hasn't ended yet." };
     }
