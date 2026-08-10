@@ -59,9 +59,11 @@ const moveMR = (id: string, actor: string, target: string | null, es: string, ee
     `select * from public.move_or_reassign_appointment($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7::timestamptz)`,
     [id, B.studioId, actor, target, es, ee, ns],
   ).then((r) => r.rows[0] as { result: string; new_practitioner_id: string });
+// B6 / 0175: was the retired 6-arg wrapper; now the successor's NULL-target
+// time-only form, which is the same semantic the wrapper provided.
 const wrapper = (id: string, actor: string, es: string, ee: string, ns: string) =>
   adminQuery(
-    `select * from public.practitioner_move_appointment($1,$2,$3,$4::timestamptz,$5::timestamptz,$6::timestamptz)`,
+    `select * from public.move_or_reassign_appointment($1,$2,$3,null,$4::timestamptz,$5::timestamptz,$6::timestamptz,false)`,
     [id, B.studioId, actor, es, ee, ns],
   ).then((r) => r.rows[0] as { result: string });
 
@@ -88,7 +90,7 @@ describe("0145 — NULL target preserves the current practitioner (race-safe)", 
     expect(row.s).toContain("11:00:00");
   });
 
-  it("CONCURRENT reassign A→B then wrapper time-move: wrapper keeps B, one winner, no deadlock", async () => {
+  it("CONCURRENT reassign A→B then time-only move: the time-only move keeps B, one winner, no deadlock", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     const c1 = new Client({ connectionString: resolveLocalDbUrl() });
     const c2 = new Client({ connectionString: resolveLocalDbUrl() });
@@ -101,10 +103,10 @@ describe("0145 — NULL target preserves the current practitioner (race-safe)", 
         `select public.move_or_reassign_appointment($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7::timestamptz)`,
         [a.id, B.studioId, owner().practitionerId, P(2), a.exp, a.expEnd, a.exp],
       );
-      // c2 fires the time-only WRAPPER; it must BLOCK on c1's locks (don't await).
+      // c2 fires the time-only form (NULL target); it must BLOCK on c1's locks.
       await c2.query("begin");
       const c2Done = c2.query(
-        `select * from public.practitioner_move_appointment($1,$2,$3,$4::timestamptz,$5::timestamptz,$6::timestamptz)`,
+        `select * from public.move_or_reassign_appointment($1,$2,$3,null,$4::timestamptz,$5::timestamptz,$6::timestamptz,false)`,
         [a.id, B.studioId, owner().practitionerId, a.exp, a.expEnd, T("11:00")],
       );
       await sleep(200); // let c2 reach + block on the lock

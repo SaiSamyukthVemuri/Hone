@@ -68,18 +68,42 @@ type MoveRow = {
   new_starts_at: string | null;
   new_ends_at: string | null;
 };
+// B6 / 0175 REPOINTED. `practitioner_move_appointment` was retired after a
+// zero-caller census; `move_or_reassign_appointment` (0174) is the governed
+// successor and this suite's DOMAIN invariants — identity preservation,
+// reservation re-sync, the buffer snapshot, the conflict-class matrix,
+// terminal-status immovability, cross-studio opacity — all still apply to it.
+// Only the call site moved.
+//
+// The successor is a SUPERSET: it takes an explicit target practitioner (a
+// time-only move passes the appointment's current practitioner, which is what
+// the retired wrapper forwarded) and an outside-availability flag that stays
+// false here, because these tests are about move mechanics rather than the
+// hours bypass — that is move-availability-validator.db.test.ts's subject.
+// Its returned columns are named identically, so MoveRow is unchanged.
 async function move(opts: {
   apptId: string;
   studioId?: string;
   practitionerId?: string;
+  targetPractitionerId?: string;
   expStart: string;
   expEnd: string;
   newStart: string;
 }): Promise<MoveRow> {
+  const actor = opts.practitionerId ?? studio.practitionerId;
   const r = await adminQuery(
     `select result, appointment_id, previous_starts_at, previous_ends_at, new_starts_at, new_ends_at
-       from public.practitioner_move_appointment($1,$2,$3,$4,$5,$6)`,
-    [opts.apptId, opts.studioId ?? studio.studioId, opts.practitionerId ?? studio.practitionerId, opts.expStart, opts.expEnd, opts.newStart],
+       from public.move_or_reassign_appointment($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      opts.apptId,
+      opts.studioId ?? studio.studioId,
+      actor,
+      opts.targetPractitionerId ?? studio.practitionerId,
+      opts.expStart,
+      opts.expEnd,
+      opts.newStart,
+      false,
+    ],
   );
   return r.rows[0] as MoveRow;
 }
@@ -329,10 +353,12 @@ describe("authorization + movability guards (closed result set)", () => {
     const a = await insertAppt({ startsAt: nextSlot().start });
     const past = new Date(Date.now() - 3600 * 1000).toISOString();
     expect((await move({ apptId: a.id, expStart: a.startsAt, expEnd: a.endsAt, newStart: past })).result).toBe("invalid_time"); // 26
-    // invalid target: the RPC treats a null new start as invalid_time
+    // invalid target: the command treats a null new start as invalid_time.
+    // Called directly rather than through move() because the helper cannot
+    // express a null target.
     const rNull = await adminQuery(
-      `select result from public.practitioner_move_appointment($1,$2,$3,$4,$5,$6)`,
-      [a.id, studio.studioId, studio.practitionerId, a.startsAt, a.endsAt, null],
+      `select result from public.move_or_reassign_appointment($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [a.id, studio.studioId, studio.practitionerId, studio.practitionerId, a.startsAt, a.endsAt, null, false],
     );
     expect(rNull.rows[0].result).toBe("invalid_time"); // 27
   });
@@ -413,7 +439,11 @@ describe("atomicity + buffer invariant + grants", () => {
   });
 
   it("33-36: execute is denied to public/anon/authenticated and granted to service_role", async () => {
-    const sig = "public.practitioner_move_appointment(uuid, uuid, uuid, timestamptz, timestamptz, timestamptz)";
+    // REPOINTED: the EXECUTE posture is a property of the governed command,
+    // and the governed command is now the successor. Its full signature
+    // includes the target practitioner and the outside-availability flag.
+    const sig =
+      "public.move_or_reassign_appointment(uuid, uuid, uuid, uuid, timestamptz, timestamptz, timestamptz, boolean)";
     for (const [role, expected] of [["public", false], ["anon", false], ["authenticated", false], ["service_role", true]] as const) {
       const r = await adminQuery(`select has_function_privilege($1, $2, 'EXECUTE') as ok`, [role, sig]);
       expect(r.rows[0].ok).toBe(expected); // 33 public / 34 anon / 35 authenticated / 36 service_role
@@ -435,12 +465,26 @@ describe("atomicity + buffer invariant + grants", () => {
     }
   });
 
-  it("38: the existing reschedule_appointment RPC still exists and is service_role-only (unchanged)", async () => {
-    const exists = await adminQuery(`select 1 from pg_proc where proname='reschedule_appointment'`);
-    expect(exists.rowCount).toBeGreaterThan(0);
+  // RETIRED (B6 / 0175). This asserted that the legacy `reschedule_appointment`
+  // wrapper still EXISTED and stayed service_role-only — a pure legacy-contract
+  // claim. B6 dropped that function by exact signature after a zero-caller
+  // census, so the assertion is not merely failing, it is meaningless: there is
+  // no object left to hold a grant.
+  //
+  // Deliberately NOT replaced with a "the function does not exist" check here —
+  // tests/migrations/0175-appointment-transition-integrity.test.ts already pins
+  // the exact DROP statements, and tests/db/appointment-transition-integrity
+  // .db.test.ts already proves all three are absent from pg_proc while their
+  // successors survive. A third copy would be duplication, not coverage.
+  //
+  // What that test was really protecting — "this migration did not weaken some
+  // OTHER command's EXECUTE posture" — is preserved by the reschedule
+  // successor's own suite (public-reschedule-command.db.test.ts).
+  it("38: the retirement did not weaken the reschedule SUCCESSOR's EXECUTE posture", async () => {
     const pub = await adminQuery(
-      `select has_function_privilege('authenticated', 'reschedule_appointment(uuid, text, timestamptz, timestamptz, integer, text)', 'EXECUTE') as ok`,
+      `select has_function_privilege('authenticated', $1, 'EXECUTE') as ok`,
+      ["public.reschedule_appointment_v2(uuid, text, timestamptz, text, boolean, text)"],
     );
-    expect(pub.rows[0].ok).toBe(false); // reschedule remains locked; move did not weaken it
+    expect(pub.rows[0].ok).toBe(false);
   });
 });

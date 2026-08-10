@@ -71,6 +71,14 @@ function insertHashOnly(token: string) {
   ).then((r) => r.rows[0].id as string);
 }
 
+// B6 / 0175: two tests exercising the LEGACY `reschedule_appointment` v1 were
+// retired here when that RPC was dropped after a zero-caller census. Their
+// property — hash-only matching, raw tokens refused — is not lost: it is
+// covered more strongly against the successor in
+// tests/db/public-reschedule-command.db.test.ts, which proves a wrong token
+// hash collapses to the same code as an unknown id, refuses a token belonging
+// to a DIFFERENT appointment, and refuses a malformed successor hash. That
+// duplication was verified before removing these.
 describe("appointment token hash-at-rest (migration 0090 + 0091 raw drop)", () => {
   it("TS hash and SQL digest agree (lookup matches storage)", async () => {
     const raw = generateAppointmentToken();
@@ -169,58 +177,7 @@ describe("appointment token hash-at-rest (migration 0090 + 0091 raw drop)", () =
     expect(res.rows[0].result).toBe("invalid_token");
   });
 
-  it("reschedule RPC matches by hash and stores the new token hash-only", async () => {
-    const raw = generateAppointmentToken();
-    const id = await insertHashOnly(raw);
-    const newRaw = generateAppointmentToken();
-    const target = nextSlot();
-    const r = await adminQuery(
-      `select result, new_appointment_id
-         from public.reschedule_appointment($1,$2,$3,$4,$5,$6)`,
-      [
-        id,
-        hashAppointmentToken(raw), // current token, as hash
-        target.start,
-        target.end,
-        60,
-        hashAppointmentToken(newRaw), // new token, as hash
-      ],
-    );
-    expect(r.rows[0].result).toBe("success");
-    const newId = r.rows[0].new_appointment_id as string;
 
-    const newRow = await adminQuery(
-      `select cancellation_token_hash, status
-         from public.appointments where id = $1`,
-      [newId],
-    );
-    expect(newRow.rows[0].status).toBe("confirmed");
-    expect(newRow.rows[0].cancellation_token_hash).toBe(
-      hashAppointmentToken(newRaw),
-    );
 
-    const orig = await adminQuery(
-      `select status from public.appointments where id = $1`,
-      [id],
-    );
-    expect(orig.rows[0].status).toBe("cancelled");
-  });
 
-  it("reschedule RPC rejects a RAW current token (0091: hash-only match)", async () => {
-    const raw = generateAppointmentToken();
-    const id = await insertHashOnly(raw);
-    const target = nextSlot();
-    const r = await adminQuery(
-      `select result from public.reschedule_appointment($1,$2,$3,$4,$5,$6)`,
-      [
-        id,
-        raw, // RAW current token no longer matches
-        target.start,
-        target.end,
-        60,
-        hashAppointmentToken(generateAppointmentToken()),
-      ],
-    );
-    expect(r.rows[0].result).toBe("appointment_not_found");
-  });
 });

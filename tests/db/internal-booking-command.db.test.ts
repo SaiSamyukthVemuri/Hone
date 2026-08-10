@@ -51,8 +51,20 @@ const book = (
   start: string,
   opts: { client?: string; service?: string; dur?: number } = {},
 ): Promise<BookOut> =>
+  // B6 / 0175 REPOINTED to the governed successor. Every invariant this suite
+  // proves — per-practitioner collision, parallel practitioners, scoped blocks,
+  // actor authorization, capacity pause, advisory-lock serialization, EXECUTE
+  // posture — is a property of internal booking, not of the retired wrapper.
+  //
+  // THE ARGUMENT ORDER IS NOT THE SAME and a name-only swap would have
+  // silently mis-bound: the retired wrapper took
+  //   (..., starts_at, duration, token_hash, notes)
+  // while v2 takes
+  //   (..., starts_at, token_hash, notes, duration_override, allow_outside)
+  // so duration and token_hash would have traded places — a 30 landing in a
+  // token column and a hex digest landing in an integer. Mapped explicitly.
   adminQuery(
-    `select * from public.create_internal_appointment($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9)`,
+    `select * from public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`,
     [
       B.studioId,
       actor,
@@ -60,9 +72,19 @@ const book = (
       opts.client ?? B.clientId,
       opts.service ?? serviceId,
       start,
-      opts.dur ?? 30,
       hash64(),
       null,
+      // DURATION IS NOT A STRAIGHT PORT. The retired wrapper's `duration` was
+      // the appointment's length; v2's `p_duration_override_minutes` is an
+      // OWNER-ONLY override layered over the service default, and v2 returns
+      // not_authorized if a non-owner sends one at all. Passing the old 30
+      // unconditionally therefore made every MEMBER booking unauthorized —
+      // which looked like a v2 authorization defect and was really a
+      // mis-port. Default to null so the service's own 30-minute default
+      // applies (identical geometry, so every collision case is unchanged),
+      // and send an explicit override only where a test asks for one.
+      opts.dur ?? null,
+      false,
     ],
   )
     .then((r) => ({ ok: true as const, result: r.rows[0].result as string, id: r.rows[0].appointment_id as string | null }))
@@ -158,8 +180,8 @@ describe("0142 concurrency + privilege", () => {
     try {
       await a.query("begin");
       await a.query(
-        `select public.create_internal_appointment($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9)`,
-        [B.studioId, owner().practitionerId, P(1), B.clientId, serviceId, T("09:00"), 30, hash64(), null],
+        `select public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`,
+        [B.studioId, owner().practitionerId, P(1), B.clientId, serviceId, T("09:00"), hash64(), null, 30, false],
       );
       // B tries to book (different practitioner, different time) — must WAIT on the
       // shared studio advisory lock A holds, proving serialization.
@@ -168,8 +190,8 @@ describe("0142 concurrency + privilege", () => {
       let code: string | undefined;
       try {
         await b.query(
-          `select public.create_internal_appointment($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9)`,
-          [B.studioId, owner().practitionerId, P(2), B.clientId, serviceId, T("09:00"), 30, hash64(), null],
+          `select public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`,
+          [B.studioId, owner().practitionerId, P(2), B.clientId, serviceId, T("09:00"), hash64(), null, 30, false],
         );
       } catch (e) {
         code = (e as { code?: string }).code;
@@ -198,8 +220,8 @@ describe("0142 concurrency + privilege", () => {
       let code: string | undefined;
       try {
         await b.query(
-          `select public.create_internal_appointment($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9)`,
-          [B.studioId, owner().practitionerId, P(1), B.clientId, serviceId, T("08:00"), 30, hash64(), null],
+          `select public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`,
+          [B.studioId, owner().practitionerId, P(1), B.clientId, serviceId, T("08:00"), hash64(), null, 30, false],
         );
       } catch (e) {
         code = (e as { code?: string }).code;
@@ -216,8 +238,8 @@ describe("0142 concurrency + privilege", () => {
 
   it("is service_role only — anon and authenticated are denied (42501)", async () => {
     const call = (q: (t: string, p?: unknown[]) => Promise<unknown>) =>
-      q(`select public.create_internal_appointment($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9)`, [
-        B.studioId, owner().practitionerId, P(1), B.clientId, serviceId, T("10:00"), 30, hash64(), null,
+      q(`select public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`, [
+        B.studioId, owner().practitionerId, P(1), B.clientId, serviceId, T("10:00"), hash64(), null, 30, false,
       ]);
     const code = (p: Promise<unknown>) => p.then(() => "ok").catch((e) => (e as { code?: string }).code);
     expect(await code(asRole("anon", call))).toBe("42501");

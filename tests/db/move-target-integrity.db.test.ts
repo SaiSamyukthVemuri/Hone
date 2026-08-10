@@ -55,10 +55,13 @@ const move = (id: string, actor: string, target: string, es: string, ee: string,
   )
     .then((r) => ({ ok: true as const, result: r.rows[0].result as string, row: r.rows[0] as Record<string, unknown> }))
     .catch((e) => ({ ok: false as const, code: (e as { code?: string }).code }));
-// Legacy time-only wrapper (old 6-arg / 6-column shape).
+// B6 / 0175: the retired wrapper's exact behaviour, expressed on the governed
+// successor. A NULL target is the documented time-only form — it keeps the
+// appointment's current practitioner, which is precisely what the 6-arg
+// wrapper did.
 const legacyMove = (id: string, actor: string, es: string, ee: string, ns: string): Promise<Out> =>
   adminQuery(
-    `select * from public.practitioner_move_appointment($1,$2,$3,$4::timestamptz,$5::timestamptz,$6::timestamptz)`,
+    `select * from public.move_or_reassign_appointment($1,$2,$3,null,$4::timestamptz,$5::timestamptz,$6::timestamptz,false)`,
     [id, B.studioId, actor, es, ee, ns],
   )
     .then((r) => ({ ok: true as const, result: r.rows[0].result as string, row: r.rows[0] as Record<string, unknown> }))
@@ -121,8 +124,11 @@ describe("0144 Item 1 — final-target integrity on EVERY move", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("0144 Item 3 — practitioner_move_appointment is a safe compatibility wrapper", () => {
-  it("still moves a valid time-only appointment (old 6-column shape)", async () => {
+// REFRAMED (B6 / 0175). This block proved the retired wrapper inherited v2's
+// guarantees. The wrapper is gone; the guarantees are not, and they are asserted
+// here directly on the successor's time-only form.
+describe("time-only move inherits the full target-integrity contract", () => {
+  it("moves a valid time-only appointment", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     const r = await legacyMove(a.id, owner().practitionerId, a.exp, a.expEnd, T("11:00"));
     expect(r).toMatchObject({ ok: true, result: "moved" });
@@ -157,7 +163,7 @@ describe("0144 Item 3 — practitioner_move_appointment is a safe compatibility 
   it("remains service_role only — anon + authenticated denied (42501)", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     const call = (q: (t: string, p?: unknown[]) => Promise<unknown>) =>
-      q(`select public.practitioner_move_appointment($1,$2,$3,$4::timestamptz,$5::timestamptz,$6::timestamptz)`, [
+      q(`select public.move_or_reassign_appointment($1,$2,$3,null,$4::timestamptz,$5::timestamptz,$6::timestamptz,false)`, [
         a.id, B.studioId, owner().practitionerId, a.exp, a.expEnd, T("11:00"),
       ]);
     const code = (p: Promise<unknown>) => p.then(() => "ok").catch((e) => (e as { code?: string }).code);

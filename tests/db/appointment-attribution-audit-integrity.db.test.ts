@@ -250,59 +250,18 @@ describe("B5 attribution — created_by_practitioner_id", () => {
   });
 });
 
-describe("B5 attribution — the LEGACY installed writers inherit it", () => {
-  // §19 of the B5 brief: it is not enough to update the modern happy-path
-  // commands while leaving a legacy installed RPC able to produce a malformed
-  // row. Both surviving legacy appointment RPCs are still installed and still
-  // service_role-EXECUTE-able (B6 owns their retirement, not B5), so B5 must
-  // prove they cannot write an unattributed appointment.
-  //
-  // They are pure delegating shims — create_internal_appointment forwards
-  // p_actor_practitioner_id to create_internal_appointment_v2, and
-  // practitioner_move_appointment forwards to move_or_reassign_appointment —
-  // so they inherit 0174 rather than needing their own edit. This test is what
-  // turns that reading of the catalog into a fact.
-  it("the legacy create_internal_appointment still records a creator", async () => {
-    const f = await seedFixture("legacy-create");
-    const r = await adminQuery(
-      `select * from public.create_internal_appointment($1,$2,$3,$4,$5,$6::timestamptz,60,$7,null)`,
-      [f.studioId, f.ownerId, f.memberId, f.clientId, f.serviceId, at(61, 10), hash64()],
-    );
-    expect(r.rows[0].result, "the legacy shim must still work").toBe("created");
-
-    const row = await apptRow(r.rows[0].appointment_id as string);
-    expect(row.practitioner_id, "assigned to the member").toBe(f.memberId);
-    expect(
-      row.created_by_practitioner_id,
-      "the legacy shim must not be able to create an UNATTRIBUTED appointment",
-    ).toBe(f.ownerId);
-
-    const audit = await auditRows(r.rows[0].appointment_id as string);
-    expect(audit).toHaveLength(1);
-    expect(audit[0].actor_practitioner_id).toBe(f.ownerId);
-    expect(audit[0].studio_id).toBe(f.studioId);
-  });
-
-  it("the legacy practitioner_move_appointment still maintains override attribution", async () => {
-    const f = await seedFixture("legacy-move");
-    const { id } = await internalCreate(f, { startsAt: at(62, 3), outsideHours: true });
-    const before = await apptRow(id!);
-    expect(before.outside_availability_authorized_by_practitioner_id).toBe(f.ownerId);
-
-    const r = await adminQuery(
-      `select * from public.practitioner_move_appointment($1,$2,$3,$4::timestamptz,$5::timestamptz,$6::timestamptz)`,
-      [id, f.studioId, f.ownerId, before.starts_at, before.ends_at, at(63, 11)],
-    );
-    expect(r.rows[0].result, "the legacy shim must still work").toBe("moved");
-
-    const after = await apptRow(id!);
-    expect(after.booked_outside_availability).toBe(false);
-    expect(
-      after.outside_availability_authorized_by_practitioner_id,
-      "the legacy shim must not leave a stale authoriser behind either",
-    ).toBeNull();
-  });
-});
+// RETIRED (B6 / 0175). This block proved that the two LEGACY appointment RPCs
+// — create_internal_appointment and practitioner_move_appointment — also wrote
+// correct B5 attribution, precisely because B5 could not retire them and a
+// still-installed legacy writer could otherwise emit a malformed row. Its own
+// comment named B6 as the owner of that retirement.
+//
+// B6 dropped both by exact signature after a zero-caller census, so there is no
+// legacy writer left to inherit anything. The attribution property itself is
+// unaffected and remains proven against the governed successors elsewhere in
+// this same file, and the drops are pinned by
+// tests/migrations/0175-appointment-transition-integrity.test.ts plus the
+// pg_proc absence check in tests/db/appointment-transition-integrity.db.test.ts.
 
 describe("B5 attribution — cancelled_by_practitioner_id", () => {
   it("a PRACTITIONER cancellation records WHICH practitioner, and keeps the role word", async () => {

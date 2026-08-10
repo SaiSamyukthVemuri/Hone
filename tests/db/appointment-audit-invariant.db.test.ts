@@ -271,7 +271,10 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     "move_or_reassign_appointment",
     "practitioner_cancel_appointment",
     "public_cancel_appointment_with_token",
-    "reschedule_appointment", // legacy v1 — installed, not driven by B2
+    // B6 / 0175: `reschedule_appointment` (legacy v1) left this list when the
+    // three caller-less legacy RPCs were dropped. It is a REMOVAL from the
+    // writer census, never a relaxation — the surviving writers are unchanged
+    // and the set is still asserted exactly.
     "reschedule_appointment_v2",
     // B4 / 0173. The repair commands write audit rows through the shared
     // `write_appointment_audit` helper rather than inlining the INSERT, so the
@@ -283,7 +286,7 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     "write_appointment_audit",
   ];
 
-  it("exactly these ten functions insert into public.appointment_audit", async () => {
+  it("exactly these functions insert into public.appointment_audit", async () => {
     const r = await adminQuery(
       `select p.proname
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace

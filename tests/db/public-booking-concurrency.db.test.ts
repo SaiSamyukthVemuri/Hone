@@ -320,9 +320,20 @@ describe("no deadlock in the reverse direction", () => {
       `select p.proname, p.prosrc from pg_proc p join pg_namespace n on n.oid=p.pronamespace
         where n.nspname='public'
           and p.proname in ('public_cancel_appointment_with_token','practitioner_cancel_appointment',
-                            'mark_appointment_complete','mark_appointment_no_show','reschedule_appointment')`,
+                            'mark_appointment_complete','mark_appointment_no_show')`,
     );
-    expect(r.rowCount).toBe(5);
+    // B6 / 0175: the legacy `reschedule_appointment` left this set when it was
+    // dropped after a zero-caller census, so the census is four.
+    //
+    // `reschedule_appointment_v2` is deliberately NOT swapped in as its
+    // replacement. Measured against the live body, v2 DOES acquire
+    // acquire_studio_capacity_lock — correctly, because it is a
+    // cancel-plus-successor CREATING command rather than an in-place lifecycle
+    // writer, so it belongs to the create lock path this test's premise
+    // excludes. Substituting it would have inverted the test's meaning and
+    // failed for the right reason at the wrong assertion. Its own ordering is
+    // covered by tests/db/public-reschedule-command.db.test.ts.
+    expect(r.rowCount).toBe(4);
     for (const row of r.rows) {
       expect(
         row.prosrc,
