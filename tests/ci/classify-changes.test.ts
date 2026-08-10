@@ -182,11 +182,27 @@ describe("classifier — baseline risk tier", () => {
     // it must not sit in the workflow tier alongside ordinary calendar code.
     ["calendar feed token route", "app/calendar-feed/[token]/route.ts"],
     ["calendar feed token helper", "lib/calendar-feed/token.ts"],
+    // The payment lane matches the literal words "payment"/"stripe" in a path,
+    // so these money-moving actions are invisible to it.
+    ["manual fee server action", "app/(app)/calendar/[id]/manual-fee-actions.ts"],
+    ["quick checkout server action", "app/(app)/quick-checkout-actions.ts"],
+    ["billing proof surface", "tests/lib/billing/live-mode-blockers.test.ts"],
   ] as const) {
     it(`a ${label} change is T3`, () => {
       expect(tier(file)).toBe("T3");
     });
   }
+
+  it("escalates money-moving ACTIONS without dragging payment UI to T3", () => {
+    // Precision matters both ways: under-classifying charge authority is a
+    // safety gap, and promoting a button to T3 is the ceremony bleed this
+    // standard exists to stop.
+    expect(tier("app/(app)/quick-checkout-actions.ts")).toBe("T3");
+    expect(tier("components/checkout-button.tsx")).toBe("T1");
+    expect(tier("components/quick-checkout-modal.tsx")).toBe("T1");
+    // Ordinary non-money server actions keep their workflow tier.
+    expect(tier("app/(app)/clients/[id]/personal-notes-actions.ts")).toBe("T2");
+  });
 
   it("resolves the highest tier regardless of the order rules matched in", () => {
     // Path fixtures alone CANNOT prove this: every T3 rule currently precedes

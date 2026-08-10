@@ -70,7 +70,19 @@ const RULES = [
 const TIER_RULES = [
   { tier: "T3", reason: "database migration or DB test surface changed", lane: "database" },
   { tier: "T3", reason: "security or privilege boundary path changed", lane: "security" },
-  { tier: "T3", reason: "payment authority path changed", lane: "payment" },
+  {
+    tier: "T3",
+    reason: "payment authority path changed",
+    lane: "payment",
+    // The payment LANE keys off the literal words "payment"/"stripe" in the
+    // path, so a money-moving server action named for the fee it charges —
+    // manual-fee, quick-checkout — slips past it, as do the billing unit tests
+    // that are the proof surface for that authority. Widening the lane itself
+    // would change which CI lanes run; this widens the TIER only. Deliberately
+    // scoped to actions and tests: `components/checkout-button.tsx` is
+    // presentation and stays T1, where semantic review applies.
+    patterns: [/(billing|checkout|charge|refund|payout|manual-fee)[^/]*-actions\.ts$/i, /^tests\/lib\/billing\//],
+  },
   {
     tier: "T3",
     reason: "authentication or tenancy boundary path changed",
