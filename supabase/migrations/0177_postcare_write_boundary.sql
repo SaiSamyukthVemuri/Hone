@@ -148,7 +148,15 @@ begin
   -- The claim. One DB clock reading is used for BOTH stamps, so claimed_at and
   -- last_attempt_at are provably the same instant and the returned token is
   -- exactly what landed in the row.
-  v_now := now();
+  --
+  -- TRUNCATED TO MILLISECONDS, and this is load-bearing rather than cosmetic.
+  -- The token leaves the database as JSON and comes back through JavaScript,
+  -- whose Date carries milliseconds — so a microsecond-precision timestamptz
+  -- would be silently rounded in transit and NO settlement would ever match its
+  -- own claim. Every send would look like a stale claim and nothing would ever
+  -- be marked sent. Millisecond truncation is the same convention 0171 applies
+  -- to appointment timestamps that cross this boundary.
+  v_now := date_trunc('milliseconds', now());
 
   update public.appointments a
      set postcare_email_claimed_at      = v_now,
@@ -212,6 +220,7 @@ as $$
 declare
   v_appt public.appointments%rowtype;
   v_now  timestamptz;
+  v_err  text;
 begin
   if p_claimed_at is null then
     return query select 'stale_claim'::text, null::timestamptz, null::timestamptz, null::text;
@@ -259,21 +268,25 @@ begin
   -- must leave yesterday's genuine successful send standing. Erasing it would
   -- turn a delivery record into a lie in exactly the situation — a dispute
   -- about whether aftercare was sent — where it matters most.
+  -- Derived HERE, from the boolean alone, and held in a variable so the value
+  -- returned to the caller is provably the value written to the column.
+  v_err := case
+    when coalesce(p_retryable, false)
+      then 'Temporary email provider error. Try again.'
+    else 'The email provider rejected the send. Try again.'
+  end;
+
   update public.appointments a
      set postcare_email_failed_at  = v_now,
-         postcare_email_last_error = case
-           when coalesce(p_retryable, false)
-             then 'Temporary email provider error. Try again.'
-           else 'The email provider rejected the send. Try again.'
-         end,
+         postcare_email_last_error = v_err,
          postcare_email_claimed_at = null
    where a.id = p_appointment_id
-     and a.studio_id = p_studio_id
-   returning a.postcare_email_sent_at, a.postcare_email_last_error
-        into v_appt.postcare_email_sent_at, v_appt.postcare_email_last_error;
+     and a.studio_id = p_studio_id;
 
-  return query select 'settled'::text, v_appt.postcare_email_sent_at, v_now,
-                      v_appt.postcare_email_last_error;
+  -- sent_at is read from the row as it stood BEFORE this update, which is
+  -- exactly right: the failure branch does not touch it, so a historical
+  -- successful send survives a later failed resend.
+  return query select 'settled'::text, v_appt.postcare_email_sent_at, v_now, v_err;
 end;
 $$;
 
