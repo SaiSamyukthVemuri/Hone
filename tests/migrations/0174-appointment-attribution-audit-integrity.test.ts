@@ -99,16 +99,19 @@ describe("0174 — migration state", () => {
   // The CENTRAL tripwire, moved here from
   // tests/migrations/0173-appointment-repair-commands.test.ts when B5 landed.
   // Only the current maximum migration's own test carries it (CLAUDE.md §2).
-  it("is the current repository maximum", () => {
-    expect(isRepoMax("0174")).toBe(true);
-    expect(versionsAbove("0174")).toEqual([]);
+  it("is no longer the repository maximum — B6 spent 0175 above it", () => {
+    // Per CLAUDE.md only the CURRENT max may assert isRepoMax; that role passed
+    // to 0175 when B6 landed. 0174 keeps a narrower, still-true claim: exactly
+    // one migration sits above it.
+    expect(isRepoMax("0174")).toBe(false);
+    expect(versionsAbove("0174")).toEqual(["0175"]);
   });
 
-  it("consumes exactly ONE number — 0175 stays reserved for B6", () => {
-    // B5 must not spend B6's number. Every later boundary migration
-    // (0175 B6, 0176 B7, 0177 B8) shifts by one if it does.
+  it("consumes exactly ONE number — B6 took 0175, B7/B8 still reserved", () => {
+    // B5 must not spend more than its own number. 0175 is now B6's and is
+    // expected to exist; 0176 and 0177 remain reserved for B7 and B8.
     expect(countVersion("0174")).toBe(1);
-    expect(countVersion("0175")).toBe(0);
+    expect(countVersion("0175")).toBe(1);
     expect(countVersion("0176")).toBe(0);
     expect(countVersion("0177")).toBe(0);
     // 0178 is the PARKED Phase-2 practitioner identity work, developed on
@@ -122,7 +125,7 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("hosted is 0174 and nothing is pending — repo and production agree", () => {
+  it("hosted is 0174, and B6's 0175 is the one migration pending above it", () => {
     // This block previously asserted the opposite (hosted 0173, one pending)
     // and was the stop condition for B5's authoring phase. 0174 was applied to
     // production on 2026-08-10T00:36:44Z-00:36:54Z, so the canonical record now
@@ -130,7 +133,12 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     // about this repository: it moved because an apply happened, not because a
     // file landed.
     expect(rec.hosted_migration_max).toBe("0174");
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+    // Repo and hosted agreed until B6 authored 0175. They now legitimately
+    // diverge by exactly one UNAPPLIED migration — which is the expected
+    // state for an authored-but-not-applied boundary migration, and is the
+    // same shape 0174 itself was in before its apply ceremony.
+    expect(isRepoMax(rec.hosted_migration_max)).toBe(false);
+    expect(versionsAbove(rec.hosted_migration_max)).toEqual(["0175"]);
   });
 
   it("the record carries the sha256 of the exact 0174 bytes that were applied", async () => {
