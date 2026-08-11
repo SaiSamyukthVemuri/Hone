@@ -982,15 +982,19 @@ earlier `PGRST202 → legacy` fallback was removed in final review.
 
 `sha256 a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744` (executable
 `2a3fa8c81ecb1b47…`), applied from the production merge commit `2358082737ef47e30d68883dedbbfea930590d8f`
-(PR #555, **MERGED before the apply**; parents `f2d4a5aa` + reviewed head `fef11e71`). 10 seconds,
-exit 0, dry run listed only 0177. **This closes the LAST direct appointment-writer surface.**
+(PR #555, **MERGED before the apply**; parents `f2d4a5aa` + reviewed head `fef11e71`). 10 seconds, dry
+run listed only 0177. The CLI reported 0177 applied with no SQL error, no `25P01` and no lock timeout;
+**the shell exit-code capture was lost**, so success is asserted from the authoritative post-state —
+the hosted migration ledger and the exact live catalog — rather than from a process exit code.
+**This closes the LAST direct appointment-writer surface.**
 
 **Deliberately APP-FIRST — the opposite of B7's order, and again the shape of the change decides it.**
 0177 *removes* B5/0174's temporary six-column grant, so a DB-first apply would have made the old
-application take a **permission denial mid-path**, after its claim UPDATE and adjacent to the provider
-call. App-first instead makes the new application fail on a **missing function**, before any provider
-handoff and with no direct-UPDATE fallback in either sender. Both orders are integrity-safe; only one
-fails closed at a boundary nobody has to reason about.
+application's **direct claim UPDATE itself receive a permission denial, before the provider call** —
+the send would never have been attempted. App-first instead makes the new application fail on a
+**missing function**, equally before any provider handoff. Both orders are integrity-safe; app-first
+was preferred because the new application fails closed on an absent command of its own rather than
+depending on the legacy direct-DML denial.
 
 - **Applied from a THROWAWAY worktree detached at the exact production merge SHA**, not from a
   long-lived checkout. `~/Hone` was still at the *previous* production SHA and would have pushed a
