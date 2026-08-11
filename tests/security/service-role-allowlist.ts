@@ -136,12 +136,6 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
-    path: "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
-    purpose: "Authenticated practitioner server action/query.",
-    why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
-  },
-  {
     path: "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
     purpose:
       "Remove pass — the audited soft-delete of ONE electrolysis/laser entry (0114 columns).",

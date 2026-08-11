@@ -79,9 +79,21 @@ describe("unresolved alerts rendering", () => {
 
 describe("mark resolved", () => {
   it("conditional UPDATE only when still unresolved", () => {
+    // The conditional shape is unchanged by 0178; only the attribution SOURCE
+    // moved, from `practitionerRow?.id ?? null` (which let `.maybeSingle()`'s
+    // error decide attribution for a multi-membership admin) to an explicit
+    // plurality rule.
     expect(ACTIONS_CODE).toMatch(
-      /\.update\(\{\s*\n?\s*resolved_at: new Date\(\)\.toISOString\(\),\s*\n?\s*resolved_by_practitioner_id: practitionerRow\?\.id \?\? null,\s*\n?\s*resolution_note: note,\s*\n?\s*\}\)\s*\n?\s*\.eq\("id", alertId\)\s*\n?\s*\.is\("resolved_at", null\)/,
+      /\.update\(\{\s*\n?\s*resolved_at: new Date\(\)\.toISOString\(\),\s*\n?\s*resolved_by_practitioner_id: practitionerId,\s*\n?\s*resolution_note: note,\s*\n?\s*\}\)\s*\n?\s*\.eq\("id", alertId\)\s*\n?\s*\.is\("resolved_at", null\)/,
     );
+  });
+
+  it("attribution is plurality-safe for a platform-global operation", () => {
+    // Resolving an ops alert is not studio-scoped, so there is no correct studio
+    // to disambiguate with. Exactly ONE active membership attributes; zero or
+    // many leaves NULL rather than naming an arbitrary one.
+    expect(ACTIONS_CODE).toMatch(/practitionerRows\.length === 1/);
+    expect(ACTIONS_CODE).not.toMatch(/\.maybeSingle\(\)|\.single\(\)|\.limit\(1\)/);
   });
 
   it("resolution note is optional and length-capped to the DB CHECK", () => {

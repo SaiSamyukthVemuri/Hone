@@ -37,14 +37,21 @@ const BLOCKING =
   )?.[0] ?? "";
 
 describe("0177 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0177")).toBe(true);
-    expect(versionsAbove("0177")).toEqual([]);
-    expect(countVersion("0177")).toBe(1);
+  // THE HAND-OFF HAPPENED. This block used to assert isRepoMax("0177"),
+  // versionsAbove([]) and countVersion("0178") === 0. 0178 was authored, and
+  // this file's own comment predicted every one of those going red and named
+  // the fix: convert to a floor and let the CURRENT maximum's test carry the
+  // tripwire (CLAUDE.md §2). That is what happened here — the successor
+  // assertions are now in 0178's own test, and 0174 stayed untouched exactly as
+  // #554 intended.
+  it("is no longer the repository maximum — 0178 was authored above it", () => {
+    expect(isRepoMax("0177")).toBe(false);
+    expect(versionsAbove("0177")).toContain("0178");
   });
 
-  it("leaves 0178 free", () => {
-    expect(countVersion("0178")).toBe(0);
+  it("consumes exactly ONE number", () => {
+    // The durable claim, and the only one that is 0177's business.
+    expect(countVersion("0177")).toBe(1);
   });
 });
 
@@ -453,10 +460,13 @@ describe("0177 — production truth: APPLIED 2026-08-10", () => {
     "utf8",
   );
 
-  it("the declared hosted max is 0177 — repository and production agree, nothing pending", () => {
-    expect(rec.hosted_migration_max).toBe("0177");
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
-    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
+  it("the 0177 apply stays RECORDED while 0178 is authored above it", () => {
+    // `hosted_migration_max` is a statement about PRODUCTION, not about this
+    // repository: it moves when an APPLY happens, never when a file lands.
+    // Authoring 0178 legitimately breaks repo/hosted equality, so this asserts a
+    // FLOOR — a hosted max BELOW 177 would mean the 0177 apply record had been
+    // falsified, and anything at or above it is somebody else's business.
+    expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(177);
   });
 
   it("the record carries the sha256 of the exact 0177 bytes that were applied", async () => {

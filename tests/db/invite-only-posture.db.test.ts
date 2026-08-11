@@ -60,7 +60,9 @@ describe("a no-studio authenticated user cannot bootstrap access", () => {
          values ($1, $2, $3, 'Self Add', 'self@example.com', 'owner', true)`,
         [randomUUID(), s.studioId, noStudioUserId],
       ),
-    ).rejects.toThrow(/row-level security/i);
+      // 0178: refused by PRIVILEGE now — a stranger cannot even reach the
+      // policy layer to be rejected by it.
+    ).rejects.toMatchObject({ code: "42501" });
   });
 
   it("cannot INSERT a pending invitation for any studio", async () => {
@@ -87,7 +89,12 @@ describe("a no-studio authenticated user cannot bootstrap access", () => {
 });
 
 describe("a non-owner member cannot create memberships or escalate", () => {
-  it("cannot INSERT a practitioner (owner-only)", async () => {
+  it("cannot INSERT a practitioner — now refused by PRIVILEGE, not RLS", async () => {
+    // 0178 revoked INSERT on public.practitioners from every runtime role, so
+    // this is refused one layer EARLIER than it used to be: `42501 permission
+    // denied` instead of a policy violation. The property this test exists for
+    // — a non-owner cannot manufacture a membership — is unchanged and is now
+    // enforced by something RLS cannot be misconfigured around.
     await expect(
       userQuery(
         member.userId,
@@ -96,7 +103,7 @@ describe("a non-owner member cannot create memberships or escalate", () => {
          values ($1, $2, $3, 'Member Add', 'memberadd@example.com', 'practitioner', true)`,
         [randomUUID(), s.studioId, randomUUID()],
       ),
-    ).rejects.toThrow(/row-level security/i);
+    ).rejects.toMatchObject({ code: "42501" });
   });
 
   it("cannot INSERT an invitation (owner-only)", async () => {
@@ -110,13 +117,22 @@ describe("a non-owner member cannot create memberships or escalate", () => {
     ).rejects.toThrow(/row-level security/i);
   });
 
-  it("cannot escalate their own role to owner (owner-only UPDATE)", async () => {
-    const r = await userQuery(
-      member.userId,
-      `update public.practitioners set role = 'owner' where id = $1`,
-      [member.practitionerId],
-    );
-    expect(r.rowCount).toBe(0);
+  it("cannot escalate their own role to owner — now a hard error, not a silent no-op", async () => {
+    // THIS ASSERTION USED TO READ `expect(r.rowCount).toBe(0)`.
+    //
+    // That is the shape 0178 exists to remove: under the owner-gated policy the
+    // statement SUCCEEDED and simply matched no row, so a refusal and a
+    // no-op were indistinguishable — the same ambiguity that made three
+    // "self-service" profile actions silently do nothing for non-owners.
+    // With UPDATE revoked the escalation attempt now fails loudly.
+    await expect(
+      userQuery(
+        member.userId,
+        `update public.practitioners set role = 'owner' where id = $1`,
+        [member.practitionerId],
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+
     const after = await adminQuery(
       `select role from public.practitioners where id = $1`,
       [member.practitionerId],

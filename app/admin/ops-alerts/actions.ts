@@ -74,18 +74,34 @@ export async function resolveOpsAlertAction(
 
   const admin = createAdminClient();
 
-  const { data: practitionerRow } = await admin
+  // 0178 — PLURALITY-SAFE ATTRIBUTION FOR A PLATFORM-GLOBAL OPERATION.
+  //
+  // Resolving ops alerts is not studio-scoped, so there is no correct studio to
+  // scope this lookup to. The previous `.maybeSingle()` did not make the
+  // ambiguity go away — for a platform admin with two active memberships it
+  // ERRORS, and the error silently decided attribution by leaving the id null.
+  //
+  // The plurality is now explicit: attribute only when the admin has exactly
+  // ONE active practitioner membership. Zero or many means there is no
+  // unambiguous practitioner identity for a global operation, so the column
+  // stays NULL rather than naming an arbitrary one. The authoritative actor for
+  // this operation remains the admin audit identity (user id / email), which is
+  // recorded independently.
+  const { data: practitionerRows } = await admin
     .from("practitioners")
     .select("id")
     .eq("user_id", user.id)
-    .eq("active", true)
-    .maybeSingle();
+    .eq("active", true);
+  const practitionerId =
+    practitionerRows && practitionerRows.length === 1
+      ? (practitionerRows[0] as { id: string }).id
+      : null;
 
   const { error } = await admin
     .from("ops_alerts")
     .update({
       resolved_at: new Date().toISOString(),
-      resolved_by_practitioner_id: practitionerRow?.id ?? null,
+      resolved_by_practitioner_id: practitionerId,
       resolution_note: note,
     })
     .eq("id", alertId)
