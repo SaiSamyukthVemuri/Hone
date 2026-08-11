@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
@@ -321,18 +320,26 @@ export type CreateBlockInput = {
 // values as the schema CHECK, and writes only the authenticated
 // practitioner's own row.
 async function rememberMachineFrequencyDefault(
-  practitionerId: string,
+  studioId: string,
   frequency: MachineFrequency | null | undefined,
 ): Promise<void> {
   if (frequency !== "13.56 MHz" && frequency !== "27.12 MHz") return;
   try {
-    const admin = createAdminClient();
-    await admin
-      .from("practitioners")
-      .update({ default_machine_frequency: frequency })
-      .eq("id", practitionerId);
+    // 0178: this used the ADMIN client because the authenticated path was
+    // owner-gated by the 0001 RLS policy — a service-role bypass standing in
+    // for a missing self-service boundary. The governed command is bound to
+    // auth.uid() in the database, so the SAME entitlement is now reached
+    // without service_role vouching for a human, and no practitioner id
+    // crosses the boundary.
+    const supabase = await createClient();
+    await supabase.rpc("set_own_default_machine_frequency", {
+      p_studio_id: studioId,
+      p_frequency: frequency,
+    });
   } catch {
-    // UI default only; the block row already saved.
+    // BEST EFFORT, deliberately unchanged: this is a UI convenience default and
+    // the clinical block row has already saved. A preference failure must never
+    // fail or roll back a successful clinical write.
   }
 }
 
@@ -1238,7 +1245,7 @@ export async function createTreatmentAreaWithEntryAction(
   const block = blockRow as SessionBlock;
 
   await rememberMachineFrequencyDefault(
-    practitioner.id,
+    studio.id,
     (input.machineFrequency ?? null) as MachineFrequency | null,
   );
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
@@ -1524,7 +1531,7 @@ export async function updateTreatmentAreaWithEntryAction(
   const block = blockRow as SessionBlock;
 
   await rememberMachineFrequencyDefault(
-    practitioner.id,
+    studio.id,
     (input.machineFrequency ?? null) as MachineFrequency | null,
   );
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);

@@ -590,26 +590,23 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
       "service-role in this file is permitted ONLY in softDeleteEntry",
     ).toBe("softDeleteEntry");
 
-    // block-actions.ts DOES construct an admin client, for one pre-existing,
-    // registered use that has nothing to do with the charting tables:
-    // `rememberMachineFrequencyDefault` writes the practitioner's own
-    // `practitioners.default_machine_frequency`. Assert that narrow scope
-    // rather than banning the import, so this case stays honest.
+    // block-actions.ts USED to construct one admin client, for
+    // `rememberMachineFrequencyDefault` — the practitioner's own
+    // `practitioners.default_machine_frequency`. That service-role write existed
+    // only because the authenticated path was owner-gated by the 0001 RLS
+    // policy, i.e. a bypass standing in for a missing self-service boundary.
+    //
+    // 0178 gave that preference a governed auth.uid()-bound command, so this
+    // file now constructs NO admin client at all. The claim here is therefore
+    // STRONGER than it was, not weaker: zero rather than one-narrowly-scoped.
     const blockSrc = readFileSync(
       "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
       "utf8",
     );
-    const adminUses = [...blockSrc.matchAll(/createAdminClient\(\)/g)];
-    expect(adminUses).toHaveLength(1);
-    const at = adminUses[0].index ?? 0;
-    const owner = [...blockSrc.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm)]
-      .filter((f) => (f.index ?? 0) < at)
-      .pop()?.[1];
-    expect(owner).toBe("rememberMachineFrequencyDefault");
-    // ...and it touches only `practitioners`.
-    const stmt = blockSrc.slice(adminUses[0].index ?? 0, (adminUses[0].index ?? 0) + 400);
-    expect(stmt).toMatch(/\.from\("practitioners"\)/);
-    for (const t of TABLES) expect(stmt).not.toContain(`"${t}"`);
+    expect(
+      [...blockSrc.matchAll(/createAdminClient/g)],
+      "block-actions.ts must not reach service_role at all after 0178",
+    ).toHaveLength(0);
   });
 });
 

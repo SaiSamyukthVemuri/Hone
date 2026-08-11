@@ -46,17 +46,23 @@ describe("rotateCalendarFeedTokenAction: uses the shared helpers", () => {
 });
 
 describe("rotateCalendarFeedTokenAction: writes ONLY the hash (phase 2 / 0116)", () => {
-  it("the UPDATE body sets calendar_feed_token_hash and NOT the raw token", () => {
-    expect(ACTIONS).toMatch(
-      /\.update\(\{\s*\n?\s*calendar_feed_token_hash: tokenHash,\s*\n?\s*\}\)/,
-    );
+  it("only the HASH crosses into the database, never the raw token", () => {
+    // 0178 moved the write from a direct `.update()` to a governed command, but
+    // the 0116 property this test exists for is unchanged and is re-asserted
+    // against the shape that now carries it.
+    expect(ACTIONS).toMatch(/p_token_hash: tokenHash/);
     expect(ACTIONS).not.toMatch(/calendar_feed_token: token,/);
+    expect(ACTIONS).not.toMatch(/p_token_hash: token\b/);
   });
 
-  it("scopes the update to the calling practitioner", () => {
-    expect(ACTIONS).toMatch(
-      /\.eq\("id", practitioner\.id\)/,
-    );
+  it("scopes the write to the calling practitioner — now in the DATABASE", () => {
+    // STRONGER than the old `.eq("id", practitioner.id)`: no practitioner id is
+    // sent at all. The command binds the actor to auth.uid() and the explicit
+    // studio, so the caller cannot name a row to write even if it wanted to.
+    expect(ACTIONS).toMatch(/set_own_calendar_feed_token_hash/);
+    expect(ACTIONS).toMatch(/p_studio_id: studio\.id/);
+    expect(ACTIONS).not.toMatch(/\.eq\("id", practitioner\.id\)/);
+    expect(ACTIONS).not.toMatch(/p_practitioner_id/);
   });
 
   it("returns the raw token to the caller so the UI can render the URL once", () => {
@@ -84,9 +90,9 @@ describe("rotateCalendarFeedTokenAction: writes ONLY the hash (phase 2 / 0116)",
 
 describe("clearCalendarFeedTokenAction: nulls ONLY the hash (phase 2 / 0116)", () => {
   it("nulls calendar_feed_token_hash and NOT the raw column", () => {
-    expect(ACTIONS).toMatch(
-      /\.update\(\{\s*\n?\s*calendar_feed_token_hash: null,\s*\n?\s*\}\)/,
-    );
+    // 0178: NULL is passed as a VALUE to the governed command — revoking a feed
+    // is a real operation, not "leave unchanged".
+    expect(ACTIONS).toMatch(/p_token_hash: null/);
     expect(ACTIONS).not.toMatch(/calendar_feed_token: null,/);
   });
 });

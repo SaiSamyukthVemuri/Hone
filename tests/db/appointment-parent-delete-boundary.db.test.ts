@@ -142,7 +142,23 @@ describe("0173 GROUP 5 — the L23 hazard is real (two-way self-test)", () => {
 });
 
 describe("0173 GROUP 5 — the privilege layer", () => {
-  for (const table of ["services", "practitioners"] as const) {
+  // 0178 SUPERSEDED THE PRACTITIONER HALF OF THIS BLOCK.
+  //
+  // 0173's claim was that its GROUP 5 revoke was SURGICAL — DELETE only, with
+  // SELECT/INSERT/UPDATE deliberately untouched on BOTH tables. That is still
+  // exactly true of `services`, which 0178 does not touch, so it keeps the
+  // original assertions below.
+  //
+  // `practitioners` moved on: 0178 reduced it to SELECT-only for every runtime
+  // role, because the recon census found the table still carried Supabase's
+  // default ALL grant (INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER) with RLS as
+  // the only gate — and RLS never governed the last three. Its expectations
+  // therefore live in tests/db/practitioner-identity-boundary.db.test.ts, which
+  // asserts the stronger posture directly — SELECT-only, MAINTAIN included, with
+  // zero column-level write authority. Re-asserting "INSERT/UPDATE are
+  // untouched" here would pin a posture the product deliberately left behind,
+  // and restating the DELETE half would duplicate that suite for no evidence.
+  for (const table of ["services"] as const) {
     it(`${table}: DELETE is revoked from anon and authenticated`, async () => {
       const r = await adminQuery(
         `select r.rolname::text role,
@@ -177,6 +193,7 @@ describe("0173 GROUP 5 — the privilege layer", () => {
       expect(r.rows[0].del, "service_role maintenance must survive").toBe(true);
     });
   }
+
 });
 
 describe("0173 GROUP 5 — the policy layer", () => {
@@ -381,15 +398,32 @@ describe("0173 GROUP 5 — the product workflows it must not break", () => {
     );
   });
 
-  it("an owner can still deactivate a practitioner", async () => {
+  it("an owner can still deactivate a practitioner — now via the governed command", async () => {
+    // 0173's point was that DEACTIVATION, not deletion, is how a practitioner
+    // retires — and that is unchanged. What changed in 0178 is the ROUTE: the
+    // direct authenticated UPDATE this used to perform is now a privilege
+    // error, and the capability lives in `set_practitioner_active_locked`,
+    // which is owner-gated per studio and multi-owner safe.
+    //
+    // Both halves are asserted, because proving only the new path would leave
+    // the old door open and proving only the closure would look like a
+    // regression.
     const studio = await seedStudio("l23-deactivate-p");
     const member = await seedMember(studio, "l23-deactivate-pm");
 
-    await asUser(studio.userId, async (q) => {
-      await q(`update public.practitioners set active = false where id = $1`, [
-        member.practitionerId,
-      ]);
-    });
+    await expect(
+      asUser(studio.userId, (q) =>
+        q(`update public.practitioners set active = false where id = $1`, [
+          member.practitionerId,
+        ]),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    const code = await adminQuery(
+      `select public.set_practitioner_active_locked($1,$2,$3,false) code`,
+      [studio.studioId, studio.practitionerId, member.practitionerId],
+    );
+    expect(code.rows[0].code).toBe("ok");
 
     const after = await adminQuery(
       `select active from public.practitioners where id = $1`,

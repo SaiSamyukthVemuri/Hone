@@ -73,8 +73,14 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
     expect(
       ACTIONS.match(/await rememberMachineFrequencyDefault\(/g)?.length,
     ).toBe(2);
-    // Best-effort: never fails the block save.
-    expect(ACTIONS).toMatch(/\/\/ UI default only; the block row already saved\./);
+    // Best-effort: never fails the block save. 0178 moved the write from the
+    // ADMIN client to a governed auth.uid()-bound command — the entitlement is
+    // identical, the service-role bypass is gone — and the swallow is preserved
+    // verbatim because a preference failure must never roll back a successful
+    // clinical write.
+    expect(ACTIONS).toMatch(/set_own_default_machine_frequency/);
+    expect(ACTIONS).not.toMatch(/createAdminClient/);
+    expect(ACTIONS).toMatch(/BEST EFFORT, deliberately unchanged/);
   });
 
   it("changing the toggle still updates the draft and the save payload", () => {
