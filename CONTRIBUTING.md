@@ -49,7 +49,7 @@ CI does NOT replace the manual smoke catalogue in [docs/12_SMOKE_TESTS.md](./doc
 
 The rule it exists to enforce: **validation depth follows risk, not habit.** Determine the baseline risk tier (T0–T3) before choosing how much to prove, then apply semantic judgment on top of it.
 
-- `npm run ci:plan` reports a **baseline** tier from `scripts/classify-changes.mjs`. It is deterministic path evidence, not semantic proof — it cannot see what a file *does*.
+- `npm run ci:plan -- --json` emits a **baseline** `baselineRiskTier` and `riskReasons` from `scripts/classify-changes.mjs` (plain `ci:plan` answers lane selection). It is deterministic path evidence, not semantic proof — it cannot see what a file *does*.
 - **Escalate** when the actual behaviour crosses a higher-risk boundary, even if the paths look ordinary.
 - **Never de-escalate** on the strength of an automated classification.
 - Do not apply T3 ceremony to T0/T1 work without naming the higher-risk failure class it catches. Safety and speed are both requirements.

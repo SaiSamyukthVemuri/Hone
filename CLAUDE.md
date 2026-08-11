@@ -12,7 +12,9 @@ restated here**. Follow it.
 **Validation depth follows risk, not habit.** Determine the baseline risk tier
 (T0–T3) before choosing how much to prove.
 
-- `npm run ci:plan` reports a **baseline** tier and reasons. That is
+- `npm run ci:plan -- --json` emits the **baseline** `baselineRiskTier` and
+  `riskReasons`. (Plain `npm run ci:plan` answers lane selection; it prints only
+  the boolean classification values, so the tier is in the JSON.) That is
   deterministic path evidence, **not semantic proof** — it cannot see what a
   file actually does.
 - **Escalate** when the behaviour you are writing crosses a higher-risk

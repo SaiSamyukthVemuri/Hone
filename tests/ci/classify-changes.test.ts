@@ -266,3 +266,118 @@ describe("classifier — baseline risk tier", () => {
     expect(tier()).toBe("T3");
   });
 });
+
+// ---------------------------------------------------------------------------
+// INDEPENDENT REVIEW — two classifier precision findings.
+// ---------------------------------------------------------------------------
+describe("classifier — conventional nested server actions (review P1-1)", () => {
+  // Hone uses THREE server-action shapes and the rule originally matched two,
+  // so a colocated `actions.ts` beside its page fell through to the generic T1
+  // application signal. `app/(app)/dashboard/actions.ts` is real, is
+  // `"use server"`, and signs the user out.
+  it("a colocated app/**/actions.ts is a server-action boundary, not ordinary UI", () => {
+    expect(tier("app/(app)/dashboard/actions.ts")).toBe("T2");
+    expect(reasons("app/(app)/dashboard/actions.ts")).toEqual([
+      "server API or server action boundary changed",
+    ]);
+    expect(tier("app/(app)/notifications/actions.ts")).toBe("T2");
+  });
+
+  it("a higher deterministic boundary still wins over the nested-action rule", () => {
+    // Highest-tier-wins is what keeps this rule from DE-escalating anything.
+    expect(tier("app/(auth)/login/actions.ts")).toBe("T3");
+    expect(tier("app/admin/studios/[id]/actions.ts")).toBe("T3");
+    expect(tier("app/manage/[token]/actions.ts")).toBe("T3");
+    expect(reasons("app/(auth)/login/actions.ts")).toEqual([
+      "authentication or tenancy boundary path changed",
+    ]);
+    expect(reasons("app/manage/[token]/actions.ts")).toEqual([
+      "public or token-authenticated route changed",
+    ]);
+  });
+
+  it("is anchored to app/ — it does not sweep in fixtures or unrelated modules", () => {
+    // An unanchored /actions\.ts$/ would fire on files that are not server
+    // boundaries at all, and a rule that cries wolf gets ignored.
+    expect(tier("tests/fixtures/b8-base-f2d4a5aa/calendar-actions.ts.txt")).not.toBe("T2");
+    expect(reasons("docs/actions.ts.md")).toEqual([
+      "documentation and non-runtime files only",
+    ]);
+  });
+});
+
+describe("classifier — payment AUTHORITY vs the broad payment lane (review P1-2)", () => {
+  // The CI payment lane matches the bare words payment/stripe anywhere in a
+  // path. Correct for selecting tests; wrong for assigning ceremony. The tier
+  // now names authority surfaces; the lane is untouched.
+  const AUTHORITY = [
+    "lib/billing/session-payment-charge.ts",
+    "lib/stripe/account.ts",
+    "lib/stripe/setup-intent.ts",
+    "app/api/stripe/webhook/route.ts",
+    "app/(app)/quick-checkout-actions.ts",
+    "app/(app)/calendar/[id]/manual-fee-actions.ts",
+    "tests/lib/billing/live-mode-blockers.test.ts",
+  ];
+  const PRESENTATION = [
+    "components/payment-method-card.tsx",
+    "components/quick-checkout-modal.tsx",
+    "components/checkout-button.tsx",
+  ];
+
+  it.each(AUTHORITY)("%s is payment authority — T3", (f) => {
+    expect(tier(f)).toBe("T3");
+    expect(reasons(f)).toContain("payment authority path changed");
+  });
+
+  it.each(PRESENTATION)("%s is presentation — T1, not T3 by filename", (f) => {
+    expect(tier(f)).toBe("T1");
+    expect(reasons(f)).toEqual([
+      "application or interface code with no higher-risk path signal",
+    ]);
+  });
+
+  it("THE REGRESSION: a read-only payment card stays T1 while its CI lane still fires", () => {
+    // This single case is the finding. Under `lane: "payment"` this file
+    // baselined T3, so a copy tweak on read-only practitioner UI — no Charge,
+    // no Replace, no Remove — demanded the heaviest process in the system.
+    // Both halves matter: the tier drops AND the lane must not.
+    const r = c("components/payment-method-card.tsx");
+    expect(r.baselineRiskTier).toBe("T1");
+    expect(r.payment, "CI payment lane selection must be unchanged").toBe(true);
+  });
+
+  it("money-moving actions are caught by what they DO, not by living under a payment path", () => {
+    // `manual-fee` and `quick-checkout` are named for the fee they charge and
+    // sit nowhere near lib/billing.
+    for (const f of [
+      "app/(app)/calendar/[id]/manual-fee-actions.ts",
+      "app/(app)/quick-checkout-actions.ts",
+      "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts",
+    ]) {
+      expect(tier(f), f).toBe("T3");
+    }
+    // ...while a settings action that configures amounts is an ordinary server
+    // boundary, escalated semantically if it ever moves money.
+    expect(tier("app/(app)/settings/payments/fee-amounts-actions.ts")).toBe("T2");
+  });
+});
+
+describe("classifier — mixed diffs still take the highest tier", () => {
+  it("T1 + T3 => T3, and only the winning tier's reasons are reported", () => {
+    const r = c("components/payment-method-card.tsx", "lib/stripe/account.ts");
+    expect(r.baselineRiskTier).toBe("T3");
+    expect(r.riskReasons).toEqual(["payment authority path changed"]);
+  });
+
+  it("T2 + T3 => T3", () => {
+    expect(tier("app/(app)/dashboard/actions.ts", "supabase/migrations/0177_x.sql")).toBe("T3");
+    expect(tier("lib/booking/slots.ts", "app/api/stripe/webhook/route.ts")).toBe("T3");
+  });
+
+  it("reason ordering is deterministic and independent of input order", () => {
+    const a = c("supabase/migrations/0177_x.sql", "lib/security/x.ts").riskReasons;
+    const b = c("lib/security/x.ts", "supabase/migrations/0177_x.sql").riskReasons;
+    expect(a).toEqual(b);
+  });
+});

@@ -73,15 +73,45 @@ const TIER_RULES = [
   {
     tier: "T3",
     reason: "payment authority path changed",
-    lane: "payment",
-    // The payment LANE keys off the literal words "payment"/"stripe" in the
-    // path, so a money-moving server action named for the fee it charges —
-    // manual-fee, quick-checkout — slips past it, as do the billing unit tests
-    // that are the proof surface for that authority. Widening the lane itself
-    // would change which CI lanes run; this widens the TIER only. Deliberately
-    // scoped to actions and tests: `components/checkout-button.tsx` is
-    // presentation and stays T1, where semantic review applies.
-    patterns: [/(billing|checkout|charge|refund|payout|manual-fee)[^/]*-actions\.ts$/i, /^tests\/lib\/billing\//],
+    // DELIBERATELY NOT `lane: "payment"`. The CI payment lane matches the bare
+    // words "payment"/"stripe" anywhere in a path, which is exactly right for
+    // SELECTING tests — if a file mentions payment, run the payment suites — and
+    // exactly wrong for assigning engineering ceremony. Under the lane,
+    // `components/payment-method-card.tsx` baselined T3 even though it is
+    // read-only practitioner UI with no Charge, Replace or Remove control: a
+    // copy tweak there would have demanded the heaviest process in the system.
+    // That is the speed principle inverted, so the TIER now names the authority
+    // surfaces directly and the LANE is left untouched.
+    //
+    // What counts as authority: the money-moving and Stripe-credential modules,
+    // their proof surfaces, and server ACTIONS named for the money they move.
+    // Presentation never matches — every action pattern requires `-actions.ts`,
+    // so a component cannot be dragged in by its filename. A presentation file
+    // that later grows money-moving behaviour is caught by semantic escalation,
+    // not by its name.
+    //
+    // A WORKED EXAMPLE OF THE LIMIT, because it is not hypothetical.
+    // `lib/payment-methods/refresh-card-authorization-pointer.ts` baselines T1
+    // here: it moves no money and matches no authority path. Its own header
+    // calls it "the load-bearing write that closes the audit-trail gap" — a
+    // service-role write binding a stored card to the consent artefact that
+    // authorizes it. A path cannot see that, and widening this rule to the word
+    // "payment" to catch it would drag every presenter and copy file back to T3,
+    // which is the defect this rule exists to remove. It is escalated by the
+    // author under ENGINEERING_STANDARDS.md, which is the mechanism for exactly
+    // this case. The tier is a FLOOR, never a ceiling.
+    patterns: [
+      /^lib\/billing\//,
+      /^lib\/stripe\//,
+      /^app\/api\/stripe\//,
+      /^e2e-payment\//,
+      /^tests\/lib\/billing\//,
+      /^playwright\.payment\.config\./,
+      // `payment-actions.ts` is here on evidence, not on its name: it carries
+      // charge, refund and capture paths. `manual-fee` and `quick-checkout` are
+      // named for the fee they charge and would otherwise miss every pattern.
+      /(billing|checkout|charge|refund|payout|manual-fee|payment)[^/]*-actions\.ts$/i,
+    ],
   },
   {
     tier: "T3",
@@ -121,7 +151,18 @@ const TIER_RULES = [
   {
     tier: "T2",
     reason: "server API or server action boundary changed",
-    patterns: [/^app\/api\//, /^app\/actions\//, /-actions\.ts$/],
+    // Three shapes, because Hone uses three. `app/api/**` and `app/actions/**`
+    // are the explicit ones; `*-actions.ts` catches the named-suffix convention.
+    // The fourth pattern catches the CONVENTIONAL Next colocated file — a bare
+    // `actions.ts` beside the page it serves, e.g. `app/(app)/dashboard/actions.ts`,
+    // which is `"use server"` and signs the user out. Without it that file
+    // matched no boundary rule and fell to the generic T1 application signal,
+    // which is a server action treated as ordinary UI.
+    //
+    // Anchored to `^app/` on purpose. A bare `/actions\.ts$/` would also sweep in
+    // fixtures and any non-app module that happens to use the name, and a rule
+    // that fires on unrelated files teaches people to ignore it.
+    patterns: [/^app\/api\//, /^app\/actions\//, /-actions\.ts$/, /^app\/.*\/actions\.ts$/],
   },
   { tier: "T2", reason: "CI or build control system changed", lane: "ci_workflows" },
   { tier: "T2", reason: "shared build or runtime configuration changed", patterns: FULL_MATRIX },
