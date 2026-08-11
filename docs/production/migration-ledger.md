@@ -14,23 +14,24 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-10, post-0177 apply)
+## Current state (verified 2026-08-11, post-0178 apply)
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0177** (`0177_postcare_write_boundary.sql`, applied 2026-08-10T23:26:11Z→23:26:21Z) |
-| **Repo migration max** | **0177** — **hosted == repo.** Nothing pending. Next free number is **0178**. |
-| **Total migrations in repo** | **176** (`0001` … `0157`, `0159` … `0177` — **no `0158`**) — derived by `npm run migration:state` |
-| **Total applied in production** | **176**, each applied **exactly once**. Applied count moved 175 → 176. |
-| **`0177` checksum (frozen)** | `a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744` |
-| **Applied from** | production merge commit `2358082737ef47e30d68883dedbbfea930590d8f` (PR #555) — **MERGED before the apply**, deliberately app-first |
-| **Production application source** | `2358082737ef47e30d68883dedbbfea930590d8f` — Vercel Production `dpl_Hk7EPDJo8DTpacpEokiwwbVu3SYc`, Ready |
+| **Hosted (production) migration max** | **0178** (`0178_practitioner_identity_boundary.sql`, applied 2026-08-11T21:39:05Z→21:39:15Z) |
+| **Repo migration max** | **0178** — **hosted == repo.** Nothing pending. Next free number is **0179**. |
+| **Total migrations in repo** | **177** (`0001` … `0157`, `0159` … `0178` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **177**, each applied **exactly once**. Applied count moved 176 → 177. |
+| **`0178` checksum (frozen)** | `6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f` |
+| **Applied from** | production merge commit `463198e21560f172e45aca32d5043d61ecc540fb` (PR #558) — **MERGED before the apply**, deliberately app-first |
+| **Production application source** | `463198e21560f172e45aca32d5043d61ecc540fb` — Vercel Production `dpl_5M2wCnoh9XUzVV3ZugypDuQESLwN`, Ready |
 
-> ✅ **APPOINTMENT BOUNDARY B8 IS CLOSED.** `service_role` on `public.appointments` is **SELECT only**
-> — no INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER and **zero column-level UPDATE grants**, so
-> B5/0174's temporary six-column postcare exception is gone. The direct-appointment-writer census is
-> **7 → 0**: every remaining appointment mutation goes through a governed `SECURITY DEFINER` command.
-> Final independent-review verdict **P0 0 / P1 0 / P2 0**.
+> ✅ **REPOSITORY AND HOSTED MIGRATION TRUTH ARE RECONCILED AT 0178.**
+> `public.practitioners` is **SELECT-only for every runtime role** — PUBLIC holds nothing, and anon,
+> authenticated and service_role each hold SELECT with INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/
+> TRIGGER/**MAINTAIN** all false and **zero effective column-level write authority**. Own preferences
+> are governed commands bound to `auth.uid()` with an explicit studio; the treatment-image actor is
+> deterministic per resource studio. Final independent T3 review **P0 0 / P1 0 / P2 0**.
 
 > **Numbers in this block are the CURRENT hosted truth and move on every apply.** The single
 > machine-readable owner is [`migration-state.json`](./migration-state.json); repo-side totals are
@@ -1035,3 +1036,53 @@ depending on the legacy direct-DML denial.
 - Vercel Production `dpl_Hk7EPDJo8DTpacpEokiwwbVu3SYc` Ready at the exact merge SHA; after the apply
   `/`, `/pricing`, `/login`, `/robots.txt`, `/sitemap.xml` all 200 and gated routes 307 to auth.
   Final independent-review verdict **P0 0 / P1 0 / P2 0** — **B8 CLOSED**.
+
+## 0178 — PRACTITIONER IDENTITY + MUTATION BOUNDARY (applied 2026-08-11T21:39:05Z–21:39:15Z)
+
+`sha256 6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f` (executable
+`311a685a41c8ac3e…`), applied from the production merge commit
+`463198e21560f172e45aca32d5043d61ecc540fb` (PR #558, reviewed head `48c5db72d779e5b6157704d07d4ce5c17e3537df`,
+**MERGED before the apply**; normal two-parent merge). 10 seconds, dry run listed only 0178,
+**captured process exit code 0**, no SQL error, no `25P01`, no `55P03`. This is the trust boundary
+after the appointment program: **business actor identity**.
+
+**Deliberately APP-FIRST, and the shape of the change decides it again.** 0178 *removes* privileges,
+so a DB-first apply would have made the old application take a permission denial on a direct UPDATE
+it still believed it could issue. App-first instead makes the new application fail on **its own
+missing RPCs**. Vercel Production `dpl_5M2wCnoh9XUzVV3ZugypDuQESLwN` was **Ready at the exact merge
+SHA (21:37:07Z) before the migration ran**, so the **app-first skew window was 21:37:07Z → 21:40:22Z,
+3 minutes 15 seconds** — own-preference writes could not complete during it, there was no direct-DML
+fallback in either direction, and the window is integrity-safe.
+
+- **Applied from a THROWAWAY worktree detached at the exact merge SHA**, never a long-lived checkout.
+- **Privilege closure — the point of 0178.** `public.practitioners` is now **SELECT-only**: PUBLIC
+  holds nothing; `anon`, `authenticated` and `service_role` each hold SELECT with INSERT, UPDATE,
+  DELETE, TRUNCATE, REFERENCES, TRIGGER and **MAINTAIN** all false, and **effective column-level
+  INSERT/UPDATE/REFERENCES all false**. MAINTAIN is named deliberately: this is PostgreSQL 17, an
+  earlier revision revoked a hand-enumerated verb list and MAINTAIN survived it, so the shipped
+  migration **REVOKEs ALL PRIVILEGES and grants back only SELECT**. Hosted production pre-0178
+  matched the reviewed 17.6 model exactly — no drift.
+- **Policies:** `practitioners: members read` **retained** (the roster is read across the product);
+  the obsolete `owners insert` and `owners update` policies are **absent**, leaving no misleading
+  direct-write shadow.
+- **Commands installed once each:** `own_practitioner_in_studio(uuid)` plus
+  `update_own_practitioner_profile`, `set_own_calendar_feed_token_hash` and
+  `set_own_default_machine_frequency`. The three commands are `authenticated`-EXECUTE only (PUBLIC,
+  anon, service_role false) and bind the actor to `auth.uid()` with an explicit studio for
+  multi-membership determinism — **no practitioner id crosses the boundary**. The helper is granted
+  to nobody.
+- **Treatment image:** the global no-argument `treatment_image_actor()` is **gone**;
+  `treatment_image_actor(uuid)` is installed once and granted to nobody, so actor resolution follows
+  the **resource's studio** instead of a planner-dependent `LIMIT 1`. The three application-facing
+  command signatures are retained and still authenticated-callable, so the application needed no
+  change. Team/invitation commands are unchanged and still installed.
+- **Zero business-row mutation:** practitioners **7 → 7**, active **6 → 6**, active owners **5 → 5**,
+  active non-owners **1 → 1**. 0178 is function/policy/privilege DDL only — no table `ALTER`, no
+  trigger, no index, no backfill.
+- **Verification was CATALOG-ONLY.** No production own-profile write, no production treatment-image
+  create/note/archive, and no team or invitation command was invoked. No Willow mutation.
+- **Appointment boundary unchanged:** 0177 frozen at `a9c15f1c…`, `service_role` UPDATE on
+  `public.appointments` false, appointment column-level UPDATE grants 0, `snapshot_appointment_buffer`
+  untouched.
+- Public health after the apply: `/` and `/login` both 200. Final independent T3 review
+  **P0 0 / P1 0 / P2 0**. **Next free migration: 0179.**
