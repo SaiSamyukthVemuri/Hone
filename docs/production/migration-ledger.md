@@ -14,7 +14,42 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-09, post-0173 apply)
+## Current state (verified 2026-08-10, post-0177 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0177** (`0177_postcare_write_boundary.sql`, applied 2026-08-10T23:26:11Z→23:26:21Z) |
+| **Repo migration max** | **0177** — **hosted == repo.** Nothing pending. Next free number is **0178**. |
+| **Total migrations in repo** | **176** (`0001` … `0157`, `0159` … `0177` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **176**, each applied **exactly once**. Applied count moved 175 → 176. |
+| **`0177` checksum (frozen)** | `a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744` |
+| **Applied from** | production merge commit `2358082737ef47e30d68883dedbbfea930590d8f` (PR #555) — **MERGED before the apply**, deliberately app-first |
+| **Production application source** | `2358082737ef47e30d68883dedbbfea930590d8f` — Vercel Production `dpl_Hk7EPDJo8DTpacpEokiwwbVu3SYc`, Ready |
+
+> ✅ **APPOINTMENT BOUNDARY B8 IS CLOSED.** `service_role` on `public.appointments` is **SELECT only**
+> — no INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER and **zero column-level UPDATE grants**, so
+> B5/0174's temporary six-column postcare exception is gone. The direct-appointment-writer census is
+> **7 → 0**: every remaining appointment mutation goes through a governed `SECURITY DEFINER` command.
+> Final independent-review verdict **P0 0 / P1 0 / P2 0**.
+
+> **Numbers in this block are the CURRENT hosted truth and move on every apply.** The single
+> machine-readable owner is [`migration-state.json`](./migration-state.json); repo-side totals are
+> **derived** by `scripts/migration-state.mjs` and must never be hand-maintained here. Sections
+> below this one are **frozen historical records** — they state what was true at their own apply and
+> are never rewritten when a later migration lands.
+
+> ⚠️ **LEDGER GAP (unchanged, still open).** `0170` and `0171` have no narrative entry in this
+> file — their apply records live only in `migration-state.json`'s `hosted_note` history. That gap
+> is pre-existing and is still **not** back-filled here. Back-fill from their own apply evidence
+> as separate work.
+
+> **The block below is FROZEN.** It is the ledger's former Current state, reproduced
+> byte-for-byte from production commit `2358082`; only its heading is reclassified from
+> Current to Previous. Its wording, tense and warnings are left exactly as they were written
+> when 0173 was the hosted max — including the ledger-gap warning, which also appears in the
+> Current state block above. Duplication is preferable to editing historical evidence.
+
+## Previous state (verified 2026-08-09, post-0173 apply)
 
 | Field | Value |
 |---|---|
@@ -942,3 +977,61 @@ earlier `PGRST202 → legacy` fallback was removed in final review.
   (parents `0196e099` + `92675cd9`); Production deployment `5834833066` at that exact SHA succeeded;
   `/`, `/login`, `/portal/login` all 200.
 - **Synthetic Twin preserved exactly:** appointments 141, reservations 115, acknowledgements 0.
+
+## 0177 — APPOINTMENT BOUNDARY B8: the postcare write boundary (applied 2026-08-10T23:26:11Z–23:26:21Z)
+
+`sha256 a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744` (executable
+`2a3fa8c81ecb1b47…`), applied from the production merge commit `2358082737ef47e30d68883dedbbfea930590d8f`
+(PR #555, **MERGED before the apply**; parents `f2d4a5aa` + reviewed head `fef11e71`). 10 seconds, dry
+run listed only 0177. The CLI reported 0177 applied with no SQL error, no `25P01` and no lock timeout;
+**the shell exit-code capture was lost**, so success is asserted from the authoritative post-state —
+the hosted migration ledger and the exact live catalog — rather than from a process exit code.
+**This closes the LAST direct appointment-writer surface.**
+
+**Deliberately APP-FIRST — the opposite of B7's order, and again the shape of the change decides it.**
+0177 *removes* B5/0174's temporary six-column grant, so a DB-first apply would have made the old
+application's **direct claim UPDATE itself receive a permission denial, before the provider call** —
+the send would never have been attempted. App-first instead makes the new application fail on a
+**missing function**, equally before any provider handoff. Both orders are integrity-safe; app-first
+was preferred because the new application fails closed on an absent command of its own rather than
+depending on the legacy direct-DML denial.
+
+- **Applied from a THROWAWAY worktree detached at the exact production merge SHA**, not from a
+  long-lived checkout. `~/Hone` was still at the *previous* production SHA and would have pushed a
+  migrations directory that did not contain 0177 at all. The pinned checkout needs
+  `supabase/.temp/` copied in, since `--workdir` selects both the project link and the migrations
+  directory. `--dry-run` first is the real no-replay gate: it printed **exactly one** pending
+  migration.
+- **Privilege closure — the point of B8.** `service_role` on `public.appointments` is now
+  **SELECT only**: INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER all false, and
+  **column-level UPDATE grants are ZERO**, so the six-column postcare exception
+  (`postcare_email_claimed_at`, `_failed_at`, `_last_attempt_at`, `_last_error`, `_send_attempts`,
+  `_sent_at`) is gone. `anon` and `authenticated` hold no appointment write grant, table or column.
+  Census **7 → 0**.
+- **Commands installed, `service_role` EXECUTE only** (public/anon/authenticated all false),
+  `SECURITY DEFINER`, `search_path` pinned: `claim_postcare_send` (`77e619dd…`) and
+  `settle_postcare_send` (`f05d748b…`), both byte-identical to the reviewed 0177 bodies. The
+  integrity primitive is a DB-issued claim token, because a provider call cannot sit inside a
+  transaction.
+- **B4 integration.** `appointment_has_blocking_dependents` was REPLACED (`1c22fe43…`, still
+  `STABLE` + `SECURITY DEFINER` + pinned + `service_role` only) and now returns **six** classes in
+  fixed order — rescheduled, linked_session, payment_state, manual_fee, postcare_sent,
+  **postcare_in_flight last** — closing a race where an owner could reopen a completed appointment
+  between claim and settlement and still have the aftercare email land.
+  `revert_appointment_outcome` was **not** redefined: its body is still exactly 0173's
+  (`2f42d4a4…`); 0177 changed only its catalog `COMMENT`, which now says six classes.
+- **Zero row mutation:** appointments **312 → 312** (158/90/58/6 unchanged), audit **265 → 265**,
+  reservations **258 → 258**, outbox **1 → 1**. 0177 is function DDL, comments, EXECUTE privilege
+  statements (a revoke-then-grant pair for each of the three functions) and the final six-column
+  `UPDATE` `REVOKE` on `public.appointments` — **seven privilege statements in total** — all inside
+  its own transaction; no table `ALTER`, no trigger, no index, no backfill, and **zero
+  `appointment_audit` delta by design**.
+- **Standing prohibition honoured:** `snapshot_appointment_buffer` unchanged across the apply
+  (`be4b3ac1…` before and after, `current_setting` behaviour present). 0177 has zero executable
+  references to it.
+- **Postcare cutover was clean:** zero non-null and zero fresh claims both immediately before and
+  immediately after, so no in-flight send was stranded (24 historical sends, 0 failures).
+- **Synthetic Twin preserved exactly:** appointments 141, reservations 115.
+- Vercel Production `dpl_Hk7EPDJo8DTpacpEokiwwbVu3SYc` Ready at the exact merge SHA; after the apply
+  `/`, `/pricing`, `/login`, `/robots.txt`, `/sitemap.xml` all 200 and gated routes 307 to auth.
+  Final independent-review verdict **P0 0 / P1 0 / P2 0** — **B8 CLOSED**.
