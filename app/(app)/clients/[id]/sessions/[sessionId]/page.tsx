@@ -858,6 +858,7 @@ export default async function SessionDetailPage({
             linkedAppointmentId && (
               <PostcareSection
                 clientEmail={clientData.client.email ?? null}
+                appointmentStatus={apptContext?.status ?? null}
                 appointmentId={linkedAppointmentId}
                 studioName={studio.name}
                 studioEmail={

@@ -543,7 +543,10 @@ export default async function AppointmentDetailPage({
           sometimes include a short electrolysis test treatment), the
           section now renders for consultations too, gated by an
           explicit "treatment was performed" confirmation on send.
-          Status is NOT a gate. Empty postcare aftercare text is
+          B8 / 0177: status IS now a gate — postcare is completed-only,
+          enforced by claim_postcare_send and reflected here so the surface
+          does not offer a send the command would refuse. Empty postcare
+          aftercare text is
           surfaced as inline guidance, not a silent block. The section
           renders a clear "Postcare unavailable — no client email"
           state instead of vanishing when the client has no EMAIL. (A deleted
@@ -551,6 +554,7 @@ export default async function AppointmentDetailPage({
       {data.client && (
         <PostcareSection
           clientEmail={data.client?.email ?? null}
+          appointmentStatus={typedStatus}
           appointmentId={id}
           studioName={studio.name}
           // Match the priority used by sendPostcareToClient

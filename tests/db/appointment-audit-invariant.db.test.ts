@@ -1339,47 +1339,48 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
     expect(rows[0].actor_id).toBe(f.ownerId);
   });
 
-  it("7: the TEMPORARY B8 postcare exception still works — and only for its six columns", async () => {
-    // 0174 GROUP 10.2. This grant is what keeps the seven direct postcare
-    // writers alive until B8/0177 replaces them; if it were missing, postcare
-    // email would break silently in production.
+  it("7: the temporary B8 postcare exception is now CLOSED — no column is writable", async () => {
+    // 0174 GROUP 10.2 granted service_role column-level UPDATE on the six
+    // postcare columns so the seven direct writers could keep working while the
+    // boundary was built. This block used to assert that grant still WORKED.
+    //
+    // B8 / 0177 replaced those writers with claim_postcare_send /
+    // settle_postcare_send and revoked the grant, so the assertion inverts:
+    // the exception is gone, and service_role holds SELECT and nothing else on
+    // public.appointments.
     const f = await seedFixture("t55-postcare");
     const a = await mkAppt(f, { startsAt: at(-15, 9) });
 
-    const ok = await asRole("service_role", async (q) => {
-      const r = await q(
-        `update public.appointments
-            set postcare_email_claimed_at      = now(),
-                postcare_email_last_attempt_at = now(),
-                postcare_email_send_attempts   = 1,
-                postcare_email_sent_at         = now(),
-                postcare_email_failed_at       = null,
-                postcare_email_last_error      = null
-          where id = $1`,
-        [a.id],
-      );
-      return r.rowCount;
-    });
-    expect(ok, "the six postcare columns must remain writable").toBe(1);
+    // Each former column individually, using a type-correct value so the
+    // statement fails on PRIVILEGE rather than on a type error — otherwise the
+    // test would pass without proving anything about the grant.
+    for (const [col, value] of [
+      ["postcare_email_claimed_at", "now()"],
+      ["postcare_email_last_attempt_at", "now()"],
+      ["postcare_email_send_attempts", "1"],
+      ["postcare_email_sent_at", "now()"],
+      ["postcare_email_failed_at", "now()"],
+      ["postcare_email_last_error", "'x'"],
+    ] as const) {
+      const err = await asRole("service_role", async (q) => {
+        try {
+          await q(`update public.appointments set ${col} = ${value} where id = $1`, [a.id]);
+          return null;
+        } catch (e) {
+          return e as { code?: string };
+        }
+      });
+      expect(err, `${col} must no longer be writable by service_role`).not.toBeNull();
+      expect(err!.code, `${col} must be denied on privilege`).toBe("42501");
+    }
 
-    // A seventh column smuggled into the SAME statement fails the WHOLE
-    // statement — this is enforced by PostgreSQL column privileges, not by
-    // convention, so it cannot drift.
-    const smuggled = await asRole("service_role", async (q) => {
-      try {
-        await q(
-          `update public.appointments
-              set postcare_email_sent_at = now(), status = 'completed'
-            where id = $1`,
-          [a.id],
-        );
-        return null;
-      } catch (e) {
-        return e as { code?: string };
-      }
-    });
-    expect(smuggled, "a seventh column must not ride along").not.toBeNull();
-    expect(smuggled!.code).toBe("42501");
+    // And the catalog agrees: zero column-level UPDATE grants remain.
+    const grants = await adminQuery(
+      `select count(*)::int as n from information_schema.column_privileges
+        where table_schema='public' and table_name='appointments'
+          and grantee='service_role' and privilege_type='UPDATE'`,
+    );
+    expect(Number(grants.rows[0].n), "the B5 exception must be fully closed").toBe(0);
   });
 
   it("8: B3's browser posture is untouched by any of the above", async () => {

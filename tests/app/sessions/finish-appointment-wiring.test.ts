@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { runPostcareSend } from "@/app/(app)/calendar/postcare-send-presenter";
 
 // Structural contracts for the Finish appointment workflow. The pure states are
 // proven in tests/lib/sessions/finish-appointment.test.ts; these prove the page
@@ -175,12 +176,39 @@ describe("durable postcare success", () => {
     expect(SEND_BUTTON).toMatch(/import \{ useRouter \} from "next\/navigation"/);
     const confirm = SEND_BUTTON.match(/function confirm\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
     expect(confirm).toMatch(/router\.refresh\(\)/);
-    // ...and ONLY after success: the failure branch returns before it.
-    const failIdx = confirm.indexOf("setError(r.error)");
-    const refreshIdx = confirm.indexOf("router.refresh()");
-    expect(failIdx).toBeGreaterThan(-1);
-    expect(refreshIdx).toBeGreaterThan(failIdx);
-    expect(confirm.slice(failIdx, refreshIdx)).toMatch(/return;/);
+  });
+
+  it("...and on the provider-accepted/unrecorded outcome, but NOT on a plain failure", async () => {
+    // B8 / 0177 independent review, P1-1. This previously asserted "refresh
+    // happens ONLY after success", by finding `setError(r.error)` and requiring
+    // a `return;` before `router.refresh()`. That pinned a two-outcome model
+    // which was itself the defect: a provider that ACCEPTED the email while the
+    // database settlement failed was rendered as an ordinary failure, and the
+    // practitioner was invited to retry — duplicating a real email once the
+    // five-minute claim went stale.
+    //
+    // The rule is now three-way and lives in the presenter, so it is asserted
+    // as BEHAVIOUR rather than as statement order in a source string. A plain
+    // failure still must not refresh: nothing changed, and nothing may look as
+    // though it did.
+    const run = async (result: unknown) => {
+      const refresh = vi.fn();
+      await runPostcareSend(
+        { send: async () => result as never, refresh },
+        new FormData(),
+      );
+      return refresh.mock.calls.length;
+    };
+
+    expect(await run({ ok: true })).toBe(1);
+    expect(
+      await run({
+        ok: false,
+        code: "provider_sent_status_unrecorded",
+        error: "provider accepted; not recorded",
+      }),
+    ).toBe(1);
+    expect(await run({ ok: false, error: "Appointment not found." })).toBe(0);
   });
 
   it("'sent' is decided ONLY by postcare_email_sent_at", () => {

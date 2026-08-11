@@ -5,47 +5,24 @@ import type { Studio } from "@/lib/types/database";
 // postcare_delivery_mode = 'auto_on_complete', postcare is sent automatically
 // after an appointment is marked complete — no manual "Send postcare" click.
 //
-// Design guarantees, stated as what is actually PROVEN:
-//   * ONE LIVE CLAIM, NOT EXACTLY-ONCE DELIVERY. Auto and manual share the
-//     appointments.postcare_email_* columns and — since B8/0177 — the COMMANDS
-//     that write them, so concurrent auto/manual attempts contend for a single
-//     DB claim and at most ONE live claim may reach the provider at a time.
-//     That is a database property and it is all this is.
-//
-//     It is NOT global exactly-once external delivery, and must not be
-//     described as such. A transaction cannot make Postgres and an email
-//     provider atomic. The documented non-atomicity is provider-success +
-//     settlement-uncertain: the message is out, `postcare_email_sent_at` was
-//     never written, and the claim is left to go stale. A later reclaim is
-//     then legitimate and CAN produce a second external send — which is
-//     exactly why that outcome is reported as its own `settle_failed` rather
-//     than as `sent` or `failed`, and why the manual surface refuses to invite
-//     an immediate retry.
-//   * NEVER sends for cancelled/no_show — claim_postcare_send refuses any
-//     status other than 'completed', in SQL, for both paths.
+// Design guarantees (SaaS-ready):
+//   * SHARES the appointments.postcare_email_* claim columns with the manual
+//     sender, so the two paths are MUTUALLY IDEMPOTENT — postcare is sent at
+//     most once even if auto + manual both run.
+//   * NEVER sends for cancelled/no_show — the claim UPDATE requires
+//     status = 'completed'.
 //   * Reuses the EXISTING SAFE postcare email (studio settings only; no
 //     clinical/intake data). No new email variant, no health data.
 //   * FAIL-SOFT: never throws. A send failure must never fail appointment
-//     completion. A provider failure is ATTEMPTED to be durably settled
-//     (failed_at + safe last_error) and is then resendable from the
-//     appointment page — but the settlement itself can fail, and when it
-//     cannot be confirmed the outcome is `settle_failed`, not `failed`.
-//     "Failures are recorded" would assert a row state that may not exist.
+//     completion. Failures are recorded (failed_at + safe last_error) and
+//     resendable from the appointment page.
 //   * Studio-scoped: every query filters studio_id.
 
+const POSTCARE_CLAIM_STALE_MS = 5 * 60_000;
 
 export type PostcareAutoOutcome =
-  // B8 / 0177: `sent` means provider success AND settle_postcare_send returned
-  // `settled`. Provider truth and persisted truth are different facts, and the
-  // outcome vocabulary must not blur them — a send Hone cannot record is not a
-  // send Hone can claim.
   | "sent"
-  // Provider FAILED and that failure was durably recorded.
   | "failed"
-  // Provider succeeded but the settlement did not persist. The email is out;
-  // Hone has no durable sent_at. Deliberately its own outcome rather than being
-  // folded into `sent` (a lie) or `failed` (also a lie).
-  | "settle_failed"
   | "not_claimed"
   | "skipped_mode"
   | "skipped_not_completed"
@@ -78,6 +55,12 @@ export function shouldAutoSendPostcare(a: {
   return { ok: true };
 }
 
+function safeAutoLastError(retryable: boolean): string {
+  return retryable
+    ? "Automatic postcare send failed (temporary). Resend it from the appointment page."
+    : "Automatic postcare send failed. Resend it from the appointment page.";
+}
+
 function pickOne<T>(v: T | T[] | null | undefined): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
 }
@@ -96,8 +79,7 @@ function logOutcome(appointmentId: string, outcome: PostcareAutoOutcome): Postca
 }
 
 // Minimal structural type for the admin client so tests can inject a fake.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AdminLike = { from: (table: string) => any; rpc: (fn: string, args: Record<string, unknown>) => any };
+type AdminLike = { from: (table: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 type StudioPostcareRow = {
   id: string;
@@ -119,13 +101,6 @@ type StudioPostcareRow = {
 export async function autoSendPostcareOnComplete(
   appointmentId: string,
   studioId: string,
-  // B8 / 0177: the SERVER-RESOLVED practitioner completing the appointment.
-  // The call site authenticates the human; the database then VALIDATES that
-  // this practitioner is active and same-studio. Auto-send therefore needs a
-  // real one, and both completion call sites already have it. Inventing a
-  // system actor would have put an identity in the boundary that no human is
-  // accountable for.
-  actorPractitionerId: string,
   deps?: {
     admin?: AdminLike;
     sendPostcare?: typeof sendPostcareToClient;
@@ -164,38 +139,30 @@ export async function autoSendPostcareOnComplete(
     });
     if (!gate.ok) return logOutcome(appointmentId, gate.reason);
 
-    // B8 / 0177 — CLAIM THROUGH THE COMMAND, never a direct UPDATE.
-    //
-    // The database owns the claim timestamp, the attempt counter, the
-    // five-minute stale window, the completed-only rule and the actor check;
-    // this helper owns none of them. Exactly one caller wins the claim, so a
-    // duplicate completion — or a concurrent MANUAL send, which runs the same
-    // command — cannot double-send. `p_is_resend: false` makes this a
-    // first-send claim: an appointment that already has a real
-    // postcare_email_sent_at is refused, never silently re-emailed.
-    // The return is a row set, not an affected-row count; `result` is the
-    // outcome and `claimed_at` is the token settlement must present.
-    const { data: claimRows, error: claimErr } = await admin.rpc(
-      "claim_postcare_send",
-      {
-        p_appointment_id: appointmentId,
-        p_studio_id: studioId,
-        p_actor_practitioner_id: actorPractitionerId,
-        p_is_resend: false,
-      },
-    );
-    const claim = (Array.isArray(claimRows) ? claimRows[0] : claimRows) as
-      | { result: string; claimed_at: string | null }
-      | null
-      | undefined;
-    // Any refusal — including the app-first window where 0177 is not yet
-    // applied and the function does not exist — ends here, BEFORE the provider.
-    // There is deliberately no direct-UPDATE fallback.
-    if (claimErr || !claim || claim.result !== "claimed" || !claim.claimed_at) {
+    // Idempotent FIRST-SEND claim (mirrors the manual sendPostcareEmailAction):
+    // only a COMPLETED, not-yet-sent appointment with no fresh claim is claimed.
+    // .select("id") proves exactly one row was won, so a duplicate completion
+    // (or a concurrent manual send) cannot double-send. The status='completed'
+    // filter is the belt-and-suspenders guard against cancelled/no_show.
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const staleIso = new Date(nowMs - POSTCARE_CLAIM_STALE_MS).toISOString();
+    const previousAttempts = (appt.postcare_email_send_attempts as number | null) ?? 0;
+    const { data: claimed, error: claimErr } = await admin
+      .from("appointments")
+      .update({
+        postcare_email_claimed_at: nowIso,
+        postcare_email_last_attempt_at: nowIso,
+        postcare_email_send_attempts: previousAttempts + 1,
+      })
+      .eq("id", appointmentId)
+      .eq("studio_id", studioId)
+      .eq("status", "completed")
+      .is("postcare_email_sent_at", null)
+      .or(`postcare_email_claimed_at.is.null,postcare_email_claimed_at.lt.${staleIso}`)
+      .select("id");
+    if (claimErr || !claimed || claimed.length === 0)
       return logOutcome(appointmentId, "not_claimed");
-    }
-    // Forwarded byte-for-byte; re-deriving it would break the token.
-    const claimToken = claim.claimed_at;
 
     const result = await send({
       clientName: client?.name ?? "",
@@ -216,48 +183,30 @@ export async function autoSendPostcareOnComplete(
       // Record the failure honestly (safe generic last_error, never raw
       // provider/PII) and clear the claim so it stays resendable. Do NOT set
       // sent_at — a failed first send stays "not sent".
-      // Settle the failure under the exact token. Safe copy is derived in SQL
-      // from `retryable` alone; no provider text crosses this boundary.
-      const { data: fRows, error: fErr } = await admin.rpc("settle_postcare_send", {
-        p_appointment_id: appointmentId,
-        p_studio_id: studioId,
-        p_claimed_at: claimToken,
-        p_success: false,
-        p_retryable: result.retryable ?? false,
-      });
-      const fSettled = (Array.isArray(fRows) ? fRows[0] : fRows) as
-        | { result: string }
-        | null
-        | undefined;
-      if (fErr || fSettled?.result !== "settled") {
-        // The send failed AND the failure did not persist. Reporting `failed`
-        // would assert a DB state that does not exist. No repair, no retry
-        // under another token — the claim goes stale and becomes reclaimable.
-        return logOutcome(appointmentId, "settle_failed");
-      }
+      await admin
+        .from("appointments")
+        .update({
+          postcare_email_failed_at: nowIso,
+          postcare_email_last_error: safeAutoLastError(result.retryable ?? false),
+          postcare_email_claimed_at: null,
+        })
+        .eq("id", appointmentId)
+        .eq("studio_id", studioId);
       return logOutcome(appointmentId, "failed");
     }
 
     // Provider success — now (and only now) stamp sent_at and clear failure +
     // claim. The appointment page's existing status UI reflects this.
-    // Settle the success under the exact token. The DB clock stamps sent_at.
-    const { data: sRows, error: sErr } = await admin.rpc("settle_postcare_send", {
-      p_appointment_id: appointmentId,
-      p_studio_id: studioId,
-      p_claimed_at: claimToken,
-      p_success: true,
-      p_retryable: false,
-    });
-    const sSettled = (Array.isArray(sRows) ? sRows[0] : sRows) as
-      | { result: string }
-      | null
-      | undefined;
-    if (sErr || sSettled?.result !== "settled") {
-      // THE EMAIL IS OUT, but Hone has no durable sent_at. `sent` would be a
-      // lie and `failed` would be a different lie. No direct repair and no
-      // second settlement under another token.
-      return logOutcome(appointmentId, "settle_failed");
-    }
+    await admin
+      .from("appointments")
+      .update({
+        postcare_email_sent_at: nowIso,
+        postcare_email_failed_at: null,
+        postcare_email_last_error: null,
+        postcare_email_claimed_at: null,
+      })
+      .eq("id", appointmentId)
+      .eq("studio_id", studioId);
     return logOutcome(appointmentId, "sent");
   } catch (err) {
     // FAIL-SOFT: a postcare auto-send failure must NEVER fail appointment
