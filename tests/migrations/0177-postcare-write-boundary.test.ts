@@ -469,42 +469,49 @@ describe("0177 — production truth: APPLIED 2026-08-10", () => {
     expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(177);
   });
 
-  it("the record carries the sha256 of the exact 0177 bytes that were applied", async () => {
-    // THE FREEZE. If this hash ever changes, an applied migration has been
-    // edited and a recorded production apply fact has been falsified. A future
-    // semantic change is 0178+, never a rewrite of these bytes.
+  it("the exact 0177 bytes that were applied are FROZEN", async () => {
+    // THE FREEZE, and the one assertion that stays 0177's business forever. If
+    // this hash changes, an applied migration has been edited and a recorded
+    // production apply fact has been falsified. A future semantic change is
+    // 0178+, never a rewrite of these bytes.
+    //
+    // It no longer asserts that the CURRENT `hosted_note` mentions this hash:
+    // that note is the moving current-state record and now describes 0178, so
+    // depending on it would make this file edit-on-every-apply again.
     const { createHash } = await import("node:crypto");
     const bytes = readFileSync(join(__dirname, "..", "..", FILE));
     const sha = createHash("sha256").update(bytes).digest("hex");
     expect(sha).toBe("a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744");
-    expect(rec.hosted_note).toContain(sha);
   });
 
-  it("the record states the privilege closure that B8 exists to produce", () => {
-    // The one outcome a reader must be able to trust without opening a psql
-    // session: after 0177 there is no appointment write grant left to revoke.
-    expect(rec.hosted_note).toMatch(/SELECT ONLY/);
-    expect(rec.hosted_note).toMatch(/COLUMN-LEVEL UPDATE GRANTS ARE ZERO/);
-    expect(rec.hosted_note).toMatch(/7 -> 0/);
+  it("B8's privilege closure stays recorded in 0177's FROZEN ledger entry", () => {
+    // This used to read `rec.hosted_note`, which is the MOVING current-state
+    // record — it now describes 0178, so the claim moved with it. B8's outcome
+    // is permanent evidence and belongs in 0177's own frozen ledger section,
+    // which is where it is asserted from now on.
+    const entry = LEDGER.slice(LEDGER.indexOf("## 0177 — APPOINTMENT BOUNDARY B8"));
+    expect(entry).toMatch(/SELECT only/i);
+    expect(entry).toMatch(/column-level UPDATE grants are ZERO/i);
+    expect(entry).toMatch(/7 → 0/);
   });
 
-  it("the ledger's CURRENT STATE block describes 0177, not a superseded boundary", () => {
-    // The stale header this reconciliation fixed said "post-0173 apply" long
-    // after 0174-0176 had landed, so the top of the canonical ledger contradicted
-    // its own later entries.
+  it("0177's apply stays RECORDED in the ledger after 0178 took the current-state block", () => {
+    // THE SECOND HALF OF THE HAND-OFF. This used to assert that the ledger's
+    // CURRENT STATE block named 0177 — true only while 0177 was the hosted max.
+    // 0178 has since been applied and legitimately owns that moving block, so
+    // asserting it here would make every future apply edit this file, which is
+    // exactly the churn the 0174/#554 amendment removed.
+    //
+    // What remains is 0177's own business: its FROZEN rollout entry, asserted
+    // below, plus the fact that the current-state block has not regressed BELOW
+    // 0177. Current repo/hosted truth is owned by `npm run migration:state`, by
+    // the CURRENT maximum migration's own test, and by migration-state.json.
     const current = LEDGER.slice(
       LEDGER.indexOf("## Current state"),
       LEDGER.indexOf("## Previous state"),
     );
-    expect(current).toContain("post-0177 apply");
-    expect(current).toContain("0177_postcare_write_boundary.sql");
-    expect(current).toContain("a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744");
-    expect(current).toContain("2358082737ef47e30d68883dedbbfea930590d8f");
-    // hosted == repo, and the next number is free.
-    expect(current).toMatch(/hosted == repo/);
-    expect(current).toMatch(/0178/);
-    // ...and it no longer claims an older migration is the current boundary.
-    expect(current).not.toMatch(/post-0173 apply/);
+    expect(current).not.toMatch(/post-017[0-6] apply/);
+    expect(Number(current.match(/post-(\d{4}) apply/)?.[1] ?? 0)).toBeGreaterThanOrEqual(177);
   });
 
   it("the ledger carries a 0177 rollout entry with the app-first evidence", () => {
