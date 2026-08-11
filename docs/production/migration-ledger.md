@@ -43,26 +43,34 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > is pre-existing and is still **not** back-filled here. Back-fill from their own apply evidence
 > as separate work.
 
-## Previous state (verified 2026-08-09, post-0173 apply)
+> **The block below is FROZEN.** It is the ledger's former Current state, reproduced
+> byte-for-byte from production commit `2358082`; only its heading is reclassified from
+> Current to Previous. Its wording, tense and warnings are left exactly as they were written
+> when 0173 was the hosted max — including the ledger-gap warning, which also appears in the
+> Current state block above. Duplication is preferable to editing historical evidence.
 
-Frozen exactly as it read when 0173 was the hosted max. 0174, 0175, 0176 and 0177 have since been
-applied; their records are the `##` sections at the end of this file.
+## Previous state (verified 2026-08-09, post-0173 apply)
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0173** (`0173_appointment_repair_commands.sql`, applied 2026-08-09T12:06:37Z→12:06:47Z) |
-| **Repo migration max** | **0173** — **hosted == repo.** Next free number was **0174** (reserved for B5). |
+| **Repo migration max** | **0173** — **hosted == repo.** Next free number is **0174** (reserved for B5). |
 | **Total migrations in repo** | **172** (`0001` … `0157`, `0159` … `0173` — **no `0158`**) |
 | **Total applied in production** | **172**, each applied **exactly once**. Applied count moved 171 → 172. |
 | **`0173` checksum (frozen)** | `04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb` |
 | **Applied from** | B4 head `0f2d58eec1e6a667d1c123f539a32f24e74f2362` (PR #534) — **UNMERGED at apply time, deliberately** |
-| **Production application source** | `59ffb28f6df48d483b80a8ffcd2286844ec56124` — contained **neither `0173` nor the B4 UI** |
+| **Production application source** | `59ffb28f6df48d483b80a8ffcd2286844ec56124` — contains **neither `0173` nor the B4 UI**; unchanged by this apply |
 
 > ⚠️ **DATABASE-FIRST APPLY — DELIBERATE INTERMEDIATE STATE.** `0173` was applied *before* its
-> application code shipped, so the B4 UI and server actions deployed against RPCs that already
-> existed rather than the reverse. All six functions are `service_role`-only, and the deployed
-> application at `59ffb28f` did not call them, so they were **inert** until #534 merged.
-> This entry records the DATABASE truth at that moment.
+> application code shipped, so the B4 UI and server actions will deploy against RPCs that already
+> exist rather than the reverse. All six functions are `service_role`-only, and the deployed
+> application at `59ffb28f` does not call them, so they are **inert** until #534 merges.
+> This ledger entry records the DATABASE truth; #534 remains open and unmerged.
+
+> ⚠️ **LEDGER GAP (unchanged, still open).** `0170` and `0171` have no narrative entry in this
+> file — their apply records live only in `migration-state.json`'s `hosted_note` history. That gap
+> is pre-existing and is still **not** back-filled here. Back-fill from their own apply evidence
+> as separate work.
 
 ### 0173 — APPOINTMENT BOUNDARY B4: governed repair commands + L23 closure
 
@@ -1009,8 +1017,10 @@ fails closed at a boundary nobody has to reason about.
   `revert_appointment_outcome` was **not** redefined: its body is still exactly 0173's
   (`2f42d4a4…`); 0177 changed only its catalog `COMMENT`, which now says six classes.
 - **Zero row mutation:** appointments **312 → 312** (158/90/58/6 unchanged), audit **265 → 265**,
-  reservations **258 → 258**, outbox **1 → 1**. 0177 is function DDL, comments and one `REVOKE`
-  inside its own transaction — no table `ALTER`, no trigger, no index, no backfill, and **zero
+  reservations **258 → 258**, outbox **1 → 1**. 0177 is function DDL, comments, EXECUTE privilege
+  statements (a revoke-then-grant pair for each of the three functions) and the final six-column
+  `UPDATE` `REVOKE` on `public.appointments` — **seven privilege statements in total** — all inside
+  its own transaction; no table `ALTER`, no trigger, no index, no backfill, and **zero
   `appointment_audit` delta by design**.
 - **Standing prohibition honoured:** `snapshot_appointment_buffer` unchanged across the apply
   (`be4b3ac1…` before and after, `current_setting` behaviour present). 0177 has zero executable
