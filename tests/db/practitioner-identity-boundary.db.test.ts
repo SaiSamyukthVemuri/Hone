@@ -125,28 +125,54 @@ describe("0178 — public.practitioners is SELECT-only for runtime roles", () =>
   );
 
   it.each(["anon", "authenticated", "service_role"] as const)(
-    "%s holds NO write or maintenance verb — including the three RLS never covered",
+    "%s holds NOTHING but SELECT — every PostgreSQL 17 table privilege enumerated",
     async (role) => {
+      // MAINTAIN IS HERE BECAUSE IT WAS MISSED ONCE. An earlier revision revoked
+      // a hand-written list of verbs; this database is PostgreSQL 17, which adds
+      // MAINTAIN (VACUUM/ANALYZE/CLUSTER/REINDEX/REFRESH/LOCK), and it was held
+      // by all three roles before 0178 and SURVIVED that list. The migration now
+      // REVOKEs ALL and grants back only SELECT, and this test enumerates the
+      // full PG17 set so a future privilege cannot slip through the same gap.
       const r = await asRole(role, (q) =>
         q(
           `select
+             has_table_privilege($1,'public.practitioners','SELECT')     sel,
              has_table_privilege($1,'public.practitioners','INSERT')     ins,
              has_table_privilege($1,'public.practitioners','UPDATE')     upd,
              has_table_privilege($1,'public.practitioners','DELETE')     del,
              has_table_privilege($1,'public.practitioners','TRUNCATE')   trunc,
              has_table_privilege($1,'public.practitioners','REFERENCES') refs,
-             has_table_privilege($1,'public.practitioners','TRIGGER')    trig`,
+             has_table_privilege($1,'public.practitioners','TRIGGER')    trig,
+             has_table_privilege($1,'public.practitioners','MAINTAIN')   maint,
+             -- A table-level revoke does not by itself prove no NARROWER
+             -- column-level write grant survived.
+             has_any_column_privilege($1,'public.practitioners','INSERT')     col_ins,
+             has_any_column_privilege($1,'public.practitioners','UPDATE')     col_upd,
+             has_any_column_privilege($1,'public.practitioners','REFERENCES') col_refs`,
           [role],
         ),
       );
-      const g = r.rows[0];
-      // TRUNCATE / REFERENCES / TRIGGER are named explicitly: a policy cannot
-      // stop a role that holds TRUNCATE, and RLS never governed any of them.
-      expect({ ...g }).toEqual({
+      expect({ ...r.rows[0] }).toEqual({
+        sel: true,
         ins: false, upd: false, del: false, trunc: false, refs: false, trig: false,
+        maint: false,
+        col_ins: false, col_upd: false, col_refs: false,
       });
     },
   );
+
+  it("PUBLIC holds no practitioner privilege at all", async () => {
+    // PUBLIC is a separate principal from the three API roles; a grant to PUBLIC
+    // would reach every one of them regardless of their own revokes.
+    const r = await adminQuery(
+      `select
+         has_table_privilege('public','public.practitioners','SELECT')   sel,
+         has_table_privilege('public','public.practitioners','INSERT')   ins,
+         has_table_privilege('public','public.practitioners','UPDATE')   upd,
+         has_table_privilege('public','public.practitioners','MAINTAIN') maint`,
+    );
+    expect({ ...r.rows[0] }).toEqual({ sel: false, ins: false, upd: false, maint: false });
+  });
 
   it("a REAL authenticated UPDATE is denied by PRIVILEGE, not silently filtered", async () => {
     // The predicate matches NO row on purpose. If UPDATE were still granted this
@@ -312,13 +338,41 @@ describe("0178 — a practitioner manages their OWN preferences", () => {
     expect((await row(m.practitionerId)).display_name).toBe(before.display_name);
   });
 
-  it("rejects a colour outside the palette and a blank name", async () => {
+  it("accepts any well-formed colour token — the palette stays canonical in CODE", async () => {
+    // `lib/practitioner-colors.ts` says adding a colour is a pure code change
+    // needing no migration, so SQL must NOT enumerate the eight current tokens.
+    // A hypothetical future token therefore has to work here today.
+    const studio = await seedStudio("p0178-colour");
+    const m = await seedMember(studio, "p0178-colour-m");
+    expect((await updateProfile(m.userId, studio.studioId, null, PALETTE_OK)).id)
+      .toBe(m.practitionerId);
+    expect((await updateProfile(m.userId, studio.studioId, null, "chartreuse")).id)
+      .toBe(m.practitionerId);
+    expect((await row(m.practitionerId)).color).toBe("chartreuse");
+  });
+
+  it("still rejects a malformed or oversized colour token, a blank name and bad enums", async () => {
+    // The generic shape backstop — length and character class only.
     const studio = await seedStudio("p0178-validate");
     const m = await seedMember(studio, "p0178-validate-m");
-    await expect(updateProfile(m.userId, studio.studioId, null, "chartreuse")).rejects.toThrow();
+    await expect(updateProfile(m.userId, studio.studioId, null, "Not A Token!")).rejects.toThrow();
+    await expect(updateProfile(m.userId, studio.studioId, null, "x".repeat(64))).rejects.toThrow();
     await expect(updateProfile(m.userId, studio.studioId, "   ", null)).rejects.toThrow();
     await expect(setFrequency(m.userId, studio.studioId, "42 MHz")).rejects.toThrow();
     await expect(setFeedHash(m.userId, studio.studioId, "not-a-hash")).rejects.toThrow();
+  });
+
+  it("imposes NO length ceiling on display_name — the column is `text not null`", async () => {
+    // An earlier revision invented a 120-character limit. This migration moves an
+    // existing behaviour behind a boundary; narrowing the accepted value domain
+    // is a separate product decision needing UI and DB agreement.
+    const studio = await seedStudio("p0178-longname");
+    const m = await seedMember(studio, "p0178-longname-m");
+    const long = "N".repeat(300);
+    expect((await updateProfile(m.userId, studio.studioId, long, null)).id).toBe(
+      m.practitionerId,
+    );
+    expect((await row(m.practitionerId)).display_name).toBe(long);
   });
 });
 

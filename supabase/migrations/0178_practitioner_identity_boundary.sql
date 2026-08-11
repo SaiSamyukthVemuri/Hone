@@ -17,8 +17,8 @@
 --    revoked DELETE and dropped the delete policy; everything else was still
 --    Supabase's default ALL grant, so on the 0177 schema BOTH `anon` and
 --    `authenticated` held INSERT, UPDATE, TRUNCATE, REFERENCES and TRIGGER.
---    RLS is the only gate there, and RLS DOES NOT GOVERN TRUNCATE, REFERENCES
---    OR TRIGGER. That is a latent privilege exposure regardless of whether
+--    RLS is the only gate there, and RLS DOES NOT GOVERN TRUNCATE, REFERENCES,
+--    TRIGGER OR (on PostgreSQL 17) MAINTAIN. That is a latent privilege exposure regardless of whether
 --    PostgREST happens to expose a path to those verbs today: runtime-facing
 --    roles simply should not hold powers outside the intended DML contract.
 --
@@ -120,22 +120,31 @@ begin
     return null;
   end if;
 
+  -- Trim, and blank is a refusal. NO LENGTH CEILING: the column is `text not
+  -- null` and the profile UX has only ever required non-blank, so inventing a
+  -- 120-character limit here would silently narrow the product's accepted value
+  -- domain inside a migration whose job is to move an existing behaviour behind
+  -- a boundary. A name limit is a product decision needing UI and DB agreement.
   if p_display_name is not null then
     v_name := btrim(p_display_name);
     if v_name = '' then
       raise exception 'Your name is required.' using errcode = 'check_violation';
     end if;
-    if length(v_name) > 120 then
-      raise exception 'Your name is too long.' using errcode = 'check_violation';
-    end if;
   end if;
 
-  -- The palette is closed, and it is validated HERE rather than trusted from
-  -- the caller: `practitioners.color` carries no CHECK constraint, so the
-  -- application's `isPractitionerColor` was the only gate.
-  if p_color is not null
-     and p_color not in ('amber','emerald','indigo','neutral','rose','sky','teal','violet')
-  then
+  -- DELIBERATELY NOT AN ENUM OF THE PALETTE.
+  --
+  -- `lib/practitioner-colors.ts` is canonical and states that adding a colour is
+  -- a pure code change needing no migration. Copying the eight tokens here would
+  -- quietly break that contract: the ninth colour would then require a
+  -- migration, and the two lists would drift. `isPractitionerColor()` remains
+  -- the validator.
+  --
+  -- What the database keeps is a GENERIC shape backstop that no ordinary token
+  -- can fail — it bounds length and character class only, so a malformed or
+  -- oversized value cannot be stored, while any future palette token still
+  -- works without touching SQL.
+  if p_color is not null and p_color !~ '^[a-z][a-z0-9_-]{0,31}$' then
     raise exception 'Pick a colour from the palette.' using errcode = 'check_violation';
   end if;
 
@@ -503,19 +512,28 @@ $$;
 -- not as the calling runtime role, so the governed team-lifecycle path
 -- (`set_practitioner_active_locked`) and invitation reconciliation keep working
 -- with no grant of their own.
-revoke insert, update, truncate, references, trigger
-  on table public.practitioners from anon;
-revoke insert, update, truncate, references, trigger
-  on table public.practitioners from authenticated;
-revoke insert, update, truncate, references, trigger
-  on table public.practitioners from service_role;
-revoke insert, update, truncate, references, trigger
-  on table public.practitioners from public;
+-- STATE THE POLICY, DO NOT ENUMERATE ITS COMPLEMENT.
+--
+-- An earlier revision listed the verbs to remove — insert, update, truncate,
+-- references, trigger — and independent review caught what that costs: this
+-- database is **PostgreSQL 17**, which added a table privilege the list did not
+-- know about. Measured on the local 17.6 stack, `MAINTAIN` was held by anon,
+-- authenticated AND service_role before this migration and SURVIVED the
+-- enumerated revoke, so "SELECT-only" was not actually true. MAINTAIN is not a
+-- data write — it permits VACUUM/ANALYZE/CLUSTER/REINDEX/REFRESH and LOCK — but
+-- it is exactly the same class of finding as TRUNCATE/REFERENCES/TRIGGER: a
+-- runtime role holding a power outside the intended contract.
+--
+-- Revoking EVERYTHING and granting back only SELECT states the intended policy
+-- directly, so a future PostgreSQL that adds another privilege cannot silently
+-- widen this surface again. It also clears the column-level grants that came
+-- with the original blanket grant, which a table-level enumeration would leave
+-- to be reasoned about separately.
+revoke all privileges on table public.practitioners
+  from public, anon, authenticated, service_role;
 
--- DELETE was already revoked from anon/authenticated by 0173; service_role and
--- PUBLIC are closed here so the posture is uniform rather than partly historical.
-revoke delete on table public.practitioners from service_role;
-revoke delete on table public.practitioners from public;
+grant select on table public.practitioners
+  to anon, authenticated, service_role;
 
 -- The obsolete mutation policies. With the underlying privileges gone these can
 -- never grant anything, and leaving them would advertise a direct-write path

@@ -75,6 +75,18 @@ describe("0178 — own-preference commands", () => {
     expect(helper).not.toMatch(/limit\s+1/i);
   });
 
+  it("does NOT duplicate the practitioner palette or invent a name limit", () => {
+    // `lib/practitioner-colors.ts` is canonical and promises that adding a
+    // colour needs no migration. Enumerating the tokens here would break that.
+    for (const token of ["amber", "emerald", "indigo", "neutral", "rose", "sky", "teal", "violet"]) {
+      expect(EXEC, `SQL must not enumerate the palette (${token})`).not.toMatch(
+        new RegExp(`'${token}'`),
+      );
+    }
+    // A generic shape backstop is fine; a product length ceiling is not.
+    expect(EXEC).not.toMatch(/length\(v_name\)\s*>/);
+  });
+
   it("NO authority column is reachable from any own-preference command", () => {
     // The SET lists are the whole surface. If a future edit adds `role` or
     // `active` to one of them, this is the guard that notices.
@@ -182,21 +194,22 @@ describe("0178 — treatment-image actor", () => {
 });
 
 describe("0178 — privilege closure on public.practitioners", () => {
-  it("revokes every write verb INCLUDING the three RLS never governed", () => {
-    for (const role of ["anon", "authenticated", "service_role", "public"]) {
-      expect(
-        EXEC,
-        `must revoke the write/maintenance verbs from ${role}`,
-      ).toMatch(
-        new RegExp(
-          `revoke insert, update, truncate, references, trigger\\s*\\n\\s*on table public\\.practitioners from ${role};`,
-        ),
-      );
-    }
-    // DELETE was already revoked from anon/authenticated by 0173; the remaining
-    // two are closed here so the posture is uniform.
-    expect(EXEC).toMatch(/revoke delete on table public\.practitioners from service_role;/);
-    expect(EXEC).toMatch(/revoke delete on table public\.practitioners from public;/);
+  it("STATES the policy — revoke ALL, then grant back only SELECT", () => {
+    // An enumerated "everything except SELECT" list is a maintenance burden that
+    // already failed once: PostgreSQL 17 added MAINTAIN, the list did not know
+    // about it, and it survived. Revoking ALL cannot be outrun by a future
+    // privilege.
+    expect(EXEC).toMatch(
+      /revoke all privileges on table public\.practitioners\s*\n\s*from public, anon, authenticated, service_role;/,
+    );
+    expect(EXEC).toMatch(
+      /grant select on table public\.practitioners\s*\n\s*to anon, authenticated, service_role;/,
+    );
+    // ...and nothing else is granted back on the table.
+    const grants = [...EXEC.matchAll(/grant\s+([a-z, ]+?)\s+on table public\.practitioners/gi)].map(
+      (m) => m[1].trim().toLowerCase(),
+    );
+    expect(grants).toEqual(["select"]);
   });
 
   it("retires the obsolete mutation policies and KEEPS the read policy", () => {

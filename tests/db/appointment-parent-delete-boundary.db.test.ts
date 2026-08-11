@@ -154,8 +154,10 @@ describe("0173 GROUP 5 — the privilege layer", () => {
   // default ALL grant (INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER) with RLS as
   // the only gate — and RLS never governed the last three. Its expectations
   // therefore live in tests/db/practitioner-identity-boundary.db.test.ts, which
-  // asserts the stronger posture directly. Re-asserting "INSERT/UPDATE are
-  // untouched" here would pin a posture the product deliberately left behind.
+  // asserts the stronger posture directly — SELECT-only, MAINTAIN included, with
+  // zero column-level write authority. Re-asserting "INSERT/UPDATE are
+  // untouched" here would pin a posture the product deliberately left behind,
+  // and restating the DELETE half would duplicate that suite for no evidence.
   for (const table of ["services"] as const) {
     it(`${table}: DELETE is revoked from anon and authenticated`, async () => {
       const r = await adminQuery(
@@ -192,12 +194,6 @@ describe("0173 GROUP 5 — the privilege layer", () => {
     });
   }
 
-  it("practitioners: DELETE stays revoked from anon and authenticated", () => {
-    // 0173's own claim, still true — and now a floor rather than a ceiling:
-    // 0178 revoked INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER on top of it.
-    // Proved in tests/db/practitioner-identity-boundary.db.test.ts.
-    expect(true).toBe(true);
-  });
 });
 
 describe("0173 GROUP 5 — the policy layer", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -9,8 +9,9 @@ import path from "node:path";
 //
 //   1. every former direct writer now goes through a governed command, and none
 //      of them reports success for a write that did not happen;
-//   2. the platform-global ops-alert attribution is PLURALITY-SAFE — which is
-//      behaviour, not text, so it is driven rather than grepped.
+//   2. the platform-global ops-alert resolver states its plurality and
+//      lookup-failure rules in code — the BEHAVIOUR is driven through the real
+//      action in tests/app/admin/ops-alert-attribution.test.ts.
 
 const root = path.resolve(__dirname, "../../../");
 const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
@@ -77,77 +78,26 @@ describe("0178 — the practitioner direct writers are gone", () => {
 });
 
 // ---------------------------------------------------------------------------
-// B — ops-alert attribution, driven
+// B — ops-alert attribution
 // ---------------------------------------------------------------------------
-const state: { rows: Array<{ id: string }>; update: Record<string, unknown> | null } = {
-  rows: [],
-  update: null,
-};
-
-vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({
-    from: (table: string) => {
-      const q: Record<string, unknown> = {};
-      q.select = () => q;
-      q.eq = () => q;
-      q.is = () => q;
-      // The practitioner lookup resolves to the seeded membership rows...
-      q.then = (r: (v: unknown) => unknown) => r({ data: state.rows, error: null });
-      q.update = (payload: Record<string, unknown>) => {
-        if (table === "ops_alerts") state.update = payload;
-        const done: Record<string, unknown> = {};
-        done.eq = () => done;
-        done.is = () => done;
-        done.then = (r: (v: unknown) => unknown) => r({ error: null });
-        return done;
-      };
-      return q;
-    },
-  }),
-}));
-
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({
-    auth: { getUser: async () => ({ data: { user: { id: "admin-user", email: "a@b.c" } } }) },
-  }),
-}));
-
-vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
-
-describe("0178 — platform-global ops attribution is plurality-safe", () => {
-  beforeEach(() => {
-    state.rows = [];
-    state.update = null;
+// The BEHAVIOUR (0 / 1 / 2 memberships and a lookup failure) is driven through
+// the real action in tests/app/admin/ops-alert-attribution.test.ts. Recomputing
+// the rule here would pass even if the action ignored its own resolver, so this
+// file keeps only what a source contract can honestly own.
+describe("0178 — the ops resolver states its plurality and failure rules in code", () => {
+  it("reads plural rows, distinguishes a lookup error, and never uses first-row semantics", () => {
+    const src = codeOnly(OPS);
+    expect(src).toMatch(/const \{ data: practitionerRows, error: practitionerLookupError \}/);
+    expect(src).toContain("practitionerRows.length === 1");
+    expect(src).toMatch(/if \(practitionerLookupError\)/);
+    expect(src).not.toMatch(/\.maybeSingle\(\)|\.single\(\)|\.limit\(1\)/);
+    expect(src).toContain("resolved_by_practitioner_id: practitionerId,");
   });
 
-  it.each([
-    ["ZERO memberships", [], null],
-    ["EXACTLY ONE membership", [{ id: "p-1" }], "p-1"],
-    ["TWO memberships", [{ id: "p-1" }, { id: "p-2" }], null],
-  ])(
-    "%s -> attribution %s",
-    async (_label, rows, expected) => {
-      // Resolving an ops alert is not studio-scoped, so there is no correct
-      // studio to disambiguate with. Attribute only when it is unambiguous;
-      // otherwise leave NULL rather than naming an arbitrary membership. The
-      // authoritative actor stays the admin audit identity.
-      state.rows = rows as Array<{ id: string }>;
-      const src = codeOnly(OPS);
-      expect(src).toContain("practitionerRows.length === 1");
-      expect(src).not.toMatch(/\.maybeSingle\(\)|\.single\(\)|\.limit\(1\)/);
-      expect(src).toContain("resolved_by_practitioner_id: practitionerId,");
-      // The rule itself, evaluated the way the action evaluates it.
-      const resolved =
-        rows && rows.length === 1 ? (rows[0] as { id: string }).id : null;
-      expect(resolved).toBe(expected);
-    },
-  );
-
-  it("never lets a query error silently decide attribution", () => {
-    // `.maybeSingle()` THREW for 2+ rows, and the thrown-away error left the id
-    // null by accident rather than by rule. The plural read cannot do that.
+  it("logs a BOUNDED diagnostic — an event name and a code, never row or user data", () => {
     const src = codeOnly(OPS);
-    expect(src).toMatch(/const \{ data: practitionerRows \} = await admin/);
-    expect(src).not.toMatch(/practitionerRow\?\.id/);
+    expect(src).toContain("ops_alert_resolver_practitioner_lookup_failed");
+    expect(src).toMatch(/code: practitionerLookupError\.code \?\? "unknown"/);
+    expect(src).not.toMatch(/practitionerLookupError\.message|practitionerLookupError\.details/);
   });
 });

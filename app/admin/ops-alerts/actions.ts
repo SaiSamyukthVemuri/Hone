@@ -87,13 +87,31 @@ export async function resolveOpsAlertAction(
   // stays NULL rather than naming an arbitrary one. The authoritative actor for
   // this operation remains the admin audit identity (user id / email), which is
   // recorded independently.
-  const { data: practitionerRows } = await admin
+  const { data: practitionerRows, error: practitionerLookupError } = await admin
     .from("practitioners")
     .select("id")
     .eq("user_id", user.id)
     .eq("active", true);
+
+  // A LOOKUP FAILURE AND "NO MEMBERSHIP" ARE DIFFERENT FACTS, and the earlier
+  // revision collapsed them: both produced NULL, one by rule and one by
+  // accident. Attribution is deliberately NOT availability-critical — resolving
+  // the alert must still succeed — so a failed lookup fails SOFT to NULL, but it
+  // says so rather than pretending the admin has no membership.
+  if (practitionerLookupError) {
+    // Bounded: a stable event name and the error CODE only. No raw database
+    // text, no SQL, no email, no row data.
+    console.error(
+      JSON.stringify({
+        event: "ops_alert_resolver_practitioner_lookup_failed",
+        code: practitionerLookupError.code ?? "unknown",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+
   const practitionerId =
-    practitionerRows && practitionerRows.length === 1
+    !practitionerLookupError && practitionerRows && practitionerRows.length === 1
       ? (practitionerRows[0] as { id: string }).id
       : null;
 
