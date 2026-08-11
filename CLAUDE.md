@@ -4,6 +4,29 @@ Working agreements for anyone (human or agent) changing this repository.
 
 ---
 
+## Engineering standards — read this first
+
+[ENGINEERING_STANDARDS.md](./ENGINEERING_STANDARDS.md) is canonical and is **not
+restated here**. Follow it.
+
+**Validation depth follows risk, not habit.** Determine the baseline risk tier
+(T0–T3) before choosing how much to prove.
+
+- `npm run ci:plan -- --json` emits the **baseline** `baselineRiskTier` and
+  `riskReasons`. (Plain `npm run ci:plan` answers lane selection; it prints only
+  the boolean classification values, so the tier is in the JSON.) That is
+  deterministic path evidence, **not semantic proof** — it cannot see what a
+  file actually does.
+- **Escalate** when the behaviour you are writing crosses a higher-risk
+  boundary, even when every path looks ordinary.
+- **Automated classification may never justify de-escalating** a change whose
+  actual behaviour crosses a higher-risk boundary.
+- Safety **and** speed are both requirements. Do not spend T3 ceremony — DB
+  resets, negative-control campaigns, skew matrices, concurrency review — on
+  T0/T1 work without naming the higher-risk failure class it catches.
+
+---
+
 ## 1. The delivery sequence — verify the COMMITTED tree, not the working tree
 
 **"Typecheck passed" is a claim about your working tree, not about what you pushed.**
