@@ -47,19 +47,26 @@ describe("Stripe acceptance is not Hone persistence — the client cannot claim 
   });
 
   it("only shows the saved headline after Hone confirms its own record", () => {
-    expect(FORM_EXEC).toMatch(/confirmCardPersistedAction\(setupIntentId\)/);
-    // saved is reachable only from a "saved" response.
-    expect(FORM_EXEC).toMatch(/res\.state === "saved"[\s\S]{0,120}setPhase\("saved"\)/);
+    // The confirmation read is injected into the shared state machine; the
+    // component never decides "saved" from anything else.
+    expect(FORM_EXEC).toMatch(/confirm: confirmCardPersistedAction/);
+    expect(FORM_EXEC).toMatch(/setupIntentId,/);
+    expect(FORM_EXEC).toMatch(/outcome === "saved"[\s\S]{0,160}setPhase\("saved"\)/);
     expect(FORM_EXEC).toMatch(/phase === "saved"[\s\S]{0,200}copy\.successHeadline/);
   });
 
   it("bounds the confirmation poll — no infinite waiting", () => {
-    expect(FORM).toMatch(/CONFIRM_POLL_ATTEMPTS\s*=\s*\d+/);
-    expect(FORM).toMatch(/CONFIRM_POLL_INTERVAL_MS\s*=\s*\d+/);
-    const attempts = Number(FORM.match(/CONFIRM_POLL_ATTEMPTS\s*=\s*(\d+)/)?.[1]);
-    const interval = Number(FORM.match(/CONFIRM_POLL_INTERVAL_MS\s*=\s*(\d+)/)?.[1]);
+    // OWNERSHIP MOVED: the bounds now live with the state machine so they can be
+    // behaviourally exercised (tests/lib/payments/card-finalization.test.ts).
+    const LIB = root("lib/payments/card-finalization.ts");
+    const attempts = Number(LIB.match(/CONFIRM_MAX_ATTEMPTS\s*=\s*(\d+)/)?.[1]);
+    const interval = Number(LIB.match(/CONFIRM_POLL_INTERVAL_MS\s*=\s*(\d+)/)?.[1]);
+    const deadline = Number(LIB.match(/CONFIRM_DEADLINE_MS\s*=\s*([\d_]+)/)?.[1].replace(/_/g, ""));
     expect(attempts).toBeGreaterThan(0);
-    expect(attempts * interval).toBeLessThanOrEqual(30_000);
+    expect(interval).toBeGreaterThan(0);
+    // The wall-clock deadline is the real ceiling, and it is finite.
+    expect(deadline).toBeGreaterThan(0);
+    expect(deadline).toBeLessThanOrEqual(60_000);
   });
 
   it("has three distinct terminal states, and none of them tells the client to re-enter the card", () => {
@@ -89,11 +96,70 @@ describe("Stripe acceptance is not Hone persistence — the client cannot claim 
   });
 });
 
+describe("finalization is recoverable, not a dead end", () => {
+  it("offers a Check-status-again action that re-reads the SAME SetupIntent", () => {
+    expect(FORM_EXEC).toMatch(/onCheckAgain/);
+    expect(FORM_EXEC).toMatch(/Check status again/);
+    const fn = FORM_EXEC.slice(FORM_EXEC.indexOf("async function onCheckAgain"));
+    const body = fn.slice(0, fn.indexOf("\n  }"));
+    // It may only re-poll. It must never mint a SetupIntent or re-confirm.
+    expect(body).toMatch(/pollForPersistence\(/);
+    expect(body).not.toMatch(/createCardSetupIntentAction/);
+    expect(body).not.toMatch(/confirmSetup/);
+  });
+
+  it("the not-confirmed state renders the recovery button, not a dead message", () => {
+    expect(FORM_EXEC).toMatch(/phase === "notConfirmed" \|\| phase === "rechecking"/);
+    expect(FORM_EXEC).toMatch(/onClick=\{onCheckAgain\}/);
+  });
+
+  it("does not promise a page that will not update itself", () => {
+    // The old copy said the card "will appear on this page shortly" while
+    // nothing was polling any more.
+    expect(FORM).not.toMatch(/will appear on this page shortly/);
+    expect(FORM).toMatch(/check status again below/i);
+  });
+
+  it("bounds the wait on wall clock AND per attempt, not just attempt count", () => {
+    const LIB = root("lib/payments/card-finalization.ts");
+    expect(LIB).toMatch(/CONFIRM_DEADLINE_MS/);
+    expect(LIB).toMatch(/CONFIRM_ATTEMPT_TIMEOUT_MS/);
+    expect(LIB).toMatch(/CONFIRM_MAX_ATTEMPTS/);
+    // The state machine issues no Stripe call of any kind — a confirmation
+    // timeout can therefore never submit another card. Asserted on executable
+    // source: the header mentions js.stripe.com when explaining why Elements
+    // cannot be driven in the e2e lane.
+    const LIB_EXEC = exec(LIB);
+    expect(LIB_EXEC).not.toMatch(/confirmSetup|createCardSetupIntent|stripe\./);
+  });
+});
+
 describe("setup_intent.succeeded — terminal rejection is never silent", () => {
   it("has no bare `rejected` return left in the handler", () => {
     // Every one of the eight rejection branches used to return a summary that
     // the parent then marked processed, with no alert of any kind.
     expect(WEBHOOK_EXEC).not.toMatch(/rejected:\s*"[a-z_]+",/);
+  });
+
+  it("the portal reads rejection from DURABLE stripe_events, never ops_alerts", () => {
+    const ACTIONS_FN = ACTIONS.slice(
+      ACTIONS.indexOf("export async function confirmCardPersistedAction"),
+    );
+    expect(ACTIONS_FN).toMatch(/\.from\("stripe_events"\)/);
+    expect(ACTIONS_FN).toMatch(/payload_summary->>terminalRejection/);
+    expect(ACTIONS_FN).toMatch(/\.not\("processed_at", "is", null\)/);
+    // ops_alerts is a notification channel, not the state authority.
+    expect(ACTIONS_FN).not.toMatch(/\.from\("ops_alerts"\)/);
+    // Bound to the caller's own studio, and no internal reason reaches the browser.
+    expect(ACTIONS_FN).toMatch(/\.eq\("studio_id", session\.studioId\)/);
+    expect(ACTIONS_FN).not.toMatch(/state: "rejected", reason/);
+  });
+
+  it("names the ops-alert guarantee honestly in the event summary", () => {
+    // recordOpsAlert's DB insert is best-effort, so the summary must not claim
+    // a durable row exists.
+    expect(WEBHOOK).not.toMatch(/opsAlerted: true/);
+    expect(WEBHOOK).toMatch(/opsAlertAttempted: true/);
   });
 
   it("routes every rejection through the alerting helper", () => {

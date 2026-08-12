@@ -127,6 +127,63 @@ describe("0180 — the atomicity contract", () => {
   });
 });
 
+describe("0180 — DB-FIRST rollout contract (deployment skew)", () => {
+  const ROUTE = readFileSync(
+    join(__dirname, "..", "..", "app/api/stripe/webhook/route.ts"),
+    "utf8",
+  );
+  const RUNBOOK = readFileSync(
+    join(__dirname, "..", "..", "docs/runbooks/0180-card-replacement-integrity-rollout.md"),
+    "utf8",
+  );
+
+  it("THE TRIPWIRE: the app calls the new command unconditionally, so the DB must go first", () => {
+    // If this ever stops being true — i.e. someone adds a feature flag or a
+    // fallback — the rollout order below must be re-derived, not assumed.
+    expect(ROUTE).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file"/);
+    // No conditional guarding the call, and no fallback to the old two writes.
+    expect(ROUTE).not.toMatch(/if\s*\([^)]*save_client_card_on_file/);
+    expect(ROUTE).not.toMatch(/\.update\(\{ status: "removed"/);
+    expect(ROUTE).not.toMatch(/\.from\("client_payment_methods"\)\s*\n\s*\.insert\(\{/);
+  });
+
+  it("an RPC-absent failure must NOT be able to look like success", () => {
+    // NEW APP + OLD DB is data-safe only because the missing command throws and
+    // the parent releases the claim. If this ever became a `return`, the event
+    // would be marked processed and the card silently lost.
+    const handler = ROUTE.slice(ROUTE.indexOf("async function handleSetupIntentSucceeded"));
+    const saveBlock = handler.slice(handler.indexOf("if (saveErr) {"));
+    expect(saveBlock).toMatch(/throw new Error\(\s*\n?\s*`save_client_card_on_file_failed/);
+    // Only the command's own lineage refusal (22023) is terminal.
+    const terminalGuard = saveBlock.slice(0, saveBlock.indexOf("throw new Error("));
+    expect(terminalGuard).toMatch(/saveErr\.code === "22023"/);
+  });
+
+  it("the rollout runbook states DB-FIRST and both skew directions explicitly", () => {
+    // Markdown hard-wraps, so assert against whitespace-normalised prose rather
+    // than guessing where the line breaks fall.
+    const FLAT = RUNBOOK.replace(/\s+/g, " ");
+    expect(FLAT).toMatch(/\*\*while the OLD application is still deployed\*\*/);
+    expect(RUNBOOK).toMatch(/0180 IS MIGRATION-FIRST \(DB-FIRST\)/);
+    expect(RUNBOOK).toMatch(/OLD app \+ NEW db/);
+    expect(RUNBOOK).toMatch(/NEW app \+ OLD db/);
+    expect(RUNBOOK).toMatch(/NOT OPERATIONALLY SAFE/);
+    // The two explicitly rejected shortcuts.
+    expect(RUNBOOK).toMatch(/No fallback to the old two-write implementation/);
+    expect(RUNBOOK).toMatch(/No "merge quickly/);
+    // Merge is step 6, after verification.
+    expect(RUNBOOK).toMatch(/Only then merge PR #562/);
+    expect(RUNBOOK).toMatch(/0181 becomes available only after/);
+  });
+
+  it("0180 is additive, which is what makes OLD-app-on-NEW-db safe", () => {
+    // The runbook's safety claim is only true while this holds; scope
+    // discipline below pins it independently.
+    expect(EXEC).not.toMatch(/\balter table\b/i);
+    expect(EXEC).not.toMatch(/\bdrop function\b/i);
+  });
+});
+
 describe("0180 — scope discipline", () => {
   it("changes no table, index, policy or grant on any table", () => {
     expect(EXEC).not.toMatch(/\balter table\b/i);

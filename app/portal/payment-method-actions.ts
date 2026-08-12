@@ -308,18 +308,47 @@ export async function confirmCardPersistedAction(
     };
   }
 
-  // Not persisted. Distinguish "still finalizing" from "terminally refused" so
-  // the client is never left polling forever against a payload Hone will never
-  // admit. The rejection alert is written by the webhook's
-  // terminalCardRejection helper.
-  const { data: rejection } = await admin
-    .from("ops_alerts")
+  // Not persisted. Distinguish "still finalizing" from "terminally refused".
+  //
+  // THE AUTHORITY IS THE DURABLE STRIPE-EVENT STATE, NOT ops_alerts.
+  // recordOpsAlert always emits its structured log but its ops_alerts INSERT is
+  // best-effort ("No retry. A failure to insert is logged and dropped." —
+  // lib/ops/alerts.ts). Reading it as the rejection authority created a
+  // split-brain: the webhook could have durably closed the event as a terminal
+  // rejection while the portal kept answering "pending" forever.
+  //
+  // mark_stripe_event_processed commits the handler's summary onto
+  // stripe_events.payload_summary in the same call that stamps processed_at, so
+  // terminalRejection there is the durable fact. ops_alerts stays what it is: an
+  // operational notification channel, not canonical state.
+  //
+  // Bound by studio_id AND this session's own SetupIntent, so one portal client
+  // can never probe another studio's or client's event state. Server-side admin
+  // authority only — no browser SELECT on stripe_events is granted.
+  const { data: rejection, error: rejectionErr } = await admin
+    .from("stripe_events")
     .select("id")
     .eq("studio_id", session.studioId)
-    .eq("event", "card_on_file_setup_rejected")
-    .eq("safe_details->>setup_intent_id", setupIntentId)
+    .eq("event_type", "setup_intent.succeeded")
+    .not("processed_at", "is", null)
+    .eq("payload_summary->>setupIntentId", setupIntentId)
+    .eq("payload_summary->>terminalRejection", "true")
     .limit(1)
     .maybeSingle();
+  if (rejectionErr) {
+    console.error(
+      JSON.stringify({
+        event: "card_persist_rejection_lookup_failed",
+        code: rejectionErr.code,
+        message: rejectionErr.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    // A failed lookup is NOT evidence of rejection. Stay pending.
+    return { ok: true, state: "pending" };
+  }
+  // Deliberately returns no reason: the internal rejection code is operator
+  // information and must not reach the browser.
   if (rejection) return { ok: true, state: "rejected" };
 
   return { ok: true, state: "pending" };

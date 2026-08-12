@@ -486,8 +486,14 @@ async function terminalCardRejection(
     eventType: event.type,
     setupIntentId,
     rejected: reason,
+    // THE DURABLE FACT. The parent commits this summary onto
+    // stripe_events.payload_summary via mark_stripe_event_processed, and the
+    // portal reads terminalRejection from there.
     terminalRejection: true,
-    opsAlerted: true,
+    // Named for what is actually guaranteed. recordOpsAlert always emits its
+    // structured log, but its ops_alerts row insert is best-effort, so this
+    // must not be called `opsAlerted` — that would imply a durable row exists.
+    opsAlertAttempted: true,
   };
 }
 

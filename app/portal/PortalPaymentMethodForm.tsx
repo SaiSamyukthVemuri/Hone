@@ -9,6 +9,10 @@ import {
   confirmCardPersistedAction,
   createCardSetupIntentAction,
 } from "./payment-method-actions";
+import {
+  CONFIRM_MAX_ATTEMPTS,
+  pollForCardPersistence,
+} from "@/lib/payments/card-finalization";
 
 // PR #135. Portal Add card surface. PR #151 extends it with a
 // Replace card mode that surfaces in /portal when the client
@@ -68,7 +72,7 @@ const COPY: Record<
     submittedHeadline: "Card submitted. Finalizing with Hone...",
     successHeadline: "Card saved.",
     stillFinalizingHeadline:
-      "Your card was accepted and is still being finalized. It will appear on this page shortly \u2014 you do not need to enter it again.",
+      "Your card was accepted, but we have not confirmed it yet. Do not enter it again \u2014 check status again below, or contact the studio if it does not confirm.",
     rejectedHeadline:
       "Your card was accepted by our payment provider, but we could not attach it to your file. Please contact the studio \u2014 do not re-enter your card.",
     introCopy: null,
@@ -83,7 +87,7 @@ const COPY: Record<
     submittedHeadline: "New card submitted. Finalizing with Hone...",
     successHeadline: "Card updated. Your new card is now on file.",
     stillFinalizingHeadline:
-      "Your new card was accepted and is still being finalized. Your existing card stays on file until the new one is confirmed \u2014 you do not need to enter it again.",
+      "Your new card was accepted, but we have not confirmed it yet. Your existing card stays on file and remains the card we will use until the new one is confirmed. Do not enter it again \u2014 check status again below, or contact the studio.",
     rejectedHeadline:
       "Your new card was accepted by our payment provider, but we could not attach it to your file. Your previous card is unchanged. Please contact the studio \u2014 do not re-enter your card.",
     introCopy:
@@ -371,20 +375,19 @@ function StripeElementsBoundary({
   );
 }
 
-// Bounded confirmation poll. Stripe accepting the card is NOT Hone saving it;
-// the setup_intent.succeeded webhook does that asynchronously. We wait a finite
-// time for Hone's own record and then tell the truth either way. Never
-// unbounded, and never a fabricated guarantee.
-const CONFIRM_POLL_INTERVAL_MS = 1200;
-const CONFIRM_POLL_ATTEMPTS = 12; // ~14.4s ceiling, then a truthful pending state
+// The finalization state machine lives in lib/payments/card-finalization.ts so
+// it can be behaviourally tested — this component cannot be rendered in the
+// unit lane, and the fake-Stripe browser lane cannot drive Elements. See that
+// module's header for the three bounds and why they exist.
 
 type SubmitPhase =
   | "idle"
   | "submitting" // confirmSetup in flight
   | "finalizing" // Stripe accepted; waiting for Hone's own record
   | "saved" // Hone has an ACTIVE row for this SetupIntent
-  | "stillFinalizing" // accepted, not yet persisted within the bound
-  | "rejected"; // Hone terminally refused the payload
+  | "notConfirmed" // accepted, not confirmed within the window — RECOVERABLE
+  | "rechecking" // an explicit "Check status again" is in flight
+  | "rejected"; // Hone durably refused the payload
 
 function PaymentForm({
   copy,
@@ -439,25 +442,41 @@ function PaymentForm({
     // Stripe accepted. Hone has NOT saved anything yet — the webhook does that.
     // Poll Hone's own record before claiming the card is saved.
     setPhase("finalizing");
-    for (let attempt = 0; attempt < CONFIRM_POLL_ATTEMPTS; attempt++) {
-      if (cancelled.current) return;
-      const res = await confirmCardPersistedAction(setupIntentId);
-      if (cancelled.current) return;
-      if (res.ok && res.state === "saved") {
-        setPhase("saved");
-        // Surface the newly authoritative card on the rest of the page.
-        router.refresh();
-        return;
-      }
-      if (res.ok && res.state === "rejected") {
-        setPhase("rejected");
-        return;
-      }
-      // A transient read failure is treated as "not yet" and retried within
-      // the same bound; it must never be reported as saved.
-      await new Promise((r) => setTimeout(r, CONFIRM_POLL_INTERVAL_MS));
+    const settled = await pollForPersistence();
+    if (!cancelled.current && settled === "pending") setPhase("notConfirmed");
+  }
+
+  // Shared by the initial window and the explicit "Check status again" button.
+  // NEVER mints a SetupIntent and NEVER calls confirmSetup — it only asks Hone
+  // about the SetupIntent Stripe already accepted.
+  async function pollForPersistence(
+    attempts: number = CONFIRM_MAX_ATTEMPTS,
+  ): Promise<"saved" | "rejected" | "pending"> {
+    const { outcome } = await pollForCardPersistence({
+      setupIntentId,
+      confirm: confirmCardPersistedAction,
+      attempts,
+      isCancelled: () => cancelled.current,
+    });
+    if (cancelled.current) return "pending";
+    if (outcome === "saved") {
+      setPhase("saved");
+      // Surface the newly authoritative card on the rest of the page.
+      router.refresh();
+      return "saved";
     }
-    if (!cancelled.current) setPhase("stillFinalizing");
+    if (outcome === "rejected") {
+      setPhase("rejected");
+      return "rejected";
+    }
+    return "pending";
+  }
+
+  async function onCheckAgain() {
+    setPhase("rechecking");
+    // A short burst, same SetupIntent. No new card is ever submitted.
+    const settled = await pollForPersistence(3);
+    if (!cancelled.current && settled === "pending") setPhase("notConfirmed");
   }
 
   if (phase === "saved") {
@@ -468,11 +487,28 @@ function PaymentForm({
     );
   }
 
-  if (phase === "stillFinalizing") {
+  if (phase === "notConfirmed" || phase === "rechecking") {
+    // NOT a dead end. Stripe holds the card; Hone has not confirmed it yet.
+    // The only offered action re-reads the SAME SetupIntent.
     return (
-      <p className="text-[14px]" style={{ color: "#0A0A0A" }} role="status">
-        {copy.stillFinalizingHeadline}
-      </p>
+      <div className="flex flex-col gap-3">
+        <p className="text-[14px]" style={{ color: "#0A0A0A" }} role="status">
+          {copy.stillFinalizingHeadline}
+        </p>
+        <button
+          type="button"
+          onClick={onCheckAgain}
+          disabled={phase === "rechecking"}
+          className="self-start px-5 py-2 text-[12px] font-medium uppercase disabled:opacity-50"
+          style={{
+            backgroundColor: "#0A0A0A",
+            color: "#FAFAF7",
+            letterSpacing: "0.1em",
+          }}
+        >
+          {phase === "rechecking" ? "Checking..." : "Check status again"}
+        </button>
+      </div>
     );
   }
 
