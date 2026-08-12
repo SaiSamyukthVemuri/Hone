@@ -73,7 +73,10 @@ export function PolicySettingsForm({ initial }: Props) {
   return (
     <form onSubmit={handleSubmit} className="flex max-w-2xl flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h2 className="text-xl font-medium">
+        {/* Anchor target for Global Search: "cancellation policy" resolves to
+            /settings/intake#policies, which sits below the full intake-form
+            preview. Same scroll-mt as the neighbouring #postcare anchor. */}
+        <h2 id="policies" className="scroll-mt-24 text-xl font-medium">
           Cancellation and no-show policy
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">

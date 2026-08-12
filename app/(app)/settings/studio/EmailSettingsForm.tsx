@@ -126,7 +126,16 @@ export function EmailSettingsForm({ initial }: Props) {
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 className="text-lg font-medium">Email notifications</h2>
+        {/* Anchor target for Global Search: "reminder" / "sms" resolves to
+            /settings/studio#email-notifications, which is well below the
+            studio-name form on this page. scroll-mt matches the existing
+            #postcare anchor so the sticky header does not cover the heading. */}
+        <h2
+          id="email-notifications"
+          className="scroll-mt-24 text-lg font-medium"
+        >
+          Email notifications
+        </h2>
         <p className="mt-1 text-sm text-neutral-500">
           All emails are sent from hello@hone.care and appear as your studio.
           Clients can cancel or reschedule directly from any of these emails.

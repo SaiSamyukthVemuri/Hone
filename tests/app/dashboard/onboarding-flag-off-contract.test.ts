@@ -48,9 +48,21 @@ describe("dashboard onboarding-v2 — default-OFF gating", () => {
     expect(CODE).toContain("<OnboardingSurface");
   });
 
-  it("gates the legacy getting-started link + footer behind !onboardingV2On", () => {
+  it("gates the legacy getting-started card behind !onboardingV2On", () => {
     expect(CODE).toMatch(/\{!onboardingV2On\s*&&\s*!setupComplete\s*&&/);
-    expect(CODE).toMatch(/\{!onboardingV2On\s*&&\s*setupComplete\s*&&/);
+  });
+
+  it("the completed-setup footer is GONE from both paths (Chloe D3)", () => {
+    // The flag-off contract is "renders exactly as the legacy path", and the
+    // legacy path deliberately changed in this PR: a studio whose setup is
+    // complete now sees no setup surface at all. Asserting the footer's absence
+    // keeps this contract honest rather than quietly dropping the assertion —
+    // if someone restores the footer, the flag-off path must fail here.
+    expect(CODE).not.toMatch(/\{!onboardingV2On\s*&&\s*setupComplete\s*&&/);
+    expect(CODE).not.toMatch(/Setup complete\./);
+    // Flag-ON is unaffected: OnboardingSurface already hides its pinned card
+    // once the model is complete, so neither system congratulates daily.
+    expect(CODE).toContain("<OnboardingSurface");
   });
 
   it("still computes the legacy getting-started signals (OFF path unchanged)", () => {

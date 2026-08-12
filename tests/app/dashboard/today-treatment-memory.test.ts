@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memory";
@@ -143,7 +143,7 @@ describe("expanding reuses the #517 card — it does not reimplement it", () => 
       /import \{ AppointmentPrepMemoryCard \} from "@\/components\/appointment-prep-memory-card"/,
     );
     expect(MEMORY_UI).toMatch(
-      /<AppointmentPrepMemoryCard\s+clientId=\{clientId\}\s+memory=\{memory\}\s+embedded\s*\/>/,
+      /<AppointmentPrepMemoryCard\s+clientId=\{clientId\}\s+memory=\{memory\}\s+embedded\s+showFullChartLink=\{false\}\s*\/>/,
     );
   });
 
@@ -197,10 +197,163 @@ describe("every #517 field family is reachable from Today", () => {
   });
 });
 
+// ===========================================================================
+// CHLOE D1 — expanding the disclosure must not navigate. Ever.
+// ===========================================================================
+// REPORTED DEFECT: "View full last treatment" expands briefly and then takes
+// her to the full-session page.
+//
+// ROOT CAUSE, two overlapping faults with one shape — the disclosure was
+// rendered INSIDE the Today row's body <Link href="/calendar/{id}">:
+//
+//   1. the toggle <button>'s click bubbled to that ancestor link, so one press
+//      both opened the region and pushed a route;
+//   2. once open, the embedded card rendered an <a> ("Open full chart →")
+//      inside an <a>, which is invalid HTML with undefined activation.
+//
+// FIX, in two halves, both pinned here:
+//   * the disclosure is a SIBLING of the row link, not a descendant;
+//   * the embedded card is denied the full-chart CTA via an explicit
+//     capability, while the standalone appointment-prep card keeps it.
+//
+// These are SOURCE assertions (this repo runs vitest in `environment: "node"`
+// with no React harness — see the header note). The behavioural proof that the
+// URL does not change lives in e2e/dashboard-treatment-memory-inline.spec.ts,
+// which clicks the real control in a real browser and waits.
+describe("D1: the disclosure never navigates away from the Dashboard", () => {
+  /** The whole source span of the Today row's body <Link>, opening tag included. */
+  function rowBodyLink(): string {
+    const open = DASH.indexOf("<Link\n          href={`/calendar/${appt.id}`}");
+    expect(open, "the row-body calendar link must exist").toBeGreaterThan(-1);
+    const close = DASH.indexOf("</Link>", open);
+    expect(close).toBeGreaterThan(open);
+    return DASH.slice(open, close + "</Link>".length);
+  }
+
+  /**
+   * The link's CHILDREN only — everything after its own opening tag closes.
+   * The nested-interactive guards must read this, not the whole span: the span
+   * starts with `<Link`, which trivially satisfies a "contains a link" grep and
+   * would make the guard vacuous.
+   */
+  function rowBodyLinkChildren(): string {
+    const span = rowBodyLink();
+    const endOfOpenTag = span.indexOf(">\n");
+    expect(endOfOpenTag, "the opening tag must terminate").toBeGreaterThan(-1);
+    return span.slice(endOfOpenTag + 1);
+  }
+
+  it("the row body still opens the appointment — nothing was removed", () => {
+    // The fix must not cost the row its navigation; only the disclosure leaves.
+    expect(rowBodyLink()).toMatch(/href=\{`\/calendar\/\$\{appt\.id\}`\}/);
+  });
+
+  it("the disclosure is OUTSIDE that link, so a click cannot bubble into it", () => {
+    const link = rowBodyLink();
+    expect(
+      link,
+      "TodayTreatmentMemory must not be a descendant of the row-body link",
+    ).not.toContain("<TodayTreatmentMemory");
+    // Self-check: the span really is the row body and not an empty slice.
+    expect(link).toContain("Latest setup:");
+    // ...and it is still rendered on the page, as a sibling.
+    expect(DASH).toContain("<TodayTreatmentMemory");
+    expect(DASH.indexOf("<TodayTreatmentMemory")).toBeGreaterThan(
+      DASH.indexOf(rowBodyLink()) + rowBodyLink().length - 1,
+    );
+  });
+
+  it("NO interactive element is left inside the row-body link", () => {
+    // The general rule the bug broke, not just this one instance: a <button>,
+    // a nested <a>, or a nested <Link> inside an anchor is invalid content and
+    // its activation behaviour is undefined. Guards the whole row, so the next
+    // control someone adds cannot recreate this.
+    const children = rowBodyLinkChildren();
+    // Self-check first: an empty or mis-sliced string would pass every guard.
+    expect(children).toContain("Latest setup:");
+    expect(children, "no nested link").not.toMatch(/<Link\b|<a\b/);
+    expect(children, "no nested button").not.toMatch(/<button\b/);
+    expect(children, "no click handler inside the link body").not.toMatch(
+      /onClick/,
+    );
+
+    // ...AND no component that ENCAPSULATES a control. A negative control
+    // caught this gap: re-nesting <TodayTreatmentMemory> inside the link — the
+    // exact defect — left every raw-tag guard above green, because the button
+    // lives one file away. Raw-tag greps cannot see through a component
+    // boundary, so the known-interactive children of this row are named.
+    for (const component of [
+      "TodayTreatmentMemory", // owns the disclosure <button>
+      "AppointmentCheckoutCell", // owns the checkout control
+      "PilotFeedbackPrompt", // mailto anchors
+      "DashboardTodoList", // rows of links
+    ]) {
+      expect(
+        children,
+        `<${component}> renders a control and must not sit inside the row link`,
+      ).not.toContain(`<${component}`);
+    }
+  });
+
+  it("the toggle does not fake a fix with stopPropagation", () => {
+    // A stopPropagation() patch would silence the React synthetic bubble and
+    // leave the invalid nesting — and native anchor activation — in place. The
+    // structural fix is the real one, so the workaround must be absent.
+    expect(MEMORY_UI_CODE).not.toMatch(/stopPropagation|preventDefault/);
+  });
+
+  it("the EMBEDDED card carries no full-chart navigation CTA", () => {
+    expect(MEMORY_UI).toMatch(/showFullChartLink=\{false\}/);
+    // Both of the card's "Open full chart →" affordances obey the capability —
+    // the header one and the one in the blockless branch. Neither may be
+    // unconditional, or the Dashboard disclosure gets a link out anyway.
+    const cta = [...CARD.matchAll(/Open full chart →/g)];
+    expect(cta.length, "the card has exactly two full-chart affordances").toBe(2);
+    for (const m of cta) {
+      const preceding = CARD.slice(Math.max(0, m.index! - 400), m.index!);
+      expect(
+        preceding,
+        "every full-chart link must be gated on showFullChartLink",
+      ).toMatch(/\{showFullChartLink && \(/);
+    }
+  });
+
+  it("the STANDALONE appointment-prep surface KEEPS its full-chart link", () => {
+    // The other half of the contract: this is a capability, not a deletion.
+    // The default is on, and the calendar appointment page does not turn it off.
+    expect(CARD).toMatch(/showFullChartLink = true/);
+    const apptPage = read("app/(app)/calendar/[id]/page.tsx");
+    expect(apptPage).toMatch(/<AppointmentPrepMemoryCard/);
+    expect(apptPage).not.toMatch(/showFullChartLink/);
+  });
+
+  it("the capability is EXPLICIT, not inferred from the layout flag", () => {
+    // `embedded` is chrome + heading rank. Deriving navigation policy from a
+    // styling flag is how the two silently re-couple.
+    expect(CARD).toMatch(/showFullChartLink\?: boolean/);
+    expect(CARD).not.toMatch(/showFullChartLink\s*=\s*!embedded/);
+  });
+
+  it("the clinical card was NOT forked to achieve any of this", () => {
+    // One presentation component, one truth about what a treatment looked like.
+    expect(DASH).not.toMatch(/DashboardPrepMemoryCard|PrepMemoryCardEmbedded/);
+    expect(MEMORY_UI).toMatch(
+      /import \{ AppointmentPrepMemoryCard \} from "@\/components\/appointment-prep-memory-card"/,
+    );
+    expect(
+      existsSync(join(process.cwd(), "components/appointment-prep-memory-card.tsx")),
+    ).toBe(true);
+  });
+});
+
 describe("the Today row wires it correctly", () => {
   it("renders the memory only for a client who HAS history", () => {
-    // A first visit stays one calm relationship line.
-    expect(DASH).toMatch(/\{workflow\.hasHistory && \(\s*<TodayTreatmentMemory/);
+    // A first visit stays one calm relationship line. (The gate moved out of
+    // the row-body link with the component — see the D1 block above — so it now
+    // reads `workflow?.hasHistory`, which is the same condition: hasHistory can
+    // only be true when workflow exists.)
+    expect(DASH).toMatch(/\{workflow\?\.hasHistory && \(/);
+    expect(DASH).toMatch(/<TodayTreatmentMemory/);
   });
 
   it("passes the memory keyed by APPOINTMENT, not by client", () => {
