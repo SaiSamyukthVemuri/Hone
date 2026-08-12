@@ -9,7 +9,8 @@ import {
   type SearchResult,
 } from "@/lib/search/global-search";
 
-// Global Search V1 (PR #232). One client component, two variants:
+// Global Search (V1: PR #232 · V2-A: settings + navigation). One client
+// component, two variants:
 //   desktop: inline input in the header with a dropdown under it
 //   mobile:  a 44px search icon button; tapping it opens a panel
 //            anchored to the header's right side
@@ -96,7 +97,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search clients, appointments, notes..."
+            placeholder="Search clients, appointments, settings..."
             aria-label="Search Hone"
             className="min-h-[44px] w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:focus:border-neutral-100"
           />
@@ -115,8 +116,8 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
         <div className="px-3 py-3 text-neutral-500">
           <p>No results found.</p>
           <p className="mt-1 text-xs">
-            Try a client name, phone, appointment, treatment area, or lot
-            number.
+            Try a client name, phone, appointment, treatment area, lot number,
+            or a setting like &ldquo;reminders&rdquo; or &ldquo;hours&rdquo;.
           </p>
         </div>
       ) : (

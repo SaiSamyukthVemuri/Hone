@@ -675,14 +675,27 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(clientResult.first()).toBeVisible({ timeout: 15_000 });
     await desktopPage.keyboard.press("Escape");
     await expect(clientResult).toHaveCount(0);
+    // V2-A: a navigation result's subtitle is now the destination's own
+    // description rather than the generic "Go to page".
+    const gettingStarted = desktopPage.getByRole("link", {
+      name: "Getting Started Setup and readiness checklist for your studio",
+    });
     await search.fill("Getting");
-    await expect(
-      desktopPage.getByRole("link", { name: "Getting Started Go to page" }),
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(gettingStarted).toBeVisible({ timeout: 15_000 });
     await desktopPage.getByText("Charted within 24h").first().click();
-    await expect(
-      desktopPage.getByRole("link", { name: "Getting Started Go to page" }),
-    ).toHaveCount(0);
+    await expect(gettingStarted).toHaveCount(0);
+
+    // V2-A: an individual SETTING is findable by terminology that appears
+    // nowhere in the page title. This account is the studio owner, so the
+    // owner-only availability surface is legitimately visible to it.
+    await search.fill("hours");
+    const availability = desktopPage.getByRole("link", {
+      name: /^Availability Weekly hours/,
+    });
+    await expect(availability).toBeVisible({ timeout: 15_000 });
+    await availability.click();
+    await desktopPage.waitForURL(/\/settings\/availability/);
+    await desktopPage.goto("/dashboard");
     await search.fill(seed.clientName);
     await expect(clientResult.first()).toBeVisible({ timeout: 15_000 });
     await clientResult.first().click();

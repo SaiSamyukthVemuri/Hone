@@ -1299,6 +1299,32 @@ history still lists prior rows unchanged. Do **not** attempt a direct PostgREST 
 production to test the boundary — the automated lane already proves it on a disposable database.
 No production writes, no backfill, no data correction. Live payments remain disabled.
 
+## Global Search V2-A — searchable settings + navigation smoke (no migration)
+
+Signed in **as the studio owner**, open the header search and type each of:
+`reminder`, `hours`, `buffer`, `booking link`, `consent`, `photo consent`,
+`google`, `calendar sync`, `sms`, `payments`, `services`, `team`,
+`data export`, `privacy`, `records`. Confirm every one returns a result under
+the **Settings & Pages** group with a plain-English description, and that
+clicking it lands on the matching settings page — `reminder` should land on
+Settings → Studio at the *Email notifications* block (not the top of the page),
+and `photo consent` on Settings → Consent forms.
+
+Then sign in **as a non-owner practitioner** in the same studio and repeat
+`payments`, `hours`, `consent`, `reminder`, `team`, `services`. Confirm **none
+of them offers an owner-only settings page** — not as a greyed row, not as a
+"no permission" row, nothing at all. Confirm `profile`, `intake`, `launch`,
+`sterile` and `getting started` still resolve for that practitioner.
+
+Confirm, for both roles: typing a client name still returns the client (data
+results were not displaced); the empty search box still shows the six
+shortcuts Dashboard / Clients / Calendar / Record Keeping / Settings / Getting
+Started; nothing in any result mentions Exposure Incidents or any `/admin`
+page; and on a phone the search sheet still fits with no sideways scroll.
+
+Search is discovery only — it adds no permission. Anything it offers was
+already reachable by that practitioner from the menu. Live payments unchanged.
+
 ## Quick gates a reviewer can run
 
 GitHub Actions CI (PR #154) runs the full validation suite on every PR. The local equivalent is:
