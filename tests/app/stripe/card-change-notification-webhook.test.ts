@@ -52,15 +52,17 @@ describe("card-change notification webhook wiring", () => {
     for (const guard of [
       "shouldIgnoreLiveModeEvent",
       "livemodeEventIgnored: true",
-      // 0180: these now route through terminalCardRejection so the rejection
-      // is operator-visible instead of a silent 200. The ordering property is
-      // unchanged — every one still returns before any notification.
-      'terminalCardRejection(event, ctx, si.id, "missing_metadata")',
-      'terminalCardRejection(event, ctx, si.id, "missing_account_context")',
-      'terminalCardRejection(event, ctx, si.id, "studio_metadata_mismatch")',
-      'terminalCardRejection(event, ctx, si.id, "missing_customer")',
-      'terminalCardRejection(event, ctx, si.id, "customer_lineage_mismatch")',
-      'terminalCardRejection(event, ctx, si.id, "signature_lineage_mismatch")',
+      // 0180: these route through terminalCardRejection so the rejection is
+      // operator-visible instead of a silent 200, and the helper now receives
+      // the SetupIntent itself so it can record the ownership anchor the portal
+      // binds against. The ordering property is unchanged — every one still
+      // returns before any notification.
+      'terminalCardRejection(event, ctx, si, "missing_metadata")',
+      'terminalCardRejection(event, ctx, si, "missing_account_context")',
+      'terminalCardRejection(event, ctx, si, "studio_metadata_mismatch")',
+      'terminalCardRejection(event, ctx, si, "missing_customer")',
+      'terminalCardRejection(event, ctx, si, "customer_lineage_mismatch")',
+      'terminalCardRejection(event, ctx, si, "signature_lineage_mismatch")',
     ]) {
       expect(BEFORE_FIRST_NOTIFY).toContain(guard);
     }
@@ -71,8 +73,8 @@ describe("card-change notification webhook wiring", () => {
     // notify (and it cannot have persisted a card, so the step-5 re-delivery
     // notify is unreachable for it). No card => no notification.
     for (const rejection of [
-      'terminalCardRejection(event, ctx, si.id, "missing_payment_method")',
-      'terminalCardRejection(event, ctx, si.id, "non_card_payment_method")',
+      'terminalCardRejection(event, ctx, si, "missing_payment_method")',
+      'terminalCardRejection(event, ctx, si, "non_card_payment_method")',
     ]) {
       expect(BEFORE_LAST_NOTIFY).toContain(rejection);
     }

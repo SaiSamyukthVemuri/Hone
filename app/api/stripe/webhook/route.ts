@@ -464,9 +464,21 @@ async function handleStripeEvent(
 async function terminalCardRejection(
   event: Stripe.Event,
   ctx: { studioId: string | null; stripeAccountId: string | null; livemode: boolean },
-  setupIntentId: string,
+  si: Stripe.SetupIntent,
   reason: string,
 ): Promise<Record<string, unknown>> {
+  const setupIntentId = si.id;
+  // THE OWNERSHIP ANCHOR. The portal must be able to prove a rejection belongs
+  // to the asking client WITHOUT trusting the SetupIntent's metadata — metadata
+  // is caller-supplied and Stripe signing the envelope says nothing about who
+  // authored it. (stripe_account_id, stripe_livemode, stripe_customer_id) is
+  // UNIQUE in client_stripe_customers, so the customer resolves to exactly one
+  // Hone (studio, client) through Hone's own provisioning table.
+  //
+  // Recorded even on branches where the customer did not validate: the portal
+  // re-derives ownership itself and fails closed when it cannot.
+  const stripeCustomerId =
+    typeof si.customer === "string" && si.customer.length > 0 ? si.customer : null;
   await recordOpsAlert({
     severity: "critical",
     event: "card_on_file_setup_rejected",
@@ -478,6 +490,7 @@ async function terminalCardRejection(
       event_type: event.type,
       reason,
       setup_intent_id: setupIntentId,
+      stripe_customer_id: stripeCustomerId,
       stripe_account_id: ctx.stripeAccountId,
       livemode: ctx.livemode,
     },
@@ -485,6 +498,12 @@ async function terminalCardRejection(
   return {
     eventType: event.type,
     setupIntentId,
+    // Ownership anchor for the portal's client-binding check. Null when the
+    // event carried no usable customer — those rejections are deliberately not
+    // portal-attributable and settle as "not confirmed" instead.
+    stripeCustomerId,
+    stripeAccountId: ctx.stripeAccountId,
+    stripeLivemode: ctx.livemode,
     rejected: reason,
     // THE DURABLE FACT. The parent commits this summary onto
     // stripe_events.payload_summary via mark_stripe_event_processed, and the
@@ -536,16 +555,16 @@ async function handleSetupIntentSucceeded(
   const metaClientId = meta.hone_client_id;
   const metaSignatureId = meta.hone_card_authorization_signature_id;
   if (!metaStudioId || !metaClientId || !metaSignatureId) {
-    return await terminalCardRejection(event, ctx, si.id, "missing_metadata");
+    return await terminalCardRejection(event, ctx, si, "missing_metadata");
   }
 
   // 2. Connected-account context must agree with the event's
   //    account + the studio's payment settings.
   if (!ctx.stripeAccountId || !ctx.studioId) {
-    return await terminalCardRejection(event, ctx, si.id, "missing_account_context");
+    return await terminalCardRejection(event, ctx, si, "missing_account_context");
   }
   if (ctx.studioId !== metaStudioId) {
-    return await terminalCardRejection(event, ctx, si.id, "studio_metadata_mismatch");
+    return await terminalCardRejection(event, ctx, si, "studio_metadata_mismatch");
   }
 
   const admin = createAdminClient();
@@ -555,7 +574,7 @@ async function handleSetupIntentSucceeded(
   //    match the (studio, client, account, mode, customer) tuple
   //    here and is rejected.
   if (typeof si.customer !== "string" || si.customer.length === 0) {
-    return await terminalCardRejection(event, ctx, si.id, "missing_customer");
+    return await terminalCardRejection(event, ctx, si, "missing_customer");
   }
   const { data: customerLineage, error: customerLineageErr } = await admin
     .from("client_stripe_customers")
@@ -572,7 +591,7 @@ async function handleSetupIntentSucceeded(
     );
   }
   if (!customerLineage) {
-    return await terminalCardRejection(event, ctx, si.id, "customer_lineage_mismatch");
+    return await terminalCardRejection(event, ctx, si, "customer_lineage_mismatch");
   }
 
   // 4. Validate the card_authorization signature belongs to the
@@ -591,7 +610,7 @@ async function handleSetupIntentSucceeded(
     );
   }
   if (!signature) {
-    return await terminalCardRejection(event, ctx, si.id, "signature_lineage_mismatch");
+    return await terminalCardRejection(event, ctx, si, "signature_lineage_mismatch");
   }
 
   // 5. PR #135 hardening. Idempotency SELECT first: if a row already
@@ -654,7 +673,7 @@ async function handleSetupIntentSucceeded(
   //    last4 / exp; browser-side Elements never sends that data to
   //    Hone.
   if (typeof si.payment_method !== "string" || si.payment_method.length === 0) {
-    return await terminalCardRejection(event, ctx, si.id, "missing_payment_method");
+    return await terminalCardRejection(event, ctx, si, "missing_payment_method");
   }
   const stripe = getStripe();
   let pm: Stripe.PaymentMethod;
@@ -671,7 +690,7 @@ async function handleSetupIntentSucceeded(
   }
   const card = pm.card;
   if (!card || !card.brand || !card.last4 || !card.exp_month || !card.exp_year) {
-    return await terminalCardRejection(event, ctx, si.id, "non_card_payment_method");
+    return await terminalCardRejection(event, ctx, si, "non_card_payment_method");
   }
 
   // 7. Persist the card ATOMICALLY via the 0180 governed command.
@@ -715,7 +734,7 @@ async function handleSetupIntentSucceeded(
       return await terminalCardRejection(
         event,
         ctx,
-        si.id,
+        si,
         `command_${saveErr.message.replace(/[^a-z_]/gi, "_").slice(0, 60)}`,
       );
     }

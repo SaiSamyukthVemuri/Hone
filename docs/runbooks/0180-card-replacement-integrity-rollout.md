@@ -66,6 +66,28 @@ the order — as it always does.
    0180 apply (`migration-state.json` + ledger + test hand-off).
 9. **0181 becomes available only after that reconciliation is merged.**
 
+## Portal visibility vs operator visibility
+
+These are deliberately different, and the runbook should not conflate them.
+
+**Operator visibility is total.** Every terminal rejection is committed to
+`stripe_events.payload_summary` with `terminalRejection: true` by
+`mark_stripe_event_processed`, and `recordOpsAlert` always emits its structured
+log (its `ops_alerts` row is best-effort, so it is evidence, not a guarantee).
+
+**Portal visibility is deliberately narrower.** A client is shown `rejected`
+only when Hone can prove the rejection is theirs — the customer on the event
+must resolve, through `client_stripe_customers`, to that client. Rejections
+that carry no usable customer (for example `missing_customer`, or a
+`customer_lineage_mismatch` whose customer belongs to nobody) are **not**
+portal-attributable and settle as **not confirmed** with the
+contact-the-studio, do-not-resubmit copy.
+
+That is intentional and fail-closed: a rare unbindable rejection shown as
+"not confirmed" is strictly better than turning the confirmation endpoint into
+a cross-client status oracle. Do not "fix" it by relaxing the binding to
+SetupIntent id alone — SetupIntent ids are not authorization.
+
 ## Stop conditions
 
 Stop and do not proceed if: the production SHA moved; the dry run lists anything

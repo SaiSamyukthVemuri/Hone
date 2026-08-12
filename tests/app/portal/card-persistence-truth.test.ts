@@ -150,9 +150,29 @@ describe("setup_intent.succeeded — terminal rejection is never silent", () => 
     expect(ACTIONS_FN).toMatch(/\.not\("processed_at", "is", null\)/);
     // ops_alerts is a notification channel, not the state authority.
     expect(ACTIONS_FN).not.toMatch(/\.from\("ops_alerts"\)/);
-    // Bound to the caller's own studio, and no internal reason reaches the browser.
+    // CLIENT-BOUND, not merely studio-bound. A SetupIntent id is not
+    // authorization: without the client_id predicate any same-studio client
+    // could probe another client's rejection state.
+    expect(ACTIONS_FN).toMatch(/\.from\("client_stripe_customers"\)/);
     expect(ACTIONS_FN).toMatch(/\.eq\("studio_id", session\.studioId\)/);
+    expect(ACTIONS_FN).toMatch(/\.eq\("client_id", session\.clientId\)/);
+    // Fail closed: unattributable rejections fall through to pending.
+    expect(ACTIONS_FN).toMatch(/continue;/);
+    // No internal reason reaches the browser.
     expect(ACTIONS_FN).not.toMatch(/state: "rejected", reason/);
+  });
+
+  it("the webhook records the ownership anchor the portal binds against", () => {
+    const helper = WEBHOOK.slice(WEBHOOK.indexOf("async function terminalCardRejection"));
+    expect(helper).toMatch(/stripeCustomerId/);
+    expect(helper).toMatch(/stripeAccountId: ctx\.stripeAccountId/);
+    expect(helper).toMatch(/stripeLivemode: ctx\.livemode/);
+  });
+
+  it("does not claim every terminal rejection is portal-visible", () => {
+    // The fail-closed design deliberately leaves unbindable rejections as
+    // not-confirmed for the client while remaining fully operator-visible.
+    expect(ACTIONS).toMatch(/If ownership cannot be proved, the answer is `pending`/);
   });
 
   it("names the ops-alert guarantee honestly in the event summary", () => {

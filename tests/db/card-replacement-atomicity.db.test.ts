@@ -291,21 +291,26 @@ describe("0180 — negative control: the pre-0180 two-write sequence really did 
   });
 });
 
-describe("B/D — terminal rejection truth comes from DURABLE stripe_events, not ops_alerts", () => {
-  // The portal's rejection authority. recordOpsAlert's ops_alerts INSERT is
-  // best-effort ("No retry. A failure to insert is logged and dropped."), so
-  // reading it as the state authority created a split-brain: the webhook could
-  // durably close an event as a terminal rejection while the portal answered
-  // "pending" forever. mark_stripe_event_processed commits the summary onto
-  // stripe_events.payload_summary, which is the durable fact.
+describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
+  // The portal's rejection authority is stripe_events.payload_summary (committed
+  // by mark_stripe_event_processed), NOT ops_alerts, whose insert is
+  // best-effort. But durability alone is not authorization: stripe_events.studio_id
+  // is derived from the connected account, so it is NULL for a
+  // missing_account_context rejection and may name a DIFFERENT studio for a
+  // studio_metadata_mismatch. Scoping by studio_id alone both missed real
+  // rejections and let any same-studio client probe any SetupIntent id.
   //
-  // These exercise the EXACT query shape confirmCardPersistedAction uses.
-  async function seedProcessedRejection(
-    studioId: string,
+  // Ownership is proved through Hone's own provisioning table instead:
+  // client_stripe_customers is UNIQUE on
+  // (stripe_account_id, stripe_livemode, stripe_customer_id), so the customer on
+  // the event resolves to exactly one (studio, client). These exercise the EXACT
+  // query pair confirmCardPersistedAction runs.
+  async function seedRejection(
     setupIntentId: string,
-    opts: { terminal?: boolean; processed?: boolean } = {},
+    summary: Record<string, unknown>,
+    opts: { studioId?: string | null; processed?: boolean } = {},
   ) {
-    const { terminal = true, processed = true } = opts;
+    const { studioId = null, processed = true } = opts;
     await adminQuery(
       `insert into public.stripe_events
          (stripe_event_id, event_type, stripe_account_id, stripe_livemode,
@@ -320,92 +325,185 @@ describe("B/D — terminal rejection truth comes from DURABLE stripe_events, not
         JSON.stringify({
           eventType: "setup_intent.succeeded",
           setupIntentId,
-          rejected: "customer_lineage_mismatch",
-          ...(terminal ? { terminalRejection: true } : {}),
+          terminalRejection: true,
           opsAlertAttempted: true,
+          ...summary,
         }),
       ],
     );
   }
 
-  /** The action's rejection lookup, verbatim in SQL. */
-  async function rejectionVisible(studioId: string, setupIntentId: string) {
-    const r = await adminQuery(
-      `select id from public.stripe_events
-        where studio_id = $1
-          and event_type = 'setup_intent.succeeded'
+  /** The action's two-step lookup: durable rejection, then client ownership. */
+  async function rejectedForClient(
+    studioId: string,
+    clientId: string,
+    setupIntentId: string,
+  ): Promise<boolean> {
+    const evts = await adminQuery(
+      `select payload_summary from public.stripe_events
+        where event_type = 'setup_intent.succeeded'
           and processed_at is not null
-          and payload_summary->>'setupIntentId' = $2
+          and payload_summary->>'setupIntentId' = $1
           and payload_summary->>'terminalRejection' = 'true'
-        limit 1`,
-      [studioId, setupIntentId],
+        limit 5`,
+      [setupIntentId],
     );
-    return (r.rowCount ?? 0) > 0;
+    for (const row of evts.rows) {
+      const sum = row.payload_summary as Record<string, unknown>;
+      if (
+        typeof sum.stripeCustomerId !== "string" ||
+        typeof sum.stripeAccountId !== "string" ||
+        typeof sum.stripeLivemode !== "boolean"
+      ) {
+        continue; // unattributable -> fail closed
+      }
+      const owner = await adminQuery(
+        `select client_id from public.client_stripe_customers
+          where stripe_account_id = $1 and stripe_livemode = $2
+            and stripe_customer_id = $3 and studio_id = $4 and client_id = $5`,
+        [sum.stripeAccountId, sum.stripeLivemode, sum.stripeCustomerId, studioId, clientId],
+      );
+      if ((owner.rowCount ?? 0) > 0) return true;
+    }
+    return false;
   }
 
-  it("a durably processed terminal rejection is visible WITHOUT any ops_alerts row", async () => {
-    // THE NEGATIVE CONTROL FOR THE FIXED DEFECT: no ops_alerts row is written
-    // at all. Under the old ops_alerts-only lookup this returned nothing and
-    // the portal stayed pending forever; it must now report rejected.
-    const f = await seedCardStudio("rej-durable");
+  it("A — the owning client sees their own terminal rejection", async () => {
+    const f = await seedCardStudio("bind-owner");
     const seti = `seti_${randomUUID().slice(0, 12)}`;
-    await seedProcessedRejection(f.studioId, seti);
+    await seedRejection(seti, {
+      stripeCustomerId: f.cust,
+      stripeAccountId: f.acct,
+      stripeLivemode: LIVEMODE,
+      rejected: "signature_lineage_mismatch",
+    }, { studioId: f.studioId });
+    expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(true);
+  });
 
+  it("B — SAME STUDIO, different client cannot see it even with the exact SetupIntent id", async () => {
+    // THE MISSING CONTROL. A SetupIntent id is not authorization.
+    const a = await seedCardStudio("bind-same-a");
+    const otherClientId = randomUUID();
+    await adminQuery(
+      `insert into public.clients (id, studio_id, name) values ($1,$2,'Same-studio other')`,
+      [otherClientId, a.studioId],
+    );
+    const seti = `seti_${randomUUID().slice(0, 12)}`;
+    await seedRejection(seti, {
+      stripeCustomerId: a.cust,
+      stripeAccountId: a.acct,
+      stripeLivemode: LIVEMODE,
+      rejected: "signature_lineage_mismatch",
+    }, { studioId: a.studioId });
+
+    expect(await rejectedForClient(a.studioId, a.clientId, seti)).toBe(true);
+    expect(await rejectedForClient(a.studioId, otherClientId, seti)).toBe(false);
+  });
+
+  it("C — a different studio cannot see it", async () => {
+    const a = await seedCardStudio("bind-studio-a");
+    const b = await seedCardStudio("bind-studio-b");
+    const seti = `seti_${randomUUID().slice(0, 12)}`;
+    await seedRejection(seti, {
+      stripeCustomerId: a.cust,
+      stripeAccountId: a.acct,
+      stripeLivemode: LIVEMODE,
+      rejected: "signature_lineage_mismatch",
+    }, { studioId: a.studioId });
+    expect(await rejectedForClient(a.studioId, a.clientId, seti)).toBe(true);
+    expect(await rejectedForClient(b.studioId, b.clientId, seti)).toBe(false);
+  });
+
+  it("D — missing_account_context (studio_id NULL) is still visible when the customer binds", async () => {
+    // Deliberate: the event carries no studio, but the customer still resolves
+    // through client_stripe_customers, so ownership IS provable.
+    const f = await seedCardStudio("bind-noacct");
+    const seti = `seti_${randomUUID().slice(0, 12)}`;
+    await seedRejection(seti, {
+      stripeCustomerId: f.cust,
+      stripeAccountId: f.acct,
+      stripeLivemode: LIVEMODE,
+      rejected: "missing_account_context",
+    }, { studioId: null });
+    expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(true);
+  });
+
+  it("E — studio_metadata_mismatch stored under ANOTHER studio still binds by customer", async () => {
+    // stripe_events.studio_id names the account's studio, which may differ from
+    // the portal client's. Binding by customer is what makes this correct.
+    const f = await seedCardStudio("bind-mismatch");
+    const other = await seedCardStudio("bind-mismatch-other");
+    const seti = `seti_${randomUUID().slice(0, 12)}`;
+    await seedRejection(seti, {
+      stripeCustomerId: f.cust,
+      stripeAccountId: f.acct,
+      stripeLivemode: LIVEMODE,
+      rejected: "studio_metadata_mismatch",
+    }, { studioId: other.studioId });
+    expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(true);
+    expect(await rejectedForClient(other.studioId, other.clientId, seti)).toBe(false);
+  });
+
+  it("D/E — an UNATTRIBUTABLE rejection fails closed to not-confirmed, never rejected", async () => {
+    // missing_customer / customer_lineage_mismatch can leave no usable customer.
+    // Nobody may see these as "rejected" — the portal shows not-confirmed.
+    const f = await seedCardStudio("bind-unattributable");
+    const seti = `seti_${randomUUID().slice(0, 12)}`;
+    await seedRejection(seti, {
+      stripeCustomerId: null,
+      stripeAccountId: f.acct,
+      stripeLivemode: LIVEMODE,
+      rejected: "missing_customer",
+    }, { studioId: f.studioId });
+    expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(false);
+  });
+
+  it("F — durable truth is used with NO ops_alerts row present at all", async () => {
+    const f = await seedCardStudio("bind-noalert");
+    const seti = `seti_${randomUUID().slice(0, 12)}`;
+    await seedRejection(seti, {
+      stripeCustomerId: f.cust,
+      stripeAccountId: f.acct,
+      stripeLivemode: LIVEMODE,
+      rejected: "non_card_payment_method",
+    }, { studioId: f.studioId });
     const alerts = await adminQuery(
-      `select id from public.ops_alerts
-        where studio_id = $1 and event = 'card_on_file_setup_rejected'`,
+      `select id from public.ops_alerts where studio_id=$1 and event='card_on_file_setup_rejected'`,
       [f.studioId],
     );
-    expect(alerts.rowCount).toBe(0); // deliberately absent
-    expect(await rejectionVisible(f.studioId, seti)).toBe(true);
+    expect(alerts.rowCount).toBe(0);
+    expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(true);
   });
 
   it("an UNPROCESSED event is not a rejection — Stripe may still retry it", async () => {
-    const f = await seedCardStudio("rej-unprocessed");
+    const f = await seedCardStudio("bind-unprocessed");
     const seti = `seti_${randomUUID().slice(0, 12)}`;
-    await seedProcessedRejection(f.studioId, seti, { processed: false });
-    expect(await rejectionVisible(f.studioId, seti)).toBe(false);
+    await seedRejection(seti, {
+      stripeCustomerId: f.cust,
+      stripeAccountId: f.acct,
+      stripeLivemode: LIVEMODE,
+    }, { studioId: f.studioId, processed: false });
+    expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(false);
   });
 
-  it("a processed NON-terminal event is not a rejection", async () => {
-    const f = await seedCardStudio("rej-nonterminal");
-    const seti = `seti_${randomUUID().slice(0, 12)}`;
-    await seedProcessedRejection(f.studioId, seti, { terminal: false });
-    expect(await rejectionVisible(f.studioId, seti)).toBe(false);
+  it("G — malformed or unknown SetupIntent ids leak nothing", async () => {
+    const f = await seedCardStudio("bind-unknown");
+    expect(await rejectedForClient(f.studioId, f.clientId, "seti_does_not_exist")).toBe(false);
+    expect(await rejectedForClient(f.studioId, f.clientId, "not-a-setup-intent")).toBe(false);
+    expect(await rejectedForClient(f.studioId, f.clientId, "")).toBe(false);
   });
 
-  it("D — a rejection is scoped to its own studio; another studio cannot see it", async () => {
-    const a = await seedCardStudio("rej-scope-a");
-    const b = await seedCardStudio("rej-scope-b");
-    const seti = `seti_${randomUUID().slice(0, 12)}`;
-    await seedProcessedRejection(a.studioId, seti);
-    expect(await rejectionVisible(a.studioId, seti)).toBe(true);
-    // Same SetupIntent id, different studio binding => invisible.
-    expect(await rejectionVisible(b.studioId, seti)).toBe(false);
-  });
-
-  it("D — an unknown or malformed SetupIntent simply reports nothing", async () => {
-    const f = await seedCardStudio("rej-unknown");
-    expect(await rejectionVisible(f.studioId, "seti_does_not_exist")).toBe(false);
-    expect(await rejectionVisible(f.studioId, "not-a-setup-intent")).toBe(false);
-  });
-
-  it("D — the saved lookup is bound to the owning client, not just the SetupIntent", async () => {
-    // The action selects on (studio_id, client_id, stripe_setup_intent_id,
-    // status='active'). A different client in the same studio must not be able
-    // to read someone else's card as their own.
-    const f = await seedCardStudio("rej-owner");
-    const other = await seedCardStudio("rej-other");
+  it("the saved lookup is bound to the owning client, not just the SetupIntent", async () => {
+    const f = await seedCardStudio("bind-saved-owner");
+    const other = await seedCardStudio("bind-saved-other");
     const seti = `seti_${randomUUID().slice(0, 12)}`;
     await saveCard(f, { seti });
-
     const mine = await adminQuery(
       `select id from public.client_payment_methods
         where studio_id=$1 and client_id=$2 and stripe_setup_intent_id=$3 and status='active'`,
       [f.studioId, f.clientId, seti],
     );
     expect(mine.rowCount).toBe(1);
-
     const theirs = await adminQuery(
       `select id from public.client_payment_methods
         where studio_id=$1 and client_id=$2 and stripe_setup_intent_id=$3 and status='active'`,

@@ -250,17 +250,27 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
 // webhook. Until that webhook has committed a row, Hone has NOT saved the
 // card, and the portal must not say that it has.
 //
-// This is the authoritative Hone-side read the browser polls. It is scoped to
-// the caller's own portal session, so a client can only ever ask about their
-// own SetupIntent.
+// This is the authoritative Hone-side read the browser polls. A SetupIntent id
+// is NOT authorization — anyone holding one could otherwise probe its state — so
+// every answer is proved against the caller's own (studio, client):
+//   * SAVED is read from client_payment_methods keyed by studio + client +
+//     SetupIntent;
+//   * REJECTED additionally requires proving, through Hone's own
+//     client_stripe_customers mapping, that the customer named on the durable
+//     rejection event belongs to THIS client.
+// If ownership cannot be proved, the answer is `pending` — never `rejected`.
 //
 // Outcomes:
 //   saved     — an ACTIVE client_payment_methods row exists for this
 //               SetupIntent. This is the only state that may be shown as
 //               "Card saved".
-//   rejected  — the webhook terminally refused the payload. Operator evidence
-//               exists; the client must not be told to just resubmit.
-//   pending   — Stripe accepted but Hone has not committed yet. Keep waiting.
+//   rejected  — the webhook terminally refused the payload AND the rejection is
+//               provably this client's. Never carries the internal reason.
+//   pending   — Stripe accepted but Hone has not committed yet, OR a terminal
+//               rejection exists that cannot be securely attributed to this
+//               client. Both settle as the truthful not-confirmed UX. Operator
+//               visibility via durable stripe_events is unaffected either way —
+//               portal visibility and operator visibility are separate things.
 // ---------------------------------------------------------------------------
 export type ConfirmCardPersistedResult =
   | { ok: true; state: "saved"; last4: string; brand: string }
@@ -310,31 +320,47 @@ export async function confirmCardPersistedAction(
 
   // Not persisted. Distinguish "still finalizing" from "terminally refused".
   //
-  // THE AUTHORITY IS THE DURABLE STRIPE-EVENT STATE, NOT ops_alerts.
+  // AUTHORITY IS THE DURABLE STRIPE-EVENT STATE, NOT ops_alerts.
   // recordOpsAlert always emits its structured log but its ops_alerts INSERT is
   // best-effort ("No retry. A failure to insert is logged and dropped." —
   // lib/ops/alerts.ts). Reading it as the rejection authority created a
-  // split-brain: the webhook could have durably closed the event as a terminal
-  // rejection while the portal kept answering "pending" forever.
-  //
+  // split-brain: the webhook could durably close an event as a terminal
+  // rejection while the portal answered "pending" forever.
   // mark_stripe_event_processed commits the handler's summary onto
-  // stripe_events.payload_summary in the same call that stamps processed_at, so
-  // terminalRejection there is the durable fact. ops_alerts stays what it is: an
-  // operational notification channel, not canonical state.
+  // stripe_events.payload_summary, so terminalRejection there is the durable
+  // fact. ops_alerts stays an operational notification channel.
   //
-  // Bound by studio_id AND this session's own SetupIntent, so one portal client
-  // can never probe another studio's or client's event state. Server-side admin
-  // authority only — no browser SELECT on stripe_events is granted.
-  const { data: rejection, error: rejectionErr } = await admin
+  // CLIENT BINDING — why this is not scoped by studio_id alone.
+  // stripe_events.studio_id is derived from the connected account, so it is
+  // NULL for a missing_account_context rejection and can name a DIFFERENT
+  // studio than the portal client's for a studio_metadata_mismatch. Scoping the
+  // lookup by session.studioId alone therefore both MISSED real rejections and,
+  // worse, let any same-studio client ask about any SetupIntent id — a
+  // cross-client status oracle. SetupIntent ids are not authorization.
+  //
+  // The binding used instead is Hone's OWN provisioning table.
+  // client_stripe_customers is UNIQUE on
+  // (stripe_account_id, stripe_livemode, stripe_customer_id), so a Stripe
+  // customer resolves to exactly one (studio_id, client_id). We ask the
+  // narrow question "does THIS session's client own the customer named on that
+  // rejection event?" — never "who does this event belong to?". The event's own
+  // metadata is not trusted for authorization; Stripe signing the envelope says
+  // nothing about who authored the metadata inside it.
+  //
+  // FAIL CLOSED. If the rejection carries no usable customer, or the customer
+  // does not resolve to this client, the caller gets "pending" and the portal
+  // shows the truthful not-confirmed / contact-the-studio state. A rare
+  // unbindable rejection showing as not-confirmed is strictly better than a
+  // cross-client oracle. Operator visibility is unaffected — the durable
+  // stripe_events row and the ops alert exist regardless of portal visibility.
+  const { data: rejections, error: rejectionErr } = await admin
     .from("stripe_events")
-    .select("id")
-    .eq("studio_id", session.studioId)
+    .select("id, payload_summary")
     .eq("event_type", "setup_intent.succeeded")
     .not("processed_at", "is", null)
     .eq("payload_summary->>setupIntentId", setupIntentId)
     .eq("payload_summary->>terminalRejection", "true")
-    .limit(1)
-    .maybeSingle();
+    .limit(5);
   if (rejectionErr) {
     console.error(
       JSON.stringify({
@@ -347,9 +373,45 @@ export async function confirmCardPersistedAction(
     // A failed lookup is NOT evidence of rejection. Stay pending.
     return { ok: true, state: "pending" };
   }
-  // Deliberately returns no reason: the internal rejection code is operator
-  // information and must not reach the browser.
-  if (rejection) return { ok: true, state: "rejected" };
+
+  for (const row of rejections ?? []) {
+    const summary = (row.payload_summary ?? {}) as Record<string, unknown>;
+    const customerId = summary.stripeCustomerId;
+    const accountId = summary.stripeAccountId;
+    const livemode = summary.stripeLivemode;
+    if (
+      typeof customerId !== "string" ||
+      customerId.length === 0 ||
+      typeof accountId !== "string" ||
+      accountId.length === 0 ||
+      typeof livemode !== "boolean"
+    ) {
+      // Not attributable to any client. Deliberately settles as pending.
+      continue;
+    }
+    const { data: owner, error: ownerErr } = await admin
+      .from("client_stripe_customers")
+      .select("client_id")
+      .eq("stripe_account_id", accountId)
+      .eq("stripe_livemode", livemode)
+      .eq("stripe_customer_id", customerId)
+      .eq("studio_id", session.studioId)
+      .eq("client_id", session.clientId)
+      .maybeSingle();
+    if (ownerErr) {
+      console.error(
+        JSON.stringify({
+          event: "card_persist_rejection_binding_failed",
+          code: ownerErr.code,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      continue; // cannot prove ownership -> not a rejection for this caller
+    }
+    // Deliberately returns no reason: the internal rejection code is operator
+    // information and must not reach the browser.
+    if (owner) return { ok: true, state: "rejected" };
+  }
 
   return { ok: true, state: "pending" };
 }

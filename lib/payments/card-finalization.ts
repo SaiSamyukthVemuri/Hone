@@ -15,11 +15,16 @@
 //
 // THREE independent bounds, because an attempt count is not a wall-clock
 // ceiling — each confirmation request can take arbitrary network time:
-//   * deadlineMs        — overall wall clock, checked before every attempt;
-//   * attemptTimeoutMs  — per request, so one hung read cannot pin the caller
-//                         in "finalizing" forever;
+//   * deadlineMs        — a HARD overall wall clock. Every per-attempt budget
+//                         and every inter-attempt pause is clamped to the time
+//                         actually remaining, so the caller settles by the
+//                         deadline rather than overshooting it by the last
+//                         attempt's full timeout;
+//   * attemptTimeoutMs  — per request ceiling, so one hung read cannot pin the
+//                         caller in "finalizing" forever;
 //   * attempts          — request budget.
-// Whichever binds first ends the window, truthfully, as "pending".
+// Whichever binds first ends the window, truthfully, as "pending". The only
+// slack is ordinary event-loop scheduling jitter.
 
 export type CardConfirmState = "saved" | "rejected" | "pending";
 
@@ -44,7 +49,12 @@ export type PollOptions = {
   deadlineMs?: number;
   /** Injected for tests; defaults to real time. */
   now?: () => number;
-  sleep?: (ms: number) => Promise<void>;
+  /**
+   * Schedules `fire` after `ms` and returns a cancel handle. Injected so tests
+   * can distinguish SCHEDULING a timeout from the timeout actually FIRING — a
+   * fake clock that advanced on scheduling would mismodel every fast path.
+   */
+  setTimer?: (ms: number, fire: () => void) => () => void;
   /** Stops the loop when the caller has unmounted. */
   isCancelled?: () => boolean;
 };
@@ -57,13 +67,30 @@ export type PollOutcome = {
   deadlineReached: boolean;
 };
 
-/** Resolves to "timeout" rather than hanging if a read outlives its budget. */
+/**
+ * Resolves to "timeout" rather than hanging if a read outlives its budget.
+ *
+ * The timer is CLEARED as soon as the read settles. The previous version raced
+ * against `sleep(ms)`, which meant a fast confirmation still left a live timer
+ * behind — and, in a fake-clock test, still advanced time by the full unused
+ * budget. `setTimer` returns a cancel handle so the loser is torn down.
+ */
 async function withTimeout<T>(
-  p: Promise<T>,
+  work: Promise<T>,
   ms: number,
-  sleep: (ms: number) => Promise<void>,
+  setTimer: (ms: number, fire: () => void) => () => void,
 ): Promise<T | "timeout"> {
-  return (await Promise.race([p, sleep(ms).then(() => "timeout" as const)])) as T | "timeout";
+  let cancel: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<"timeout">((resolve) => {
+        cancel = setTimer(ms, () => resolve("timeout"));
+      }),
+    ]);
+  } finally {
+    cancel?.();
+  }
 }
 
 /**
@@ -82,21 +109,34 @@ export async function pollForCardPersistence(opts: PollOptions): Promise<PollOut
     attemptTimeoutMs = CONFIRM_ATTEMPT_TIMEOUT_MS,
     deadlineMs = CONFIRM_DEADLINE_MS,
     now = () => Date.now(),
-    sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+    setTimer = (ms: number, fire: () => void) => {
+      const id = setTimeout(fire, ms);
+      return () => clearTimeout(id);
+    },
     isCancelled = () => false,
   } = opts;
 
   const deadline = now() + deadlineMs;
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => {
+      setTimer(ms, resolve);
+    });
+  /** Time left before the hard deadline; never negative. */
+  const remaining = () => Math.max(0, deadline - now());
   let attemptsMade = 0;
 
   for (let i = 0; i < attempts; i++) {
     if (isCancelled()) return { outcome: "pending", attemptsMade, deadlineReached: false };
-    if (now() >= deadline) {
+    if (remaining() <= 0) {
       return { outcome: "pending", attemptsMade, deadlineReached: true };
     }
 
     attemptsMade++;
-    const res = await withTimeout(confirm(setupIntentId), attemptTimeoutMs, sleep);
+    // THE DEADLINE IS HARD. An attempt may never be given more time than the
+    // window has left, or the last attempt alone could overshoot by its full
+    // per-attempt budget.
+    const budget = Math.min(attemptTimeoutMs, remaining());
+    const res = await withTimeout(confirm(setupIntentId), budget, setTimer);
     if (isCancelled()) return { outcome: "pending", attemptsMade, deadlineReached: false };
 
     if (res !== "timeout" && res.ok && res.state === "saved") {
@@ -108,11 +148,14 @@ export async function pollForCardPersistence(opts: PollOptions): Promise<PollOut
     // A timeout, a transient read failure, or a genuine "not yet" are all
     // "keep waiting". None of them may be reported as saved.
 
-    if (now() >= deadline) {
+    const left = remaining();
+    if (left <= 0) {
       return { outcome: "pending", attemptsMade, deadlineReached: true };
     }
-    await sleep(intervalMs);
+    // The inter-attempt pause is capped the same way, so waiting between reads
+    // cannot push past the deadline either.
+    await sleep(Math.min(intervalMs, left));
   }
 
-  return { outcome: "pending", attemptsMade, deadlineReached: now() >= deadline };
+  return { outcome: "pending", attemptsMade, deadlineReached: remaining() <= 0 };
 }
