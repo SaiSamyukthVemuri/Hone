@@ -483,17 +483,71 @@ describe("0179 — validation precedes superseded-constraint cleanup", () => {
   });
 });
 
-describe("0179 — locking claims are precise, not marketing", () => {
-  it("does not claim NOT VALID avoids scanning under ACCESS EXCLUSIVE", () => {
-    // The previous header made exactly that claim, which was untrue for the
-    // old drop-then-add ordering.
+// ---------------------------------------------------------------------------
+// DEPLOYMENT-SAFETY TRUTH.
+//
+// 0179 is deliberately ONE transaction, which is what makes it all-or-nothing.
+// The cost of that is real and must be stated: ADD FOREIGN KEY takes SHARE ROW
+// EXCLUSIVE on the referencing table and on practitioners, and Postgres holds
+// it until COMMIT. SHARE ROW EXCLUSIVE conflicts with the ROW EXCLUSIVE lock
+// ordinary INSERT/UPDATE/DELETE take, so writes to a touched table are blocked
+// from that table's ADD onward — including throughout validation. VALIDATE's
+// own weaker lock does NOT release the locks already held.
+//
+// Verified locally against PostgreSQL 17: with an ADD-FK transaction held open
+// on public.clients, a concurrent UPDATE failed with 55P03 (canceling statement
+// due to lock timeout) while a plain SELECT returned normally.
+//
+// An earlier revision of this header claimed VALIDATE "allows concurrent reads
+// and writes". That is false inside this transaction. These assertions keep the
+// documentation honest.
+// ---------------------------------------------------------------------------
+describe("0179 — deployment-safety claims are truthful", () => {
+  it("never claims validation runs concurrently with writes", () => {
+    // The specific retracted wording, and any close variant, must not return.
+    expect(SQL).not.toMatch(/allows concurrent reads and writes/i);
+    expect(SQL).not.toMatch(/concurrently with writes/i);
+    expect(SQL).not.toMatch(/zero[- ]downtime/i);
     expect(SQL).not.toMatch(/no table is scanned while an\s*--?\s*ACCESS EXCLUSIVE lock is held/);
-    expect(SQL).toMatch(/NOT VALID skips the INITIAL historical scan/);
   });
 
-  it("states plainly that it is not lock-free and still needs a preflight", () => {
-    expect(SQL).toMatch(/does not make 0179 lock-free/);
-    expect(SQL).toMatch(/bounded read-only preflight/);
+  it("states that ADD FOREIGN KEY locks are held until COMMIT", () => {
+    expect(SQL).toMatch(/SHARE ROW EXCLUSIVE/);
+    expect(SQL).toMatch(/remain held until COMMIT/i);
+  });
+
+  it("states that ordinary writes are blocked during ADD and VALIDATE", () => {
+    expect(SQL).toMatch(/ordinary writes to a table are\s*--?\s*BLOCKED/i);
+    expect(SQL).toMatch(/writes to touched tables stay blocked/i);
+    // And that VALIDATE's weaker lock does not undo that.
+    expect(SQL).toMatch(/does NOT release them/i);
+  });
+
+  it("states that plain reads survive until the cleanup tail", () => {
+    expect(SQL).toMatch(/Plain reads still work/i);
+    expect(SQL).toMatch(/only\s*--?\s*phase that can also block plain READS/i);
+  });
+
+  it("requires a controlled write-quiescent production rollout", () => {
+    expect(SQL).toMatch(/WRITE-QUIESCENT/);
+    expect(SQL).toMatch(/read-only preflight/i);
+    expect(SQL).toMatch(/not an ordinary\s*--?\s*mid-traffic apply/i);
+  });
+
+  it("describes lock_timeout accurately and adds no statement_timeout", () => {
+    // lock_timeout bounds WAITING to acquire, nothing else.
+    expect(SQL).toMatch(/bounds how long each statement will WAIT TO ACQUIRE/);
+    expect(SQL).toMatch(/does NOT cap the validation scan duration/);
+    expect(EXEC).toMatch(/set local lock_timeout = '5s';/);
+    expect(EXEC).not.toMatch(/statement_timeout/i);
+  });
+
+  it("records the production apply preflight without performing it", () => {
+    expect(SQL).toMatch(/PRODUCTION APPLY PREFLIGHT/);
+    expect(SQL).toMatch(/read-only historical cross-studio violation census/i);
+    expect(SQL).toMatch(/active\/long-running transactions/i);
+    // Recorded as documentation only — no executable statement may reach out.
+    expect(EXEC).not.toMatch(/dblink|postgres_fdw|copy\s+.*from\s+program/i);
   });
 });
 

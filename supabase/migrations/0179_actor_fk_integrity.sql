@@ -75,17 +75,59 @@
 -- Doing the validation first and confining the drops to a short catalog-only
 -- tail keeps those scans out of that window.
 --
--- Precisely what is and is not claimed:
---   * NOT VALID skips the INITIAL historical scan at ADD time. It does not make
---     ADD FOREIGN KEY lock-free — that statement still takes its own locks on
---     both the referencing and referenced table.
---   * VALIDATE CONSTRAINT takes a weaker lock than ALTER TABLE's default and
---     allows concurrent reads and writes, but it does scan the table.
---   * DROP CONSTRAINT has no weaker-lock exception; those drops are the
---     strongest part of this migration and are pushed to the final tail.
---   * This reduces the lock footprint. It does not make 0179 lock-free, and it
---     is not a substitute for a bounded read-only preflight and a controlled
---     rollout at production apply time.
+-- WHAT THIS MIGRATION ACTUALLY DOES TO CONCURRENT TRAFFIC.
+--
+-- VALIDATE CONSTRAINT itself requests a weaker lock than ADD/DROP. However,
+-- because 0179 is intentionally ONE transaction, the SHARE ROW EXCLUSIVE locks
+-- acquired by the preceding ADD FOREIGN KEY statements remain held until COMMIT.
+-- SHARE ROW EXCLUSIVE conflicts with the ROW EXCLUSIVE lock that ordinary
+-- INSERT / UPDATE / DELETE take. So:
+--
+--   sections 1–4 (ADD)     Each ADD FOREIGN KEY takes SHARE ROW EXCLUSIVE on the
+--                          referencing table AND on practitioners, held to COMMIT.
+--                          Plain reads still work. Ordinary writes to a table are
+--                          BLOCKED from the moment that table's ADD succeeds.
+--   section 5 (VALIDATE)   The scans run while those ADD locks are still held.
+--                          Reads still work; writes to touched tables stay blocked.
+--                          VALIDATE's own weaker lock does NOT release them.
+--   section 6 (DROP)       Stronger catalog locks. This short tail is the only
+--                          phase that can also block plain READS.
+--   COMMIT                 All locks release.
+--
+-- Do NOT read this as validation running alongside ordinary writes. It does
+-- not, inside this transaction. What the ADD -> VALIDATE -> DROP ordering buys
+-- is that the read-blocking DROP locks are no longer held across the validation
+-- scans. That is a real improvement in blast radius, and nothing more than that:
+-- it is not a claim of uninterrupted availability.
+--
+-- NOT VALID skips only the INITIAL historical scan at ADD time. It does not make
+-- ADD FOREIGN KEY lock-free.
+--
+-- Applying this in production therefore requires a bounded, short
+-- WRITE-QUIESCENT window, after a read-only preflight — not an ordinary
+-- mid-traffic apply.
+--
+-- lock_timeout = '5s' below bounds how long each statement will WAIT TO ACQUIRE
+-- a lock. It does NOT cap the validation scan duration, the total transaction
+-- duration, or how long an already-acquired lock stays held. No statement_timeout
+-- is introduced here; that would be a change to existing project doctrine.
+--
+-- ---------------------------------------------------------------------------
+-- PRODUCTION APPLY PREFLIGHT (recorded here for the later apply authorization —
+-- NOT performed by this migration and NOT performed while authoring it)
+-- ---------------------------------------------------------------------------
+--   1. confirm the exact production SHA and migration state;
+--   2. read-only historical cross-studio violation census for all 39 relationships;
+--   3. bounded row counts for every touched table, so validation duration is
+--      understood before the transaction is opened;
+--   4. check for active/long-running transactions that would prevent lock
+--      acquisition within lock_timeout;
+--   5. establish a short write-quiescent application window;
+--   6. exact dry run;
+--   7. apply;
+--   8. verify 39/39 validated and the final 58 composite / 9 simple / 0 NOT VALID
+--      catalog;
+--   9. restore ordinary traffic immediately.
 --
 -- During section 5 the old simple FK and the new composite FK coexist on the
 -- same column. That is intentional and temporary — it lives only inside this
