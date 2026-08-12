@@ -41,6 +41,10 @@ export type CreateCardSetupIntentResult =
   | {
       ok: true;
       clientSecret: string;
+      // Returned so the browser can ask Hone whether IT has persisted the
+      // card yet. The client_secret already embeds this id, so exposing it
+      // leaks nothing new.
+      setupIntentId: string;
       // The publishable key the portal page already knows about, so
       // the browser can mount Elements with the correct connected-
       // account context.
@@ -231,6 +235,92 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
   return {
     ok: true,
     clientSecret: setup.clientSecret,
+    setupIntentId: setup.setupIntentId,
     stripeAccountId: settings.stripe_account_id as string,
   };
+}
+
+// ---------------------------------------------------------------------------
+// confirmCardPersistedAction
+// ---------------------------------------------------------------------------
+// STRIPE ACCEPTED != HONE CARD SAVED.
+//
+// Stripe's confirmSetup resolving only means the provider accepted the card.
+// Hone records the card asynchronously, from the setup_intent.succeeded
+// webhook. Until that webhook has committed a row, Hone has NOT saved the
+// card, and the portal must not say that it has.
+//
+// This is the authoritative Hone-side read the browser polls. It is scoped to
+// the caller's own portal session, so a client can only ever ask about their
+// own SetupIntent.
+//
+// Outcomes:
+//   saved     — an ACTIVE client_payment_methods row exists for this
+//               SetupIntent. This is the only state that may be shown as
+//               "Card saved".
+//   rejected  — the webhook terminally refused the payload. Operator evidence
+//               exists; the client must not be told to just resubmit.
+//   pending   — Stripe accepted but Hone has not committed yet. Keep waiting.
+// ---------------------------------------------------------------------------
+export type ConfirmCardPersistedResult =
+  | { ok: true; state: "saved"; last4: string; brand: string }
+  | { ok: true; state: "rejected" }
+  | { ok: true; state: "pending" }
+  | { ok: false; error: string };
+
+export async function confirmCardPersistedAction(
+  setupIntentId: string,
+): Promise<ConfirmCardPersistedResult> {
+  const session = await getCurrentPortalSession();
+  if (!session) return { ok: false, error: ERR_SESSION_EXPIRED };
+  if (typeof setupIntentId !== "string" || !setupIntentId.startsWith("seti_")) {
+    return { ok: false, error: ERR_TRY_AGAIN };
+  }
+
+  const admin = createAdminClient();
+
+  // The authoritative Hone record, scoped to this session's own client.
+  const { data: card, error: cardErr } = await admin
+    .from("client_payment_methods")
+    .select("id, brand, last4")
+    .eq("studio_id", session.studioId)
+    .eq("client_id", session.clientId)
+    .eq("stripe_setup_intent_id", setupIntentId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (cardErr) {
+    console.error(
+      JSON.stringify({
+        event: "card_persist_confirm_lookup_failed",
+        code: cardErr.code,
+        message: cardErr.message,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: ERR_TRY_AGAIN };
+  }
+  if (card) {
+    return {
+      ok: true,
+      state: "saved",
+      brand: card.brand as string,
+      last4: card.last4 as string,
+    };
+  }
+
+  // Not persisted. Distinguish "still finalizing" from "terminally refused" so
+  // the client is never left polling forever against a payload Hone will never
+  // admit. The rejection alert is written by the webhook's
+  // terminalCardRejection helper.
+  const { data: rejection } = await admin
+    .from("ops_alerts")
+    .select("id")
+    .eq("studio_id", session.studioId)
+    .eq("event", "card_on_file_setup_rejected")
+    .eq("safe_details->>setup_intent_id", setupIntentId)
+    .limit(1)
+    .maybeSingle();
+  if (rejection) return { ok: true, state: "rejected" };
+
+  return { ok: true, state: "pending" };
 }
