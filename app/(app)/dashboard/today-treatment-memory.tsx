@@ -101,7 +101,17 @@ export function TodayTreatmentMemory({
             data-testid="today-memory-full"
             className="rounded-md border border-neutral-200 p-3 dark:border-neutral-800"
           >
-            <AppointmentPrepMemoryCard clientId={clientId} memory={memory} embedded />
+            {/* showFullChartLink={false} is the Dashboard half of the
+                stay-inline contract. Expanding a Today row is a READ; the
+                disclosure must not contain a control that leaves /dashboard.
+                The full chart is still one tap away from the row's own
+                resolved action button, outside this region. */}
+            <AppointmentPrepMemoryCard
+              clientId={clientId}
+              memory={memory}
+              embedded
+              showFullChartLink={false}
+            />
           </div>
         )}
       </div>

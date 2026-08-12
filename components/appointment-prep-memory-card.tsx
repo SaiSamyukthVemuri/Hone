@@ -130,10 +130,27 @@ export function AppointmentPrepMemoryCard({
   // presentation is how two surfaces start disagreeing about what a treatment
   // looked like.
   embedded = false,
+  // MAY THIS PRESENTATION NAVIGATE AWAY? An explicit capability, deliberately
+  // NOT derived from `embedded`.
+  //
+  // `embedded` is a LAYOUT fact (heading rank + chrome). Whether a surface is
+  // allowed to offer a link that leaves it is a PRODUCT fact, and the two are
+  // not the same question — inferring one from the other is how a styling flag
+  // quietly acquires navigation policy.
+  //
+  // On the appointment-preparation screen the full-chart link is the point:
+  // she is already on a page about this appointment and wants the prior chart.
+  // Inside the Dashboard Today disclosure it is a trap: she expanded a row to
+  // READ something, and the only controls in reach must not throw her off the
+  // worklist. The Dashboard therefore passes `false`; every other caller keeps
+  // the link. Reaching the full chart from Today is still one tap — the row's
+  // own resolved action button, outside the disclosure, does exactly that.
+  showFullChartLink = true,
 }: {
   clientId: string;
   memory: AppointmentPrepMemory;
   embedded?: boolean;
+  showFullChartLink?: boolean;
 }) {
   const fullChartHref = `/clients/${clientId}/sessions/${memory.sessionId}`;
   // A prior visit can be genuinely charted and still carry no settings blocks —
@@ -165,13 +182,15 @@ export function AppointmentPrepMemoryCard({
               Last treatment
             </h2>
           )}
-          <Link
-            href={fullChartHref}
-            data-testid="prep-full-chart-link"
-            className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-          >
-            Open full chart →
-          </Link>
+          {showFullChartLink && (
+            <Link
+              href={fullChartHref}
+              data-testid="prep-full-chart-link"
+              className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+            >
+              Open full chart →
+            </Link>
+          )}
         </div>
         <p className="text-sm text-neutral-700 dark:text-neutral-300">
           {/* A session's started_at is a real instant, so it follows the
@@ -222,14 +241,24 @@ export function AppointmentPrepMemoryCard({
             {memory.blocklessNote
               ?? "This previous visit has no charted treatment areas. Open the full chart to review what was recorded."}
           </p>
-          <p className="mt-2 text-xs">
-            <Link
-              href={fullChartHref}
-              className="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-            >
-              Open full chart →
-            </Link>
-          </p>
+          {/* The SECOND full-chart affordance, and it obeys the same
+              capability. The blockless COPY above is shared with the charting
+              card and the /sessions/new panel (and is source-pinned there), so
+              it is never rewritten per surface — it keeps saying that the full
+              chart is where the rest lives. On a surface that may not navigate,
+              that sentence is guidance and the row's own action button is the
+              control; leaving the link here would reintroduce exactly the
+              off-Dashboard jump the capability exists to prevent. */}
+          {showFullChartLink && (
+            <p className="mt-2 text-xs">
+              <Link
+                href={fullChartHref}
+                className="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+              >
+                Open full chart →
+              </Link>
+            </p>
+          )}
         </div>
       )}
 

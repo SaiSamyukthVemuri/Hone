@@ -50,11 +50,20 @@ export const BROWSER_GROUPS = {
       "finish-appointment-mobile.spec.ts",
       "combined-today-workflow.spec.ts",
       "dashboard-memory-visibility.spec.ts",
+      // Chloe D1: the Today treatment-memory disclosure must EXPAND without
+      // navigating (it used to sit inside the row-body link and push a route),
+      // while the standalone appointment-prep card keeps its full-chart link.
+      // Also carries the D2/D3/D4 "this is no longer on the Dashboard" proofs.
+      "dashboard-treatment-memory-inline.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be
       // missing, and the multi-area treatment-time attribution.
       "point-of-care-memory.spec.ts",
+      // Repeat-client fast charting: "Start from last session" copies the
+      // reusable setup and lands the practitioner in TODAY'S editor in one tap,
+      // without manufacturing today's clinical outcome.
+      "repeat-client-fast-charting.spec.ts",
     ],
   },
   intake: {

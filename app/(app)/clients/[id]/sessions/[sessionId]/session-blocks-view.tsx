@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FAST_CHART_PARAM } from "@/lib/sessions/fast-chart-start";
 import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
 import type { ProbeLotOption } from "@/lib/record-keeping/probe-lot-inventory";
 import type {
@@ -100,6 +101,12 @@ type Props = {
   // studio's session blocks, auto-populated per selected probe (never auto-confirmed).
   probeLotSuggestions?: ProbeLotSuggestions;
   probeLotInventory?: ProbeLotOption[];
+  // Repeat-client fast charting: the treatment area to open in TODAY'S editor
+  // straight away, resolved SERVER-side against the live blocks below. Set only
+  // after "Start from last session" has copied the reusable setup forward, so
+  // the practitioner edits today's facts without closing a panel, scrolling
+  // back down and reopening the area she just created.
+  autoEditBlockId?: string | null;
 };
 
 export function SessionBlocksView({
@@ -112,6 +119,7 @@ export function SessionBlocksView({
   defaultMachineFrequency = null,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
+  autoEditBlockId = null,
 }: Props) {
   // Charting-usability polish (Chloe): the long settings form no longer
   // auto-renders. A session with zero saved blocks starts on a COMPACT "Add
@@ -120,6 +128,20 @@ export function SessionBlocksView({
   // block is written only when the practitioner saves (existing create action).
   const [adding, setAdding] = useState(false);
   const previousBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+
+  // The fast-start param is a ONE-SHOT instruction ("open the editor for the
+  // area I just created"), not durable page state. Consume it here with a
+  // shallow history rewrite — no router navigation, no server refetch, no extra
+  // history entry — so reloading this URL later does not silently reopen an
+  // editor. The editor is already open by then: BlockSection seeds its own
+  // `editing` state from the prop at mount, so clearing the URL cannot close it.
+  useEffect(() => {
+    if (!autoEditBlockId || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(FAST_CHART_PARAM)) return;
+    url.searchParams.delete(FAST_CHART_PARAM);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [autoEditBlockId]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -132,6 +154,7 @@ export function SessionBlocksView({
           clientTagLabels={clientTagLabels}
           probeLotSuggestions={probeLotSuggestions}
           probeLotInventory={probeLotInventory}
+          autoEdit={block.id === autoEditBlockId}
         />
       ))}
 
@@ -196,6 +219,7 @@ function BlockSection({
   clientTagLabels,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
+  autoEdit = false,
 }: {
   block: SessionBlockWithEntries;
   sessionId: string;
@@ -203,8 +227,24 @@ function BlockSection({
   clientTagLabels: ReadonlyArray<string>;
   probeLotSuggestions?: ProbeLotSuggestions;
   probeLotInventory?: ProbeLotOption[];
+  // True for the area a just-completed "Start from last session" created. Seeds
+  // the INITIAL editing state only: once mounted this section owns its own open/
+  // closed state exactly as before, so saving (which calls onCancel) closes it
+  // and a later refresh cannot force it back open.
+  autoEdit?: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(autoEdit);
+  const sectionRef = useRef<HTMLElement | null>(null);
+
+  // Bring the auto-opened area into view. The copy panel that sat above it has
+  // just been replaced by the copied areas, so without this the practitioner
+  // would land mid-page and still have to scroll — the exact step this feature
+  // removes. Mount-only: it never fights a scroll position she chose herself.
+  useEffect(() => {
+    if (!autoEdit) return;
+    sectionRef.current?.scrollIntoView({ block: "start" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Extra passes are optional and collapsed by default — the first reading
   // is captured on the one-page treatment-area form, so this is only for
   // additional passes on the same area.
@@ -277,7 +317,13 @@ function BlockSection({
   const flat = Boolean(block.primary_area && block.primary_area.trim().length > 0);
 
   return (
-    <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+    <section
+      ref={sectionRef}
+      id={`area-${block.id}`}
+      data-testid={`area-section-${block.id}`}
+      data-editing={editing ? "true" : "false"}
+      className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950"
+    >
       {editing ? (
         <BlockSetupForm
           sessionId={sessionId}

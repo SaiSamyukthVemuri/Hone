@@ -1,30 +1,44 @@
 import Link from "next/link";
-import { BookingLinkCard } from "../settings/booking/BookingLinkCard";
 import type { BookingReadiness, ReadinessItem } from "@/lib/booking/readiness";
 
-// Owner-only dashboard surface that doubles as:
-//   - publish-readiness checklist (derived; no schema)
-//   - "your booking link" (copy + open + paste-it-where helper)
+// Owner-only dashboard surface: the publish-readiness checklist for a booking
+// page that is NOT yet ready (derived; no schema flag).
 //
-// Ready state: compact "Booking page ready" header + the existing
-// BookingLinkCard (inline variant) + "Open booking page" link + helper text.
-// Not-ready state: "Set up your booking page" header + every missing
-// required item, each linked to the right settings tab. The link itself
-// is intentionally hidden when not ready so owners don't share a URL that
-// would render the public soft-gate.
+// CHLOE D2 — it renders only while there is setup left to do.
+// ---------------------------------------------------------------------------
+// This card used to have two states. The "ready" state was a permanent
+// congratulation — "Booking page ready" / "Your public booking page is live",
+// the booking link, an Open-booking-page button, and a column of green ticks —
+// that sat on the Dashboard forever once an established studio had finished
+// setting up. It was no longer operational work, and it was the single biggest
+// block of finished-setup clutter on the page.
+//
+// So the ready state is GONE, not merely hidden by the caller: `readiness.status
+// === "ready"` renders null. Keeping the decision in the component means a
+// future caller cannot reintroduce the banner by forgetting a guard, and there
+// is no unreachable branch left behind to rot.
+//
+// Nothing was removed from the product. Readiness itself is unchanged
+// (lib/booking/readiness.ts is untouched), the public booking page is
+// soft-gated independently, and the booking LINK — copy, open, paste-it-where
+// — still lives on its own pages, which is where an established studio goes
+// looking for it:
+//   * /settings/booking      (BookingLinkCard, variant="card")
+//   * /settings/availability (BookingLinkCard, inline)
+//
+// Not-ready state is deliberately unchanged: the same header, the same full
+// checklist including the items already satisfied, and the same per-item links
+// into the right settings tab.
 
 type Props = {
   readiness: BookingReadiness;
-  studioSlug: string | null | undefined;
-  appOrigin: string;
 };
 
-export function BookingSetupCard({ readiness, studioSlug, appOrigin }: Props) {
-  const isReady = readiness.status === "ready";
-  const slug =
-    typeof studioSlug === "string" && studioSlug.length > 0
-      ? studioSlug
-      : null;
+export function BookingSetupCard({ readiness }: Props) {
+  // Derived readiness is the ONLY authority. `status === "ready"` already means
+  // "every REQUIRED item is satisfied"; informational items (public location)
+  // are `required: false` by design and never hold a studio in setup.
+  if (readiness.status === "ready") return null;
 
   return (
     <section
@@ -32,45 +46,14 @@ export function BookingSetupCard({ readiness, studioSlug, appOrigin }: Props) {
       className="flex flex-col gap-5 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
     >
       <header className="flex flex-col gap-1">
-        <h2
-          id="booking-setup-heading"
-          className="text-lg font-medium"
-        >
-          {isReady ? "Booking page ready" : "Set up your booking page"}
+        <h2 id="booking-setup-heading" className="text-lg font-medium">
+          Set up your booking page
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {isReady
-            ? "Your public booking page is live. Share the link wherever your clients find you."
-            : "A few things are still needed before your booking page can accept appointments."}
+          A few things are still needed before your booking page can accept
+          appointments.
         </p>
       </header>
-
-      {isReady && slug && (
-        <div className="flex flex-col gap-3">
-          <BookingLinkCard
-            slug={slug}
-            origin={appOrigin}
-            variant="inline"
-          />
-          <div className="flex flex-wrap items-center gap-3">
-            <a
-              href={readiness.publicBookingUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              Open booking page
-            </a>
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">
-              Opens the same page your clients see.
-            </span>
-          </div>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400">
-            Add this link to your website, Instagram bio, Google Business
-            profile, or email signature.
-          </p>
-        </div>
-      )}
 
       <Checklist items={readiness.items} />
     </section>
