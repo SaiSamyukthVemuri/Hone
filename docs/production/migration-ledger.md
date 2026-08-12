@@ -1146,6 +1146,7 @@ a terminal state**.
   **165 → 165**, treatment_images **3 → 3**, client_clinical_notes **21 → 21**. FK DDL only — and
   **zero attribution backfill**: every populated actor value already carried authoritative evidence,
   and no NULL could be reconstructed without inference the backfill rule forbids.
+  **NO WILLOW MUTATION. NO SYNTHETIC TWIN MUTATION.**
 - **No maintenance mechanism exists in Hone and none was invented.** The apply used the quiet window
   plus the migration's own `set local lock_timeout = '5s'`. Public health after the apply:
   `hone.care /` and `/login` both **200**. Applied bytes rehashed after the apply and **unchanged**.
