@@ -11,14 +11,18 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // never touch, and that it mutates no business row.
 //
 // ---------------------------------------------------------------------------
-// WHEN A SUCCESSOR IS AUTHORED (0180+), THIS BLOCK GOES RED ON PURPOSE.
-// The fix is NOT to delete the assertions. Per CLAUDE.md §2 only the CURRENT
-// repository maximum carries the current-state tripwire, so:
-//   * convert "is the current repository maximum" to "is no longer the
-//     repository maximum" plus versionsAbove(...).toContain("0180");
-//   * keep countVersion("0179") === 1 — that claim is permanent;
-//   * let 0180's own test become the single current-state tripwire.
-// Do NOT weaken this block and leave two owners of current state.
+// WHEN A SUCCESSOR IS AUTHORED (0180+), ONLY THE CURRENT-STATE BLOCK GOES RED.
+// The fix is NOT to delete assertions. This file separates two owners:
+//   * PERMANENT 0179 apply facts read the FROZEN 0179 ledger entry and the
+//     FROZEN migration bytes — leave them completely untouched forever;
+//   * CURRENT-STATE claims read migration-state.json and the ledger's Current
+//     block — convert "is the current repository maximum" to "is no longer the
+//     repository maximum" plus versionsAbove(...).toContain("0180"), keep
+//     countVersion("0179") === 1, and let 0180's own test become the single
+//     current-state tripwire (CLAUDE.md §2).
+// NEVER point a permanent 0179 assertion at migration-state.json.hosted_note —
+// that field is CURRENT STATE and will describe 0180. The full hand-off list is
+// in the block comment above the current-state describe.
 // ---------------------------------------------------------------------------
 
 const FILE = "supabase/migrations/0179_actor_fk_integrity.sql";
@@ -47,18 +51,187 @@ describe("0179 — migration state", () => {
   });
 });
 
-describe("0179 — production truth: PENDING", () => {
-  const rec = JSON.parse(
-    readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
-  );
+// ---------------------------------------------------------------------------
+// TWO OWNERS, DELIBERATELY SEPARATED.
+//
+//   PERMANENT 0179 apply facts  -> the FROZEN 0179 ledger entry + the FROZEN
+//                                  migration bytes. These never move.
+//   CURRENT-STATE claims        -> docs/production/migration-state.json and the
+//                                  ledger's Current block. These hand forward.
+//
+// WHY: `migration-state.json`'s `hosted_note` is a CURRENT-STATE field. When
+// 0180 applies, it will describe 0180. An earlier revision of this file read
+// 0179's permanent apply facts from it — the exact defect this same PR fixed
+// for 0178, where one such assertion was passing only by coincidence of a
+// successor's wording. Permanent evidence must never read a moving field.
+// ---------------------------------------------------------------------------
 
-  it("is authored but NOT yet applied — hosted stays at 0178", () => {
-    // 0179 is a pending migration. Recording its apply is a SEPARATE change
-    // that also converts this block and hands 0178's floor forward.
-    expect(rec.hosted_migration_max).toBe("0178");
-    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeLessThan(179);
+const LEDGER = readFileSync(
+  join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
+  "utf8",
+);
+const REC = JSON.parse(
+  readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
+);
+
+/** The FROZEN 0179 rollout entry — 0179's permanent apply record. */
+const ENTRY_0179 = (() => {
+  const HEAD = "## 0179 — ACTOR FK INTEGRITY";
+  const i = LEDGER.indexOf(HEAD);
+  if (i === -1) {
+    // Fail loudly. Silently falling back to other ledger content would let
+    // permanent assertions pass against an unrelated migration's entry.
+    throw new Error(
+      "migration-ledger.md has no '## 0179 — ACTOR FK INTEGRITY' entry; 0179's permanent apply evidence is missing",
+    );
+  }
+  const rest = LEDGER.slice(i + HEAD.length);
+  const next = rest.search(/\n## /);
+  return next === -1 ? LEDGER.slice(i) : LEDGER.slice(i, i + HEAD.length + next);
+})();
+
+const RAW_SHA_0179 = "ce9993d86f67d4f5d82c908980f44baf11e404b371cc0611862e0c253cef059a";
+
+describe("0179 — the frozen evidence slice is really the 0179 entry", () => {
+  it("is the 0179 rollout entry and nothing else", () => {
+    expect(ENTRY_0179.startsWith("## 0179 — ACTOR FK INTEGRITY")).toBe(true);
+    // The entry identifies its migration by heading + checksum, the same way
+    // 0178's entry does; the filename lives in the Current-state table above.
+    expect(ENTRY_0179).toContain("ACTOR FK INTEGRITY");
+    expect(ENTRY_0179).toContain(RAW_SHA_0179);
+    expect(ENTRY_0179).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
+    // Must not bleed into the neighbouring entry.
+    expect(ENTRY_0179).not.toContain("## 0178");
+    expect(ENTRY_0179).not.toContain("0178_practitioner_identity_boundary.sql");
+    expect(ENTRY_0179.length).toBeGreaterThan(500);
   });
 });
+
+describe("0179 — PERMANENT apply facts (frozen; must survive 0180+)", () => {
+  it("the applied migration bytes are frozen", async () => {
+    // Computed from the migration file itself — independent of any document.
+    const { createHash } = await import("node:crypto");
+    const bytes = readFileSync(join(__dirname, "..", "..", FILE));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(RAW_SHA_0179);
+    // …and the frozen apply record names that same hash.
+    expect(ENTRY_0179).toContain(RAW_SHA_0179);
+  });
+
+  it("records the apply itself — source, window, duration, captured exit code", () => {
+    expect(ENTRY_0179).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
+    expect(ENTRY_0179).toContain("273dbc69881a199f6f25ba409f49bf7412ce1512");
+    expect(ENTRY_0179).toMatch(/applied 2026-08-12T01:40:39Z–01:40:52Z/);
+    expect(ENTRY_0179).toMatch(/12,920 ms/);
+    expect(ENTRY_0179).toMatch(/exit code 0/);
+    expect(ENTRY_0179).toMatch(/no `25P01`/);
+    expect(ENTRY_0179).toMatch(/no `55P03`/);
+  });
+
+  it("records the catalog closure 0179 exists to produce", () => {
+    expect(ENTRY_0179).toMatch(/58 composite, 9 simple, 0 NOT VALID/);
+    expect(ENTRY_0179).toMatch(/39\/39 validated/);
+    expect(ENTRY_0179).toMatch(/All 39 present/);
+    expect(ENTRY_0179).toMatch(/\*\*convalidated\*\*/);
+  });
+
+  it("records the delete semantics as designed", () => {
+    expect(ENTRY_0179).toMatch(/\*\*35 RESTRICT\*\*/);
+    expect(ENTRY_0179).toMatch(/exactly \*\*4 SET NULL\*\*/);
+    // The clinical-history closure: CASCADE would have destroyed the notes.
+    expect(ENTRY_0179).toMatch(/CASCADE/);
+    expect(ENTRY_0179).toMatch(/destroyed their append-only clinical notes/);
+    expect(ENTRY_0179).toMatch(/RENAME CONSTRAINT/);
+  });
+
+  it("records the census and the documented partial closure", () => {
+    expect(ENTRY_0179).toMatch(/39 changed \+ 25 unchanged \+/);
+    expect(ENTRY_0179).toMatch(/MATCH SIMPLE/);
+    expect(ENTRY_0179).toMatch(/electrolysis_entries\.deleted_by/);
+  });
+
+  it("records that NO business row was mutated", () => {
+    expect(ENTRY_0179).toMatch(/ZERO business-row mutation/);
+    expect(ENTRY_0179).toMatch(/practitioners \*\*7 → 7\*\*/);
+    expect(ENTRY_0179).toMatch(/client_clinical_notes \*\*21 → 21\*\*/);
+    expect(ENTRY_0179).toMatch(/zero attribution backfill/);
+    expect(ENTRY_0179).toMatch(/NO WILLOW MUTATION/);
+    expect(ENTRY_0179).toMatch(/NO SYNTHETIC TWIN MUTATION/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CURRENT-STATE OWNERSHIP — these are the assertions that hand forward.
+//
+// WHEN 0180 IS AUTHORED / APPLIED:
+//   1. Leave the PERMANENT block above completely untouched. It reads the
+//      frozen 0179 ledger entry and the frozen migration bytes, so it stays
+//      true forever.
+//   2. In THIS block only, convert the repository-max and hosted-equality
+//      assertions to a floor (`hosted >= 179`) plus "no longer the repository
+//      maximum", as the Engineering OS requires.
+//   3. Transfer current-state ownership to 0180's own test — only the current
+//      maximum may assert isRepoMax.
+//   4. Do NOT redirect any permanent 0179 evidence back to
+//      `migration-state.json.hosted_note`. That field will describe 0180.
+//   5. The checksum-chain assertion below is a CURRENT-NOTE invariant, not a
+//      0179 fact: whichever record is current must never drop earlier history.
+//      Hand it to 0180's test (0180's note must carry 0179's sha too), or
+//      delete it here — never leave it asserting 0179-specific wording against
+//      a successor's note.
+// ---------------------------------------------------------------------------
+describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
+  it("the declared hosted max is 0179 — repository and production agree, nothing pending", () => {
+    expect(REC.hosted_migration_max).toBe("0179");
+    expect(isRepoMax(REC.hosted_migration_max)).toBe(true);
+    expect(versionsAbove(REC.hosted_migration_max)).toEqual([]);
+    expect(countVersion("0179")).toBe(1);
+  });
+
+  it("the current record points at the 0179 apply", () => {
+    // Current-state fields only: which migration is live, and when.
+    expect(REC.hosted_applied_at).toBe("2026-08-12T01:40:52Z");
+    expect(REC.hosted_note).toContain("0179_actor_fk_integrity.sql");
+  });
+
+  it("CURRENT-NOTE INVARIANT: the live record carries the full superseded checksum chain", () => {
+    // Not a 0179 fact — a standing rule about whatever record is current:
+    // recording an apply must never drop an earlier frozen apply record.
+    // Hands to 0180 (whose note must carry 0179's sha as well).
+    for (const sha of [
+      "6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f", // 0178
+      "a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744", // 0177
+      "4ed5ad84168d6c6f9a8372709b737990af57a5dde08a4e56a7a983308951af20", // 0176
+      "7a00f67159a31dcdf90db8a35521ba26f258980b415ddd1aea214e63f4af3ad1", // 0175
+      "479dc58dd76d6030bc33bd83fb30b0a7f930ca58330067bb98a3f6c16a949bbc", // 0174
+      "04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb", // 0173
+      "b89b0d47a70ea2d4a7574bcc4223081cfe1d527394b3ef8b6d4c82bb090f42f1", // 0172
+      "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6", // 0171
+    ]) {
+      expect(REC.hosted_note).toContain(sha);
+    }
+  });
+
+  it("the ledger's CURRENT STATE block reconciles repo and hosted at 0179", () => {
+    const current = LEDGER.slice(
+      LEDGER.indexOf("## Current state"),
+      LEDGER.indexOf("## Previous state"),
+    );
+    expect(current).toContain("post-0179 apply");
+    expect(current).toContain("0179_actor_fk_integrity.sql");
+    expect(current).toContain(RAW_SHA_0179);
+    expect(current).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
+    expect(current).toMatch(/hosted == repo/);
+    expect(current).toMatch(/0180/);
+    expect(current).not.toMatch(/post-0178 apply/);
+  });
+
+  it("preserves the 0178 record as frozen historical evidence, heading-only demotion", () => {
+    expect(LEDGER).toContain("## Previous state (verified 2026-08-11, post-0178 apply)");
+    expect(LEDGER).toContain("## 0178 — PRACTITIONER IDENTITY + MUTATION BOUNDARY");
+    expect(LEDGER).toContain("6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f");
+  });
+});
+
 
 describe("0179 — transaction envelope", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {

@@ -14,7 +14,45 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-11, post-0178 apply)
+## Current state (verified 2026-08-12, post-0179 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0179** (`0179_actor_fk_integrity.sql`, applied 2026-08-12T01:40:39Z→01:40:52Z) |
+| **Repo migration max** | **0179** — **hosted == repo.** Nothing pending. Next free number is **0180**. |
+| **Total migrations in repo** | **178** (`0001` … `0157`, `0159` … `0179` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **178**, each applied **exactly once**. Applied count moved 177 → 178. |
+| **`0179` checksum (frozen)** | `ce9993d86f67d4f5d82c908980f44baf11e404b371cc0611862e0c253cef059a` |
+| **Applied from** | production merge commit `91b81cd35abfbab6686a5dbe7560124fa56c3fea` (PR #560) — **MERGED before the apply**, normal two-parent merge |
+| **Production branch governance** | protected **before** the apply — PR required, four stable CI contexts required, force pushes and deletion blocked, linear history **not** required, `enforce_admins` true |
+
+> ✅ **REPOSITORY AND HOSTED MIGRATION TRUTH ARE RECONCILED AT 0179.**
+> **ACTOR FK INTEGRITY is closed.** All **39** genuine actor/author/creator practitioner
+> relationships are same-studio composite FKs and **validated** — final catalog **58 composite /
+> 9 simple / 0 NOT VALID**. Durable historical actor attribution is **delete-safe**: 35
+> relationships are `ON DELETE RESTRICT`, and exactly 4 operational ones deliberately keep
+> `SET NULL`. `client_clinical_notes_practitioner_same_studio` moved **CASCADE → RESTRICT**, so
+> deleting a practitioner can no longer destroy their append-only clinical notes.
+> **Zero business-row mutation.** Independent T3 review **P0 0 / P1 0 / P2 0**.
+
+> **Numbers in this block are the CURRENT hosted truth and move on every apply.** The single
+> machine-readable owner is [`migration-state.json`](./migration-state.json); repo-side totals are
+> **derived** by `scripts/migration-state.mjs` and must never be hand-maintained here. Sections
+> below this one are **frozen historical records** — they state what was true at their own apply and
+> are never rewritten when a later migration lands.
+
+> ⚠️ **LEDGER GAP (unchanged, still open).** `0170` and `0171` have no narrative entry in this
+> file — their apply records live only in `migration-state.json`'s `hosted_note` history. That gap
+> is pre-existing and is **not** back-filled here. Back-fill from their own apply evidence
+> as separate work.
+
+> **The block below is FROZEN.** It is the ledger's former Current state, reproduced
+> byte-for-byte from production commit `91b81cd`; only its heading is reclassified from
+> Current to Previous. Its wording, tense and numbers are left exactly as they were written
+> when 0178 was the hosted max — including its own ledger-gap warning. Duplication is
+> preferable to editing historical evidence.
+
+## Previous state (verified 2026-08-11, post-0178 apply)
 
 | Field | Value |
 |---|---|
@@ -1036,6 +1074,82 @@ depending on the legacy direct-DML denial.
 - Vercel Production `dpl_Hk7EPDJo8DTpacpEokiwwbVu3SYc` Ready at the exact merge SHA; after the apply
   `/`, `/pricing`, `/login`, `/robots.txt`, `/sitemap.xml` all 200 and gated routes 307 to auth.
   Final independent-review verdict **P0 0 / P1 0 / P2 0** — **B8 CLOSED**.
+
+## 0179 — ACTOR FK INTEGRITY (applied 2026-08-12T01:40:39Z–01:40:52Z)
+
+`sha256 ce9993d86f67d4f5d82c908980f44baf11e404b371cc0611862e0c253cef059a` (executable
+`9c7498264caaf72a…`), applied from the production merge commit
+`91b81cd35abfbab6686a5dbe7560124fa56c3fea` (PR #560, reviewed head `273dbc69881a199f6f25ba409f49bf7412ce1512`,
+**MERGED before the apply**; normal two-parent merge, parent 1 `d22605b03db834ee3b32dee0179e526fe6045309`).
+**12,920 ms**, dry run listed only 0179, **captured process exit code 0**, no SQL error, no `25P01`,
+no `55P03`, no `23503`, no deadlock. This closes actor attribution integrity for the practitioner
+model: **who did it, and can that correlation survive?**
+
+**The census came first, and it is the load-bearing artifact.** All 67 practitioner FK constraints
+were enumerated from `pg_constraint` — 47 simple + 20 composite, **no column carrying both** — and
+classified by **writer evidence, not column name**. The result splits **39 changed + 25 unchanged +
+3 deferred = 67**. Two reclassifications drove the design: `client_portal_access_events.practitioner_id`
+is an **ACTOR** (every non-null writer passes the acting `practitioner.id`; the client-side magic-link
+writer passes none), while `record_keeping_disinfectants.operator_practitioner_id` is **not** — it is a
+dropdown-picked staff member, and its sibling `created_by_practitioner_id` carries the actor.
+
+**Ordering was chosen for lock footprint, and it is recorded because it changed.** 0179 **ADDs** all 39
+composite constraints `NOT VALID`, **VALIDATEs** all 39 fail-closed, and only **then DROPs** the 38
+superseded simple FKs and retires the old CASCADE composite. An earlier revision dropped each old
+constraint before adding its replacement, which took `DROP CONSTRAINT`'s lock on many central tables at
+the *start* and held it across every validation scan. `NOT VALID` is the **ADD-time lock strategy, never
+a terminal state**.
+
+- **Fail-closed validation.** An earlier revision caught `exception when others`, downgraded a failed
+  `VALIDATE` to a `WARNING` and committed anyway. The shipped migration pins the 39 constraint names,
+  catches **only** `foreign_key_violation` (to report every dirty relationship in one pass), then
+  **raises and rolls back**; it re-proves the postcondition from `pg_constraint.convalidated` before
+  succeeding. **Committing implies 39/39 validated.**
+- **Preflight was clean before a single byte was written.** Read-only census across all 39:
+  **0 missing practitioner ids, 0 cross-studio-invalid rows**. Production `treatment_images`
+  attribution was **clean** — the 5+1 dirty rows seen during development existed only in accumulated
+  **local** test state, never in production. Activity snapshot at the gate: 0 active, 0
+  idle-in-transaction, 0 waiting, 0 blocked, 0 ungranted locks on the 33 touched tables.
+- **Final catalog:** 67 practitioner FKs — **58 composite, 9 simple, 0 NOT VALID**. All 39 present,
+  arity 2, referencing `public.practitioners`, **convalidated**.
+- **Delete semantics as designed:** **35 RESTRICT** for durable business/clinical/audit evidence;
+  exactly **4 SET NULL** kept deliberately for current operational state
+  (`client_personal_notes`, `pending_invitations`, `studio_recurring_break_rules`,
+  `studio_timed_blocks`). No other delete action on any of the 39.
+- **`client_clinical_notes`.** It was *already* same-studio composite — but `ON DELETE CASCADE`, so
+  deleting a practitioner would have **destroyed their append-only clinical notes**, contradicting the
+  0119 retention contract that historical attribution survives account deletion. Because the old
+  constraint held the canonical name through validation, the replacement was added and validated as
+  `…_same_studio_0179`, then the CASCADE constraint was dropped and the candidate **renamed back**.
+  `RENAME CONSTRAINT` is catalog-only and preserves the validated state. Final: canonical name present
+  exactly once, composite, validated, **RESTRICT**, **zero** `_0179` names surviving, no practitioner
+  CASCADE left on the table.
+- **RESTRICT was already safe.** `0173` revoked `DELETE` on `public.practitioners` from `anon` and
+  `authenticated` and dropped the owners-delete policy; the team UI deactivates rather than deletes.
+- **Recorded residual — parent-scoped actors with no local studio lineage.**
+  `electrolysis_entries.deleted_by`, `laser_entries.deleted_by` and
+  `session_audit.edited_by_practitioner_id` carry no local `studio_id`, so the composite cannot be
+  expressed without inventing tenant lineage. **Unchanged**, still simple FKs with `SET NULL`. Not a
+  production severity — a separately designed parent-lineage pass.
+- **`ops_alerts` partial closure, stated rather than hidden.** `ops_alerts.studio_id` is the only
+  nullable `studio_id` in scope, and a composite FK is `MATCH SIMPLE`, so the same-studio half is not
+  enforced for global (studio-less) alerts — only the delete semantics are. `MATCH FULL` is
+  deliberately **not** used: it would reject resolving a global alert outright. The three existing
+  global rows were untouched.
+- **Untouched by explicit ruling:** `sessions.practitioner_id` (assignee),
+  `sessions.performed_by_practitioner_id` and `aftercare_and_risks_explained_by` (clinical performer
+  provenance), `practitioner_notifications.practitioner_id` (recipient),
+  `studio_calendar_reservations.practitioner_id` (resource), `appointment_audit.actor_id` (polymorphic
+  namespace, carries no practitioner FK), and the four `auth.users` import-provenance columns on
+  `import_batches` / `imported_treatment_memories`.
+- **ZERO business-row mutation:** practitioners **7 → 7**, clients **114 → 114**, sessions
+  **165 → 165**, treatment_images **3 → 3**, client_clinical_notes **21 → 21**. FK DDL only — and
+  **zero attribution backfill**: every populated actor value already carried authoritative evidence,
+  and no NULL could be reconstructed without inference the backfill rule forbids.
+  **NO WILLOW MUTATION. NO SYNTHETIC TWIN MUTATION.**
+- **No maintenance mechanism exists in Hone and none was invented.** The apply used the quiet window
+  plus the migration's own `set local lock_timeout = '5s'`. Public health after the apply:
+  `hone.care /` and `/login` both **200**. Applied bytes rehashed after the apply and **unchanged**.
 
 ## 0178 — PRACTITIONER IDENTITY + MUTATION BOUNDARY (applied 2026-08-11T21:39:05Z–21:39:15Z)
 
