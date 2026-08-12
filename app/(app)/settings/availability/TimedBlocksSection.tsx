@@ -230,7 +230,9 @@ export function TimedBlocksSection({
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 className="text-xl font-medium">Block time</h2>
+        <h2 id="block-time" className="scroll-mt-24 text-xl font-medium">
+          Block time
+        </h2>
         <p className="mt-1 text-sm text-neutral-500">
           One-off lunch, meeting, emergency, or personal time. Block details
           and notes are private to your studio; clients only see the slot as

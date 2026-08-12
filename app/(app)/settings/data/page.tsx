@@ -70,6 +70,7 @@ export default async function DataSettingsPage() {
       </section>
 
       <DataCard
+        anchorId="export-data"
         title="Export your data"
         body="Download a portable copy of your supported studio records as a ZIP. Reads are paginated to exhaustion, so no file is silently truncated, and manifest.json records how many rows each file received. It is not point-in-time consistent and is not a transactional database backup — it does not replace Hone's disaster-recovery backups."
       >
@@ -147,6 +148,7 @@ export default async function DataSettingsPage() {
       </DataCard>
 
       <DataCard
+        anchorId="import-csv"
         title="Import clients from CSV"
         body="Bring existing client records in from a spreadsheet."
       >
@@ -154,6 +156,7 @@ export default async function DataSettingsPage() {
       </DataCard>
 
       <DataCard
+        anchorId="delete-data"
         title="Delete all studio data"
         body="Permanently remove every client, session, and entry. This cannot be undone."
       >
@@ -173,17 +176,22 @@ export default async function DataSettingsPage() {
 }
 
 function DataCard({
+  anchorId,
   title,
   body,
   children,
 }: {
+  // Stable anchor so Global Search can resolve an individual data control
+  // ("export", "delete all studio data") to its exact card, not the page top.
+  anchorId: string;
   title: string;
   body: string;
   children: React.ReactNode;
 }) {
   return (
     <section
-      className="flex flex-col gap-4 p-8"
+      id={anchorId}
+      className="flex scroll-mt-24 flex-col gap-4 p-8"
       style={{ border: "1px solid #E5E2DA" }}
     >
       <h3 className="text-lg font-medium">{title}</h3>

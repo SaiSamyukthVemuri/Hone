@@ -170,7 +170,7 @@ describe("permissions — search advertises only what the caller can already ope
       ["booking link", "Booking link"],
       ["services", "Services"],
       ["team", "Team"],
-      ["data export", "Data"],
+      ["data export", "Export your data"],
     ];
     for (const [query, expected] of cases) {
       expect(titles(query, OWNER), `owner should find "${query}"`).toContain(
@@ -252,7 +252,9 @@ describe("permissions — search advertises only what the caller can already ope
     expect(top("calendar sync", OWNER)).toBe("Google Calendar");
     // Practitioner with the flag on: their OWN connection card, on Profile.
     const withFlag = { isOwner: false, googleCalendarEnabled: true };
-    expect(hrefs("google", withFlag)).toEqual(["/settings/profile"]);
+    expect(hrefs("google", withFlag)).toEqual([
+      "/settings/profile#google-calendar",
+    ]);
   });
 });
 
@@ -299,9 +301,17 @@ describe("href integrity — every registered destination is real", () => {
       const sources = [page, ...relativeImportsOf(page)].map((f) =>
         readFileSync(f, "utf8"),
       );
-      const found = sources.some((src) =>
-        src.includes(`id="${fragment}"`),
-      );
+      // Two accepted shapes, both of which put a LITERAL fragment in the
+      // source: an inline `id="frag"`, or a component that renders
+      // `id={anchorId}` with `anchorId="frag"` supplied at the call site
+      // (settings/data does this so its three cards share one card component).
+      // The indirection is only accepted when BOTH halves are present, so a
+      // stray prop named anchorId can never satisfy this on its own.
+      const inline = sources.some((s) => s.includes(`id="${fragment}"`));
+      const viaProp =
+        sources.some((s) => s.includes(`anchorId="${fragment}"`)) &&
+        sources.some((s) => s.includes("id={anchorId}"));
+      const found = inline || viaProp;
       expect(
         found,
         `${entry.id}: no id="${fragment}" in ${path.relative(ROOT, page)} or its direct imports`,
@@ -462,7 +472,7 @@ describe("matching — the words Chloe actually types", () => {
       ["payments", "Payments"],
       ["services", "Services"],
       ["team", "Team"],
-      ["data export", "Data"],
+      ["data export", "Export your data"],
       ["privacy", "Privacy Policy"],
       ["records", "Record Keeping"],
     ];
@@ -478,14 +488,14 @@ describe("matching — the words Chloe actually types", () => {
     // the page they must resolve to.
     for (const [query, expected] of [
       ["hours", "Availability"],
-      ["lunch", "Availability"],
-      ["vacation", "Availability"],
-      ["day off", "Availability"],
+      ["lunch", "Repeating breaks"],
+      ["vacation", "Blocked time"],
+      ["day off", "Blocked time"],
       ["buffer", "Time between appointments"],
       ["csv", "Quick import"],
       ["pixel", "Marketing & analytics"],
       ["waiver", "Consent forms"],
-      ["backup", "Data"],
+      ["backup", "Export your data"],
       ["staff", "Team"],
       ["autoclave", "Sterile Items"],
       ["onboarding", "Getting Started"],

@@ -1325,6 +1325,34 @@ page; and on a phone the search sheet still fits with no sideways scroll.
 Search is discovery only — it adds no permission. Anything it offers was
 already reachable by that practitioner from the menu. Live payments unchanged.
 
+## Global Search V2-A.1 — settings CONTROL search smoke (no migration)
+
+Signed in **as the studio owner**, open the header search and type the exact
+visible setting name **`booking horizon`**. Confirm the first result is
+**Booking horizon — "Choose how far ahead clients can book online"**, and that
+clicking it lands on Settings → Booking **at the Booking horizon field**, not at
+the top of the page. Repeat with `horizon`, `how far ahead`, `booking window`
+and `months ahead` — all must reach the same control.
+
+Then confirm each of the other seven Booking controls resolves to its own field:
+`booking link`, `slug`, `timezone`, `default duration`, `buffer`,
+`public address`, `booking page intro`. Confirm plain `booking` still returns the
+Booking **page** — the page row and the control rows must both survive.
+
+Spot-check one control from every other Settings page: `studio name`,
+`time format`, `send 24 hour reminders`, `weekly hours`, `lunch`,
+`service menu order`, `pending invitations`, `photo consent`,
+`aftercare instructions`, `cancellation policy`, `late cancellation fee`,
+`google calendar`, `pixel`, `csv`, `export your data`, `calendar feed`.
+
+Then sign in **as a non-owner practitioner** and repeat `booking horizon`,
+`timezone`, `weekly hours`, `studio name` and `export your data`. Confirm **none
+of them returns anything at all**. Confirm `your name`, `calendar color`,
+`calendar feed` and `intake form preview` still resolve for that practitioner.
+
+Search adds no permission — every control it offers was already reachable from
+that practitioner's own Settings tabs. Live payments unchanged.
+
 ## Quick gates a reviewer can run
 
 GitHub Actions CI (PR #154) runs the full validation suite on every PR. The local equivalent is:

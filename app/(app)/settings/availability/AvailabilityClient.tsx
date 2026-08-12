@@ -427,7 +427,9 @@ export function AvailabilityClient({
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
-            <h2 className="text-xl font-medium">Weekly hours</h2>
+            <h2 id="weekly-hours" className="scroll-mt-24 text-xl font-medium">
+              Weekly hours
+            </h2>
             <p className="mt-1 text-sm text-neutral-500">
               Click a day to set or change its hours.
             </p>
@@ -838,7 +840,9 @@ function OverridesSection({
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h2 className="text-xl font-medium">Special hours</h2>
+          <h2 id="special-hours" className="scroll-mt-24 text-xl font-medium">
+            Special hours
+          </h2>
           <p className="mt-1 text-sm text-neutral-500">
             Use this when you are opening extra time or closing early on
             a specific date.
@@ -1019,7 +1023,9 @@ function BlockoutsSection({ blockouts }: { blockouts: StudioBlockout[] }) {
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h2 className="text-xl font-medium">Blocked time</h2>
+          <h2 id="blocked-time" className="scroll-mt-24 text-xl font-medium">
+            Blocked time
+          </h2>
           <p className="mt-1 text-sm text-neutral-500">
             Use this for a vacation, a sick day, a whole-day break, or
             any date range where you do not want any bookings.

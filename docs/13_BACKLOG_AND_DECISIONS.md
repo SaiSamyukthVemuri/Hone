@@ -621,6 +621,59 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Decision (2026-06-12):** Chloe's phone screenshot of the client page showed the remaining pre-#228 desktop-first layout: a text-3xl name sharing a baseline row with an inline Edit link (crowding/wrapping at 390px), dot-separated inline contacts, an oversized right-aligned "+ Log session" button floating with a 16rem helper paragraph, a detached Book appointment block, and a tab row wrapping into two cramped lines. **Fixes (layout only; identical actions and business logic):** header is mobile-first (text-2xl name scaling up at md, Edit as a small bordered button on the same row via justify-between, contacts stacked on phones, lifetime summary demoted a size); Log session (compact, text-sm) and the collapsed "+ Book appointment" button now sit TOGETHER in one action row (stacked on phones; the expanded booking card grows into the remaining row width, full-width on phones), with one short helper line below; the tab bar is a one-row horizontal scroller contained inside itself (scrollbar hidden, page never scrolls sideways; desktop fits in one row and is visually unchanged). Pinned Notes was already first on Overview; the compact header simply stops pushing it down. Proven in the mobile E2E (Edit/Log/Book reachable, all six tabs reachable + two tab navigations with overflow re-checks, pinned notes visible, page overflow assertions). Live payments remain disabled.
 
+### Global Search V2-A.1 — settings CONTROL completeness (no migration)
+
+**Reported production failure (2026-08-12):** Sam searched the exact visible
+setting name **"Booking horizon"** and Global Search returned nothing.
+
+**Root cause.** V2-A registered *pages*, and its coverage tripwire proved every
+authenticated **route** carried a searchability decision — which it did. The
+Booking page was registered with three concepts (Booking, Booking link, Time
+between appointments) while the page actually renders **eight**: Your booking
+link, Booking URL slug, Timezone, Default duration, Time between appointments,
+**Booking horizon**, Public address, and Booking page intro. Route coverage
+cannot detect a missing control, because the route it checks is already present
+and already decided. The V2-A census read pages deeply enough to enumerate the
+routes and only sampled the controls inside them.
+
+**The completeness model is now two contracts, not one:**
+
+| Contract | Question | Enforced by |
+|---|---|---|
+| Route coverage | "Can I find this page?" | `tests/lib/search/navigation-registry.test.ts` |
+| **Control coverage** | **"Can I find the exact setting I am looking at?"** | `tests/lib/search/settings-control-coverage.test.ts` |
+
+**Control census.** `tests/lib/search/fixtures/settings-controls.census.ts` is an
+audited list of every visible, configurable control across all fourteen Settings
+pages, each transcribed from the rendered source with an explicit decision —
+`searchable` (naming the registry entry that must resolve its exact visible
+label) or `excluded` (with the reason). Three tripwires run against it:
+**(1)** every searchable control's *exact visible label* must return its entry;
+**(2)** every audited label must still be **rendered** by the page's `.tsx`
+components; **(3)** a structural sweep of declared label-bearing files must not
+surface a control the census has never heard of. The sweep guards itself with a
+per-file minimum, so a changed label idiom fails loudly instead of extracting
+nothing and passing vacuously.
+
+**Anchors.** Twenty-eight stable `id` anchors were added so a result for a
+specific setting lands on that control rather than the top of a long form — all
+content-named, never positional, and each proved to exist by the href-integrity
+test. Anchored hrefs are also what keeps sibling controls on one page distinct
+under href dedupe: all eight Booking controls now resolve to eight different
+destinations. **Settings → Payments deliberately received no anchors** — its
+files are payment runtime owned by a parallel track — so its five controls
+resolve to the page-level Payments entry instead.
+
+**Authorization is unchanged and now proved at control granularity:** every
+owner-only control is verified unreachable from a practitioner context, the
+registry is still `server-only`, and entry visibility may be stricter than the
+page's own gate but never looser.
+
+**Not in scope:** per-service editor fields (repeated accordion rows with no
+stable anchor — their vocabulary lives on the Services entry), credential entry
+fields on Marketing & analytics, and read-only displays. All are recorded as
+`excluded` with reasons rather than omitted.
+
 ### Global Search V2-A — searchable settings and navigation (no migration)
 
 **Decision (2026-08-12):** Chloe's ask was "everything in Hone should be

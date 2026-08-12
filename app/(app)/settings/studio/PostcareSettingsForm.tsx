@@ -285,7 +285,9 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
 
       <label className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <span className="text-sm font-medium">Aftercare instructions</span>
+          <span id="aftercare" className="scroll-mt-24 text-sm font-medium">
+          Aftercare instructions
+        </span>
           <SuggestedCopyButton
             label="Use suggested copy"
             arming={confirming === "aftercare"}
@@ -359,7 +361,9 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
       </label>
 
       <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">Postcare contact email</span>
+        <span id="postcare-contact" className="scroll-mt-24 text-sm font-medium">
+          Postcare contact email
+        </span>
         <input
           type="email"
           value={contactEmail}

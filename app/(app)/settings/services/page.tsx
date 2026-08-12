@@ -64,7 +64,10 @@ export default async function ServicesSettingsPage() {
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <h3
+            id="service-order"
+            className="scroll-mt-24 text-xs font-medium uppercase tracking-wider text-neutral-500"
+          >
             Service menu order
           </h3>
           <p className="text-xs text-neutral-500">

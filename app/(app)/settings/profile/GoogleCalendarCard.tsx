@@ -170,7 +170,9 @@ export function GoogleCalendarCard({
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-neutral-300 p-5 dark:border-neutral-700">
       <div>
-        <h3 className="text-sm font-semibold">Google Calendar</h3>
+        <h3 id="google-calendar" className="scroll-mt-24 text-sm font-semibold">
+          Google Calendar
+        </h3>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           Connect your Google account so Hone can add appointments to your calendar in a
           later release. This is <strong>separate</strong> from the read-only calendar feed

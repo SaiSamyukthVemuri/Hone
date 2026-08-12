@@ -217,7 +217,9 @@ export function RecurringBreaksSection({
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 className="text-xl font-medium">Repeating breaks</h2>
+        <h2 id="repeating-breaks" className="scroll-mt-24 text-xl font-medium">
+          Repeating breaks
+        </h2>
         <p className="mt-1 text-sm text-neutral-500">
           Set up the regular times you&rsquo;re unavailable each week:
           lunch, dinner, admin, or personal time. Generated up to a year
