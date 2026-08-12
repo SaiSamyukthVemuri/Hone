@@ -40,6 +40,26 @@ const DASH = readFileSync(
   "utf8",
 );
 
+/**
+ * DASH with `//` lines and `{/* jsx *\/}` blocks removed.
+ *
+ * Every "this copy must NOT appear" assertion below reads THIS, never DASH.
+ * The page documents its own product decisions in comments, so the note
+ * explaining why the Pilot learning card was deleted necessarily contains the
+ * words "Pilot learning" — and a naive whole-file grep would be satisfied by
+ * the explanation of the removal rather than by the removal. That failure mode
+ * has bitten this repo before; strip first, then assert.
+ */
+function stripComments(src: string): string {
+  return src
+    .split("\n")
+    .filter((l) => !/^\s*\/\//.test(l))
+    .join("\n")
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+}
+
+const DASH_CODE = stripComments(DASH);
+
 /** Index of a unique source marker, asserted to exist exactly once. */
 function at(marker: string | RegExp): number {
   const src = DASH;
@@ -126,6 +146,7 @@ describe("dashboard hierarchy — reporting and setup are DEMOTED, not deleted",
 
   it("the Getting started card sits below the operational sections", () => {
     // Setup is not daily work. It used to render directly under Today.
+    // Still the INCOMPLETE branch only — see the CHLOE D3 block below.
     expect(at(BIRTHDAYS)).toBeLessThan(at("{!onboardingV2On && !setupComplete && ("));
   });
 
@@ -137,6 +158,154 @@ describe("dashboard hierarchy — reporting and setup are DEMOTED, not deleted",
     // Unchanged by this PR and deliberately so: it is an opt-in, owner-only
     // guided wizard that is supposed to be above the fold.
     expect(at("{onboarding && (")).toBeLessThan(at(TODAY));
+  });
+});
+
+// ===========================================================================
+// CHLOE (this PR) — finished setup and pilot-only tooling leave the Dashboard.
+// ===========================================================================
+// The three deletions below are the product decision, exactly like the ordering
+// above: nothing enforced them, and a drive-by edit could put any of them back
+// without a single test noticing. Each is asserted as a POSITIVE absence, and
+// each is paired with the surface that must SURVIVE it — a cleanup that also
+// deletes the incomplete-setup path, or the /getting-started route, or the
+// shared feedback helper, is a regression, not a cleanup.
+describe("dashboard cleanup — completed setup and pilot tooling do not render", () => {
+  it("D2: the booking setup card is gated on readiness NOT being ready", () => {
+    // Chloe saw "Booking page ready / Your public booking page is live" plus a
+    // column of ticks, permanently. Complete readiness must render nothing.
+    expect(DASH).toMatch(
+      /\{isOwner && bookingReadiness && bookingReadiness\.status !== "ready" && \(/,
+    );
+    // The card itself refuses too, so the contract does not depend on a caller
+    // remembering the guard.
+    const cardRaw = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/BookingSetupCard.tsx"),
+      "utf8",
+    );
+    expect(cardRaw).toMatch(/if \(readiness\.status === "ready"\) return null;/);
+    // The congratulation copy is GONE from the component, not merely unreached.
+    // Comment-stripped for the same reason as DASH_CODE: the component's own
+    // header note quotes the copy it retired.
+    const card = stripComments(cardRaw);
+    expect(card).not.toMatch(/Booking page ready/);
+    expect(card).not.toMatch(/Your public booking page is live/);
+    expect(card).not.toMatch(/<BookingLinkCard/);
+    expect(DASH_CODE).not.toMatch(/Booking page ready/);
+  });
+
+  it("D2: derived readiness stays the ONLY authority — no new completion flag", () => {
+    // "Do not create a new completion flag if current state already determines
+    // readiness." The page must keep deriving from computeBookingReadiness and
+    // must not invent a persisted booking-complete signal.
+    expect(DASH).toMatch(/computeBookingReadiness\(/);
+    expect(DASH).not.toMatch(/booking_setup_complete|bookingSetupComplete|booking_ready\b/);
+    const readiness = readFileSync(
+      join(process.cwd(), "lib/booking/readiness.ts"),
+      "utf8",
+    );
+    // The authority itself is untouched by this PR.
+    expect(readiness).toMatch(/const allRequiredOk = items\.every\(\(it\) => !it\.required \|\| it\.ok\);/);
+  });
+
+  it("D2: the incomplete state and the booking link's real homes all survive", () => {
+    // The not-ready checklist keeps every per-item action...
+    const card = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/BookingSetupCard.tsx"),
+      "utf8",
+    );
+    expect(card).toMatch(/>\s*Set up your booking page\s*</);
+    expect(card).toMatch(/<Checklist items=\{readiness\.items\}/);
+    expect(card).toMatch(/href=\{item\.href\}/);
+    // ...and the booking LINK still lives on the pages that own it, so hiding
+    // the ready card removed a banner, not a capability.
+    for (const f of [
+      "app/(app)/settings/booking/page.tsx",
+      "app/(app)/settings/availability/AvailabilityClient.tsx",
+    ]) {
+      expect(readFileSync(join(process.cwd(), f), "utf8")).toMatch(
+        /<BookingLinkCard/,
+      );
+    }
+  });
+
+  it("D3: a COMPLETED setup renders no Getting Started card or footer", () => {
+    // The retired footer said "Setup complete." and then offered the setup
+    // checklist — the exact contradiction Chloe reported.
+    expect(DASH_CODE).not.toMatch(/\{!onboardingV2On && setupComplete && \(/);
+    expect(DASH_CODE).not.toMatch(/Setup complete\./);
+    expect(DASH_CODE).not.toMatch(/Getting started checklist/);
+    // Exactly ONE /getting-started link remains on the page: the incomplete
+    // branch. (Two would mean the footer is back under another name.)
+    expect(DASH_CODE.match(/href="\/getting-started"/g) ?? []).toHaveLength(1);
+  });
+
+  it("D3: incomplete onboarding STILL gets its assistance, both systems", () => {
+    // New-studio onboarding must be undamaged. Legacy (flag-off) path:
+    expect(DASH).toMatch(/\{!onboardingV2On && !setupComplete && \(/);
+    expect(DASH).toMatch(/const setupComplete =/);
+    // Onboarding v2 path: its pinned card already hides itself when complete,
+    // which is why no page-level change was needed for it.
+    expect(DASH).toContain("<OnboardingSurface");
+    const surface = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/onboarding/OnboardingSurface.tsx"),
+      "utf8",
+    );
+    expect(surface).toMatch(/\{!model\.isComplete && \(\s*<OnboardingProgressCard/);
+  });
+
+  it("D3: the dedicated Getting Started route stays reachable and deliberate", () => {
+    // "Getting Started itself remains available deliberately through the
+    // Account menu / its existing route." Deleting the product is NOT the fix.
+    expect(existsSync(join(process.cwd(), "app/(app)/getting-started/page.tsx"))).toBe(
+      true,
+    );
+    for (const f of ["app/(app)/AccountMenu.tsx", "app/(app)/MobileMenu.tsx"]) {
+      expect(
+        readFileSync(join(process.cwd(), f), "utf8"),
+        `${f} must keep the Getting Started entry`,
+      ).toMatch(/href: "\/getting-started"/);
+    }
+  });
+
+  it("D4: Pilot Learning does not render on the Dashboard, in any form", () => {
+    for (const marker of [
+      "PilotLearningCard",
+      "pilot-learning",
+      "Pilot learning",
+      "Send it to Sam",
+      "Know another electrologist",
+      "Send feedback",
+    ]) {
+      expect(
+        DASH_CODE,
+        `${marker} must not appear on the dashboard`,
+      ).not.toContain(marker);
+    }
+    // Dead component deleted, not left orphaned behind an unused import.
+    expect(
+      existsSync(join(process.cwd(), "app/(app)/dashboard/pilot-learning.tsx")),
+    ).toBe(false);
+  });
+
+  it("D4: the SHARED feedback helper and its two quiet footers survive", () => {
+    // "If something else legitimately uses them: leave the shared
+    // implementation but remove Dashboard rendering." PilotFeedbackPrompt does.
+    expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(
+      true,
+    );
+    expect(
+      existsSync(join(process.cwd(), "app/(app)/dashboard/pilot-feedback-prompt.tsx")),
+    ).toBe(true);
+    expect(DASH_CODE.match(/<PilotFeedbackPrompt/g) ?? []).toHaveLength(2);
+  });
+
+  it("no replacement card was introduced for anything removed", () => {
+    // "Do not introduce new cards to replace deleted cards." The page's own
+    // top-level headings are still exactly the three operational sections
+    // (also asserted above); this pins that the cleanup ADDED no section.
+    const h2s = [...DASH.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map((m) => m[1]);
+    expect(h2s).toEqual(["Today", "To do", "Birthdays this month"]);
   });
 });
 
@@ -335,7 +504,9 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
     "<BookingSetupCard",
     "<BirthdaysThisMonth",
     "<PracticeSnapshot",
-    "<PilotLearningCard",
+    // "<PilotLearningCard" deliberately left this list — see the CHLOE D4
+    // block below, which asserts its ABSENCE rather than merely dropping the
+    // row. A removed guard proves nothing; a positive absence assertion does.
     "<PilotFeedbackPrompt",
     "<AppointmentCheckoutCell",
     "<DashboardGreeting",

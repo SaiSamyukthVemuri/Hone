@@ -70,7 +70,9 @@ export default async function TeamSettingsPage() {
 
       <section className="flex flex-col gap-4">
         <div>
-          <h2 className="text-xl font-medium">Invite a practitioner</h2>
+          <h2 id="invite-practitioner" className="scroll-mt-24 text-xl font-medium">
+            Invite a practitioner
+          </h2>
           <p className="mt-1 text-sm text-neutral-500">
             We don&rsquo;t send the email automatically. Share the message we
             give you with your teammate. They sign in with the same email and
@@ -95,7 +97,9 @@ function CurrentPractitioners({
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 className="text-xl font-medium">Practitioners</h2>
+        <h2 id="practitioners" className="scroll-mt-24 text-xl font-medium">
+          Practitioners
+        </h2>
         <p className="mt-1 text-sm text-neutral-500">
           {practitioners.length === 1
             ? "Just you."
@@ -153,7 +157,9 @@ function PendingInvitations({
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 className="text-xl font-medium">Pending invitations</h2>
+        <h2 id="pending-invitations" className="scroll-mt-24 text-xl font-medium">
+          Pending invitations
+        </h2>
         <p className="mt-1 text-sm text-neutral-500">
           {invitations.length === 0
             ? "Nothing pending."

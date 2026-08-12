@@ -69,7 +69,6 @@ import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assi
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { DashboardTodoList } from "./todo-list";
 import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
-import { PilotLearningCard } from "./pilot-learning";
 import {
   buildGettingStarted,
   getGettingStartedSignals,
@@ -626,12 +625,21 @@ export default async function DashboardPage({
           boundary correction in resolvePeriodRange. */}
       <PracticeSnapshot metrics={practiceMetrics} livemode={inferStripeLivemode()} />
 
-      {isOwner && bookingReadiness && (
-        <BookingSetupCard
-          readiness={bookingReadiness}
-          studioSlug={studio.slug}
-          appOrigin={getRequiredAppOrigin()}
-        />
+      {/* CHLOE D2 — setup that is DONE is not daily work.
+          ------------------------------------------------------------------
+          This card used to render in both states. Once every required item was
+          satisfied it became a permanent "Booking page ready / Your public
+          booking page is live" banner plus a column of ticks — a congratulation
+          occupying the daily workspace forever.
+
+          The gate is `readiness.status`, the EXISTING derived authority
+          (lib/booking/readiness.ts). No new flag, no new column, no new query:
+          `computeBookingReadiness` is already computed above for this card, and
+          "ready" already means "every required item is satisfied". The card
+          itself also returns null in that state, so the contract holds for any
+          future caller and not only for this call site. */}
+      {isOwner && bookingReadiness && bookingReadiness.status !== "ready" && (
+        <BookingSetupCard readiness={bookingReadiness} />
       )}
 
       {/* PR #215: setup/readiness checklist entry point. A normal
@@ -652,25 +660,32 @@ export default async function DashboardPage({
         </Link>
       )}
 
-      {/* PR #250 Pilot Love Loop V1: a quiet, optional "Pilot learning"
-          card near the bottom (well below Today). Manual mailto only —
-          no automated send, no contacts, no referral links, no provider. */}
-      <PilotLearningCard />
+      {/* CHLOE D3 — a finished checklist is not a dashboard card.
+          ------------------------------------------------------------------
+          PR #238 collapsed completed setup into a quiet footer reading "Setup
+          complete. Getting started checklist →". Chloe's report is that the
+          Dashboard says setup is complete AND still offers her the setup
+          checklist; the footer is that contradiction in one line. When
+          `setupComplete` is true the Dashboard now renders NOTHING here.
 
-      {/* PR #238: completed setup collapses to a quiet footer link;
-          the /getting-started route stays reachable (also in the
-          account/mobile menus). */}
-      {!onboardingV2On && setupComplete && (
-        <p className="text-xs text-neutral-500">
-          Setup complete.{" "}
-          <Link
-            href="/getting-started"
-            className="underline decoration-neutral-300 underline-offset-2 hover:text-neutral-900 hover:decoration-neutral-700 dark:hover:text-neutral-100"
-          >
-            Getting started checklist →
-          </Link>
-        </p>
-      )}
+          Getting Started is not deleted and is not harder to find on purpose:
+          /getting-started is a permanent route and is linked from the account
+          menu (app/(app)/AccountMenu.tsx) and the mobile menu
+          (app/(app)/MobileMenu.tsx). It is available deliberately rather than
+          presented daily.
+
+          The INCOMPLETE branch above is untouched: a studio that still has
+          auto-detected steps outstanding keeps its progress card, so new-studio
+          onboarding is unaffected. Onboarding v2 already hides its own pinned
+          card once `model.isComplete` (see OnboardingSurface), so both systems
+          now agree: no completed-setup card on the daily Dashboard.
+
+          CHLOE D4 — the "Pilot learning" card ("…Send it to Sam", "Send
+          feedback", "Know another electrologist?") was PR #250 pilot tooling
+          and no longer belongs in a practitioner's daily workspace. It is
+          removed here and its component file is deleted; the shared
+          buildPilotFeedbackMailto helper stays, because the quiet
+          <PilotFeedbackPrompt> footers above still use it. */}
     </div>
   );
 }
@@ -761,156 +776,188 @@ function AppointmentRow({
     // detail), and a separate primary-action button sits beside it,
     // wrapping below the content on phones. No nested anchors.
     <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900">
-      <Link
-        href={`/calendar/${appt.id}`}
-        className="flex min-w-0 flex-1 basis-64 gap-4"
-      >
-        <div className="w-14 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
-          {time}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="truncate font-medium">
-              {appt.client?.name ?? "Client deleted"}
-            </span>
-            <AppointmentStatusPill status={appt.status} />
-            {nextAction.chip && (
-              <span
-                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-                  nextAction.chip === "Charting needed"
-                    ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
-                    : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
-                }`}
-              >
-                {nextAction.chip}
+      {/* CHLOE D1 — the row body is a link, so NOTHING interactive may live
+          inside it.
+          ----------------------------------------------------------------
+          The Treatment Memory disclosure used to be rendered as the last child
+          of the "Before today" block, which is inside this <Link>. Two things
+          went wrong at once, and both look identical to the practitioner:
+
+            1. the toggle's click bubbled to the ancestor <Link>, so pressing
+               "View full last treatment" set the open state AND pushed
+               /calendar/<id> — the region expanded and was then thrown away by
+               a navigation she never asked for;
+            2. once open, the embedded card rendered an <a> INSIDE an <a>,
+               which is invalid HTML with undefined activation behaviour.
+
+          stopPropagation() would only paper over (1) — a nested anchor and a
+          nested <button> are still invalid content for <a>, and native anchor
+          activation is not a React synthetic event. So the disclosure is
+          HOISTED OUT of the link instead, and sits directly beneath it in the
+          same text column (pl-[4.5rem] = the w-14 time cell + the gap-4), which
+          is where it already appeared. The row body still opens the
+          appointment; the disclosure is simply no longer part of it. */}
+      <div className="flex min-w-0 flex-1 basis-64 flex-col">
+        <Link
+          href={`/calendar/${appt.id}`}
+          className="flex min-w-0 gap-4"
+        >
+          <div className="w-14 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
+            {time}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="truncate font-medium">
+                {appt.client?.name ?? "Client deleted"}
               </span>
-            )}
-          </div>
-          <div className="mt-0.5 truncate text-xs text-neutral-500">
-            {serviceName && <span>{serviceName}</span>}
-            {modality && <span>{serviceName ? " · " : ""}{modality}</span>}
-            <span>
-              {(serviceName || modality) ? " · " : ""}
-              {appt.duration_minutes} min
-            </span>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            {performerName ? (
-              <span className="flex items-center gap-1.5">
+              <AppointmentStatusPill status={appt.status} />
+              {nextAction.chip && (
                 <span
-                  aria-hidden
-                  className={`inline-block h-2 w-2 rounded-full ${performerColor.bg}`}
-                />
-                <span className="text-neutral-600 dark:text-neutral-400">
-                  {performerName}
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+                    nextAction.chip === "Charting needed"
+                      ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
+                      : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
+                  }`}
+                >
+                  {nextAction.chip}
                 </span>
-              </span>
-            ) : (
-              <span className="text-neutral-400 dark:text-neutral-500">
-                Unassigned
-              </span>
-            )}
-            {showAllergyFlag && (
-              <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 font-medium text-rose-900 dark:bg-rose-900/40 dark:text-rose-200">
-                Allergies
-              </span>
-            )}
-            <IntakePill status={intakeStatus} />
-          </div>
-          {pinnedNoteText && (
-            <div
-              className="mt-1 truncate text-xs text-amber-800 dark:text-amber-300"
-              title={pinnedNoteText}
-            >
-              <span className="font-semibold uppercase tracking-wider text-[10px]">
-                Pinned
-              </span>{" "}
-              {truncate(pinnedNoteText, 50)}
+              )}
             </div>
-          )}
-          {/* PREPARATION — the facts that used to be split across the Today
-              row and the Daily Prep Brief, now resolved ONCE by
-              buildTodayWorkflow and rendered once here. Nothing below repeats a
-              status already shown by a pill or chip above. */}
-          {workflow && (
-            <div className="mt-1.5 flex flex-col gap-0.5 text-xs">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-                Before today
+            <div className="mt-0.5 truncate text-xs text-neutral-500">
+              {serviceName && <span>{serviceName}</span>}
+              {modality && <span>{serviceName ? " · " : ""}{modality}</span>}
+              <span>
+                {(serviceName || modality) ? " · " : ""}
+                {appt.duration_minutes} min
               </span>
-              {!workflow.hasHistory ? (
-                // ONE relationship line, not "New client" here and "No prior
-                // treatment history yet" somewhere else.
-                <span className="text-neutral-500">
-                  New client · No charted history yet
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              {performerName ? (
+                <span className="flex items-center gap-1.5">
+                  <span
+                    aria-hidden
+                    className={`inline-block h-2 w-2 rounded-full ${performerColor.bg}`}
+                  />
+                  <span className="text-neutral-600 dark:text-neutral-400">
+                    {performerName}
+                  </span>
                 </span>
               ) : (
-                <>
-                  {/* Remember = the PLAN note (next_session_note). It is no
-                      longer taken from `rememberLine`, which collapsed the
-                      caution and the plan into one string, so the caution used
-                      to print twice under two different labels. */}
-                  {workflow.remember && (
-                    <span
-                      className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
-                      title={workflow.remember}
-                    >
-                      Remember: {workflow.remember}
-                    </span>
-                  )}
-                  {/* Caution = the watch line, kept visually distinct in the
-                      established rose convention and never folded into
-                      Remember. */}
-                  {workflow.caution && (
-                    <span
-                      className="whitespace-pre-wrap break-words text-rose-900 dark:text-rose-200"
-                      title={workflow.caution}
-                    >
-                      Caution: {workflow.caution}
-                    </span>
-                  )}
-                  {!workflow.remember && !workflow.caution && (
-                    <span className="text-neutral-500">No watch/plan note.</span>
-                  )}
-                  {/* Latest setup, once. The brief's duplicate "Last recorded:"
-                      line is gone. */}
-                  <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
-                    Latest setup: {workflow.setup ?? "Not recorded"}
-                  </span>
-                </>
-              )}
-              {/* Specific missing-record reminders, once each. The generic
-                  "Records: N reminders" count is gone: it said nothing these
-                  chips do not say precisely. */}
-              {workflow.missingRecords.length > 0 && (
-                <span className="mt-0.5 flex flex-wrap gap-1">
-                  {workflow.missingRecords.map((r) => (
-                    <span
-                      key={r}
-                      data-testid="missing-record-chip"
-                      className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-                    >
-                      {r}
-                    </span>
-                  ))}
+                <span className="text-neutral-400 dark:text-neutral-500">
+                  Unassigned
                 </span>
               )}
-              {/* Dashboard V2 Part 2A: the previous treatment in place. Compact
-                  by default — one line naming the visit — and expandable to the
-                  complete #517 card without leaving Today. Rendered only for a
-                  client who HAS history, so a first visit stays a single calm
-                  relationship line. */}
-              {workflow.hasHistory && (
-                <TodayTreatmentMemory
-                  clientId={appt.client_id}
-                  clientName={appt.client?.name ?? "this client"}
-                  memory={prepMemory.memory}
-                  unavailable={prepMemory.unavailable}
-                />
+              {showAllergyFlag && (
+                <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 font-medium text-rose-900 dark:bg-rose-900/40 dark:text-rose-200">
+                  Allergies
+                </span>
               )}
+              <IntakePill status={intakeStatus} />
             </div>
-          )}
-        </div>
-      </Link>
+            {pinnedNoteText && (
+              <div
+                className="mt-1 truncate text-xs text-amber-800 dark:text-amber-300"
+                title={pinnedNoteText}
+              >
+                <span className="font-semibold uppercase tracking-wider text-[10px]">
+                  Pinned
+                </span>{" "}
+                {truncate(pinnedNoteText, 50)}
+              </div>
+            )}
+            {/* PREPARATION — the facts that used to be split across the Today
+                row and the Daily Prep Brief, now resolved ONCE by
+                buildTodayWorkflow and rendered once here. Nothing below repeats
+                a status already shown by a pill or chip above. */}
+            {workflow && (
+              <div className="mt-1.5 flex flex-col gap-0.5 text-xs">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                  Before today
+                </span>
+                {!workflow.hasHistory ? (
+                  // ONE relationship line, not "New client" here and "No prior
+                  // treatment history yet" somewhere else.
+                  <span className="text-neutral-500">
+                    New client · No charted history yet
+                  </span>
+                ) : (
+                  <>
+                    {/* Remember = the PLAN note (next_session_note). It is no
+                        longer taken from `rememberLine`, which collapsed the
+                        caution and the plan into one string, so the caution
+                        used to print twice under two different labels. */}
+                    {workflow.remember && (
+                      <span
+                        className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
+                        title={workflow.remember}
+                      >
+                        Remember: {workflow.remember}
+                      </span>
+                    )}
+                    {/* Caution = the watch line, kept visually distinct in the
+                        established rose convention and never folded into
+                        Remember. */}
+                    {workflow.caution && (
+                      <span
+                        className="whitespace-pre-wrap break-words text-rose-900 dark:text-rose-200"
+                        title={workflow.caution}
+                      >
+                        Caution: {workflow.caution}
+                      </span>
+                    )}
+                    {!workflow.remember && !workflow.caution && (
+                      <span className="text-neutral-500">
+                        No watch/plan note.
+                      </span>
+                    )}
+                    {/* Latest setup, once. The brief's duplicate "Last
+                        recorded:" line is gone. */}
+                    <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
+                      Latest setup: {workflow.setup ?? "Not recorded"}
+                    </span>
+                  </>
+                )}
+                {/* Specific missing-record reminders, once each. The generic
+                    "Records: N reminders" count is gone: it said nothing these
+                    chips do not say precisely. */}
+                {workflow.missingRecords.length > 0 && (
+                  <span className="mt-0.5 flex flex-wrap gap-1">
+                    {workflow.missingRecords.map((r) => (
+                      <span
+                        key={r}
+                        data-testid="missing-record-chip"
+                        className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+                      >
+                        {r}
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </Link>
+        {/* Dashboard V2 Part 2A: the previous treatment in place. Compact by
+            default — one line naming the visit — and expandable to the complete
+            #517 card WITHOUT leaving Today. Rendered only for a client who HAS
+            history, so a first visit stays a single calm relationship line.
+
+            CHLOE D1: it is a SIBLING of the row-body link, never a descendant.
+            The left padding lines it up with the text column above it (w-14
+            time cell + gap-4), so it reads as the last line of "Before today"
+            exactly as it did before — it simply is no longer inside a control
+            that navigates. */}
+        {workflow?.hasHistory && (
+          <div className="pl-[4.5rem] text-xs">
+            <TodayTreatmentMemory
+              clientId={appt.client_id}
+              clientName={appt.client?.name ?? "this client"}
+              memory={prepMemory.memory}
+              unavailable={prepMemory.unavailable}
+            />
+          </div>
+        )}
+      </div>
       <div className="flex flex-col items-end gap-2 self-center">
         {/* Quick checkout (Chloe): take payment from the roster without opening
             charting. Paid/Processing/Refunded show a status badge instead. */}

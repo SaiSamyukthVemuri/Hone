@@ -58,6 +58,29 @@ async function expectInsideViewport(
   ).toBeLessThanOrEqual(viewport.width + 0.5);
 }
 
+// V2-A.1: after a hash navigation the TARGET CONTROL must actually be on
+// screen. Presence in the DOM is not the contract Global Search promises — a
+// result that names one specific setting has to land the practitioner on that
+// setting. This asserts real vertical intersection with the viewport, which is
+// the part expectInsideViewport (horizontal only) cannot see.
+async function expectScrolledIntoView(
+  page: Page,
+  locator: ReturnType<Page["locator"]>,
+  label: string,
+) {
+  const box = await locator.boundingBox();
+  expect(box, `${label}: no bounding box — not rendered`).not.toBeNull();
+  const viewport = page.viewportSize()!;
+  expect(
+    box!.y,
+    `${label}: top is below the fold (y=${box!.y}, viewport height ${viewport.height}) — the hash did not scroll`,
+  ).toBeLessThan(viewport.height);
+  expect(
+    box!.y + box!.height,
+    `${label}: bottom is above the fold (y+h=${box!.y + box!.height}) — scrolled past`,
+  ).toBeGreaterThan(0);
+}
+
 async function expectNoPageOverflow(page: Page, label: string) {
   const widths = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,
@@ -675,14 +698,100 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(clientResult.first()).toBeVisible({ timeout: 15_000 });
     await desktopPage.keyboard.press("Escape");
     await expect(clientResult).toHaveCount(0);
+    // V2-A: a navigation result's subtitle is now the destination's own
+    // description rather than the generic "Go to page".
+    const gettingStarted = desktopPage.getByRole("link", {
+      name: "Getting Started Setup and readiness checklist for your studio",
+    });
     await search.fill("Getting");
-    await expect(
-      desktopPage.getByRole("link", { name: "Getting Started Go to page" }),
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(gettingStarted).toBeVisible({ timeout: 15_000 });
     await desktopPage.getByText("Charted within 24h").first().click();
+    await expect(gettingStarted).toHaveCount(0);
+
+    // V2-A: an individual SETTING is findable by terminology that appears
+    // nowhere in the page title. This account is the studio owner, so the
+    // owner-only availability surface is legitimately visible to it.
+    await search.fill("hours");
+    const availability = desktopPage.getByRole("link", {
+      name: /^Availability Weekly hours/,
+    });
+    await expect(availability).toBeVisible({ timeout: 15_000 });
+    await availability.click();
+    await desktopPage.waitForURL(/\/settings\/availability/);
+    await desktopPage.goto("/dashboard");
+
+    // -----------------------------------------------------------------
+    // V2-A.1 — THE REPORTED PRODUCTION FAILURE, in a real browser.
+    //
+    // Sam searched the exact visible setting name "booking horizon" and
+    // Global Search returned nothing: V2-A registered the Booking PAGE and
+    // three of its concepts, and Booking horizon was not one of them. The
+    // unit suite proves the registry resolves it; only the browser can prove
+    // the journey — found by name, clicked, and LANDED ON THE CONTROL.
+    // -----------------------------------------------------------------
+    await search.fill("booking horizon");
+    const horizonResult = desktopPage.getByRole("link", {
+      name: "Booking horizon Choose how far ahead clients can book online",
+    });
+    await expect(horizonResult).toBeVisible({ timeout: 15_000 });
+
+    // ...and it is the PRECISE control, not the generic page row falling out
+    // of a keyword brush. The Booking page entry must not answer this query.
     await expect(
-      desktopPage.getByRole("link", { name: "Getting Started Go to page" }),
+      desktopPage.getByRole("link", {
+        name: /^Booking Public booking page/,
+      }),
     ).toHaveCount(0);
+
+    await horizonResult.click();
+
+    // Exact pathname AND hash. The hash is the whole point: without it the
+    // practitioner lands at the top of an eight-control form.
+    await desktopPage.waitForURL(
+      (url) =>
+        url.pathname === "/settings/booking" && url.hash === "#booking-horizon",
+    );
+
+    // The real anchored control, on screen — not merely somewhere in the DOM.
+    const horizonControl = desktopPage.locator("#booking-horizon");
+    await expect(horizonControl).toBeVisible();
+    await expect(horizonControl).toContainText("Booking horizon");
+    await expectScrolledIntoView(
+      desktopPage,
+      horizonControl,
+      "booking horizon control",
+    );
+    // The actual form field, not just its label wrapper.
+    await expect(
+      horizonControl.locator("select[name='public_booking_horizon_months']"),
+    ).toBeVisible();
+
+    // Existing contract: choosing a result closes the search panel.
+    await expect(horizonResult).toHaveCount(0);
+
+    // -----------------------------------------------------------------
+    // Sibling control on the SAME page resolves to its OWN anchor. This is
+    // what proves href dedupe cannot collapse two controls that share a page
+    // — the failure mode that would silently make one of them unreachable.
+    // -----------------------------------------------------------------
+    await desktopPage.goto("/dashboard");
+    await search.fill("buffer");
+    const bufferResult = desktopPage.getByRole("link", {
+      name: "Time between appointments Buffer left between back-to-back appointments",
+    });
+    await expect(bufferResult).toBeVisible({ timeout: 15_000 });
+    await bufferResult.click();
+    await desktopPage.waitForURL(
+      (url) => url.pathname === "/settings/booking" && url.hash === "#buffer",
+    );
+    const bufferControl = desktopPage.locator("#buffer");
+    await expect(bufferControl).toBeVisible();
+    await expect(bufferControl).toContainText("Time between appointments");
+    await expectScrolledIntoView(desktopPage, bufferControl, "buffer control");
+    // Two searches, one page, two different destinations.
+    expect(new URL(desktopPage.url()).hash).toBe("#buffer");
+
+    await desktopPage.goto("/dashboard");
     await search.fill(seed.clientName);
     await expect(clientResult.first()).toBeVisible({ timeout: 15_000 });
     await clientResult.first().click();

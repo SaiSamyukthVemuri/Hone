@@ -9,6 +9,13 @@
 // no migration, no new index. Deliberately EXCLUDED from V1:
 // exposure incident content, audit change payloads, payment
 // internals, Stripe ids, and every raw token field.
+//
+// V2-A extends the "page" category from six hard-coded shortcuts to the
+// permission-aware navigation/settings registry in
+// lib/search/navigation-registry.ts. The registry is static product metadata
+// with no database access, so the posture above is unchanged — a nav result
+// can only ever point at a page the practitioner was already authorized to
+// open.
 
 export type SearchResultType =
   | "client"
@@ -34,9 +41,43 @@ export type SearchGroup = {
 
 export const SEARCH_MIN_CHARS = 2;
 export const SEARCH_MAX_QUERY_LENGTH = 80;
+
+/**
+ * Cap on DATA results (clients, appointments, treatment memory, records).
+ * Unchanged from V1.
+ */
 export const SEARCH_TOTAL_CAP = 12;
 
-// Display order. Clients first; page shortcuts always last.
+/**
+ * Cap on NAVIGATION results (the settings/pages registry).
+ *
+ * Six, not four: the pre-typing state of the dropdown is the six default
+ * shortcuts inherited from V1, and this cap is applied by groupResults on the
+ * way to the screen. A cap below six would silently trim that state — the
+ * component would render four of the six rows the action returned. Pinned by
+ * tests/lib/search/navigation-registry.test.ts.
+ *
+ * Lives here rather than in navigation-registry.ts so the client component can
+ * import it without pulling the registry — which is server-only precisely so a
+ * non-owner's browser bundle never carries the titles of owner-only surfaces.
+ */
+export const NAV_RESULT_CAP = 6;
+
+/**
+ * Absolute cap on everything the dropdown can render.
+ *
+ * Navigation results are capped SEPARATELY (NAV_RESULT_CAP) and sit on top of
+ * the data cap rather than competing for the same twelve slots. Two reasons:
+ *   * a data-rich query must never lose a client result to a settings row —
+ *     V1's categories are not allowed to degrade;
+ *   * a settings-only query ("buffer", "photo consent") must never lose its
+ *     answer to a wall of unrelated clients, which is exactly what happens
+ *     when page shortcuts are appended last into a shared, already-full cap.
+ * Both caps are constants, so the total is deterministic.
+ */
+export const SEARCH_RESULT_CAP = SEARCH_TOTAL_CAP + NAV_RESULT_CAP;
+
+// Display order. Clients first; navigation/settings always last.
 export const GROUP_ORDER: ReadonlyArray<{
   type: SearchResultType;
   label: string;
@@ -45,7 +86,9 @@ export const GROUP_ORDER: ReadonlyArray<{
   { type: "appointment", label: "Appointments" },
   { type: "memory", label: "Treatment Memory" },
   { type: "record", label: "Records" },
-  { type: "page", label: "Pages" },
+  // V2-A: the group is no longer "six page shortcuts" — it is every settings
+  // and navigation destination the practitioner is allowed to reach.
+  { type: "page", label: "Settings & Pages" },
 ];
 
 // Escape ILIKE metacharacters so a typed % or _ is literal (same
@@ -58,35 +101,31 @@ export function sanitizeQuery(raw: string): string {
   return raw.trim().slice(0, SEARCH_MAX_QUERY_LENGTH);
 }
 
-// Static page shortcuts: search stays useful before data exists.
-// Exposure Incidents is deliberately NOT a shortcut (owner-only
-// surface; global search must not advertise it).
-const PAGE_SHORTCUTS: ReadonlyArray<{ title: string; href: string }> = [
-  { title: "Dashboard", href: "/dashboard" },
-  { title: "Clients", href: "/clients" },
-  { title: "Calendar", href: "/calendar" },
-  { title: "Records", href: "/records" },
-  { title: "Settings", href: "/settings/profile" },
-  { title: "Getting Started", href: "/getting-started" },
-];
-
-export function filterPageShortcuts(query: string): SearchResult[] {
-  const q = query.trim().toLowerCase();
-  return PAGE_SHORTCUTS.filter(
-    (p) => q.length === 0 || p.title.toLowerCase().includes(q),
-  ).map((p) => ({
-    id: `page:${p.href}`,
-    type: "page" as const,
-    title: p.title,
-    subtitle: "Go to page",
-    href: p.href,
-  }));
+// Apply the two independent caps. Data results keep the V1 budget; navigation
+// results get their own, so neither category can starve the other. Order
+// within each category is preserved exactly as the producer established it,
+// which is what makes the capped output deterministic.
+//
+// Called by the server action (before returning) and again by groupResults
+// (before rendering) — capping is idempotent, and defining it once means the
+// two can never disagree about what "capped" means.
+export function capResults(results: SearchResult[]): SearchResult[] {
+  const data: SearchResult[] = [];
+  const nav: SearchResult[] = [];
+  for (const r of results) {
+    if (r.type === "page") {
+      if (nav.length < NAV_RESULT_CAP) nav.push(r);
+    } else if (data.length < SEARCH_TOTAL_CAP) {
+      data.push(r);
+    }
+  }
+  return [...data, ...nav];
 }
 
-// Group flat results in display order and apply the global cap,
+// Group flat results in display order and apply the caps,
 // preserving the per-category ranking the action established.
 export function groupResults(results: SearchResult[]): SearchGroup[] {
-  const capped = results.slice(0, SEARCH_TOTAL_CAP);
+  const capped = capResults(results);
   return GROUP_ORDER.map(({ type, label }) => ({
     label,
     results: capped.filter((r) => r.type === type),

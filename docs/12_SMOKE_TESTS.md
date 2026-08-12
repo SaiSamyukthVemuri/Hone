@@ -1299,6 +1299,60 @@ history still lists prior rows unchanged. Do **not** attempt a direct PostgREST 
 production to test the boundary — the automated lane already proves it on a disposable database.
 No production writes, no backfill, no data correction. Live payments remain disabled.
 
+## Global Search V2-A — searchable settings + navigation smoke (no migration)
+
+Signed in **as the studio owner**, open the header search and type each of:
+`reminder`, `hours`, `buffer`, `booking link`, `consent`, `photo consent`,
+`google`, `calendar sync`, `sms`, `payments`, `services`, `team`,
+`data export`, `privacy`, `records`. Confirm every one returns a result under
+the **Settings & Pages** group with a plain-English description, and that
+clicking it lands on the matching settings page — `reminder` should land on
+Settings → Studio at the *Email notifications* block (not the top of the page),
+and `photo consent` on Settings → Consent forms.
+
+Then sign in **as a non-owner practitioner** in the same studio and repeat
+`payments`, `hours`, `consent`, `reminder`, `team`, `services`. Confirm **none
+of them offers an owner-only settings page** — not as a greyed row, not as a
+"no permission" row, nothing at all. Confirm `profile`, `intake`, `launch`,
+`sterile` and `getting started` still resolve for that practitioner.
+
+Confirm, for both roles: typing a client name still returns the client (data
+results were not displaced); the empty search box still shows the six
+shortcuts Dashboard / Clients / Calendar / Record Keeping / Settings / Getting
+Started; nothing in any result mentions Exposure Incidents or any `/admin`
+page; and on a phone the search sheet still fits with no sideways scroll.
+
+Search is discovery only — it adds no permission. Anything it offers was
+already reachable by that practitioner from the menu. Live payments unchanged.
+
+## Global Search V2-A.1 — settings CONTROL search smoke (no migration)
+
+Signed in **as the studio owner**, open the header search and type the exact
+visible setting name **`booking horizon`**. Confirm the first result is
+**Booking horizon — "Choose how far ahead clients can book online"**, and that
+clicking it lands on Settings → Booking **at the Booking horizon field**, not at
+the top of the page. Repeat with `horizon`, `how far ahead`, `booking window`
+and `months ahead` — all must reach the same control.
+
+Then confirm each of the other seven Booking controls resolves to its own field:
+`booking link`, `slug`, `timezone`, `default duration`, `buffer`,
+`public address`, `booking page intro`. Confirm plain `booking` still returns the
+Booking **page** — the page row and the control rows must both survive.
+
+Spot-check one control from every other Settings page: `studio name`,
+`time format`, `send 24 hour reminders`, `weekly hours`, `lunch`,
+`service menu order`, `pending invitations`, `photo consent`,
+`aftercare instructions`, `cancellation policy`, `late cancellation fee`,
+`google calendar`, `pixel`, `csv`, `export your data`, `calendar feed`.
+
+Then sign in **as a non-owner practitioner** and repeat `booking horizon`,
+`timezone`, `weekly hours`, `studio name` and `export your data`. Confirm **none
+of them returns anything at all**. Confirm `your name`, `calendar color`,
+`calendar feed` and `intake form preview` still resolve for that practitioner.
+
+Search adds no permission — every control it offers was already reachable from
+that practitioner's own Settings tabs. Live payments unchanged.
+
 ## Quick gates a reviewer can run
 
 GitHub Actions CI (PR #154) runs the full validation suite on every PR. The local equivalent is:

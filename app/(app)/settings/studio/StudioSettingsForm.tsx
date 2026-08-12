@@ -68,7 +68,7 @@ export function StudioSettingsForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex max-w-xl flex-col gap-5">
-      <label className="flex flex-col gap-1.5">
+      <label id="studio-name" className="flex scroll-mt-24 flex-col gap-1.5">
         <span className="text-sm font-medium">
           Studio name<span className="ml-1 text-red-500">*</span>
         </span>
@@ -80,7 +80,7 @@ export function StudioSettingsForm({
         />
       </label>
 
-      <label className="flex flex-col gap-1.5">
+      <label id="legal-entity" className="flex scroll-mt-24 flex-col gap-1.5">
         <span className="text-sm font-medium">Legal entity name</span>
         <input
           value={legalEntity}
@@ -97,7 +97,7 @@ export function StudioSettingsForm({
         </p>
       </div>
 
-      <div className="flex flex-col gap-1.5">
+      <div id="birthday-color" className="flex scroll-mt-24 flex-col gap-1.5">
         <span className="text-sm font-medium">Birthday reminder color</span>
         <p className="text-xs text-neutral-500">
           Choose the accent color used for birthday reminders. Red is
@@ -130,7 +130,7 @@ export function StudioSettingsForm({
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5">
+      <div id="time-format" className="flex scroll-mt-24 flex-col gap-1.5">
         <span className="text-sm font-medium">Time format</span>
         <p className="text-xs text-neutral-500">
           How times are shown on your calendar, dashboard, and availability.

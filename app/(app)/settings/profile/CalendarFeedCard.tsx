@@ -102,7 +102,9 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <div className="flex flex-col gap-1">
-        <h3 className="text-base font-medium">Calendar feed</h3>
+        <h3 id="calendar-feed" className="scroll-mt-24 text-base font-medium">
+          Calendar feed
+        </h3>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Subscribe to this private calendar URL in Google Calendar or
           Apple Calendar to see your Hone appointments. This is one-way

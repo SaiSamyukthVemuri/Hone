@@ -41,7 +41,7 @@ export function ProfileForm({ initialDisplayName, email }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="flex max-w-xl flex-col gap-5">
-      <label className="flex flex-col gap-1.5">
+      <label id="your-name" className="flex scroll-mt-24 flex-col gap-1.5">
         <span className="text-sm font-medium">
           Your name<span className="ml-1 text-red-500">*</span>
         </span>
