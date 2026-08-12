@@ -39,7 +39,9 @@ export default async function IntakeAndPostcarePage() {
   return (
     <section className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
-        <h2 className="text-xl font-medium">Intake form preview</h2>
+        <h2 id="intake-preview" className="scroll-mt-24 text-xl font-medium">
+          Intake form preview
+        </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           This is the current health intake form. Inspect each step end
           to end without creating a test client.

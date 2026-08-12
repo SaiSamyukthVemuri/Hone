@@ -34,7 +34,7 @@ export function ColorPicker({ initialColor }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div id="calendar-color" className="flex scroll-mt-24 flex-col gap-2">
       <span className="text-sm font-medium">Calendar color</span>
       <span className="text-xs text-neutral-500">
         Your appointments will appear in this color on the calendar.

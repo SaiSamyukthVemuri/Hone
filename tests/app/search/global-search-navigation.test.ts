@@ -228,7 +228,9 @@ describe("the action derives navigation visibility from the real session", () =>
     expect(pages(await search("google"))).toEqual([]);
 
     signInAs("practitioner", { google_calendar_connection_enabled: true });
-    expect(hrefs(await search("google"))).toContain("/settings/profile");
+    expect(hrefs(await search("google"))).toContain(
+      "/settings/profile#google-calendar",
+    );
   });
 
   it("a missing session yields a refusal, never a default-owner view", async () => {
@@ -269,7 +271,9 @@ describe("navigation results are shaped safely", () => {
     expect(result.subtitle).toBe(
       "Buffer left between back-to-back appointments",
     );
-    expect(result.href).toBe("/settings/booking");
+    // V2-A.1: anchored at the control, so a click lands on the buffer field
+    // rather than the top of the Booking form.
+    expect(result.href).toBe("/settings/booking#buffer");
     expect(result.date).toBeUndefined();
     expect(result.badge).toBeUndefined();
   });

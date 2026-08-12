@@ -87,8 +87,16 @@ export default async function BookingSettingsPage({
         </p>
       </section>
 
+      {/* Stable anchor ids below. Global Search resolves an individual SETTING
+          (not just this page) to /settings/booking#<id>, so each control needs
+          a durable target. Ids are content-stable names, never positions —
+          tests/lib/search/settings-control-coverage.test.ts fails if a
+          registered anchor stops existing. `scroll-mt-24` clears the sticky
+          header, matching the existing #postcare convention. */}
       <section className="flex flex-col gap-2">
-        <label className="text-sm font-medium">Your booking link</label>
+        <label id="booking-link" className="scroll-mt-24 text-sm font-medium">
+          Your booking link
+        </label>
         <BookingLinkCard slug={studio.slug} origin={appOrigin} variant="card" />
       </section>
 
@@ -96,7 +104,7 @@ export default async function BookingSettingsPage({
         action={updateStudioBookingPrefsAction}
         className="flex max-w-2xl flex-col gap-5"
       >
-        <label className="flex flex-col gap-1.5">
+        <label id="booking-slug" className="flex scroll-mt-24 flex-col gap-1.5">
           <span className="text-sm font-medium">Booking URL slug</span>
           <div className="flex items-stretch">
             <span className="inline-flex items-center rounded-l-md border border-r-0 border-neutral-300 bg-neutral-50 px-3 text-xs text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
@@ -117,7 +125,7 @@ export default async function BookingSettingsPage({
         </label>
 
         <div className="grid gap-4 md:grid-cols-3">
-          <label className="flex flex-col gap-1.5">
+          <label id="timezone" className="flex scroll-mt-24 flex-col gap-1.5">
             <span className="text-sm font-medium">Timezone</span>
             <input
               name="timezone"
@@ -126,7 +134,10 @@ export default async function BookingSettingsPage({
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
             />
           </label>
-          <label className="flex flex-col gap-1.5">
+          <label
+            id="default-duration"
+            className="flex scroll-mt-24 flex-col gap-1.5"
+          >
             <span className="text-sm font-medium">Default duration (min)</span>
             <input
               name="default_appointment_duration_minutes"
@@ -138,7 +149,7 @@ export default async function BookingSettingsPage({
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
             />
           </label>
-          <label className="flex flex-col gap-1.5">
+          <label id="buffer" className="flex scroll-mt-24 flex-col gap-1.5">
             <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
               <span className="text-sm font-medium">
                 Time between appointments
@@ -171,7 +182,10 @@ export default async function BookingSettingsPage({
           </label>
         </div>
 
-        <label className="flex flex-col gap-1.5 max-w-xs">
+        <label
+          id="booking-horizon"
+          className="flex max-w-xs scroll-mt-24 flex-col gap-1.5"
+        >
           <span className="text-sm font-medium">Booking horizon</span>
           <select
             name="public_booking_horizon_months"
@@ -190,7 +204,10 @@ export default async function BookingSettingsPage({
           </span>
         </label>
 
-        <label className="flex flex-col gap-1.5">
+        <label
+          id="public-address"
+          className="flex scroll-mt-24 flex-col gap-1.5"
+        >
           <span className="text-sm font-medium">
             Public address (shown on your booking page)
           </span>
@@ -206,7 +223,7 @@ export default async function BookingSettingsPage({
           </span>
         </label>
 
-        <label className="flex flex-col gap-1.5">
+        <label id="booking-intro" className="flex scroll-mt-24 flex-col gap-1.5">
           <span className="text-sm font-medium">Booking page intro</span>
           <textarea
             name="booking_description"
