@@ -169,18 +169,34 @@ describe("5. dashboard: worklist first", () => {
     }
   });
 
-  it("completed setup collapses to a quiet footer link; incomplete keeps the card", () => {
+  it("completed setup renders NOTHING; incomplete keeps the card", () => {
+    // SUPERSEDED INTENTIONALLY (Chloe D3, this PR). PR #238 collapsed completed
+    // setup into a quiet "Setup complete. Getting started checklist →" footer.
+    // Chloe's newer report is that the Dashboard tells her setup is complete
+    // AND still offers her the checklist — the footer IS that contradiction, so
+    // the completed state now renders nothing at all. The derivation itself is
+    // unchanged; only what a completed studio SEES changed.
     expect(DASH).toMatch(
       /const setupComplete =\s*\n?\s*gettingStarted\.autoTotal > 0 &&\s*\n?\s*gettingStarted\.autoDone === gettingStarted\.autoTotal/,
     );
-    // Onboarding v2 (migration 0140) supersedes these when its per-studio flag
-    // is on, so the legacy link/footer are gated behind !onboardingV2On. On the
-    // default OFF path they render exactly as before.
+    // Onboarding v2 (migration 0140) supersedes this when its per-studio flag
+    // is on, so the legacy card stays gated behind !onboardingV2On. On the
+    // default OFF path an INCOMPLETE studio still gets its card, unchanged.
     expect(DASH).toMatch(/\{!onboardingV2On && !setupComplete && \(/);
-    expect(DASH).toMatch(/\{!onboardingV2On && setupComplete && \(/);
-    expect(DASH).toMatch(/Setup complete\./);
-    // Both states keep the route reachable.
-    expect(DASH.match(/href="\/getting-started"/g)?.length).toBe(2);
+    // ...and a COMPLETE one gets no footer, no card, no congratulation.
+    // Comment-stripped: the page explains WHY the footer went away, and that
+    // explanation quotes the retired copy. A whole-file grep would be satisfied
+    // by the explanation rather than by the removal.
+    const code = DASH.split("\n")
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(code).not.toMatch(/\{!onboardingV2On && setupComplete && \(/);
+    expect(code).not.toMatch(/Setup complete\./);
+    // Exactly one route link survives — the incomplete card's. The route stays
+    // reachable regardless: AccountMenu and MobileMenu both link it (pinned in
+    // tests/app/dashboard/operational-hierarchy.test.ts).
+    expect(code.match(/href="\/getting-started"/g)?.length).toBe(1);
     // The dashboard never renders the full checklist; that lives on
     // /getting-started.
     expect(DASH).not.toMatch(/gettingStarted\.sections/);

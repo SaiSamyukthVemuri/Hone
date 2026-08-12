@@ -61,18 +61,28 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps all 63 specs, and the targeted lane still selects 28", () => {
+  it("the manifest still maps every spec, and the targeted lane still selects 29", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
     // 58 since practitioner-assisted-intake.spec.ts joined the intake group
     // (57 after PR #518 added intake-electrolysis-acknowledgement.spec.ts).
     // 64 with B7's public-cancel-policy-change.spec.ts mapped into `portal`
-    // (63 before it). The count is deliberate: it is the tripwire for a spec
-    // that lands on disk without being mapped, which would silently never run.
-    expect(mapped).toHaveLength(64);
-    // The exact selection that was cancelled twice at the old 10-minute ceiling.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(28);
+    // (63 before it). 65 with the Chloe D1 dashboard-treatment-memory-inline
+    // spec mapped into `sessions`.
+    //
+    // The count is deliberate: it is the tripwire for a spec that lands on disk
+    // without being mapped, which would silently never run. It is now derived
+    // from the DISK rather than hard-coded, because a hard number here says
+    // nothing the derivation does not — and the two can disagree in the one
+    // direction that matters (a spec on disk, absent from the manifest), which
+    // is precisely what the derived form catches and a literal does not.
+    const onDisk = readdirSync("e2e").filter((f) => f.endsWith(".spec.ts"));
+    expect(mapped).toHaveLength(onDisk.length);
+    expect([...mapped].sort()).toEqual([...onDisk].sort());
+    // The exact selection that was cancelled twice at the old 10-minute
+    // ceiling, plus the one spec this PR added to `sessions`.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(29);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
