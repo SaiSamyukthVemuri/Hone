@@ -150,16 +150,101 @@ describe("setup_intent.succeeded — terminal rejection is never silent", () => 
     expect(ACTIONS_FN).toMatch(/\.not\("processed_at", "is", null\)/);
     // ops_alerts is a notification channel, not the state authority.
     expect(ACTIONS_FN).not.toMatch(/\.from\("ops_alerts"\)/);
-    // CLIENT-BOUND, not merely studio-bound. A SetupIntent id is not
-    // authorization: without the client_id predicate any same-studio client
-    // could probe another client's rejection state.
-    expect(ACTIONS_FN).toMatch(/\.from\("client_stripe_customers"\)/);
-    expect(ACTIONS_FN).toMatch(/\.eq\("studio_id", session\.studioId\)/);
-    expect(ACTIONS_FN).toMatch(/\.eq\("client_id", session\.clientId\)/);
     // Fail closed: unattributable rejections fall through to pending.
     expect(ACTIONS_FN).toMatch(/continue;/);
     // No internal reason reaches the browser.
     expect(ACTIONS_FN).not.toMatch(/state: "rejected", reason/);
+  });
+
+  // -------------------------------------------------------------------------
+  // The ownership binding, pinned to the ownership QUERY specifically.
+  //
+  // The previous version of this guard asserted `.eq("client_id",
+  // session.clientId)` against the whole function slice — and that slice runs
+  // to end of file and contains TWO client-bound queries
+  // (client_payment_methods and client_stripe_customers). Deleting the binding
+  // from the OWNERSHIP query left the other one matching, so the guard passed
+  // while same-studio cross-client probing was reopened. A negative control is
+  // what exposed it; the guard now extracts the one query expression it is
+  // talking about before asserting anything.
+  // -------------------------------------------------------------------------
+
+  /**
+   * The single chained PostgREST expression that starts at `.from(table)` and
+   * ends at its own terminator. Bounded and single-query by construction: it
+   * fails loudly rather than silently swallowing a neighbouring query if the
+   * implementation is restructured.
+   */
+  function queryExpression(src: string, table: string, terminator: string): string {
+    const start = src.indexOf(`.from("${table}")`);
+    expect(start, `no .from("${table}") in the action`).toBeGreaterThan(-1);
+    const end = src.indexOf(terminator, start);
+    expect(end, `no ${terminator} after .from("${table}")`).toBeGreaterThan(start);
+    const expr = src.slice(start, end + terminator.length);
+    // Exactly ONE query in the slice — if a restructure moved the terminator,
+    // this catches it instead of the assertions below passing on a neighbour.
+    expect(
+      (expr.match(/\.from\(/g) ?? []).length,
+      `the extracted ${table} expression swallowed another query`,
+    ).toBe(1);
+    expect(expr.length, `${table} expression implausibly long`).toBeLessThan(600);
+    return expr;
+  }
+
+  it("the OWNERSHIP query itself is bound to studio, client, account, mode and customer", () => {
+    const ACTIONS_FN = ACTIONS.slice(
+      ACTIONS.indexOf("export async function confirmCardPersistedAction"),
+    );
+    const ownership = queryExpression(
+      ACTIONS_FN,
+      "client_stripe_customers",
+      ".maybeSingle()",
+    );
+    // All five predicates must live on THIS query. A matching predicate on any
+    // other query in the function cannot satisfy these.
+    expect(ownership).toMatch(/\.eq\("studio_id", session\.studioId\)/);
+    expect(ownership).toMatch(/\.eq\("client_id", session\.clientId\)/);
+    expect(ownership).toMatch(/\.eq\("stripe_account_id", accountId\)/);
+    expect(ownership).toMatch(/\.eq\("stripe_livemode", livemode\)/);
+    expect(ownership).toMatch(/\.eq\("stripe_customer_id", customerId\)/);
+  });
+
+  it("the guard cannot be satisfied by the OTHER client-bound query", () => {
+    // Proves the extraction is doing real work: the card lookup is also
+    // client-bound, and it must NOT be what the ownership assertions read.
+    const ACTIONS_FN = ACTIONS.slice(
+      ACTIONS.indexOf("export async function confirmCardPersistedAction"),
+    );
+    const card = queryExpression(
+      ACTIONS_FN,
+      "client_payment_methods",
+      ".maybeSingle()",
+    );
+    const ownership = queryExpression(
+      ACTIONS_FN,
+      "client_stripe_customers",
+      ".maybeSingle()",
+    );
+    expect(card).not.toBe(ownership);
+    // Both are client-bound — which is exactly why a whole-function regex was
+    // ambiguous — but only the ownership one carries the Stripe lineage.
+    expect(card).toMatch(/\.eq\("client_id", session\.clientId\)/);
+    expect(card).not.toMatch(/stripe_customer_id/);
+    expect(ownership).toMatch(/stripe_customer_id/);
+  });
+
+  it("terminal rejection is returned ONLY behind the proved-ownership gate", () => {
+    const ACTIONS_FN = ACTIONS.slice(
+      ACTIONS.indexOf("export async function confirmCardPersistedAction"),
+    );
+    // The only `rejected` return in the function is the one guarded by `owner`,
+    // the ownership query's own result. An unguarded return would be a
+    // cross-client oracle.
+    const rejectedReturns = [
+      ...ACTIONS_FN.matchAll(/(.{0,80})return \{ ok: true, state: "rejected" \}/g),
+    ];
+    expect(rejectedReturns.length).toBe(1);
+    expect(rejectedReturns[0][1]).toMatch(/if \(owner\)\s*$/);
   });
 
   it("the webhook records the ownership anchor the portal binds against", () => {
