@@ -233,23 +233,34 @@ test("core memory loop: booking to next-appointment memory", async ({
       page.getByRole("heading", { name: "Follow-up assistant" }),
     ).toHaveCount(0);
 
-    // PR #250 Pilot Love Loop V1: the dashboard shows the "Pilot learning"
-    // card and the agentic cards carry a quiet "Was this useful?" prompt.
-    // Both are manual mailto: links only — the Send feedback href is a
-    // safe mailto with no client/treatment/system-sensitive data.
+    // PR #250 Pilot Love Loop V1, as amended by the Chloe D4 cleanup.
+    //
+    // The "Pilot learning" CARD is GONE from the Dashboard: "Notice a moment
+    // where Hone helped you remember something? Send it to Sam." plus "Send
+    // feedback" / "Know another electrologist?" was pilot tooling, and a
+    // practitioner's daily worklist is not where it belongs. This step used to
+    // assert the card was visible; it now asserts the opposite, deliberately.
     await expect(
       page.getByRole("heading", { name: "Pilot learning" }),
-    ).toBeVisible();
-    const sendFeedback = page.getByRole("link", { name: "Send feedback" });
-    await expect(sendFeedback).toBeVisible();
-    const href = (await sendFeedback.getAttribute("href")) ?? "";
+    ).toHaveCount(0);
+    await expect(page.getByText("Send it to Sam")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Know another electrologist?" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Send feedback" })).toHaveCount(0);
+
+    // The quiet "Was this useful?" prompts SURVIVE — they are the reason the
+    // shared buildPilotFeedbackMailto helper was kept rather than deleted with
+    // the card. Still manual mailto: links only, and the href still carries no
+    // client/treatment/system-sensitive data.
+    await expect(page.getByText("Was this useful?").first()).toBeVisible();
+    const feedbackYes = page.getByRole("link", { name: "Yes", exact: true }).first();
+    await expect(feedbackYes).toBeVisible();
+    const href = (await feedbackYes.getAttribute("href")) ?? "";
     expect(href.startsWith("mailto:hello@hone.care?")).toBe(true);
     expect(href).not.toMatch(
       /client|phone|address|tolerance|probe|aftercare|exposure|stripe|payment|token|audit/i,
     );
-    // The prompt that lived on the retired Follow-up assistant card now sits
-    // at the foot of the To do section — same pilot surface id, still once.
-    await expect(page.getByText("Was this useful?").first()).toBeVisible();
   });
 
   await test.step("Record Keeping shows the procedure record, filtered print works", async () => {

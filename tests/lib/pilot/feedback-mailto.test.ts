@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildPilotFeedbackMailto,
@@ -13,19 +13,23 @@ import {
 // no contacts, no referral automation, no AI. The builder takes ENUM
 // inputs only, so by construction no client-sensitive data can reach the
 // subject/body. These tests pin that, plus the component/dashboard wiring.
+//
+// CHLOE D4 (this PR). The Dashboard "Pilot learning" card is REMOVED: it was
+// pilot tooling ("…Send it to Sam", "Know another electrologist?") occupying a
+// practitioner's daily workspace. The shared builder SURVIVES — the two quiet
+// "Was this useful?" footers still use it — so every safety property below is
+// still asserted, over the enum members that remain reachable. The
+// `dashboard_pilot_learning` surface and the `another_electrologist` intent
+// were reachable only from that card and are removed with it; the tests that
+// exercised them are replaced by assertions that the card is gone, NOT deleted
+// silently.
 
 const SURFACES: PilotSurface[] = [
   "before_today",
   "daily_prep",
   "follow_up_assistant",
-  "dashboard_pilot_learning",
 ];
-const INTENTS: PilotIntent[] = [
-  "useful",
-  "not_useful",
-  "general",
-  "another_electrologist",
-];
+const INTENTS: PilotIntent[] = ["useful", "not_useful", "general"];
 
 function decoded(surface: PilotSurface, intent: PilotIntent): string {
   // Decode the mailto so the assertions read the human text, not %20s.
@@ -53,10 +57,19 @@ describe("buildPilotFeedbackMailto", () => {
     expect(decoded("follow_up_assistant", "not_useful")).toMatch(
       /Feedback: not really/,
     );
-    expect(decoded("dashboard_pilot_learning", "another_electrologist")).toMatch(
-      /another electrologist who might care about treatment memory/,
-    );
     expect(pilotSurfaceLabel("follow_up_assistant")).toBe("Follow-up Assistant");
+  });
+
+  it("no longer offers the retired pilot-only surface or referral intent", () => {
+    // CHLOE D4. Both were reachable ONLY from the deleted "Pilot learning"
+    // card. Asserting on the built output (not just the TypeScript union)
+    // proves the runtime switch has no surviving branch for them, which a type
+    // narrowing alone would not.
+    const built = SURFACES.flatMap((s) =>
+      INTENTS.map((i) => decoded(s, i)),
+    ).join("\n");
+    expect(built).not.toMatch(/Pilot learning/);
+    expect(built).not.toMatch(/another electrologist/i);
   });
 
   it("never includes client-sensitive or system-sensitive data", () => {
@@ -90,13 +103,9 @@ describe("Pilot Love Loop: source pins (helper + components)", () => {
     join(process.cwd(), "app/(app)/dashboard/pilot-feedback-prompt.tsx"),
     "utf8",
   );
-  const CARD = readFileSync(
-    join(process.cwd(), "app/(app)/dashboard/pilot-learning.tsx"),
-    "utf8",
-  );
 
   it("adds no automated send / contact access / AI / referral automation", () => {
-    for (const src of [HELPER, PROMPT, CARD]) {
+    for (const src of [HELPER, PROMPT]) {
       const executable = src
         .split("\n")
         .filter((l) => !l.trim().startsWith("//"))
@@ -110,21 +119,32 @@ describe("Pilot Love Loop: source pins (helper + components)", () => {
     }
   });
 
-  it("the feedback prompt and card are link-only (mailto anchors, no client JS)", () => {
-    for (const src of [PROMPT, CARD]) {
-      expect(src).not.toMatch(/"use client"|onClick|<button|<form|action=/);
-      expect(src).toMatch(/href=\{buildPilotFeedbackMailto/);
-    }
+  it("the feedback prompt is link-only (mailto anchors, no client JS)", () => {
+    expect(PROMPT).not.toMatch(/"use client"|onClick|<button|<form|action=/);
+    expect(PROMPT).toMatch(/href=\{buildPilotFeedbackMailto/);
   });
 
   it("the prompt copy is quiet and optional, never a growth/referral nag", () => {
     expect(PROMPT).toMatch(/Was this useful\?/);
     expect(PROMPT).toMatch(/Not really/);
-    expect(CARD).toMatch(/Pilot learning/);
-    expect(CARD).toMatch(/Send feedback/);
-    for (const src of [PROMPT, CARD]) {
-      expect(src).not.toMatch(/refer a friend|invite your contacts|help us grow|claim your reward|share client/i);
-    }
+    expect(PROMPT).not.toMatch(
+      /refer a friend|invite your contacts|help us grow|claim your reward|share client/i,
+    );
+  });
+
+  it("CHLOE D4: the Pilot learning card component is DELETED, not orphaned", () => {
+    // A caller census ran before deleting it: the component was imported by
+    // exactly one file (the dashboard page) and referenced nowhere else, so it
+    // is genuinely dead rather than merely unrendered. The shared
+    // feedback-mailto helper is NOT deleted — PilotFeedbackPrompt still uses
+    // it, which is the whole reason this file still exists.
+    expect(
+      existsSync(join(process.cwd(), "app/(app)/dashboard/pilot-learning.tsx")),
+      "pilot-learning.tsx should be deleted",
+    ).toBe(false);
+    expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(
+      true,
+    );
   });
 });
 
@@ -133,9 +153,23 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
     join(process.cwd(), "app/(app)/dashboard/page.tsx"),
     "utf8",
   );
+  // Comment-stripped for the absence assertions: the page records WHY the card
+  // was removed, and that note necessarily names the card and quotes its copy.
+  const PAGE_CODE = PAGE.split("\n")
+    .filter((l) => !/^\s*\/\//.test(l))
+    .join("\n")
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
 
-  it("the dashboard renders the Pilot learning card and keeps the agentic cards", () => {
-    expect(PAGE).toMatch(/<PilotLearningCard \/>/);
+  it("CHLOE D4: the dashboard no longer renders the Pilot learning card", () => {
+    expect(PAGE_CODE).not.toMatch(/PilotLearningCard/);
+    expect(PAGE_CODE).not.toMatch(/pilot-learning/);
+    // ...and none of its pilot-only copy survives anywhere on the page.
+    expect(PAGE_CODE).not.toMatch(/Send it to Sam/i);
+    expect(PAGE_CODE).not.toMatch(/Know another electrologist/i);
+    expect(PAGE_CODE).not.toMatch(/Pilot learning/);
+  });
+
+  it("the operational surfaces it sat beside are untouched", () => {
     // The Daily Prep Brief card is retired into the combined Today workflow.
     expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
     expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);

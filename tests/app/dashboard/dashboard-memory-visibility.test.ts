@@ -19,7 +19,18 @@ import { join } from "node:path";
 // own 90-char caps — a deliberately compact, separate surface.
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
-const PAGE = read("app/(app)/dashboard/page.tsx");
+const RAW_PAGE = read("app/(app)/dashboard/page.tsx");
+// COMMENTS OUT, BEFORE SLICING. The block below is located by searching for the
+// phrase "Before today", and this page explains itself at length — a design
+// note that merely NAMES the block would otherwise move the start marker above
+// the real eyebrow and drag unrelated JSX (the client-name `truncate` class,
+// the pinned-note `truncate(...)` call) into the slice, turning the CSS-clamp
+// assertion red for a prose edit. Same idiom as
+// tests/app/dashboard/today-treatment-memory.test.ts.
+const PAGE = RAW_PAGE.split("\n")
+  .filter((l) => !/^\s*\/\//.test(l))
+  .join("\n")
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
 const PREVIEWS = read("lib/dashboard/before-today-previews.ts");
 const WORKFLOW = read("lib/dashboard/today-workflow.ts");
 

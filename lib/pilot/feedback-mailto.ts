@@ -13,17 +13,19 @@
 // the subject/body. The body invites the practitioner to add their own
 // words; it is empty of any recorded data by default.
 
+// CHLOE D4: `dashboard_pilot_learning` (the surface) and
+// `another_electrologist` (the intent) were reachable ONLY from the Dashboard
+// "Pilot learning" card. That card is gone, so both members are unreachable and
+// are removed with it rather than left as dead branches of a SAFETY-relevant
+// enum — the point of an enum-only builder is that every member it accepts is a
+// member something actually renders. The remaining surfaces are the two quiet
+// <PilotFeedbackPrompt> footers, which are unchanged.
 export type PilotSurface =
   | "before_today"
   | "daily_prep"
-  | "follow_up_assistant"
-  | "dashboard_pilot_learning";
+  | "follow_up_assistant";
 
-export type PilotIntent =
-  | "useful"
-  | "not_useful"
-  | "general"
-  | "another_electrologist";
+export type PilotIntent = "useful" | "not_useful" | "general";
 
 // The established in-app support address (used on the login page and in
 // settings). The pilot inbox Sam reads.
@@ -33,7 +35,6 @@ const SURFACE_LABELS: Record<PilotSurface, string> = {
   before_today: "Before Today",
   daily_prep: "Daily Prep Brief",
   follow_up_assistant: "Follow-up Assistant",
-  dashboard_pilot_learning: "Pilot learning",
 };
 
 export function pilotSurfaceLabel(surface: PilotSurface): string {
@@ -59,14 +60,6 @@ export function buildPilotFeedbackMailto(
     case "not_useful":
       subject = `Hone feedback: ${label}`;
       bodyLines = [`Surface: ${label}`, "Feedback: not really", "", "(Add any details here.)"];
-      break;
-    case "another_electrologist":
-      subject = "Hone: another electrologist who might care about treatment memory";
-      bodyLines = [
-        "I know an electrologist who might care about treatment memory.",
-        "",
-        "(Add any details here.)",
-      ];
       break;
     case "general":
       subject = `Hone feedback: ${label}`;
