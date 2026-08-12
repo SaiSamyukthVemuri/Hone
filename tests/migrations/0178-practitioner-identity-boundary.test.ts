@@ -339,42 +339,59 @@ describe("0178 — production truth: APPLIED 2026-08-11", () => {
     expect(rec.hosted_note).toContain(sha);
   });
 
-  it("the record states the privilege closure 0178 exists to produce", () => {
+  // 0178's apply evidence MOVED when 0179 landed. `migration-state.json`'s
+  // hosted_note is a CURRENT-STATE field — it now describes 0179 — so asserting
+  // 0178's facts against it would either go red or, worse, pass by coincidence
+  // on a successor's wording. 0178's permanent record is the frozen ledger
+  // entry, and that is what these assertions read.
+  const ENTRY_0178 = (() => {
+    const i = LEDGER.indexOf("## 0178 — PRACTITIONER IDENTITY");
+    const next = LEDGER.slice(i + 10).search(/\n## /);
+    return next === -1 ? LEDGER.slice(i) : LEDGER.slice(i, i + 10 + next);
+  })();
+
+  it("the frozen 0178 ledger entry states the privilege closure 0178 exists to produce", () => {
     // The outcome a reader must be able to trust without opening a psql session,
     // including the PostgreSQL-17 verb an enumerated revoke list missed once.
-    expect(rec.hosted_note).toMatch(/SELECT-ONLY for every runtime role/);
-    expect(rec.hosted_note).toMatch(/MAINTAIN/);
-    expect(rec.hosted_note).toMatch(/REVOKEs ALL PRIVILEGES/);
+    expect(ENTRY_0178).not.toBe("");
+    expect(ENTRY_0178).toMatch(/SELECT-only/);
+    expect(ENTRY_0178).toMatch(/MAINTAIN/);
+    expect(ENTRY_0178).toMatch(/REVOKEs ALL PRIVILEGES/);
   });
 
-  it("the record states the apply exit code was CAPTURED as 0", () => {
+  it("the frozen 0178 ledger entry states the apply exit code was CAPTURED as 0", () => {
     // Named explicitly because a previous apply record could not say this: the
     // shell capture was lost and success had to be asserted from post-state.
-    expect(rec.hosted_note).toMatch(/CAPTURED PROCESS EXIT CODE WAS 0/);
+    expect(ENTRY_0178).toMatch(/captured process exit code 0/i);
   });
 
-  it("the record does NOT claim any live production mutation was executed", () => {
+  it("the frozen 0178 ledger entry does NOT claim any live production mutation was executed", () => {
     // Rollout verification was catalog-only. Claiming otherwise would overstate
     // the evidence, which is the failure mode this programme keeps correcting.
-    expect(rec.hosted_note).toMatch(/VERIFICATION WAS CATALOG-ONLY/);
-    expect(rec.hosted_note).toMatch(/NO production own-profile write/);
-    expect(rec.hosted_note).toMatch(/NO production treatment-image/);
-    expect(rec.hosted_note).toMatch(/NO team or invitation command was invoked/);
-    expect(rec.hosted_note).toMatch(/ZERO BUSINESS-ROW MUTATION/);
+    expect(ENTRY_0178).toMatch(/CATALOG-ONLY/);
+    expect(ENTRY_0178).toMatch(/own-profile/);
+    expect(ENTRY_0178).toMatch(/treatment-image/);
+    expect(ENTRY_0178).toMatch(/team or invitation/);
+    expect(ENTRY_0178).toMatch(/practitioners \*\*7 → 7\*\*/);
   });
 
-  it("the ledger's CURRENT STATE block reconciles repo and hosted at 0178", () => {
-    const current = LEDGER.slice(
-      LEDGER.indexOf("## Current state"),
-      LEDGER.indexOf("## Previous state"),
-    );
-    expect(current).toContain("post-0178 apply");
-    expect(current).toContain("0178_practitioner_identity_boundary.sql");
-    expect(current).toContain("6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f");
-    expect(current).toContain("463198e21560f172e45aca32d5043d61ecc540fb");
-    expect(current).toMatch(/hosted == repo/);
-    expect(current).toMatch(/0179/);
-    expect(current).not.toMatch(/post-0177 apply/);
+  it("0178's state block was DEMOTED to Previous, byte-preserved, when 0179 landed", () => {
+    // THE HAND-OFF HAPPENED. This used to slice the ledger's CURRENT state
+    // block and assert it described 0178. Recording the 0179 apply moved that
+    // block to Previous — heading-only reclassification, body preserved — and
+    // current-state ownership now belongs to 0179's own test. Asserting on the
+    // Current block here would be false-red on a correct tree.
+    const PREV_HEAD = "## Previous state (verified 2026-08-11, post-0178 apply)";
+    const i = LEDGER.indexOf(PREV_HEAD);
+    expect(i).toBeGreaterThan(-1);
+    const block = LEDGER.slice(i, LEDGER.indexOf("## Previous state", i + PREV_HEAD.length));
+    expect(block).toContain("0178_practitioner_identity_boundary.sql");
+    expect(block).toContain("6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f");
+    expect(block).toContain("463198e21560f172e45aca32d5043d61ecc540fb");
+    expect(block).toMatch(/hosted == repo/);
+    expect(block).not.toMatch(/post-0177 apply/);
+    // 0178 is no longer the hosted maximum; the floor assertion above owns that.
+    expect(LEDGER.slice(LEDGER.indexOf("## Current state"), i)).toContain("post-0179 apply");
   });
 
   it("the ledger carries a 0178 rollout entry with the app-first evidence", () => {

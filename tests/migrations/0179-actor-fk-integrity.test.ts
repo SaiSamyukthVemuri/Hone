@@ -47,16 +47,101 @@ describe("0179 — migration state", () => {
   });
 });
 
-describe("0179 — production truth: PENDING", () => {
+// ---------------------------------------------------------------------------
+// WHEN A SUCCESSOR IS AUTHORED (0180+), THIS BLOCK GOES RED ON PURPOSE.
+// Convert the equality below to a FLOOR (`hosted >= 179`) plus "no longer the
+// repository maximum", keep the sha256 freeze and the apply facts exactly as
+// they are, and let 0180's own test become the single current-state tripwire.
+// That is the same hand-off 0178 performed for this file.
+// ---------------------------------------------------------------------------
+describe("0179 — production truth: APPLIED 2026-08-12", () => {
   const rec = JSON.parse(
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
+  const LEDGER = readFileSync(
+    join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
+    "utf8",
+  );
 
-  it("is authored but NOT yet applied — hosted stays at 0178", () => {
-    // 0179 is a pending migration. Recording its apply is a SEPARATE change
-    // that also converts this block and hands 0178's floor forward.
-    expect(rec.hosted_migration_max).toBe("0178");
-    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeLessThan(179);
+  it("the declared hosted max is 0179 — repository and production agree, nothing pending", () => {
+    expect(rec.hosted_migration_max).toBe("0179");
+    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
+    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
+    expect(countVersion("0179")).toBe(1);
+  });
+
+  it("the record carries the sha256 of the exact 0179 bytes that were applied", async () => {
+    // THE FREEZE. If this hash ever changes, an applied migration has been
+    // edited and a recorded production apply fact has been falsified. A future
+    // semantic change is 0180+, never a rewrite of these bytes.
+    const { createHash } = await import("node:crypto");
+    const bytes = readFileSync(join(__dirname, "..", "..", FILE));
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    expect(sha).toBe("ce9993d86f67d4f5d82c908980f44baf11e404b371cc0611862e0c253cef059a");
+    expect(rec.hosted_note).toContain(sha);
+  });
+
+  it("the record states the catalog closure 0179 exists to produce", () => {
+    expect(rec.hosted_note).toMatch(/58 composite \/ 9 simple \/ 0 NOT VALID/);
+    expect(rec.hosted_note).toMatch(/all 39 constraints validated/);
+    expect(rec.hosted_note).toMatch(/35 durable actor\/author\/creator relationships are ON DELETE RESTRICT/);
+    expect(rec.hosted_note).toMatch(/exactly 4 operational actor/);
+  });
+
+  it("the record does NOT claim any business-row mutation was executed", () => {
+    expect(rec.hosted_note).toMatch(/ZERO BUSINESS-ROW MUTATION/);
+    expect(rec.hosted_note).toMatch(/practitioners 7 -> 7/);
+    expect(rec.hosted_note).toMatch(/client_clinical_notes 21 -> 21/);
+    expect(rec.hosted_note).toMatch(/NO WILLOW MUTATION/);
+    expect(rec.hosted_note).toMatch(/zero attribution backfill/);
+  });
+
+  it("the record carries the FULL superseded checksum chain forward", () => {
+    // Recording an apply must never drop an earlier frozen apply record.
+    for (const sha of [
+      "6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f", // 0178
+      "a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744", // 0177
+      "4ed5ad84168d6c6f9a8372709b737990af57a5dde08a4e56a7a983308951af20", // 0176
+      "7a00f67159a31dcdf90db8a35521ba26f258980b415ddd1aea214e63f4af3ad1", // 0175
+      "479dc58dd76d6030bc33bd83fb30b0a7f930ca58330067bb98a3f6c16a949bbc", // 0174
+      "04973b15c7b4b5675faa0d4260e29d7e6ccac9fd4a96cd83cbfbea2b90ab97cb", // 0173
+      "b89b0d47a70ea2d4a7574bcc4223081cfe1d527394b3ef8b6d4c82bb090f42f1", // 0172
+      "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6", // 0171
+    ]) {
+      expect(rec.hosted_note).toContain(sha);
+    }
+  });
+
+  it("the ledger's CURRENT STATE block reconciles repo and hosted at 0179", () => {
+    const current = LEDGER.slice(
+      LEDGER.indexOf("## Current state"),
+      LEDGER.indexOf("## Previous state"),
+    );
+    expect(current).toContain("post-0179 apply");
+    expect(current).toContain("0179_actor_fk_integrity.sql");
+    expect(current).toContain("ce9993d86f67d4f5d82c908980f44baf11e404b371cc0611862e0c253cef059a");
+    expect(current).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
+    expect(current).toMatch(/hosted == repo/);
+    expect(current).toMatch(/0180/);
+    expect(current).not.toMatch(/post-0178 apply/);
+  });
+
+  it("the ledger carries a 0179 rollout entry with the ordering and census evidence", () => {
+    const entry = LEDGER.slice(LEDGER.indexOf("## 0179 — ACTOR FK INTEGRITY"));
+    expect(entry).not.toBe("");
+    expect(entry).toMatch(/exit code 0/);
+    expect(entry).toMatch(/12,920 ms/);
+    expect(entry).toMatch(/39 changed \+ 25 unchanged \+\s*\n?3 deferred = 67|39 changed \+ 25 unchanged \+ \*\*?3 deferred/);
+    expect(entry).toMatch(/CASCADE/);
+    expect(entry).toMatch(/MATCH SIMPLE/);
+  });
+
+  it("preserves the 0178 record as frozen historical evidence, heading-only demotion", () => {
+    // The former Current state block must survive verbatim as Previous state —
+    // recording a new apply never deletes the one it supersedes.
+    expect(LEDGER).toContain("## Previous state (verified 2026-08-11, post-0178 apply)");
+    expect(LEDGER).toContain("## 0178 — PRACTITIONER IDENTITY + MUTATION BOUNDARY");
+    expect(LEDGER).toContain("6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f");
   });
 });
 
