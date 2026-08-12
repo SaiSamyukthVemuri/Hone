@@ -19,6 +19,12 @@ import { join } from "node:path";
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
+// Executable source only — line and block comments removed. Guards about what
+// the UI SAYS must not be satisfied (or broken) by prose in a comment.
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
 const BASE = "app/(app)/clients/[id]/sessions/[sessionId]";
 const PANEL = read(`${BASE}/CopyPreviousAreasPanel.tsx`);
 const ACTIONS = read(`${BASE}/whole-session-copy-actions.ts`);
@@ -128,8 +134,8 @@ describe("(3/4/5/6/7/8/9) reusable setup copies; today's clinical facts are NEVE
   it("the fast path sends the SAME canonical setup-only payload as the reviewed path", () => {
     // One commit helper, one mapper. The fast path passes drafts straight from
     // buildCopyDrafts — it constructs no payload of its own.
-    expect(FAST).toMatch(/drafts: loaded\.drafts/);
-    expect(PANEL).toMatch(/drafts: args\.drafts\.map\(draftToCopyInput\)/);
+    expect(FAST).toMatch(/drafts: loaded\.drafts,/);
+    expect(PANEL).toMatch(/drafts: env\.drafts\.map\(draftToCopyInput\)/);
     // Exactly ONE mapping call site — both routes share it.
     expect((PANEL.match(/\.map\(draftToCopyInput\)/g) ?? []).length).toBe(1);
     // The fast path does not map the payload itself.
@@ -214,11 +220,13 @@ describe("(3/4/5/6/7/8/9) reusable setup copies; today's clinical facts are NEVE
 });
 
 describe("(10) source freshness is preserved — the fast path never silently copies stale setup", () => {
-  it("a failed commit surfaces the mapped error and performs NO fallback write", () => {
-    expect(FAST).toMatch(/if \(!res\.ok\) \{[\s\S]{0,400}?setError\(res\.error\);[\s\S]{0,80}?return;/);
-    // No retry, no second commit, no "force" flag on this route.
-    expect((FAST.match(/commitDrafts\(/g) ?? []).length).toBe(1);
-    expect(FAST).not.toMatch(/force|ignoreFingerprint|retry/i);
+  it("a DEFINITIVE failure surfaces the mapped error and performs NO fallback write", () => {
+    expect(FAST).toMatch(
+      /if \(outcome\.kind === "failed"\) \{[\s\S]{0,400}?setError\(outcome\.error\);[\s\S]{0,80}?return;/,
+    );
+    // One submission per press — no automatic second attempt, no "force" flag.
+    expect((FAST.match(/submitCommit\(/g) ?? []).length).toBe(1);
+    expect(FAST).not.toMatch(/force|ignoreFingerprint/i);
   });
 
   it("the stale-source SQLSTATE still maps to a truthful, non-leaky message", () => {
@@ -247,13 +255,73 @@ describe("(11) double submit cannot duplicate the copied setup", () => {
     expect(PANEL).toMatch(/const busy = fastStarting \|\| loading;/);
   });
 
-  it("a retry after a LOST response replays under the same key — keyed by the source revision", () => {
-    expect(PANEL).toMatch(/const fastKeysRef = useRef<Map<string, string>>\(new Map\(\)\)/);
-    expect(PANEL).toMatch(/function fastStartKey\(source: string, fingerprint: string\)/);
-    expect(PANEL).toMatch(/const signature = `\$\{source\}:\$\{fingerprint\}`/);
-    expect(FAST).toMatch(
-      /idempotencyKey: fastStartKey\(loaded\.sourceSessionId, loaded\.sourceFingerprint\)/,
+  // NOTE ON SCOPE: these are STRUCTURAL guards on the orchestration. They do not
+  // by themselves prove that a lost response replays — that claim is only as good
+  // as a run in which the write lands and the answer does not, which is
+  // e2e/repeat-client-fast-charting.spec.ts, "a LOST COMMIT RESPONSE replays the
+  // same governed request instead of re-reading the target".
+  it("an UNKNOWN outcome is modelled distinctly from a definitive failure", () => {
+    expect(PANEL).toMatch(/\| \{ kind: "unknown" \}/);
+    expect(PANEL).toMatch(/\| \{ kind: "failed"; error: string \}/);
+    expect(PANEL).toMatch(/kind: "committed"; createdBlockIds: string\[\]/);
+    // A throw is UNKNOWN, never "failed" — the mapped result objects are the
+    // only source of a definitive refusal.
+    expect(PANEL).toMatch(/\} catch \{[\s\S]{0,240}?return \{ kind: "unknown" \};/);
+  });
+
+  it("an unknown outcome RETAINS the request envelope instead of discarding it", () => {
+    expect(PANEL).toMatch(/const pendingRetryRef = useRef<RetryEnvelope \| null>\(null\)/);
+    expect(PANEL).toMatch(
+      /type RetryEnvelope = \{[\s\S]{0,260}?idempotencyKey: string;\s*\n\};/,
     );
+    expect(FAST).toMatch(
+      /if \(outcome\.kind === "unknown"\) \{[\s\S]{0,320}?pendingRetryRef\.current = env;[\s\S]{0,120}?setAmbiguous\(true\);/,
+    );
+  });
+
+  it("a retry from the ambiguous state SKIPS the source read and re-submits the envelope", () => {
+    // The defect: re-reading here reports not_empty once the first attempt has
+    // landed, so the retry never reaches the retained key.
+    expect(FAST).toMatch(
+      /let env = pendingRetryRef\.current;\s*\n\s*if \(!env\) \{\s*\n\s*const loaded = await loadSource\(\);/,
+    );
+    // loadSource is reachable ONLY inside that `if (!env)` guard.
+    const beforeCommit = FAST.slice(0, FAST.indexOf("const outcome = await submitCommit(env)"));
+    expect((beforeCommit.match(/await loadSource\(\)/g) ?? []).length).toBe(1);
+    expect(FAST).toMatch(/idempotencyKey: crypto\.randomUUID\(\)/); // minted per FRESH attempt only
+  });
+
+  it("any DEFINITIVE outcome clears the envelope, so there is no retry loop", () => {
+    expect(FAST).toMatch(/pendingRetryRef\.current = null;\s*\n\s*setAmbiguous\(false\);/);
+    // Nothing retries on its own — recovery is always a practitioner action.
+    expect(FAST).not.toMatch(/setTimeout|setInterval|while \(|for \(/);
+  });
+
+  it("both success shapes land the same way, so a replay is as actionable as a first commit", () => {
+    expect(PANEL).toMatch(/function landIn\(createdBlockIds: string\[\]\)/);
+    expect(FAST).toMatch(/landIn\(outcome\.createdBlockIds\)/);
+    // The landing does not branch on idempotentReplay — the ids are authoritative
+    // either way.
+    expect(FAST).not.toMatch(/idempotentReplay/);
+  });
+
+  it("the misleading 'nothing to copy' route is unreachable while an outcome is unknown", () => {
+    // Previewing would re-read the source and report not_empty about a copy that
+    // may have succeeded.
+    expect(PANEL).toMatch(/disabled=\{busy \|\| ambiguous\}/);
+    expect(PANEL).toMatch(/disabled=\{loading \|\| committing \|\| ambiguous\}/);
+  });
+
+  it("the ambiguous copy is TRUTHFUL — it never claims nothing was written", () => {
+    expect(PANEL).toMatch(
+      /const AMBIGUOUS_MESSAGE =\s*\n\s*"We couldn't confirm whether the setup was added\. Try again to check safely\.";/,
+    );
+    expect(PANEL).toMatch(/data-testid="copy-previous-ambiguous"/);
+    // Scoped to EXECUTABLE source: the comments deliberately quote the false
+    // claim they exist to warn against, and a comment must neither satisfy nor
+    // break this guard.
+    expect(stripComments(PANEL)).not.toMatch(/nothing was (saved|added|written)/i);
+    expect(PANEL).toMatch(/"Try again to check"/);
   });
 
   it("the EDITABLE preview path keeps its per-build random key (its payload is not source-derived)", () => {
@@ -295,23 +363,29 @@ describe("(13) today's chart is never destructively replaced", () => {
     ]) {
       expect(FAST).not.toContain(destructive);
     }
-    // Its only navigation is the landing replace; it issues no other route change.
-    expect((FAST.match(/router\./g) ?? []).length).toBe(2); // replace + the empty-batch refresh
+    // It performs no navigation of its own — landing is delegated to landIn().
+    expect(FAST).not.toMatch(/router\./);
   });
 });
 
 describe("(19) after the copy she lands in TODAY'S editor — no close/refresh/scroll/reopen", () => {
   it("the fast path routes using the ids the RPC already returned (no schema change needed)", () => {
-    expect(FAST).toMatch(/const landing = landingBlockId\(res\.createdBlockIds\)/);
-    expect(FAST).toMatch(/router\.replace\(fastChartUrl\(clientId, sessionId, landing\)\)/);
+    expect(PANEL).toMatch(/const landing = landingBlockId\(createdBlockIds\)/);
+    expect(PANEL).toMatch(/router\.replace\(fastChartUrl\(clientId, sessionId, landing\)\)/);
+    expect(FAST).toMatch(/landIn\(outcome\.createdBlockIds\)/);
     // The commit action already surfaces them; nothing new was added to the DB.
     expect(ACTIONS).toMatch(/createdBlockIds: result\.created_block_ids \?\? \[\]/);
     expect(MIGRATION).toMatch(/'created_block_ids', to_jsonb\(v_ids\)/);
   });
 
   it("router.replace (not push) is used, so the copy leaves no extra history entry to back through", () => {
-    expect(FAST).toMatch(/router\.replace\(/);
-    expect(FAST).not.toMatch(/router\.push\(/);
+    const landFn = PANEL.slice(
+      PANEL.indexOf("function landIn(createdBlockIds: string[])"),
+      PANEL.indexOf("function startFromLastSession()"),
+    );
+    expect(landFn).toMatch(/router\.replace\(/);
+    expect(landFn).not.toMatch(/router\.push\(/);
+    expect(PANEL).not.toMatch(/router\.push\(/);
   });
 
   it("the page validates the landing id SERVER-side against this session's live blocks", () => {

@@ -42,20 +42,20 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(PANEL).toMatch(/setIdempotencyKey\(crypto\.randomUUID\(\)\)/);
   });
 
-  it("there is exactly ONE commit call site — commitDrafts() — sending the narrow input + server fingerprint", () => {
+  it("there is exactly ONE commit call site — submitCommit() — sending the narrow input + server fingerprint", () => {
     // Repeat-client fast charting added a SECOND route to the copy, not a second
-    // copy implementation: both routes funnel through the single commitDrafts()
+    // copy implementation: both routes funnel through the single submitCommit()
     // helper, so this count staying at 1 is what proves they cannot drift.
     expect((PANEL.match(/commitWholeSessionCopyAction\(/g) ?? []).length).toBe(1);
-    expect(PANEL).toMatch(/async function commitDrafts\(/);
+    expect(PANEL).toMatch(/async function submitCommit\(env: RetryEnvelope\)/);
     expect(PANEL).toMatch(/data-testid="copy-previous-commit"/);
     expect(PANEL).toMatch(/Add these areas to today's chart/);
-    expect(PANEL).toMatch(/drafts: args\.drafts\.map\(draftToCopyInput\)/);
-    expect(PANEL).toMatch(/sourceSessionId: args\.sourceSessionId,/);
-    expect(PANEL).toMatch(/sourceFingerprint: args\.sourceFingerprint,/);
-    // Both callers pass the SERVER-derived source identity through — neither
-    // route can commit without it.
-    expect((PANEL.match(/await commitDrafts\(\{/g) ?? []).length).toBe(2);
+    expect(PANEL).toMatch(/drafts: env\.drafts\.map\(draftToCopyInput\)/);
+    expect(PANEL).toMatch(/sourceSessionId: env\.sourceSessionId,/);
+    expect(PANEL).toMatch(/sourceFingerprint: env\.sourceFingerprint,/);
+    // Both routes submit through it, each passing the SERVER-derived source
+    // identity — neither can commit without it.
+    expect((PANEL.match(/await submitCommit\(/g) ?? []).length).toBe(2);
   });
 
   it("there is exactly ONE source-read call site — loadSource() — shared by both routes", () => {
@@ -65,9 +65,9 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     // loadSource is READ-ONLY: it never reaches the commit action.
     const fn = PANEL.slice(
       PANEL.indexOf("async function loadSource()"),
-      PANEL.indexOf("async function commitDrafts("),
+      PANEL.indexOf("async function submitCommit("),
     );
-    expect(fn).not.toMatch(/commitWholeSessionCopyAction|commitDrafts/);
+    expect(fn).not.toMatch(/commitWholeSessionCopyAction|submitCommit/);
   });
 
   it("renders EDITABLE cards (CopyDraftCard) with an in-state update handler — no writes", () => {

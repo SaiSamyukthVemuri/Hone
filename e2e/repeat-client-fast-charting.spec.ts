@@ -31,6 +31,18 @@ import { loginAsOwner } from "./helpers/flows";
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 const T = 20_000;
 
+// The exact misleading message an ambiguous-outcome retry must never produce.
+const NOTHING_TO_COPY_TEXT = "There's nothing from a previous visit to copy here.";
+
+// Pull the idempotency key out of a server-action request body. The body is a
+// serialized argument object, so the key appears verbatim next to its name.
+function idempotencyKeyOf(body: string): string | null {
+  const m = body.match(
+    /idempotencyKey[^0-9a-f]{0,8}([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+  );
+  return m?.[1] ?? null;
+}
+
 // Counts every interaction the practitioner makes, so "clicks to typeable" is
 // measured rather than asserted by inspection.
 function makeCounter() {
@@ -272,6 +284,123 @@ test("the fast path refuses a source that changed under it, and writes nothing @
   expect(text).not.toMatch(/HN0\d\d|SQLSTATE|constraint|relation|session_copy_operations/i);
   expect(await getSessionBlockCount(todaySessionId)).toBe(0);
   expect(await getCopyOperationCount(todaySessionId)).toBe(0);
+});
+
+test("a LOST COMMIT RESPONSE replays the same governed request instead of re-reading the target @390px", async ({
+  page,
+}) => {
+  // THE DEFECT THIS PROVES FIXED: the first commit succeeds server-side but its
+  // RESPONSE never arrives. Today's chart is now non-empty, so re-reading the
+  // source would make whole_session_copy_source_descriptor report
+  // eligible=false / not_empty — and the panel would announce "there's nothing
+  // from a previous visit to copy here" about a copy that had just succeeded,
+  // never reaching the retained idempotency key that would have settled it.
+  //
+  // The retry must therefore RE-SUBMIT the same envelope, not start over.
+  const seed = await seedE2eStudio();
+  const { clientId, todaySessionId } = await seedE2eRepeatClientTwoAreas(seed);
+  await loginAsOwner(page, seed);
+  const url = `/clients/${clientId}/sessions/${todaySessionId}`;
+
+  // Ordered record of every server-action POST this page makes, classified by
+  // whether it carries the commit's own argument name. A source READ carries no
+  // idempotencyKey, so "did the retry re-read the source first?" is answerable.
+  const posts: Array<{ kind: "commit" | "read"; body: string }> = [];
+  page.on("request", (r) => {
+    if (r.method() !== "POST") return;
+    if (!r.url().includes(`/sessions/${todaySessionId}`)) return;
+    const body = r.postData() ?? "";
+    posts.push({ kind: body.includes("idempotencyKey") ? "commit" : "read", body });
+  });
+
+  // Let the FIRST commit reach the server and take effect, then drop its
+  // response so the browser experiences a transport failure. route.fetch()
+  // performs the request without fulfilling it; aborting afterwards means the
+  // side effect happened and the client never learned the result.
+  let dropped = false;
+  await page.route("**/clients/**/sessions/**", async (route, request) => {
+    const isCommit =
+      request.method() === "POST" && (request.postData() ?? "").includes("idempotencyKey");
+    if (isCommit && !dropped) {
+      dropped = true;
+      await route.fetch(); // the server DOES commit
+      await route.abort("connectionfailed"); // ...and the answer never arrives
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto(url);
+  await expect(page.getByTestId("copy-previous-fast-start")).toBeVisible({ timeout: T });
+
+  await test.step("attempt 1: the write lands, the response does not", async () => {
+    await page.getByTestId("copy-previous-fast-start").click();
+
+    // (3) the UI experienced a transport failure and says so TRUTHFULLY —
+    // it does not claim nothing was written.
+    const ambiguous = page.getByTestId("copy-previous-ambiguous");
+    await expect(ambiguous).toBeVisible({ timeout: T });
+    await expect(ambiguous).toContainText(
+      /couldn't confirm whether the setup was added/i,
+    );
+    await expect(ambiguous).not.toContainText(/nothing was (saved|added|written)/i);
+
+    // (11) the misleading state never appears.
+    await expect(page.getByText(NOTHING_TO_COPY_TEXT)).toHaveCount(0);
+
+    // (4) the target genuinely DOES contain the copied blocks.
+    await expect.poll(() => getSessionBlockCount(todaySessionId), { timeout: T }).toBe(2);
+    expect(await getCopyOperationCount(todaySessionId)).toBe(1);
+  });
+
+  const firstCommit = posts.find((p) => p.kind === "commit");
+  expect(firstCommit, "attempt 1 issued a commit").toBeTruthy();
+  const markIndex = posts.length;
+
+  await test.step("attempt 2: the SAME request is replayed, with no source re-read", async () => {
+    // (5) the retry action.
+    await page.getByTestId("copy-previous-fast-start").click();
+
+    // (10) she lands directly in today's editor.
+    await expect(page.getByTestId("save-treatment-area")).toBeVisible({ timeout: T });
+    await expect(page.getByLabel("Minutes performed (optional)")).toHaveValue("");
+
+    const after = posts.slice(markIndex);
+    // (6) NO source-descriptor read happened before the retry commit.
+    expect(after.length, "the retry issued at least one request").toBeGreaterThan(0);
+    expect(after[0].kind, "the retry's FIRST request must be the commit").toBe("commit");
+    expect(
+      after.filter((p) => p.kind === "read").length,
+      "the retry must not re-read the source",
+    ).toBe(0);
+
+    // (7) same idempotency key, and byte-identical request.
+    const retryCommit = after[0];
+    expect(idempotencyKeyOf(retryCommit.body)).toBe(idempotencyKeyOf(firstCommit!.body));
+    expect(idempotencyKeyOf(retryCommit.body)).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(retryCommit.body).toBe(firstCommit!.body);
+  });
+
+  await test.step("the replay added nothing and named the same areas", async () => {
+    // (8/9) one ledger row, block count unchanged — a REPLAY, not a second copy.
+    expect(await getSessionBlockCount(todaySessionId)).toBe(2);
+    expect(await getCopyOperationCount(todaySessionId)).toBe(1);
+
+    const blocks = await getSessionBlocksWithFacts(todaySessionId);
+    expect(blocks.map((b) => b.primary_area)).toEqual(["Chin", "Upper lip"]);
+    // She landed in the FIRST created area — the ids the original attempt made.
+    await expect(page.getByTestId(`area-section-${blocks[0].id}`)).toHaveAttribute(
+      "data-editing",
+      "true",
+    );
+    // (11) still never shown.
+    await expect(page.getByText(NOTHING_TO_COPY_TEXT)).toHaveCount(0);
+    // Today's facts are still blank — a replay records no outcome either.
+    for (const b of blocks) {
+      expect(b.minutes_performed).toBeNull();
+      expect(b.hairs_treated).toBeNull();
+    }
+  });
 });
 
 test("the retained Preview route still reviews and commits, and also lands in the editor @390px", async ({

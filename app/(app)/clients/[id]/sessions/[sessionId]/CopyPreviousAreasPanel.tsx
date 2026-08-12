@@ -13,7 +13,6 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   getWholeSessionCopySourceAction,
   commitWholeSessionCopyAction,
-  type WholeSessionCopyCommitResult,
 } from "./whole-session-copy-actions";
 
 // Is there a visit date worth showing at all? Only a parseable timestamp gets a
@@ -42,7 +41,7 @@ function VisitDate({ iso }: { iso: string | null }) {
 //
 // TWO ROUTES, ONE AUTHORITY. Both routes run the SAME governed pipeline —
 // loadSource() (server-derived source + fingerprint) -> buildCopyDrafts ->
-// commitDrafts() -> draftToCopyInput -> the server normalizer ->
+// submitCommit() -> draftToCopyInput -> the server normalizer ->
 // copy_session_setup. There is exactly ONE call site for the read action and
 // exactly ONE for the commit action, so the fast path and the preview path
 // cannot drift into two copy implementations.
@@ -62,12 +61,23 @@ function VisitDate({ iso }: { iso: string | null }) {
 // observations, reaction, tolerance, notes and every other outcome are never
 // copied, so today's clinical facts start blank and record only what happens
 // today.
+//
+// THREE OUTCOMES, NOT TWO. A commit either succeeded, definitively failed, or
+// its result is UNKNOWN because the response never arrived. Collapsing the third
+// into the second is a real defect: the write may already have landed, so a
+// retry must RE-SUBMIT THE SAME GOVERNED REQUEST rather than start over. See
+// CommitOutcome and the ambiguous-recovery notes on startFromLastSession.
 
 type Phase = "idle" | "preview";
 
 const NOTHING_TO_COPY = "There's nothing from a previous visit to copy here.";
 const NO_AREAS = "Last session has no areas to copy.";
-const TRANSPORT_ERROR = "Couldn't reach the server. Check your connection and try again.";
+
+// Truthful copy for an UNKNOWN outcome. It deliberately does NOT claim that
+// nothing was written — at this point nobody knows, and saying "nothing was
+// saved" about a copy that actually landed would be a lie on a clinical screen.
+const AMBIGUOUS_MESSAGE =
+  "We couldn't confirm whether the setup was added. Try again to check safely.";
 
 // The server-derived source plus the drafts built from it. EPHEMERAL — holding
 // this performs no write.
@@ -80,6 +90,29 @@ type LoadedSource =
       sourceStartedAt: string | null;
     }
   | { ok: false; error: string };
+
+// Everything needed to re-submit the EXACT same governed request. Held in memory
+// only while an attempt's outcome is unknown. Re-submitting this verbatim is what
+// lets copy_session_setup recognise the retry: same target + same idempotency key
+// + same request hash is an at-most-once REPLAY that returns the ids the first
+// attempt created.
+type RetryEnvelope = {
+  drafts: CopyAreaDraft[];
+  sourceSessionId: string;
+  sourceFingerprint: string;
+  idempotencyKey: string;
+};
+
+// The outcome of ONE commit attempt.
+//   committed — the server answered: here is what exists (possibly a replay).
+//   failed    — the server answered with a DEFINITIVE domain refusal. Every RPC
+//               refusal path creates zero rows, so nothing was written.
+//   unknown   — no answer arrived. The write may or may not have landed; only a
+//               replay of the same request can settle it.
+type CommitOutcome =
+  | { kind: "committed"; createdBlockIds: string[]; idempotentReplay: boolean }
+  | { kind: "failed"; error: string }
+  | { kind: "unknown" };
 
 export function CopyPreviousAreasPanel({
   clientId,
@@ -101,6 +134,9 @@ export function CopyPreviousAreasPanel({
   const [sourceFingerprint, setSourceFingerprint] = useState<string | null>(null);
   const [sourceStartedAt, setSourceStartedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // True while an attempt's outcome is unknown. Drives the truthful copy and the
+  // retry affordance; cleared by any DEFINITIVE outcome.
+  const [ambiguous, setAmbiguous] = useState(false);
   const [loading, startLoad] = useTransition();
   const [committing, startCommit] = useTransition();
   const [fastStarting, startFast] = useTransition();
@@ -110,24 +146,10 @@ export function CopyPreviousAreasPanel({
   // has re-rendered the button as disabled — issues exactly ONE request.
   const fastInFlightRef = useRef(false);
 
-  // Idempotency keys for the fast path, keyed by the source revision they were
-  // minted for. The fast payload is a PURE function of (source session, source
-  // fingerprint) — nothing is edited on this route — so a retry after a lost
-  // response re-derives a byte-identical request, matches the ledger's stored
-  // request hash, and REPLAYS (same created ids, zero new rows) instead of
-  // being rejected as ambiguous. A source that changed produces a different
-  // fingerprint and therefore a fresh key, so a changed source can never replay
-  // under a key minted for the old one. This reuses the existing 0157 ledger
-  // (unique on target_session_id + idempotency_key); it adds no new persistence.
-  const fastKeysRef = useRef<Map<string, string>>(new Map());
-  function fastStartKey(source: string, fingerprint: string): string {
-    const signature = `${source}:${fingerprint}`;
-    const existing = fastKeysRef.current.get(signature);
-    if (existing) return existing;
-    const minted = crypto.randomUUID();
-    fastKeysRef.current.set(signature, minted);
-    return minted;
-  }
+  // The retry envelope for an attempt whose outcome is unknown. A ref, not
+  // state: it is read inside the transition callback, where a ref is always the
+  // current value. Null whenever the last outcome was definitive.
+  const pendingRetryRef = useRef<RetryEnvelope | null>(null);
 
   // The ONE read path. READ-ONLY: it creates nothing. The DB derives the
   // canonical eligible previous session and its fingerprint; the browser gets
@@ -153,31 +175,40 @@ export function CopyPreviousAreasPanel({
   // payload, the server-side normalization and the atomic RPC are identical
   // whichever button was pressed.
   //
-  // A TRANSPORT failure (dropped connection, server action never answered) is
-  // turned into an ordinary failed result rather than an unhandled rejection, so
-  // the practitioner always sees something instead of a button that silently did
-  // nothing. Retrying is safe: the fast path reuses its source-derived
-  // idempotency key, so a request that DID land replays rather than duplicating.
-  async function commitDrafts(args: {
-    drafts: readonly CopyAreaDraft[];
-    idempotencyKey: string;
-    sourceSessionId: string | null;
-    sourceFingerprint: string | null;
-  }): Promise<WholeSessionCopyCommitResult> {
+  // A thrown error means the RESPONSE never arrived (dropped connection, server
+  // action that never answered). That is reported as `unknown`, NOT as a
+  // failure: the server action returns mapped result objects for every business
+  // refusal, so a throw carries no information about whether the write landed.
+  async function submitCommit(env: RetryEnvelope): Promise<CommitOutcome> {
     try {
-      return await commitWholeSessionCopyAction({
+      const res = await commitWholeSessionCopyAction({
         clientId,
         sessionId,
-        drafts: args.drafts.map(draftToCopyInput),
-        idempotencyKey: args.idempotencyKey,
-        sourceSessionId: args.sourceSessionId,
-        sourceFingerprint: args.sourceFingerprint,
+        drafts: env.drafts.map(draftToCopyInput),
+        idempotencyKey: env.idempotencyKey,
+        sourceSessionId: env.sourceSessionId,
+        sourceFingerprint: env.sourceFingerprint,
       });
+      return res.ok
+        ? {
+            kind: "committed",
+            createdBlockIds: res.createdBlockIds,
+            idempotentReplay: res.idempotentReplay,
+          }
+        : { kind: "failed", error: res.error };
     } catch {
       // Never surfaces the underlying error text — the server action's own
       // mapped messages are the only vocabulary this panel speaks.
-      return { ok: false, error: TRANSPORT_ERROR };
+      return { kind: "unknown" };
     }
+  }
+
+  // Land in today's editor for the first area the batch created. Identical for a
+  // fresh commit and for a replay, because the RPC returns the same ids for both.
+  function landIn(createdBlockIds: string[]) {
+    const landing = landingBlockId(createdBlockIds);
+    if (landing) router.replace(fastChartUrl(clientId, sessionId, landing));
+    else router.refresh();
   }
 
   // PRIMARY: bring the reusable setup forward and land in today's editor. One
@@ -188,31 +219,59 @@ export function CopyPreviousAreasPanel({
     setError(null);
     startFast(async () => {
       try {
-        const loaded = await loadSource();
-        if (!loaded.ok) {
-          setError(loaded.error);
+        // AMBIGUOUS RECOVERY. When a previous attempt's outcome is unknown, the
+        // stored envelope is re-submitted VERBATIM and the source is NOT re-read.
+        //
+        // Re-reading here is precisely the bug this replaces: if the first
+        // attempt DID land, today's chart is no longer empty, so
+        // whole_session_copy_source_descriptor reports eligible=false /
+        // not_empty — and the panel would announce "there's nothing from a
+        // previous visit to copy here" about a copy that had just succeeded,
+        // while never reaching the retained idempotency key that would have
+        // settled it.
+        let env = pendingRetryRef.current;
+        if (!env) {
+          const loaded = await loadSource();
+          if (!loaded.ok) {
+            setError(loaded.error);
+            return;
+          }
+          env = {
+            drafts: loaded.drafts,
+            sourceSessionId: loaded.sourceSessionId,
+            sourceFingerprint: loaded.sourceFingerprint,
+            // Minted once per fresh attempt and then RETAINED by the envelope,
+            // so a retry re-submits under the same key and the 0157 ledger can
+            // recognise it (unique on target_session_id + idempotency_key).
+            idempotencyKey: crypto.randomUUID(),
+          };
+        }
+
+        const outcome = await submitCommit(env);
+
+        if (outcome.kind === "unknown") {
+          // Keep the envelope so the next press is a REPLAY of this exact
+          // request rather than a fresh copy. No automatic retry: the
+          // practitioner decides, so there is no retry loop.
+          pendingRetryRef.current = env;
+          setAmbiguous(true);
           return;
         }
-        const res = await commitDrafts({
-          drafts: loaded.drafts,
-          idempotencyKey: fastStartKey(loaded.sourceSessionId, loaded.sourceFingerprint),
-          sourceSessionId: loaded.sourceSessionId,
-          sourceFingerprint: loaded.sourceFingerprint,
-        });
-        if (!res.ok) {
+
+        // Definitive either way — the envelope has served its purpose.
+        pendingRetryRef.current = null;
+        setAmbiguous(false);
+
+        if (outcome.kind === "failed") {
           // Fail CLOSED and truthfully — a changed source is reported, never
-          // silently copied stale. Pressing the button again re-reads the
-          // source, so recovery is one tap.
-          setError(res.error);
+          // silently copied stale. A definitive refusal wrote nothing, so the
+          // next press legitimately starts fresh and re-reads the source.
+          setError(outcome.error);
           return;
         }
-        // The RPC already returns the authoritative created ids (and the SAME
-        // ids on an idempotent replay), so the landing area needs no derivation
-        // and no schema change. Routing with it re-renders the chart from the
-        // server AND tells it which editor to open.
-        const landing = landingBlockId(res.createdBlockIds);
-        if (landing) router.replace(fastChartUrl(clientId, sessionId, landing));
-        else router.refresh();
+        // Whether this was the first commit or a replay of one whose response
+        // was lost, createdBlockIds is authoritative and names the same areas.
+        landIn(outcome.createdBlockIds);
       } finally {
         fastInFlightRef.current = false;
       }
@@ -254,31 +313,41 @@ export function CopyPreviousAreasPanel({
     setSourceFingerprint(null);
     setSourceStartedAt(null);
     setError(null);
+    setAmbiguous(false);
     setPhase("idle");
   }
 
   // The reviewed-preview write. Sends the reviewed, setup-only draft (validated
   // server-side) plus the server's source id + fingerprint.
+  //
+  // This route needs no separate retry envelope: it never re-reads the source on
+  // commit, and its idempotency key + reviewed drafts live in component state,
+  // so pressing the button again after an unknown outcome re-submits the SAME
+  // request and replays for the same reason the fast path does.
   function commit() {
-    if (drafts.length === 0) return;
+    if (drafts.length === 0 || !sourceSessionId || !sourceFingerprint) return;
     setError(null);
     startCommit(async () => {
-      const res = await commitDrafts({
+      const outcome = await submitCommit({
         drafts,
         idempotencyKey,
         sourceSessionId,
         sourceFingerprint,
       });
-      if (!res.ok) {
-        setError(res.error);
+      if (outcome.kind === "unknown") {
+        setAmbiguous(true);
+        return;
+      }
+      setAmbiguous(false);
+      if (outcome.kind === "failed") {
+        setError(outcome.error);
         return;
       }
       // Reviewed copies land in today's editor too — the reopen loop is gone on
-      // both routes.
-      const landing = landingBlockId(res.createdBlockIds);
+      // BOTH routes.
+      const created = outcome.createdBlockIds;
       cancel();
-      if (landing) router.replace(fastChartUrl(clientId, sessionId, landing));
-      else router.refresh();
+      landIn(created);
     });
   }
 
@@ -304,12 +373,20 @@ export function CopyPreviousAreasPanel({
             data-testid="copy-previous-fast-start"
             className="rounded-md bg-neutral-900 px-4 py-2 font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
           >
-            {fastStarting ? "Starting…" : "Start from last session"}
+            {fastStarting
+              ? "Checking…"
+              : ambiguous
+                ? "Try again to check"
+                : "Start from last session"}
           </button>
           <button
             type="button"
             onClick={buildPreview}
-            disabled={busy}
+            // Disabled while an outcome is unknown: previewing would re-read the
+            // source, and if the copy DID land the descriptor would report
+            // "nothing to copy" — the misleading state this recovery exists to
+            // prevent. Settle the outcome first.
+            disabled={busy || ambiguous}
             data-testid="copy-previous-preview"
             className="rounded-md border border-neutral-300 px-4 py-2 font-medium hover:border-neutral-500 disabled:opacity-50 dark:border-neutral-700"
           >
@@ -322,6 +399,15 @@ export function CopyPreviousAreasPanel({
             data-testid="copy-previous-idle-source-date"
           >
             From the visit on <VisitDate iso={knownSourceStartedAt} />
+          </span>
+        )}
+        {ambiguous && (
+          <span
+            role="status"
+            data-testid="copy-previous-ambiguous"
+            className="text-amber-700 dark:text-amber-400"
+          >
+            {AMBIGUOUS_MESSAGE}
           </span>
         )}
         {error && (
@@ -364,6 +450,16 @@ export function CopyPreviousAreasPanel({
         ))}
       </ul>
 
+      {ambiguous && (
+        <span
+          role="status"
+          data-testid="copy-previous-ambiguous"
+          className="text-amber-700 dark:text-amber-400"
+        >
+          {AMBIGUOUS_MESSAGE}
+        </span>
+      )}
+
       {error && (
         <span role="alert" className="text-red-600 dark:text-red-400">
           {error}
@@ -378,12 +474,16 @@ export function CopyPreviousAreasPanel({
           data-testid="copy-previous-commit"
           className="rounded-md bg-neutral-900 px-4 py-2 font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
         >
-          {committing ? "Adding…" : "Add these areas to today's chart"}
+          {committing
+            ? "Adding…"
+            : ambiguous
+              ? "Try again to check"
+              : "Add these areas to today's chart"}
         </button>
         <button
           type="button"
           onClick={buildPreview}
-          disabled={loading || committing}
+          disabled={loading || committing || ambiguous}
           data-testid="copy-previous-refresh"
           className="rounded-md border border-neutral-300 px-4 py-2 hover:border-neutral-500 disabled:opacity-50 dark:border-neutral-700"
         >
