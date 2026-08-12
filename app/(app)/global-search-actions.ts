@@ -7,17 +7,20 @@ import {
 } from "@/lib/supabase/queries";
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
+  capResults,
   escapeIlike,
-  filterPageShortcuts,
   sanitizeQuery,
   statusForQuery,
   SEARCH_MIN_CHARS,
-  SEARCH_TOTAL_CAP,
   type SearchResult,
 } from "@/lib/search/global-search";
+import {
+  matchNavEntries,
+  type NavSearchContext,
+} from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
 
-// Global Search V1 server action (PR #232).
+// Global Search server action (V1: PR #232 · V2-A: settings + navigation).
 //
 // Security posture:
 //   * Requires an authenticated practitioner; resolves the CURRENT
@@ -28,6 +31,11 @@ import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
 //     href/date/badge). No tokens, no Stripe ids, no payment rows,
 //     no exposure incident content, no audit payloads.
 //   * Every href is app-internal.
+//   * V2-A: navigation/settings results are resolved from the static
+//     registry against a SERVER-DERIVED context — the practitioner's real
+//     role and the studio's real feature flags, never anything supplied by
+//     the browser. Search advertises only what its caller could already
+//     open; it grants nothing.
 //
 // Each category is capped; queries are simple ILIKE scans bounded by
 // studio + limit, fine at pilot scale (documented follow-up: add
@@ -109,16 +117,30 @@ export async function globalSearchAction(
   rawQuery: string,
 ): Promise<{ ok: true; results: SearchResult[] } | { ok: false }> {
   let studioId: string;
+  // Navigation visibility is derived HERE, from the resolved session — the
+  // same source that scopes every data query below. There is no code path
+  // that lets a caller state its own role or flags.
+  let navContext: NavSearchContext;
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
+    // Both checks are written as positive equality against the privileged
+    // value, so anything unexpected — missing, null, a renamed role, a flag
+    // that is undefined because the column has not been read — resolves to
+    // the LEAST privileged view rather than the most. Fail closed.
+    navContext = {
+      isOwner: practitioner?.role === "owner",
+      googleCalendarEnabled: studio.google_calendar_connection_enabled === true,
+    };
   } catch {
     return { ok: false };
   }
 
   const query = sanitizeQuery(rawQuery ?? "");
   if (query.length < SEARCH_MIN_CHARS) {
-    return { ok: true, results: filterPageShortcuts("") };
+    // Capped through the same helper as the full path, so there is exactly
+    // one definition of "how many results may leave this action".
+    return { ok: true, results: capResults(navResults("", navContext)) };
   }
   const like = `%${escapeIlike(query)}%`;
   const supabase = await createClient();
@@ -414,7 +436,20 @@ export async function globalSearchAction(
     });
   }
 
-  results.push(...filterPageShortcuts(query));
+  results.push(...navResults(query, navContext));
 
-  return { ok: true, results: results.slice(0, SEARCH_TOTAL_CAP) };
+  return { ok: true, results: capResults(results) };
+}
+
+// Registry matches, projected onto the shared SearchResult shape. The registry
+// itself is pure and permission-aware; this only renames its fields. `id` is
+// the registry's stable entry id, never a database id.
+function navResults(query: string, ctx: NavSearchContext): SearchResult[] {
+  return matchNavEntries(query, ctx).map(({ entry }) => ({
+    id: `page:${entry.id}`,
+    type: "page" as const,
+    title: entry.title,
+    subtitle: entry.description,
+    href: entry.href,
+  }));
 }

@@ -621,6 +621,110 @@ Decisions are listed roughly in the order they were made. Each entry says **what
 
 **Decision (2026-06-12):** Chloe's phone screenshot of the client page showed the remaining pre-#228 desktop-first layout: a text-3xl name sharing a baseline row with an inline Edit link (crowding/wrapping at 390px), dot-separated inline contacts, an oversized right-aligned "+ Log session" button floating with a 16rem helper paragraph, a detached Book appointment block, and a tab row wrapping into two cramped lines. **Fixes (layout only; identical actions and business logic):** header is mobile-first (text-2xl name scaling up at md, Edit as a small bordered button on the same row via justify-between, contacts stacked on phones, lifetime summary demoted a size); Log session (compact, text-sm) and the collapsed "+ Book appointment" button now sit TOGETHER in one action row (stacked on phones; the expanded booking card grows into the remaining row width, full-width on phones), with one short helper line below; the tab bar is a one-row horizontal scroller contained inside itself (scrollbar hidden, page never scrolls sideways; desktop fits in one row and is visually unchanged). Pinned Notes was already first on Overview; the compact header simply stops pushing it down. Proven in the mobile E2E (Edit/Log/Book reachable, all six tabs reachable + two tab navigations with overflow re-checks, pinned notes visible, page overflow assertions). Live payments remain disabled.
 
+### Global Search V2-A — searchable settings and navigation (no migration)
+
+**Decision (2026-08-12):** Chloe's ask was "everything in Hone should be
+searchable, doesn't matter what". V1 answered that with six hard-coded page
+shortcuts, one of which was a single generic **Settings** row — so an
+individual setting (the booking buffer, the 24-hour reminder toggle, photo
+consent) was undiscoverable unless you already knew which of the fifteen
+settings tabs owned it. V2-A makes settings and product navigation genuinely
+searchable and leaves the four data categories untouched.
+
+**Interpretation of the ask (deliberately narrower than the words):** anything a
+practitioner is *already authorized* to see, configure, or navigate to should
+be discoverable. **Search is discovery over existing authority, never authority
+itself.**
+
+**Architecture.** One canonical registry, `lib/search/navigation-registry.ts`:
+stable id, title, category, description, keyword aliases, href, and an explicit
+`visibility` (`practitioner` | `owner`) plus an optional studio feature-flag
+requirement. Static product metadata — **no database access, no migration, no
+index, no AI/embeddings, no external search service.** Matching is a bounded,
+deterministic pass over ~35 rows with ranked tiers (exact title → title prefix
+→ exact alias → alias prefix → substring → all-words fallback), tie-broken by a
+declared priority then id. Entries sharing an href collapse to the best-ranked
+one, so "Booking", "Booking link" and "Time between appointments" all reach
+`/settings/booking` while a single query only ever shows one row for it.
+
+**Permission model.** Owner-only entries are filtered out **before** matching, so
+a non-owner is never shown an owner surface — not even as a denied row. The
+registry is `import "server-only"`, so those titles never enter a
+practitioner's browser bundle at all (verified against a production build:
+present in `.next/server`, absent from `.next/static`). Visibility is derived
+server-side from the resolved session and **fails closed** — a missing, null or
+unrecognised role resolves to the practitioner view. A test parses the settings
+layout's own owner gate and fails if the registry ever disagrees with it, so
+search cannot drift into being a second opinion about who may see what.
+
+**Result caps.** Navigation results are now capped **separately** (6) from data
+results (12, unchanged). V1 appended page shortcuts last into one shared cap of
+12, so a query matching twelve data rows dropped every page result — searching
+"consent" in a studio with a client named Consentino returned no consent
+*setting*. Neither category can now starve the other; the total is a
+deterministic ≤18.
+
+**Deliberately withheld, recorded with reasons in `NON_SEARCHABLE_ROUTES` /
+`NON_SEARCHABLE_RECORD_SECTIONS`:** Exposure Incidents (personal information
+about an exposed person; V1's exclusion is preserved), every `/admin` surface
+(platform authority, cross-studio), the payment-provider onboarding callback
+pages, `/settings/calendar` (a redirect alias superseded by Availability), and
+`/records/print`. **A static coverage tripwire** walks the app router and fails
+when an authenticated static route is neither registered nor explicitly
+excluded — a new Settings page now requires an explicit searchability decision
+rather than silently becoming undiscoverable.
+
+**UI.** Unchanged interaction: same input, same debounce, same dismissal model,
+no competing search box. The result group is relabelled **Settings & Pages**,
+subtitles are now each destination's own description instead of "Go to page",
+and two anchors were added (`#email-notifications` on Settings → Studio,
+`#policies` on Settings → Forms & Postcare) so a matched setting lands at the
+block rather than the top of a long page.
+
+**Not attempted in V2-A** (see the V2-B register immediately below): individual
+services, practitioners, probes, lots, consultation and skin/hair notes,
+consent-form instances, notification rows, and advanced Treatment Memory
+fields. **Zero payment runtime code touched, no migration, no new index, no
+service-role client.** Live payments unchanged.
+
+### Global Search V2-B register (open, 2026-08-12)
+
+Entity search — searching individual **rows**, not destinations. Every item
+below needs the same three answers V2-A answered for navigation: what is the
+authorization rule, what is the safe projection, and what is the cap. None of
+them is started.
+
+| # | Entity | Where it lives today | Notes / open questions |
+|---|---|---|---|
+| 1 | **Services** | `services`, Settings → Services | Owner-only surface, but a service NAME is already visible to every practitioner on the calendar and on appointment rows. Decide whether the result links to the owner-only editor (owner) or to a read context (practitioner). Prices must not become searchable text for non-owners. |
+| 2 | **Practitioners** | `practitioners`, Settings → Team | `public.practitioners` is SELECT-only for every runtime role (0178). Display name and colour are safe; email is already visible to owners on the Team page and must stay owner-scoped. Deactivated practitioners need an explicit include/exclude decision. |
+| 3 | **Probes** | probe label / lot on `session_blocks` | Partially searchable already (V1 matches `probe_label` / `probe_lot_number` and surfaces them as Treatment Memory). V2-B is the *inventory* view: probe as an entity with its own history, not as a hit on one treatment. |
+| 4 | **Lots** | `record_keeping_sterile_items`, probe lots | V1 matches sterile lot numbers. Missing: one lot → every treatment that consumed it (the traceability question an inspector actually asks). Needs a bounded fan-out design; the naive version is a query per lot. |
+| 5 | **Treatment settings** | `session_blocks` machine fields | Modality, energy level, machine frequency, pulse count. Numeric/enum, not text — needs a value-matching design ("13.56", "blend"), not ILIKE. Related: **machine frequency has no settings destination at all today** — it is a per-practitioner sticky default remembered while charting (0084). If it should be configurable, that is a product decision before it is a search one. |
+| 6 | **Consultation notes** | `client_clinical_notes` (append-only) | Clinical narrative. Superseded revisions must never surface; only the current revision is a legitimate result. Needs the same liveness discipline V1 applies to void/soft-deleted sessions. |
+| 7 | **Skin / hair notes** | clinical analyses | Same append-only supersession question as #6, plus a stricter safe-subtitle rule: a matched fragment must not render clinical detail into a dropdown that renders over the page. |
+| 8 | **Consent form instances** | `client_consent_signatures` | The *templates* are searchable as a destination in V2-A. Individual SIGNED instances are a different authorization question (they carry the historical hash and the signer). Almost certainly owner-only, possibly not searchable at all. |
+| 9 | **Notifications** | `practitioner_notifications` | Studio-scoped rows already visible on `/notifications`. Cheap win; needs a read/unread ranking rule and a decision about the computed overdue-disinfectant alerts, which have no row to match. |
+| 10 | **Advanced Treatment Memory fields** | `session_blocks`, `electrolysis_entries` | Observation chips, tolerance/reaction structure, minutes performed, hairs treated. Structured-value matching, same class of problem as #5. |
+| 11 | **MultiPlex** | not modelled | **Blocked.** Deferred until its clinical model exists. Nothing to search and nothing to design against. |
+| 12 | **Additional practitioner-visible records** | record-keeping change history, procedure records | Procedure records are GENERATED from client/session data rather than stored, so "searching" them means searching their sources. Record-keeping audit rows carry change payloads and stay excluded. |
+
+Two cross-cutting items that apply to all of the above: **(a)** ILIKE scans are
+fine at pilot scale but V1 already documented trigram indexes as the follow-up
+if a studio outgrows them — entity search is what will trigger that, and it
+needs a migration this PR deliberately did not take; **(b)** every new entity
+category needs its own cap, because the total result budget is a fixed
+deterministic number and adding categories without caps is how a dropdown
+becomes a wall.
+
+Also open from V2-A recon, not a search change: **`/settings/data` has no
+server-side owner gate on the page itself** — the nav tab is owner-only and the
+export action re-checks `role === "owner"`, but a non-owner who types the URL
+renders the page and its studio-wide counts. V2-A classifies the entry
+owner-only to match the nav, so search neither widens nor narrows anything;
+whether the page should gate is a separate decision for whoever owns that
+surface.
+
 ### Global Search V1 (PR #232, no migration)
 
 **Decision (2026-06-12):** the header gains a real global search. **Scope:** clients (name/email/phone), appointments (via matched client, service-name match, and status keywords like "no show"), treatment memory (session_blocks area/caution/reaction/probe label/probe lot + sessions next_session_note, labeled "Recorded caution" / "Probe lot" / "Recorded treatment note"), Records (sterile item lot/description with a traceability deep link, disinfectant name), and static page shortcuts (Dashboard/Clients/Calendar/Records/Settings/Getting Started) so search is useful before data exists. **Deliberately excluded from V1 (pinned):** exposure incident content and any shortcut to it, audit change payloads, payment internals, Stripe ids, and all raw token fields. **Architecture:** no migration, no index, no AI/embeddings/external service; a single "use server" action (`app/(app)/global-search-actions.ts`) resolves the practitioner + studio, runs capped ILIKE queries on the USER-SCOPED client with explicit studio_id filters (RLS backstop), and returns sanitized result objects with app-internal hrefs only; total cap 12, per-category caps, sub-2-character queries answered with page shortcuts without touching the database. **UI:** one client component, two variants (desktop inline input w-36/lg:w-56 so the iPad-width header does not overflow; mobile 44px magnifier icon opening an anchored panel with input + Close), 250ms debounce, grouped results, empty state with helper text, and the same dismissal model as the menus (result click / Escape / outside pointerdown). Recent-searches storage deferred (not implemented; no localStorage). Follow-up documented: trigram indexes if a studio outgrows ILIKE scans. Proven in both E2E specs (desktop: find client, Escape/outside close, Getting Started shortcut, navigate; mobile: icon -> panel -> result navigates and closes; appointment results disambiguated from client results by email subtitle). Live payments remain disabled.
