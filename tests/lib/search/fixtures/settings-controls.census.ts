@@ -528,12 +528,23 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   },
 
   // ----------------------------------------------------------------- import
+  // IMPORT-01 retitled the page (and its registry entry) from "Quick import":
+  // execution is operator-assisted, so the destination must not be named after
+  // a self-service run the server refuses.
   {
     page: "/settings/import",
-    label: "Quick import",
+    label: "Import clients and history",
     role: "owner",
     decision: "searchable",
     entryId: "settings-import",
+  },
+  {
+    page: "/settings/import",
+    label: "Contact support",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "A mailto: link to Hone, not a studio setting, and it shares the page's href — a second searchable row would collapse into the page entry under dedupe and hide one of the two. The page entry's own description already says the model is operator-assisted.",
   },
 
   // ------------------------------------------------------------------- data
@@ -550,6 +561,14 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     role: "owner",
     decision: "searchable",
     entryId: "settings-data-import-csv",
+  },
+  {
+    page: "/settings/data",
+    label: "How importing works",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "IMPORT-01. Cross-link from the Data page's import card to /settings/import, which search already resolves on its own entry. Advertising it separately would put two rows in front of one destination.",
   },
   {
     page: "/settings/data",

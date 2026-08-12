@@ -492,7 +492,7 @@ describe("matching — the words Chloe actually types", () => {
       ["vacation", "Blocked time"],
       ["day off", "Blocked time"],
       ["buffer", "Time between appointments"],
-      ["csv", "Quick import"],
+      ["csv", "Import clients and history"],
       ["pixel", "Marketing & analytics"],
       ["waiver", "Consent forms"],
       ["backup", "Export your data"],

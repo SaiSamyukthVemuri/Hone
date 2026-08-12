@@ -437,13 +437,19 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     visibility: "owner",
     priority: 440,
   },
+  // IMPORT-01. Still searchable — an owner looking for "import" needs to find
+  // the one page that tells them how to actually get their records moved. What
+  // changed is the promise: the title no longer implies a self-service run the
+  // server will refuse, and the description states the operator-assisted model
+  // in the result row itself, before the click. Deliberate search EXCLUSION was
+  // the alternative and is worse: it hides the only route to migration help.
   {
     id: "settings-import",
-    title: "Quick import",
+    title: "Import clients and history",
     category: "Settings",
     href: "/settings/import",
-    description: "Bring existing clients and treatment history in from CSV",
-    keywords: ["quick import", "import", "csv", "spreadsheet", "migrate", "migration", "upload clients", "bring data", "transfer"],
+    description: "Operator-assisted — Hone brings your existing records over for you",
+    keywords: ["quick import", "import", "csv", "spreadsheet", "migrate", "migration", "upload clients", "bring data", "transfer", "operator assisted", "assisted import", "migration help", "help importing", "move my clients"],
     visibility: "owner",
     priority: 450,
   },
