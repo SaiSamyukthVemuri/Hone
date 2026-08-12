@@ -22,14 +22,21 @@ const EXEC = SQL.split("\n")
   .join("\n");
 
 describe("0178 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0178")).toBe(true);
-    expect(versionsAbove("0178")).toEqual([]);
-    expect(countVersion("0178")).toBe(1);
+  // THE HAND-OFF HAPPENED. This block used to assert isRepoMax("0178"),
+  // versionsAbove([]) and countVersion("0179") === 0. 0179 (actor FK integrity)
+  // was authored above it, and the header of this file predicted every one of
+  // those going red and named the fix: convert to a floor and let the CURRENT
+  // maximum's test carry the tripwire (CLAUDE.md §2). That is what happened
+  // here — the successor assertions now live in
+  // tests/migrations/0179-actor-fk-integrity.test.ts.
+  it("is no longer the repository maximum — 0179 was authored above it", () => {
+    expect(isRepoMax("0178")).toBe(false);
+    expect(versionsAbove("0178")).toContain("0179");
   });
 
-  it("leaves 0179 free", () => {
-    expect(countVersion("0179")).toBe(0);
+  it("consumes exactly ONE number", () => {
+    // The durable claim, and the only one that is 0178's business.
+    expect(countVersion("0178")).toBe(1);
   });
 });
 
@@ -309,11 +316,16 @@ describe("0178 — production truth: APPLIED 2026-08-11", () => {
     "utf8",
   );
 
-  it("the declared hosted max is 0178 — repository and production agree, nothing pending", () => {
-    expect(rec.hosted_migration_max).toBe("0178");
-    expect(isRepoMax(rec.hosted_migration_max)).toBe(true);
-    expect(versionsAbove(rec.hosted_migration_max)).toEqual([]);
+  it("0178 is APPLIED in production and remains a floor under the hosted max", () => {
+    // CONVERTED TO A FLOOR, exactly as this file's header instructed when a
+    // successor was authored. 0178's permanent claim is that production reached
+    // it — NOT that production has stopped there. 0179 is authored but NOT yet
+    // applied, so repo max (0179) and hosted max (0178) legitimately differ and
+    // an equality assertion here would be false-red on a correct tree.
+    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeGreaterThanOrEqual(178);
     expect(countVersion("0178")).toBe(1);
+    // Current-state ownership belongs to 0179's own test now.
+    expect(isRepoMax("0178")).toBe(false);
   });
 
   it("the record carries the sha256 of the exact 0178 bytes that were applied", async () => {
