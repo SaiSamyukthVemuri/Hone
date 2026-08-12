@@ -182,7 +182,9 @@ describe("0179 — DURABLE actor attribution is delete-safe", () => {
     "client_portal_messages_created_by_same_studio_fk",
     "manual_fee_charge_attempts_cancelled_by_same_studio_fk",
     "payment_charge_attempts_cancelled_by_same_studio_fk",
-    "client_clinical_notes_practitioner_same_studio",
+    // Added under its 0179 candidate name because the old CASCADE constraint
+    // still occupies the canonical name until section 6 renames it back.
+    "client_clinical_notes_practitioner_same_studio_0179",
   ];
 
   it.each(RESTRICT)("%s is ON DELETE RESTRICT", (name) => {
@@ -380,6 +382,118 @@ describe("0179 — validation is mandatory and fails closed", () => {
     const notValidClauses = EXEC.match(/not valid;/gi) ?? [];
     expect(notValidClauses).toHaveLength(39);
     expect(EXEC.trim().endsWith("commit;")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LOCK FOOTPRINT — validation must finish before any superseded constraint is
+// dropped.
+//
+// Postgres holds every table lock until the transaction ends, so a strong lock
+// taken early is held for the rest of the migration. An earlier revision of
+// 0179 dropped each old constraint immediately before adding its replacement,
+// which put DROP CONSTRAINT's lock on many central tables at the START of the
+// migration and held it across all 39 validation scans. The order is now
+// ADD (not valid) -> VALIDATE 39 -> DROP superseded, so the scans happen before
+// the strongest locks are taken. These assertions pin that order.
+// ---------------------------------------------------------------------------
+describe("0179 — validation precedes superseded-constraint cleanup", () => {
+  const idxValidate = EXEC.indexOf("validate constraint");
+  const idxFirstDrop = EXEC.indexOf("drop constraint");
+  const idxAdd = EXEC.indexOf("add constraint");
+
+  it("orders the migration ADD -> VALIDATE -> DROP", () => {
+    expect(idxAdd).toBeGreaterThanOrEqual(0);
+    expect(idxValidate).toBeGreaterThan(idxAdd);
+    expect(idxFirstDrop).toBeGreaterThan(idxValidate);
+  });
+
+  it("drops NO superseded constraint before mandatory validation has run", () => {
+    // Every drop in the file must sit after the validation statement.
+    const drops = [...EXEC.matchAll(/drop constraint if exists ([a-z0-9_]+);/g)];
+    expect(drops.length).toBe(39);
+    for (const d of drops) expect(d.index!).toBeGreaterThan(idxValidate);
+  });
+
+  it("aborts before cleanup — the raise is between validation and the first drop", () => {
+    const idxAbort = EXEC.indexOf("0179 ABORTED");
+    expect(idxAbort).toBeGreaterThan(idxValidate);
+    expect(idxAbort).toBeLessThan(idxFirstDrop);
+  });
+
+  it("performs no historical scan after cleanup begins", () => {
+    // The only `validate constraint` occurrences must precede every drop.
+    const validates = [...EXEC.matchAll(/validate constraint/g)];
+    for (const v of validates) expect(v.index!).toBeLessThan(idxFirstDrop);
+  });
+
+  it("validates the client_clinical_notes candidate BEFORE dropping its old CASCADE constraint", () => {
+    const idxCandidateAdd = EXEC.indexOf(
+      "add constraint client_clinical_notes_practitioner_same_studio_0179",
+    );
+    const idxCandidateInValidation = EXEC.indexOf(
+      "'client_clinical_notes_practitioner_same_studio_0179'",
+    );
+    const idxOldDrop = EXEC.indexOf(
+      "drop constraint if exists client_clinical_notes_practitioner_same_studio;",
+    );
+    expect(idxCandidateAdd).toBeGreaterThanOrEqual(0);
+    // It is one of the mandatory 39.
+    expect(idxCandidateInValidation).toBeGreaterThan(idxCandidateAdd);
+    expect(idxCandidateInValidation).toBeLessThan(idxValidate);
+    // Old CASCADE constraint is retired only after validation.
+    expect(idxOldDrop).toBeGreaterThan(idxValidate);
+  });
+
+  it("restores the canonical client_clinical_notes constraint name", () => {
+    // The committed catalog must carry the canonical name, not the candidate.
+    expect(EXEC).toMatch(
+      /rename constraint client_clinical_notes_practitioner_same_studio_0179\s+to client_clinical_notes_practitioner_same_studio;/,
+    );
+    const idxRename = EXEC.indexOf("rename constraint");
+    const idxOldDrop = EXEC.indexOf(
+      "drop constraint if exists client_clinical_notes_practitioner_same_studio;",
+    );
+    expect(idxRename).toBeGreaterThan(idxOldDrop);
+  });
+
+  it("drops exactly the 38 superseded SIMPLE FKs plus the one old composite", () => {
+    const dropped = [...EXEC.matchAll(/drop constraint if exists ([a-z0-9_]+);/g)].map((m) => m[1]);
+    expect(dropped).toHaveLength(39);
+    expect(new Set(dropped).size).toBe(39);
+    const composite = dropped.filter((d) => d === "client_clinical_notes_practitioner_same_studio");
+    expect(composite).toHaveLength(1);
+    expect(dropped.length - composite.length).toBe(38);
+  });
+
+  it("proves the final catalog shape inside the migration itself", () => {
+    // 58 composite + 9 simple practitioner FKs, none NOT VALID, no candidate
+    // name surviving — asserted from pg_constraint, not assumed.
+    expect(EXEC).toMatch(/n_composite\s*<>\s*58/);
+    expect(EXEC).toMatch(/n_simple\s*<>\s*9/);
+    expect(EXEC).toMatch(/n_invalid\s*<>\s*0/);
+    expect(EXEC).toMatch(/n_candidate\s*<>\s*0/);
+    const idxFinalCheck = EXEC.indexOf("n_composite");
+    expect(idxFinalCheck).toBeGreaterThan(idxFirstDrop);
+  });
+
+  it("keeps lock_timeout and invents no statement_timeout", () => {
+    expect(EXEC).toMatch(/set local lock_timeout = '5s';/);
+    expect(EXEC).not.toMatch(/statement_timeout/i);
+  });
+});
+
+describe("0179 — locking claims are precise, not marketing", () => {
+  it("does not claim NOT VALID avoids scanning under ACCESS EXCLUSIVE", () => {
+    // The previous header made exactly that claim, which was untrue for the
+    // old drop-then-add ordering.
+    expect(SQL).not.toMatch(/no table is scanned while an\s*--?\s*ACCESS EXCLUSIVE lock is held/);
+    expect(SQL).toMatch(/NOT VALID skips the INITIAL historical scan/);
+  });
+
+  it("states plainly that it is not lock-free and still needs a preflight", () => {
+    expect(SQL).toMatch(/does not make 0179 lock-free/);
+    expect(SQL).toMatch(/bounded read-only preflight/);
   });
 });
 

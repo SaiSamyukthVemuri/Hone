@@ -56,11 +56,42 @@
 -- NOT VALID is used here ONLY as the ADD-CONSTRAINT lock strategy. It is NOT an
 -- acceptable terminal state for 0179.
 --
--- Every constraint is added NOT VALID so that no table is scanned while an
--- ACCESS EXCLUSIVE lock is held (NOT VALID still enforces the constraint on
--- every INSERT and UPDATE from the moment it is added — it only declines to
--- re-scan pre-existing rows). All 39 are then VALIDATED inside this SAME
--- transaction by section 5.
+-- ORDERING (sections 1–4 → 5 → 6), and why it is this way:
+--
+--   1–4  ADD the 39 new composite constraints NOT VALID. The superseded old
+--        constraints are deliberately LEFT IN PLACE. NOT VALID skips the
+--        initial historical scan; the constraint is still enforced on every
+--        INSERT and UPDATE from the moment it is added.
+--   5    VALIDATE all 39. Fail closed — any failure aborts the transaction.
+--   6    ONLY after 39/39 succeed, drop the superseded constraints. Catalog
+--        work only, no scans.
+--
+-- The point of that order is the lock footprint. Postgres holds every table
+-- lock until the transaction ends, so a strong lock taken early is held for the
+-- rest of the migration. An earlier revision of 0179 dropped each old
+-- constraint immediately before adding its replacement, which meant DROP
+-- CONSTRAINT's lock on many central tables was acquired near the start and then
+-- held across every subsequent statement — including all 39 validation scans.
+-- Doing the validation first and confining the drops to a short catalog-only
+-- tail keeps those scans out of that window.
+--
+-- Precisely what is and is not claimed:
+--   * NOT VALID skips the INITIAL historical scan at ADD time. It does not make
+--     ADD FOREIGN KEY lock-free — that statement still takes its own locks on
+--     both the referencing and referenced table.
+--   * VALIDATE CONSTRAINT takes a weaker lock than ALTER TABLE's default and
+--     allows concurrent reads and writes, but it does scan the table.
+--   * DROP CONSTRAINT has no weaker-lock exception; those drops are the
+--     strongest part of this migration and are pushed to the final tail.
+--   * This reduces the lock footprint. It does not make 0179 lock-free, and it
+--     is not a substitute for a bounded read-only preflight and a controlled
+--     rollout at production apply time.
+--
+-- During section 5 the old simple FK and the new composite FK coexist on the
+-- same column. That is intentional and temporary — it lives only inside this
+-- transaction. Business semantics are unchanged: the composite is strictly
+-- stronger than the simple constraint it replaces, and for durable actors the
+-- new RESTRICT constraint is authoritative throughout the overlap.
 --
 -- THE BINDING RULE:
 --
@@ -126,15 +157,16 @@ set local lock_timeout = '5s';
 -- ===========================================================================
 -- 1. DURABLE ACTOR ATTRIBUTION — same-studio + ON DELETE RESTRICT
 -- ===========================================================================
--- Each of these replaces a simple practitioners(id) FK. The composite
+-- Each of these supersedes a simple practitioners(id) FK. The composite
 -- (col, studio_id) -> practitioners (id, studio_id) strictly implies the simple
--- reference it replaces, because practitioners_id_studio_id_unique is a
+-- reference it supersedes, because practitioners_id_studio_id_unique is a
 -- superkey over the primary key — so dropping the simple FK loses nothing.
+--
+-- The superseded constraints are NOT dropped here. They stay in place through
+-- validation and are removed in section 6, once all 39 have validated.
 
 -- --- Audit / event evidence ------------------------------------------------
 
-alter table public.audit_logs
-  drop constraint if exists audit_logs_actor_id_fkey;
 alter table public.audit_logs
   add constraint audit_logs_actor_same_studio_fk
   foreign key (actor_id, studio_id)
@@ -143,16 +175,12 @@ alter table public.audit_logs
   not valid;
 
 alter table public.record_keeping_audit_events
-  drop constraint if exists record_keeping_audit_events_actor_practitioner_id_fkey;
-alter table public.record_keeping_audit_events
   add constraint rk_audit_events_actor_same_studio_fk
   foreign key (actor_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.imported_treatment_memory_audit_events
-  drop constraint if exists imported_treatment_memory_audit_even_actor_practitioner_id_fkey;
 alter table public.imported_treatment_memory_audit_events
   add constraint itm_audit_events_actor_same_studio_fk
   foreign key (actor_practitioner_id, studio_id)
@@ -168,8 +196,6 @@ alter table public.imported_treatment_memory_audit_events
 -- (app/portal/verify/[token]/actions.ts:115). Named merely practitioner_id, but
 -- an ACTOR column by every writer.
 alter table public.client_portal_access_events
-  drop constraint if exists client_portal_access_events_practitioner_id_fkey;
-alter table public.client_portal_access_events
   add constraint client_portal_access_events_practitioner_same_studio_fk
   foreign key (practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
@@ -179,16 +205,12 @@ alter table public.client_portal_access_events
 -- --- Client record ---------------------------------------------------------
 
 alter table public.clients
-  drop constraint if exists clients_created_by_fkey;
-alter table public.clients
   add constraint clients_created_by_same_studio_fk
   foreign key (created_by, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.clients
-  drop constraint if exists clients_archived_by_fkey;
 alter table public.clients
   add constraint clients_archived_by_same_studio_fk
   foreign key (archived_by, studio_id)
@@ -197,8 +219,6 @@ alter table public.clients
   not valid;
 
 alter table public.client_tags
-  drop constraint if exists client_tags_created_by_fkey;
-alter table public.client_tags
   add constraint client_tags_created_by_same_studio_fk
   foreign key (created_by, studio_id)
   references public.practitioners (id, studio_id)
@@ -206,16 +226,12 @@ alter table public.client_tags
   not valid;
 
 alter table public.client_tags
-  drop constraint if exists client_tags_deleted_by_fkey;
-alter table public.client_tags
   add constraint client_tags_deleted_by_same_studio_fk
   foreign key (deleted_by, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.client_pinned_notes
-  drop constraint if exists client_pinned_notes_created_by_practitioner_id_fkey;
 alter table public.client_pinned_notes
   add constraint client_pinned_notes_created_by_same_studio_fk
   foreign key (created_by_practitioner_id, studio_id)
@@ -226,8 +242,6 @@ alter table public.client_pinned_notes
 -- --- Intake / consent ------------------------------------------------------
 
 alter table public.client_intake_forms
-  drop constraint if exists client_intake_forms_requested_by_fkey;
-alter table public.client_intake_forms
   add constraint client_intake_forms_requested_by_same_studio_fk
   foreign key (requested_by, studio_id)
   references public.practitioners (id, studio_id)
@@ -235,16 +249,12 @@ alter table public.client_intake_forms
   not valid;
 
 alter table public.client_intake_forms
-  drop constraint if exists client_intake_forms_reviewed_by_fkey;
-alter table public.client_intake_forms
   add constraint client_intake_forms_reviewed_by_same_studio_fk
   foreign key (reviewed_by, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.consent_form_templates
-  drop constraint if exists consent_form_templates_created_by_practitioner_id_fkey;
 alter table public.consent_form_templates
   add constraint consent_form_templates_created_by_same_studio_fk
   foreign key (created_by_practitioner_id, studio_id)
@@ -255,16 +265,12 @@ alter table public.consent_form_templates
 -- --- Clinical session evidence --------------------------------------------
 
 alter table public.sessions
-  drop constraint if exists sessions_deleted_by_fkey;
-alter table public.sessions
   add constraint sessions_deleted_by_same_studio_fk
   foreign key (deleted_by, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.session_blocks
-  drop constraint if exists session_blocks_deleted_by_fkey;
 alter table public.session_blocks
   add constraint session_blocks_deleted_by_same_studio_fk
   foreign key (deleted_by, studio_id)
@@ -279,16 +285,12 @@ alter table public.session_blocks
 -- BEFORE the 0178 fix — including throughout 0168–0177, whose helper had no
 -- studio scope — may violate this. See the dirty-history note in the header.
 alter table public.treatment_images
-  drop constraint if exists treatment_images_uploaded_by_fkey;
-alter table public.treatment_images
   add constraint treatment_images_uploaded_by_same_studio_fk
   foreign key (uploaded_by, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.treatment_images
-  drop constraint if exists treatment_images_deleted_by_fkey;
 alter table public.treatment_images
   add constraint treatment_images_deleted_by_same_studio_fk
   foreign key (deleted_by, studio_id)
@@ -299,8 +301,6 @@ alter table public.treatment_images
 -- --- Treatment planning ----------------------------------------------------
 
 alter table public.treatment_plans
-  drop constraint if exists treatment_plans_created_by_practitioner_id_fkey;
-alter table public.treatment_plans
   add constraint treatment_plans_created_by_same_studio_fk
   foreign key (created_by_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
@@ -308,16 +308,12 @@ alter table public.treatment_plans
   not valid;
 
 alter table public.treatment_plans
-  drop constraint if exists treatment_plans_closed_by_practitioner_id_fkey;
-alter table public.treatment_plans
   add constraint treatment_plans_closed_by_same_studio_fk
   foreign key (closed_by_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.treatment_goals
-  drop constraint if exists treatment_goals_created_by_fkey;
 alter table public.treatment_goals
   add constraint treatment_goals_created_by_same_studio_fk
   foreign key (created_by, studio_id)
@@ -328,8 +324,6 @@ alter table public.treatment_goals
 -- --- Regulatory record keeping --------------------------------------------
 
 alter table public.record_keeping_sterile_items
-  drop constraint if exists record_keeping_sterile_items_created_by_practitioner_id_fkey;
-alter table public.record_keeping_sterile_items
   add constraint rk_sterile_items_created_by_same_studio_fk
   foreign key (created_by_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
@@ -337,16 +331,12 @@ alter table public.record_keeping_sterile_items
   not valid;
 
 alter table public.record_keeping_disinfectants
-  drop constraint if exists record_keeping_disinfectants_created_by_practitioner_id_fkey;
-alter table public.record_keeping_disinfectants
   add constraint rk_disinfectants_created_by_same_studio_fk
   foreign key (created_by_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.record_keeping_exposure_incidents
-  drop constraint if exists record_keeping_exposure_inciden_created_by_practitioner_id_fkey;
 alter table public.record_keeping_exposure_incidents
   add constraint rk_exposure_incidents_created_by_same_studio_fk
   foreign key (created_by_practitioner_id, studio_id)
@@ -364,8 +354,6 @@ alter table public.record_keeping_exposure_incidents
 -- validation is free.
 
 alter table public.stripe_charge_attempts
-  drop constraint if exists stripe_charge_attempts_initiated_by_practitioner_id_fkey;
-alter table public.stripe_charge_attempts
   add constraint stripe_charge_attempts_initiated_by_same_studio_fk
   foreign key (initiated_by_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
@@ -373,16 +361,12 @@ alter table public.stripe_charge_attempts
   not valid;
 
 alter table public.stripe_refund_attempts
-  drop constraint if exists stripe_refund_attempts_initiated_by_practitioner_id_fkey;
-alter table public.stripe_refund_attempts
   add constraint stripe_refund_attempts_initiated_by_same_studio_fk
   foreign key (initiated_by_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.stripe_payment_audit
-  drop constraint if exists stripe_payment_audit_practitioner_id_fkey;
 alter table public.stripe_payment_audit
   add constraint stripe_payment_audit_practitioner_same_studio_fk
   foreign key (practitioner_id, studio_id)
@@ -398,8 +382,6 @@ alter table public.stripe_payment_audit
 -- outright. Same-studio enforcement for ops_alerts is therefore partial by
 -- construction and is recorded as such in the census.
 alter table public.ops_alerts
-  drop constraint if exists ops_alerts_resolved_by_practitioner_id_fkey;
-alter table public.ops_alerts
   add constraint ops_alerts_resolved_by_same_studio_fk
   foreign key (resolved_by_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
@@ -414,16 +396,12 @@ alter table public.ops_alerts
 -- their delete behaviour is unchanged.
 
 alter table public.clinical_audit_events
-  drop constraint if exists clinical_audit_events_actor_fk;
-alter table public.clinical_audit_events
   add constraint clinical_audit_events_actor_practitioner_id_same_studio_fk
   foreign key (actor_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.clinical_record_amendments
-  drop constraint if exists clinical_record_amendments_author_fk;
 alter table public.clinical_record_amendments
   add constraint clinical_record_amendments_authored_by_same_studio_fk
   foreign key (authored_by, studio_id)
@@ -432,16 +410,12 @@ alter table public.clinical_record_amendments
   not valid;
 
 alter table public.clinical_record_snapshots
-  drop constraint if exists clinical_record_snapshots_finalized_by_fkey;
-alter table public.clinical_record_snapshots
   add constraint clinical_record_snapshots_finalized_by_same_studio_fk
   foreign key (finalized_by, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.clinical_record_snapshots
-  drop constraint if exists clinical_record_snapshots_corrected_by_fk;
 alter table public.clinical_record_snapshots
   add constraint clinical_record_snapshots_corrected_by_same_studio_fk
   foreign key (corrected_by, studio_id)
@@ -450,16 +424,12 @@ alter table public.clinical_record_snapshots
   not valid;
 
 alter table public.sessions
-  drop constraint if exists sessions_finalized_by_fkey;
-alter table public.sessions
   add constraint sessions_finalized_by_same_studio_fk
   foreign key (finalized_by, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.client_portal_messages
-  drop constraint if exists client_portal_messages_created_by_practitioner_id_fkey;
 alter table public.client_portal_messages
   add constraint client_portal_messages_created_by_same_studio_fk
   foreign key (created_by_practitioner_id, studio_id)
@@ -468,16 +438,12 @@ alter table public.client_portal_messages
   not valid;
 
 alter table public.manual_fee_charge_attempts
-  drop constraint if exists manual_fee_charge_attempts_cancelled_by_practitioner_id_fkey;
-alter table public.manual_fee_charge_attempts
   add constraint manual_fee_charge_attempts_cancelled_by_same_studio_fk
   foreign key (cancelled_by_practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
   not valid;
 
-alter table public.payment_charge_attempts
-  drop constraint if exists payment_charge_attempts_cancelled_by_practitioner_id_fkey;
 alter table public.payment_charge_attempts
   add constraint payment_charge_attempts_cancelled_by_same_studio_fk
   foreign key (cancelled_by_practitioner_id, studio_id)
@@ -497,10 +463,15 @@ alter table public.payment_charge_attempts
 -- account deletion") and is the reason "already composite same-studio" is not
 -- treated as automatically frozen. Tenant half is unchanged; only the delete
 -- action moves CASCADE -> RESTRICT.
+--
+-- The old constraint still occupies the canonical name at this point, and two
+-- constraints cannot share a name, so the replacement is added under a
+-- temporary 0179 candidate name. It is validated as one of the mandatory 39 in
+-- section 5; section 6 then drops the CASCADE constraint and renames the
+-- candidate back to the canonical name, which is what the committed catalog
+-- carries.
 alter table public.client_clinical_notes
-  drop constraint if exists client_clinical_notes_practitioner_same_studio;
-alter table public.client_clinical_notes
-  add constraint client_clinical_notes_practitioner_same_studio
+  add constraint client_clinical_notes_practitioner_same_studio_0179
   foreign key (practitioner_id, studio_id)
   references public.practitioners (id, studio_id)
   on delete restrict
@@ -517,8 +488,6 @@ alter table public.client_clinical_notes
 -- A team invitation is consumed on acceptance or expires unaccepted; it is a
 -- pending-state row, never retained as evidence of anything.
 alter table public.pending_invitations
-  drop constraint if exists pending_invitations_invited_by_fkey;
-alter table public.pending_invitations
   add constraint pending_invitations_invited_by_same_studio_fk
   foreign key (invited_by, studio_id)
   references public.practitioners (id, studio_id)
@@ -529,16 +498,12 @@ alter table public.pending_invitations
 -- deleted freely as the schedule changes; created_by is provenance on mutable
 -- config, not a retained record.
 alter table public.studio_timed_blocks
-  drop constraint if exists studio_timed_blocks_created_by_fkey;
-alter table public.studio_timed_blocks
   add constraint studio_timed_blocks_created_by_same_studio_fk
   foreign key (created_by, studio_id)
   references public.practitioners (id, studio_id)
   on delete set null
   not valid;
 
-alter table public.studio_recurring_break_rules
-  drop constraint if exists studio_recurring_break_rules_created_by_fkey;
 alter table public.studio_recurring_break_rules
   add constraint studio_recurring_break_rules_created_by_same_studio_fk
   foreign key (created_by, studio_id)
@@ -549,8 +514,6 @@ alter table public.studio_recurring_break_rules
 -- A last-edited-by stamp that is OVERWRITTEN IN PLACE by every subsequent save
 -- (app/(app)/clients/[id]/personal-notes-actions.ts:91). It records current
 -- state, not history — there is no edit trail here for it to be evidence of.
-alter table public.client_personal_notes
-  drop constraint if exists client_personal_notes_updated_by_practitioner_id_fkey;
 alter table public.client_personal_notes
   add constraint client_personal_notes_updated_by_same_studio_fk
   foreign key (updated_by_practitioner_id, studio_id)
@@ -608,7 +571,7 @@ declare
     ['client_portal_messages',                'client_portal_messages_created_by_same_studio_fk'],
     ['manual_fee_charge_attempts',            'manual_fee_charge_attempts_cancelled_by_same_studio_fk'],
     ['payment_charge_attempts',               'payment_charge_attempts_cancelled_by_same_studio_fk'],
-    ['client_clinical_notes',                 'client_clinical_notes_practitioner_same_studio'],
+    ['client_clinical_notes',                 'client_clinical_notes_practitioner_same_studio_0179'],
     ['pending_invitations',                   'pending_invitations_invited_by_same_studio_fk'],
     ['studio_timed_blocks',                   'studio_timed_blocks_created_by_same_studio_fk'],
     ['studio_recurring_break_rules',          'studio_recurring_break_rules_created_by_same_studio_fk'],
@@ -674,7 +637,142 @@ begin
 end $$;
 
 -- ===========================================================================
--- 6. RESIDUAL LIMITATION (recorded, not closed here)
+-- 6. CATALOG CLEANUP — ONLY REACHED WHEN ALL 39 VALIDATED
+-- ===========================================================================
+-- Everything above this line has already succeeded: all 39 new composite
+-- constraints exist AND are validated. Section 5 aborts the transaction
+-- otherwise, so no statement below can run against unvalidated attribution.
+--
+-- This section is CATALOG-ONLY. It performs no historical scan, so the stronger
+-- locks DROP CONSTRAINT takes are confined to this short tail rather than being
+-- held across the validation scans. Nothing unrelated is done here.
+
+-- 6a. The 38 superseded SIMPLE practitioner FKs. Each is strictly implied by the
+--     composite that replaced it — practitioners_id_studio_id_unique is a
+--     superkey over the primary key, so a row satisfying (col, studio_id) always
+--     satisfies (col). Dropping them loses no integrity.
+alter table public.audit_logs
+  drop constraint if exists audit_logs_actor_id_fkey;
+alter table public.record_keeping_audit_events
+  drop constraint if exists record_keeping_audit_events_actor_practitioner_id_fkey;
+alter table public.imported_treatment_memory_audit_events
+  drop constraint if exists imported_treatment_memory_audit_even_actor_practitioner_id_fkey;
+alter table public.client_portal_access_events
+  drop constraint if exists client_portal_access_events_practitioner_id_fkey;
+alter table public.clients
+  drop constraint if exists clients_created_by_fkey;
+alter table public.clients
+  drop constraint if exists clients_archived_by_fkey;
+alter table public.client_tags
+  drop constraint if exists client_tags_created_by_fkey;
+alter table public.client_tags
+  drop constraint if exists client_tags_deleted_by_fkey;
+alter table public.client_pinned_notes
+  drop constraint if exists client_pinned_notes_created_by_practitioner_id_fkey;
+alter table public.client_intake_forms
+  drop constraint if exists client_intake_forms_requested_by_fkey;
+alter table public.client_intake_forms
+  drop constraint if exists client_intake_forms_reviewed_by_fkey;
+alter table public.consent_form_templates
+  drop constraint if exists consent_form_templates_created_by_practitioner_id_fkey;
+alter table public.sessions
+  drop constraint if exists sessions_deleted_by_fkey;
+alter table public.session_blocks
+  drop constraint if exists session_blocks_deleted_by_fkey;
+alter table public.treatment_images
+  drop constraint if exists treatment_images_uploaded_by_fkey;
+alter table public.treatment_images
+  drop constraint if exists treatment_images_deleted_by_fkey;
+alter table public.treatment_plans
+  drop constraint if exists treatment_plans_created_by_practitioner_id_fkey;
+alter table public.treatment_plans
+  drop constraint if exists treatment_plans_closed_by_practitioner_id_fkey;
+alter table public.treatment_goals
+  drop constraint if exists treatment_goals_created_by_fkey;
+alter table public.record_keeping_sterile_items
+  drop constraint if exists record_keeping_sterile_items_created_by_practitioner_id_fkey;
+alter table public.record_keeping_disinfectants
+  drop constraint if exists record_keeping_disinfectants_created_by_practitioner_id_fkey;
+alter table public.record_keeping_exposure_incidents
+  drop constraint if exists record_keeping_exposure_inciden_created_by_practitioner_id_fkey;
+alter table public.stripe_charge_attempts
+  drop constraint if exists stripe_charge_attempts_initiated_by_practitioner_id_fkey;
+alter table public.stripe_refund_attempts
+  drop constraint if exists stripe_refund_attempts_initiated_by_practitioner_id_fkey;
+alter table public.stripe_payment_audit
+  drop constraint if exists stripe_payment_audit_practitioner_id_fkey;
+alter table public.ops_alerts
+  drop constraint if exists ops_alerts_resolved_by_practitioner_id_fkey;
+alter table public.clinical_audit_events
+  drop constraint if exists clinical_audit_events_actor_fk;
+alter table public.clinical_record_amendments
+  drop constraint if exists clinical_record_amendments_author_fk;
+alter table public.clinical_record_snapshots
+  drop constraint if exists clinical_record_snapshots_finalized_by_fkey;
+alter table public.clinical_record_snapshots
+  drop constraint if exists clinical_record_snapshots_corrected_by_fk;
+alter table public.sessions
+  drop constraint if exists sessions_finalized_by_fkey;
+alter table public.client_portal_messages
+  drop constraint if exists client_portal_messages_created_by_practitioner_id_fkey;
+alter table public.manual_fee_charge_attempts
+  drop constraint if exists manual_fee_charge_attempts_cancelled_by_practitioner_id_fkey;
+alter table public.payment_charge_attempts
+  drop constraint if exists payment_charge_attempts_cancelled_by_practitioner_id_fkey;
+alter table public.pending_invitations
+  drop constraint if exists pending_invitations_invited_by_fkey;
+alter table public.studio_timed_blocks
+  drop constraint if exists studio_timed_blocks_created_by_fkey;
+alter table public.studio_recurring_break_rules
+  drop constraint if exists studio_recurring_break_rules_created_by_fkey;
+alter table public.client_personal_notes
+  drop constraint if exists client_personal_notes_updated_by_practitioner_id_fkey;
+
+-- 6b. client_clinical_notes: the old composite occupied the canonical name for
+--     the whole validation phase, so the replacement was added and validated as
+--     ..._0179. Retire the CASCADE constraint, then restore the canonical name.
+--     RENAME CONSTRAINT is catalog-only and does NOT re-validate — the
+--     constraint keeps the validated state proved in section 5.
+alter table public.client_clinical_notes
+  drop constraint if exists client_clinical_notes_practitioner_same_studio;
+alter table public.client_clinical_notes
+  rename constraint client_clinical_notes_practitioner_same_studio_0179
+                 to client_clinical_notes_practitioner_same_studio;
+
+-- 6c. Final catalog shape, proved rather than assumed. 58 composite + 9 simple
+--     practitioner FKs, none left NOT VALID, and no 0179 candidate name
+--     surviving into the committed schema.
+do $$
+declare
+  n_composite int;
+  n_simple    int;
+  n_invalid   int;
+  n_candidate int;
+begin
+  select count(*) filter (where array_length(con.conkey, 1) > 1),
+         count(*) filter (where array_length(con.conkey, 1) = 1),
+         count(*) filter (where not con.convalidated)
+    into n_composite, n_simple, n_invalid
+  from pg_constraint con
+  join pg_class ct on ct.oid = con.conrelid
+  join pg_class pt on pt.oid = con.confrelid
+  join pg_namespace pn on pn.oid = pt.relnamespace
+  where con.contype = 'f' and pt.relname = 'practitioners' and pn.nspname = 'public';
+
+  select count(*) into n_candidate
+  from pg_constraint where conname like '%\_0179';
+
+  if n_composite <> 58 or n_simple <> 9 or n_invalid <> 0 or n_candidate <> 0 then
+    raise exception
+      '0179 ABORTED: final catalog is composite=%, simple=%, not-valid=%, candidate-names=%; expected 58, 9, 0, 0.',
+      n_composite, n_simple, n_invalid, n_candidate;
+  end if;
+
+  raise notice '0179 actor FK integrity: final catalog 58 composite / 9 simple / 0 NOT VALID.';
+end $$;
+
+-- ===========================================================================
+-- 7. RESIDUAL LIMITATION (recorded, not closed here)
 -- ===========================================================================
 -- ACTOR FK INTEGRITY — PARENT-SCOPED ACTOR COLUMNS WITHOUT LOCAL STUDIO LINEAGE
 --

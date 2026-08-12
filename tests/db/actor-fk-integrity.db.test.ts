@@ -293,6 +293,48 @@ describe("0179 — a successful apply means 39/39 VALIDATED", () => {
     }
   });
 
+  it("carries the CANONICAL clinical-notes name — no 0179 candidate survives", async () => {
+    // The replacement was added and validated as
+    // client_clinical_notes_practitioner_same_studio_0179 because the old
+    // CASCADE constraint held the canonical name through validation. Section 6
+    // drops the old one and renames the candidate back. RENAME CONSTRAINT is
+    // catalog-only, so the validated state proved in section 5 is preserved.
+    const candidates = await adminQuery(
+      `select conname from pg_constraint where conname like '%\\_0179'`,
+    );
+    expect(candidates.rows.map((r: { conname: string }) => r.conname)).toEqual([]);
+
+    const canonical = await adminQuery(
+      `select con.convalidated, con.confdeltype, array_length(con.conkey, 1) as arity
+         from pg_constraint con
+        where con.conname = 'client_clinical_notes_practitioner_same_studio'`,
+    );
+    expect(canonical.rowCount).toBe(1);
+    expect(canonical.rows[0].convalidated).toBe(true);
+    expect(canonical.rows[0].arity).toBe(2);
+    expect(canonical.rows[0].confdeltype).toBe("r"); // RESTRICT, not CASCADE
+  });
+
+  it("retains no superseded simple FK on any table 0179 upgraded", async () => {
+    // The 38 simple FKs 0179 supersedes must be gone from the committed catalog.
+    const res = await adminQuery(`
+      select con.conname
+        from pg_constraint con
+       where con.conname = any($1::text[])`, [[
+      "clients_created_by_fkey",
+      "clients_archived_by_fkey",
+      "client_tags_created_by_fkey",
+      "client_tags_deleted_by_fkey",
+      "audit_logs_actor_id_fkey",
+      "sessions_deleted_by_fkey",
+      "sessions_finalized_by_fkey",
+      "treatment_images_uploaded_by_fkey",
+      "treatment_images_deleted_by_fkey",
+      "client_portal_access_events_practitioner_id_fkey",
+    ]]);
+    expect(res.rows.map((r: { conname: string }) => r.conname)).toEqual([]);
+  });
+
   it("no practitioner FK anywhere in the schema is left NOT VALID", async () => {
     const res = await adminQuery(`
       select con.conname
