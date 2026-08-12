@@ -205,6 +205,110 @@ describe("0179 — NON-actor relationships are behaviourally unchanged", () => {
   });
 });
 
+// The 39 constraints 0179 owns, pinned by name so the proof below cannot be
+// satisfied by some other migration's constraints happening to be validated.
+const OWNED_0179 = [
+  "audit_logs_actor_same_studio_fk",
+  "rk_audit_events_actor_same_studio_fk",
+  "itm_audit_events_actor_same_studio_fk",
+  "client_portal_access_events_practitioner_same_studio_fk",
+  "clients_created_by_same_studio_fk",
+  "clients_archived_by_same_studio_fk",
+  "client_tags_created_by_same_studio_fk",
+  "client_tags_deleted_by_same_studio_fk",
+  "client_pinned_notes_created_by_same_studio_fk",
+  "client_intake_forms_requested_by_same_studio_fk",
+  "client_intake_forms_reviewed_by_same_studio_fk",
+  "consent_form_templates_created_by_same_studio_fk",
+  "sessions_deleted_by_same_studio_fk",
+  "session_blocks_deleted_by_same_studio_fk",
+  "treatment_images_uploaded_by_same_studio_fk",
+  "treatment_images_deleted_by_same_studio_fk",
+  "treatment_plans_created_by_same_studio_fk",
+  "treatment_plans_closed_by_same_studio_fk",
+  "treatment_goals_created_by_same_studio_fk",
+  "rk_sterile_items_created_by_same_studio_fk",
+  "rk_disinfectants_created_by_same_studio_fk",
+  "rk_exposure_incidents_created_by_same_studio_fk",
+  "stripe_charge_attempts_initiated_by_same_studio_fk",
+  "stripe_refund_attempts_initiated_by_same_studio_fk",
+  "stripe_payment_audit_practitioner_same_studio_fk",
+  "ops_alerts_resolved_by_same_studio_fk",
+  "clinical_audit_events_actor_practitioner_id_same_studio_fk",
+  "clinical_record_amendments_authored_by_same_studio_fk",
+  "clinical_record_snapshots_finalized_by_same_studio_fk",
+  "clinical_record_snapshots_corrected_by_same_studio_fk",
+  "sessions_finalized_by_same_studio_fk",
+  "client_portal_messages_created_by_same_studio_fk",
+  "manual_fee_charge_attempts_cancelled_by_same_studio_fk",
+  "payment_charge_attempts_cancelled_by_same_studio_fk",
+  "client_clinical_notes_practitioner_same_studio",
+  "pending_invitations_invited_by_same_studio_fk",
+  "studio_timed_blocks_created_by_same_studio_fk",
+  "studio_recurring_break_rules_created_by_same_studio_fk",
+  "client_personal_notes_updated_by_same_studio_fk",
+];
+
+describe("0179 — a successful apply means 39/39 VALIDATED", () => {
+  // THE BINDING RULE. 0179 aborts rather than commit with an unvalidated actor
+  // relationship, so on any database where it applied, every one of its
+  // constraints must exist AND carry convalidated = true. An aggregate
+  // composite/simple count cannot see this — an unvalidated constraint is still
+  // a composite constraint.
+  it("owns exactly 39 named constraints", () => {
+    expect(OWNED_0179).toHaveLength(39);
+    expect(new Set(OWNED_0179).size).toBe(39);
+  });
+
+  it("all 39 exist, are composite (col, studio_id) -> practitioners, and are VALIDATED", async () => {
+    const res = await adminQuery(
+      `select con.conname,
+              con.convalidated,
+              array_length(con.conkey, 1) as arity,
+              pt.relname as parent
+         from pg_constraint con
+         join pg_class cl on cl.oid = con.conrelid
+         join pg_namespace n on n.oid = cl.relnamespace
+         join pg_class pt on pt.oid = con.confrelid
+        where con.contype = 'f' and n.nspname = 'public'
+          and con.conname = any($1::text[])
+        order by con.conname`,
+      [OWNED_0179],
+    );
+
+    const found = res.rows.map((r: { conname: string }) => r.conname);
+    const missing = OWNED_0179.filter((c) => !found.includes(c));
+    expect(missing).toEqual([]);
+    expect(res.rowCount).toBe(39);
+
+    const notValidated = res.rows
+      .filter((r: { convalidated: boolean }) => !r.convalidated)
+      .map((r: { conname: string }) => r.conname);
+    // ZERO 0179 constraints may remain convalidated = false after a successful apply.
+    expect(notValidated).toEqual([]);
+
+    for (const r of res.rows) {
+      expect(r.arity).toBe(2);
+      expect(r.parent).toBe("practitioners");
+    }
+  });
+
+  it("no practitioner FK anywhere in the schema is left NOT VALID", async () => {
+    const res = await adminQuery(`
+      select con.conname
+        from pg_constraint con
+        join pg_class cl on cl.oid = con.conrelid
+        join pg_namespace n on n.oid = cl.relnamespace
+        join pg_class pt on pt.oid = con.confrelid
+        join pg_namespace pn on pn.oid = pt.relnamespace
+       where con.contype = 'f' and n.nspname = 'public'
+         and pt.relname = 'practitioners' and pn.nspname = 'public'
+         and not con.convalidated
+       order by con.conname`);
+    expect(res.rows.map((r: { conname: string }) => r.conname)).toEqual([]);
+  });
+});
+
 describe("0179 — catalog shape", () => {
   it("leaves exactly the expected nine simple practitioner FKs", async () => {
     const res = await adminQuery(`

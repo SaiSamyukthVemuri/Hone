@@ -51,27 +51,68 @@
 -- named with its reason at the point of change.
 --
 -- ---------------------------------------------------------------------------
--- VALIDATION STRATEGY
+-- VALIDATION STRATEGY — FAIL CLOSED, ALL OR NOTHING
 -- ---------------------------------------------------------------------------
--- Every new constraint is added NOT VALID first. NOT VALID still enforces the
--- constraint on every INSERT and UPDATE from the moment it is added — it only
--- declines to re-scan pre-existing rows — so forward integrity is unconditional
--- and no table is scanned under an ACCESS EXCLUSIVE lock at apply time.
+-- NOT VALID is used here ONLY as the ADD-CONSTRAINT lock strategy. It is NOT an
+-- acceptable terminal state for 0179.
 --
--- History is then validated OPPORTUNISTICALLY by the guarded pass at the end.
--- A constraint whose historical rows do not satisfy it stays NOT VALID and
--- raises a WARNING instead of aborting the apply. This is deliberate: this
--- migration is authored with ZERO production database access, so production's
--- historical rows cannot be inspected beforehand, and an unguarded VALIDATE
--- would turn unknown legacy data into a failed apply.
+-- Every constraint is added NOT VALID so that no table is scanned while an
+-- ACCESS EXCLUSIVE lock is held (NOT VALID still enforces the constraint on
+-- every INSERT and UPDATE from the moment it is added — it only declines to
+-- re-scan pre-existing rows). All 39 are then VALIDATED inside this SAME
+-- transaction by section 5.
 --
--- Known-dirty history on the local fixture database (886 studios / 1168
--- practitioners): treatment_images.uploaded_by has 5 cross-studio rows and
--- treatment_images.deleted_by has 1. Those rows predate migration 0168, which
--- moved treatment image metadata behind create_treatment_image_metadata and
--- derives studio_id and the actor from the SAME practitioner row via auth.uid()
--- — so writes since 0168 are structurally same-studio by construction. All
--- other 65 practitioner FK columns were clean on that fixture.
+-- THE BINDING RULE:
+--
+--     0179 COMMITTING SUCCESSFULLY  IMPLIES  ALL 39 CONSTRAINTS ARE VALIDATED.
+--
+-- Zero 0179 constraints may remain convalidated = false after a successful
+-- apply. A migration named ACTOR FK INTEGRITY must never be recorded as applied
+-- while some of its in-scope historical actor relationships are structurally
+-- unverified.
+--
+-- Section 5 therefore aborts the transaction if ANY constraint fails to
+-- validate. It catches ONLY foreign_key_violation, and only so that it can
+-- report EVERY dirty relationship in one pass instead of one per attempt; it
+-- then raises and rolls the whole migration back. Every other error class —
+-- lock timeout, deadlock, permission failure, catalog error — propagates
+-- immediately and is never swallowed.
+--
+-- This migration is authored with ZERO production database access, so
+-- production's historical rows cannot be inspected here. That is deliberately
+-- NOT a reason to weaken the migration: dirty history is discovered by the
+-- read-only preflight that precedes the production apply, and remediated
+-- before this fail-closed migration is invoked.
+--
+-- ---------------------------------------------------------------------------
+-- KNOWN DIRTY-HISTORY WINDOW — treatment_images
+-- ---------------------------------------------------------------------------
+-- The local development database carries 5 cross-studio rows on
+-- treatment_images.uploaded_by and 1 on treatment_images.deleted_by. That
+-- database has NO seed file: its contents are ACCUMULATED TEST STATE, not a
+-- curated production-like fixture, so those counts measure nothing about
+-- production. All other 65 practitioner FK columns were clean on it.
+--
+-- The window in which such values COULD have been produced ends at 0178, NOT
+-- at 0168:
+--
+--   * 0168 introduced the treatment-image write commands, but its
+--     public.treatment_image_actor() helper resolved the actor with
+--         where p.user_id = auth.uid() and p.active = true limit 1
+--     — NO studio scope. For a human who is an active practitioner in more than
+--     one studio, the membership chosen was planner-dependent, so the actor
+--     could be attributed to a studio other than the resource's.
+--
+--   * 0178 is the migration that fixed it, replacing that helper with
+--     treatment_image_actor(p_studio_id uuid) and inverting the order to
+--         RESOURCE -> RESOURCE'S STUDIO -> ACTIVE PRACTITIONER FOR auth.uid()
+--         IN THAT STUDIO.
+--
+-- So cross-studio-invalid historical treatment-image actor values could have
+-- been produced at any point BEFORE the 0178 fix, INCLUDING during 0168–0177.
+-- No claim is made here about when the six local rows were actually written:
+-- no timestamp or provenance evidence was gathered, so they are not asserted to
+-- predate any particular migration.
 --
 -- ZERO business rows are mutated by this migration. No attribution backfill is
 -- performed: every populated actor value already carries authoritative
@@ -231,10 +272,12 @@ alter table public.session_blocks
   on delete restrict
   not valid;
 
--- treatment_images.uploaded_by / deleted_by are both derived from auth.uid()
--- inside create_treatment_image_metadata / the delete command (0168), which
--- resolves studio_id and the practitioner from the same row. Pre-0168 rows may
--- still violate this — see the validation note in the header.
+-- treatment_images.uploaded_by / deleted_by are never accepted from the caller:
+-- both are derived from auth.uid() inside the 0168 write commands. Since 0178
+-- that derivation is studio-scoped (resource -> studio -> active practitioner
+-- there), so writes after 0178 are same-studio by construction. Rows written
+-- BEFORE the 0178 fix — including throughout 0168–0177, whose helper had no
+-- studio scope — may violate this. See the dirty-history note in the header.
 alter table public.treatment_images
   drop constraint if exists treatment_images_uploaded_by_fkey;
 alter table public.treatment_images
@@ -516,42 +559,118 @@ alter table public.client_personal_notes
   not valid;
 
 -- ===========================================================================
--- 5. GUARDED VALIDATION PASS
+-- 5. MANDATORY VALIDATION PASS — ALL 39 OR THE MIGRATION ABORTS
 -- ===========================================================================
--- Validate history where it is already clean; leave the constraint NOT VALID
--- (still enforced forward) and warn where it is not. Never aborts the apply.
+-- The 39 constraint names 0179 owns, pinned explicitly rather than discovered
+-- by pattern. A LIKE '%_same_studio_fk' probe would also sweep up composites
+-- created by 0174 and earlier, which is precisely the kind of imprecision that
+-- lets a missed constraint pass unnoticed. Pinning the list means a renamed or
+-- dropped constraint is a hard error, not a silent skip.
+--
+-- Only foreign_key_violation is caught, and only to report EVERY dirty
+-- relationship in one pass. Any other error class — lock timeout, deadlock,
+-- permission failure, catalog error — has no handler and propagates
+-- immediately. If anything failed, the migration RAISES and rolls back.
 do $$
 declare
-  c record;
-  validated int := 0;
-  deferred  int := 0;
+  owned constant text[][] := array[
+    ['audit_logs',                            'audit_logs_actor_same_studio_fk'],
+    ['record_keeping_audit_events',           'rk_audit_events_actor_same_studio_fk'],
+    ['imported_treatment_memory_audit_events','itm_audit_events_actor_same_studio_fk'],
+    ['client_portal_access_events',           'client_portal_access_events_practitioner_same_studio_fk'],
+    ['clients',                               'clients_created_by_same_studio_fk'],
+    ['clients',                               'clients_archived_by_same_studio_fk'],
+    ['client_tags',                           'client_tags_created_by_same_studio_fk'],
+    ['client_tags',                           'client_tags_deleted_by_same_studio_fk'],
+    ['client_pinned_notes',                   'client_pinned_notes_created_by_same_studio_fk'],
+    ['client_intake_forms',                   'client_intake_forms_requested_by_same_studio_fk'],
+    ['client_intake_forms',                   'client_intake_forms_reviewed_by_same_studio_fk'],
+    ['consent_form_templates',                'consent_form_templates_created_by_same_studio_fk'],
+    ['sessions',                              'sessions_deleted_by_same_studio_fk'],
+    ['session_blocks',                        'session_blocks_deleted_by_same_studio_fk'],
+    ['treatment_images',                      'treatment_images_uploaded_by_same_studio_fk'],
+    ['treatment_images',                      'treatment_images_deleted_by_same_studio_fk'],
+    ['treatment_plans',                       'treatment_plans_created_by_same_studio_fk'],
+    ['treatment_plans',                       'treatment_plans_closed_by_same_studio_fk'],
+    ['treatment_goals',                       'treatment_goals_created_by_same_studio_fk'],
+    ['record_keeping_sterile_items',          'rk_sterile_items_created_by_same_studio_fk'],
+    ['record_keeping_disinfectants',          'rk_disinfectants_created_by_same_studio_fk'],
+    ['record_keeping_exposure_incidents',     'rk_exposure_incidents_created_by_same_studio_fk'],
+    ['stripe_charge_attempts',                'stripe_charge_attempts_initiated_by_same_studio_fk'],
+    ['stripe_refund_attempts',                'stripe_refund_attempts_initiated_by_same_studio_fk'],
+    ['stripe_payment_audit',                  'stripe_payment_audit_practitioner_same_studio_fk'],
+    ['ops_alerts',                            'ops_alerts_resolved_by_same_studio_fk'],
+    ['clinical_audit_events',                 'clinical_audit_events_actor_practitioner_id_same_studio_fk'],
+    ['clinical_record_amendments',            'clinical_record_amendments_authored_by_same_studio_fk'],
+    ['clinical_record_snapshots',             'clinical_record_snapshots_finalized_by_same_studio_fk'],
+    ['clinical_record_snapshots',             'clinical_record_snapshots_corrected_by_same_studio_fk'],
+    ['sessions',                              'sessions_finalized_by_same_studio_fk'],
+    ['client_portal_messages',                'client_portal_messages_created_by_same_studio_fk'],
+    ['manual_fee_charge_attempts',            'manual_fee_charge_attempts_cancelled_by_same_studio_fk'],
+    ['payment_charge_attempts',               'payment_charge_attempts_cancelled_by_same_studio_fk'],
+    ['client_clinical_notes',                 'client_clinical_notes_practitioner_same_studio'],
+    ['pending_invitations',                   'pending_invitations_invited_by_same_studio_fk'],
+    ['studio_timed_blocks',                   'studio_timed_blocks_created_by_same_studio_fk'],
+    ['studio_recurring_break_rules',          'studio_recurring_break_rules_created_by_same_studio_fk'],
+    ['client_personal_notes',                 'client_personal_notes_updated_by_same_studio_fk']
+  ];
+  v_table text;
+  v_name  text;
+  dirty   text[] := '{}';
+  still_invalid text[];
+  n_owned constant int := array_length(owned, 1);
 begin
-  for c in
-    select con.conname, n.nspname, cl.relname
-    from pg_constraint con
-    join pg_class cl on cl.oid = con.conrelid
-    join pg_namespace n on n.oid = cl.relnamespace
-    where con.contype = 'f'
-      and not con.convalidated
-      and n.nspname = 'public'
-      and (con.conname like '%\_same\_studio\_fk'
-           or con.conname = 'client_clinical_notes_practitioner_same_studio')
-    order by cl.relname, con.conname
-  loop
+  if n_owned <> 39 then
+    raise exception '0179: expected 39 owned constraints, found %.', n_owned;
+  end if;
+
+  for i in 1 .. n_owned loop
+    v_table := owned[i][1];
+    v_name  := owned[i][2];
+
+    -- A missing constraint means an earlier section of this migration did not
+    -- do what this list says it did. Hard error, never a skip.
+    if not exists (
+      select 1 from pg_constraint con
+      join pg_class cl on cl.oid = con.conrelid
+      join pg_namespace n on n.oid = cl.relnamespace
+      where n.nspname = 'public' and cl.relname = v_table
+        and con.conname = v_name and con.contype = 'f'
+    ) then
+      raise exception '0179: constraint %.% was never created.', v_table, v_name;
+    end if;
+
     begin
-      execute format('alter table %I.%I validate constraint %I',
-                     c.nspname, c.relname, c.conname);
-      validated := validated + 1;
-    exception when others then
-      deferred := deferred + 1;
-      raise warning
-        '0179: % on %.% left NOT VALID (still enforced for new and updated rows); historical rows violate it: %',
-        c.conname, c.nspname, c.relname, sqlerrm;
+      execute format('alter table public.%I validate constraint %I', v_table, v_name);
+    exception when foreign_key_violation then
+      -- Collected, not tolerated. The migration aborts below.
+      dirty := dirty || format('%s.%s', v_table, v_name);
     end;
   end loop;
 
-  raise notice '0179 actor FK integrity: % constraint(s) validated, % left NOT VALID.',
-    validated, deferred;
+  if array_length(dirty, 1) is not null then
+    raise exception
+      '0179 ABORTED: % of % actor FK constraint(s) have cross-studio historical rows: %. '
+      'Remediate the offending rows, then re-apply. 0179 will not commit with unvalidated actor attribution.',
+      array_length(dirty, 1), n_owned, array_to_string(dirty, ', ')
+      using errcode = 'foreign_key_violation';
+  end if;
+
+  -- Belt and braces: prove the postcondition from the catalog rather than from
+  -- the loop having appeared to succeed.
+  select array_agg(con.conname order by con.conname) into still_invalid
+  from pg_constraint con
+  join pg_class cl on cl.oid = con.conrelid
+  join pg_namespace n on n.oid = cl.relnamespace
+  where con.contype = 'f' and n.nspname = 'public' and not con.convalidated
+    and con.conname = any (array(select owned[i][2] from generate_series(1, n_owned) i));
+
+  if still_invalid is not null then
+    raise exception '0179 ABORTED: constraint(s) still NOT VALID after validation: %.',
+      array_to_string(still_invalid, ', ');
+  end if;
+
+  raise notice '0179 actor FK integrity: all % constraints validated.', n_owned;
 end $$;
 
 -- ===========================================================================

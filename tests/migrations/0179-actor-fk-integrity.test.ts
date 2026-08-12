@@ -300,14 +300,86 @@ describe("0179 — no business-row mutation, no backfill", () => {
     expect(EXEC).not.toMatch(/set not null/i);
   });
 
-  it("adds every constraint NOT VALID and validates only under a guard", () => {
+});
+
+// ---------------------------------------------------------------------------
+// VALIDATION IS MANDATORY AND FAILS CLOSED.
+//
+// THE BINDING RULE:  0179 committing successfully IMPLIES all 39 constraints
+// are validated. NOT VALID is the ADD-CONSTRAINT lock strategy, never an
+// acceptable terminal state — a migration named ACTOR FK INTEGRITY must not be
+// recorded as applied while some of its in-scope historical actor relationships
+// are structurally unverified.
+//
+// An earlier revision of 0179 caught `exception when others`, downgraded a
+// failed VALIDATE to a WARNING and committed anyway. These assertions exist so
+// that fail-open behaviour cannot return unnoticed.
+// ---------------------------------------------------------------------------
+describe("0179 — validation is mandatory and fails closed", () => {
+  const VALIDATION_BLOCK = EXEC.match(/owned constant text\[\]\[\][\s\S]*?end \$\$;/)?.[0] ?? "";
+
+  it("pins its owned constraint list inside the migration", () => {
+    expect(VALIDATION_BLOCK).not.toBe("");
+  });
+
+  it("adds every constraint NOT VALID — the lock strategy, not the terminal state", () => {
     const added = EXEC.match(/add constraint [a-z0-9_]+\s+foreign key[\s\S]*?;/g) ?? [];
     expect(added.length).toBe(39);
     for (const a of added) expect(a).toMatch(/not valid;$/);
-    // The validation pass must never be able to abort the apply.
-    expect(EXEC).toMatch(/validate constraint/);
-    expect(EXEC).toMatch(/exception when others then/);
-    expect(EXEC).toMatch(/raise warning/);
+  });
+
+  it("puts EVERY constraint it creates into the mandatory validation path", () => {
+    const created = [...EXEC.matchAll(/add constraint ([a-z0-9_]+)\s+foreign key/g)].map((m) => m[1]);
+    expect(created).toHaveLength(39);
+    expect(new Set(created).size).toBe(39);
+    // Not one of them may be created and then left out of validation.
+    for (const name of created) expect(VALIDATION_BLOCK).toContain(name);
+  });
+
+  it("validates by pinned name, not by a LIKE pattern that could sweep in other migrations' constraints", () => {
+    expect(VALIDATION_BLOCK).toMatch(/validate constraint/);
+    expect(VALIDATION_BLOCK).not.toMatch(/like\s+'%/i);
+    // A wrong-sized list is a hard error rather than a partial pass.
+    expect(VALIDATION_BLOCK).toMatch(/n_owned\s*<>\s*39/);
+  });
+
+  it("cannot swallow a validation failure — no `exception when others`, no warning downgrade", () => {
+    expect(EXEC).not.toMatch(/exception\s+when\s+others/i);
+    expect(EXEC).not.toMatch(/raise\s+warning/i);
+  });
+
+  it("catches ONLY foreign_key_violation, so every other error class propagates", () => {
+    // Lock timeout, deadlock, permission failure, catalog error and any
+    // unexpected SQL error must abort the apply immediately.
+    const handlers = [...EXEC.matchAll(/exception\s+when\s+([a-z_]+)/gi)].map((m) => m[1].toLowerCase());
+    expect(handlers.length).toBeGreaterThan(0);
+    for (const h of handlers) expect(h).toBe("foreign_key_violation");
+  });
+
+  it("aborts the transaction when any in-scope constraint failed to validate", () => {
+    // foreign_key_violation is collected only to report EVERY dirty
+    // relationship in one pass; the migration then raises and rolls back.
+    expect(VALIDATION_BLOCK).toMatch(/raise\s+exception[\s\S]*?0179 ABORTED[\s\S]*?cross-studio historical rows/);
+  });
+
+  it("treats a missing constraint as a hard error, never a silent skip", () => {
+    expect(VALIDATION_BLOCK).toMatch(/was never created/);
+  });
+
+  it("re-proves the postcondition from the catalog before succeeding", () => {
+    // Success is asserted from pg_constraint.convalidated, not from the loop
+    // merely appearing to have run.
+    expect(VALIDATION_BLOCK).toMatch(/not con\.convalidated/);
+    expect(VALIDATION_BLOCK).toMatch(/still NOT VALID after validation/);
+  });
+
+  it("has no successful terminal path that leaves an 0179 FK NOT VALID", () => {
+    // Every `not valid;` clause in executable SQL is an ADD CONSTRAINT. There
+    // is no branch that reaches COMMIT while a constraint is still unvalidated.
+    // (The one other "NOT VALID" in EXEC is the abort message's own text.)
+    const notValidClauses = EXEC.match(/not valid;/gi) ?? [];
+    expect(notValidClauses).toHaveLength(39);
+    expect(EXEC.trim().endsWith("commit;")).toBe(true);
   });
 });
 
