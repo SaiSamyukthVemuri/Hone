@@ -61,7 +61,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps every spec, and the targeted lane still selects 29", () => {
+  it("the manifest still maps every spec, and the targeted lane still selects 30", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
@@ -69,20 +69,27 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // (57 after PR #518 added intake-electrolysis-acknowledgement.spec.ts).
     // 64 with B7's public-cancel-policy-change.spec.ts mapped into `portal`
     // (63 before it). 65 with the Chloe D1 dashboard-treatment-memory-inline
-    // spec mapped into `sessions`.
+    // spec mapped into `sessions` (#565), and 66 with repeat-client-fast-
+    // charting.spec.ts mapped into `sessions` too (#564, this branch).
     //
-    // The count is deliberate: it is the tripwire for a spec that lands on disk
-    // without being mapped, which would silently never run. It is now derived
-    // from the DISK rather than hard-coded, because a hard number here says
-    // nothing the derivation does not — and the two can disagree in the one
-    // direction that matters (a spec on disk, absent from the manifest), which
-    // is precisely what the derived form catches and a literal does not.
+    // RECONCILED ACROSS BOTH BRANCHES. #565 and #564 were developed in parallel
+    // and BOTH added one e2e spec, so both bumped this literal from 64 to 65 —
+    // the same text, on the same line, for different reasons. Git merges an
+    // identical edit on both sides WITHOUT a conflict, so a hard-coded count
+    // here would have merged clean and silently claimed 65 when the disk had
+    // 66. That is exactly the failure this assertion exists to catch, and it
+    // would have been the assertion telling the lie.
+    //
+    // So the count is DERIVED from the disk. It cannot drift, cannot be
+    // half-merged, and it still catches the one direction that matters: a spec
+    // on disk that no group maps, which would silently never run.
     const onDisk = readdirSync("e2e").filter((f) => f.endsWith(".spec.ts"));
     expect(mapped).toHaveLength(onDisk.length);
     expect([...mapped].sort()).toEqual([...onDisk].sort());
     // The exact selection that was cancelled twice at the old 10-minute
-    // ceiling, plus the one spec this PR added to `sessions`.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(29);
+    // ceiling (28), plus ONE spec from #565 and ONE from #564, both of which
+    // joined `sessions` — hence 30, not the 29 either branch expected alone.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(30);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
