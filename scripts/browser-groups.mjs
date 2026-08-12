@@ -55,6 +55,10 @@ export const BROWSER_GROUPS = {
       // newest-CHARTED-session selector, the setup fields that used to be
       // missing, and the multi-area treatment-time attribution.
       "point-of-care-memory.spec.ts",
+      // Repeat-client fast charting: "Start from last session" copies the
+      // reusable setup and lands the practitioner in TODAY'S editor in one tap,
+      // without manufacturing today's clinical outcome.
+      "repeat-client-fast-charting.spec.ts",
     ],
   },
   intake: {

@@ -1611,6 +1611,157 @@ export async function getFirstEntryRow(sessionId: string): Promise<{
   return rows[0] ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Repeat-client fast charting ("Start from last session").
+// ---------------------------------------------------------------------------
+
+// A repeat client whose PREVIOUS visit has TWO treatment areas with DIFFERENT
+// settings, each carrying a full set of today's-facts values (minutes, hairs,
+// notes, observation chips, tolerance, reaction), plus an EMPTY session for
+// today. The fast path must bring the reusable setup of both areas forward and
+// none of the outcomes.
+export async function seedE2eRepeatClientTwoAreas(seed: E2eSeed): Promise<{
+  clientId: string;
+  todaySessionId: string;
+  previousSessionId: string;
+}> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const clientId = randomUUID();
+  const previousSessionId = randomUUID();
+  const todaySessionId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [
+      clientId,
+      seed.studioId,
+      `Repeat Client ${seed.runId}-${uniq}`,
+      `e2e-repeat-${seed.runId}-${uniq}@harness.local`,
+    ],
+  );
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'electrolysis','2026-01-01T10:00:00Z')`,
+    [previousSessionId, seed.studioId, clientId, prac.id],
+  );
+
+  const areas = [
+    { area: "Chin", side: "left", mode: "thermo", energy: 11, freq: "13.56 MHz" },
+    { area: "Upper lip", side: "bilateral", mode: "thermo", energy: 24, freq: "27.12 MHz" },
+  ] as const;
+  for (let i = 0; i < areas.length; i++) {
+    const a = areas[i];
+    const blockId = randomUUID();
+    await sql(
+      `insert into public.session_blocks (
+         id, studio_id, session_id, sort_order, primary_area, side, mode, energy_level,
+         machine_frequency, minutes_performed, tolerance_rating, reaction_type,
+         reaction_notes, caution_for_next_session, caution_note)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,19,4,'mild_redness','pink afterwards',true,'go gentler')`,
+      [blockId, seed.studioId, previousSessionId, i + 1, a.area, a.side, a.mode, a.energy, a.freq],
+    );
+    await sql(
+      `insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order)
+       values ($1,$2,$3,$4,$5,0)`,
+      [randomUUID(), seed.studioId, blockId, a.area, a.side],
+    );
+    await sql(
+      `insert into public.electrolysis_entries (
+         id, session_id, block_id, area, areas, mode, energy_level, machine_frequency,
+         thermolysis_intensity_percent, thermolysis_duration_seconds, pulse_count,
+         minutes_performed, hairs_treated, comments, observation_chips)
+       values ($1,$2,$3,$4,array[$4]::text[],$5,$6,$7,44,3,1,19,71,
+               'last visit narrative', '["Coarse hair"]'::jsonb)`,
+      [randomUUID(), previousSessionId, blockId, a.area, a.mode, a.energy, a.freq],
+    );
+  }
+
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at)
+     values ($1,$2,$3,$4,'electrolysis','2026-06-01T10:00:00Z')`,
+    [todaySessionId, seed.studioId, clientId, prac.id],
+  );
+  return { clientId, todaySessionId, previousSessionId };
+}
+
+// Every live block of a session with its setup AND its today's-facts columns,
+// ordered by sort_order — the ground truth the fast-charting journey asserts.
+export async function getSessionBlocksWithFacts(sessionId: string): Promise<
+  Array<{
+    id: string;
+    sort_order: number;
+    primary_area: string | null;
+    side: string | null;
+    mode: string | null;
+    energy_level: string | number | null;
+    machine_frequency: string | null;
+    minutes_performed: number | null;
+    tolerance_rating: number | null;
+    reaction_type: string | null;
+    reaction_notes: string | null;
+    caution_for_next_session: boolean | null;
+    caution_note: string | null;
+    hairs_treated: number | null;
+    comments: string | null;
+    observation_chips: unknown;
+    thermolysis_intensity_percent: number | null;
+  }>
+> {
+  return sql(
+    `select b.id, b.sort_order, b.primary_area, b.side, b.mode, b.energy_level,
+            b.machine_frequency, b.minutes_performed, b.tolerance_rating, b.reaction_type,
+            b.reaction_notes, b.caution_for_next_session, b.caution_note,
+            e.hairs_treated, e.comments, e.observation_chips, e.thermolysis_intensity_percent
+       from public.session_blocks b
+       left join lateral (
+         select * from public.electrolysis_entries e2
+          where e2.block_id = b.id and e2.deleted_at is null
+          order by e2.created_at asc, e2.id asc limit 1
+       ) e on true
+      where b.session_id = $1 and b.deleted_at is null
+      order by b.sort_order asc`,
+    [sessionId],
+  );
+}
+
+// The 0157 provenance ledger rows for a target session — the at-most-once proof
+// that a double submit produced ONE committed copy, not two.
+export async function getCopyOperationCount(sessionId: string): Promise<number> {
+  const rows = await sql<{ n: string }>(
+    `select count(*)::int as n from public.session_copy_operations where target_session_id = $1`,
+    [sessionId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+// A stable digest of a session's clinical content, used to prove the HISTORICAL
+// visit is byte-identical before and after today's charting.
+export async function getSessionContentDigest(sessionId: string): Promise<string> {
+  const rows = await sql<{ digest: string }>(
+    `select coalesce(md5(string_agg(row_line, '|' order by row_line)), 'empty') as digest
+       from (
+         select b.id::text || ':' || coalesce(b.primary_area,'') || ':' || coalesce(b.side,'')
+                || ':' || coalesce(b.mode,'') || ':' || coalesce(b.energy_level::text,'')
+                || ':' || coalesce(b.minutes_performed::text,'') || ':' || coalesce(b.tolerance_rating::text,'')
+                || ':' || coalesce(b.reaction_type,'') || ':' || coalesce(b.reaction_notes,'')
+                || ':' || coalesce(b.caution_note,'') || ':' || coalesce(b.updated_at::text,'')
+                || ':' || coalesce(e.hairs_treated::text,'') || ':' || coalesce(e.comments,'')
+                || ':' || coalesce(e.observation_chips::text,'')
+                || ':' || coalesce(e.minutes_performed::text,'') as row_line
+           from public.session_blocks b
+           left join public.electrolysis_entries e on e.block_id = b.id and e.deleted_at is null
+          where b.session_id = $1 and b.deleted_at is null
+       ) t`,
+    [sessionId],
+  );
+  return rows[0]?.digest ?? "empty";
+}
+
 // Mutate the source session so its fingerprint changes (stale-preview test).
 export async function bumpSourceBlockEnergy(sessionId: string): Promise<void> {
   await sql(

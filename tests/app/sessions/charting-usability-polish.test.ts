@@ -47,7 +47,15 @@ describe("A. collapse the Add settings block by default (no auto-open, no writes
 
   it("(#5) existing blocks stay summarized + editable (unchanged)", () => {
     expect(VIEW).toMatch(/blocks\.map\(\(block\) => \(/);
-    expect(VIEW).toMatch(/const \[editing, setEditing\] = useState\(false\)/);
+    // Repeat-client fast charting seeds the INITIAL editing state from
+    // `autoEdit`, whose default is false — so an ordinary saved block still
+    // renders summarized and the long form is still an explicit tap. The ONLY
+    // thing that can open a section at mount is the server-validated area a
+    // just-completed "Start from last session" created.
+    expect(VIEW).toMatch(/const \[editing, setEditing\] = useState\(autoEdit\)/);
+    expect(VIEW).toMatch(/autoEdit = false,/);
+    expect(VIEW).toMatch(/autoEditBlockId = null,/);
+    expect(VIEW).toMatch(/autoEdit=\{block\.id === autoEditBlockId\}/);
   });
 });
 

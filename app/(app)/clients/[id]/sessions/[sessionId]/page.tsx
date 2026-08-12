@@ -75,13 +75,23 @@ import {
 import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-complete-control";
 import { PostcareSection } from "@/components/appointment/postcare-section";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
+import {
+  FAST_CHART_PARAM,
+  resolveAutoEditBlockId,
+} from "@/lib/sessions/fast-chart-start";
 
 export default async function SessionDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string; sessionId: string }>;
+  // Repeat-client fast charting only: `?chart=<blockId>` names the treatment
+  // area to open in today's editor after "Start from last session". It is
+  // validated against this session's LIVE blocks below and grants no access.
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id, sessionId } = await params;
+  const query = (await searchParams) ?? {};
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
 
   const [clientData, session] = await Promise.all([
@@ -456,6 +466,24 @@ export default async function SessionDetailPage({
   const canCopyFromPrevious = Boolean(
     (copyDescriptor as { eligible?: boolean } | null)?.eligible,
   );
+  // The canonical source visit date, from the SAME descriptor that gates the
+  // panel — so the "Start from last session" card names the visit it will bring
+  // forward without the practitioner having to open a preview to find out.
+  const copySourceStartedAt =
+    (copyDescriptor as { source_started_at?: string } | null)?.source_started_at ??
+    null;
+
+  // Repeat-client fast charting: after the governed copy commits, the panel
+  // routes back here naming the treatment area to open in TODAY'S editor. Only
+  // a LIVE block on THIS session is honoured — a stale or crafted id resolves to
+  // null and changes nothing, and the param can only pre-open an editor the
+  // practitioner could already open by tapping "Edit" on an area in front of her.
+  const autoEditBlockId = resolveAutoEditBlockId(
+    query[FAST_CHART_PARAM],
+    (blockData?.blocks ?? [])
+      .filter((b) => b.deleted_at == null)
+      .map((b) => b.id),
+  );
 
   const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
   // " · 1 laser session previously" / " · 3 laser sessions previously"
@@ -611,18 +639,27 @@ export default async function SessionDetailPage({
           performer surface. */}
 
 
-      {/* Migration 0157: whole-session "Copy areas and settings" — editable
-          draft-model replacement for the paused one-tap copy. The preview is
-          EPHEMERAL (component memory only); nothing is written until the
-          practitioner explicitly confirms. Shown only on an empty editable
-          electrolysis chart when the canonical source descriptor reports an
-          eligible previous session (same authority the commit RPC uses). */}
+      {/* Migration 0157: whole-session "Copy areas and settings", now led by the
+          repeat-client fast path. "Start from last session" brings the reusable
+          setup forward in ONE interaction and lands the practitioner in today's
+          editor; "Preview first" keeps the editable draft-review flow for anyone
+          who wants it. Both share one source loader and one commit path.
+
+          Shown only on an EMPTY editable electrolysis chart, gated on the
+          canonical source descriptor (the same authority the commit RPC uses).
+          A chart that already has areas keeps this hidden — copy_session_setup
+          refuses a non-empty target (HN003), so today's chart can never be
+          destructively replaced. */}
       {!isFinalized &&
         session.modality === "electrolysis" &&
         blockData &&
         blockData.blocks.length === 0 &&
         canCopyFromPrevious && (
-          <CopyPreviousAreasPanel clientId={id} sessionId={session.id} />
+          <CopyPreviousAreasPanel
+            clientId={id}
+            sessionId={session.id}
+            sourceStartedAt={copySourceStartedAt}
+          />
         )}
 
       {/* Migration 0126: consultation + skin/hair analysis context during
@@ -666,6 +703,10 @@ export default async function SessionDetailPage({
           // practitioner's last-used value seeds NEW treatment-area
           // drafts; still editable per area, still saved per block.
           defaultMachineFrequency={practitioner.default_machine_frequency ?? null}
+          // Repeat-client fast charting: open TODAY'S editor for the area the
+          // copy just created, so recording today's minutes/hairs/observations
+          // needs no scroll-back-and-reopen.
+          autoEditBlockId={autoEditBlockId}
         />
       ) : (
         <>

@@ -42,12 +42,32 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(PANEL).toMatch(/setIdempotencyKey\(crypto\.randomUUID\(\)\)/);
   });
 
-  it("the ONLY caller of the commit action is commit(), behind the explicit CTA, sending the narrow input + server fingerprint", () => {
+  it("there is exactly ONE commit call site — commitDrafts() — sending the narrow input + server fingerprint", () => {
+    // Repeat-client fast charting added a SECOND route to the copy, not a second
+    // copy implementation: both routes funnel through the single commitDrafts()
+    // helper, so this count staying at 1 is what proves they cannot drift.
     expect((PANEL.match(/commitWholeSessionCopyAction\(/g) ?? []).length).toBe(1);
+    expect(PANEL).toMatch(/async function commitDrafts\(/);
     expect(PANEL).toMatch(/data-testid="copy-previous-commit"/);
     expect(PANEL).toMatch(/Add these areas to today's chart/);
-    expect(PANEL).toMatch(/drafts: drafts\.map\(draftToCopyInput\)/);
-    expect(PANEL).toMatch(/sourceSessionId,\s*\n?\s*sourceFingerprint,/);
+    expect(PANEL).toMatch(/drafts: args\.drafts\.map\(draftToCopyInput\)/);
+    expect(PANEL).toMatch(/sourceSessionId: args\.sourceSessionId,/);
+    expect(PANEL).toMatch(/sourceFingerprint: args\.sourceFingerprint,/);
+    // Both callers pass the SERVER-derived source identity through — neither
+    // route can commit without it.
+    expect((PANEL.match(/await commitDrafts\(\{/g) ?? []).length).toBe(2);
+  });
+
+  it("there is exactly ONE source-read call site — loadSource() — shared by both routes", () => {
+    expect((PANEL.match(/getWholeSessionCopySourceAction\(/g) ?? []).length).toBe(1);
+    expect(PANEL).toMatch(/async function loadSource\(\)/);
+    expect((PANEL.match(/await loadSource\(\)/g) ?? []).length).toBe(2);
+    // loadSource is READ-ONLY: it never reaches the commit action.
+    const fn = PANEL.slice(
+      PANEL.indexOf("async function loadSource()"),
+      PANEL.indexOf("async function commitDrafts("),
+    );
+    expect(fn).not.toMatch(/commitWholeSessionCopyAction|commitDrafts/);
   });
 
   it("renders EDITABLE cards (CopyDraftCard) with an in-state update handler — no writes", () => {
@@ -75,7 +95,11 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
 
   it("displays the source visit date so the practitioner knows which visit is copied", () => {
     expect(PANEL).toMatch(/data-testid="copy-previous-source-date"/);
-    expect(PANEL).toMatch(/setSourceStartedAt\(res\.sourceStartedAt\)/);
+    expect(PANEL).toMatch(/setSourceStartedAt\(loaded\.sourceStartedAt\)/);
+    // The IDLE card names the visit too, from the page's own descriptor read, so
+    // the fast path never requires opening a preview just to learn which visit
+    // is being brought forward.
+    expect(PANEL).toMatch(/data-testid="copy-previous-idle-source-date"/);
   });
 });
 
@@ -136,10 +160,19 @@ describe("server actions — read-only descriptor source; service-role RPC is th
 });
 
 describe("wiring", () => {
-  it("the session page renders the draft-model panel with only clientId + sessionId", () => {
-    expect(PAGE).toMatch(/<CopyPreviousAreasPanel clientId=\{id\} sessionId=\{session\.id\} \/>/);
+  it("the session page renders the panel with clientId + sessionId + the canonical source date only", () => {
+    expect(PAGE).toMatch(
+      /<CopyPreviousAreasPanel\s+clientId=\{id\}\s+sessionId=\{session\.id\}\s+sourceStartedAt=\{copySourceStartedAt\}\s*\/>/,
+    );
     expect(PAGE).toMatch(/import \{ CopyPreviousAreasPanel \}/);
     expect(PAGE).not.toMatch(/<CopyPreviousAreasButton/);
+    // The date comes from the SAME descriptor that gates the panel — not a
+    // second "latest previous session" query that could name a different visit.
+    expect(PAGE).toMatch(
+      /copySourceStartedAt =\s*\n?\s*\(copyDescriptor as \{ source_started_at\?: string \} \| null\)\?\.source_started_at/,
+    );
+    // The panel still receives NO browser-chosen source session id.
+    expect(PAGE).not.toMatch(/previousSessionId=/);
   });
 
   it("the page gates the panel on the CANONICAL descriptor — not a separate previous-session query", () => {

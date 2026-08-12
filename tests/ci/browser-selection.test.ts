@@ -61,18 +61,20 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps all 63 specs, and the targeted lane still selects 28", () => {
+  it("the manifest still maps all 65 specs, and the targeted lane still selects 29", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
     // 58 since practitioner-assisted-intake.spec.ts joined the intake group
     // (57 after PR #518 added intake-electrolysis-acknowledgement.spec.ts).
     // 64 with B7's public-cancel-policy-change.spec.ts mapped into `portal`
-    // (63 before it). The count is deliberate: it is the tripwire for a spec
-    // that lands on disk without being mapped, which would silently never run.
-    expect(mapped).toHaveLength(64);
-    // The exact selection that was cancelled twice at the old 10-minute ceiling.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(28);
+    // (63 before it). 65 with repeat-client-fast-charting.spec.ts in `sessions`.
+    // The count is deliberate: it is the tripwire for a spec that lands on disk
+    // without being mapped, which would silently never run.
+    expect(mapped).toHaveLength(65);
+    // The exact selection that was cancelled twice at the old 10-minute ceiling
+    // (28 before repeat-client-fast-charting.spec.ts joined `sessions`).
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(29);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
