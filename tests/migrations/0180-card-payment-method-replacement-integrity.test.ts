@@ -32,14 +32,19 @@ const EXEC = SQL.split("\n")
   .join("\n");
 
 describe("0180 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0180")).toBe(true);
-    expect(versionsAbove("0180")).toEqual([]);
-    expect(countVersion("0180")).toBe(1);
+  // THE HAND-OFF HAPPENED. This block used to assert isRepoMax("0180"),
+  // versionsAbove([]) and countVersion("0181") === 0. 0181 (multi-studio command
+  // authority) was authored above it, so per CLAUDE.md §2 only the CURRENT
+  // maximum's own test carries the "nothing above me" tripwire. The successor
+  // assertions now live in
+  // tests/migrations/0181-multi-studio-command-authority.test.ts.
+  it("is no longer the repository maximum — 0181 was authored above it", () => {
+    expect(isRepoMax("0180")).toBe(false);
+    expect(versionsAbove("0180")).toContain("0181");
   });
 
-  it("leaves 0181 free", () => {
-    expect(countVersion("0181")).toBe(0);
+  it("consumes exactly ONE number", () => {
+    expect(countVersion("0180")).toBe(1);
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {
@@ -52,14 +57,16 @@ describe("0180 — production truth: APPLIED (CURRENT STATE — moves on the nex
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("is applied — hosted max is 0180", () => {
-    expect(rec.hosted_migration_max).toBe("0180");
+  it("is applied — hosted max is at least 0180", () => {
     expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeGreaterThanOrEqual(180);
   });
 
-  it("repo and hosted agree, with nothing pending", () => {
-    expect(isRepoMax("0180")).toBe(true);
-    expect(versionsAbove("0180")).toEqual([]);
+  // 0181 is authored but NOT YET APPLIED, so repo and hosted deliberately
+  // disagree until the migration-first rollout runs. Asserting parity here
+  // would make an intentional pre-apply state look like a defect; the pending
+  // set is asserted in 0181's own test instead.
+  it("hosted has not moved past the repository", () => {
+    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeLessThanOrEqual(181);
   });
 });
 

@@ -190,11 +190,26 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // Appointment validation (same studio, same client, unassigned-or-mine) and
   // the electrolysis-only single-active-plan auto-attach moved into the command
   // with it, so neither can drift from the write.
+  //
+  // 0181: p_studio_id is the EXPLICIT selected studio. It comes ONLY from
+  // getCurrentPractitionerWithStudio() above — the server-side resolver that
+  // honours the user's validated studio selection — and never from FormData,
+  // searchParams or any other browser-supplied value. The browser does not
+  // choose tenant scope.
+  //
+  // Before 0181 the command resolved the studio itself with an unordered
+  // `limit 1` over every active membership, so a practitioner active in two
+  // studios could render this page against the SELECTED studio (client found,
+  // HTTP 200) and then have the command run against the OTHER one (client
+  // absent → "Client not found in this studio." → HTTP 500). The value is
+  // still not trusted: the command re-proves an active membership in this
+  // studio at the SECURITY DEFINER boundary before it reads anything.
   const { data: startRows, error: startErr } = await supabase.rpc("start_session", {
     p_client_id: clientId,
     p_modality: modality as Modality,
     p_appointment_id: appointmentId,
     p_coalesce_minutes: COALESCE_MINUTES,
+    p_studio_id: studio.id,
   });
   if (startErr) {
     throw new Error(`Failed to start session: ${mapSessionCommandError(startErr)}`);

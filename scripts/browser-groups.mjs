@@ -64,6 +64,12 @@ export const BROWSER_GROUPS = {
       // reusable setup and lands the practitioner in TODAY'S editor in one tap,
       // without manufacturing today's clinical outcome.
       "repeat-client-fast-charting.spec.ts",
+      // 0181: a practitioner ACTIVE IN TWO STUDIOS driving the real
+      // profile -> "+ Log session" -> modality journey. Every other spec in
+      // this group seeds ONE studio, where the old unordered membership pick
+      // was always right by construction — which is exactly how the P1 reached
+      // production. This is the only fixture that can express the defect.
+      "multi-studio-session-start.spec.ts",
     ],
   },
   intake: {
