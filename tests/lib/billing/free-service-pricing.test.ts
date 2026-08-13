@@ -143,8 +143,8 @@ describe("FREE-01 no money-moving path", () => {
     // Free must not depend on a prepare form being shown: a `ready` attempt
     // sets showPrepareForm false, and the status panel would still offer
     // Run charge.
-    expect(CARD).toMatch(/\{isFreeNow && \(/);
-    expect(CARD).toMatch(/\{activeAttempt && !isFreeNow && \(/);
+    expect(CARD).toMatch(/\{isFreeNow && !settledOrInFlightAttempt && \(/);
+    expect(CARD).toMatch(/\{activeAttempt && !readyAttemptIsNowFree && \(/);
     // PrepareForm is gated on a strictly `resolved` amount, so free cannot reach it.
     expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
   });
@@ -172,6 +172,55 @@ describe("FREE-01 no money-moving path", () => {
       ACTIONS.indexOf(".insert("),
     );
     expect(branch).toMatch(/return \{\s*ok: false/);
+  });
+
+  // ---- Review 3777045537 / 3777045543: the two P1s this round closed. ----
+
+  it("F10 only a READY attempt is suppressed by freeness; in-flight and settled survive", () => {
+    // ACTIVE_STATUSES is {ready, pending_stripe, succeeded}. Only `ready` has a
+    // money-moving control, so only `ready` may be hidden. Hiding the others
+    // concealed an in-flight charge and removed receipt/refund from a
+    // succeeded one.
+    expect(CARD).toMatch(
+      /const readyAttemptIsNowFree =\s*\n?\s*isFreeNow && activeAttempt !== null && activeAttempt\.status === "ready"/,
+    );
+    expect(CARD).toMatch(
+      /const settledOrInFlightAttempt =\s*\n?\s*activeAttempt !== null && activeAttempt\.status !== "ready"/,
+    );
+    // the panel gate must NOT be the blunt one that hid every active status
+    expect(CARD).not.toMatch(/\{activeAttempt && !isFreeNow && \(/);
+    // and "No payment required" must yield to money that has actually moved,
+    // matching the reducer's processing/paid/refunded > free ranking
+    expect(CARD).toMatch(/\{isFreeNow && !settledOrInFlightAttempt && \(/);
+  });
+
+  it("F11 the execution free-check FAILS CLOSED on every unresolved path", () => {
+    // Anchor on the DECLARATION and on the actual CALL. Anchoring on the bare
+    // name matched the doc-comment header first and produced an empty slice —
+    // a vacuously passing test.
+    const exec = ACTIONS.slice(
+      ACTIONS.indexOf("export async function executeSessionPaymentChargeAction"),
+    );
+    const guardStart = exec.indexOf("const admin = createAdminClient();");
+    const guardEnd = exec.indexOf(
+      "const result: SessionPaymentChargeResult = await runSessionPaymentCharge(",
+    );
+    expect(guardStart).toBeGreaterThan(-1);
+    expect(guardEnd).toBeGreaterThan(guardStart); // the slice is non-empty
+    const guard = exec.slice(guardStart, guardEnd);
+    expect(guard.length).toBeGreaterThan(200);
+    // an unreadable attempt row, or one with no session, blocks
+    expect(guard).toMatch(/if \(attemptRowError \|\| !attemptSessionId\) \{/);
+    // a failed authoritative reload blocks
+    expect(guard).toMatch(/if \(!repriced\.ok\) \{/);
+    // free blocks
+    expect(guard).toMatch(/if \(repriced\.result\.kind === "free"\) \{/);
+    // every one of those three is a BLOCK, never a fall-through
+    expect(guard.match(/outcome: "blocked"/g) ?? []).toHaveLength(3);
+    // the old fail-open shape is gone: freeness is no longer conjoined with ok
+    expect(guard).not.toMatch(/repriced\.ok && repriced\.result\.kind === "free"/);
+    // and the refusal precedes the charge in source order
+    expect(guardEnd).toBeGreaterThan(guard.indexOf('kind === "free"'));
   });
 
   it("no Stripe call was introduced by this change", () => {

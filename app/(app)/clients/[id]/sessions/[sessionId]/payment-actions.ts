@@ -424,9 +424,17 @@ export async function executeSessionPaymentChargeAction(
   // The session id is read from the attempt ROW, never from the browser — the
   // form's session_id is used only for revalidatePath and is untrusted here.
   // The lookup is studio-scoped, so it cannot reach another tenant's attempt.
+  //
+  // Review 3777045543. This check FAILS CLOSED. Every way of not reaching a
+  // verdict — the attempt row not reading, it carrying no session, or the
+  // authoritative reload failing to establish pricing context — previously
+  // fell through to runSessionPaymentCharge, which reads the stored attempt
+  // independently and would happily charge its positive amount. A guard that
+  // is skipped whenever it cannot answer is not a guard. Refusing to charge is
+  // recoverable by retrying; charging a visit that is currently free is not.
   {
     const admin = createAdminClient();
-    const { data: attemptRow } = await admin
+    const { data: attemptRow, error: attemptRowError } = await admin
       .from("payment_charge_attempts")
       .select("session_id")
       .eq("id", attemptId)
@@ -434,19 +442,33 @@ export async function executeSessionPaymentChargeAction(
       .maybeSingle();
     const attemptSessionId = (attemptRow as { session_id?: string | null } | null)
       ?.session_id;
-    if (attemptSessionId) {
-      const repriced = await getAuthoritativeSessionPaymentAmount({
-        studioId,
-        sessionId: attemptSessionId,
-        studioTimezone,
-      });
-      if (repriced.ok && repriced.result.kind === "free") {
-        return {
-          ok: false,
-          outcome: "blocked",
-          error: `${repriced.result.serviceName} is free — no payment is required, so this charge was not run.`,
-        };
-      }
+    if (attemptRowError || !attemptSessionId) {
+      return {
+        ok: false,
+        outcome: "blocked",
+        error:
+          "The current price for this session could not be confirmed, so this charge was not run. Please try again.",
+      };
+    }
+    const repriced = await getAuthoritativeSessionPaymentAmount({
+      studioId,
+      sessionId: attemptSessionId,
+      studioTimezone,
+    });
+    if (!repriced.ok) {
+      return {
+        ok: false,
+        outcome: "blocked",
+        error:
+          "The current price for this session could not be confirmed, so this charge was not run. Please try again.",
+      };
+    }
+    if (repriced.result.kind === "free") {
+      return {
+        ok: false,
+        outcome: "blocked",
+        error: `${repriced.result.serviceName} is free — no payment is required, so this charge was not run.`,
+      };
     }
   }
 

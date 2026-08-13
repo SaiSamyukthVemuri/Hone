@@ -255,6 +255,19 @@ export function SessionPaymentPrepareCard({
   // notice on it left the AttemptStatusPanel still offering Run charge for a
   // visit every other surface now calls "No payment required".
   const isFreeNow = amountResult?.kind === "free";
+  // Review 3777045537. ACTIVE_STATUSES is {ready, pending_stripe, succeeded},
+  // so suppressing the whole panel whenever the price is now free hid an
+  // IN-FLIGHT charge behind "No payment required" and stripped the receipt and
+  // refund controls off a SUCCEEDED one. Only `ready` carries a money-moving
+  // control, so only `ready` may be suppressed. pending_stripe and succeeded
+  // are transaction state — money that has actually moved — and the
+  // appointment-state reducer deliberately ranks processing/paid/refunded
+  // ABOVE free for exactly this reason. Mirror that ranking here: what the
+  // price says today never overrides what has already happened.
+  const readyAttemptIsNowFree =
+    isFreeNow && activeAttempt !== null && activeAttempt.status === "ready";
+  const settledOrInFlightAttempt =
+    activeAttempt !== null && activeAttempt.status !== "ready";
   // F-PAY-001: there is no "suggested" amount any more. Either the server
   // resolved ONE authoritative amount, or preparation is blocked with a reason.
   // The historical session price is NOT a pricing authority and is no longer
@@ -284,7 +297,7 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
-      {activeAttempt && !isFreeNow && (
+      {activeAttempt && !readyAttemptIsNowFree && (
         <AttemptStatusPanel
           attempt={activeAttempt}
           sessionId={sessionId}
@@ -349,7 +362,7 @@ export function SessionPaymentPrepareCard({
           Prepare, never Run charge, and never the amber "pricing blocked"
           warning, because nothing is wrong. Defense in depth: even if a route
           reaches this card directly, there is no money-moving control here. */}
-      {isFreeNow && (
+      {isFreeNow && !settledOrInFlightAttempt && (
         <p
           data-testid="payment-not-required"
           className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
