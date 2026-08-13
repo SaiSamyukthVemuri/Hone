@@ -70,12 +70,22 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > Post-deploy logs on the new deployment: **zero** `Client not found in this studio`, **zero**
 > `start_session_studio_aware_signature_missing`, zero error-level rows.
 >
-> ⚠️ **OUTSTANDING:** no authenticated production session was created. The end-to-end
-> `profile -> Log session -> Electrolysis` smoke on a previously failing account is **not done** and
-> must be performed manually. A read-only structural proof stands in for it: production holds
-> exactly 2 users with 2+ active memberships; before 0181 four reachable clients per user failed the
-> arbitrary pick (one user could reach **none** of its four); after 0181 **54/54 and 4/4 pass, 0
-> still broken**.
+> ✅ **MANUAL PRODUCTION SMOKE: PASS — user-performed.** After this rollout, the previously failing
+> multi-studio practitioner account was retested **by hand in production**: client profile →
+> Log session → the previously failing modality/session-start path, with **no HTTP or application
+> error observed**. This is a **manually reported** result from a real account — not synthetic
+> automation and not server-side instrumentation. No session id, client id, precise timestamp or
+> server trace is recorded, because none was captured and none is invented.
+>
+> The two proofs are kept deliberately distinct:
+>
+> | Evidence | Kind | Result |
+> |---|---|---|
+> | Live-schema verification + read-only membership/authority proof | automated / structural, measured | production holds exactly 2 users with 2+ active memberships; before 0181 four reachable clients per user failed the arbitrary pick (one user could reach **none** of its four); after 0181 **54/54 and 4/4 pass, 0 still broken** |
+> | Previously failing account, real Log-session path | **manual, user-performed** | **PASS — no application error** |
+>
+> No production session was created *by the rollout itself*; the session created during the manual
+> retest was created by the practitioner in the ordinary course of using the product.
 
 ## Previous state (verified 2026-08-13, post-0180 apply)
 
