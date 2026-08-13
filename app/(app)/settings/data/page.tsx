@@ -147,12 +147,20 @@ export default async function DataSettingsPage() {
         </div>
       </DataCard>
 
+      {/* IMPORT-01. This card used to promise "Coming this week", which was
+          already stale and now contradicts the other import surface. Both
+          surfaces must tell one story: Hone runs the migration. */}
       <DataCard
         anchorId="import-csv"
         title="Import clients from CSV"
-        body="Bring existing client records in from a spreadsheet."
+        body="Bring existing client records in from a spreadsheet. Import is currently operator-assisted — Hone brings your records over for you."
       >
-        <DisabledButton label="Coming this week" />
+        <a
+          href="/settings/import"
+          className="inline-block rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        >
+          How importing works
+        </a>
       </DataCard>
 
       <DataCard

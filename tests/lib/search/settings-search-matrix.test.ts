@@ -152,8 +152,11 @@ describe("acceptance matrix — every other Settings page", () => {
     ["marketing", "Marketing & analytics"],
     ["pixel", "Marketing & analytics"],
     // import / data / launch
-    ["quick import", "Quick import"],
-    ["csv", "Quick import"],
+    // IMPORT-01 retitled the entry. The vocabulary must not regress: "quick
+    // import" is still what an owner types, it just no longer lands on a
+    // promise of self-service execution.
+    ["quick import", "Import clients and history"],
+    ["csv", "Import clients and history"],
     ["export your data", "Export your data"],
     ["delete all studio data", "Delete all studio data"],
     ["ready for booking checklist", "Launch"],

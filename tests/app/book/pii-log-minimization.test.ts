@@ -38,10 +38,20 @@ function logCall(event: string): string {
   return ACTIONS.match(re)?.[0] ?? "";
 }
 
-// Anchor on `("` so this matches call sites (logInternalBookingError("ev",
-// {...})) and NOT the function definition (logInternalBookingError(event:...)).
+// Anchor on `("` so this matches literal-event call sites
+// (logInternalBookingError("ev", {...})) and NOT the function definition
+// (logInternalBookingError(event: unknown...)).
+//
+// BOOK-01 P2-A WIDENED THIS. The post-commit fail-soft helper logs through
+// `logInternalBookingError(event, {...})` with the event as a VARIABLE, so the
+// `("`-only anchor skipped it entirely and a whole new logging path — one that
+// runs on every unexpected post-commit exception — was invisible to every
+// invariant below. The second pattern closes that hole. The function DEFINITION
+// is still excluded because it is `logInternalBookingError(event: string`, with
+// a type annotation rather than a comma.
 const ALL_LOG_CALLS = [
   ...ACTIONS.matchAll(/logInternalBookingError\("[\s\S]*?\}\);/g),
+  ...ACTIONS.matchAll(/logInternalBookingError\(event,[\s\S]*?\}\);/g),
 ].map((m) => m[0]);
 
 // ---------------------------------------------------------------------------
@@ -131,6 +141,9 @@ describe("every public booking log payload is PII-minimized", () => {
     "studioId", // tenant id (already logged historically)
     "emailFingerprint", // salted SHA-256 of the normalized email
     "archivedClientCollision", // non-identifying boolean discriminator
+    // BOOK-01 P2-A, consciously approved:
+    "appointmentId", // opaque UUID the studio already owns; no PII
+    "errorClass", // the error's CLASS only ("TypeError"), never its message
   ]);
 
   // Top-level keys of the `{ ... }` object literal in a captured call.

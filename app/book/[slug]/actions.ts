@@ -22,6 +22,7 @@ import {
   generateAppointmentToken,
   hashAppointmentToken,
 } from "@/lib/booking/appointment-token";
+import type { ConfirmationEmailStatus } from "@/lib/booking/confirmation-presentation";
 import {
   parseReferralSource,
   referralSourceLabel,
@@ -329,8 +330,31 @@ export async function fetchNextAvailableDateAction(params: {
   return { ok: true, date: null };
 }
 
+// BOOK-01 Tranche 1. A COMMITTED booking now returns the client's management
+// URL and the TRUE confirmation-email outcome, so the browser that created the
+// appointment always leaves with a working path to it — exactly the contract
+// the reschedule surface has carried since the 0171 amendment
+// (app/reschedule/[token]/actions.ts:598-617).
+//
+// `manageUrl` goes ONLY to that authorised browser. It is built from the raw
+// token this request minted, and the command stored only that token's SHA-256,
+// so the URL is never persisted, never logged, never put in an analytics event,
+// an ops alert, an audit row or an error message.
+//
+// SCOPE, STATED HONESTLY: this closes the case where the appointment commits
+// and the provider then fails or is switched off. It does NOT cover the process
+// dying after COMMIT but before this response reaches the browser — there is no
+// response in that case. That case remains covered by the existing recovery
+// paths (the authenticated client portal, which mints its own HMAC management
+// token per appointment, and the 24h/2h reminder passes, whose window query
+// never consults `confirmation_sent_at`). Tranche 1 does not claim otherwise.
 export type PublicBookResult =
-  | { ok: true; appointmentId: string }
+  | {
+      ok: true;
+      appointmentId: string;
+      manageUrl: string;
+      confirmationEmailStatus: ConfirmationEmailStatus;
+    }
   | { ok: false; error: string; code?: "slot_taken" };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
@@ -757,6 +781,33 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     }
   }
 
+  // BOOK-01 P2-B. REQUIRED CONFIGURATION IS RESOLVED BEFORE THE DURABILITY
+  // BOUNDARY. `getRequiredAppOrigin()` THROWS by design when
+  // NEXT_PUBLIC_APP_ORIGIN is absent in production (lib/app-origin.ts:38-46) —
+  // it deliberately offers no hone.care or localhost fallback, because a
+  // wrong-domain link mailed to a real client is worse than a refusal. This
+  // call used to sit ~250 lines BELOW the command, so a missing origin threw
+  // AFTER the appointment and its audit row had committed: the booking existed,
+  // the client saw an error, and no management URL was ever produced.
+  //
+  // Resolved here, the same misconfiguration refuses cleanly and durably:
+  // nothing is committed, no audit row, no token hash persisted, no
+  // client-facing success. It is a deterministic config failure, so failing
+  // closed before the write is the only honest order. Mirrors the reschedule
+  // surface, which already resolves the origin before minting its successor
+  // token (app/reschedule/[token]/actions.ts:744-754).
+  let appOrigin: string;
+  try {
+    appOrigin = getRequiredAppOrigin();
+  } catch (err) {
+    const errorClass = err instanceof Error ? err.name : "unknown";
+    logInternalBookingError("public_booking_app_origin_unresolved", {
+      studioId: studio.id,
+      errorClass,
+    });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+
   const appointmentToken = generateAppointmentToken();
   // Migration 0170. The appointment and its MANDATORY appointment_audit row are
   // created by one command, in one transaction. Previously this route inserted
@@ -898,11 +949,20 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //
   // This is deliberate. An earlier revision re-read the row and gated the sends
   // on that read succeeding — which meant one transient SELECT failure would
-  // silently skip the confirmation email. That is not a cosmetic loss: the raw
-  // `appointmentToken` lives only in memory and only its SHA-256 is persisted
-  // (`cancellation_token_hash`), so the email is the ONLY carrier of the token
-  // the client needs to cancel or reschedule. Losing it is unrecoverable. The
-  // send must therefore depend on nothing that can fail after the commit.
+  // silently skip the confirmation email. The raw `appointmentToken` lives only
+  // in memory and only its SHA-256 is persisted (`cancellation_token_hash`), so
+  // the send must depend on nothing that can fail after the commit.
+  //
+  // BOOK-01 Tranche 1 AMENDS THE REST OF THIS NOTE. It used to say the email is
+  // the ONLY carrier of the token and that losing it is unrecoverable. Neither
+  // is true any more, and one was never quite true: this action's own success
+  // response now carries the management URL to the authorised browser, and a
+  // committed appointment was already recoverable through the authenticated
+  // client portal and the 24h/2h reminder passes, both of which mint a stateless
+  // HMAC management token from the appointment id (lib/booking/tokens.ts) that
+  // /manage, /cancel and /reschedule all accept. Delivering the email still
+  // matters — it is the client's durable copy — but a provider failure is no
+  // longer a dead end.
   const created = {
     id: createdId,
     starts_at: commandRow?.starts_at as string,
@@ -910,6 +970,60 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     duration_minutes: commandRow?.duration_minutes as number,
     created_at: createdAtIso as string,
   } as unknown as import("@/lib/types/database").Appointment;
+
+  // BOOK-01 P2-A. THE POST-COMMIT LAW.
+  //
+  // `create_public_appointment` has returned 'created', so the appointment and
+  // its audit row are DURABLE. From here to the return, every operation is an
+  // OPTIONAL secondary effect, and none of them may turn a committed booking
+  // into `{ ok: false }` or an exception. Before this helper existed, several
+  // could: `getTreatmentTimeContextForEmail` throws outright on a read error
+  // (lib/treatment-time/queries.ts:256-258), and `ensureIntakeForClient`,
+  // `recordEmailAttempt`, the practitioner notification and `revalidatePath`
+  // are none of them proven throw-free. Any one of them would have surfaced a
+  // committed booking as a failure with no management URL.
+  //
+  // Fail-soft is NOT silence: each failure records safe internal evidence and
+  // degrades exactly one enrichment. Same shape as the reschedule surface's
+  // `attempt()` (app/reschedule/[token]/actions.ts:918-945).
+  //
+  // SECRECY. Never `err.message`. A template, provider or URL-parsing error can
+  // carry the recipient address or a management URL that embeds the RAW token.
+  // Only the error's NAME — a fixed class like "TypeError" — plus ids we already
+  // own are recorded.
+  //
+  // SCOPE. This contains unexpected APPLICATION EXCEPTIONS. It cannot contain
+  // process termination: if the host kills this function after the commit there
+  // is no response to carry anything, and that case stays owned by the portal
+  // and reminder recovery paths.
+  // Bound once, so the evidence the helper records cannot depend on anything
+  // that might change (or be re-narrowed) later in this response.
+  const evidenceAppointmentId = createdId;
+  const evidenceStudioId = studio.id;
+  const postCommit = async <T,>(
+    event: string,
+    fallback: T,
+    fn: () => Promise<T> | T,
+  ): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      // `errorClass` (not `errorName`) because the PII guard bans any key or
+      // expression matching /\w*[nN]ame\w*/ in a booking log payload — a
+      // deliberately blunt rule that catches clientName/practitionerName, and
+      // widening it to admit an exception would weaken it. The CLASS is
+      // extracted here so no `err.name` expression appears inside the logged
+      // payload at all. Never `err.message`: it can carry the recipient address
+      // or a URL embedding the raw token.
+      const errorClass = err instanceof Error ? err.name : "unknown";
+      logInternalBookingError(event, {
+        appointmentId: evidenceAppointmentId,
+        studioId: evidenceStudioId,
+        errorClass,
+      });
+      return fallback;
+    }
+  };
 
   // AUTHORITATIVE PRACTITIONER. `commandRow.practitioner_id` is the practitioner
   // the appointment was actually assigned to, resolved inside the transaction
@@ -929,30 +1043,36 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // committed and nothing here may fail the booking.
   const assignedPractitionerId =
     (commandRow?.practitioner_id as string | null | undefined) ?? null;
-  let assignedPractitioner: {
+  type AssignedPractitioner = {
     id: string;
     display_name: string | null;
     email: string | null;
-  } | null = null;
-  if (assignedPractitionerId) {
-    const { data: pr, error: prErr } = await admin
-      .from("practitioners")
-      .select("id, display_name, email")
-      .eq("id", assignedPractitionerId)
-      .eq("studio_id", studio.id)
-      .maybeSingle();
-    if (prErr || !pr) {
-      // Safe, non-PII operational signal. Downstream degrades to the studio-name
-      // fallback and skips the practitioner-specific email rather than risking a
-      // stale recipient.
-      logInternalBookingError("public_booking_practitioner_lookup_failed", {
-        code: prErr?.code,
-        studioId: studio.id,
-      });
-    } else {
-      assignedPractitioner = pr;
-    }
-  }
+  };
+  const assignedPractitioner: AssignedPractitioner | null = assignedPractitionerId
+    ? await postCommit<AssignedPractitioner | null>(
+        "public_booking_practitioner_lookup_threw",
+        null,
+        async () => {
+          const { data: pr, error: prErr } = await admin
+            .from("practitioners")
+            .select("id, display_name, email")
+            .eq("id", assignedPractitionerId)
+            .eq("studio_id", studio.id)
+            .maybeSingle();
+          if (prErr || !pr) {
+            // Safe, non-PII operational signal. Downstream degrades to the
+            // studio-name fallback and skips the practitioner-specific email
+            // rather than risking a stale recipient.
+            logInternalBookingError("public_booking_practitioner_lookup_failed", {
+              code: prErr?.code,
+              studioId: studio.id,
+            });
+            return null;
+          }
+          return pr;
+        },
+      )
+    : null;
   // Client-facing practitioner label. Falls back to the studio name exactly as
   // before when there is no assigned practitioner or the metadata read failed.
   const practitionerDisplayName =
@@ -967,16 +1087,21 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // for the email + SMS confirmations -- no tokens, no secrets, no
   // PII beyond the client name + service name + start time the
   // appointment detail page already exposes to studio members.
-  recordPractitionerNotification({
-    studioId: studio.id,
-    practitionerId: assignedPractitionerId,
-    eventType: "new_booking",
-    title: "New booking",
-    body: `${clientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
-    appointmentId: createdId,
-    clientId: clientId,
-    href: `/calendar/${createdId}`,
-  });
+  // BOOK-01 P2-A: the helper itself is synchronous and documented never to
+  // throw, but the `body` template is evaluated EAGERLY at this call site, so a
+  // date/timezone formatting failure would propagate from here. Contained.
+  await postCommit("public_booking_practitioner_notification_threw", undefined, () =>
+    recordPractitionerNotification({
+      studioId: studio.id,
+      practitionerId: assignedPractitionerId,
+      eventType: "new_booking",
+      title: "New booking",
+      body: `${clientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      appointmentId: createdId,
+      clientId: clientId,
+      href: `/calendar/${createdId}`,
+    }),
+  );
 
   // Fire-and-forget marketing/analytics consent capture. The appointment is
   // already committed, so this NEVER fails or delays the booking (a failed
@@ -1013,9 +1138,6 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // unchanged: actor_type 'client', actor_id null, action 'created', details
   // { source: 'public_booking', email, notes } — with the email read from the
   // client row inside the command rather than passed across the boundary.
-
-  // Single helper call up front; downstream lines share the same origin.
-  const appOrigin = getRequiredAppOrigin();
 
   // Fire-and-forget provider-agnostic conversion tracking (booking_confirmed).
   // Fully gated inside dispatchBookingConversion: sends NOTHING unless the
@@ -1057,47 +1179,99 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // Ensure an in-progress intake exists for this client and attach the link
   // to the confirmation email. Returns null if they already have a submitted
   // or reviewed intake on file, in which case the email omits the section.
-  const intake = await ensureIntakeForClient({
-    studioId: studio.id,
-    clientId,
-    appOrigin,
-  });
+  //
+  // BOOK-01 P2-A: the helper already returns null for EXPECTED read/insert
+  // errors, but it carries no outer try/catch, so an unexpected throw would
+  // have escaped. A null fallback degrades exactly one thing — the email and
+  // SMS omit the intake link — and never a committed booking. Deliberately ONE
+  // attempt: no retry inside this response path.
+  const intake = await postCommit<{ id: string; url: string } | null>(
+    "public_booking_intake_threw",
+    null,
+    () =>
+      ensureIntakeForClient({
+        studioId: studio.id,
+        clientId,
+        appOrigin,
+      }),
+  );
 
   // Studio toggle: skip the confirmation email entirely if disabled.
   // Email reporting is truthful: recordEmailAttempt atomically increments
   // confirmation_send_attempts AND stamps confirmation_sent_at only when
   // the Resend call actually succeeded. The old code path stamped the
   // timestamp unconditionally, which falsely advertised delivery.
+  //
+  // BOOK-01 Tranche 1: that same verdict is now REPORTED to the caller.
+  // `disabled` is the honest default — the studio switched confirmations off,
+  // which is a configuration rather than a failure, and still returns the
+  // management URL. Only a provider success may move it to `sent`.
+  let confirmationEmailStatus: ConfirmationEmailStatus = "disabled";
   if (studio.send_confirmation_emails) {
+    // BOOK-01 P2-A: the treatment-time enrichment is the one dependency here
+    // that throws OUTRIGHT rather than returning an error —
+    // `getTreatmentTimeContextForEmail` raises on any read failure
+    // (lib/treatment-time/queries.ts:256-258). A null line degrades the email's
+    // optional context and nothing else, so the confirmation still goes out.
     const treatmentTimeLine = studio.show_treatment_time_to_clients
-      ? buildTreatmentTimeLine({
-          enabled: true,
-          clientFirstName: clientName.split(/\s+/)[0] || clientName,
-          context: await getTreatmentTimeContextForEmail(studio.id, clientId),
-        })
+      ? await postCommit<string | null>(
+          "public_booking_treatment_time_threw",
+          null,
+          async () =>
+            buildTreatmentTimeLine({
+              enabled: true,
+              clientFirstName: clientName.split(/\s+/)[0] || clientName,
+              context: await getTreatmentTimeContextForEmail(studio.id, clientId),
+            }),
+        )
       : null;
-    const result = await sendBookingConfirmationToClient({
-      appointment: created,
-      service,
-      studio,
-      practitionerDisplayName,
-      clientName,
-      clientEmail: email,
-      cancellationUrl,
-      rescheduleUrl,
-      intakeUrl: intake?.url ?? null,
-      treatmentTimeLine,
-      appBaseUrl: appOrigin,
-    });
-    await recordEmailAttempt(admin, createdId, "confirmation", result.ok);
+    // BOOK-01 P2-A: `sendEmailSafely` returns `{ ok: false }` rather than
+    // throwing, so a provider refusal already lands on the truthful path below.
+    // What is NOT proven throw-free is everything around it — subject/HTML/text
+    // composition and the ICS builder. An unexpected throw there resolves to the
+    // same shape as a refusal, so it reports `failed`: we do not know the client
+    // received anything, and claiming otherwise would be a lie.
+    const result = await postCommit<{
+      ok: boolean;
+      error?: string;
+      retryable?: boolean;
+    }>(
+      "public_booking_confirmation_email_threw",
+      { ok: false, error: "confirmation sender threw", retryable: false },
+      () =>
+        sendBookingConfirmationToClient({
+          appointment: created,
+          service,
+          studio,
+          practitionerDisplayName,
+          clientName,
+          clientEmail: email,
+          cancellationUrl,
+          rescheduleUrl,
+          intakeUrl: intake?.url ?? null,
+          treatmentTimeLine,
+          appBaseUrl: appOrigin,
+        }),
+    );
+    // The status reflects the PROVIDER, not the bookkeeping write below: if
+    // recording the attempt fails, the client still did (or did not) get the
+    // email, and what we report must match what actually happened. This is set
+    // BEFORE the write for exactly that reason — the write cannot upgrade a
+    // refusal to `sent`, nor downgrade a real send to `failed`.
+    confirmationEmailStatus = result.ok ? "sent" : "failed";
+    await postCommit("public_booking_email_attempt_write_threw", undefined, () =>
+      recordEmailAttempt(admin, createdId, "confirmation", result.ok),
+    );
     if (!result.ok) {
-      logEmailFailure({
-        appointmentId: createdId,
-        emailType: "confirmation",
-        error: result.error,
-        retryable: result.retryable,
-        attemptNumber: 1,
-      });
+      await postCommit("public_booking_email_failure_log_threw", undefined, () =>
+        logEmailFailure({
+          appointmentId: createdId,
+          emailType: "confirmation",
+          error: result.error ?? "unknown",
+          retryable: result.retryable ?? false,
+          attemptNumber: 1,
+        }),
+      );
     }
   }
 
@@ -1110,20 +1284,28 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // outcome and the email attempt tracking above is untouched. We
   // await so the serverless function does not exit before the Twilio
   // POST resolves; the helper bounds itself with a 15-second timeout.
-  await sendBookingConfirmationSmsToClient({
-    admin,
-    appointmentId: createdId,
-    startsAt: start,
-    timezone: studio.timezone,
-    studio,
-    client: {
-      phone: clientPhone,
-      sms_consent_at: clientSmsConsentAt,
-      sms_opted_out_at: clientSmsOptedOutAt,
-    },
-    intakeUrl: intake?.url ?? null,
-    manageUrl,
-  });
+  //
+  // BOOK-01 P2-A: verified — `sendOne` wraps the provider call in try/catch and
+  // returns a result object, so the documented "never throws" holds for the send
+  // itself. It is NOT total: the consent/toggle gate and the `claim_sms_send`
+  // race guard run BEFORE that try. Contained at the boundary rather than by
+  // editing the helper, so SMS product behaviour is unchanged by this PR.
+  await postCommit("public_booking_confirmation_sms_threw", undefined, () =>
+    sendBookingConfirmationSmsToClient({
+      admin,
+      appointmentId: createdId,
+      startsAt: start,
+      timezone: studio.timezone,
+      studio,
+      client: {
+        phone: clientPhone,
+        sms_consent_at: clientSmsConsentAt,
+        sms_opted_out_at: clientSmsOptedOutAt,
+      },
+      intakeUrl: intake?.url ?? null,
+      manageUrl,
+    }),
+  );
   // Migration 0047: studio owners can opt out of the practitioner
   // new-booking notification. Default true preserves existing
   // behavior. Client confirmation email above is gated separately
@@ -1134,38 +1316,61 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     assignedPractitioner?.email &&
     studio.notify_practitioner_on_new_booking !== false
   ) {
-    await sendBookingNotificationToPractitioner({
-      appointment: created,
-      service,
-      studio,
-      practitionerName:
-        assignedPractitioner.display_name?.trim() ||
-        assignedPractitioner.email ||
-        "Practitioner",
-      practitionerEmail: assignedPractitioner.email,
-      clientName,
-      clientEmail: email,
-      clientPhone,
-      notes,
-      appointmentUrl: `${appOrigin}/calendar/${createdId}`,
-      // PR #163. Already-labelled practitioner-facing string;
-      // null when the visitor declined to answer.
-      referralSourceLabel: referralSourceLabel(referralSource),
-    });
+    // BOOK-01 P2-A: secondary by definition — the CLIENT's booking must not
+    // depend on notifying staff. Recipients and enablement logic are unchanged.
+    await postCommit("public_booking_practitioner_email_threw", undefined, () =>
+      sendBookingNotificationToPractitioner({
+        appointment: created,
+        service,
+        studio,
+        practitionerName:
+          assignedPractitioner.display_name?.trim() ||
+          assignedPractitioner.email ||
+          "Practitioner",
+        practitionerEmail: assignedPractitioner.email as string,
+        clientName,
+        clientEmail: email,
+        clientPhone,
+        notes,
+        appointmentUrl: `${appOrigin}/calendar/${createdId}`,
+        // PR #163. Already-labelled practitioner-facing string;
+        // null when the visitor declined to answer.
+        referralSourceLabel: referralSourceLabel(referralSource),
+      }),
+    );
   }
 
-  revalidatePath("/calendar");
-  revalidatePath("/calendar/upcoming");
+  // BOOK-01 P2-A: cache revalidation is a studio-side nicety. `revalidatePath`
+  // throws when called outside a request scope, and a stale calendar is a far
+  // smaller problem than a committed booking reported as an error.
+  await postCommit("public_booking_revalidate_threw", undefined, () => {
+    revalidatePath("/calendar");
+    revalidatePath("/calendar/upcoming");
+  });
 
   // Post-response, bounded: a PostHog outage must never make a COMMITTED
   // public booking report failure to the client (P1/P2-ANALYTICS-03).
-  captureServerEvent({
-    actor: { kind: "studio", id: studio.id },
-    event: "public_appointment_booked",
-    properties: { studio_id: studio.id, source: "public_booking" },
-  });
+  // `captureServerEvent` is already non-blocking and documented never to throw
+  // (lib/analytics/server.ts:110-117 wraps `after()` in try/catch), but the
+  // property allowlisting runs synchronously first, so it is contained too.
+  // The payload carries studio scope only — never a token, URL or client id.
+  await postCommit("public_booking_analytics_threw", undefined, () =>
+    captureServerEvent({
+      actor: { kind: "studio", id: studio.id },
+      event: "public_appointment_booked",
+      properties: { studio_id: studio.id, source: "public_booking" },
+    }),
+  );
 
-  return { ok: true, appointmentId: createdId };
+  // THE BOOKING IS COMMITTED, and the client leaves with a usable path to it
+  // whatever the email did. `manageUrl` goes ONLY to this authorised browser —
+  // it is never persisted, logged, alerted on or reported.
+  return {
+    ok: true,
+    appointmentId: createdId,
+    manageUrl,
+    confirmationEmailStatus,
+  };
 }
 
 function trimmed(value: FormDataEntryValue | null): string {
