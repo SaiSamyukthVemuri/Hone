@@ -72,14 +72,24 @@ export const REMINDER_DEGRADED_AFTER_MINUTES = CRON_INTERVAL_MINUTES * 2; // 30
 export const REMINDER_STALE_AFTER_MINUTES = CRON_INTERVAL_MINUTES * 3; // 45
 
 export type ReminderHeartbeat = {
-  at: string; // ISO timestamp of the last successful run
-  // OPS-01.1 (review 3774540589). ISO timestamp of the run BEFORE `at`.
-  // OPTIONAL, and deliberately so: every heartbeat written before this hotfix
-  // lacks it, and the classifier must stay truthful when it is absent rather
-  // than inventing an interval. Written by recordReminderRunSuccess from the
-  // value it replaces, so the very first post-hotfix run can already use the
-  // timestamp production is holding right now — no two-cycle warm-up.
-  previousSuccessAt?: string;
+  // RECENCY axis: when the latest successful run COMPLETED.
+  at: string;
+  // ---------------------------------------------------------------------
+  // CADENCE axis (OPS-01.1, review 3775042692). The external scheduler's
+  // cadence is the spacing between route INVOCATIONS, not between run
+  // completions. Deriving it from completions is wrong in both directions:
+  // a run that starts 31 minutes late but finishes quickly looks like a
+  // 30-minute cadence, and a slow run makes an on-time scheduler look late.
+  // These fields therefore hold INVOCATION timestamps, and are named so they
+  // cannot be mistaken for completion times.
+  //
+  // Both are OPTIONAL: every heartbeat written before this change has neither,
+  // and the classifier must report cadence as UNAVAILABLE rather than invent an
+  // interval from whatever timestamp happens to be present. One cycle of
+  // warm-up is the honest cost.
+  // ---------------------------------------------------------------------
+  invokedAt?: string; // when the latest successful run STARTED
+  previousInvokedAt?: string; // when the previous successful run STARTED
   durationMs?: number;
   emailAttempted?: number;
   emailSucceeded?: number;
@@ -112,55 +122,158 @@ function coerceHeartbeat(raw: unknown): ReminderHeartbeat | null {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Monotonic heartbeat merge (OPS-01.1, review 3775070631)
+// ---------------------------------------------------------------------------
+//
+// Two reminder runs can overlap, and Redis completion order is NOT invocation
+// order: an older invocation can finish (and reach Redis) after a newer one.
+// A read-then-write cannot be monotonic under that — the earlier claim in this
+// file that it "keeps `at` monotonic" was simply WRONG and has been removed.
+//
+// This pure function is the SPECIFICATION of the merge. The Lua script below
+// performs exactly this merge atomically inside Redis, so the read and the
+// write cannot be interleaved by another run.
+//
+// Rules, given the stored value and an arriving candidate:
+//   * `at` (recency) takes the LATER completion — a successful run that
+//     finished later is real, so recency never moves backwards.
+//   * a candidate whose invocation is NEWER becomes the cadence point, and the
+//     one it displaces becomes `previousInvokedAt`.
+//   * a candidate whose invocation is OLDER never overwrites the newer cadence
+//     point; it may only improve `previousInvokedAt` when it is a CLOSER
+//     predecessor of the stored invocation than what is recorded.
+//   * an equal invocation is a no-op for cadence (idempotent / non-regressive).
+export function mergeReminderHeartbeat(
+  current: ReminderHeartbeat | null,
+  candidate: ReminderHeartbeat,
+): ReminderHeartbeat {
+  const t = (iso: string | undefined): number | null => {
+    if (!iso) return null;
+    const ms = Date.parse(iso);
+    return Number.isNaN(ms) ? null : ms;
+  };
+  if (!current) return { ...candidate };
+
+  const curAt = t(current.at);
+  const candAt = t(candidate.at);
+  const curInv = t(current.invokedAt);
+  const candInv = t(candidate.invokedAt);
+  const curPrevInv = t(current.previousInvokedAt);
+
+  // Recency: the later completion wins, so it can never regress.
+  const at =
+    curAt !== null && candAt !== null
+      ? (candAt >= curAt ? candidate.at : current.at)
+      : (candidate.at ?? current.at);
+
+  // Aggregate counts follow whichever completion we kept.
+  const base = at === candidate.at ? candidate : current;
+
+  let invokedAt = current.invokedAt;
+  let previousInvokedAt = current.previousInvokedAt;
+
+  if (candInv !== null) {
+    if (curInv === null) {
+      // First invocation-bearing heartbeat: adopt it, no predecessor known.
+      invokedAt = candidate.invokedAt;
+      previousInvokedAt = candidate.previousInvokedAt;
+    } else if (candInv > curInv) {
+      // Newer invocation: it becomes the cadence point, displacing the old one.
+      invokedAt = candidate.invokedAt;
+      previousInvokedAt = current.invokedAt;
+    } else if (candInv < curInv) {
+      // An OLDER invocation arriving late. It must never regress the cadence
+      // point. It may still be the closest known predecessor of it.
+      if (curPrevInv === null || candInv > curPrevInv) {
+        previousInvokedAt = candidate.invokedAt;
+      }
+    }
+    // candInv === curInv: idempotent, nothing to change.
+  }
+
+  return {
+    ...base,
+    at,
+    ...(invokedAt ? { invokedAt } : {}),
+    ...(previousInvokedAt ? { previousInvokedAt } : {}),
+  };
+}
+
+// The atomic form of mergeReminderHeartbeat, executed server-side by Redis so
+// no other run can interleave between the read and the write. Keep in lockstep
+// with the function above.
+//
+// KEYS[1] = heartbeat key
+// ARGV[1] = candidate heartbeat JSON
+// ARGV[2] = TTL seconds
+const HEARTBEAT_MERGE_LUA = `
+local raw = redis.call('GET', KEYS[1])
+local cand = cjson.decode(ARGV[1])
+local cur = nil
+if raw then
+  local ok, decoded = pcall(cjson.decode, raw)
+  if ok and type(decoded) == 'table' and decoded.at then cur = decoded end
+end
+if cur == nil then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  return 1
+end
+local function ts(v)
+  if v == nil or v == cjson.null then return nil end
+  return v
+end
+local out = {}
+for k, v in pairs(cur) do out[k] = v end
+-- recency: later completion wins
+if ts(cand.at) ~= nil and (ts(cur.at) == nil or cand.at >= cur.at) then
+  for k, v in pairs(cand) do out[k] = v end
+  out.at = cand.at
+  out.invokedAt = cur.invokedAt
+  out.previousInvokedAt = cur.previousInvokedAt
+end
+-- cadence: invocation ordering, never completion ordering
+local ci = ts(cand.invokedAt)
+local ui = ts(cur.invokedAt)
+local up = ts(cur.previousInvokedAt)
+if ci ~= nil then
+  if ui == nil then
+    out.invokedAt = ci
+    out.previousInvokedAt = ts(cand.previousInvokedAt)
+  elseif ci > ui then
+    out.invokedAt = ci
+    out.previousInvokedAt = ui
+  elseif ci < ui then
+    out.invokedAt = ui
+    if up == nil or ci > up then out.previousInvokedAt = ci end
+  end
+end
+redis.call('SET', KEYS[1], cjson.encode(out), 'EX', ARGV[2])
+return 1
+`;
+
 // Best-effort, fail-open. Called by the cron route after a successful run.
 //
-// OPS-01.1 (review 3774540589): the run also carries FORWARD the timestamp of
-// the run it is replacing, so the stored heartbeat contains real inter-run
-// evidence and the classifier never has to infer cadence from how often the
-// health check happens to sample.
-//
-// CONCURRENCY MODEL — read-then-write, deliberately, and bounded.
-// The installed @upstash/redis exposes an atomic set-and-return-previous
-// (`set(key, value, { ex, get: true })`). It is NOT used here, for a concrete
-// reason: it returns the prior value only AFTER the new one is installed, so
-// the derived `previousSuccessAt` could not be part of that same write. Using
-// it would require a second, unconditional write-back, and that write-back can
-// REGRESS `at` if a newer run has already landed — turning a monitoring nicety
-// into a source of wrong health data. A read-then-write keeps `at` monotonic
-// under exactly the same races.
-// The residual race is two *successful* reminder runs overlapping within the
-// same instant. That is already vanishingly unlikely (one external scheduler,
-// 15 minutes apart, and each row is claim-protected), and its worst outcome is
-// a single slightly-stale `previousSuccessAt` — a monitoring blip, never a
-// missed or duplicated reminder. Both operations stay best-effort/fail-open.
+// OPS-01.1: the write is ONE atomic Redis operation (an EVAL of the Lua above,
+// a documented method on the installed @upstash/redis client). There is no
+// separate client-side read to race, so:
+//   * recency and the cadence point are monotonic under overlapping runs;
+//   * Redis completion order cannot determine heartbeat ordering — invocation
+//     timestamps do;
+//   * "failing to obtain prior evidence" cannot suppress this run's recency,
+//     because the prior value is read inside the same atomic step and an
+//     unreadable/corrupt current value simply stores the candidate.
 export async function recordReminderRunSuccess(
   heartbeat: ReminderHeartbeat,
 ): Promise<void> {
   try {
     const redis = getRedis();
     if (!redis) return;
-    // The value we are about to replace IS the previous successful run.
-    //
-    // The read is isolated in its OWN try/catch on purpose. Cadence evidence is
-    // a NICE-TO-HAVE; recording that this run succeeded is not. If the read were
-    // inside the same try as the write, a transient Redis read failure would
-    // skip the write entirely — so a perfectly healthy cron would stop
-    // refreshing its heartbeat and could age itself into a stale/critical alert
-    // purely because reads were flaky. Degrade to "no cadence evidence" instead,
-    // and always write.
-    let previousSuccessAt: string | undefined;
-    try {
-      const prior = coerceHeartbeat(
-        await redis.get<ReminderHeartbeat | string>(HEARTBEAT_KEY),
-      );
-      previousSuccessAt = prior?.at;
-    } catch {
-      previousSuccessAt = undefined;
-    }
-    const next: ReminderHeartbeat = previousSuccessAt
-      ? { ...heartbeat, previousSuccessAt }
-      : heartbeat;
-    await redis.set(HEARTBEAT_KEY, next, { ex: HEARTBEAT_TTL_SECONDS });
+    await redis.eval(
+      HEARTBEAT_MERGE_LUA,
+      [HEARTBEAT_KEY],
+      [JSON.stringify(heartbeat), String(HEARTBEAT_TTL_SECONDS)],
+    );
   } catch {
     // A heartbeat write must never break the reminder run.
   }
@@ -205,7 +318,9 @@ export type ReminderSchedulerStatus = {
   lastSuccessAt: string | null;
   ageMinutes: number | null;
   // OPS-01.1: real inter-run evidence, null when unavailable/corrupt.
-  previousSuccessAt: string | null;
+  // Invocation timestamps drive the cadence axis; null when unavailable.
+  invokedAt: string | null;
+  previousInvokedAt: string | null;
   observedIntervalMinutes: number | null;
   cadenceEvidence: ReminderCadenceEvidence;
   // null when healthy/missing; otherwise the axis (or axes) that failed.
@@ -267,7 +382,7 @@ function classifyElapsedMs(ms: number): ReminderSchedulerHealth {
 //   missing:  no (valid) heartbeat recorded
 //
 // When cadence evidence is absent or corrupt (a pre-hotfix heartbeat, an
-// unparseable or future-dated previousSuccessAt) the classifier falls back to
+// unparseable or mis-ordered invocation pair) the classifier falls back to
 // recency ONLY and reports cadenceEvidence: "unavailable". It never fabricates
 // an interval and never implies cadence was proven. No fifth status is added —
 // the honest signal is carried by cadenceEvidence + a null interval, which the
@@ -287,7 +402,8 @@ export function computeReminderSchedulerStatus(
       status: "missing",
       lastSuccessAt: null,
       ageMinutes: null,
-      previousSuccessAt: null,
+      invokedAt: null,
+      previousInvokedAt: null,
       observedIntervalMinutes: null,
       cadenceEvidence: "unavailable",
       failingAxis: null,
@@ -298,13 +414,25 @@ export function computeReminderSchedulerStatus(
   const ageMs = Math.max(0, nowMs - parsed);
   const ageMinutes = Math.round(ageMs / 60000);
 
-  // Cadence axis. Only trusted when the previous timestamp parses AND is not
-  // after the latest one (a future-dated prior is corrupt, not a 0-minute run).
-  const priorRaw = heartbeat?.previousSuccessAt;
-  const priorParsed = priorRaw ? Date.parse(priorRaw) : NaN;
+  // CADENCE axis — measured between the two most recent successful
+  // INVOCATIONS (review 3775042692). Completion times are deliberately not used
+  // here: a run that starts late but finishes fast would otherwise look on
+  // time, and a slow run would make an on-time scheduler look late.
+  //
+  // Trusted only when BOTH invocation timestamps parse and are correctly
+  // ordered. A legacy heartbeat has neither field, so cadence reads
+  // "unavailable" for one cycle rather than being invented from `at`.
+  const invRaw = heartbeat?.invokedAt;
+  const prevInvRaw = heartbeat?.previousInvokedAt;
+  const invParsed = invRaw ? Date.parse(invRaw) : NaN;
+  const prevInvParsed = prevInvRaw ? Date.parse(prevInvRaw) : NaN;
   const cadenceMeasured =
-    !Number.isNaN(priorParsed) && priorParsed <= parsed;
-  const intervalMs = cadenceMeasured ? Math.max(0, parsed - priorParsed) : null;
+    !Number.isNaN(invParsed) &&
+    !Number.isNaN(prevInvParsed) &&
+    prevInvParsed <= invParsed;
+  const intervalMs = cadenceMeasured
+    ? Math.max(0, invParsed - prevInvParsed)
+    : null;
   const observedIntervalMinutes =
     intervalMs === null ? null : Math.round(intervalMs / 60000);
 
@@ -329,7 +457,8 @@ export function computeReminderSchedulerStatus(
     status,
     lastSuccessAt: heartbeat!.at,
     ageMinutes,
-    previousSuccessAt: cadenceMeasured ? priorRaw! : null,
+    invokedAt: invRaw && !Number.isNaN(invParsed) ? invRaw : null,
+    previousInvokedAt: cadenceMeasured ? prevInvRaw! : null,
     observedIntervalMinutes,
     cadenceEvidence: cadenceMeasured ? "measured" : "unavailable",
     failingAxis,
@@ -489,7 +618,8 @@ export function reminderSchedulerAlertSafeDetails(
     age_minutes: status.ageMinutes,
     // OPS-01.1: non-sensitive timing scalars only — two ISO timestamps and an
     // integer minute count. No identifiers, no reminder content, no secrets.
-    previous_success_at: status.previousSuccessAt,
+    invoked_at: status.invokedAt,
+    previous_invoked_at: status.previousInvokedAt,
     observed_interval_minutes: status.observedIntervalMinutes,
     cadence_evidence: status.cadenceEvidence,
     failing_axis: status.failingAxis,

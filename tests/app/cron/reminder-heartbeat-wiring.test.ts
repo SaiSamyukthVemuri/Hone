@@ -393,20 +393,33 @@ describe("admin card renders all four states (PR OPS-01)", () => {
 //   3774540589  measure cadence rather than only heartbeat recency
 //   3774540599  do not dedupe critical stale alerts against legacy warnings
 // ---------------------------------------------------------------------------
-describe("OPS-01.1 P1-A: the writer preserves real inter-run evidence", () => {
-  it("reads the value it is about to replace and carries its timestamp forward", () => {
-    // The heartbeat it writes must contain previousSuccessAt taken from the
-    // PRIOR stored heartbeat — that is what makes the interval real rather
-    // than inferred from how often the health check samples.
-    expect(HEARTBEAT).toMatch(/previousSuccessAt = prior\?\.at/);
-    const read = HEARTBEAT.indexOf("await redis.get<ReminderHeartbeat | string>(HEARTBEAT_KEY)");
-    const write = HEARTBEAT.indexOf("await redis.set(HEARTBEAT_KEY, next");
-    expect(read).toBeGreaterThan(-1);
-    expect(write).toBeGreaterThan(read);
+describe("OPS-01.1 P1-A/P2-A: the writer records real INVOCATION evidence", () => {
+  it("the route passes its real invocation timestamp, not a post-processing one", () => {
+    // startedAt is captured immediately after the auth gate, before any work.
+    expect(ROUTE).toMatch(/const startedAt = Date\.now\(\);/);
+    expect(ROUTE).toMatch(/invokedAt: new Date\(startedAt\)\.toISOString\(\)/);
+    const gate = ROUTE.indexOf("isAuthorizedCronRequest(req)");
+    const started = ROUTE.indexOf("const startedAt = Date.now();");
+    expect(started).toBeGreaterThan(gate);
   });
 
-  it("still writes with the TTL (a heartbeat must expire, not linger forever)", () => {
-    expect(HEARTBEAT).toMatch(/ex: HEARTBEAT_TTL_SECONDS/);
+  it("completion time remains the recency axis", () => {
+    const block =
+      ROUTE.match(/recordReminderRunSuccess\(\{[\s\S]*?\}\);/)?.[0] ?? "";
+    expect(block).toMatch(/at: new Date\(\)\.toISOString\(\)/);
+    expect(block).toMatch(/invokedAt:/);
+  });
+
+  it("the heartbeat type names invocation fields unambiguously", () => {
+    expect(HEARTBEAT).toMatch(/invokedAt\?: string;/);
+    expect(HEARTBEAT).toMatch(/previousInvokedAt\?: string;/);
+    // the old, misleading name must be gone entirely
+    expect(HEARTBEAT).not.toMatch(/previousSuccessAt/);
+  });
+
+  it("the classifier derives cadence from invocation timestamps only", () => {
+    expect(HEARTBEAT).toMatch(/invParsed - prevInvParsed/);
+    expect(HEARTBEAT).not.toMatch(/parsed - priorParsed/);
   });
 
   it("the write path stays best-effort/fail-open", () => {
@@ -430,14 +443,50 @@ describe("OPS-01.1 P1-A: the writer preserves real inter-run evidence", () => {
     expect(HEARTBEAT).toMatch(/"measured"|"unavailable"/);
   });
 
-  it("the concurrency choice is documented rather than left implicit", () => {
-    expect(HEARTBEAT).toMatch(/CONCURRENCY MODEL/);
-  });
-
   it("no new dependency and no database table for cadence", () => {
     const code = codeOnly(HEARTBEAT);
     expect(code).not.toMatch(/from "(?!@upstash\/redis|@\/lib|server-only)/);
     expect(code).not.toMatch(/create table|CREATE TABLE/i);
+  });
+});
+
+describe("OPS-01.1 P2-B: the heartbeat write is ONE atomic operation", () => {
+  it("uses an atomic EVAL, not a client-side read-then-write", () => {
+    expect(HEARTBEAT).toMatch(/await redis\.eval\(/);
+    expect(HEARTBEAT).toMatch(/HEARTBEAT_MERGE_LUA/);
+    const fn =
+      HEARTBEAT.match(
+        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    // no separate GET/SET pair to race
+    expect(fn).not.toMatch(/redis\.get\(/);
+    expect(fn).not.toMatch(/redis\.set\(/);
+  });
+
+  it("the Lua orders by INVOCATION, never by completion or arrival", () => {
+    expect(HEARTBEAT).toMatch(/if ci > ui then/);
+    expect(HEARTBEAT).toMatch(/elseif ci < ui then/);
+  });
+
+  it("the Lua keeps recency on the later completion", () => {
+    expect(HEARTBEAT).toMatch(/cand\.at >= cur\.at/);
+  });
+
+  it("the Lua still applies the TTL", () => {
+    expect(HEARTBEAT).toMatch(/'EX', ARGV\[2\]/);
+  });
+
+  it("an unreadable stored value still stores the current run", () => {
+    expect(HEARTBEAT).toMatch(/if cur == nil then/);
+  });
+
+  it("the false read-then-write monotonicity claim is gone", () => {
+    expect(HEARTBEAT).not.toMatch(/read-then-write keeps `at` monotonic/);
+    expect(HEARTBEAT).toMatch(/was simply WRONG and has been removed/);
+  });
+
+  it("the pure merge is exported as the specification of the Lua", () => {
+    expect(HEARTBEAT).toMatch(/export function mergeReminderHeartbeat/);
   });
 });
 
@@ -499,31 +548,34 @@ describe("OPS-01.1 admin card surfaces measured cadence honestly", () => {
 //   3774838345 (P2) distinguish cadence failures from recency failures
 // ---------------------------------------------------------------------------
 describe("P2 3774838342: a failed prior read must not discard the run's heartbeat", () => {
-  it("the prior read has its OWN try/catch, separate from the write", () => {
+  // This invariant is now STRUCTURAL rather than defensive. The earlier fix
+  // isolated a client-side read in its own try/catch; the atomic EVAL removes
+  // the client-side read altogether, so there is no longer a prior-read step
+  // that can fail independently of the write. The guarantee is stronger, so
+  // these pins assert the new shape.
+  it("there is no separate client-side prior read to fail", () => {
     const fn =
       HEARTBEAT.match(
         /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
       )?.[0] ?? "";
     expect(fn).not.toBe("");
-    // inner catch degrades cadence evidence only
-    expect(fn).toMatch(
-      /try \{[\s\S]*?redis\.get<ReminderHeartbeat \| string>\(HEARTBEAT_KEY\)[\s\S]*?\} catch \{\s*previousSuccessAt = undefined;\s*\}/,
-    );
+    expect(fn).not.toMatch(/redis\.get\(/);
+    expect(fn).toMatch(/redis\.eval\(/);
   });
 
-  it("the write happens AFTER the isolated read block, unconditionally", () => {
-    const fn =
-      HEARTBEAT.match(
-        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
-      )?.[0] ?? "";
-    const innerCatch = fn.indexOf("previousSuccessAt = undefined;");
-    const write = fn.indexOf("await redis.set(HEARTBEAT_KEY, next");
-    expect(innerCatch).toBeGreaterThan(-1);
-    expect(write).toBeGreaterThan(innerCatch);
+  it("the prior value is read INSIDE the same atomic step", () => {
+    expect(HEARTBEAT).toMatch(/redis\.call\('GET', KEYS\[1\]\)/);
+    expect(HEARTBEAT).toMatch(/redis\.call\('SET', KEYS\[1\]/);
+  });
+
+  it("an unreadable or corrupt current value still records this run's success", () => {
+    // pcall-guarded decode, then the cur == nil branch stores the candidate.
+    expect(HEARTBEAT).toMatch(/pcall\(cjson\.decode, raw\)/);
+    expect(HEARTBEAT).toMatch(/if cur == nil then[\s\S]*?redis\.call\('SET'/);
   });
 
   it("cadence evidence is optional; recording the success is not", () => {
-    expect(HEARTBEAT).toMatch(/NICE-TO-HAVE/);
+    expect(HEARTBEAT).toMatch(/cannot suppress this run's recency/);
   });
 });
 

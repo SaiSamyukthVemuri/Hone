@@ -5,6 +5,7 @@ import {
   reminderSchedulerAlertEventFor,
   reminderSchedulerAlertSafeDetails,
   isAtLeastAsSevere,
+  mergeReminderHeartbeat,
   REMINDER_DEGRADED_AFTER_MINUTES,
   REMINDER_STALE_AFTER_MINUTES,
   type ReminderHeartbeat,
@@ -330,9 +331,10 @@ describe("reminderSchedulerAlertSafeDetails is non-sensitive", () => {
         "checked_at",
         "degraded_after_minutes",
         "failing_axis",
+        "invoked_at",
         "last_success_at",
         "observed_interval_minutes",
-        "previous_success_at",
+        "previous_invoked_at",
         "stale_after_minutes",
         "status",
       ].sort(),
@@ -383,9 +385,13 @@ const isoAt = (hhmm: string) => `2026-08-13T${hhmm}:00.000Z`;
 const msAt = (hhmm: string) => Date.parse(isoAt(hhmm));
 
 // Build a heartbeat carrying real inter-run evidence.
+// Cadence is invocation-to-invocation. For these classifier tests the run is
+// treated as instantaneous (invokedAt == completion) unless a test says
+// otherwise, so the existing expectations keep their meaning.
 const beat = (lastSuccess: string, previousSuccess?: string): ReminderHeartbeat => ({
   at: isoAt(lastSuccess),
-  ...(previousSuccess ? { previousSuccessAt: isoAt(previousSuccess) } : {}),
+  invokedAt: isoAt(lastSuccess),
+  ...(previousSuccess ? { previousInvokedAt: isoAt(previousSuccess) } : {}),
 });
 
 describe("P1-A: the reported 40-minute-cadence scenario", () => {
@@ -487,12 +493,12 @@ describe("P1-A regression matrix: worst of (recency, observed interval)", () => 
 });
 
 describe("P1-A backward compatibility and corrupt evidence", () => {
-  // C7 — every heartbeat written before this hotfix has no previousSuccessAt.
+  // C7 — every heartbeat written before this hotfix has no previousInvokedAt.
   it("C7 old heartbeat shape still classifies on recency, and says so", () => {
     const healthy = computeReminderSchedulerStatus(beat("09:00"), msAt("09:10"));
     expect(healthy.status).toBe("healthy");
     expect(healthy.observedIntervalMinutes).toBeNull();
-    expect(healthy.previousSuccessAt).toBeNull();
+    expect(healthy.previousInvokedAt).toBeNull();
     expect(healthy.cadenceEvidence).toBe("unavailable");
 
     const stale = computeReminderSchedulerStatus(beat("08:00"), msAt("09:00"));
@@ -513,9 +519,9 @@ describe("P1-A backward compatibility and corrupt evidence", () => {
   it.each([
     ["unparseable", "not-a-timestamp"],
     ["empty", ""],
-  ])("C8 %s previousSuccessAt => no crash, no fabricated interval", (_label, bad) => {
+  ])("C8 %s previousInvokedAt => no crash, no fabricated interval", (_label, bad) => {
     const s = computeReminderSchedulerStatus(
-      { at: isoAt("09:00"), previousSuccessAt: bad },
+      { at: isoAt("09:00"), previousInvokedAt: bad },
       msAt("09:10"),
     );
     expect(s.observedIntervalMinutes).toBeNull();
@@ -523,9 +529,9 @@ describe("P1-A backward compatibility and corrupt evidence", () => {
     expect(s.status).toBe("healthy");
   });
 
-  it("C8b a FUTURE-dated previousSuccessAt is corrupt, not a 0-minute interval", () => {
+  it("C8b a FUTURE-dated previousInvokedAt is corrupt, not a 0-minute interval", () => {
     const s = computeReminderSchedulerStatus(
-      { at: isoAt("09:00"), previousSuccessAt: isoAt("09:30") },
+      { at: isoAt("09:00"), previousInvokedAt: isoAt("09:30") },
       msAt("09:10"),
     );
     expect(s.observedIntervalMinutes).toBeNull();
@@ -543,7 +549,7 @@ describe("P1-A safe details carry the cadence evidence, non-sensitively", () => 
     const s = computeReminderSchedulerStatus(beat("09:00", "08:20"), msAt("09:10"));
     const d = reminderSchedulerAlertSafeDetails(s, msAt("09:10"));
     expect(d.observed_interval_minutes).toBe(40);
-    expect(d.previous_success_at).toBe(isoAt("08:20"));
+    expect(d.previous_invoked_at).toBe(isoAt("08:20"));
     expect(d.cadence_evidence).toBe("measured");
   });
 
@@ -551,7 +557,7 @@ describe("P1-A safe details carry the cadence evidence, non-sensitively", () => 
     const s = computeReminderSchedulerStatus(beat("09:00"), msAt("09:10"));
     const d = reminderSchedulerAlertSafeDetails(s, msAt("09:10"));
     expect(d.observed_interval_minutes).toBeNull();
-    expect(d.previous_success_at).toBeNull();
+    expect(d.previous_invoked_at).toBeNull();
     expect(d.cadence_evidence).toBe("unavailable");
   });
 
@@ -633,7 +639,7 @@ describe("sub-minute precision at the threshold boundaries", () => {
     ["45:29 (would round DOWN to 45)", 45 * MIN + 29_000, "stale"],
   ])("cadence interval %s => %s", (_label, deltaMs, expected) => {
     const s = computeReminderSchedulerStatus(
-      { at: at(T0), previousSuccessAt: at(T0 - (deltaMs as number)) },
+      { at: at(T0), invokedAt: at(T0), previousInvokedAt: at(T0 - (deltaMs as number)) },
       T0 + 60_000, // recency healthy, so cadence alone decides
     );
     expect(s.status).toBe(expected);
@@ -655,7 +661,7 @@ describe("sub-minute precision at the threshold boundaries", () => {
 
   it("the DISPLAYED value is still a friendly rounded minute count", () => {
     const s = computeReminderSchedulerStatus(
-      { at: at(T0), previousSuccessAt: at(T0 - (30 * MIN + 29_000)) },
+      { at: at(T0), invokedAt: at(T0), previousInvokedAt: at(T0 - (30 * MIN + 29_000)) },
       T0 + 60_000,
     );
     // classification used the raw interval...
@@ -666,9 +672,199 @@ describe("sub-minute precision at the threshold boundaries", () => {
 
   it("a 29:59 interval is still healthy (no over-correction)", () => {
     const s = computeReminderSchedulerStatus(
-      { at: at(T0), previousSuccessAt: at(T0 - (29 * MIN + 59_000)) },
+      { at: at(T0), invokedAt: at(T0), previousInvokedAt: at(T0 - (29 * MIN + 59_000)) },
       T0 + 60_000,
     );
     expect(s.status).toBe("healthy");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 — Codex review 3775042692 (P2):
+// scheduler cadence is INVOCATION-to-INVOCATION, never completion-to-completion.
+// ---------------------------------------------------------------------------
+describe("P2-A: cadence comes from invocation times, not completion times", () => {
+  const T = (s: string) => `2026-08-13T${s}.000Z`;
+  const M = (s: string) => Date.parse(T(s));
+
+  // The reported scenario.
+  //   run A invoked 10:00:00, completed 10:02:00
+  //   run B invoked 10:31:00, completed 10:32:00
+  //   real scheduler interval = 31 min  => degraded
+  //   completion-to-completion = 30 min => would have read healthy
+  it("a 31-minute scheduler interval is degraded even though completions are 30 apart", () => {
+    const s = computeReminderSchedulerStatus(
+      {
+        at: T("10:32:00"),
+        invokedAt: T("10:31:00"),
+        previousInvokedAt: T("10:00:00"),
+      },
+      M("10:33:00"),
+    );
+    expect(s.observedIntervalMinutes).toBe(31);
+    expect(s.status).toBe("degraded");
+  });
+
+  it("completion spacing of exactly 30 does not rescue it", () => {
+    const completionSpacingMinutes =
+      (M("10:32:00") - M("10:02:00")) / 60000;
+    expect(completionSpacingMinutes).toBe(30); // the misleading number
+  });
+
+  // The reverse direction: on-time invocations must stay healthy no matter how
+  // long the runs themselves take.
+  it("invocations exactly 30 min apart are healthy even with very different durations", () => {
+    const s = computeReminderSchedulerStatus(
+      {
+        at: T("10:30:10"), // run B took 10s
+        invokedAt: T("10:30:00"),
+        previousInvokedAt: T("10:00:00"), // run A took 5 min
+      },
+      M("10:31:00"),
+    );
+    expect(s.observedIntervalMinutes).toBe(30);
+    expect(s.status).toBe("healthy");
+  });
+
+  it("a slow run cannot fabricate a slow scheduler", () => {
+    // A invoked 10:00 and took 14 minutes; B invoked 10:15 and took 10s.
+    // Completion-to-completion would be ~1 minute — also wrong, in the other
+    // direction. Invocation spacing is the only honest number.
+    const s = computeReminderSchedulerStatus(
+      { at: T("10:15:10"), invokedAt: T("10:15:00"), previousInvokedAt: T("10:00:00") },
+      M("10:16:00"),
+    );
+    expect(s.observedIntervalMinutes).toBe(15);
+    expect(s.status).toBe("healthy");
+  });
+
+  it("a legacy heartbeat (no invocation fields) reports cadence unavailable", () => {
+    const s = computeReminderSchedulerStatus({ at: T("10:30:00") }, M("10:31:00"));
+    expect(s.cadenceEvidence).toBe("unavailable");
+    expect(s.observedIntervalMinutes).toBeNull();
+    expect(s.status).toBe("healthy"); // recency only, truthfully
+  });
+
+  it("an invocation-bearing heartbeat with no predecessor is still unavailable", () => {
+    const s = computeReminderSchedulerStatus(
+      { at: T("10:30:00"), invokedAt: T("10:29:00") },
+      M("10:31:00"),
+    );
+    expect(s.cadenceEvidence).toBe("unavailable");
+    expect(s.invokedAt).toBe(T("10:29:00"));
+    expect(s.previousInvokedAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 — Codex review 3775070631 (P2):
+// the heartbeat update must be monotonic under overlapping runs. Redis
+// completion order is NOT invocation order.
+// ---------------------------------------------------------------------------
+describe("P2-B: monotonic heartbeat merge", () => {
+  const T = (s: string) => `2026-08-13T${s}.000Z`;
+  const run = (invoked: string, completed: string): ReminderHeartbeat => ({
+    at: T(completed),
+    invokedAt: T(invoked),
+  });
+
+  // RACE 1 — B's Redis update lands first, A's arrives afterwards.
+  it("RACE 1: a late-arriving OLDER invocation does not regress the cadence point", () => {
+    const A = run("10:00:00", "10:02:00");
+    const B = run("10:15:00", "10:16:00");
+    const afterB = mergeReminderHeartbeat(null, B);
+    const afterA = mergeReminderHeartbeat(afterB, A);
+    expect(afterA.invokedAt).toBe(T("10:15:00")); // never regresses to 10:00
+    expect(afterA.previousInvokedAt).toBe(T("10:00:00"));
+  });
+
+  it("RACE 1b: the in-order arrival produces the same cadence state", () => {
+    const A = run("10:00:00", "10:02:00");
+    const B = run("10:15:00", "10:16:00");
+    const inOrder = mergeReminderHeartbeat(mergeReminderHeartbeat(null, A), B);
+    expect(inOrder.invokedAt).toBe(T("10:15:00"));
+    expect(inOrder.previousInvokedAt).toBe(T("10:00:00"));
+  });
+
+  // RACE 2 — completion order differs from invocation order.
+  it("RACE 2: cadence is 15 min regardless of which run finished first", () => {
+    // A invoked 10:00 but finished at 10:20; B invoked 10:15 and finished 10:16.
+    const A = run("10:00:00", "10:20:00");
+    const B = run("10:15:00", "10:16:00");
+    const merged = mergeReminderHeartbeat(mergeReminderHeartbeat(null, B), A);
+    const s = computeReminderSchedulerStatus(merged, Date.parse(T("10:21:00")));
+    expect(s.observedIntervalMinutes).toBe(15);
+    expect(s.status).toBe("healthy");
+    // recency followed the LATER completion, so it never moved backwards
+    expect(merged.at).toBe(T("10:20:00"));
+  });
+
+  it("RACE 2b: recency never moves backwards when an older completion arrives late", () => {
+    const newer = run("10:15:00", "10:16:00");
+    const olderCompletion = run("10:00:00", "10:02:00");
+    const merged = mergeReminderHeartbeat(
+      mergeReminderHeartbeat(null, newer),
+      olderCompletion,
+    );
+    expect(merged.at).toBe(T("10:16:00"));
+  });
+
+  // RACE 3 — idempotency.
+  it("RACE 3: replaying the same update is non-regressive", () => {
+    const A = run("10:00:00", "10:02:00");
+    const B = run("10:15:00", "10:16:00");
+    const once = mergeReminderHeartbeat(mergeReminderHeartbeat(null, A), B);
+    const twice = mergeReminderHeartbeat(once, B);
+    const thrice = mergeReminderHeartbeat(twice, B);
+    expect(thrice.at).toBe(once.at);
+    expect(thrice.invokedAt).toBe(once.invokedAt);
+    expect(thrice.previousInvokedAt).toBe(once.previousInvokedAt);
+  });
+
+  // RACE 4 — no readable prior state must not suppress this run's recency.
+  it("RACE 4: an absent or corrupt current value still records the new success", () => {
+    const B = run("10:15:00", "10:16:00");
+    const fromNothing = mergeReminderHeartbeat(null, B);
+    expect(fromNothing.at).toBe(T("10:16:00"));
+    expect(fromNothing.invokedAt).toBe(T("10:15:00"));
+
+    const fromCorrupt = mergeReminderHeartbeat({ at: "not-a-date" }, B);
+    expect(fromCorrupt.at).toBe(T("10:16:00"));
+  });
+
+  it("a legacy stored value (no invocation) is upgraded by the first new run", () => {
+    const legacy: ReminderHeartbeat = { at: T("10:00:00") };
+    const B = run("10:15:00", "10:16:00");
+    const merged = mergeReminderHeartbeat(legacy, B);
+    expect(merged.invokedAt).toBe(T("10:15:00"));
+    // no invocation predecessor can be honestly reconstructed from a bare `at`
+    expect(merged.previousInvokedAt).toBeUndefined();
+    expect(
+      computeReminderSchedulerStatus(merged, Date.parse(T("10:17:00")))
+        .cadenceEvidence,
+    ).toBe("unavailable");
+  });
+
+  it("an out-of-order arrival improves the predecessor when it is closer", () => {
+    // stored: latest 10:30, previous 10:00. A 10:15 invocation arrives late —
+    // it is the true immediate predecessor of 10:30.
+    const stored: ReminderHeartbeat = {
+      at: T("10:31:00"),
+      invokedAt: T("10:30:00"),
+      previousInvokedAt: T("10:00:00"),
+    };
+    const merged = mergeReminderHeartbeat(stored, run("10:15:00", "10:16:00"));
+    expect(merged.invokedAt).toBe(T("10:30:00"));
+    expect(merged.previousInvokedAt).toBe(T("10:15:00"));
+  });
+
+  it("a far-older straggler does not worsen a good predecessor", () => {
+    const stored: ReminderHeartbeat = {
+      at: T("10:31:00"),
+      invokedAt: T("10:30:00"),
+      previousInvokedAt: T("10:15:00"),
+    };
+    const merged = mergeReminderHeartbeat(stored, run("10:00:00", "10:01:00"));
+    expect(merged.previousInvokedAt).toBe(T("10:15:00"));
   });
 });

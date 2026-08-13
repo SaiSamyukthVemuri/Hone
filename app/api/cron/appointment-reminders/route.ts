@@ -607,8 +607,15 @@ export async function GET(req: Request) {
     // success path; a thrown run skips this and the catch records
     // cron_route_failed instead). Best-effort/fail-open — never blocks the run.
     // Aggregate counts only: no client email/phone/name, notes, token, or URL.
+    // OPS-01.1 (review 3775042692): `at` is the COMPLETION time (recency axis);
+    // `invokedAt` is this run's real INVOCATION time — `startedAt`, captured
+    // immediately after the auth gate and before any reminder work. Scheduler
+    // cadence is the spacing between invocations, so a slow or fast run can no
+    // longer distort it. `previousInvokedAt` is filled in atomically by the
+    // heartbeat merge from the value this write displaces.
     await recordReminderRunSuccess({
       at: new Date().toISOString(),
+      invokedAt: new Date(startedAt).toISOString(),
       durationMs: Date.now() - startedAt,
       emailAttempted:
         reminder_24h.attempted +
