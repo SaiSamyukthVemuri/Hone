@@ -39,21 +39,26 @@ describe("0181 — migration state", () => {
   });
 });
 
-describe("0181 — production truth: AUTHORED, NOT YET APPLIED", () => {
+describe("0181 — production truth: APPLIED (CURRENT STATE — moves on the next apply)", () => {
   const rec = JSON.parse(
     readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
   );
 
-  // The migration-first rollout has not run. This is the EXPECTED pre-apply
-  // state and it is asserted, not tolerated: hosted must still read 0180 so
-  // nobody can claim parity before the apply record is written.
-  it("hosted max is still 0180 — 0181 is pending", () => {
-    expect(rec.hosted_migration_max).toBe("0180");
+  // THE HAND-OFF HAPPENED. This block previously asserted the PRE-APPLY state
+  // (hosted still 0180, 0181 pending) and was written to go red the moment the
+  // rollout ran, so the apply could not be recorded without updating the
+  // canonical hosted-state record in the same change. The migration-first
+  // rollout completed on 2026-08-13: 0181 was pushed to the linked production
+  // project BEFORE #573 was merged, and the old application was verified
+  // healthy against the new database in between.
+  it("is applied — hosted max is 0181", () => {
+    expect(rec.hosted_migration_max).toBe("0181");
   });
 
-  it("repo is ahead of hosted by exactly this migration", () => {
+  it("repo and hosted agree, with nothing pending", () => {
     expect(isRepoMax("0181")).toBe(true);
-    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBe(180);
+    expect(versionsAbove("0181")).toEqual([]);
+    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBe(181);
   });
 });
 
