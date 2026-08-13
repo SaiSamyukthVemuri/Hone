@@ -111,24 +111,51 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // from the server-resolved practitioner+studio, never from the
     // form. The form only supplies client_id (the route param) and
     // modality (the button identity) and the optional appointment_id.
-    // L18 Phase 3: neither value is sent AT ALL any more. start_session
-    // (migration 0167) derives the studio and the practitioner from the
-    // actor's active membership, which is strictly stronger than the old
-    // server-resolved insert payload — there is no parameter to forge.
+    //
+    // L18 Phase 3 sent NEITHER value: 0167's start_session derived the studio
+    // itself. 0181 REVERSED HALF of that, and the reversal is the fix for a
+    // production P1 — 0167 derived the studio with an unordered `limit 1` over
+    // every active membership, so a practitioner active in two studios could
+    // render the page against the SELECTED studio and have the command run
+    // against the other one ("Client not found in this studio.", HTTP 500).
+    //
+    // So p_studio_id IS now sent. The invariant this case actually protects is
+    // unchanged and is asserted directly instead of by absence: the value comes
+    // from the SERVER-RESOLVED studio, and no studio ever comes from the form.
+    // The practitioner is still never sent — the command derives it from the
+    // named studio's own membership row.
     const params = SOURCE.slice(
       SOURCE.indexOf('rpc("start_session"'),
       SOURCE.indexOf("});", SOURCE.indexOf('rpc("start_session"')),
     );
     expect(params).toMatch(/p_client_id: clientId/);
     expect(params).toMatch(/p_modality: modality/);
-    expect(params).not.toMatch(/studio/i);
+    // Server-resolved, and ONLY server-resolved.
+    expect(params).toMatch(/p_studio_id: studio\.id/);
+    expect(params).not.toMatch(/p_studio_id:\s*(formData|sp|searchParams|params)\b/);
     expect(params).not.toMatch(/practitioner/i);
-    const MIGRATION = readFileSync(
+    // `studio` exists in scope only because the action resolved it server-side.
+    expect(SOURCE).toMatch(
+      /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+getCurrentPractitionerWithStudio\(\)/,
+    );
+    // …and the form still supplies nothing tenant-scoped.
+    expect(SOURCE).not.toMatch(/formData\.get\(\s*["'`][^"'`]*studio/i);
+
+    // The 0167 signature is FROZEN (applied migrations are never edited); the
+    // studio-aware signature is introduced by 0181.
+    const M0167 = readFileSync(
       "supabase/migrations/0167_session_write_commands.sql",
       "utf8",
     );
-    const seg = MIGRATION.slice(MIGRATION.indexOf("function public.start_session("));
+    const seg = M0167.slice(M0167.indexOf("function public.start_session("));
     expect(seg.slice(0, seg.indexOf(")"))).not.toMatch(/p_studio_id|p_practitioner_id/);
+
+    const M0181 = readFileSync(
+      "supabase/migrations/0181_multi_studio_command_authority.sql",
+      "utf8",
+    );
+    expect(M0181).toMatch(/p_studio_id\s+uuid/);
+    expect(M0181).not.toMatch(/p_practitioner_id/);
   });
 
   it("writes appointment_id on insert when validated, null otherwise", () => {

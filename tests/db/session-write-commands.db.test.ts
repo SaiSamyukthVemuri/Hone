@@ -425,7 +425,12 @@ describe("0167 — effective EXECUTE privileges", () => {
   ];
   const HELPERS = ["session_actor_practitioner", "assert_session_studio_for_actor"];
 
-  it("31. the eight commands are executable by authenticated ONLY", async () => {
+  // 0181 added a SECOND start_session signature (explicit-studio command +
+  // retained four-argument compatibility wrapper). One command NAME can map to
+  // several signatures, so these guards assert the NAME SET and then require
+  // EVERY signature to satisfy the rule — strictly stronger than the previous
+  // row count, which a new overload could only shift rather than be checked by.
+  it("31. every signature of the eight commands is executable by authenticated ONLY", async () => {
     const r = await adminQuery(
       `select p.proname,
               has_function_privilege('authenticated', p.oid, 'EXECUTE') auth_x,
@@ -435,7 +440,8 @@ describe("0167 — effective EXECUTE privileges", () => {
         where n.nspname='public' and p.proname = any($1)`,
       [PUBLIC_COMMANDS],
     );
-    expect(r.rows).toHaveLength(PUBLIC_COMMANDS.length);
+    expect(new Set(r.rows.map((x) => x.proname))).toEqual(new Set(PUBLIC_COMMANDS));
+    expect(r.rows.length).toBeGreaterThanOrEqual(PUBLIC_COMMANDS.length);
     for (const row of r.rows) {
       expect(row.auth_x, `${row.proname} authenticated`).toBe(true);
       expect(row.anon_x, `${row.proname} anon`).toBe(false);
@@ -461,14 +467,17 @@ describe("0167 — effective EXECUTE privileges", () => {
     }
   });
 
-  it("33. all ten are SECURITY DEFINER with an EMPTY search_path", async () => {
+  it("33. every signature of all ten is SECURITY DEFINER with an EMPTY search_path", async () => {
     const r = await adminQuery(
       `select p.proname, p.prosecdef, array_to_string(p.proconfig, ',') cfg
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname='public' and p.proname = any($1)`,
       [[...PUBLIC_COMMANDS, ...HELPERS]],
     );
-    expect(r.rows).toHaveLength(10);
+    expect(new Set(r.rows.map((x) => x.proname))).toEqual(
+      new Set([...PUBLIC_COMMANDS, ...HELPERS]),
+    );
+    expect(r.rows.length).toBeGreaterThanOrEqual(10);
     for (const row of r.rows) {
       expect(row.prosecdef, `${row.proname} definer`).toBe(true);
       expect(row.cfg, `${row.proname} search_path`).toBe('search_path=""');

@@ -190,12 +190,66 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // Appointment validation (same studio, same client, unassigned-or-mine) and
   // the electrolysis-only single-active-plan auto-attach moved into the command
   // with it, so neither can drift from the write.
-  const { data: startRows, error: startErr } = await supabase.rpc("start_session", {
+  //
+  // 0181: p_studio_id is the EXPLICIT selected studio. It comes ONLY from
+  // getCurrentPractitionerWithStudio() above — the server-side resolver that
+  // honours the user's validated studio selection — and never from FormData,
+  // searchParams or any other browser-supplied value. The browser does not
+  // choose tenant scope.
+  //
+  // Before 0181 the command resolved the studio itself with an unordered
+  // `limit 1` over every active membership, so a practitioner active in two
+  // studios could render this page against the SELECTED studio (client found,
+  // HTTP 200) and then have the command run against the OTHER one (client
+  // absent → "Client not found in this studio." → HTTP 500). The value is
+  // still not trusted: the command re-proves an active membership in this
+  // studio at the SECURITY DEFINER boundary before it reads anything.
+  let { data: startRows, error: startErr } = await supabase.rpc("start_session", {
     p_client_id: clientId,
     p_modality: modality as Modality,
     p_appointment_id: appointmentId,
     p_coalesce_minutes: COALESCE_MINUTES,
+    p_studio_id: studio.id,
   });
+
+  // REVERSE-SKEW FLOOR. 0181 keeps the four-argument signature so an OLD app
+  // survives a NEW database. This handles the other direction: a NEW app
+  // against an OLD database — a rolled-back migration, or a deploy that
+  // outran the apply. There the five-argument command does not exist and
+  // PostgREST answers PGRST202, which would fail EVERY session start for
+  // EVERY practitioner, including the single-studio majority this incident
+  // never touched. That is strictly worse than the bug being fixed.
+  //
+  // SAFE TO RETRY, and only because of what PGRST202 means: the function was
+  // never RESOLVED, so nothing executed. There is no partial write to
+  // duplicate. Exactly one retry, and ONLY on this code — any other error is
+  // a real command outcome and is rethrown untouched.
+  //
+  // HONEST ABOUT WHAT THE FALLBACK IS: on a pre-0181 database the four-arg
+  // signature is still 0167's, unordered `limit 1` and all. This does not fix
+  // the defect there — it degrades to EXACTLY today's production behaviour
+  // (correct for single-studio, the pre-existing bug for multi-studio)
+  // instead of a total outage. It is a floor, not a fix. The event below is
+  // the operational signal that the database is behind the application.
+  if (startErr?.code === "PGRST202") {
+    console.error(
+      JSON.stringify({
+        event: "start_session_studio_aware_signature_missing",
+        // Structural only — no client, no practitioner, no studio identity.
+        errorClass: "PGRST202",
+        modality,
+        hadAppointmentContext: appointmentId !== null,
+        at: new Date().toISOString(),
+      }),
+    );
+    ({ data: startRows, error: startErr } = await supabase.rpc("start_session", {
+      p_client_id: clientId,
+      p_modality: modality as Modality,
+      p_appointment_id: appointmentId,
+      p_coalesce_minutes: COALESCE_MINUTES,
+    }));
+  }
+
   if (startErr) {
     throw new Error(`Failed to start session: ${mapSessionCommandError(startErr)}`);
   }

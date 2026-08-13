@@ -178,7 +178,15 @@ describe("0169 — the command surface is untouched", () => {
     "archive_treatment_image",
   ];
 
-  it("all sixteen commands still exist and are authenticated-EXECUTE only", async () => {
+  // 0181 gave start_session a SECOND overload (the explicit-studio command
+  // alongside the retained four-argument compatibility wrapper), so a raw ROW
+  // count is no longer the right shape — one command name can legitimately map
+  // to several signatures. The guard's actual claim is unchanged and is now
+  // asserted directly: every listed command NAME is present, and EVERY
+  // signature of it is authenticated-only. That is strictly stronger than the
+  // old count, because a new overload must now satisfy the privilege rule too
+  // rather than merely shifting a number.
+  it("all sixteen commands still exist and EVERY signature is authenticated-EXECUTE only", async () => {
     const r = await adminQuery(
       `select p.proname,
               has_function_privilege('authenticated', p.oid, 'EXECUTE') a,
@@ -188,7 +196,8 @@ describe("0169 — the command surface is untouched", () => {
         where n.nspname='public' and p.proname = any($1) order by p.proname`,
       [COMMANDS],
     );
-    expect(r.rows).toHaveLength(COMMANDS.length);
+    expect(new Set(r.rows.map((x) => x.proname))).toEqual(new Set(COMMANDS));
+    expect(r.rows.length).toBeGreaterThanOrEqual(COMMANDS.length);
     for (const row of r.rows) {
       expect(row.a, `${row.proname} authenticated`).toBe(true);
       expect(row.an, `${row.proname} anon`).toBe(false);
@@ -203,7 +212,8 @@ describe("0169 — the command surface is untouched", () => {
         where n.nspname='public' and p.proname = any($1)`,
       [COMMANDS],
     );
-    expect(r.rows).toHaveLength(COMMANDS.length);
+    expect(new Set(r.rows.map((x) => x.proname))).toEqual(new Set(COMMANDS));
+    expect(r.rows.length).toBeGreaterThanOrEqual(COMMANDS.length);
     for (const row of r.rows) {
       expect(row.prosecdef, `${row.proname} definer`).toBe(true);
       expect(row.cfg, `${row.proname} search_path`).toBe('search_path=""');
