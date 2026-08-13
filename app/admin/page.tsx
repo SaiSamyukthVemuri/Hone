@@ -393,6 +393,19 @@ function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) 
           </dd>
         </div>
         <div className="flex flex-wrap gap-x-2">
+          <dt className="opacity-70">Observed cadence:</dt>
+          <dd>
+            {status.observedIntervalMinutes != null ? (
+              <>
+                {status.observedIntervalMinutes} min between the last two runs
+              </>
+            ) : (
+              // Never imply cadence was proven from recency alone.
+              "not yet measured (needs two recorded runs)"
+            )}
+          </dd>
+        </div>
+        <div className="flex flex-wrap gap-x-2">
           <dt className="opacity-70">Health thresholds:</dt>
           <dd>
             degraded over {status.degradedAfterMinutes} min · stale over{" "}

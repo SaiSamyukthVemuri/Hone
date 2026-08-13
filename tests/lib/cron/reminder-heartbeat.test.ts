@@ -4,6 +4,7 @@ import {
   decideReminderSchedulerAlert,
   reminderSchedulerAlertEventFor,
   reminderSchedulerAlertSafeDetails,
+  isAtLeastAsSevere,
   REMINDER_DEGRADED_AFTER_MINUTES,
   REMINDER_STALE_AFTER_MINUTES,
   type ReminderHeartbeat,
@@ -194,15 +195,20 @@ describe("reminderSchedulerAlertEventFor", () => {
   });
 });
 
+const NONE = null;
+const openWarning = { severity: "warning" as const };
+const openCritical = { severity: "critical" as const };
+
 describe("decideReminderSchedulerAlert", () => {
   it("healthy never alerts", () => {
-    const plan = decideReminderSchedulerAlert(statusOf("healthy"), false);
+    const plan = decideReminderSchedulerAlert(statusOf("healthy"), NONE);
     expect(plan.shouldAlert).toBe(false);
     if (!plan.shouldAlert) expect(plan.reason).toBe("healthy");
   });
 
-  it("degraded (no existing unresolved alert) -> one warning reminder_scheduler_degraded", () => {
-    const plan = decideReminderSchedulerAlert(statusOf("degraded"), false);
+  // D2
+  it("degraded + nothing open -> one warning reminder_scheduler_degraded", () => {
+    const plan = decideReminderSchedulerAlert(statusOf("degraded"), NONE);
     expect(plan.shouldAlert).toBe(true);
     if (plan.shouldAlert) {
       expect(plan.severity).toBe("warning");
@@ -211,11 +217,9 @@ describe("decideReminderSchedulerAlert", () => {
   });
 
   // THE ESCALATION. recordOpsAlert only emails OPS_ALERT_EMAILS on critical
-  // severity, so a warning-level stale alert never reached an operator inbox —
-  // a dead scheduler stayed silent until the 24h heartbeat TTL expired it into
-  // "missing" (up to ~48h). Stale must be CRITICAL.
-  it("stale (no existing unresolved alert) -> one CRITICAL reminder_scheduler_stale", () => {
-    const plan = decideReminderSchedulerAlert(statusOf("stale"), false);
+  // severity, so a warning-level stale alert never reached an operator inbox.
+  it("stale + nothing open -> one CRITICAL reminder_scheduler_stale", () => {
+    const plan = decideReminderSchedulerAlert(statusOf("stale"), NONE);
     expect(plan.shouldAlert).toBe(true);
     if (plan.shouldAlert) {
       expect(plan.severity).toBe("critical");
@@ -224,8 +228,8 @@ describe("decideReminderSchedulerAlert", () => {
     }
   });
 
-  it("missing (no existing unresolved alert) -> one critical reminder_scheduler_missing", () => {
-    const plan = decideReminderSchedulerAlert(statusOf("missing"), false);
+  it("missing + nothing open -> one critical reminder_scheduler_missing", () => {
+    const plan = decideReminderSchedulerAlert(statusOf("missing"), NONE);
     expect(plan.shouldAlert).toBe(true);
     if (plan.shouldAlert) {
       expect(plan.severity).toBe("critical");
@@ -235,40 +239,78 @@ describe("decideReminderSchedulerAlert", () => {
 
   it("every state that needs an operator email is critical", () => {
     for (const state of ["stale", "missing"] as const) {
-      const plan = decideReminderSchedulerAlert(statusOf(state), false);
+      const plan = decideReminderSchedulerAlert(statusOf(state), NONE);
       expect(plan.shouldAlert).toBe(true);
       if (plan.shouldAlert) expect(plan.severity).toBe("critical");
     }
   });
 
-  it.each(["degraded", "stale", "missing"] as const)(
-    "%s with an existing unresolved alert is deduped (no new alert)",
+  // ---------------------------------------------------------------------
+  // OPS-01.1 / review 3774540599 — SEVERITY-AWARE DEDUPE.
+  // ---------------------------------------------------------------------
+
+  // D1 — same severity already open: dedupe.
+  it("D1 degraded warning + open degraded warning -> dedupe", () => {
+    const plan = decideReminderSchedulerAlert(statusOf("degraded"), openWarning);
+    expect(plan.shouldAlert).toBe(false);
+    if (!plan.shouldAlert) expect(plan.reason).toBe("deduped");
+  });
+
+  // D3 / D5 — equal-severity critical already open: dedupe.
+  it.each(["stale", "missing"] as const)(
+    "D3/D5 %s critical + open critical -> dedupe",
     (state) => {
-      const plan = decideReminderSchedulerAlert(statusOf(state), true);
+      const plan = decideReminderSchedulerAlert(statusOf(state), openCritical);
       expect(plan.shouldAlert).toBe(false);
       if (!plan.shouldAlert) expect(plan.reason).toBe("deduped");
     },
   );
 
-  // Several daily crons call the same helper. Dedupe is what keeps three
-  // callers from producing three alerts for one outage.
-  it("repeated same-day checks after the first alert record nothing (multi-caller spam guard)", () => {
-    const status = statusOf("stale");
-    const first = decideReminderSchedulerAlert(status, false);
-    expect(first.shouldAlert).toBe(true);
-    // callers 2 and 3 of the day now see the unresolved row the first recorded
-    for (const _caller of [2, 3]) {
-      const later = decideReminderSchedulerAlert(status, true);
-      expect(later.shouldAlert).toBe(false);
+  // D4 — THE FINDING. Before OPS-01, reminder_scheduler_stale was recorded at
+  // severity WARNING. An unresolved row from that era must NOT swallow the new
+  // critical escalation, because only critical reaches OPS_ALERT_EMAILS.
+  it("D4 stale critical + open LEGACY stale WARNING -> records the critical escalation", () => {
+    const plan = decideReminderSchedulerAlert(statusOf("stale"), openWarning);
+    expect(plan.shouldAlert).toBe(true);
+    if (plan.shouldAlert) {
+      expect(plan.severity).toBe("critical");
+      expect(plan.event).toBe("reminder_scheduler_stale");
     }
   });
 
-  // Dedupe must NOT suppress an escalation: degraded and stale are separate
-  // events, so a worsening outage still reaches the operator.
+  it("D4b missing critical + open legacy warning -> records the critical escalation", () => {
+    const plan = decideReminderSchedulerAlert(statusOf("missing"), openWarning);
+    expect(plan.shouldAlert).toBe(true);
+    if (plan.shouldAlert) expect(plan.severity).toBe("critical");
+  });
+
+  // A critical open row must still suppress a *lower* severity alert.
+  it("degraded warning + open critical -> dedupe (never downgrade-spam)", () => {
+    const plan = decideReminderSchedulerAlert(statusOf("degraded"), openCritical);
+    expect(plan.shouldAlert).toBe(false);
+  });
+
+  it("severity ordering is explicit: warning < critical", () => {
+    expect(isAtLeastAsSevere("critical", "warning")).toBe(true);
+    expect(isAtLeastAsSevere("critical", "critical")).toBe(true);
+    expect(isAtLeastAsSevere("warning", "warning")).toBe(true);
+    expect(isAtLeastAsSevere("warning", "critical")).toBe(false);
+  });
+
+  // Several daily crons call the same helper. Dedupe is what keeps three
+  // callers from producing three alerts for one outage.
+  it("repeated same-severity checks after the first alert record nothing (multi-caller spam guard)", () => {
+    const status = statusOf("stale");
+    expect(decideReminderSchedulerAlert(status, NONE).shouldAlert).toBe(true);
+    for (const _caller of [2, 3]) {
+      expect(decideReminderSchedulerAlert(status, openCritical).shouldAlert).toBe(false);
+    }
+  });
+
+  // degraded and stale are separate EVENTS, so the caller looks each up
+  // independently: a degraded row is simply absent from the stale lookup.
   it("an unresolved degraded alert does NOT suppress the stale escalation", () => {
-    // `hasUnresolvedAlertForEvent` is looked up per-event by the caller, so a
-    // degraded row means "no unresolved row for the stale event".
-    const plan = decideReminderSchedulerAlert(statusOf("stale"), false);
+    const plan = decideReminderSchedulerAlert(statusOf("stale"), NONE);
     expect(plan.shouldAlert).toBe(true);
     if (plan.shouldAlert) {
       expect(plan.event).toBe("reminder_scheduler_stale");
@@ -283,10 +325,13 @@ describe("reminderSchedulerAlertSafeDetails is non-sensitive", () => {
     expect(Object.keys(details).sort()).toEqual(
       [
         "age_minutes",
+        "cadence_evidence",
         "cadence_minutes",
         "checked_at",
         "degraded_after_minutes",
         "last_success_at",
+        "observed_interval_minutes",
+        "previous_success_at",
         "stale_after_minutes",
         "status",
       ].sort(),
@@ -322,4 +367,198 @@ describe("reminderSchedulerAlertSafeDetails is non-sensitive", () => {
       );
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 / review 3774540589 — CADENCE IS MEASURED, NOT INFERRED.
+//
+// The finding: a recent heartbeat is not evidence of cadence. A scheduler
+// firing at 07:50 / 08:30 / 09:10 / 09:50 runs a 40-MINUTE cadence — wide
+// enough to miss appointment offsets in the 30-minute 2h window — yet health
+// checks at 08:00 / 09:00 / 09:30 observe ages of only 10 / 30 / 20 minutes.
+// Recency sampling can never see the gap BETWEEN runs.
+// ---------------------------------------------------------------------------
+const isoAt = (hhmm: string) => `2026-08-13T${hhmm}:00.000Z`;
+const msAt = (hhmm: string) => Date.parse(isoAt(hhmm));
+
+// Build a heartbeat carrying real inter-run evidence.
+const beat = (lastSuccess: string, previousSuccess?: string): ReminderHeartbeat => ({
+  at: isoAt(lastSuccess),
+  ...(previousSuccess ? { previousSuccessAt: isoAt(previousSuccess) } : {}),
+});
+
+describe("P1-A: the reported 40-minute-cadence scenario", () => {
+  // Exactly the invocations and observation times from the review comment.
+  const scenario = [
+    { checkAt: "08:00", last: "07:50", prev: "07:10", age: 10 },
+    { checkAt: "09:00", last: "08:30", prev: "07:50", age: 30 },
+    { checkAt: "09:30", last: "09:10", prev: "08:30", age: 20 },
+  ];
+
+  it("recency alone would call every one of these observations healthy", () => {
+    for (const o of scenario) {
+      // No cadence evidence => recency-only, which is the pre-fix behaviour.
+      const s = computeReminderSchedulerStatus(beat(o.last), msAt(o.checkAt));
+      expect(s.ageMinutes).toBe(o.age);
+      expect(s.status).toBe("healthy");
+    }
+  });
+
+  it("with real inter-run evidence NONE of them is healthy", () => {
+    for (const o of scenario) {
+      const s = computeReminderSchedulerStatus(
+        beat(o.last, o.prev),
+        msAt(o.checkAt),
+      );
+      expect(s.observedIntervalMinutes).toBe(40);
+      expect(s.cadenceEvidence).toBe("measured");
+      expect(s.status).toBe("degraded");
+      expect(s.status).not.toBe("healthy");
+    }
+  });
+});
+
+describe("P1-A regression matrix: worst of (recency, observed interval)", () => {
+  // C1
+  it("C1 age 10 + interval 15 => healthy", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00", "08:45"), msAt("09:10"));
+    expect(s.ageMinutes).toBe(10);
+    expect(s.observedIntervalMinutes).toBe(15);
+    expect(s.status).toBe("healthy");
+  });
+
+  // C2
+  it("C2 age 30 + interval 40 => degraded", () => {
+    const s = computeReminderSchedulerStatus(beat("08:30", "07:50"), msAt("09:00"));
+    expect(s.ageMinutes).toBe(30);
+    expect(s.observedIntervalMinutes).toBe(40);
+    expect(s.status).toBe("degraded");
+  });
+
+  // C3 — the headline: recency looks perfect, cadence does not.
+  it("C3 age 10 + interval 40 => degraded (NOT healthy)", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00", "08:20"), msAt("09:10"));
+    expect(s.ageMinutes).toBe(10);
+    expect(s.observedIntervalMinutes).toBe(40);
+    expect(s.status).toBe("degraded");
+  });
+
+  // C4
+  it("C4 age 10 + interval 46 => stale (critical-bound)", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00", "08:14"), msAt("09:10"));
+    expect(s.ageMinutes).toBe(10);
+    expect(s.observedIntervalMinutes).toBe(46);
+    expect(s.status).toBe("stale");
+  });
+
+  // C5
+  it("C5 age 31 + interval 15 => degraded", () => {
+    const s = computeReminderSchedulerStatus(beat("08:29", "08:14"), msAt("09:00"));
+    expect(s.ageMinutes).toBe(31);
+    expect(s.observedIntervalMinutes).toBe(15);
+    expect(s.status).toBe("degraded");
+  });
+
+  // C6
+  it("C6 age 46 + interval 15 => stale", () => {
+    const s = computeReminderSchedulerStatus(beat("08:14", "07:59"), msAt("09:00"));
+    expect(s.ageMinutes).toBe(46);
+    expect(s.observedIntervalMinutes).toBe(15);
+    expect(s.status).toBe("stale");
+  });
+
+  it("the worse axis always wins, in both directions", () => {
+    // recency worse than cadence
+    expect(
+      computeReminderSchedulerStatus(beat("08:00", "07:45"), msAt("09:00")).status,
+    ).toBe("stale");
+    // cadence worse than recency
+    expect(
+      computeReminderSchedulerStatus(beat("09:00", "08:00"), msAt("09:05")).status,
+    ).toBe("stale");
+  });
+
+  it("a healthy cadence never rescues bad recency", () => {
+    const s = computeReminderSchedulerStatus(beat("08:00", "07:45"), msAt("09:00"));
+    expect(s.observedIntervalMinutes).toBe(15);
+    expect(s.status).not.toBe("healthy");
+  });
+});
+
+describe("P1-A backward compatibility and corrupt evidence", () => {
+  // C7 — every heartbeat written before this hotfix has no previousSuccessAt.
+  it("C7 old heartbeat shape still classifies on recency, and says so", () => {
+    const healthy = computeReminderSchedulerStatus(beat("09:00"), msAt("09:10"));
+    expect(healthy.status).toBe("healthy");
+    expect(healthy.observedIntervalMinutes).toBeNull();
+    expect(healthy.previousSuccessAt).toBeNull();
+    expect(healthy.cadenceEvidence).toBe("unavailable");
+
+    const stale = computeReminderSchedulerStatus(beat("08:00"), msAt("09:00"));
+    expect(stale.status).toBe("stale");
+    expect(stale.cadenceEvidence).toBe("unavailable");
+  });
+
+  it("C7b an old-shape heartbeat object with extra unknown keys still works", () => {
+    const s = computeReminderSchedulerStatus(
+      { at: isoAt("09:00"), emailAttempted: 3, smsFailed: 0 },
+      msAt("09:10"),
+    );
+    expect(s.status).toBe("healthy");
+    expect(s.cadenceEvidence).toBe("unavailable");
+  });
+
+  // C8 — never crash, never fabricate.
+  it.each([
+    ["unparseable", "not-a-timestamp"],
+    ["empty", ""],
+  ])("C8 %s previousSuccessAt => no crash, no fabricated interval", (_label, bad) => {
+    const s = computeReminderSchedulerStatus(
+      { at: isoAt("09:00"), previousSuccessAt: bad },
+      msAt("09:10"),
+    );
+    expect(s.observedIntervalMinutes).toBeNull();
+    expect(s.cadenceEvidence).toBe("unavailable");
+    expect(s.status).toBe("healthy");
+  });
+
+  it("C8b a FUTURE-dated previousSuccessAt is corrupt, not a 0-minute interval", () => {
+    const s = computeReminderSchedulerStatus(
+      { at: isoAt("09:00"), previousSuccessAt: isoAt("09:30") },
+      msAt("09:10"),
+    );
+    expect(s.observedIntervalMinutes).toBeNull();
+    expect(s.cadenceEvidence).toBe("unavailable");
+  });
+
+  it("never claims cadence was proven when it was not", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00"), msAt("09:10"));
+    expect(s.cadenceEvidence).not.toBe("measured");
+  });
+});
+
+describe("P1-A safe details carry the cadence evidence, non-sensitively", () => {
+  it("includes the interval scalars", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00", "08:20"), msAt("09:10"));
+    const d = reminderSchedulerAlertSafeDetails(s, msAt("09:10"));
+    expect(d.observed_interval_minutes).toBe(40);
+    expect(d.previous_success_at).toBe(isoAt("08:20"));
+    expect(d.cadence_evidence).toBe("measured");
+  });
+
+  it("reports nulls rather than invented values when evidence is absent", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00"), msAt("09:10"));
+    const d = reminderSchedulerAlertSafeDetails(s, msAt("09:10"));
+    expect(d.observed_interval_minutes).toBeNull();
+    expect(d.previous_success_at).toBeNull();
+    expect(d.cadence_evidence).toBe("unavailable");
+  });
+
+  it("the new fields introduce no secret or PII", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00", "08:20"), msAt("09:10"));
+    const serialized = JSON.stringify(reminderSchedulerAlertSafeDetails(s, msAt("09:10")));
+    expect(serialized).not.toMatch(
+      /cron_secret|authorization|bearer|email|phone|\bname\b|client|token|message|body|reminder_text/i,
+    );
+  });
 });

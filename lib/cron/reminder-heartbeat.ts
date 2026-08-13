@@ -73,6 +73,13 @@ export const REMINDER_STALE_AFTER_MINUTES = CRON_INTERVAL_MINUTES * 3; // 45
 
 export type ReminderHeartbeat = {
   at: string; // ISO timestamp of the last successful run
+  // OPS-01.1 (review 3774540589). ISO timestamp of the run BEFORE `at`.
+  // OPTIONAL, and deliberately so: every heartbeat written before this hotfix
+  // lacks it, and the classifier must stay truthful when it is absent rather
+  // than inventing an interval. Written by recordReminderRunSuccess from the
+  // value it replaces, so the very first post-hotfix run can already use the
+  // timestamp production is holding right now — no two-cycle warm-up.
+  previousSuccessAt?: string;
   durationMs?: number;
   emailAttempted?: number;
   emailSucceeded?: number;
@@ -88,14 +95,58 @@ function getRedis(): Redis | null {
   return url && token ? new Redis({ url, token }) : null;
 }
 
+// Parse a heartbeat that may arrive as an object or a JSON string (the Upstash
+// client usually deserializes, but tolerate both). Returns null on anything
+// that is not a heartbeat with a usable `at`.
+function coerceHeartbeat(raw: unknown): ReminderHeartbeat | null {
+  try {
+    const hb =
+      typeof raw === "string" ? (JSON.parse(raw) as ReminderHeartbeat) : raw;
+    if (!hb || typeof hb !== "object") return null;
+    const at = (hb as ReminderHeartbeat).at;
+    return typeof at === "string" && at.length > 0
+      ? (hb as ReminderHeartbeat)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 // Best-effort, fail-open. Called by the cron route after a successful run.
+//
+// OPS-01.1 (review 3774540589): the run also carries FORWARD the timestamp of
+// the run it is replacing, so the stored heartbeat contains real inter-run
+// evidence and the classifier never has to infer cadence from how often the
+// health check happens to sample.
+//
+// CONCURRENCY MODEL — read-then-write, deliberately, and bounded.
+// The installed @upstash/redis exposes an atomic set-and-return-previous
+// (`set(key, value, { ex, get: true })`). It is NOT used here, for a concrete
+// reason: it returns the prior value only AFTER the new one is installed, so
+// the derived `previousSuccessAt` could not be part of that same write. Using
+// it would require a second, unconditional write-back, and that write-back can
+// REGRESS `at` if a newer run has already landed — turning a monitoring nicety
+// into a source of wrong health data. A read-then-write keeps `at` monotonic
+// under exactly the same races.
+// The residual race is two *successful* reminder runs overlapping within the
+// same instant. That is already vanishingly unlikely (one external scheduler,
+// 15 minutes apart, and each row is claim-protected), and its worst outcome is
+// a single slightly-stale `previousSuccessAt` — a monitoring blip, never a
+// missed or duplicated reminder. Both operations stay best-effort/fail-open.
 export async function recordReminderRunSuccess(
   heartbeat: ReminderHeartbeat,
 ): Promise<void> {
   try {
     const redis = getRedis();
     if (!redis) return;
-    await redis.set(HEARTBEAT_KEY, heartbeat, { ex: HEARTBEAT_TTL_SECONDS });
+    // The value we are about to replace IS the previous successful run.
+    const prior = coerceHeartbeat(
+      await redis.get<ReminderHeartbeat | string>(HEARTBEAT_KEY),
+    );
+    const next: ReminderHeartbeat = prior?.at
+      ? { ...heartbeat, previousSuccessAt: prior.at }
+      : heartbeat;
+    await redis.set(HEARTBEAT_KEY, next, { ex: HEARTBEAT_TTL_SECONDS });
   } catch {
     // A heartbeat write must never break the reminder run.
   }
@@ -123,22 +174,74 @@ export type ReminderSchedulerHealth =
   | "stale"
   | "missing";
 
+// Whether the stored heartbeat actually carried inter-run evidence. "measured"
+// means observedIntervalMinutes came from two real successful runs; "unavailable"
+// means the classifier had ONLY recency to go on and must not imply otherwise.
+export type ReminderCadenceEvidence = "measured" | "unavailable";
+
 export type ReminderSchedulerStatus = {
   status: ReminderSchedulerHealth;
   lastSuccessAt: string | null;
   ageMinutes: number | null;
+  // OPS-01.1: real inter-run evidence, null when unavailable/corrupt.
+  previousSuccessAt: string | null;
+  observedIntervalMinutes: number | null;
+  cadenceEvidence: ReminderCadenceEvidence;
   cadenceMinutes: number;
   degradedAfterMinutes: number;
   staleAfterMinutes: number;
 };
 
+// Rank so the WORSE of two conditions can be selected without an if-ladder.
+const HEALTH_RANK: Record<ReminderSchedulerHealth, number> = {
+  healthy: 0,
+  degraded: 1,
+  stale: 2,
+  missing: 3,
+};
+
+function worseHealth(
+  a: ReminderSchedulerHealth,
+  b: ReminderSchedulerHealth,
+): ReminderSchedulerHealth {
+  return HEALTH_RANK[a] >= HEALTH_RANK[b] ? a : b;
+}
+
+// One shared band, applied to BOTH recency and observed interval so the two
+// axes can never drift apart.
+function classifyMinutes(minutes: number): ReminderSchedulerHealth {
+  if (minutes <= REMINDER_DEGRADED_AFTER_MINUTES) return "healthy";
+  if (minutes <= REMINDER_STALE_AFTER_MINUTES) return "degraded";
+  return "stale";
+}
+
 // Pure, deterministic classifier — the testable core. `nowMs` is injected so
 // tests are time-independent.
-//   healthy:  last success within REMINDER_DEGRADED_AFTER_MINUTES (2x cadence)
-//   degraded: older than that but within REMINDER_STALE_AFTER_MINUTES — the
-//             cadence margin the 2h reminder window depends on is gone
-//   stale:    older than REMINDER_STALE_AFTER_MINUTES (3 missed cycles)
+//
+// OPS-01.1 (review 3774540589). Health is now the WORSE of two independent
+// conditions, because recency alone is not evidence of cadence:
+//
+//   A. RECENCY  — minutes since the latest successful run.
+//   B. CADENCE  — minutes between the latest TWO successful runs.
+//
+// The finding's example is exactly why B is required. A scheduler firing at
+// 07:50 / 08:30 / 09:10 / 09:50 is running a 40-minute cadence — wide enough to
+// miss appointment offsets in the 30-minute 2h window — yet health checks at
+// 08:00 / 09:00 / 09:30 see ages of only 10 / 30 / 20 minutes and would each
+// report "healthy". Sampling recency can never expose the gap BETWEEN runs; only
+// a stored previous-success timestamp can.
+//
+//   healthy:  both axes within REMINDER_DEGRADED_AFTER_MINUTES (2x cadence)
+//   degraded: either axis past that but within REMINDER_STALE_AFTER_MINUTES
+//   stale:    either axis past REMINDER_STALE_AFTER_MINUTES
 //   missing:  no (valid) heartbeat recorded
+//
+// When cadence evidence is absent or corrupt (a pre-hotfix heartbeat, an
+// unparseable or future-dated previousSuccessAt) the classifier falls back to
+// recency ONLY and reports cadenceEvidence: "unavailable". It never fabricates
+// an interval and never implies cadence was proven. No fifth status is added —
+// the honest signal is carried by cadenceEvidence + a null interval, which the
+// admin card and safe_details both surface.
 export function computeReminderSchedulerStatus(
   heartbeat: ReminderHeartbeat | null,
   nowMs: number,
@@ -150,19 +253,41 @@ export function computeReminderSchedulerStatus(
   };
   const parsed = heartbeat?.at ? Date.parse(heartbeat.at) : NaN;
   if (Number.isNaN(parsed)) {
-    return { status: "missing", lastSuccessAt: null, ageMinutes: null, ...base };
+    return {
+      status: "missing",
+      lastSuccessAt: null,
+      ageMinutes: null,
+      previousSuccessAt: null,
+      observedIntervalMinutes: null,
+      cadenceEvidence: "unavailable",
+      ...base,
+    };
   }
   const ageMinutes = Math.max(0, Math.round((nowMs - parsed) / 60000));
-  const status: ReminderSchedulerHealth =
-    ageMinutes <= REMINDER_DEGRADED_AFTER_MINUTES
-      ? "healthy"
-      : ageMinutes <= REMINDER_STALE_AFTER_MINUTES
-        ? "degraded"
-        : "stale";
+
+  // Cadence axis. Only trusted when the previous timestamp parses AND is not
+  // after the latest one (a future-dated prior is corrupt, not a 0-minute run).
+  const priorRaw = heartbeat?.previousSuccessAt;
+  const priorParsed = priorRaw ? Date.parse(priorRaw) : NaN;
+  const cadenceMeasured =
+    !Number.isNaN(priorParsed) && priorParsed <= parsed;
+  const observedIntervalMinutes = cadenceMeasured
+    ? Math.max(0, Math.round((parsed - priorParsed) / 60000))
+    : null;
+
+  const recencyStatus = classifyMinutes(ageMinutes);
+  const status =
+    observedIntervalMinutes === null
+      ? recencyStatus
+      : worseHealth(recencyStatus, classifyMinutes(observedIntervalMinutes));
+
   return {
     status,
     lastSuccessAt: heartbeat!.at,
     ageMinutes,
+    previousSuccessAt: cadenceMeasured ? priorRaw! : null,
+    observedIntervalMinutes,
+    cadenceEvidence: cadenceMeasured ? "measured" : "unavailable",
     ...base,
   };
 }
@@ -243,39 +368,67 @@ export function reminderSchedulerAlertEventFor(
   }
 }
 
-// Pure, deterministic decision — the testable core. Given the computed
-// status and whether an UNRESOLVED ops alert already exists for the matching
-// event, decide whether to record a new one.
-//   healthy              -> no alert
-//   degraded + no dupe   -> warning  reminder_scheduler_degraded
-//   stale + no dupe      -> CRITICAL reminder_scheduler_stale
-//   missing + no dupe    -> CRITICAL reminder_scheduler_missing
-//   any unhealthy + dupe -> no alert (deduped)
+export type ReminderAlertSeverity = "warning" | "critical";
+
+// Explicit ordering. Scheduler alerts use only these two levels, and the
+// dedupe rule below depends on the comparison being stated rather than implied.
+const SEVERITY_RANK: Record<ReminderAlertSeverity, number> = {
+  warning: 0,
+  critical: 1,
+};
+
+export function isAtLeastAsSevere(
+  existing: ReminderAlertSeverity,
+  desired: ReminderAlertSeverity,
+): boolean {
+  return SEVERITY_RANK[existing] >= SEVERITY_RANK[desired];
+}
+
+// The severity of the strongest UNRESOLVED alert already open for the event,
+// or null when none is open (or the lookup failed — see the caller).
+export type ExistingUnresolvedAlert = { severity: ReminderAlertSeverity } | null;
+
+// Pure, deterministic decision — the testable core. Given the computed status
+// and the strongest UNRESOLVED ops alert already open for the matching event,
+// decide whether to record a new one.
+//   healthy                          -> no alert
+//   degraded + nothing open          -> warning  reminder_scheduler_degraded
+//   stale + nothing open             -> CRITICAL reminder_scheduler_stale
+//   missing + nothing open           -> CRITICAL reminder_scheduler_missing
+//   open alert >= desired severity   -> no alert (deduped)
+//   open alert <  desired severity   -> RECORD the escalation
 //
 // PR OPS-01: `stale` is CRITICAL, not warning. recordOpsAlert only emails
 // OPS_ALERT_EMAILS for critical severity, so the previous warning meant a dead
 // scheduler produced no operator email until the 24h heartbeat TTL expired the
-// key into `missing` — up to ~48h of silence. Escalating `stale` makes the
-// FIRST daily health check after 45 minutes of scheduler silence email the
-// operator. `degraded` stays a warning on purpose: it is the early cadence
-// signal (row + admin card), and paging on it would train operators to ignore
-// the channel.
+// key into `missing` — up to ~48h of silence. `degraded` stays a warning on
+// purpose: it is the early cadence signal (row + admin card), and paging on it
+// would train operators to ignore the channel.
+//
+// OPS-01.1 (review 3774540599): dedupe is SEVERITY-AWARE. Deduping on
+// "same event AND unresolved" alone was correct only while an event had exactly
+// one severity forever. OPS-01 changed `reminder_scheduler_stale` from warning
+// to critical, so any warning-severity stale row left unresolved from before
+// that change would have silently swallowed the first real critical escalation
+// — and with it the OPS_ALERT_EMAILS notification the escalation exists to
+// send. A lower-severity open row must never suppress a higher-severity alert.
+// The legacy warning is deliberately NOT auto-resolved: rewriting operator-owned
+// history to make a check pass would be worse than letting the critical row sit
+// alongside it, and the operator resolves both from the same admin page.
 export function decideReminderSchedulerAlert(
   status: ReminderSchedulerStatus,
-  hasUnresolvedAlertForEvent: boolean,
+  existingUnresolved: ExistingUnresolvedAlert,
 ): ReminderSchedulerAlertPlan {
   const event = reminderSchedulerAlertEventFor(status.status);
   if (event === null) {
     return { shouldAlert: false, reason: "healthy" };
   }
-  if (hasUnresolvedAlertForEvent) {
+  const severity: ReminderAlertSeverity =
+    status.status === "degraded" ? "warning" : "critical";
+  if (existingUnresolved && isAtLeastAsSevere(existingUnresolved.severity, severity)) {
     return { shouldAlert: false, reason: "deduped" };
   }
-  return {
-    shouldAlert: true,
-    event,
-    severity: status.status === "degraded" ? "warning" : "critical",
-  };
+  return { shouldAlert: true, event, severity };
 }
 
 // Pure builder for the alert's safe_details. NON-SENSITIVE scalars only —
@@ -289,6 +442,11 @@ export function reminderSchedulerAlertSafeDetails(
     status: status.status,
     last_success_at: status.lastSuccessAt,
     age_minutes: status.ageMinutes,
+    // OPS-01.1: non-sensitive timing scalars only — two ISO timestamps and an
+    // integer minute count. No identifiers, no reminder content, no secrets.
+    previous_success_at: status.previousSuccessAt,
+    observed_interval_minutes: status.observedIntervalMinutes,
+    cadence_evidence: status.cadenceEvidence,
     cadence_minutes: status.cadenceMinutes,
     degraded_after_minutes: status.degradedAfterMinutes,
     stale_after_minutes: status.staleAfterMinutes,
@@ -337,24 +495,40 @@ export async function recordReminderSchedulerHealthAlert(
   const unhealthy: "degraded" | "stale" | "missing" = status.status;
   const event = reminderSchedulerAlertEventFor(unhealthy) as ReminderSchedulerAlertEvent;
 
-  // Dedupe on an existing UNRESOLVED alert for this exact event. On a read
-  // error, fall through (hasUnresolved=false) and record — recordOpsAlert is
-  // fail-open; a rare duplicate beats silently dropping a scheduler-down alert.
-  let hasUnresolved = false;
+  // Dedupe on an existing UNRESOLVED alert for this exact event.
+  //
+  // OPS-01.1 (review 3774540599): the SEVERITY is read too, and the strongest
+  // open row wins. Selecting only `id` made every unresolved row look
+  // equivalent, so a legacy warning-severity `reminder_scheduler_stale` row
+  // (the severity this event used before OPS-01) would suppress the new
+  // critical escalation and its OPS_ALERT_EMAILS notification.
+  //
+  // On a read error, fall through (null = nothing open) and record —
+  // recordOpsAlert is fail-open; a rare duplicate beats silently dropping a
+  // scheduler-down alert.
+  let existingUnresolved: ExistingUnresolvedAlert = null;
   try {
     const admin = createAdminClient();
     const { data: existing } = await admin
       .from("ops_alerts")
-      .select("id")
+      .select("id, severity")
       .eq("event", event)
-      .is("resolved_at", null)
-      .limit(1);
-    hasUnresolved = Boolean(existing && existing.length > 0);
+      .is("resolved_at", null);
+    // Strongest open row decides: one critical anywhere in the set dedupes a
+    // critical; only warnings open means a critical still escalates.
+    const severities = (existing ?? [])
+      .map((row) => (row as { severity?: string }).severity)
+      .filter((s): s is ReminderAlertSeverity => s === "warning" || s === "critical");
+    if (severities.length > 0) {
+      existingUnresolved = {
+        severity: severities.includes("critical") ? "critical" : "warning",
+      };
+    }
   } catch {
-    hasUnresolved = false;
+    existingUnresolved = null;
   }
 
-  const plan = decideReminderSchedulerAlert(status, hasUnresolved);
+  const plan = decideReminderSchedulerAlert(status, existingUnresolved);
   if (!plan.shouldAlert) {
     return {
       status: status.status,

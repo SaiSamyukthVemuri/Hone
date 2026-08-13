@@ -139,7 +139,7 @@ describe("reminder-scheduler health alert function (lib/cron/reminder-heartbeat.
   // severity === "critical"), so `stale` must NOT be a warning.
   it("severity is chosen from the status, with degraded the ONLY warning", () => {
     expect(HEARTBEAT).toMatch(
-      /severity:\s*status\.status === "degraded"\s*\?\s*"warning"\s*:\s*"critical"/,
+      /const severity: ReminderAlertSeverity =\s*\n?\s*status\.status === "degraded" \? "warning" : "critical";/,
     );
   });
 
@@ -385,5 +385,110 @@ describe("admin card renders all four states (PR OPS-01)", () => {
   it("surfaces both thresholds so the operator can see the contract", () => {
     expect(ADMIN).toMatch(/degradedAfterMinutes/);
     expect(ADMIN).toMatch(/staleAfterMinutes/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 — the two P1s from the #569 review, pinned at the wiring layer.
+//   3774540589  measure cadence rather than only heartbeat recency
+//   3774540599  do not dedupe critical stale alerts against legacy warnings
+// ---------------------------------------------------------------------------
+describe("OPS-01.1 P1-A: the writer preserves real inter-run evidence", () => {
+  it("reads the value it is about to replace and carries its timestamp forward", () => {
+    // The heartbeat it writes must contain previousSuccessAt taken from the
+    // PRIOR stored heartbeat — that is what makes the interval real rather
+    // than inferred from how often the health check samples.
+    expect(HEARTBEAT).toMatch(/previousSuccessAt: prior\.at/);
+    const read = HEARTBEAT.indexOf("await redis.get<ReminderHeartbeat | string>(HEARTBEAT_KEY)");
+    const write = HEARTBEAT.indexOf("await redis.set(HEARTBEAT_KEY, next");
+    expect(read).toBeGreaterThan(-1);
+    expect(write).toBeGreaterThan(read);
+  });
+
+  it("still writes with the TTL (a heartbeat must expire, not linger forever)", () => {
+    expect(HEARTBEAT).toMatch(/ex: HEARTBEAT_TTL_SECONDS/);
+  });
+
+  it("the write path stays best-effort/fail-open", () => {
+    const fn =
+      HEARTBEAT.match(
+        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(fn).not.toBe("");
+    expect(fn).toMatch(/try\s*\{/);
+    expect(fn).toMatch(/catch/);
+    expect(fn).toMatch(/if \(!redis\) return/);
+  });
+
+  it("the classifier consumes BOTH axes, not recency alone", () => {
+    expect(HEARTBEAT).toMatch(/observedIntervalMinutes/);
+    expect(HEARTBEAT).toMatch(/worseHealth\(recencyStatus/);
+  });
+
+  it("cadence evidence is explicit, never fabricated", () => {
+    expect(HEARTBEAT).toMatch(/cadenceEvidence/);
+    expect(HEARTBEAT).toMatch(/"measured"|"unavailable"/);
+  });
+
+  it("the concurrency choice is documented rather than left implicit", () => {
+    expect(HEARTBEAT).toMatch(/CONCURRENCY MODEL/);
+  });
+
+  it("no new dependency and no database table for cadence", () => {
+    const code = codeOnly(HEARTBEAT);
+    expect(code).not.toMatch(/from "(?!@upstash\/redis|@\/lib|server-only)/);
+    expect(code).not.toMatch(/create table|CREATE TABLE/i);
+  });
+});
+
+describe("OPS-01.1 P1-B: dedupe reads severity, not just existence", () => {
+  it("the unresolved-alert lookup selects severity", () => {
+    expect(HEARTBEAT).toMatch(/\.select\("id, severity"\)/);
+  });
+
+  it("a critical open row anywhere in the set outranks warnings", () => {
+    expect(HEARTBEAT).toMatch(/severities\.includes\("critical"\)/);
+  });
+
+  it("the decider compares severity rather than a bare boolean", () => {
+    expect(HEARTBEAT).toMatch(/isAtLeastAsSevere\(existingUnresolved\.severity, severity\)/);
+  });
+
+  it("severity ordering is stated explicitly (warning < critical)", () => {
+    expect(HEARTBEAT).toMatch(/SEVERITY_RANK/);
+    expect(HEARTBEAT).toMatch(/warning: 0/);
+    expect(HEARTBEAT).toMatch(/critical: 1/);
+  });
+
+  // D6 — a failed dedupe lookup must fail OPEN (record), never silently drop
+  // a scheduler-down alert.
+  it("D6 a read error falls open toward recording the alert", () => {
+    // Slice to a STABLE end anchor. A non-greedy `\n  }` stops at the first
+    // nested block close, which sits before the catch — the slice would then
+    // silently exclude the very thing under test.
+    const start = HEARTBEAT.indexOf("let existingUnresolved");
+    const end = HEARTBEAT.indexOf("const plan = decideReminderSchedulerAlert");
+    const block = start > -1 && end > start ? HEARTBEAT.slice(start, end) : "";
+    expect(block).not.toBe("");
+    expect(block).toMatch(/\}\s*catch\s*\{\s*existingUnresolved = null;/);
+  });
+
+  // The legacy row is operator-owned history; making a test pass by rewriting
+  // it would be worse than letting the critical row sit beside it.
+  it("does NOT auto-resolve the legacy warning row", () => {
+    const code = codeOnly(HEARTBEAT);
+    expect(code).not.toMatch(/resolved_at:\s/);
+    expect(code).not.toMatch(/\.update\(/);
+  });
+});
+
+describe("OPS-01.1 admin card surfaces measured cadence honestly", () => {
+  it("shows the observed interval", () => {
+    expect(ADMIN).toMatch(/observedIntervalMinutes/);
+    expect(ADMIN).toMatch(/Observed cadence/);
+  });
+
+  it("says 'not yet measured' rather than implying a healthy cadence", () => {
+    expect(ADMIN).toMatch(/not yet measured/);
   });
 });
