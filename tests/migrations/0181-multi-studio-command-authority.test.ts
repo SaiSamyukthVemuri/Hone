@@ -251,3 +251,45 @@ describe("chain census — no unconstrained actor LIMIT 1 survives", () => {
     }
   });
 });
+
+describe("0181 — coalesce atomicity is actually closed", () => {
+  // 0167 claimed `for update` closed the read-then-insert race. It does not
+  // when the coalesce window is EMPTY — `for update` locks rows, and an empty
+  // result set locks nothing, so two overlapping FIRST taps both inserted.
+  // Raised by Codex on PR #573; proved with two real connections in
+  // tests/db/multi-studio-session-start-concurrency.db.test.ts, where removing
+  // the lock yields 2 sessions instead of 1.
+  it("serializes the coalesce identity with a transaction-scoped advisory lock", () => {
+    expect(EXEC).toMatch(/pg_catalog\.pg_advisory_xact_lock\(/);
+    // Keyed on the coalesce dimensions, not on something coarser.
+    const at = EXEC.indexOf("pg_advisory_xact_lock");
+    const key = EXEC.slice(at, EXEC.indexOf(");", at));
+    expect(key).toMatch(/v_studio_id/);
+    expect(key).toMatch(/p_client_id/);
+    expect(key).toMatch(/v_practitioner/);
+    expect(key).toMatch(/p_modality/);
+  });
+
+  it("takes the lock AFTER authority is proven and BEFORE the lookup", () => {
+    const actor = EXEC.indexOf("session_actor_practitioner(v_studio_id)");
+    const clientCheck = EXEC.indexOf("Client not found in this studio.");
+    const lock = EXEC.indexOf("pg_advisory_xact_lock");
+    const lookup = EXEC.indexOf("for update");
+    expect(actor).toBeGreaterThan(-1);
+    // An unauthenticated or non-member caller must never make the database
+    // take a lock on its behalf.
+    expect(lock).toBeGreaterThan(actor);
+    expect(lock).toBeGreaterThan(clientCheck);
+    expect(lock).toBeLessThan(lookup);
+  });
+
+  it("is transaction-scoped, so it cannot leak across a pooled connection", () => {
+    expect(EXEC).not.toMatch(/pg_advisory_lock\(/); // session-scoped variant
+    expect(EXEC).not.toMatch(/pg_advisory_unlock/); // nothing to release by hand
+  });
+
+  it("pg_catalog-qualifies the lock helpers, because search_path is empty", () => {
+    expect(EXEC).toMatch(/pg_catalog\.pg_advisory_xact_lock/);
+    expect(EXEC).toMatch(/pg_catalog\.hashtextextended/);
+  });
+});

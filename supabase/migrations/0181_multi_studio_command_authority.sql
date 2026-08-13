@@ -81,11 +81,14 @@ set local lock_timeout = '5s';
 -- ---------------------------------------------------------------------------
 -- COMMAND — start (or reuse) a session IN AN EXPLICIT, PROVEN STUDIO.
 --
--- Body is 0167's, unchanged except for the actor/studio resolution at the top.
--- Every downstream invariant is preserved verbatim: client-in-studio, the three
--- appointment lineage checks, the FOR UPDATE coalesce window keyed on
--- (studio, client, practitioner, modality, time), NULL-only appointment-link
--- promotion, and electrolysis-only exactly-one-active-plan auto-attach.
+-- Body is 0167's, with TWO changes: the actor/studio resolution at the top, and
+-- an advisory lock that makes the coalesce window's stated guarantee true (see
+-- the comment on it below — 0167's `for update` could not close the race when
+-- the window was EMPTY). Every other invariant is preserved verbatim:
+-- client-in-studio, the three appointment lineage checks, the coalesce window
+-- keyed on (studio, client, practitioner, modality, time), NULL-only
+-- appointment-link promotion, and electrolysis-only exactly-one-active-plan
+-- auto-attach. Nothing is weakened; one thing is strengthened.
 -- ---------------------------------------------------------------------------
 create or replace function public.start_session(
   p_client_id        uuid,
@@ -159,9 +162,37 @@ begin
     end if;
   end if;
 
-  -- Coalesce window. FOR UPDATE closes the read-then-insert race that could
-  -- produce two sessions for one visit. Keyed on the PROVEN studio, so a reuse
-  -- can never cross tenants.
+  -- SERIALIZE THE COALESCE IDENTITY BEFORE LOOKING.
+  --
+  -- 0167 claimed "FOR UPDATE closes the read-then-insert race that could
+  -- produce two sessions for one visit". That claim is only true when the
+  -- window already CONTAINS a row: `for update` locks rows, and an empty
+  -- result set locks nothing. Two overlapping first taps therefore both saw an
+  -- empty window and both inserted, and no unique constraint stops them — i.e.
+  -- the guarantee failed in exactly the double-tap case the coalescing exists
+  -- to prevent. Carried into this file verbatim, so the false claim is fixed
+  -- here rather than re-published.
+  --
+  -- A transaction-scoped advisory lock keyed on the COALESCE DIMENSIONS
+  -- (studio, client, practitioner, modality) makes the lookup-then-insert
+  -- atomic for one visit while leaving every other start unblocked. Taken
+  -- AFTER authority is proven, so an unauthenticated or non-member caller can
+  -- never make the database take a lock on its behalf; released automatically
+  -- at commit or rollback. It is the only advisory lock in the session command
+  -- surface and it is taken before any row lock, so it introduces no ordering
+  -- cycle. pg_catalog-qualified because search_path is empty.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      v_studio_id::text || ':' || p_client_id::text || ':' ||
+      v_practitioner::text || ':' || p_modality,
+      0
+    )
+  );
+
+  -- Coalesce window. Under the lock above, the read and the insert below are
+  -- one atomic decision for this visit: a concurrent caller blocks here and
+  -- then finds — and reuses — the row the first one created. Keyed on the
+  -- PROVEN studio, so a reuse can never cross tenants.
   select s.id, s.appointment_id
     into v_session_id, v_existing_appt
     from public.sessions s
