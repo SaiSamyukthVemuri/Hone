@@ -543,7 +543,7 @@ export default async function DashboardPage({
                   }
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
-                  paymentState={paymentStates.get(appt.id) ?? "no_session"}
+                  paymentState={paymentStates.get(appt.id) ?? "unavailable"}
                   prepMemory={
                     prepMemoryByAppointment.get(appt.id) ?? {
                       memory: null,

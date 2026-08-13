@@ -69,12 +69,29 @@ describe("loader is bounded + tenant-scoped (no N+1, no full history)", () => {
     // No query lives inside a per-appointment loop.
     // Bound the slice to the loop BODY. An unbounded slice runs to end-of-file
     // and would pick up the next function's queries — a false positive.
+    // The free lookup now returns a discriminated result, so the old
+    // `return free;` anchor no longer exists. Anchor on the current return.
     const loopStart = SRC.indexOf("for (const a of appts)");
-    const loopEnd = SRC.indexOf("return free;", loopStart);
+    const loopEnd = SRC.indexOf(
+      "return { ok: true, freeAppointmentIds: free };",
+      loopStart,
+    );
     expect(loopStart).toBeGreaterThan(-1);
     expect(loopEnd).toBeGreaterThan(loopStart);
     const loop = SRC.slice(loopStart, loopEnd);
+    expect(loop.length).toBeGreaterThan(80); // slice is real, not empty
     expect(loop).not.toMatch(/await supabase|\.from\(/);
+
+    // The per-appointment combine loop must not query either.
+    // The braced form: the bare `for (const apptId of ids) out.set(...)`
+    // one-liner is the unavailable early-return, not the combine loop.
+    const combineStart = SRC.indexOf("for (const apptId of ids) {");
+    const combineEnd = SRC.indexOf("return out;", combineStart);
+    expect(combineStart).toBeGreaterThan(-1);
+    expect(combineEnd).toBeGreaterThan(combineStart);
+    const combine = SRC.slice(combineStart, combineEnd);
+    expect(combine.length).toBeGreaterThan(80);
+    expect(combine).not.toMatch(/await supabase|\.from\(/);
   });
   it("is studio-scoped and filtered to session_payment (tenant isolation)", () => {
     expect(SRC).toMatch(/\.eq\("studio_id", studioId\)/);

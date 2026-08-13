@@ -33,8 +33,6 @@ function session(over: Partial<RecordedSession> = {}): RecordedSession {
     hasTreatmentArea: true,
     aftercareMarked: true,
     probeLotMissing: false,
-    nextVisitNote: null,
-    hasUpcomingAppointment: false,
     ...over,
   };
 }
@@ -101,28 +99,23 @@ describe("buildMissingRecordsAssistant item types", () => {
   // memory, not a missing record. The assistant must not manufacture a task
   // from it — the note itself is untouched and still shows in Today/Remember,
   // Treatment Memory, appointment prep and history.
-  it("P2 does NOT flag a for-next-visit note with no upcoming appointment", () => {
+  // Review 3779063526. This used to be proved by passing a plan into the
+  // builder and asserting nothing came out. The plan fields are gone from this
+  // loader entirely, so the guarantee is now STRUCTURAL and strictly stronger:
+  // the builder cannot express a plan, so it cannot manufacture a task from one
+  // and cannot transport the text.
+  it("P2 a plan for the next visit cannot even reach this builder", () => {
     const built = buildMissingRecordsAssistant({
       unchartedAppointments: [],
-      sessions: [
-        session({
-          nextVisitNote: "Try lower intensity on the upper lip next time.",
-          hasUpcomingAppointment: false,
-        }),
-      ],
+      sessions: [session({})],
       incompleteIntakes: [],
     });
     expect(built.items).toHaveLength(0);
     expect(built.totalFound).toBe(0);
-  });
 
-  it("does NOT flag follow-up when an upcoming appointment exists", () => {
-    const a = build({
-      sessions: [
-        session({ nextVisitNote: "Shorter passes.", hasUpcomingAppointment: true }),
-      ],
-    });
-    expect(a.hasItems).toBe(false);
+    const shape = session({}) as Record<string, unknown>;
+    expect(Object.keys(shape)).not.toContain("nextVisitNote");
+    expect(Object.keys(shape)).not.toContain("hasUpcomingAppointment");
   });
 });
 
@@ -132,12 +125,7 @@ describe("priority order, dedup, and cap", () => {
       unchartedAppointments: [appt({ appointmentId: "ap1", clientId: "c1" })],
       sessions: [
         session({ sessionId: "s2", clientId: "c2", aftercareMarked: false }),
-        session({
-          sessionId: "s3",
-          clientId: "c3",
-          nextVisitNote: "follow",
-          hasUpcomingAppointment: false,
-        }),
+        session({ sessionId: "s3", clientId: "c3" }),
       ],
       incompleteIntakes: [intake({ clientId: "c4" })],
     });
@@ -199,8 +187,6 @@ describe("safe routes and wording", () => {
         session({
           sessionId: "s3",
           clientId: "c3",
-          nextVisitNote: "x",
-          hasUpcomingAppointment: false,
         }),
       ],
       incompleteIntakes: [intake({ clientId: "c4" })],
@@ -218,7 +204,7 @@ describe("safe routes and wording", () => {
       unchartedAppointments: [appt()],
       sessions: [
         session({ sessionId: "s2", clientId: "c2", aftercareMarked: false, probeLotMissing: true }),
-        session({ sessionId: "s3", clientId: "c3", nextVisitNote: "x", hasUpcomingAppointment: false }),
+        session({ sessionId: "s3", clientId: "c3" }),
       ],
       incompleteIntakes: [intake({ clientId: "c4" })],
     });

@@ -67,7 +67,18 @@ export type AttentionBlockInput = {
 export type ClientNeedingAttention = {
   clientId: string;
   clientName: string;
-  latestDate: string;
+  // Review 3779063515. The timestamp of the SIGNAL THAT PUT THIS ROW ON THE
+  // LIST — a caution or a notable reaction — never the client's newest
+  // session.
+  //
+  // This deliberately REPLACES the old `latestDate` rather than sitting beside
+  // it. A generic "latest session date" is exactly the alias through which a
+  // plan-only session kept reaching ranking after plans were removed from
+  // inclusion and from the sort key: client A (caution Jan 1 + plan-only
+  // Jan 10) outranked client B (caution Jan 5), and at the bounded disclosure
+  // limit A's stale caution could displace B's newer genuine one. Leaving a
+  // second name in place would leave that leak available.
+  attentionDate: string;
   hasWatch: boolean;
   hasPlan: boolean;
   notableReactionLabel: string | null;
@@ -100,7 +111,10 @@ export function buildClientsNeedingAttention(
 
   type Acc = {
     clientName: string;
-    latestDate: string;
+    // Dates of the ACTUAL To-do signals, tracked separately. A session that
+    // contributes only a plan sets neither.
+    watchDate: string | null;
+    reactionDate: string | null;
     hasWatch: boolean;
     hasPlan: boolean;
     watchText: string | null;
@@ -114,7 +128,8 @@ export function buildClientsNeedingAttention(
   for (const s of sessionsNewestFirst) {
     const acc = byClient.get(s.client_id) ?? {
       clientName: s.client_name,
-      latestDate: s.started_at,
+      watchDate: null,
+      reactionDate: null,
       hasWatch: false,
       hasPlan: false,
       watchText: null,
@@ -136,7 +151,10 @@ export function buildClientsNeedingAttention(
             b.reaction_type,
             b.observation_chips_list ?? [],
           );
-          if (label) acc.notableReactionLabel = label;
+          if (label) {
+            acc.notableReactionLabel = label;
+            acc.reactionDate = s.started_at;
+          }
         }
         if (acc.latestToleranceRating == null && b.tolerance_rating != null) {
           acc.latestToleranceRating = b.tolerance_rating;
@@ -168,6 +186,7 @@ export function buildClientsNeedingAttention(
       if (cautionBlock) {
         acc.watchSourceFound = true;
         acc.hasWatch = true;
+        acc.watchDate = s.started_at;
         acc.watchText =
           cautionBlock.caution_note?.trim() || "Previously noted";
       }
@@ -200,7 +219,16 @@ export function buildClientsNeedingAttention(
     .map(([clientId, a]) => ({
       clientId,
       clientName: a.clientName,
-      latestDate: a.latestDate,
+      // The later of the genuine signals. Both a caution and a notable
+      // reaction are real To-do signals, so the honest "when did this client
+      // last need attention" is the newer of the two. A plan can never
+      // contribute, because plan-only sessions set neither date.
+      attentionDate:
+        a.watchDate && a.reactionDate
+          ? a.watchDate > a.reactionDate
+            ? a.watchDate
+            : a.reactionDate
+          : (a.watchDate ?? a.reactionDate ?? ""),
       hasWatch: a.hasWatch,
       hasPlan: a.hasPlan,
       notableReactionLabel: a.notableReactionLabel,
@@ -222,7 +250,7 @@ export function buildClientsNeedingAttention(
       // still push reaction-only clients down the list for a reason that is
       // not work. Watch note first, then most recent.
       if (x.hasWatch !== y.hasWatch) return x.hasWatch ? -1 : 1;
-      return x.latestDate < y.latestDate ? 1 : -1;
+      return x.attentionDate < y.attentionDate ? 1 : -1;
     });
 
   return {

@@ -15,7 +15,14 @@ export type AppointmentPaymentState =
   | "refunded"
   | "free" // FREE-01: the studio deliberately prices this service at $0
   | "chargeable" // has a session, no terminal charge yet (or a retryable failure)
-  | "no_session"; // no treatment session for the appointment yet
+  | "no_session" // no treatment session for the appointment yet
+  // Reviews 3779063521 / 3779063523. A read this state DEPENDS ON failed, so
+  // Hone does not know. This is deliberately its own state rather than being
+  // folded into no_session / chargeable / free: an absence produced by a failed
+  // query is not a fact, and each of those three is an affirmative claim.
+  // Collapsing a failure into any of them previously rendered Checkout over an
+  // unknown price, or hid a pending/paid/refunded charge behind "no session".
+  | "unavailable";
 
 type AttemptRow = { status: string | null; refund_status: string | null };
 
@@ -52,13 +59,20 @@ export function deriveAppointmentPaymentState(
 // on the Dashboard and a free visit on the session page can never disagree —
 // and so custom-pricing precedence is honoured here too (a $0 menu service with
 // a current positive client price is chargeable, not free).
+// The free lookup must be able to say "I could not find out". Returning a bare
+// Set made a failed read indistinguishable from an authoritative "nothing here
+// is free", so the caller silently rendered Checkout without knowing the price.
+export type FreeAppointmentIdsLoad =
+  | { ok: true; freeAppointmentIds: Set<string> }
+  | { ok: false };
+
 async function getFreeAppointmentIds(
   studioId: string,
   appointmentIds: ReadonlyArray<string>,
   studioTimezone: string,
-): Promise<Set<string>> {
+): Promise<FreeAppointmentIdsLoad> {
   const free = new Set<string>();
-  if (appointmentIds.length === 0) return free;
+  if (appointmentIds.length === 0) return { ok: true, freeAppointmentIds: free };
   const supabase = await createClient();
 
   // Review 3778160194 — same class as the authoritative loader (3777890267),
@@ -79,14 +93,14 @@ async function getFreeAppointmentIds(
     .select("id, client_id, service_id, duration_minutes")
     .eq("studio_id", studioId)
     .in("id", [...appointmentIds]);
-  if (apptError) return free;
+  if (apptError) return { ok: false };
   const appts = (apptRows ?? []) as Array<{
     id: string;
     client_id: string | null;
     service_id: string | null;
     duration_minutes: number | null;
   }>;
-  if (appts.length === 0) return free;
+  if (appts.length === 0) return { ok: true, freeAppointmentIds: free };
 
   const serviceIds = [...new Set(appts.map((a) => a.service_id).filter(Boolean))] as string[];
   const clientIds = [...new Set(appts.map((a) => a.client_id).filter(Boolean))] as string[];
@@ -98,7 +112,7 @@ async function getFreeAppointmentIds(
         .eq("studio_id", studioId)
         .in("id", serviceIds)
     : { data: [] as never[], error: null };
-  if (serviceError) return free;
+  if (serviceError) return { ok: false };
   const serviceById = new Map<string, { name: string; price_cents: number | null }>();
   for (const r of (serviceRows ?? []) as Array<{
     id: string;
@@ -117,7 +131,7 @@ async function getFreeAppointmentIds(
     : { data: [] as never[], error: null };
   // The one Codex named: without this, a positive custom price silently
   // disappears and its $0 menu service reads as free.
-  if (pricingError) return free;
+  if (pricingError) return { ok: false };
   const pricingByClient = new Map<
     string,
     Array<{ service_name: string; price_cents: number; notes: string | null; effective_from: string }>
@@ -150,7 +164,7 @@ async function getFreeAppointmentIds(
     });
     if (result.kind === "free") free.add(a.id);
   }
-  return free;
+  return { ok: true, freeAppointmentIds: free };
 }
 
 export async function getAppointmentPaymentStates(
@@ -215,23 +229,61 @@ export async function getAppointmentPaymentStates(
     }
   }
 
-  // Freeness is only applied when we can see the transaction state it must
-  // rank below. Untrustworthy reads fall back to the neutral state, which
-  // claims nothing: not "No payment required", and not "Paid".
   const transactionStateTrusted = !sessionError && !attemptsUntrusted;
-  const freeIds = transactionStateTrusted
-    ? await getFreeAppointmentIds(studioId, ids, studioTimezone)
-    : new Set<string>();
+
+  // Reviews 3779063521 / 3779063523. THREE STAGES, and only trusted facts are
+  // ever combined. Query-error awareness lives HERE, at the I/O boundary; the
+  // pure reducer below stays free of Supabase concepts.
+  //
+  //   1. transaction truth  — if either read failed we cannot know whether a
+  //      pending / succeeded / refunded attempt exists, so every appointment is
+  //      unavailable. Never assume absence.
+  //   2. terminal states win — money that has actually moved outranks pricing,
+  //      so a known Processing / Paid / Refunded is preserved even when the
+  //      price cannot be loaded. The unavailable state is only for facts that
+  //      genuinely depend on the failed read.
+  //   3. pricing truth      — for the remaining appointments the answer depends
+  //      on the price, so a failed pricing read is unavailable rather than a
+  //      confident "chargeable".
+  if (!transactionStateTrusted) {
+    for (const apptId of ids) out.set(apptId, "unavailable");
+    return out;
+  }
+
+  const freeLoad = await getFreeAppointmentIds(studioId, ids, studioTimezone);
 
   for (const apptId of ids) {
+    const hasSession = apptHasSession.has(apptId);
+    const attempts = attemptsByAppt.get(apptId) ?? [];
+    // Stage 2: resolved WITHOUT freeness, purely to see whether transaction
+    // truth already settles this appointment.
+    const transactionOnly = deriveAppointmentPaymentState(
+      hasSession,
+      attempts,
+      false,
+    );
+    if (
+      transactionOnly === "paid" ||
+      transactionOnly === "refunded" ||
+      transactionOnly === "processing"
+    ) {
+      out.set(apptId, transactionOnly);
+      continue;
+    }
+    // Stage 3: everything left depends on the current price.
+    if (!freeLoad.ok) {
+      out.set(apptId, "unavailable");
+      continue;
+    }
     out.set(
       apptId,
       deriveAppointmentPaymentState(
-        apptHasSession.has(apptId),
-        attemptsByAppt.get(apptId) ?? [],
-        freeIds.has(apptId),
+        hasSession,
+        attempts,
+        freeLoad.freeAppointmentIds.has(apptId),
       ),
     );
   }
+
   return out;
 }

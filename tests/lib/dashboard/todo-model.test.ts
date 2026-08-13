@@ -95,7 +95,7 @@ function attentionClient(
   return {
     clientId,
     clientName,
-    latestDate: "2026-08-04T09:00:00.000Z",
+    attentionDate: "2026-08-04T09:00:00.000Z",
     hasWatch: false,
     hasPlan: false,
     notableReactionLabel: null,

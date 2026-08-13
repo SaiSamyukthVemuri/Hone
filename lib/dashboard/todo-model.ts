@@ -395,7 +395,10 @@ export function buildDashboardTodo(
       detail: detail || null,
       action: { href: `/clients/${c.clientId}`, label: "Open client" },
       priority: TODO_PRIORITY.treatment_memory,
-      occurredAt: c.latestDate,
+      // Review 3779063515. The To-do sort also orders by occurredAt, so this
+      // must be the attention SIGNAL's date, not the client's newest session —
+      // otherwise a plan-only session reorders the To-do list too.
+      occurredAt: c.attentionDate,
       tone: "normal",
     });
   }

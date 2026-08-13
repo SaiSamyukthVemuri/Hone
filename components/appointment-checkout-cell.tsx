@@ -57,6 +57,22 @@ export function AppointmentCheckoutCell({
     );
   }
 
+  // Reviews 3779063521 / 3779063523. A read this state depends on failed, so
+  // Hone does not know. Claim nothing: no Checkout, no "No payment required",
+  // no "Paid"/"Processing"/"Refunded", no "no session". The money-moving
+  // prepare/execute actions remain the real safety boundary and fail closed on
+  // their own; this is presentation honesty.
+  if (paymentState === "unavailable") {
+    return (
+      <span
+        data-testid="appointment-payment-unavailable"
+        className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+      >
+        Payment status unavailable
+      </span>
+    );
+  }
+
   // chargeable or no_session → the shared Checkout entry. The modal resolves the
   // accurate state (and routes to charting when there is no session yet).
   return (
