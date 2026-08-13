@@ -140,11 +140,25 @@ export async function recordReminderRunSuccess(
     const redis = getRedis();
     if (!redis) return;
     // The value we are about to replace IS the previous successful run.
-    const prior = coerceHeartbeat(
-      await redis.get<ReminderHeartbeat | string>(HEARTBEAT_KEY),
-    );
-    const next: ReminderHeartbeat = prior?.at
-      ? { ...heartbeat, previousSuccessAt: prior.at }
+    //
+    // The read is isolated in its OWN try/catch on purpose. Cadence evidence is
+    // a NICE-TO-HAVE; recording that this run succeeded is not. If the read were
+    // inside the same try as the write, a transient Redis read failure would
+    // skip the write entirely — so a perfectly healthy cron would stop
+    // refreshing its heartbeat and could age itself into a stale/critical alert
+    // purely because reads were flaky. Degrade to "no cadence evidence" instead,
+    // and always write.
+    let previousSuccessAt: string | undefined;
+    try {
+      const prior = coerceHeartbeat(
+        await redis.get<ReminderHeartbeat | string>(HEARTBEAT_KEY),
+      );
+      previousSuccessAt = prior?.at;
+    } catch {
+      previousSuccessAt = undefined;
+    }
+    const next: ReminderHeartbeat = previousSuccessAt
+      ? { ...heartbeat, previousSuccessAt }
       : heartbeat;
     await redis.set(HEARTBEAT_KEY, next, { ex: HEARTBEAT_TTL_SECONDS });
   } catch {
@@ -179,6 +193,13 @@ export type ReminderSchedulerHealth =
 // means the classifier had ONLY recency to go on and must not imply otherwise.
 export type ReminderCadenceEvidence = "measured" | "unavailable";
 
+// Which axis drove an unhealthy status. Carried so the admin card and the ops
+// alert can describe the ACTUAL cause: a cadence-only failure (last success 10
+// minutes ago, but 40 minutes between the last two runs) must not be reported
+// as "last success was over 30 minutes ago", which contradicts the displayed
+// age and sends the operator to the wrong place.
+export type ReminderFailingAxis = "recency" | "cadence" | "both";
+
 export type ReminderSchedulerStatus = {
   status: ReminderSchedulerHealth;
   lastSuccessAt: string | null;
@@ -187,6 +208,8 @@ export type ReminderSchedulerStatus = {
   previousSuccessAt: string | null;
   observedIntervalMinutes: number | null;
   cadenceEvidence: ReminderCadenceEvidence;
+  // null when healthy/missing; otherwise the axis (or axes) that failed.
+  failingAxis: ReminderFailingAxis | null;
   cadenceMinutes: number;
   degradedAfterMinutes: number;
   staleAfterMinutes: number;
@@ -260,6 +283,7 @@ export function computeReminderSchedulerStatus(
       previousSuccessAt: null,
       observedIntervalMinutes: null,
       cadenceEvidence: "unavailable",
+      failingAxis: null,
       ...base,
     };
   }
@@ -276,10 +300,24 @@ export function computeReminderSchedulerStatus(
     : null;
 
   const recencyStatus = classifyMinutes(ageMinutes);
-  const status =
+  const cadenceStatus =
     observedIntervalMinutes === null
-      ? recencyStatus
-      : worseHealth(recencyStatus, classifyMinutes(observedIntervalMinutes));
+      ? null
+      : classifyMinutes(observedIntervalMinutes);
+  const status =
+    cadenceStatus === null ? recencyStatus : worseHealth(recencyStatus, cadenceStatus);
+
+  // Attribute the failure so downstream copy can name the real cause.
+  const recencyFailed = recencyStatus !== "healthy";
+  const cadenceFailed = cadenceStatus !== null && cadenceStatus !== "healthy";
+  const failingAxis: ReminderFailingAxis | null =
+    status === "healthy"
+      ? null
+      : recencyFailed && cadenceFailed
+        ? "both"
+        : cadenceFailed
+          ? "cadence"
+          : "recency";
 
   return {
     status,
@@ -288,6 +326,7 @@ export function computeReminderSchedulerStatus(
     previousSuccessAt: cadenceMeasured ? priorRaw! : null,
     observedIntervalMinutes,
     cadenceEvidence: cadenceMeasured ? "measured" : "unavailable",
+    failingAxis,
     ...base,
   };
 }
@@ -447,6 +486,7 @@ export function reminderSchedulerAlertSafeDetails(
     previous_success_at: status.previousSuccessAt,
     observed_interval_minutes: status.observedIntervalMinutes,
     cadence_evidence: status.cadenceEvidence,
+    failing_axis: status.failingAxis,
     cadence_minutes: status.cadenceMinutes,
     degraded_after_minutes: status.degradedAfterMinutes,
     stale_after_minutes: status.staleAfterMinutes,
@@ -454,18 +494,30 @@ export function reminderSchedulerAlertSafeDetails(
   };
 }
 
+// OPS-01.1 (review 3774838345): the message must name the axis that ACTUALLY
+// failed. A cadence-only failure (last success 10 minutes ago, but 40 minutes
+// between the last two runs) previously read "last success was over 30 minutes
+// ago", which contradicted the age in the same alert and pointed the operator
+// at the wrong symptom.
 function reminderSchedulerAlertMessage(
-  status: "degraded" | "stale" | "missing",
+  status: ReminderSchedulerStatus,
 ): string {
   const remedy =
     "Check the external scheduler (cron-job.org), the CRON_SECRET configuration, and recent Vercel logs; resolve this alert after the scheduler is confirmed healthy.";
-  if (status === "missing") {
+  if (status.status === "missing") {
     return `The external appointment-reminder scheduler has no recorded successful run (missing heartbeat). Appointment reminders may be silently stopped. ${remedy}`;
   }
-  if (status === "degraded") {
-    return `The external appointment-reminder scheduler is running slower than its required cadence (last success older than twice the expected interval). The 2h reminder window is only as wide as twice the cadence, so at this rate some appointments can stop receiving a 2h reminder. ${remedy}`;
-  }
-  return `The external appointment-reminder scheduler heartbeat is stale (no successful run within the stale threshold). Appointment reminders may be delayed or stopped. ${remedy}`;
+  const cause =
+    status.failingAxis === "cadence"
+      ? `the last two successful runs were ${status.observedIntervalMinutes} minutes apart (the most recent was only ${status.ageMinutes} minutes ago, so the scheduler is still firing — just too slowly)`
+      : status.failingAxis === "both"
+        ? `the last successful run was ${status.ageMinutes} minutes ago AND the last two runs were ${status.observedIntervalMinutes} minutes apart`
+        : `the last successful run was ${status.ageMinutes} minutes ago`;
+  const impact =
+    "The 2h reminder window is only as wide as twice the expected cadence, so at this rate some appointments can stop receiving a 2h reminder.";
+  return status.status === "degraded"
+    ? `The external appointment-reminder scheduler is not meeting its required cadence: ${cause}. ${impact} ${remedy}`
+    : `The external appointment-reminder scheduler is failing its cadence contract: ${cause}. Appointment reminders may be delayed or stopped. ${remedy}`;
 }
 
 // Best-effort, fail-open. Reads the heartbeat, classifies, and records ONE
@@ -540,7 +592,7 @@ export async function recordReminderSchedulerHealthAlert(
   await recordOpsAlert({
     severity: plan.severity,
     event: plan.event,
-    message: reminderSchedulerAlertMessage(unhealthy),
+    message: reminderSchedulerAlertMessage(status),
     route: HEALTH_ALERT_ROUTE,
     safeDetails: reminderSchedulerAlertSafeDetails(status, nowMs),
   });

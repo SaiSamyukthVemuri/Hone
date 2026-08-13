@@ -398,7 +398,7 @@ describe("OPS-01.1 P1-A: the writer preserves real inter-run evidence", () => {
     // The heartbeat it writes must contain previousSuccessAt taken from the
     // PRIOR stored heartbeat — that is what makes the interval real rather
     // than inferred from how often the health check samples.
-    expect(HEARTBEAT).toMatch(/previousSuccessAt: prior\.at/);
+    expect(HEARTBEAT).toMatch(/previousSuccessAt = prior\?\.at/);
     const read = HEARTBEAT.indexOf("await redis.get<ReminderHeartbeat | string>(HEARTBEAT_KEY)");
     const write = HEARTBEAT.indexOf("await redis.set(HEARTBEAT_KEY, next");
     expect(read).toBeGreaterThan(-1);
@@ -490,5 +490,67 @@ describe("OPS-01.1 admin card surfaces measured cadence honestly", () => {
 
   it("says 'not yet measured' rather than implying a healthy cadence", () => {
     expect(ADMIN).toMatch(/not yet measured/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 follow-up — Codex review on the OPS-01.1 head.
+//   3774838342 (P2) refresh the heartbeat even when the prior read fails
+//   3774838345 (P2) distinguish cadence failures from recency failures
+// ---------------------------------------------------------------------------
+describe("P2 3774838342: a failed prior read must not discard the run's heartbeat", () => {
+  it("the prior read has its OWN try/catch, separate from the write", () => {
+    const fn =
+      HEARTBEAT.match(
+        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(fn).not.toBe("");
+    // inner catch degrades cadence evidence only
+    expect(fn).toMatch(
+      /try \{[\s\S]*?redis\.get<ReminderHeartbeat \| string>\(HEARTBEAT_KEY\)[\s\S]*?\} catch \{\s*previousSuccessAt = undefined;\s*\}/,
+    );
+  });
+
+  it("the write happens AFTER the isolated read block, unconditionally", () => {
+    const fn =
+      HEARTBEAT.match(
+        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    const innerCatch = fn.indexOf("previousSuccessAt = undefined;");
+    const write = fn.indexOf("await redis.set(HEARTBEAT_KEY, next");
+    expect(innerCatch).toBeGreaterThan(-1);
+    expect(write).toBeGreaterThan(innerCatch);
+  });
+
+  it("cadence evidence is optional; recording the success is not", () => {
+    expect(HEARTBEAT).toMatch(/NICE-TO-HAVE/);
+  });
+});
+
+describe("P2 3774838345: operator copy names the axis that failed", () => {
+  it("the status carries a failing-axis attribution", () => {
+    expect(HEARTBEAT).toMatch(/failingAxis/);
+    expect(HEARTBEAT).toMatch(/ReminderFailingAxis/);
+  });
+
+  it("the alert message branches on the failing axis", () => {
+    expect(HEARTBEAT).toMatch(/status\.failingAxis === "cadence"/);
+    // and it takes the whole status, not just the bare health word
+    expect(HEARTBEAT).toMatch(
+      /function reminderSchedulerAlertMessage\(\s*status: ReminderSchedulerStatus,?\s*\)/,
+    );
+  });
+
+  it("a cadence-only message does not claim the last success is old", () => {
+    const fn =
+      HEARTBEAT.match(
+        /function reminderSchedulerAlertMessage\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(fn).toMatch(/still firing/);
+  });
+
+  it("the admin card branches on the failing axis too", () => {
+    expect(ADMIN).toMatch(/status\.failingAxis === "cadence"/);
+    expect(ADMIN).toMatch(/still firing/);
   });
 });

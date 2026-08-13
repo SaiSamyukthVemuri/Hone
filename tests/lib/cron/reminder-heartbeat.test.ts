@@ -329,6 +329,7 @@ describe("reminderSchedulerAlertSafeDetails is non-sensitive", () => {
         "cadence_minutes",
         "checked_at",
         "degraded_after_minutes",
+        "failing_axis",
         "last_success_at",
         "observed_interval_minutes",
         "previous_success_at",
@@ -559,6 +560,53 @@ describe("P1-A safe details carry the cadence evidence, non-sensitively", () => 
     const serialized = JSON.stringify(reminderSchedulerAlertSafeDetails(s, msAt("09:10")));
     expect(serialized).not.toMatch(
       /cron_secret|authorization|bearer|email|phone|\bname\b|client|token|message|body|reminder_text/i,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 follow-up, Codex review 3774838345 (P2):
+// the reported cause must match the axis that actually failed. A cadence-only
+// failure previously read "last success was over 30 minutes ago" while the same
+// alert displayed an age of 10 minutes.
+// ---------------------------------------------------------------------------
+describe("failing axis is attributed, so operator copy cannot contradict itself", () => {
+  it("cadence-only failure is attributed to cadence, not recency", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00", "08:20"), msAt("09:10"));
+    expect(s.ageMinutes).toBe(10);
+    expect(s.observedIntervalMinutes).toBe(40);
+    expect(s.status).toBe("degraded");
+    expect(s.failingAxis).toBe("cadence");
+  });
+
+  it("recency-only failure is attributed to recency", () => {
+    const s = computeReminderSchedulerStatus(beat("08:00", "07:45"), msAt("09:00"));
+    expect(s.observedIntervalMinutes).toBe(15);
+    expect(s.failingAxis).toBe("recency");
+  });
+
+  it("both-bad is attributed to both", () => {
+    const s = computeReminderSchedulerStatus(beat("08:00", "07:00"), msAt("09:00"));
+    expect(s.failingAxis).toBe("both");
+  });
+
+  it("healthy and missing have no failing axis", () => {
+    expect(
+      computeReminderSchedulerStatus(beat("09:00", "08:45"), msAt("09:10")).failingAxis,
+    ).toBeNull();
+    expect(computeReminderSchedulerStatus(null, msAt("09:00")).failingAxis).toBeNull();
+  });
+
+  it("no-cadence-evidence failures attribute to recency (never a phantom cadence)", () => {
+    const s = computeReminderSchedulerStatus(beat("08:00"), msAt("09:00"));
+    expect(s.cadenceEvidence).toBe("unavailable");
+    expect(s.failingAxis).toBe("recency");
+  });
+
+  it("safe_details carry the attribution", () => {
+    const s = computeReminderSchedulerStatus(beat("09:00", "08:20"), msAt("09:10"));
+    expect(reminderSchedulerAlertSafeDetails(s, msAt("09:10")).failing_axis).toBe(
+      "cadence",
     );
   });
 });
