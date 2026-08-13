@@ -64,7 +64,6 @@ import {
   selectCurrentIntakeByClient,
   type TodayIntakeRow,
 } from "@/lib/dashboard/today-intake";
-import { PilotFeedbackPrompt } from "./pilot-feedback-prompt";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { DashboardTodoList } from "./todo-list";
@@ -322,7 +321,7 @@ export default async function DashboardPage({
 
   // Quick checkout (Chloe): one bounded, tenant-scoped batch loader for the
   // visible appointments' payment state — no per-row query, no full history.
-  const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds);
+  const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds, studio.timezone);
 
   const beforeTodayPreviews = await getBeforeTodayPreviews(
     studio.id,
@@ -558,14 +557,9 @@ export default async function DashboardPage({
             ))}
           </ul>
         )}
-        {/* The pilot feedback prompt used to live at the foot of the Daily Prep
-            Brief card. That card is gone, so it moves here — ONCE, at the foot
-            of the combined section, never once per appointment. Same
-            surface="daily_prep" contract, so pilot feedback stays comparable
-            across the change. */}
-        {visibleAppointments.length > 0 && (
-          <PilotFeedbackPrompt surface="daily_prep" />
-        )}
+        {/* DASH-TRUTH-04: the quiet pilot feedback footer is gone from Today.
+            The daily workspace should not ask a practitioner to email the
+            founder; that was pilot tooling, not product. */}
       </section>
 
 
@@ -595,13 +589,8 @@ export default async function DashboardPage({
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">To do</h2>
         <DashboardTodoList todo={dashboardTodo} />
-        {/* The pilot feedback prompt that lived at the foot of the retired
-            Follow-up assistant card. surface="follow_up_assistant" is an
-            UNCHANGED pilot contract — keeping the same surface id is what
-            makes feedback comparable across this restructure, exactly as
-            surface="daily_prep" was kept across the Daily Prep retirement.
-            Rendered ONCE, at the foot of the section, never per row. */}
-        <PilotFeedbackPrompt surface="follow_up_assistant" />
+        {/* DASH-TRUTH-04: the quiet pilot feedback footer is gone from To do
+            as well. See the note at the foot of this file. */}
       </section>
 
       {/* Relationship context, BELOW the operational work — never above it. */}
@@ -682,10 +671,17 @@ export default async function DashboardPage({
 
           CHLOE D4 — the "Pilot learning" card ("…Send it to Sam", "Send
           feedback", "Know another electrologist?") was PR #250 pilot tooling
-          and no longer belongs in a practitioner's daily workspace. It is
-          removed here and its component file is deleted; the shared
-          buildPilotFeedbackMailto helper stays, because the quiet
-          <PilotFeedbackPrompt> footers above still use it. */}
+          and no longer belongs in a practitioner's daily workspace. It was
+          removed earlier and its component file deleted.
+
+          DASH-TRUTH-04 finishes the job: the two quiet <PilotFeedbackPrompt>
+          footers that survived under Today and To do are now gone too. The
+          daily product no longer routes practitioner feedback directly to Sam.
+          The PilotFeedbackPrompt component and the shared
+          buildPilotFeedbackMailto helper are deliberately NOT deleted — this
+          requirement is Dashboard-specific, and a census found no other live
+          consumer to break, so removing the shared helper would be a wider
+          decision than this tranche was asked to make. */}
     </div>
   );
 }

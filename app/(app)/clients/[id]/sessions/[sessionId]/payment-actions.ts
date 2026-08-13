@@ -229,6 +229,16 @@ export async function prepareSessionPaymentChargeAction(
   if (!priced.ok) {
     return { ok: false, error: loadFailureMessage(priced.failure) };
   }
+  // FREE-01. A deliberately $0 service is not a pricing failure — it is a
+  // decided price of nothing. It stops here with a calm explanation rather than
+  // a warning, and critically it returns BEFORE any payment_charge_attempt is
+  // written, so a free visit can never become a chargeable row.
+  if (priced.result.kind === "free") {
+    return {
+      ok: false,
+      error: `${priced.result.serviceName} is free — no payment is required, so there is nothing to prepare.`,
+    };
+  }
   if (priced.result.kind !== "resolved") {
     return { ok: false, error: unresolvedAmountMessage(priced.result) };
   }

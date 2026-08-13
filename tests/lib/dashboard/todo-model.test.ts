@@ -160,9 +160,6 @@ describe("To-do model — deterministic ordering", () => {
       TODO_PRIORITY.intake_incomplete,
     );
     expect(TODO_PRIORITY.intake_incomplete).toBeLessThan(
-      TODO_PRIORITY.follow_up,
-    );
-    expect(TODO_PRIORITY.follow_up).toBeLessThan(
       TODO_PRIORITY.treatment_memory,
     );
     expect(TODO_PRIORITY.treatment_memory).toBeLessThan(
@@ -172,7 +169,7 @@ describe("To-do model — deterministic ordering", () => {
 
   it("the assistant's own 1..5 relative order is preserved, not re-litigated", () => {
     const order = (
-      ["charting", "aftercare", "probe_lot", "intake_incomplete", "follow_up"] as const
+      ["charting", "aftercare", "probe_lot", "intake_incomplete"] as const
     ).map((k) => TODO_PRIORITY[k]);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
@@ -363,56 +360,61 @@ describe("To-do model — deduplication is on DOMAIN IDENTITY", () => {
     ]);
   });
 
-  it("a plan-only treatment-memory row collapses into the better-informed follow_up", () => {
+  // DASH-TRUTH-01. A plan for the next visit is CLINICAL MEMORY. It is not
+  // unresolved work merely because nothing has been rebooked, so it neither
+  // creates a To-do nor contributes a reason to one.
+  it("P1 plan-only produces NO treatment-memory To-do at all", () => {
     const built = buildDashboardTodo(
       input({
-        assistant: assistant([
-          {
-            id: "follow_up:s1",
-            type: "follow_up" as const,
-            priority: 5 as const,
-            clientId: "c1",
-            clientName: "Maya",
-            reason: "For-next-visit note recorded, but no upcoming appointment.",
-            date: "2026-08-05T10:00:00.000Z",
-            href: "/clients/c1",
-            actionLabel: "Open client" as const,
-            chip: "Follow-up",
-          },
-        ]),
         attention: attention([attentionClient("c1", "Maya", { hasPlan: true })]),
       }),
     );
-    expect(built.items).toHaveLength(1);
-    expect(built.items[0].kind).toBe("follow_up");
+    expect(built.items).toHaveLength(0);
+    expect(built.hasItems).toBe(false);
   });
 
-  it("...but a watch note or reaction keeps BOTH rows — clinical info is never hidden", () => {
+  it("P3 watch + plan keeps the row for the WATCH, and never names the plan", () => {
     const built = buildDashboardTodo(
       input({
-        assistant: assistant([
-          {
-            id: "follow_up:s1",
-            type: "follow_up" as const,
-            priority: 5 as const,
-            clientId: "c1",
-            clientName: "Maya",
-            reason: "For-next-visit note recorded, but no upcoming appointment.",
-            date: "2026-08-05T10:00:00.000Z",
-            href: "/clients/c1",
-            actionLabel: "Open client" as const,
-            chip: "Follow-up",
-          },
-        ]),
         attention: attention([
           attentionClient("c1", "Maya", { hasPlan: true, hasWatch: true }),
         ]),
       }),
     );
-    expect(built.items.map((i) => i.kind).sort()).toEqual([
-      "follow_up",
-      "treatment_memory",
-    ]);
+    expect(built.items).toHaveLength(1);
+    expect(built.items[0].kind).toBe("treatment_memory");
+    expect(built.items[0].reason).toContain("Watch note");
+    expect(built.items[0].reason).not.toContain("Plan for next visit");
+  });
+
+  it("P4 reaction + plan keeps the row for the REACTION, and never names the plan", () => {
+    const built = buildDashboardTodo(
+      input({
+        attention: attention([
+          attentionClient("c1", "Maya", {
+            hasPlan: true,
+            notableReactionLabel: "Blistering",
+          }),
+        ]),
+      }),
+    );
+    expect(built.items).toHaveLength(1);
+    expect(built.items[0].reason).toContain("Blistering");
+    expect(built.items[0].reason).not.toContain("Plan for next visit");
+  });
+
+  it("no To-do reason anywhere can name the plan", () => {
+    const built = buildDashboardTodo(
+      input({
+        attention: attention([
+          attentionClient("c1", "Maya", { hasPlan: true, hasWatch: true }),
+          attentionClient("c2", "Ada", { hasPlan: true }),
+        ]),
+      }),
+    );
+    for (const i of built.items) {
+      expect(i.reason).not.toMatch(/Plan for next visit/);
+    }
   });
 });
 

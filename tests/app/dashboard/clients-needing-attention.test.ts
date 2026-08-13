@@ -164,7 +164,9 @@ describe("placement + UI", () => {
 
   it("every inclusion signal still reaches the row, and so does the tolerance context", () => {
     expect(MODEL).toMatch(/Watch note/);
-    expect(MODEL).toMatch(/Plan for next visit/);
+    // DASH-TRUTH-01: a plan for the next visit is clinical memory, not work, so
+    // it is deliberately NOT an inclusion reason any more.
+    expect(MODEL).not.toMatch(/reasons\.push\("Plan for next visit"\)/);
     expect(MODEL).toMatch(/Latest recorded reaction:/);
     expect(MODEL).toMatch(/Latest tolerance:/);
   });

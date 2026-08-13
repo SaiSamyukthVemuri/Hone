@@ -1,3 +1,4 @@
+import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { createClient } from "@/lib/supabase/server";
 import {
   NOTABLE_CODED_REACTION_TYPES,
@@ -274,7 +275,9 @@ export async function getClientsNeedingAttention(
   }));
 
   return buildClientsNeedingAttention(sessions, blocks, {
-    limit: 5,
+    // DASH-TRUTH-02: return enough rows for the Dashboard disclosure to be real.
+    // Bounded by TODO_DISCLOSURE_LIMIT; the SCAN_CAP above is unchanged.
+    limit: TODO_DISCLOSURE_LIMIT,
     scanCapped: (sessionRows ?? []).length >= SCAN_CAP,
   });
 }

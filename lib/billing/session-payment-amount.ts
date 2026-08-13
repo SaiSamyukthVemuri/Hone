@@ -51,8 +51,25 @@ export type UnresolvedSessionPaymentAmount =
   // an amount decided by database row order.
   | { kind: "ambiguous_custom_pricing"; serviceName: string; candidateCents: number[] };
 
+// FREE-01. A studio can deliberately price a service at $0 — a free
+// consultation being the obvious case. That is a REAL, decided price, and it is
+// categorically different from "no price is configured", which is what a NULL
+// price means. Conflating them produced two wrong behaviours: a free service
+// looked like a configuration error, and it could still reach Checkout.
+//
+// Free is its own first-class result rather than a `resolved` row with
+// amountCents: 0, precisely so it can never be fed to payment preparation. A
+// zero-amount chargeable row would be a charge waiting to be attempted; this
+// shape cannot be one.
+export type FreeSessionPayment = {
+  kind: "free";
+  serviceName: string;
+  durationMinutes: number | null;
+};
+
 export type SessionPaymentAmountResult =
   | ResolvedSessionPaymentAmount
+  | FreeSessionPayment
   | UnresolvedSessionPaymentAmount;
 
 export type AuthoritativeServiceInput = {
@@ -144,6 +161,27 @@ export function resolveAuthoritativeSessionPaymentAmount(input: {
     };
   }
 
+  // FREE-01. An explicit zero menu price means the studio decided this service
+  // costs nothing. Reached ONLY after the custom-pricing block above, so
+  // precedence is untouched: a client with a current positive custom price for
+  // a $0 menu service is still charged that custom price, and ambiguous custom
+  // pricing still fails closed. Note the model has never accepted a zero custom
+  // price as "charge nothing" (those rows are filtered out above as "no custom
+  // price recorded"), so zero-dollar CUSTOM pricing is not a state this
+  // codebase supports and none is invented here.
+  //
+  // `price_cents` is `int check (price_cents >= 0)` and nullable since 0010, so
+  // 0 and NULL are genuinely different recorded facts, not one sloppy value.
+  if (service.price_cents === 0) {
+    return {
+      kind: "free",
+      serviceName,
+      durationMinutes: appointmentDurationMinutes,
+    };
+  }
+
+  // NULL price: nothing has been decided, so nothing can be charged. This is a
+  // configuration gap, never "free".
   return { kind: "missing_price", serviceName };
 }
 

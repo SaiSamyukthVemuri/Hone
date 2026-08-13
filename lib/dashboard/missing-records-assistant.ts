@@ -1,3 +1,4 @@
+import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { createClient } from "@/lib/supabase/server";
 
 // Missing Records / Follow-up Assistant V1 (PR #249). The SECOND
@@ -31,8 +32,7 @@ export type MissingRecordType =
   | "charting"
   | "aftercare"
   | "probe_lot"
-  | "intake"
-  | "follow_up";
+  | "intake";
 
 // 1 = most worth finishing first. Matches the spec ordering.
 export type MissingRecordPriority = 1 | 2 | 3 | 4 | 5;
@@ -100,7 +100,9 @@ export type MissingRecordsAssistant = {
   totalFound: number;
 };
 
-const DEFAULT_LIMIT = 6;
+// DASH-TRUTH-02: return enough rows for the Dashboard disclosure to be real.
+// Bounded; the SESSION_SCAN_CAP / COMPLETED_APPT_CAP scans are unchanged.
+const DEFAULT_LIMIT = TODO_DISCLOSURE_LIMIT;
 
 function clientHref(clientId: string): string {
   return `/clients/${clientId}`;
@@ -169,20 +171,13 @@ export function buildMissingRecordsAssistant(
         chip: "Probe lot missing",
       });
     }
-    if (s.nextVisitNote?.trim() && !s.hasUpcomingAppointment) {
-      candidates.push({
-        id: `follow_up:${s.sessionId}`,
-        type: "follow_up",
-        priority: 5,
-        clientId: s.clientId,
-        clientName: s.clientName,
-        reason: "For-next-visit note recorded, but no upcoming appointment.",
-        date: s.startedAt,
-        href: clientHref(s.clientId),
-        actionLabel: "Open client",
-        chip: "Follow-up",
-      });
-    }
+    // DASH-TRUTH-01: a recorded for-next-visit note with no upcoming
+    // appointment is NOT a missing record. It is clinical memory the
+    // practitioner wrote deliberately, and whether to rebook is their call, not
+    // an outstanding task this assistant should manufacture. The note itself is
+    // untouched (sessions.next_session_note) and still surfaces in Today →
+    // Before today → Remember, Treatment Memory, appointment prep and history.
+    // The `follow_up` candidate that used to be pushed here is gone.
   }
 
   for (const i of input.incompleteIntakes) {

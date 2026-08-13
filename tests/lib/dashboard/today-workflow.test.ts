@@ -383,14 +383,13 @@ describe("dashboard wiring", () => {
     expect(rendered).not.toMatch(/Daily prep brief/i);
   });
 
-  it("keeps ONE quiet pilot feedback prompt, at the foot of the section", () => {
-    const prompts = PAGE.match(/<PilotFeedbackPrompt surface="daily_prep" \/>/g) ?? [];
-    expect(prompts).toHaveLength(1);
-    // Inside the Today section, not inside the per-appointment row.
-    const rowStart = PAGE.indexOf("function AppointmentRow(");
-    expect(PAGE.indexOf('<PilotFeedbackPrompt surface="daily_prep" />')).toBeLessThan(
-      rowStart,
-    );
+  // DASH-TRUTH-04: the daily workspace no longer asks a practitioner to email
+  // the founder. The quiet pilot feedback footers under Today and To do are
+  // gone, along with the earlier large "Pilot learning" card.
+  it("renders NO pilot feedback prompt anywhere on the Dashboard", () => {
+    const rendered = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(rendered).not.toMatch(/<PilotFeedbackPrompt/);
+    expect(rendered).not.toMatch(/Send feedback|Send it to Sam|Know another electrologist|Pilot learning/i);
   });
 
   it("the card renders each fact once, from the workflow item only", () => {

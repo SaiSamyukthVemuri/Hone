@@ -97,16 +97,23 @@ describe("buildMissingRecordsAssistant item types", () => {
     expect(item.href).toBe("/clients/c1");
   });
 
-  it("flags a for-next-visit note with no upcoming appointment", () => {
-    const item = build({
+  // DASH-TRUTH-01: a for-next-visit note with nothing booked is clinical
+  // memory, not a missing record. The assistant must not manufacture a task
+  // from it — the note itself is untouched and still shows in Today/Remember,
+  // Treatment Memory, appointment prep and history.
+  it("P2 does NOT flag a for-next-visit note with no upcoming appointment", () => {
+    const built = buildMissingRecordsAssistant({
+      unchartedAppointments: [],
       sessions: [
-        session({ nextVisitNote: "Shorter passes.", hasUpcomingAppointment: false }),
+        session({
+          nextVisitNote: "Try lower intensity on the upper lip next time.",
+          hasUpcomingAppointment: false,
+        }),
       ],
-    }).items[0];
-    expect(item.type).toBe("follow_up");
-    expect(item.priority).toBe(5);
-    expect(item.chip).toBe("Follow-up");
-    expect(item.href).toBe("/clients/c1");
+      incompleteIntakes: [],
+    });
+    expect(built.items).toHaveLength(0);
+    expect(built.totalFound).toBe(0);
   });
 
   it("does NOT flag follow-up when an upcoming appointment exists", () => {
@@ -138,7 +145,6 @@ describe("priority order, dedup, and cap", () => {
       "charting", // 1
       "aftercare", // 2
       "intake", // 4
-      "follow_up", // 5
     ]);
   });
 
@@ -309,7 +315,7 @@ describe("dashboard wiring (source pins)", () => {
   it("every assistant gap type still reaches the unified list", () => {
     // The five types are mapped 1:1 onto To-do kinds; a dropped mapping would
     // silently stop surfacing that gap.
-    for (const t of ["charting", "aftercare", "probe_lot", "intake", "follow_up"]) {
+    for (const t of ["charting", "aftercare", "probe_lot", "intake"]) {
       expect(MODEL, `${t} is not mapped into the To-do model`).toMatch(
         new RegExp(`${t}:`),
       );
@@ -322,7 +328,19 @@ describe("dashboard wiring (source pins)", () => {
     expect(MODEL).toMatch(/href: item\.href, label: item\.actionLabel/);
   });
 
-  it("the unified list stays link-only (no form/button action, no fetch)", () => {
-    expect(LIST).not.toMatch(/<form|<button|onClick|action=|fetch\(/);
+  // The invariant is that the list performs no MUTATION and no I/O: every row's
+  // action is a real link, and the list never submits a form, invokes a server
+  // action, or fetches. DASH-TRUTH-02 adds one purely presentational disclosure
+  // toggle (show/hide already-loaded rows), which mutates nothing and is
+  // explicitly permitted — so the check now targets the real hazards.
+  it("the unified list stays link-only for ACTIONS (no form, no server action, no fetch)", () => {
+    expect(LIST).not.toMatch(/<form|action=|fetch\(/);
+    // each row action is still a Link, never a button
+    const rowAction = LIST.slice(LIST.indexOf("{item.action.label}") - 800, LIST.indexOf("{item.action.label}"));
+    expect(rowAction).toMatch(/<Link/);
+    // the only interactive control is the disclosure toggle
+    const buttons = LIST.match(/<button/g) ?? [];
+    expect(buttons).toHaveLength(1);
+    expect(LIST).toMatch(/data-testid="todo-disclosure-toggle"/);
   });
 });

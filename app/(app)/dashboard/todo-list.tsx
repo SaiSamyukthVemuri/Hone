@@ -1,5 +1,11 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
-import type { DashboardTodo } from "@/lib/dashboard/todo-model";
+import {
+  TODO_COMPACT_COUNT,
+  type DashboardTodo,
+} from "@/lib/dashboard/todo-model";
 
 // ===========================================================================
 // Dashboard V2 Part 2B — the ONE To-do list.
@@ -18,6 +24,14 @@ import type { DashboardTodo } from "@/lib/dashboard/todo-model";
 // no query, no clock — `items` is already ordered and deduplicated.
 
 export function DashboardTodoList({ todo }: { todo: DashboardTodo }) {
+  // DASH-TRUTH-02: the list used to end with the non-interactive text
+  // "+ N more not shown". That told a practitioner work was hidden and then
+  // gave them no way to see it. The rows are now genuinely loaded (see
+  // TODO_DISCLOSURE_LIMIT), so this is a real in-place disclosure: no
+  // navigation, no fake control, and the count can only ever name rows that
+  // can actually be rendered.
+  const [expanded, setExpanded] = useState(false);
+
   if (!todo.hasItems) {
     return (
       <p className="rounded-lg border border-dashed border-neutral-300 px-4 py-6 text-sm text-neutral-500 dark:border-neutral-700">
@@ -27,10 +41,13 @@ export function DashboardTodoList({ todo }: { todo: DashboardTodo }) {
     );
   }
 
+  const hiddenCount = Math.max(0, todo.items.length - TODO_COMPACT_COUNT);
+  const visible = expanded ? todo.items : todo.items.slice(0, TODO_COMPACT_COUNT);
+
   return (
     <>
-    <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-      {todo.items.map((item) => {
+    <ul id="dashboard-todo-list" className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+      {visible.map((item) => {
         const urgent = item.tone === "urgent";
         return (
           <li
@@ -90,11 +107,25 @@ export function DashboardTodoList({ todo }: { todo: DashboardTodo }) {
         );
       })}
     </ul>
-    {/* The sources cap what they return. Saying so keeps the list honest: a
-        practitioner must not read the last row as "and that's everything". */}
+    {hiddenCount > 0 && (
+      <button
+        type="button"
+        data-testid="todo-disclosure-toggle"
+        aria-expanded={expanded}
+        aria-controls="dashboard-todo-list"
+        onClick={() => setExpanded((v) => !v)}
+        className="mt-2 rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
+      >
+        {expanded ? "Show less" : `Show ${hiddenCount} more`}
+      </button>
+    )}
+    {/* A safety scan cap can still mean the studio has older unresolved work
+        this list never scanned. Say so plainly rather than implying the list
+        is exhaustive — but never as a control, because there is nothing more
+        to reveal in place. */}
     {todo.moreCount > 0 && (
       <p className="mt-2 text-xs text-neutral-500">
-        + {todo.moreCount} more not shown
+        Older items beyond this list are not included.
       </p>
     )}
     </>

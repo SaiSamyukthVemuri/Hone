@@ -175,18 +175,16 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
     expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
   });
 
-  it("the two intended surfaces carry the feedback prompt; nothing else", () => {
-    // surface="daily_prep" is an unchanged pilot contract, so feedback stays
-    // comparable across the retirement. It moved to the foot of the combined
-    // Today section — ONCE, never once per appointment card.
-    const prompts = PAGE.match(/<PilotFeedbackPrompt surface="daily_prep" \/>/g) ?? [];
-    expect(prompts).toHaveLength(1);
-    // Dashboard V2 Part 2B retired the standalone Follow-up assistant card;
-    // the prompt moved to the foot of the unified To do section. The SURFACE
-    // ID is deliberately unchanged so pilot feedback stays comparable across
-    // the restructure — and it must still appear exactly ONCE.
-    const followUp =
-      PAGE.match(/<PilotFeedbackPrompt surface="follow_up_assistant" \/>/g) ?? [];
-    expect(followUp).toHaveLength(1);
+  // DASH-TRUTH-04: the Dashboard no longer carries ANY feedback prompt. The
+  // daily workspace should not ask a practitioner to email the founder — that
+  // was pilot tooling, not product. The shared helper and the component are
+  // deliberately retained (this requirement is Dashboard-specific), so their
+  // own contracts above still apply; only the Dashboard rendering is gone.
+  it("no Dashboard surface carries the feedback prompt any more", () => {
+    // Code only: the page keeps a comment explaining what was removed and why.
+    const rendered = PAGE.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(rendered).not.toMatch(/<PilotFeedbackPrompt/);
   });
 });

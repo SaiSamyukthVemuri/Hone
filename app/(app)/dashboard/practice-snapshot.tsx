@@ -131,10 +131,14 @@ export function PracticeSnapshot({
               {livemode ? "Live payments" : "Test mode only"} (
               {metrics.periodLabel})
             </p>
-            <Stat
-              label={livemode ? "Payments prepared" : "Test payments prepared"}
-              value={metrics.testPayments.prepared}
-            />
+            {/* DASH-TRUTH-03: the prepared-payments row is removed. Preparing
+                a payment is internal plumbing on the way to charging one — it
+                is not an outcome a practitioner runs their practice on, and it
+                invited reading a prepared-but-uncharged payment as money taken.
+                The outcome-oriented rows below stay. The underlying
+                `testPayments.prepared` metric is deliberately left computed:
+                it is a truthful count with a plausible operational use, and
+                this tranche is about what the Dashboard SHOWS. */}
             <Stat
               label={livemode ? "Payments charged" : "Test payments charged"}
               value={metrics.testPayments.charged}

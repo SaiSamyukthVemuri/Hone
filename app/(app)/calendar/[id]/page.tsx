@@ -205,7 +205,7 @@ export default async function AppointmentDetailPage({
   // bounded loader + cell the dashboard uses (one flow, not two).
   const checkoutPaymentState =
     typedStatus === "completed"
-      ? (await getAppointmentPaymentStates(studio.id, [id])).get(id) ??
+      ? (await getAppointmentPaymentStates(studio.id, [id], studio.timezone)).get(id) ??
         "no_session"
       : "no_session";
 

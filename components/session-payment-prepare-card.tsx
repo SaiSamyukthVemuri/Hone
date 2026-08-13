@@ -339,7 +339,23 @@ export function SessionPaymentPrepareCard({
         </p>
       )}
 
-      {showPrepareForm && amountResult && amountResult.kind !== "resolved" && (
+      {/* FREE-01: an explicit $0 service renders a calm, factual state — never
+          Prepare, never Run charge, and never the amber "pricing blocked"
+          warning, because nothing is wrong. Defense in depth: even if a route
+          reaches this card directly, there is no money-moving control here. */}
+      {showPrepareForm && amountResult && amountResult.kind === "free" && (
+        <p
+          data-testid="payment-not-required"
+          className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+        >
+          {amountResult.serviceName} is free · No payment required.
+        </p>
+      )}
+
+      {showPrepareForm &&
+        amountResult &&
+        amountResult.kind !== "resolved" &&
+        amountResult.kind !== "free" && (
         <p
           data-testid="pricing-blocked"
           className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"

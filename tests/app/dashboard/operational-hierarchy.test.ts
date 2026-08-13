@@ -288,16 +288,21 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     ).toBe(false);
   });
 
-  it("D4: the SHARED feedback helper and its two quiet footers survive", () => {
-    // "If something else legitimately uses them: leave the shared
-    // implementation but remove Dashboard rendering." PilotFeedbackPrompt does.
-    expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(
-      true,
-    );
-    expect(
-      existsSync(join(process.cwd(), "app/(app)/dashboard/pilot-feedback-prompt.tsx")),
-    ).toBe(true);
-    expect(DASH_CODE.match(/<PilotFeedbackPrompt/g) ?? []).toHaveLength(2);
+  it("D4: the SHARED feedback helper survives, but NO Dashboard footer does", () => {
+    // DASH-TRUTH-04 finished the job the earlier cleanup started: the two quiet
+    // <PilotFeedbackPrompt> footers under Today and To do are gone, so the daily
+    // product no longer routes practitioner feedback to the founder. The SHARED
+    // helper and component files are deliberately kept — this requirement is
+    // Dashboard-specific, and deleting shared code is a wider decision than this
+    // tranche was asked to make.
+    expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(true);
+    const page = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/page.tsx"),
+      "utf8",
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(page).not.toMatch(/<PilotFeedbackPrompt/);
   });
 
   it("no replacement card was introduced for anything removed", () => {
