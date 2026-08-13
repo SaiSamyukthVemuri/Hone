@@ -139,7 +139,7 @@ describe("reminder-scheduler health alert function (lib/cron/reminder-heartbeat.
   // severity === "critical"), so `stale` must NOT be a warning.
   it("severity is chosen from the status, with degraded the ONLY warning", () => {
     expect(HEARTBEAT).toMatch(
-      /severity:\s*status\.status === "degraded"\s*\?\s*"warning"\s*:\s*"critical"/,
+      /const severity: ReminderAlertSeverity =\s*\n?\s*status\.status === "degraded" \? "warning" : "critical";/,
     );
   });
 
@@ -385,5 +385,371 @@ describe("admin card renders all four states (PR OPS-01)", () => {
   it("surfaces both thresholds so the operator can see the contract", () => {
     expect(ADMIN).toMatch(/degradedAfterMinutes/);
     expect(ADMIN).toMatch(/staleAfterMinutes/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 — the two P1s from the #569 review, pinned at the wiring layer.
+//   3774540589  measure cadence rather than only heartbeat recency
+//   3774540599  do not dedupe critical stale alerts against legacy warnings
+// ---------------------------------------------------------------------------
+describe("OPS-01.1 P1-A/P2-A: the writer records real INVOCATION evidence", () => {
+  it("the route passes its real invocation timestamp, not a post-processing one", () => {
+    // startedAt is captured immediately after the auth gate, before any work.
+    expect(ROUTE).toMatch(/const startedAt = Date\.now\(\);/);
+    expect(ROUTE).toMatch(/invokedAt: new Date\(startedAt\)\.toISOString\(\)/);
+    const gate = ROUTE.indexOf("isAuthorizedCronRequest(req)");
+    const started = ROUTE.indexOf("const startedAt = Date.now();");
+    expect(started).toBeGreaterThan(gate);
+  });
+
+  it("completion time remains the recency axis", () => {
+    const block =
+      ROUTE.match(/recordReminderRunSuccess\(\{[\s\S]*?\}\);/)?.[0] ?? "";
+    expect(block).toMatch(/at: new Date\(\)\.toISOString\(\)/);
+    expect(block).toMatch(/invokedAt:/);
+  });
+
+  it("the heartbeat type names invocation fields unambiguously", () => {
+    expect(HEARTBEAT).toMatch(/invokedAt\?: string;/);
+    expect(HEARTBEAT).toMatch(/previousInvokedAt\?: string;/);
+    // the old, misleading name must be gone entirely
+    expect(HEARTBEAT).not.toMatch(/previousSuccessAt/);
+  });
+
+  it("the classifier derives cadence from invocation timestamps only", () => {
+    expect(HEARTBEAT).toMatch(/invParsed - prevInvParsed/);
+    expect(HEARTBEAT).not.toMatch(/parsed - priorParsed/);
+  });
+
+  it("the write path stays best-effort/fail-open", () => {
+    const fn =
+      HEARTBEAT.match(
+        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(fn).not.toBe("");
+    expect(fn).toMatch(/try\s*\{/);
+    expect(fn).toMatch(/catch/);
+    expect(fn).toMatch(/if \(!redis\) return/);
+  });
+
+  it("the classifier consumes BOTH axes, not recency alone", () => {
+    expect(HEARTBEAT).toMatch(/observedIntervalMinutes/);
+    expect(HEARTBEAT).toMatch(/worseHealth\(recencyStatus/);
+  });
+
+  it("cadence evidence is explicit, never fabricated", () => {
+    expect(HEARTBEAT).toMatch(/cadenceEvidence/);
+    expect(HEARTBEAT).toMatch(/"measured"|"unavailable"/);
+  });
+
+  it("no new dependency and no database table for cadence", () => {
+    const code = codeOnly(HEARTBEAT);
+    expect(code).not.toMatch(/from "(?!@upstash\/redis|@\/lib|server-only)/);
+    expect(code).not.toMatch(/create table|CREATE TABLE/i);
+  });
+});
+
+describe("OPS-01.1 P2-B: the heartbeat write is ONE atomic operation", () => {
+  it("uses an atomic EVAL, not a client-side read-then-write", () => {
+    expect(HEARTBEAT).toMatch(/await redis\.eval\(/);
+    expect(HEARTBEAT).toMatch(/HEARTBEAT_MERGE_LUA/);
+    const fn =
+      HEARTBEAT.match(
+        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    // no separate GET/SET pair to race
+    expect(fn).not.toMatch(/redis\.get\(/);
+    expect(fn).not.toMatch(/redis\.set\(/);
+  });
+
+  it("the Lua orders by INVOCATION, never by completion or arrival", () => {
+    expect(HEARTBEAT).toMatch(/if ci > ui then/);
+    expect(HEARTBEAT).toMatch(/elseif ci < ui then/);
+  });
+
+  it("the Lua keeps recency on the later completion", () => {
+    // compared via the validated locals, never the raw fields
+    expect(HEARTBEAT).toMatch(/if ca ~= nil and \(ua == nil or ca >= ua\) then/);
+  });
+
+  it("the Lua still applies the TTL", () => {
+    expect(HEARTBEAT).toMatch(/'EX', ARGV\[2\]/);
+  });
+
+  it("an unreadable stored value still stores the current run", () => {
+    expect(HEARTBEAT).toMatch(/if cur == nil then/);
+  });
+
+  it("the false read-then-write monotonicity claim is gone", () => {
+    expect(HEARTBEAT).not.toMatch(/read-then-write keeps `at` monotonic/);
+    expect(HEARTBEAT).toMatch(/was simply WRONG and has been removed/);
+  });
+
+  it("the pure merge is exported as the specification of the Lua", () => {
+    expect(HEARTBEAT).toMatch(/export function mergeReminderHeartbeat/);
+  });
+});
+
+describe("OPS-01.1 P1-B: dedupe reads severity, not just existence", () => {
+  it("the unresolved-alert lookup selects severity", () => {
+    expect(HEARTBEAT).toMatch(/\.select\("id, severity"\)/);
+  });
+
+  it("a critical open row anywhere in the set outranks warnings", () => {
+    expect(HEARTBEAT).toMatch(/severities\.includes\("critical"\)/);
+  });
+
+  it("the decider compares severity rather than a bare boolean", () => {
+    expect(HEARTBEAT).toMatch(/isAtLeastAsSevere\(existingUnresolved\.severity, severity\)/);
+  });
+
+  it("severity ordering is stated explicitly (warning < critical)", () => {
+    expect(HEARTBEAT).toMatch(/SEVERITY_RANK/);
+    expect(HEARTBEAT).toMatch(/warning: 0/);
+    expect(HEARTBEAT).toMatch(/critical: 1/);
+  });
+
+  // D6 — a failed dedupe lookup must fail OPEN (record), never silently drop
+  // a scheduler-down alert.
+  it("D6 a read error falls open toward recording the alert", () => {
+    // Slice to a STABLE end anchor. A non-greedy `\n  }` stops at the first
+    // nested block close, which sits before the catch — the slice would then
+    // silently exclude the very thing under test.
+    const start = HEARTBEAT.indexOf("let existingUnresolved");
+    const end = HEARTBEAT.indexOf("const plan = decideReminderSchedulerAlert");
+    const block = start > -1 && end > start ? HEARTBEAT.slice(start, end) : "";
+    expect(block).not.toBe("");
+    expect(block).toMatch(/\}\s*catch\s*\{\s*existingUnresolved = null;/);
+  });
+
+  // The legacy row is operator-owned history; making a test pass by rewriting
+  // it would be worse than letting the critical row sit beside it.
+  it("does NOT auto-resolve the legacy warning row", () => {
+    const code = codeOnly(HEARTBEAT);
+    expect(code).not.toMatch(/resolved_at:\s/);
+    expect(code).not.toMatch(/\.update\(/);
+  });
+});
+
+describe("OPS-01.1 admin card surfaces measured cadence honestly", () => {
+  it("shows the observed interval", () => {
+    expect(ADMIN).toMatch(/observedIntervalMinutes/);
+    expect(ADMIN).toMatch(/Observed cadence/);
+  });
+
+  it("says 'not yet measured' rather than implying a healthy cadence", () => {
+    expect(ADMIN).toMatch(/not yet measured/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 follow-up — Codex review on the OPS-01.1 head.
+//   3774838342 (P2) refresh the heartbeat even when the prior read fails
+//   3774838345 (P2) distinguish cadence failures from recency failures
+// ---------------------------------------------------------------------------
+describe("P2 3774838342: a failed prior read must not discard the run's heartbeat", () => {
+  // This invariant is now STRUCTURAL rather than defensive. The earlier fix
+  // isolated a client-side read in its own try/catch; the atomic EVAL removes
+  // the client-side read altogether, so there is no longer a prior-read step
+  // that can fail independently of the write. The guarantee is stronger, so
+  // these pins assert the new shape.
+  it("there is no separate client-side prior read to fail", () => {
+    const fn =
+      HEARTBEAT.match(
+        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(fn).not.toBe("");
+    expect(fn).not.toMatch(/redis\.get\(/);
+    expect(fn).toMatch(/redis\.eval\(/);
+  });
+
+  it("the prior value is read INSIDE the same atomic step", () => {
+    expect(HEARTBEAT).toMatch(/redis\.call\('GET', KEYS\[1\]\)/);
+    expect(HEARTBEAT).toMatch(/redis\.call\('SET', KEYS\[1\]/);
+  });
+
+  it("an unreadable or corrupt current value still records this run's success", () => {
+    // pcall-guarded decode, then the cur == nil branch stores the candidate.
+    expect(HEARTBEAT).toMatch(/pcall\(cjson\.decode, raw\)/);
+    expect(HEARTBEAT).toMatch(/if cur == nil then[\s\S]*?redis\.call\('SET'/);
+  });
+
+  it("cadence evidence is optional; recording the success is not", () => {
+    expect(HEARTBEAT).toMatch(/cannot suppress this run's recency/);
+  });
+});
+
+describe("P2 3774838345: operator copy names the axis that failed", () => {
+  it("the status carries a failing-axis attribution", () => {
+    expect(HEARTBEAT).toMatch(/failingAxis/);
+    expect(HEARTBEAT).toMatch(/ReminderFailingAxis/);
+  });
+
+  it("the alert message branches on the failing axis", () => {
+    expect(HEARTBEAT).toMatch(/status\.failingAxis === "cadence"/);
+    // and it takes the whole status, not just the bare health word
+    expect(HEARTBEAT).toMatch(
+      /function reminderSchedulerAlertMessage\(\s*status: ReminderSchedulerStatus,?\s*\)/,
+    );
+  });
+
+  it("a cadence-only message does not claim the last success is old", () => {
+    const fn =
+      HEARTBEAT.match(
+        /function reminderSchedulerAlertMessage\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(fn).toMatch(/still firing/);
+  });
+
+  it("the admin card branches on the failing axis too", () => {
+    expect(ADMIN).toMatch(/status\.failingAxis === "cadence"/);
+    expect(ADMIN).toMatch(/still firing/);
+  });
+});
+
+describe("P2 3775193411: the Lua validates timestamps before ordering", () => {
+  it("defines a shape-validating ts() helper", () => {
+    expect(HEARTBEAT).toMatch(/local function ts\(v\)/);
+    // canonical ISO-8601 form check (with component captures)
+    expect(HEARTBEAT).toMatch(/%d%d%d%d\)%-\(%d%d\)%-\(%d%d\)T/);
+  });
+
+  it("every ordering comparison runs on validated values, never raw fields", () => {
+    // recency
+    expect(HEARTBEAT).toMatch(/local ca = ts\(cand\.at\)/);
+    expect(HEARTBEAT).toMatch(/local ua = ts\(cur\.at\)/);
+    expect(HEARTBEAT).toMatch(/ca >= ua/);
+    // cadence
+    expect(HEARTBEAT).toMatch(/local ci = ts\(cand\.invokedAt\)/);
+    expect(HEARTBEAT).toMatch(/local ui = ts\(cur\.invokedAt\)/);
+    // the unvalidated forms must be gone
+    expect(HEARTBEAT).not.toMatch(/cand\.at >= cur\.at/);
+  });
+
+  it("a stored value with an unusable completion timestamp is treated as absent", () => {
+    expect(HEARTBEAT).toMatch(/ts\(decoded\.at\) ~= nil then cur = decoded/);
+  });
+
+  it("the JS specification applies the identical guard", () => {
+    expect(HEARTBEAT).toMatch(/if \(!current \|\| t\(current\.at\) === null\) return \{ \.\.\.candidate \};/);
+  });
+});
+
+describe("P2 3775413510: the Lua rejects impossible dates, not just bad shapes", () => {
+  it("matches the FULL canonical ISO form, anchored at both ends", () => {
+    expect(HEARTBEAT).toMatch(/\^\(%d%d%d%d\)%-\(%d%d\)%-\(%d%d\)T\(%d%d\):\(%d%d\):\(%d%d\)%\.%d%d%dZ\$/);
+  });
+
+  it("range-checks every component", () => {
+    expect(HEARTBEAT).toMatch(/if mo < 1 or mo > 12 then return nil end/);
+    expect(HEARTBEAT).toMatch(/if d < 1 or d > 31 then return nil end/);
+    expect(HEARTBEAT).toMatch(/if h > 23 or mi > 59 or sec > 59 then return nil end/);
+  });
+
+  it("documents that it must never be more permissive than Date.parse", () => {
+    // the comment wraps across lines, so match across the newline
+    expect(HEARTBEAT).toMatch(/never be MORE permissive[\s\S]{0,12}than Date\.parse/);
+  });
+});
+
+describe("P3 3775413519: documented safe_details keys match the builder", () => {
+  const DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
+
+  it("the runbook lists the keys the builder actually emits", () => {
+    for (const key of [
+      "invoked_at",
+      "previous_invoked_at",
+      "failing_axis",
+      "observed_interval_minutes",
+      "cadence_evidence",
+    ]) {
+      expect(DOC).toContain(`\`${key}\``);
+    }
+  });
+
+  it("the removed key is gone from the runbook", () => {
+    expect(DOC).not.toMatch(/`previous_success_at`/);
+  });
+
+  it("every key the builder emits appears in the runbook", () => {
+    const builder =
+      HEARTBEAT.match(
+        /export function reminderSchedulerAlertSafeDetails\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(builder).not.toBe("");
+    const emitted = [...builder.matchAll(/^\s{4}([a-z_]+):/gm)].map((m) => m[1]);
+    expect(emitted.length).toBeGreaterThan(5);
+    for (const key of emitted) {
+      expect(DOC, `runbook is missing safe_details key "${key}"`).toContain(
+        `\`${key}\``,
+      );
+    }
+  });
+});
+
+describe("P2 3775518504: the Lua rejects hour 24 outright", () => {
+  it("bounds the hour at 23, not 24", () => {
+    expect(HEARTBEAT).toMatch(/if h > 23 or mi > 59 or sec > 59 then return nil end/);
+    expect(HEARTBEAT).not.toMatch(/if h > 24/);
+  });
+
+  it("explains why rejecting it loses nothing", () => {
+    expect(HEARTBEAT).toMatch(/toISOString\(\) NEVER emits hour 24/);
+  });
+});
+
+describe("P3 3775518514: the runbook health table describes BOTH axes", () => {
+  const DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
+
+  it("states that health is the worse of recency and cadence", () => {
+    expect(DOC).toMatch(/worse of two independent axes/i);
+  });
+
+  it("gives the cadence-only example an operator would otherwise misread", () => {
+    expect(DOC).toMatch(/10 minutes old is still \*\*degraded\*\*/);
+  });
+
+  it("the table column is not framed as heartbeat age alone", () => {
+    expect(DOC).toMatch(/\| State \| Worse axis \(recency \*\*or\*\* cadence\) \|/);
+  });
+
+  it("documents the unavailable-cadence warm-up honestly", () => {
+    expect(DOC).toMatch(/reported as `unavailable` until two successive invocations/);
+  });
+});
+
+describe("P2 3775648194: the plausibility bound closes the ordering family", () => {
+  it("the Lua receives a max-plausible timestamp and enforces it", () => {
+    expect(HEARTBEAT).toMatch(/local maxIso = ARGV\[3\]/);
+    expect(HEARTBEAT).toMatch(/if maxIso ~= nil and v > maxIso then return nil end/);
+  });
+
+  it("the caller derives that bound from the same clock that stamps the heartbeat", () => {
+    expect(HEARTBEAT).toMatch(/const maxPlausibleIso = new Date\(/);
+    expect(HEARTBEAT).toMatch(/REMINDER_FUTURE_TOLERANCE_MINUTES \* 60_000/);
+    expect(HEARTBEAT).toMatch(/maxPlausibleIso,/);
+  });
+
+  it("the JS specification applies the same bound", () => {
+    expect(HEARTBEAT).toMatch(/return ms > horizon \? null : ms;/);
+    expect(HEARTBEAT).toMatch(/parsedRaw > futureHorizon \? NaN : parsedRaw/);
+  });
+
+  it("the tolerance is exported as a named constant", () => {
+    expect(HEARTBEAT).toMatch(/export const REMINDER_FUTURE_TOLERANCE_MINUTES/);
+  });
+});
+
+describe("P2 3775648205: displayed minutes cannot contradict their band", () => {
+  it("display uses CEIL, never round-to-nearest", () => {
+    expect(HEARTBEAT).toMatch(/Math\.ceil\(ageMs \/ 60000\)/);
+    expect(HEARTBEAT).toMatch(/Math\.ceil\(intervalMs \/ 60000\)/);
+    expect(HEARTBEAT).not.toMatch(/Math\.round\(ageMs \/ 60000\)/);
+    expect(HEARTBEAT).not.toMatch(/Math\.round\(intervalMs \/ 60000\)/);
+  });
+
+  it("the reason is recorded next to the code", () => {
+    expect(HEARTBEAT).toMatch(/CEIL, not round/);
   });
 });

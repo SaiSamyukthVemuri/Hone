@@ -393,6 +393,19 @@ function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) 
           </dd>
         </div>
         <div className="flex flex-wrap gap-x-2">
+          <dt className="opacity-70">Observed cadence:</dt>
+          <dd>
+            {status.observedIntervalMinutes != null ? (
+              <>
+                {status.observedIntervalMinutes} min between the last two runs
+              </>
+            ) : (
+              // Never imply cadence was proven from recency alone.
+              "not yet measured (needs two recorded runs)"
+            )}
+          </dd>
+        </div>
+        <div className="flex flex-wrap gap-x-2">
           <dt className="opacity-70">Health thresholds:</dt>
           <dd>
             degraded over {status.degradedAfterMinutes} min · stale over{" "}
@@ -402,11 +415,16 @@ function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) 
       </dl>
       {status.status !== "healthy" && (
         <p className="mt-3 max-w-prose text-sm">
+          {/* OPS-01.1: name the axis that actually failed. A cadence-only
+              failure must not claim the last success is old — the age is shown
+              directly above and would contradict it. */}
           {status.status === "missing"
             ? "No successful reminder run recorded recently. "
-            : status.status === "degraded"
-              ? `Last success was over ${status.degradedAfterMinutes} minutes ago — the scheduler is running slower than its required cadence, and the 2h reminder window is only ${status.degradedAfterMinutes} minutes wide. `
-              : `Last success was over ${status.staleAfterMinutes} minutes ago. `}
+            : status.failingAxis === "cadence"
+              ? `The scheduler is still firing (last success ${status.ageMinutes} min ago) but too slowly: the last two runs were ${status.observedIntervalMinutes} minutes apart, and the 2h reminder window is only ${status.degradedAfterMinutes} minutes wide. `
+              : status.failingAxis === "both"
+                ? `Last success was ${status.ageMinutes} min ago and the last two runs were ${status.observedIntervalMinutes} minutes apart. `
+                : `Last success was ${status.ageMinutes} min ago, past the ${status.status === "degraded" ? status.degradedAfterMinutes : status.staleAfterMinutes}-minute threshold. `}
           Confirm the external scheduler is enabled and calling{" "}
           <code>GET /api/cron/appointment-reminders</code> every{" "}
           {status.cadenceMinutes} min with the{" "}
