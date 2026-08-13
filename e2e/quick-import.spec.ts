@@ -1,6 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedE2eStudio, seedNoStudioAuthUser } from "./helpers/seed";
-import { loginAsOwner } from "./helpers/flows";
+import {
+  createLocalAuthUser,
+  insertMembershipInStudio,
+  seedE2eStudio,
+  seedNoStudioAuthUser,
+  sql,
+  type E2eSeed,
+} from "./helpers/seed";
+import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
@@ -107,5 +114,143 @@ test.describe("an ordinary studio owner gets an informational surface only", () 
     await expect(
       page.getByRole("heading", { name: "Import clients and history", level: 2 }),
     ).toBeVisible();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The operator side of the same boundary
+// ---------------------------------------------------------------------------
+//
+// The ordinary-owner specs above are an ABSENCE claim, and an absence claim is
+// only worth what its positive control is worth: if `/settings/import` were
+// broken for everyone, they would all still pass. This proves the other half
+// in a real browser — the island renders, and the SAME gated server action the
+// ordinary owner is refused by succeeds for an operator.
+//
+// No production authorization was weakened and no test-only bypass exists: the
+// operator here is authorized by exactly the mechanism production uses, the
+// `ADMIN_EMAILS` allowlist, which the harness already declares in
+// e2e/helpers/local-env.ts. Every helper used is already exported and
+// general-purpose, so `e2e/helpers/**` is untouched.
+//
+// `e2e@harness.local` is the allowlisted address that NO other spec claims.
+// (`e2e-operator@harness.local` is the other one, and seedOperatorAuthUser()
+// asserts it holds no practitioner row — giving it a membership here would
+// break e2e/new-studio-wizard.spec.ts.)
+
+const OPERATOR_EMAIL = "e2e@harness.local";
+
+/** A studio whose active owner is also a platform operator. */
+async function seedOperatorOwnedStudio(): Promise<E2eSeed> {
+  const seed = await seedE2eStudio();
+
+  // Idempotent: the address is FIXED (it has to be, to match the allowlist),
+  // so on a local stack that is not reset between runs the auth user already
+  // exists from a previous run.
+  const existing = await sql<{ id: string }>(
+    `select id::text as id from auth.users where lower(email) = lower($1)`,
+    [OPERATOR_EMAIL],
+  );
+  const userId = existing[0]?.id ?? (await createLocalAuthUser(OPERATOR_EMAIL));
+
+  // ...and for the same reason its memberships accumulate. Two or more ACTIVE
+  // memberships resolve to the studio CHOOSER rather than to the page under
+  // test, so retire the older ones first and leave exactly one.
+  await sql(
+    `update public.practitioners set active = false
+      where lower(email) = lower($1)`,
+    [OPERATOR_EMAIL],
+  );
+  await insertMembershipInStudio(seed.studioId, userId, OPERATOR_EMAIL);
+  await sql(
+    `insert into public.pending_invitations
+       (studio_id, email, role, display_name, status, accepted_at)
+     values ($1, $2, 'owner', 'E2E Operator', 'accepted', now())`,
+    [seed.studioId, OPERATOR_EMAIL],
+  );
+  return seed;
+}
+
+test.describe("a platform operator who owns the studio gets the real island", () => {
+  test("the import UI renders and a preview runs — with zero writes", async ({
+    page,
+  }) => {
+    const seed = await seedOperatorOwnedStudio();
+    await loginByMagicLink(page, OPERATOR_EMAIL);
+
+    await page.goto(IMPORT);
+    await expect(
+      page.getByRole("heading", { name: "Import clients and history", level: 2 }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    // The operator banner, and NOT the ordinary-owner notice.
+    await expect(page.getByText(/Operator-assisted import\./).first()).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /Import is currently operator-assisted/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Contact support" }),
+    ).toHaveCount(0);
+
+    // The executable island the ordinary owner does not get.
+    await expect(page.locator("#import-text")).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: /copy template/i }),
+    ).toBeVisible();
+
+    // previewImportAction goes through the SAME ownerContext() gate as confirm,
+    // so a successful preview is the operator-authorization proof — and it is
+    // the read-only half, which is why this stops here.
+    const tsv = [
+      "client_name\temail\ttreatment_area\tlast_visit_date",
+      `Maya Operator ${seed.runId}\tmaya-op-${seed.runId}@example.com\tUpper lip\t2024-11-02`,
+      `Maya Operator ${seed.runId}\tmaya-op-${seed.runId}@example.com\tChin\t2024-11-15`,
+      `Jordan Operator ${seed.runId}\tjordan-op-${seed.runId}@example.com\tNeck\t2024-10-01`,
+    ].join("\n");
+    await page.locator("#import-text").fill(tsv);
+    await page.getByRole("button", { name: /preview import/i }).click();
+
+    // Not merely "no error": the plan grouped the two Maya rows into ONE
+    // client, so the preview list holds TWO group rows, not three. Counted on
+    // the <li> group rows rather than on the text, which also matches the
+    // ancestors that contain it.
+    const groupRows = page
+      .locator("li")
+      .filter({ hasText: `Operator ${seed.runId}` });
+    await expect(groupRows).toHaveCount(2, { timeout: 20_000 });
+    await expect(
+      page.getByText(`Maya Operator ${seed.runId}`).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText(`Jordan Operator ${seed.runId}`).first(),
+    ).toBeVisible();
+    await expect(page.getByText(/Upper lip/).first()).toBeVisible();
+
+    // Confirm is now offered — deliberately NOT clicked. This lane treats the
+    // local database as disposable and attempts no cleanup, and a real confirm
+    // creates real client rows that migration 0087 forbids deleting. The write
+    // path is proven by the behavioural positive control in
+    // tests/app/settings/import/operator-assisted-gate.test.ts instead.
+    await expect(
+      page.getByRole("button", { name: /confirm import/i }),
+    ).toBeVisible();
+
+    // Preview really is read-only, checked at the DATABASE, not inferred.
+    const [batches] = await sql<{ n: number }>(
+      `select count(*)::int as n from public.import_batches where studio_id = $1`,
+      [seed.studioId],
+    );
+    const [memories] = await sql<{ n: number }>(
+      `select count(*)::int as n from public.imported_treatment_memories
+        where studio_id = $1`,
+      [seed.studioId],
+    );
+    const [clients] = await sql<{ n: number }>(
+      `select count(*)::int as n from public.clients where studio_id = $1`,
+      [seed.studioId],
+    );
+    expect(batches.n).toBe(0);
+    expect(memories.n).toBe(0);
+    expect(clients.n).toBe(0);
   });
 });
