@@ -435,6 +435,87 @@ async function handleStripeEvent(
   }
 }
 
+// ---------------------------------------------------------------------------
+// terminalCardRejection
+// ---------------------------------------------------------------------------
+// A payload Stripe legitimately delivered that Hone's domain cannot admit —
+// forged/absent metadata, lineage that does not resolve, a non-card payment
+// method. Retrying cannot fix any of these, so the event is marked processed
+// rather than left to storm.
+//
+// But it must NEVER masquerade as success. Previously these branches returned
+// a bare `rejected` summary; the parent then called mark_stripe_event_processed
+// and the delivery ended as a 200 with NO alert at all — while the client had
+// already been told "Card saved" and Hone held no card row.
+//
+// Operator-visible evidence, stated precisely:
+//   * recordOpsAlert ALWAYS emits a structured stderr log with the event name
+//     and safe identifiers — that is its documented floor, emitted even when
+//     the DB insert fails;
+//   * it also attempts a durable public.ops_alerts row. That insert is
+//     best-effort by design ("No retry. A failure to insert is logged and
+//     dropped." — lib/ops/alerts.ts), so it is NOT claimed here as guaranteed;
+//   * the returned summary is persisted on stripe_events.payload_summary with
+//     terminalRejection: true, which IS durable — the parent commits it via
+//     mark_stripe_event_processed.
+// So a terminal rejection always leaves at least two independent traces and can
+// never be mistaken for a saved card.
+// ---------------------------------------------------------------------------
+async function terminalCardRejection(
+  event: Stripe.Event,
+  ctx: { studioId: string | null; stripeAccountId: string | null; livemode: boolean },
+  si: Stripe.SetupIntent,
+  reason: string,
+): Promise<Record<string, unknown>> {
+  const setupIntentId = si.id;
+  // THE OWNERSHIP ANCHOR. The portal must be able to prove a rejection belongs
+  // to the asking client WITHOUT trusting the SetupIntent's metadata — metadata
+  // is caller-supplied and Stripe signing the envelope says nothing about who
+  // authored it. (stripe_account_id, stripe_livemode, stripe_customer_id) is
+  // UNIQUE in client_stripe_customers, so the customer resolves to exactly one
+  // Hone (studio, client) through Hone's own provisioning table.
+  //
+  // Recorded even on branches where the customer did not validate: the portal
+  // re-derives ownership itself and fails closed when it cannot.
+  const stripeCustomerId =
+    typeof si.customer === "string" && si.customer.length > 0 ? si.customer : null;
+  await recordOpsAlert({
+    severity: "critical",
+    event: "card_on_file_setup_rejected",
+    message: `setup_intent.succeeded terminally rejected: ${reason}`,
+    studioId: ctx.studioId,
+    stripeEventId: event.id,
+    route: "app/api/stripe/webhook",
+    safeDetails: {
+      event_type: event.type,
+      reason,
+      setup_intent_id: setupIntentId,
+      stripe_customer_id: stripeCustomerId,
+      stripe_account_id: ctx.stripeAccountId,
+      livemode: ctx.livemode,
+    },
+  });
+  return {
+    eventType: event.type,
+    setupIntentId,
+    // Ownership anchor for the portal's client-binding check. Null when the
+    // event carried no usable customer — those rejections are deliberately not
+    // portal-attributable and settle as "not confirmed" instead.
+    stripeCustomerId,
+    stripeAccountId: ctx.stripeAccountId,
+    stripeLivemode: ctx.livemode,
+    rejected: reason,
+    // THE DURABLE FACT. The parent commits this summary onto
+    // stripe_events.payload_summary via mark_stripe_event_processed, and the
+    // portal reads terminalRejection from there.
+    terminalRejection: true,
+    // Named for what is actually guaranteed. recordOpsAlert always emits its
+    // structured log, but its ops_alerts row insert is best-effort, so this
+    // must not be called `opsAlerted` — that would imply a durable row exists.
+    opsAlertAttempted: true,
+  };
+}
+
 // PR #135. setup_intent.succeeded arm. Validates the metadata +
 // every lineage dimension before writing client_payment_methods.
 // Throws on validation failure so the parent handler releases the
@@ -474,28 +555,16 @@ async function handleSetupIntentSucceeded(
   const metaClientId = meta.hone_client_id;
   const metaSignatureId = meta.hone_card_authorization_signature_id;
   if (!metaStudioId || !metaClientId || !metaSignatureId) {
-    return {
-      eventType: event.type,
-      setupIntentId: si.id,
-      rejected: "missing_metadata",
-    };
+    return await terminalCardRejection(event, ctx, si, "missing_metadata");
   }
 
   // 2. Connected-account context must agree with the event's
   //    account + the studio's payment settings.
   if (!ctx.stripeAccountId || !ctx.studioId) {
-    return {
-      eventType: event.type,
-      setupIntentId: si.id,
-      rejected: "missing_account_context",
-    };
+    return await terminalCardRejection(event, ctx, si, "missing_account_context");
   }
   if (ctx.studioId !== metaStudioId) {
-    return {
-      eventType: event.type,
-      setupIntentId: si.id,
-      rejected: "studio_metadata_mismatch",
-    };
+    return await terminalCardRejection(event, ctx, si, "studio_metadata_mismatch");
   }
 
   const admin = createAdminClient();
@@ -505,11 +574,7 @@ async function handleSetupIntentSucceeded(
   //    match the (studio, client, account, mode, customer) tuple
   //    here and is rejected.
   if (typeof si.customer !== "string" || si.customer.length === 0) {
-    return {
-      eventType: event.type,
-      setupIntentId: si.id,
-      rejected: "missing_customer",
-    };
+    return await terminalCardRejection(event, ctx, si, "missing_customer");
   }
   const { data: customerLineage, error: customerLineageErr } = await admin
     .from("client_stripe_customers")
@@ -526,11 +591,7 @@ async function handleSetupIntentSucceeded(
     );
   }
   if (!customerLineage) {
-    return {
-      eventType: event.type,
-      setupIntentId: si.id,
-      rejected: "customer_lineage_mismatch",
-    };
+    return await terminalCardRejection(event, ctx, si, "customer_lineage_mismatch");
   }
 
   // 4. Validate the card_authorization signature belongs to the
@@ -549,11 +610,7 @@ async function handleSetupIntentSucceeded(
     );
   }
   if (!signature) {
-    return {
-      eventType: event.type,
-      setupIntentId: si.id,
-      rejected: "signature_lineage_mismatch",
-    };
+    return await terminalCardRejection(event, ctx, si, "signature_lineage_mismatch");
   }
 
   // 5. PR #135 hardening. Idempotency SELECT first: if a row already
@@ -616,11 +673,7 @@ async function handleSetupIntentSucceeded(
   //    last4 / exp; browser-side Elements never sends that data to
   //    Hone.
   if (typeof si.payment_method !== "string" || si.payment_method.length === 0) {
-    return {
-      eventType: event.type,
-      setupIntentId: si.id,
-      rejected: "missing_payment_method",
-    };
+    return await terminalCardRejection(event, ctx, si, "missing_payment_method");
   }
   const stripe = getStripe();
   let pm: Stripe.PaymentMethod;
@@ -637,89 +690,64 @@ async function handleSetupIntentSucceeded(
   }
   const card = pm.card;
   if (!card || !card.brand || !card.last4 || !card.exp_month || !card.exp_year) {
-    return {
-      eventType: event.type,
-      setupIntentId: si.id,
-      rejected: "non_card_payment_method",
-    };
+    return await terminalCardRejection(event, ctx, si, "non_card_payment_method");
   }
 
-  // 7. Pre-flip any existing active row for the (studio, client)
-  //    pair, then insert the new active row. Both writes use the
-  //    service-role admin client; RLS default-deny on
-  //    UPDATE/INSERT against authenticated roles is preserved.
-  //    The idempotency SELECT above already returned for the
-  //    duplicate-SetupIntent re-delivery case; the 23505 catch
-  //    below remains as a defensive backstop for the rarer race
-  //    where claim_stripe_event admits two distinct events that
-  //    happen to resolve to the same (account, mode,
-  //    setup_intent_id) tuple.
-  //    Mode-scoped (post-live-billing cleanup): the pre-flip retires only
-  //    the SAME-mode active card — saving a live card must not retire the
-  //    client's test card row, and vice versa. One active card per
-  //    (studio, client, mode).
-  const nowIso = new Date().toISOString();
-  const { error: removeErr } = await admin
-    .from("client_payment_methods")
-    .update({ status: "removed", removed_at: nowIso })
-    .eq("studio_id", metaStudioId)
-    .eq("client_id", metaClientId)
-    .eq("stripe_livemode", ctx.livemode)
-    .eq("status", "active");
-  if (removeErr) {
-    throw new Error(
-      `existing_active_card_flip_failed:${removeErr.code}:${removeErr.message}`,
-    );
-  }
-
-  const { data: inserted, error: insertErr } = await admin
-    .from("client_payment_methods")
-    .insert({
-      studio_id: metaStudioId,
-      client_id: metaClientId,
-      stripe_account_id: ctx.stripeAccountId,
-      stripe_livemode: ctx.livemode,
-      stripe_customer_id: si.customer,
-      stripe_payment_method_id: pm.id,
-      stripe_setup_intent_id: si.id,
-      brand: card.brand,
-      last4: card.last4,
-      exp_month: card.exp_month,
-      exp_year: card.exp_year,
-      status: "active",
-      card_authorization_signature_id: metaSignatureId,
-      added_via: "portal",
-    })
-    .select("id")
-    .single();
-  if (insertErr) {
-    // Idempotent re-delivery: a row keyed on the same SetupIntent
-    // already exists (unique on stripe_setup_intent_id index) OR
-    // the partial unique blocked a concurrent dual-delivery.
-    // Treat as success since the webhook's job is done.
-    if (insertErr.code === "23505") {
-      // A concurrent/duplicate delivery already inserted the card for this
-      // SetupIntent. Still ensure the notification (deduped on the mode-scoped
-      // SetupIntent) so a card-saved-but-notification-missing race self-heals.
-      const notif = await ensureCardChangeNotification(admin, {
-        studioId: metaStudioId,
-        clientId: metaClientId,
-        livemode: ctx.livemode,
-        setupIntentId: si.id,
-      });
-      return {
-        eventType: event.type,
-        setupIntentId: si.id,
-        cardBrandPresent: true,
-        idempotent: true,
-        cardChangeNotification: notif.eventType,
-        cardChangeNotificationDeduped: notif.deduped,
-      };
+  // 7. Persist the card ATOMICALLY via the 0180 governed command.
+  //
+  //    This used to be two independent PostgREST writes — an UPDATE that
+  //    retired the existing active row, then a separate INSERT. PostgREST
+  //    gives each request its own transaction, so any non-23505 failure of the
+  //    INSERT left the client with ZERO ACTIVE CARDS after their working card
+  //    had already been retired. The retire-before-insert ordering is forced by
+  //    the partial unique index client_payment_methods_one_active_per_pair, so
+  //    it cannot be reordered away; it has to commit as one transaction.
+  //
+  //    save_client_card_on_file re-validates the customer and signature lineage
+  //    inside that transaction, takes an advisory lock per
+  //    (studio, client, mode) so two concurrent replacements cannot interleave,
+  //    and returns 'inserted' or 'idempotent'. Anything else raises, which we
+  //    surface as a throw so the parent releases the claim and Stripe retries —
+  //    with the previous card still active, because the retire rolled back too.
+  const { data: saveRows, error: saveErr } = await admin.rpc(
+    "save_client_card_on_file",
+    {
+      p_studio_id: metaStudioId,
+      p_client_id: metaClientId,
+      p_stripe_account_id: ctx.stripeAccountId,
+      p_stripe_livemode: ctx.livemode,
+      p_stripe_customer_id: si.customer,
+      p_stripe_payment_method_id: pm.id,
+      p_stripe_setup_intent_id: si.id,
+      p_brand: card.brand,
+      p_last4: card.last4,
+      p_exp_month: card.exp_month,
+      p_exp_year: card.exp_year,
+      p_card_authorization_signature_id: metaSignatureId,
+    },
+  );
+  if (saveErr) {
+    // 22023 is the command's own lineage refusal. It is terminal — a retry
+    // cannot make forged lineage resolve — but it is still operator-visible,
+    // and no card row was written because the whole transaction rolled back.
+    if (saveErr.code === "22023") {
+      return await terminalCardRejection(
+        event,
+        ctx,
+        si,
+        `command_${saveErr.message.replace(/[^a-z_]/gi, "_").slice(0, 60)}`,
+      );
     }
     throw new Error(
-      `client_payment_methods_insert_failed:${insertErr.code}:${insertErr.message}`,
+      `save_client_card_on_file_failed:${saveErr.code}:${saveErr.message}`,
     );
   }
+  const saved = Array.isArray(saveRows) ? saveRows[0] : saveRows;
+  if (!saved || typeof saved.card_id !== "string") {
+    throw new Error("save_client_card_on_file_returned_no_row");
+  }
+  const inserted = { id: saved.card_id as string };
+  const wasIdempotent = saved.outcome === "idempotent";
 
   // Post-response, bounded: analytics failure must never 500 this webhook
   // and trigger Stripe retries (P1/P2-ANALYTICS-03). Fired here (before the
@@ -749,6 +777,8 @@ async function handleSetupIntentSucceeded(
     cardPaymentMethodId: pm.id,
     cardBrandPresent: true,
     insertedId: inserted?.id,
+    idempotent: wasIdempotent,
+    previousCardRetiredId: saved.previous_card_id ?? null,
     cardChangeNotification: notif.eventType,
     cardChangeNotificationDeduped: notif.deduped,
   };

@@ -57,19 +57,27 @@ describe("4) getActiveCardForStudioClient is mode-scoped", () => {
   });
 });
 
-describe("5) webhook card pre-flip is mode-scoped", () => {
-  it("the removed-status pre-flip filters by the event's mode (ctx.livemode)", () => {
-    const src = read("app/api/stripe/webhook/route.ts");
-    const flip = src.slice(
-      src.indexOf('.update({ status: "removed", removed_at: nowIso })'),
-    );
-    const chain = flip.slice(0, flip.indexOf(";"));
-    expect(chain).toMatch(/\.eq\("stripe_livemode", ctx\.livemode\)/);
-    expect(chain).toMatch(/\.eq\("status", "active"\)/);
+describe("5) card retire-on-replace is mode-scoped", () => {
+  // OWNERSHIP MOVED IN 0180. The retire used to be a PostgREST .update() in the
+  // webhook, paired with a separate .insert() — two transactions, so a failed
+  // insert left the client with zero active cards. Both writes now live inside
+  // save_client_card_on_file. The PROPERTY is unchanged and still load-bearing:
+  // saving a LIVE card must never retire the client's TEST card, or vice versa.
+  // Only the file that owns it changed.
+  it("the command retires only the SAME-mode active card", () => {
+    const sql = read("supabase/migrations/0180_card_payment_method_replacement_integrity.sql");
+    const body = sql.slice(sql.indexOf("update public.client_payment_methods"));
+    const stmt = body.slice(0, body.indexOf("returning"));
+    expect(stmt).toMatch(/cpm\.stripe_livemode = p_stripe_livemode/);
+    expect(stmt).toMatch(/cpm\.status = 'active'/);
   });
 
-  it("the pre-flip never uses a hardcoded mode literal", () => {
+  it("the webhook passes the EVENT's mode into the command, never a literal", () => {
     const src = read("app/api/stripe/webhook/route.ts");
+    const call = src.slice(src.indexOf('"save_client_card_on_file"'));
+    const args = call.slice(0, call.indexOf("},"));
+    expect(args).toMatch(/p_stripe_livemode: ctx\.livemode/);
     expect(src).not.toMatch(/\.eq\("stripe_livemode", (true|false)\)/);
+    expect(args).not.toMatch(/p_stripe_livemode: (true|false)/);
   });
 });

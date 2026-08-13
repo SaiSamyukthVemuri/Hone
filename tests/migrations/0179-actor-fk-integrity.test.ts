@@ -36,14 +36,17 @@ const EXEC = SQL.split("\n")
   .join("\n");
 
 describe("0179 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0179")).toBe(true);
-    expect(versionsAbove("0179")).toEqual([]);
-    expect(countVersion("0179")).toBe(1);
+  // THE HAND-OFF HAPPENED, exactly as this file's header instructed. 0180 was
+  // authored above 0179, so the current-state tripwire moves to 0180's own
+  // test (CLAUDE.md §2). The PERMANENT apply block below is untouched — it
+  // reads the frozen ledger entry and frozen bytes, so it stays true forever.
+  it("is no longer the repository maximum — 0180 was authored above it", () => {
+    expect(isRepoMax("0179")).toBe(false);
+    expect(versionsAbove("0179")).toContain("0180");
   });
 
-  it("leaves 0180 free", () => {
-    expect(countVersion("0180")).toBe(0);
+  it("consumes exactly ONE number", () => {
+    expect(countVersion("0179")).toBe(1);
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {
@@ -180,17 +183,23 @@ describe("0179 — PERMANENT apply facts (frozen; must survive 0180+)", () => {
 //      a successor's note.
 // ---------------------------------------------------------------------------
 describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
-  it("the declared hosted max is 0179 — repository and production agree, nothing pending", () => {
-    expect(REC.hosted_migration_max).toBe("0179");
-    expect(isRepoMax(REC.hosted_migration_max)).toBe(true);
-    expect(versionsAbove(REC.hosted_migration_max)).toEqual([]);
+  it("0179 is APPLIED in production and remains a floor under the hosted max", () => {
+    // CONVERTED TO A FLOOR when 0180 was authored. 0179's durable claim is that
+    // production REACHED it, not that production has stopped there. 0180 is
+    // authored but NOT yet applied, so hosted legitimately still reads 0179
+    // while repo max is 0180 — an equality-to-repo-max assertion here would be
+    // false-red on a correct tree.
+    expect(Number.parseInt(REC.hosted_migration_max, 10)).toBeGreaterThanOrEqual(179);
     expect(countVersion("0179")).toBe(1);
+    expect(isRepoMax("0179")).toBe(false);
   });
 
-  it("the current record points at the 0179 apply", () => {
-    // Current-state fields only: which migration is live, and when.
-    expect(REC.hosted_applied_at).toBe("2026-08-12T01:40:52Z");
-    expect(REC.hosted_note).toContain("0179_actor_fk_integrity.sql");
+  it("HANDED OFF: the current record now points at 0180, not 0179", () => {
+    // 0180 was APPLIED to production, so current-state ownership moves to
+    // 0180's own test (CLAUDE.md §2). 0179's durable claim is the FLOOR
+    // asserted above — that production reached it — not that it is still live.
+    expect(Number.parseInt(REC.hosted_migration_max, 10)).toBeGreaterThanOrEqual(180);
+    expect(REC.hosted_note).toContain("0180_card_payment_method_replacement_integrity.sql");
   });
 
   it("CURRENT-NOTE INVARIANT: the live record carries the full superseded checksum chain", () => {
@@ -198,6 +207,7 @@ describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
     // recording an apply must never drop an earlier frozen apply record.
     // Hands to 0180 (whose note must carry 0179's sha as well).
     for (const sha of [
+      RAW_SHA_0179, // 0179 — now itself superseded, and must still be carried
       "6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f", // 0178
       "a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744", // 0177
       "4ed5ad84168d6c6f9a8372709b737990af57a5dde08a4e56a7a983308951af20", // 0176
@@ -211,18 +221,18 @@ describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
     }
   });
 
-  it("the ledger's CURRENT STATE block reconciles repo and hosted at 0179", () => {
-    const current = LEDGER.slice(
-      LEDGER.indexOf("## Current state"),
-      LEDGER.indexOf("## Previous state"),
+  it("PRESERVED: the 0179 block is now FROZEN historical evidence, heading-only demotion", () => {
+    // 0180's apply prepended a new Current state, so 0179's block was
+    // reclassified Current -> Previous. Its EVIDENCE must be byte-preserved.
+    expect(LEDGER).toContain("## Previous state (verified 2026-08-12, post-0179 apply)");
+    const frozen = LEDGER.slice(
+      LEDGER.indexOf("## Previous state (verified 2026-08-12, post-0179 apply)"),
+      LEDGER.indexOf("## Previous state (verified 2026-08-11, post-0178 apply)"),
     );
-    expect(current).toContain("post-0179 apply");
-    expect(current).toContain("0179_actor_fk_integrity.sql");
-    expect(current).toContain(RAW_SHA_0179);
-    expect(current).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
-    expect(current).toMatch(/hosted == repo/);
-    expect(current).toMatch(/0180/);
-    expect(current).not.toMatch(/post-0178 apply/);
+    expect(frozen).toContain("0179_actor_fk_integrity.sql");
+    expect(frozen).toContain(RAW_SHA_0179);
+    expect(frozen).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
+    expect(frozen).toMatch(/hosted == repo/);
   });
 
   it("preserves the 0178 record as frozen historical evidence, heading-only demotion", () => {

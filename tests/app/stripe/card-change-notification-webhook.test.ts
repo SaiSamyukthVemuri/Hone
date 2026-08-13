@@ -34,9 +34,14 @@ describe("card-change notification webhook wiring", () => {
     expect(ROUTE).not.toMatch(/recordPractitionerNotification/);
   });
 
-  it("is called (awaited) in exactly the three card-persisted branches", () => {
+  it("is called (awaited) in exactly the two card-persisted branches", () => {
+    // Was three. 0180 folded the separate 23505 "concurrent insert already
+    // happened" branch into the command, which now reports that case as
+    // outcome='idempotent' through the SAME return path as a fresh insert.
+    // Two notify sites remain: the step-5 re-delivery short circuit, and the
+    // post-persist path. Every card that persists still notifies exactly once.
     const calls = HANDLER.match(/await ensureCardChangeNotification\(admin,/g) ?? [];
-    expect(calls.length).toBe(3);
+    expect(calls.length).toBe(2);
   });
 
   it("the live-mode dormancy guard + cross-studio/forged rejections return BEFORE ANY notification (Tests 6 & 7)", () => {
@@ -47,12 +52,17 @@ describe("card-change notification webhook wiring", () => {
     for (const guard of [
       "shouldIgnoreLiveModeEvent",
       "livemodeEventIgnored: true",
-      'rejected: "missing_metadata"',
-      'rejected: "missing_account_context"',
-      'rejected: "studio_metadata_mismatch"',
-      'rejected: "missing_customer"',
-      'rejected: "customer_lineage_mismatch"',
-      'rejected: "signature_lineage_mismatch"',
+      // 0180: these route through terminalCardRejection so the rejection is
+      // operator-visible instead of a silent 200, and the helper now receives
+      // the SetupIntent itself so it can record the ownership anchor the portal
+      // binds against. The ordering property is unchanged — every one still
+      // returns before any notification.
+      'terminalCardRejection(event, ctx, si, "missing_metadata")',
+      'terminalCardRejection(event, ctx, si, "missing_account_context")',
+      'terminalCardRejection(event, ctx, si, "studio_metadata_mismatch")',
+      'terminalCardRejection(event, ctx, si, "missing_customer")',
+      'terminalCardRejection(event, ctx, si, "customer_lineage_mismatch")',
+      'terminalCardRejection(event, ctx, si, "signature_lineage_mismatch")',
     ]) {
       expect(BEFORE_FIRST_NOTIFY).toContain(guard);
     }
@@ -63,20 +73,23 @@ describe("card-change notification webhook wiring", () => {
     // notify (and it cannot have persisted a card, so the step-5 re-delivery
     // notify is unreachable for it). No card => no notification.
     for (const rejection of [
-      'rejected: "missing_payment_method"',
-      'rejected: "non_card_payment_method"',
+      'terminalCardRejection(event, ctx, si, "missing_payment_method")',
+      'terminalCardRejection(event, ctx, si, "non_card_payment_method")',
     ]) {
       expect(BEFORE_LAST_NOTIFY).toContain(rejection);
     }
     // Nothing rejects AFTER the fresh-path notify — it is the last step before
     // the success return.
-    expect(AFTER_LAST_NOTIFY).not.toContain('rejected: "');
+    expect(AFTER_LAST_NOTIFY).not.toContain("terminalCardRejection(");
   });
 
-  it("preserves the existing card write + analytics (unchanged behavior)", () => {
-    // Pre-flip retire (mode-scoped) + insert still present.
-    expect(HANDLER).toMatch(/\.update\(\{ status: "removed", removed_at: nowIso \}\)/);
-    expect(HANDLER).toMatch(/\.from\("client_payment_methods"\)\s*\n\s*\.insert\(\{/);
+  it("persists the card atomically and keeps the analytics ordering", () => {
+    // 0180: the mode-scoped retire + insert are no longer two PostgREST writes
+    // in this file — they are one transaction inside save_client_card_on_file.
+    // Neither raw write may come back.
+    expect(HANDLER).not.toMatch(/\.update\(\{ status: "removed"/);
+    expect(HANDLER).not.toMatch(/\.from\("client_payment_methods"\)\s*\n\s*\.insert\(\{/);
+    expect(HANDLER).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file"/);
     // The card_on_file_saved analytics event still fires, and BEFORE the
     // fresh-path notification (so a notification failure cannot suppress it).
     const analyticsIdx = HANDLER.indexOf('event: "card_on_file_saved"');
