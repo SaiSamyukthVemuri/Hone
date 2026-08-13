@@ -22,6 +22,7 @@ import {
   generateAppointmentToken,
   hashAppointmentToken,
 } from "@/lib/booking/appointment-token";
+import type { ConfirmationEmailStatus } from "@/lib/booking/confirmation-presentation";
 import {
   parseReferralSource,
   referralSourceLabel,
@@ -329,8 +330,31 @@ export async function fetchNextAvailableDateAction(params: {
   return { ok: true, date: null };
 }
 
+// BOOK-01 Tranche 1. A COMMITTED booking now returns the client's management
+// URL and the TRUE confirmation-email outcome, so the browser that created the
+// appointment always leaves with a working path to it — exactly the contract
+// the reschedule surface has carried since the 0171 amendment
+// (app/reschedule/[token]/actions.ts:598-617).
+//
+// `manageUrl` goes ONLY to that authorised browser. It is built from the raw
+// token this request minted, and the command stored only that token's SHA-256,
+// so the URL is never persisted, never logged, never put in an analytics event,
+// an ops alert, an audit row or an error message.
+//
+// SCOPE, STATED HONESTLY: this closes the case where the appointment commits
+// and the provider then fails or is switched off. It does NOT cover the process
+// dying after COMMIT but before this response reaches the browser — there is no
+// response in that case. That case remains covered by the existing recovery
+// paths (the authenticated client portal, which mints its own HMAC management
+// token per appointment, and the 24h/2h reminder passes, whose window query
+// never consults `confirmation_sent_at`). Tranche 1 does not claim otherwise.
 export type PublicBookResult =
-  | { ok: true; appointmentId: string }
+  | {
+      ok: true;
+      appointmentId: string;
+      manageUrl: string;
+      confirmationEmailStatus: ConfirmationEmailStatus;
+    }
   | { ok: false; error: string; code?: "slot_taken" };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
@@ -898,11 +922,20 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //
   // This is deliberate. An earlier revision re-read the row and gated the sends
   // on that read succeeding — which meant one transient SELECT failure would
-  // silently skip the confirmation email. That is not a cosmetic loss: the raw
-  // `appointmentToken` lives only in memory and only its SHA-256 is persisted
-  // (`cancellation_token_hash`), so the email is the ONLY carrier of the token
-  // the client needs to cancel or reschedule. Losing it is unrecoverable. The
-  // send must therefore depend on nothing that can fail after the commit.
+  // silently skip the confirmation email. The raw `appointmentToken` lives only
+  // in memory and only its SHA-256 is persisted (`cancellation_token_hash`), so
+  // the send must depend on nothing that can fail after the commit.
+  //
+  // BOOK-01 Tranche 1 AMENDS THE REST OF THIS NOTE. It used to say the email is
+  // the ONLY carrier of the token and that losing it is unrecoverable. Neither
+  // is true any more, and one was never quite true: this action's own success
+  // response now carries the management URL to the authorised browser, and a
+  // committed appointment was already recoverable through the authenticated
+  // client portal and the 24h/2h reminder passes, both of which mint a stateless
+  // HMAC management token from the appointment id (lib/booking/tokens.ts) that
+  // /manage, /cancel and /reschedule all accept. Delivering the email still
+  // matters — it is the client's durable copy — but a provider failure is no
+  // longer a dead end.
   const created = {
     id: createdId,
     starts_at: commandRow?.starts_at as string,
@@ -1068,6 +1101,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // confirmation_send_attempts AND stamps confirmation_sent_at only when
   // the Resend call actually succeeded. The old code path stamped the
   // timestamp unconditionally, which falsely advertised delivery.
+  //
+  // BOOK-01 Tranche 1: that same verdict is now REPORTED to the caller.
+  // `disabled` is the honest default — the studio switched confirmations off,
+  // which is a configuration rather than a failure, and still returns the
+  // management URL. Only a provider success may move it to `sent`.
+  let confirmationEmailStatus: ConfirmationEmailStatus = "disabled";
   if (studio.send_confirmation_emails) {
     const treatmentTimeLine = studio.show_treatment_time_to_clients
       ? buildTreatmentTimeLine({
@@ -1089,6 +1128,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       treatmentTimeLine,
       appBaseUrl: appOrigin,
     });
+    // The status reflects the PROVIDER, not the bookkeeping write below: if
+    // recording the attempt fails, the client still did (or did not) get the
+    // email, and what we report must match what actually happened.
+    confirmationEmailStatus = result.ok ? "sent" : "failed";
     await recordEmailAttempt(admin, createdId, "confirmation", result.ok);
     if (!result.ok) {
       logEmailFailure({
@@ -1165,7 +1208,15 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     properties: { studio_id: studio.id, source: "public_booking" },
   });
 
-  return { ok: true, appointmentId: createdId };
+  // THE BOOKING IS COMMITTED, and the client leaves with a usable path to it
+  // whatever the email did. `manageUrl` goes ONLY to this authorised browser —
+  // it is never persisted, logged, alerted on or reported.
+  return {
+    ok: true,
+    appointmentId: createdId,
+    manageUrl,
+    confirmationEmailStatus,
+  };
 }
 
 function trimmed(value: FormDataEntryValue | null): string {

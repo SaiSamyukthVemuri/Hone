@@ -14,6 +14,10 @@ import {
 import { MARKETING_CONSENT_FIELD } from "@/lib/booking/marketing-consent";
 import { REFERRAL_SOURCE_OPTIONS } from "@/lib/booking/referral-source";
 import {
+  buildBookingConfirmationCopy,
+  type ConfirmationEmailStatus,
+} from "@/lib/booking/confirmation-presentation";
+import {
   fetchNextAvailableDateAction,
   fetchPublicSlotsAction,
   publicBookAppointmentAction,
@@ -46,11 +50,17 @@ type Props = {
   maxDate: string;
 };
 
+// BOOK-01 Tranche 1. The success state carries the appointment's MANAGEMENT URL
+// and the TRUE confirmation-email outcome, so the card never tells the client
+// their cancel/reschedule links are in an email the provider refused — and the
+// client always leaves with a usable path to the booking they just made.
 type Confirmation = {
   when: string;
   dateLocal: string;
   service: Service | null;
   email: string;
+  manageUrl: string;
+  emailStatus: ConfirmationEmailStatus;
 };
 
 // Render a local YYYY-MM-DD as "Tuesday, May 26" (or, with year, "Tuesday, May 26, 2026"
@@ -393,7 +403,8 @@ export function PublicBookForm({
       }
       // Snapshot the selected service + date + email at success time so the
       // confirmation card stays stable even if local form state is later
-      // cleared on unmount or a re-render.
+      // cleared on unmount or a re-render. BOOK-01 Tranche 1 adds the
+      // management URL and the real email verdict to that same snapshot.
       const bookedService =
         services.find((s) => s.id === serviceId) ?? null;
       setDone({
@@ -401,6 +412,8 @@ export function PublicBookForm({
         dateLocal: date,
         service: bookedService,
         email,
+        manageUrl: r.manageUrl,
+        emailStatus: r.confirmationEmailStatus,
       });
     });
   }
@@ -411,6 +424,7 @@ export function PublicBookForm({
         confirmation={done}
         studioName={studioName}
         studioAddress={studioAddress}
+        studioSlug={slug}
       />
     );
   }
@@ -1018,6 +1032,23 @@ function Field({
   );
 }
 
+// Bold the client's own address wherever a step names it, so a mistyped email
+// is easy to spot — the emphasis the pre-Tranche-1 card carried on that line.
+// Purely derived from data already on screen: it reads the address, never the
+// email STATUS, so no status decision returns to the JSX. A step that does not
+// mention the address renders unchanged.
+function emphasiseEmail(step: string, email: string): React.ReactNode {
+  if (!email || !step.includes(email)) return step;
+  const [before, ...rest] = step.split(email);
+  return (
+    <>
+      {before}
+      <strong>{email}</strong>
+      {rest.join(email)}
+    </>
+  );
+}
+
 // Public booking confirmation surface. Pure display — no actions, no
 // fetches, no side effects. The booking has already been created and
 // the confirmation email already dispatched by the server action by
@@ -1026,15 +1057,25 @@ function ConfirmationView({
   confirmation,
   studioName,
   studioAddress,
+  studioSlug,
 }: {
   confirmation: Confirmation;
   studioName: string;
   studioAddress: string | null;
+  studioSlug: string;
 }) {
   const formattedDate = formatLocalDate(confirmation.dateLocal);
   const serviceName = confirmation.service?.name ?? null;
   const durationMinutes =
     confirmation.service?.default_duration_minutes ?? null;
+  // BOOK-01 Tranche 1. Copy is decided by the ACTUAL provider outcome, in a
+  // pure function the unit lane can execute (this file is `.tsx` and the unit
+  // lane is node-only, so a rule left inside JSX would only ever be provable
+  // by a source regex).
+  const copy = buildBookingConfirmationCopy({
+    emailStatus: confirmation.emailStatus,
+    email: confirmation.email,
+  });
   return (
     <div className="flex flex-col gap-8">
       <div>
@@ -1084,7 +1125,8 @@ function ConfirmationView({
         </ConfirmationRow>
       </dl>
 
-      {/* What happens next — three short lines. */}
+      {/* What happens next. The lines come from the pure copy builder, which
+          never asserts a delivery the provider did not make. */}
       <div className="flex flex-col gap-3">
         <h3
           className="text-[12px] font-medium uppercase"
@@ -1093,19 +1135,57 @@ function ConfirmationView({
           What happens next
         </h3>
         <ul className="flex flex-col gap-2 text-[16px] leading-relaxed text-[#0A0A0A]">
-          <li>
-            We sent a confirmation to{" "}
-            <strong>{confirmation.email}</strong>, with a calendar invite.
-          </li>
-          <li>
-            The email includes links to cancel or reschedule if your plans
-            change.
-          </li>
-          <li>
-            If your studio asks for a health intake, you&rsquo;ll receive
-            that link too.
-          </li>
+          {copy.steps.map((step) => (
+            <li key={step}>{emphasiseEmail(step, confirmation.email)}</li>
+          ))}
         </ul>
+      </div>
+
+      {/* PRIMARY exit, present in ALL THREE email states. This link is the
+          client's guaranteed path to the booking and depends on no provider:
+          it carries the raw token this request minted, of which only the
+          SHA-256 was ever stored. /manage surfaces reschedule and cancel
+          behind the studio's policies, so one link covers every action. */}
+      <div className="flex flex-col gap-3">
+        <a
+          href={confirmation.manageUrl}
+          className="self-start px-6 py-3 text-[13px] font-medium uppercase"
+          style={{
+            backgroundColor: "#0A0A0A",
+            color: "#FAFAF7",
+            letterSpacing: "0.1em",
+          }}
+        >
+          {copy.manageLabel}
+        </a>
+        {copy.urgesSavingLink && (
+          // Deliberately says SAVE THE LINK, not "bookmark this page": this
+          // card is client-side state and a refresh returns to the empty
+          // booking form. Only the link survives.
+          <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
+            Save that link — it&rsquo;s how you manage this appointment.
+          </p>
+        )}
+      </div>
+
+      {/* SECONDARY, durable fallback. Existing route, unchanged: the portal
+          login page reads ?studio=<slug> to scope the sign-in to THIS studio
+          (app/portal/login/page.tsx), and the portal itself mints a fresh
+          management token per upcoming appointment. Deliberately quiet and
+          deliberately not required — the in-band link above is primary, and
+          nothing here asks the client to sign in to manage this booking. */}
+      <div className="flex flex-col gap-2">
+        <a
+          href={`/portal/login?studio=${encodeURIComponent(studioSlug)}`}
+          className="self-start text-[13px] underline"
+          style={{ color: "#6B6B6B" }}
+        >
+          Or sign in to your {studioName} client portal
+        </a>
+        <p className="text-[12px]" style={{ color: "#6B6B6B" }}>
+          Use the email you booked with. Your upcoming appointments are always
+          there.
+        </p>
       </div>
 
       {/* Subtle payment reassurance. Phase 1 booking does not collect
