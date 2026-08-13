@@ -165,7 +165,14 @@ export async function getAppointmentPaymentStates(
   const supabase = await createClient();
 
   // 1) Sessions for these appointments (studio-scoped + RLS). One bounded query.
-  const { data: sessionRows } = await supabase
+  // Review 3778292139 — transaction state must be TRUSTWORTHY before freeness
+  // may be applied. `deriveAppointmentPaymentState` returns
+  // `isFree ? "free" : "no_session"` when hasSession is false, so a failed
+  // sessions or attempts read (which collapses to an empty row set) combined
+  // with a SUCCESSFUL pricing read renders "No payment required" over a real
+  // pending_stripe or succeeded charge — inverting the precedence that ranks
+  // processing/paid/refunded above free.
+  const { data: sessionRows, error: sessionError } = await supabase
     .from("sessions")
     .select("id, appointment_id")
     .eq("studio_id", studioId)
@@ -184,15 +191,17 @@ export async function getAppointmentPaymentStates(
   }
 
   // 2) session_payment attempts for those sessions. One bounded query.
+  let attemptsUntrusted = false;
   const attemptsByAppt = new Map<string, AttemptRow[]>();
   const sessionIds = [...sessionToAppt.keys()];
   if (sessionIds.length > 0) {
-    const { data: attemptRows } = await supabase
+    const { data: attemptRows, error: attemptError } = await supabase
       .from("payment_charge_attempts")
       .select("session_id, status, refund_status")
       .eq("studio_id", studioId)
       .eq("charge_reason", "session_payment")
       .in("session_id", sessionIds);
+    if (attemptError) attemptsUntrusted = true;
     for (const a of (attemptRows ?? []) as Array<{
       session_id: string;
       status: string | null;
@@ -206,7 +215,13 @@ export async function getAppointmentPaymentStates(
     }
   }
 
-  const freeIds = await getFreeAppointmentIds(studioId, ids, studioTimezone);
+  // Freeness is only applied when we can see the transaction state it must
+  // rank below. Untrustworthy reads fall back to the neutral state, which
+  // claims nothing: not "No payment required", and not "Paid".
+  const transactionStateTrusted = !sessionError && !attemptsUntrusted;
+  const freeIds = transactionStateTrusted
+    ? await getFreeAppointmentIds(studioId, ids, studioTimezone)
+    : new Set<string>();
 
   for (const apptId of ids) {
     out.set(
