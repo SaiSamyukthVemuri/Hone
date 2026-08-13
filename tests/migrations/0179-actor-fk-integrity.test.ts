@@ -194,10 +194,12 @@ describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
     expect(isRepoMax("0179")).toBe(false);
   });
 
-  it("the current record points at the 0179 apply", () => {
-    // Current-state fields only: which migration is live, and when.
-    expect(REC.hosted_applied_at).toBe("2026-08-12T01:40:52Z");
-    expect(REC.hosted_note).toContain("0179_actor_fk_integrity.sql");
+  it("HANDED OFF: the current record now points at 0180, not 0179", () => {
+    // 0180 was APPLIED to production, so current-state ownership moves to
+    // 0180's own test (CLAUDE.md §2). 0179's durable claim is the FLOOR
+    // asserted above — that production reached it — not that it is still live.
+    expect(Number.parseInt(REC.hosted_migration_max, 10)).toBeGreaterThanOrEqual(180);
+    expect(REC.hosted_note).toContain("0180_card_payment_method_replacement_integrity.sql");
   });
 
   it("CURRENT-NOTE INVARIANT: the live record carries the full superseded checksum chain", () => {
@@ -205,6 +207,7 @@ describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
     // recording an apply must never drop an earlier frozen apply record.
     // Hands to 0180 (whose note must carry 0179's sha as well).
     for (const sha of [
+      RAW_SHA_0179, // 0179 — now itself superseded, and must still be carried
       "6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f", // 0178
       "a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744", // 0177
       "4ed5ad84168d6c6f9a8372709b737990af57a5dde08a4e56a7a983308951af20", // 0176
@@ -218,18 +221,18 @@ describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
     }
   });
 
-  it("the ledger's CURRENT STATE block reconciles repo and hosted at 0179", () => {
-    const current = LEDGER.slice(
-      LEDGER.indexOf("## Current state"),
-      LEDGER.indexOf("## Previous state"),
+  it("PRESERVED: the 0179 block is now FROZEN historical evidence, heading-only demotion", () => {
+    // 0180's apply prepended a new Current state, so 0179's block was
+    // reclassified Current -> Previous. Its EVIDENCE must be byte-preserved.
+    expect(LEDGER).toContain("## Previous state (verified 2026-08-12, post-0179 apply)");
+    const frozen = LEDGER.slice(
+      LEDGER.indexOf("## Previous state (verified 2026-08-12, post-0179 apply)"),
+      LEDGER.indexOf("## Previous state (verified 2026-08-11, post-0178 apply)"),
     );
-    expect(current).toContain("post-0179 apply");
-    expect(current).toContain("0179_actor_fk_integrity.sql");
-    expect(current).toContain(RAW_SHA_0179);
-    expect(current).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
-    expect(current).toMatch(/hosted == repo/);
-    expect(current).toMatch(/0180/);
-    expect(current).not.toMatch(/post-0178 apply/);
+    expect(frozen).toContain("0179_actor_fk_integrity.sql");
+    expect(frozen).toContain(RAW_SHA_0179);
+    expect(frozen).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
+    expect(frozen).toMatch(/hosted == repo/);
   });
 
   it("preserves the 0178 record as frozen historical evidence, heading-only demotion", () => {

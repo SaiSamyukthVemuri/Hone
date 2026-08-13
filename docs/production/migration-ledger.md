@@ -14,7 +14,76 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-12, post-0179 apply)
+## Current state (verified 2026-08-13, post-0180 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0180** (`0180_card_payment_method_replacement_integrity.sql`, applied 2026-08-13) |
+| **Repo migration max** | **0180** — **hosted == repo.** Nothing pending. Next free number is **0181** (available, not claimed). |
+| **Total migrations in repo** | **179** (`0001` … `0157`, `0159` … `0180` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **179**, each applied **exactly once**. Applied count moved 178 → 179. |
+| **`0180` raw checksum (frozen)** | `d5d8271da38588a89e0727ce7a2a5c417ee8e079ad283acdc1fa55f90727eb8d` |
+| **`0180` executable checksum (frozen)** | `160b39a7ad419438df96e240003bf814146e601dfeefc83bd5c1bbff23f5c4ea` |
+| **Deployed function body (frozen)** | md5 `9bdcfd4d67a2c6c7538c37a7c5b34fd4`, length `4432` — byte-identical to the reviewed migration's `$$`-delimited body |
+| **Applied from** | the reviewed #562 head `d0b4a311825f9a98a61b09726c61678982c46af7` — **DATABASE FIRST, before any application merge** |
+| **Application merge** | `acfddf2b7ac0b4e3c548a956f5cce4830ca28584` (PR #562), normal two-parent merge, parent 1 `773dbc7008b5e3683387cdf1e92d04f4682fead1` |
+| **Production deployment** | Vercel `5879768147`, built from `acfddf2b7ac0b4e3c548a956f5cce4830ca28584`, success |
+| **Production branch governance** | protected throughout — PR required, four stable CI contexts, force push and deletion blocked, linear history not required, `enforce_admins` true; not bypassed |
+
+> ✅ **REPOSITORY AND HOSTED MIGRATION TRUTH ARE RECONCILED AT 0180.**
+> **PAY-01 (card-on-file persistence integrity) is PRODUCTION-CLOSED.** Card replacement is now
+> ONE database transaction: `public.save_client_card_on_file` re-validates customer and signature
+> lineage, takes a same-mode advisory xact lock, and retires the same-mode active card and inserts
+> its replacement together — so a failed insert rolls the retirement back and **the previous active
+> card survives**. Before 0180 the retire and the insert were two separate PostgREST round trips,
+> each its own transaction, which could leave a client with **no active card at all**.
+> The command is **SECURITY DEFINER**, `search_path = ''`, and **service_role only** —
+> `PUBLIC`, `anon` and `authenticated` are all denied EXECUTE.
+> **Zero business-row mutation.** Independent T3 review **P0 0 / P1 0 / P2 0**.
+
+> 🚨 **APPLY EXIT STATUS: THE CLIENT PROCESS EXIT CODE WAS NOT CAPTURED — and none is claimed.**
+> The `db push` process was terminated by the operator harness timeout before it returned.
+> **Server-side commit was proven independently, without relying on the client**: 0180 is a single
+> `begin;`/`commit;` transaction whose only object statements are one `CREATE OR REPLACE FUNCTION`
+> and one `COMMENT ON FUNCTION`, so partial application is impossible — it committed whole or
+> rolled back whole. Observed after the process ended: hosted max **0180** with `0180` recorded
+> **exactly once** and nothing above it; `save_client_card_on_file` present **exactly once** with
+> the expected 12-argument signature; the deployed body **byte-identical** to the reviewed
+> migration (md5 `9bdcfd4d67a2c6c7538c37a7c5b34fd4`, length `4432`); the migration's **final**
+> object statement (the `COMMENT`, 607 chars) present, proving execution reached the end of the
+> transaction body; `prosecdef` true; `proconfig` `search_path=""`; EXECUTE granted to
+> `service_role` and denied to `PUBLIC`/`anon`/`authenticated`; and zero open transactions, zero
+> lock waiters and zero ungranted locks remaining.
+
+> ⚠️ **NO SERVER-SIDE APPLY TIMESTAMP EXISTS.** `supabase_migrations.schema_migrations` carries only
+> `(version, statements, name)` — there is **no timestamp column**, for any migration. The
+> `hosted_applied_at` recorded in [`migration-state.json`](./migration-state.json) for 0180
+> (`2026-08-13T00:00:11Z`) is the **observed client-side apply start marker**, not a database fact,
+> and is labelled as such. Earlier records quoting precise apply windows took them from the same
+> client-side observation.
+
+> **DB-FIRST WAS MANDATORY AND WAS FOLLOWED.** 0180 is additive, so **old app + new DB is safe**
+> while **new app + old DB is not** — the application calls `save_client_card_on_file`
+> unconditionally. The database was applied and verified **first**; the old application was then
+> confirmed healthy against the new database (`/` 200, `/login` 200, `/dashboard` 307 → `/login`,
+> `/portal/login` 200, zero new critical/error ops alerts) **before** PR #562 was merged.
+
+> **Numbers in this block are the CURRENT hosted truth and move on every apply.** The single
+> machine-readable owner is [`migration-state.json`](./migration-state.json); repo-side totals are
+> **derived** by `scripts/migration-state.mjs` and must never be hand-maintained here. Sections
+> below this one are **frozen historical records** — they state what was true at their own apply and
+> are never rewritten when a later migration lands.
+
+> ⚠️ **LEDGER GAP (unchanged, still open).** `0170` and `0171` have no narrative entry in this
+> file — their apply records live only in `migration-state.json`'s `hosted_note` history. That gap
+> is pre-existing and is **not** back-filled here.
+
+> **The block below is FROZEN.** It is the ledger's former Current state, reproduced
+> byte-for-byte from production commit `acfddf2`; only its heading is reclassified from
+> Current to Previous. Its wording, tense and numbers are left exactly as they were written
+> when 0179 was the hosted max. Duplication is preferable to editing historical evidence.
+
+## Previous state (verified 2026-08-12, post-0179 apply)
 
 | Field | Value |
 |---|---|
