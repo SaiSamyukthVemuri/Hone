@@ -249,6 +249,12 @@ export function SessionPaymentPrepareCard({
 
   const showPrepareForm =
     eligibility.eligible && !activeAttempt && !prepareJustSucceeded;
+  // FREE-01 / review 3777045531. Freeness is a property of the CURRENT price,
+  // not of whether a prepare form happens to be showing. A positive-price
+  // attempt already in `ready` sets showPrepareForm false, so gating the free
+  // notice on it left the AttemptStatusPanel still offering Run charge for a
+  // visit every other surface now calls "No payment required".
+  const isFreeNow = amountResult?.kind === "free";
   // F-PAY-001: there is no "suggested" amount any more. Either the server
   // resolved ONE authoritative amount, or preparation is blocked with a reason.
   // The historical session price is NOT a pricing authority and is no longer
@@ -278,7 +284,7 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
-      {activeAttempt && (
+      {activeAttempt && !isFreeNow && (
         <AttemptStatusPanel
           attempt={activeAttempt}
           sessionId={sessionId}
@@ -343,7 +349,7 @@ export function SessionPaymentPrepareCard({
           Prepare, never Run charge, and never the amber "pricing blocked"
           warning, because nothing is wrong. Defense in depth: even if a route
           reaches this card directly, there is no money-moving control here. */}
-      {showPrepareForm && amountResult && amountResult.kind === "free" && (
+      {isFreeNow && (
         <p
           data-testid="payment-not-required"
           className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"

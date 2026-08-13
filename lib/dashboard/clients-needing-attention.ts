@@ -16,7 +16,10 @@ import { notableReactionLabel } from "@/lib/sessions/reaction-unified";
 //      watch/plan content has a caution flag or caution note (the
 //      same newest-with-content rule as the PR #203 pre-client
 //      watch/plan source, applied per client).
-//   B. Plan for next visit: that same source has a next_session_note.
+//   B. RETIRED by DASH-TRUTH-01. A next_session_note (plan for the next
+//      visit) used to include the client. It is clinical memory, not work,
+//      so it no longer includes anyone and no longer ranks anyone; it is
+//      still carried on the row as context when another rule includes them.
 //   C. Notable recorded reaction on the most recent charted session
 //      (moderate redness, swelling, sensitivity, irritation; the
 //      existing reaction vocabulary, no new values).
@@ -163,10 +166,19 @@ export function buildClientsNeedingAttention(
     byClient.set(s.client_id, acc);
   }
 
+  // DASH-TRUTH-01 / review 3777045539. A plan for the next visit is clinical
+  // memory, not work — so it must stop being an INCLUSION signal HERE, at the
+  // source, not later at presentation.
+  //
+  // Filtering it downstream was wrong in a way that loses real clinical
+  // signal: plan-only clients still passed this filter, still sorted AHEAD of
+  // reaction-only clients (hasPlan was the second sort key), and still consumed
+  // slots in the slice below. With enough plan-only clients a genuine notable
+  // reaction could be cut entirely and the Dashboard could report nothing
+  // needing attention. Excluding them before sort/count/limit is the only
+  // placement that cannot starve real work.
   const included = [...byClient.entries()]
-    .filter(
-      ([, a]) => a.hasWatch || a.hasPlan || a.notableReactionLabel !== null,
-    )
+    .filter(([, a]) => a.hasWatch || a.notableReactionLabel !== null)
     .map(([clientId, a]) => ({
       clientId,
       clientName: a.clientName,
@@ -183,8 +195,10 @@ export function buildClientsNeedingAttention(
           : ""),
     }))
     .sort((x, y) => {
+      // hasPlan is no longer a ranking signal either: ordering by it would
+      // still push reaction-only clients down the list for a reason that is
+      // not work. Watch note first, then most recent.
       if (x.hasWatch !== y.hasWatch) return x.hasWatch ? -1 : 1;
-      if (x.hasPlan !== y.hasPlan) return x.hasPlan ? -1 : 1;
       return x.latestDate < y.latestDate ? 1 : -1;
     });
 

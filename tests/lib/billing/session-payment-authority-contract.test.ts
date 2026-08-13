@@ -163,15 +163,35 @@ describe("session detail and quick checkout share one authority", () => {
   });
 });
 
-describe("execution is unchanged — preparation is the pricing boundary", () => {
-  it("execution takes attempt_id only and recalculates nothing", () => {
+describe("preparation remains the pricing boundary; execution may only REFUSE", () => {
+  // The invariant this protects is that execution never DECIDES or CHANGES an
+  // amount — the prepared row stays the single charge authority. FREE-01
+  // (review 3777045531) added one narrow exception in the opposite direction:
+  // a `ready` attempt prepared at a positive price survives the service later
+  // being set to $0, and execution otherwise works purely from the stored row,
+  // so it would charge the stale positive amount for a visit every other
+  // surface now shows as "No payment required". Execution therefore re-resolves
+  // the CURRENT price for one purpose only — to refuse when it is free.
+  it("execution still takes attempt_id only and never recomputes the amount", () => {
     const exec = ACTION.slice(ACTION.indexOf("executeSessionPaymentChargeAction"));
     expect(exec).toMatch(/attempt_id/);
-    expect(codeOnly(exec)).not.toMatch(/getAuthoritativeSessionPaymentAmount/);
-    expect(codeOnly(exec)).not.toMatch(/resolveAuthoritativeSessionPaymentAmount/);
+    // No amount is derived for charging: the repricing result is used solely
+    // for the free refusal, never to produce an amount_cents.
+    expect(codeOnly(exec)).not.toMatch(/amountCents/);
+    expect(codeOnly(exec)).not.toMatch(/amount_cents/);
     const CHARGE = read("lib/billing/session-payment-charge.ts");
     expect(codeOnly(CHARGE)).not.toMatch(/resolveAuthoritativeSessionPaymentAmount/);
     expect(codeOnly(CHARGE)).not.toMatch(/client_pricing/);
+  });
+
+  it("the ONLY use of the re-resolved price is the free refusal", () => {
+    const exec = ACTION.slice(ACTION.indexOf("executeSessionPaymentChargeAction"));
+    expect(exec).toMatch(/getAuthoritativeSessionPaymentAmount/);
+    expect(exec).toMatch(/repriced\.result\.kind === "free"/);
+    expect(exec).toMatch(/outcome: "blocked"/);
+    // and the session id comes from the ATTEMPT ROW, never the browser
+    expect(exec).toMatch(/\.select\("session_id"\)/);
+    expect(exec).toMatch(/\.eq\("studio_id", studioId\)/);
   });
 });
 

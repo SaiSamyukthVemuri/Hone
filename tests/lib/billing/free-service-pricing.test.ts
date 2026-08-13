@@ -138,8 +138,13 @@ describe("FREE-01 no money-moving path", () => {
   });
 
   it("F7 the session prepare card shows a calm free state, never Prepare", () => {
-    expect(CARD).toMatch(/amountResult\.kind === "free"/);
+    expect(CARD).toMatch(/const isFreeNow = amountResult\?\.kind === "free"/);
     expect(CARD).toMatch(/data-testid="payment-not-required"/);
+    // Free must not depend on a prepare form being shown: a `ready` attempt
+    // sets showPrepareForm false, and the status panel would still offer
+    // Run charge.
+    expect(CARD).toMatch(/\{isFreeNow && \(/);
+    expect(CARD).toMatch(/\{activeAttempt && !isFreeNow && \(/);
     // PrepareForm is gated on a strictly `resolved` amount, so free cannot reach it.
     expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
   });

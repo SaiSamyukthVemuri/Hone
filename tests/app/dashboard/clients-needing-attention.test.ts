@@ -50,7 +50,12 @@ function block(
 }
 
 describe("buildClientsNeedingAttention", () => {
-  it("watch note includes a client; plan includes a client; both count ONCE", () => {
+  // DASH-TRUTH-01: a plan for the next visit is clinical MEMORY, not work.
+  // It was inclusion rule B; it no longer includes anyone on its own. The
+  // original invariant this test proved — a client matching more than one
+  // signal is counted exactly ONCE — is unchanged and still asserted, and the
+  // plan itself is still carried on the row as context.
+  it("watch note includes a client; a plan alone does NOT; overlap counts ONCE", () => {
     const out = buildClientsNeedingAttention(
       [
         session("s1", "watchy", "2026-06-10T10:00:00Z"),
@@ -62,10 +67,13 @@ describe("buildClientsNeedingAttention", () => {
         block("s3", { caution_note: "watch this" }),
       ],
     );
-    expect(out.totalClients).toBe(3);
+    expect(out.totalClients).toBe(2);
+    expect(out.clients.map((c) => c.clientId)).not.toContain("planny");
     const both = out.clients.find((c) => c.clientId === "both")!;
     expect(both.hasWatch).toBe(true);
+    // still carried, still just once — a watch+plan client is ONE row
     expect(both.hasPlan).toBe(true);
+    expect(out.clients.filter((c) => c.clientId === "both")).toHaveLength(1);
   });
 
   it("clients with no watch/plan/notable reaction are excluded", () => {
@@ -106,37 +114,71 @@ describe("buildClientsNeedingAttention", () => {
   });
 
   it("newest watch/plan source wins per client (PR #203 rule)", () => {
-    const out = buildClientsNeedingAttention(
+    // The invariant is recency: the newest session carrying watch/plan content
+    // is the ONLY source consulted, so a stale caution can never override it.
+    // Under DASH-TRUTH-01 that rule now has a stronger consequence — the newest
+    // source holding only a plan leaves nothing to act on, and the superseded
+    // caution must not resurrect the client.
+    const staleCaution = buildClientsNeedingAttention(
       [
         session("new", "c1", "2026-06-10T10:00:00Z", "Newest plan."),
         session("old", "c1", "2026-06-01T10:00:00Z"),
       ],
       [block("old", { caution_note: "stale caution" })],
     );
-    const c = out.clients[0];
-    expect(c.hasPlan).toBe(true);
-    expect(c.hasWatch).toBe(false); // stale caution never overrides
-    expect(c.previewLine).toBe("Newest plan.");
+    expect(staleCaution.totalClients).toBe(0);
+
+    // ...and the same recency rule the other way round: a newest watch wins
+    // over an older plan, and supplies the preview line.
+    const freshWatch = buildClientsNeedingAttention(
+      [
+        session("new", "c1", "2026-06-10T10:00:00Z"),
+        session("old", "c1", "2026-06-01T10:00:00Z", "Stale plan."),
+      ],
+      [block("new", { caution_note: "Newest caution." })],
+    );
+    const c = freshWatch.clients[0];
+    expect(c.hasWatch).toBe(true);
+    expect(c.hasPlan).toBe(false); // the older plan is not the source
+    expect(c.previewLine).toBe("Newest caution.");
   });
 
-  it("sorting: watch first, then plan-only, then date desc; cap with + N more data", () => {
+  it("sorting: watch first, then date desc; a plan-only client never consumes the cap", () => {
+    // Was "watch first, then plan-only, then date desc". Plan is no longer a
+    // ranking signal, because ordering by it pushed reaction-only clients —
+    // actual work — below clients with nothing to do. The surviving invariants
+    // are: watch outranks everything, ties break newest-first, and the cap is
+    // applied to the included set.
     const out = buildClientsNeedingAttention(
       [
-        session("p1", "planA", "2026-06-10T10:00:00Z", "p"),
-        session("w1", "watchA", "2026-06-01T10:00:00Z"),
-        session("p2", "planB", "2026-06-11T10:00:00Z", "p"),
+        session("p1", "planA", "2026-06-12T10:00:00Z", "p"), // newest of all
+        session("w1", "watchA", "2026-06-01T10:00:00Z"), // oldest of all
+        session("r1", "reactB", "2026-06-11T10:00:00Z"),
+        session("r2", "reactC", "2026-06-10T10:00:00Z"),
       ],
-      [block("w1", { caution_note: "w" })],
+      [
+        block("w1", { caution_note: "w" }),
+        block("r1", { reaction_type: "swelling" }),
+        block("r2", { reaction_type: "irritation" }),
+      ],
       { limit: 2 },
     );
-    expect(out.clients.map((c) => c.clientId)).toEqual(["watchA", "planB"]);
-    expect(out.totalClients).toBe(3); // unique clients, capped list
+    // watchA leads despite being oldest; reactB beats reactC on date; and the
+    // NEWEST client of all is absent because a plan is not work. If plan-only
+    // clients were still included they would occupy this entire limit.
+    expect(out.clients.map((c) => c.clientId)).toEqual(["watchA", "reactB"]);
+    expect(out.totalClients).toBe(3); // unique INCLUDED clients, capped list
+    expect(out.totalClients).not.toBe(4);
   });
 
   it("latest tolerance is surfaced only alongside another reason", () => {
+    // The other reason used to be a plan; a plan no longer includes anyone, so
+    // this now rides along with a watch note. The invariant is unchanged:
+    // tolerance is CONTEXT on an already-included client, never an inclusion
+    // rule of its own — we invent no low-tolerance threshold.
     const out = buildClientsNeedingAttention(
-      [session("s1", "c1", "2026-06-10T10:00:00Z", "plan")],
-      [block("s1", { tolerance_rating: 2 })],
+      [session("s1", "c1", "2026-06-10T10:00:00Z")],
+      [block("s1", { caution_note: "watch", tolerance_rating: 2 })],
     );
     expect(out.clients[0].latestToleranceRating).toBe(2);
     // Tolerance alone never includes a client (tested above via

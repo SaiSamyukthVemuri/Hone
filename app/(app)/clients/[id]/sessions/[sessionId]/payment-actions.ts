@@ -414,6 +414,42 @@ export async function executeSessionPaymentChargeAction(
     };
   }
 
+  // FREE-01 / review 3777045531. A `ready` attempt prepared at a POSITIVE price
+  // survives a later change of the service to $0. This action otherwise works
+  // purely from the stored row, so it would happily charge the stale positive
+  // amount for a visit every other surface now presents as "No payment
+  // required". Re-resolve the CURRENT authoritative price and refuse if it is
+  // free.
+  //
+  // The session id is read from the attempt ROW, never from the browser — the
+  // form's session_id is used only for revalidatePath and is untrusted here.
+  // The lookup is studio-scoped, so it cannot reach another tenant's attempt.
+  {
+    const admin = createAdminClient();
+    const { data: attemptRow } = await admin
+      .from("payment_charge_attempts")
+      .select("session_id")
+      .eq("id", attemptId)
+      .eq("studio_id", studioId)
+      .maybeSingle();
+    const attemptSessionId = (attemptRow as { session_id?: string | null } | null)
+      ?.session_id;
+    if (attemptSessionId) {
+      const repriced = await getAuthoritativeSessionPaymentAmount({
+        studioId,
+        sessionId: attemptSessionId,
+        studioTimezone,
+      });
+      if (repriced.ok && repriced.result.kind === "free") {
+        return {
+          ok: false,
+          outcome: "blocked",
+          error: `${repriced.result.serviceName} is free — no payment is required, so this charge was not run.`,
+        };
+      }
+    }
+  }
+
   const result: SessionPaymentChargeResult = await runSessionPaymentCharge({
     attemptId,
     studioId,
