@@ -610,3 +610,65 @@ describe("failing axis is attributed, so operator copy cannot contradict itself"
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 follow-up, Codex review 3775029882 (P2):
+// classify the RAW elapsed interval, not a rounded minute count. Math.round
+// pulled 30:01-30:29 back to 30 (healthy) and 45:01-45:29 back to 45
+// (degraded), letting a genuinely over-threshold gap dodge its classification
+// — and, at the stale boundary, dodge the operator email.
+// ---------------------------------------------------------------------------
+describe("sub-minute precision at the threshold boundaries", () => {
+  const at = (msFromEpoch: number) => new Date(msFromEpoch).toISOString();
+  const T0 = Date.parse("2026-08-13T09:00:00.000Z");
+  const MIN = 60_000;
+
+  // CADENCE axis — the reported case.
+  it.each([
+    ["exactly 30:00", 30 * MIN, "healthy"],
+    ["30:01", 30 * MIN + 1_000, "degraded"],
+    ["30:29 (would round DOWN to 30)", 30 * MIN + 29_000, "degraded"],
+    ["exactly 45:00", 45 * MIN, "degraded"],
+    ["45:01", 45 * MIN + 1_000, "stale"],
+    ["45:29 (would round DOWN to 45)", 45 * MIN + 29_000, "stale"],
+  ])("cadence interval %s => %s", (_label, deltaMs, expected) => {
+    const s = computeReminderSchedulerStatus(
+      { at: at(T0), previousSuccessAt: at(T0 - (deltaMs as number)) },
+      T0 + 60_000, // recency healthy, so cadence alone decides
+    );
+    expect(s.status).toBe(expected);
+  });
+
+  // RECENCY axis — the same rounding bug existed here since #569.
+  it.each([
+    ["exactly 30:00", 30 * MIN, "healthy"],
+    ["30:29 (would round DOWN to 30)", 30 * MIN + 29_000, "degraded"],
+    ["exactly 45:00", 45 * MIN, "degraded"],
+    ["45:29 (would round DOWN to 45)", 45 * MIN + 29_000, "stale"],
+  ])("recency age %s => %s", (_label, deltaMs, expected) => {
+    const s = computeReminderSchedulerStatus(
+      { at: at(T0) },
+      T0 + (deltaMs as number),
+    );
+    expect(s.status).toBe(expected);
+  });
+
+  it("the DISPLAYED value is still a friendly rounded minute count", () => {
+    const s = computeReminderSchedulerStatus(
+      { at: at(T0), previousSuccessAt: at(T0 - (30 * MIN + 29_000)) },
+      T0 + 60_000,
+    );
+    // classification used the raw interval...
+    expect(s.status).toBe("degraded");
+    // ...while the operator-facing number stays readable.
+    expect(s.observedIntervalMinutes).toBe(30);
+  });
+
+  it("a 29:59 interval is still healthy (no over-correction)", () => {
+    const s = computeReminderSchedulerStatus(
+      { at: at(T0), previousSuccessAt: at(T0 - (29 * MIN + 59_000)) },
+      T0 + 60_000,
+    );
+    expect(s.status).toBe("healthy");
+  });
+});

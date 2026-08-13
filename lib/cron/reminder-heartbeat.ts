@@ -232,9 +232,16 @@ function worseHealth(
 
 // One shared band, applied to BOTH recency and observed interval so the two
 // axes can never drift apart.
-function classifyMinutes(minutes: number): ReminderSchedulerHealth {
-  if (minutes <= REMINDER_DEGRADED_AFTER_MINUTES) return "healthy";
-  if (minutes <= REMINDER_STALE_AFTER_MINUTES) return "degraded";
+//
+// OPS-01.1 (review 3775029882): classify the RAW elapsed milliseconds, never a
+// rounded minute count. `Math.round` pulled 30:01-30:29 back to 30 and
+// 45:01-45:29 back to 45, so an interval that genuinely exceeds the threshold
+// could still read healthy — or dodge the stale/critical escalation and its
+// operator email. The reminder-window invariant is about the real elapsed time,
+// so the comparison is too; rounding is for DISPLAY only.
+function classifyElapsedMs(ms: number): ReminderSchedulerHealth {
+  if (ms <= REMINDER_DEGRADED_AFTER_MINUTES * 60_000) return "healthy";
+  if (ms <= REMINDER_STALE_AFTER_MINUTES * 60_000) return "degraded";
   return "stale";
 }
 
@@ -287,7 +294,9 @@ export function computeReminderSchedulerStatus(
       ...base,
     };
   }
-  const ageMinutes = Math.max(0, Math.round((nowMs - parsed) / 60000));
+  // Raw elapsed time drives classification; the rounded value is for display.
+  const ageMs = Math.max(0, nowMs - parsed);
+  const ageMinutes = Math.round(ageMs / 60000);
 
   // Cadence axis. Only trusted when the previous timestamp parses AND is not
   // after the latest one (a future-dated prior is corrupt, not a 0-minute run).
@@ -295,15 +304,12 @@ export function computeReminderSchedulerStatus(
   const priorParsed = priorRaw ? Date.parse(priorRaw) : NaN;
   const cadenceMeasured =
     !Number.isNaN(priorParsed) && priorParsed <= parsed;
-  const observedIntervalMinutes = cadenceMeasured
-    ? Math.max(0, Math.round((parsed - priorParsed) / 60000))
-    : null;
+  const intervalMs = cadenceMeasured ? Math.max(0, parsed - priorParsed) : null;
+  const observedIntervalMinutes =
+    intervalMs === null ? null : Math.round(intervalMs / 60000);
 
-  const recencyStatus = classifyMinutes(ageMinutes);
-  const cadenceStatus =
-    observedIntervalMinutes === null
-      ? null
-      : classifyMinutes(observedIntervalMinutes);
+  const recencyStatus = classifyElapsedMs(ageMs);
+  const cadenceStatus = intervalMs === null ? null : classifyElapsedMs(intervalMs);
   const status =
     cadenceStatus === null ? recencyStatus : worseHealth(recencyStatus, cadenceStatus);
 
