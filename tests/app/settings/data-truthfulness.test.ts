@@ -240,30 +240,54 @@ describe("export privilege posture is unchanged (E7, E8)", () => {
   });
 });
 
-describe("#9 — the reminder scheduler is documented as operationally unproven", () => {
+describe("#9 — reminder scheduler: proven runtime and unproven ownership stay separate claims", () => {
   const CRON_DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
   const CURRENT_STATE = read("docs/production/current-state.md");
 
-  it("code-proven and production-unverified are stated as different claims", () => {
-    expect(CRON_DOC).toMatch(/PRODUCTION OPERATION/);
-    expect(CRON_DOC).toMatch(/OPEN — requires externally verified evidence/);
+  // PR OPS-01 closed the RUNTIME half of this finding with dated production
+  // evidence (three observed 200s at ~15-minute spacing). The HUMAN half —
+  // who owns the third-party scheduler account — is not closable by any probe
+  // and must never be folded into the same claim.
+  it("the two claims are stated separately, not merged", () => {
+    expect(CRON_DOC).toMatch(/PROVEN RUNTIME FACTS/);
+    expect(CRON_DOC).toMatch(/OPERATOR \/ HUMAN FACTS STILL TO VERIFY/);
   });
 
-  it("the objective verification checklist exists", () => {
+  it("the runtime evidence is dated and attributed to a production SHA", () => {
+    expect(CRON_DOC).toMatch(/2026-08-12/);
+    expect(CRON_DOC).toMatch(/773dbc7008b5/);
+    for (const stamp of ["23:00:19Z", "23:15:10Z", "23:30:14Z"]) {
+      expect(CRON_DOC).toContain(stamp);
+    }
+  });
+
+  it("the objective verification checklist still covers every operator fact", () => {
     for (const item of [
-      /owner named/i,
-      /exists and is \*\*enabled\*\*|exists and is enabled/i,
-      /Cadence \*\*≤ 15 minutes\*\*|≤ 15 minutes/,
+      /owner named|primary account owner/i,
+      /Backup owner/i,
+      /single enabled job|exactly one enabled reminder job/i,
       /CRON_SECRET/,
-      /Recent successful executions visible/i,
-      /alerting\/monitoring ownership named/i,
-      /No second competing scheduler/i,
+      /Alert owner|alerting ownership named/i,
+      /Reminder scheduler.{0,40}Healthy/i,
     ]) {
       expect(CRON_DOC).toMatch(item);
     }
   });
 
-  it("current-state does not claim reminder delivery is verified", () => {
-    expect(CURRENT_STATE).toMatch(/production operation UNVERIFIED \(OPEN\)/i);
+  it("no ownership fact is recorded as verified", () => {
+    const register =
+      CRON_DOC.match(
+        /#### Scheduler ownership register[\s\S]*?Never record a credential/,
+      )?.[0] ?? "";
+    expect(register).not.toBe("");
+    expect(register).toMatch(/☐ unverified/);
+    expect(register).not.toMatch(/☑|\[x\]/i);
+  });
+
+  it("current-state does not overclaim: runtime proven, ownership unattested", () => {
+    expect(CURRENT_STATE).toMatch(/production operation PROVEN 2026-08-12/i);
+    expect(CURRENT_STATE).toMatch(/ownership (still )?unverified|ownership unattested/i);
+    // the old blanket "verified in production" claim must not reappear
+    expect(CURRENT_STATE).not.toMatch(/reminder delivery is verified in production/i);
   });
 });

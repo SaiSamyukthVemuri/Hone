@@ -136,3 +136,72 @@ describe("reminder route preserves claim-before-send, idempotency, and auth", ()
     expect(ROUTE_CODE).not.toMatch(/paymentIntents|stripe|charges\.create/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR OPS-01. Bounded-backlog + auth side-effect pins for the reminder route.
+//
+// OPS-01 recon found PER_RUN_LIMIT was implemented but pinned by NO test, so a
+// future edit could silently make the reminder query unbounded. An unbounded
+// SELECT is not a throughput win here: it is how one late run tries to process
+// an entire backlog inside a single serverless invocation.
+// ---------------------------------------------------------------------------
+describe("reminder route stays bounded per run (PR OPS-01)", () => {
+  it("declares an explicit per-run cap of 50", () => {
+    expect(ROUTE).toMatch(/const PER_RUN_LIMIT = 50;/);
+  });
+
+  it("actually applies the cap to the window query (not just declares it)", () => {
+    expect(ROUTE_CODE).toMatch(/\.limit\(PER_RUN_LIMIT\)/);
+  });
+
+  it("the only numeric-literal limits are single-row lookups, never the window cap", () => {
+    // The window query must use the named constant. Elsewhere the route
+    // legitimately calls .limit(1) to fetch one latest intake row, so the rule
+    // is: every numeric .limit() in this file is exactly .limit(1).
+    const numericLimits = ROUTE_CODE.match(/\.limit\(\s*\d+\s*\)/g) ?? [];
+    for (const call of numericLimits) {
+      expect(call.replace(/\s+/g, "")).toBe(".limit(1)");
+    }
+  });
+
+  it("keeps the 3-strike attempt cap and applies it to the query", () => {
+    expect(ROUTE).toMatch(/const MAX_ATTEMPTS = 3;/);
+    expect(ROUTE_CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
+  });
+
+  it("orders the window by starts_at so the cap takes the soonest appointments", () => {
+    expect(ROUTE_CODE).toMatch(/\.order\("starts_at", \{ ascending: true \}\)/);
+  });
+});
+
+describe("an unauthorized reminder invocation is side-effect free (PR OPS-01)", () => {
+  // Proven in production during the OPS-01 recon: an unauthenticated GET to
+  // https://hone.care/api/cron/appointment-reminders returned
+  // 401 {"ok":false,"error":"Unauthorized"}. This pins the source property that
+  // makes such a probe safe — the gate is the FIRST thing in the handler, so a
+  // 401 touches no admin client, no claim, no provider, no heartbeat.
+  it("the auth gate is the first statement of GET, before any work", () => {
+    const handler = ROUTE.slice(ROUTE.indexOf("export async function GET"));
+    const gate = handler.indexOf("isAuthorizedCronRequest(req)");
+    expect(gate).toBeGreaterThan(-1);
+    for (const sideEffect of [
+      "createAdminClient(",
+      "claimEmailSend(",
+      "recordEmailResult(",
+      "recordReminderRunSuccess(",
+      "sendReminderPass(",
+      "sendSmsReminderPass(",
+      "sendIntakeReminderPass(",
+    ]) {
+      const at = handler.indexOf(sideEffect);
+      if (at > -1) expect(at).toBeGreaterThan(gate);
+    }
+  });
+
+  it("returns 401 without recording an ops alert or a heartbeat", () => {
+    const handler = ROUTE.slice(ROUTE.indexOf("export async function GET"));
+    const unauthorizedBlock = handler.slice(0, handler.indexOf("const startedAt"));
+    expect(unauthorizedBlock).toMatch(/status: 401/);
+    expect(unauthorizedBlock).not.toMatch(/recordOpsAlert|recordReminderRunSuccess/);
+  });
+});

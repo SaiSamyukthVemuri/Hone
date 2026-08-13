@@ -41,8 +41,34 @@ const HEARTBEAT_KEY = "reminder_cron:last_success";
 // as "missing" rather than leaving an ancient timestamp lingering forever.
 const HEARTBEAT_TTL_SECONDS = 60 * 60 * 24; // 24h
 
-// Staleness threshold = 3 missed */15 cycles. Derived from the shared cadence
-// constant so the two can never drift.
+// ---------------------------------------------------------------------------
+// Health thresholds — derived from the shipped cadence contract, never literals
+// ---------------------------------------------------------------------------
+//
+// Both thresholds are multiples of CRON_INTERVAL_MINUTES so a future cadence
+// change moves the monitoring contract with it (there is no second magic 15).
+//
+// DEGRADED (2 x cadence = 30 min). This is the exact point where the reminder
+// system loses its correctness MARGIN, and the number is not arbitrary: the 2h
+// reminder window is 30 minutes wide (REMINDER_WINDOW_MINUTES["2h"] = [105,
+// 135]). The reliability invariant in lib/cron/reminder-schedule.ts is that a
+// window W minutes wide sampled every P minutes is only missable when W < P.
+// So while the effective cadence stays <= 30 the 2h window still covers every
+// appointment minute offset; the moment it exceeds 30, appointment offsets
+// start being missed outright (at 45 min: 19/60 offsets; at 60 min: 29/60).
+// A heartbeat age above 2 x cadence therefore means "the external scheduler is
+// no longer delivering the cadence the window math depends on".
+//
+// STALE (3 x cadence = 45 min) is unchanged from PR #265 — three consecutive
+// missed cycles is a sustained failure, not a blip, and matches the 3-strike
+// per-row MAX_ATTEMPTS posture of the reminder route itself.
+//
+// PR #283 classified everything from 45 min upwards as one "stale" bucket and
+// reported it as a WARNING, which never emails. That left two holes this module
+// now closes: ages between 30 and 45 minutes were reported as fully "healthy"
+// (a silent cadence regression), and a genuinely dead scheduler only produced
+// an EMAIL once the 24h heartbeat TTL expired it into "missing" — up to ~48h.
+export const REMINDER_DEGRADED_AFTER_MINUTES = CRON_INTERVAL_MINUTES * 2; // 30
 export const REMINDER_STALE_AFTER_MINUTES = CRON_INTERVAL_MINUTES * 3; // 45
 
 export type ReminderHeartbeat = {
@@ -91,25 +117,35 @@ export async function readReminderHeartbeat(): Promise<ReminderHeartbeat | null>
   }
 }
 
+export type ReminderSchedulerHealth =
+  | "healthy"
+  | "degraded"
+  | "stale"
+  | "missing";
+
 export type ReminderSchedulerStatus = {
-  status: "healthy" | "stale" | "missing";
+  status: ReminderSchedulerHealth;
   lastSuccessAt: string | null;
   ageMinutes: number | null;
   cadenceMinutes: number;
+  degradedAfterMinutes: number;
   staleAfterMinutes: number;
 };
 
 // Pure, deterministic classifier — the testable core. `nowMs` is injected so
 // tests are time-independent.
-//   healthy: last success within REMINDER_STALE_AFTER_MINUTES
-//   stale:   last success older than that
-//   missing: no (valid) heartbeat recorded
+//   healthy:  last success within REMINDER_DEGRADED_AFTER_MINUTES (2x cadence)
+//   degraded: older than that but within REMINDER_STALE_AFTER_MINUTES — the
+//             cadence margin the 2h reminder window depends on is gone
+//   stale:    older than REMINDER_STALE_AFTER_MINUTES (3 missed cycles)
+//   missing:  no (valid) heartbeat recorded
 export function computeReminderSchedulerStatus(
   heartbeat: ReminderHeartbeat | null,
   nowMs: number,
 ): ReminderSchedulerStatus {
   const base = {
     cadenceMinutes: CRON_INTERVAL_MINUTES,
+    degradedAfterMinutes: REMINDER_DEGRADED_AFTER_MINUTES,
     staleAfterMinutes: REMINDER_STALE_AFTER_MINUTES,
   };
   const parsed = heartbeat?.at ? Date.parse(heartbeat.at) : NaN;
@@ -117,8 +153,14 @@ export function computeReminderSchedulerStatus(
     return { status: "missing", lastSuccessAt: null, ageMinutes: null, ...base };
   }
   const ageMinutes = Math.max(0, Math.round((nowMs - parsed) / 60000));
+  const status: ReminderSchedulerHealth =
+    ageMinutes <= REMINDER_DEGRADED_AFTER_MINUTES
+      ? "healthy"
+      : ageMinutes <= REMINDER_STALE_AFTER_MINUTES
+        ? "degraded"
+        : "stale";
   return {
-    status: ageMinutes <= REMINDER_STALE_AFTER_MINUTES ? "healthy" : "stale",
+    status,
     lastSuccessAt: heartbeat!.at,
     ageMinutes,
     ...base,
@@ -154,13 +196,14 @@ export function computeReminderSchedulerStatus(
 // CRON_SECRET, an Authorization header, client phone/email/PII, reminder
 // contents, or a provider payload.
 
+const REMINDER_SCHEDULER_DEGRADED_EVENT = "reminder_scheduler_degraded";
 const REMINDER_SCHEDULER_STALE_EVENT = "reminder_scheduler_stale";
 const REMINDER_SCHEDULER_MISSING_EVENT = "reminder_scheduler_missing";
 const HEALTH_ALERT_ROUTE =
   "lib/cron/reminder-heartbeat:recordReminderSchedulerHealthAlert";
 
 export type ReminderSchedulerHealthAlertResult = {
-  status: "healthy" | "stale" | "missing";
+  status: ReminderSchedulerHealth;
   // true when this call recorded a NEW ops alert.
   alerted: boolean;
   // true when an unhealthy status was suppressed by an existing unresolved
@@ -170,42 +213,68 @@ export type ReminderSchedulerHealthAlertResult = {
 
 // Decision plan: whether to record + which event/severity. Returned by the
 // pure decider so the side-effecting wrapper just executes it.
+export type ReminderSchedulerAlertEvent =
+  | typeof REMINDER_SCHEDULER_DEGRADED_EVENT
+  | typeof REMINDER_SCHEDULER_STALE_EVENT
+  | typeof REMINDER_SCHEDULER_MISSING_EVENT;
+
 export type ReminderSchedulerAlertPlan =
   | { shouldAlert: false; reason: "healthy" | "deduped" }
   | {
       shouldAlert: true;
-      event: typeof REMINDER_SCHEDULER_STALE_EVENT | typeof REMINDER_SCHEDULER_MISSING_EVENT;
+      event: ReminderSchedulerAlertEvent;
       severity: "warning" | "critical";
     };
+
+// The event each unhealthy status records. Exported so the caller and the
+// tests share one mapping instead of restating it.
+export function reminderSchedulerAlertEventFor(
+  status: ReminderSchedulerHealth,
+): ReminderSchedulerAlertEvent | null {
+  switch (status) {
+    case "healthy":
+      return null;
+    case "degraded":
+      return REMINDER_SCHEDULER_DEGRADED_EVENT;
+    case "stale":
+      return REMINDER_SCHEDULER_STALE_EVENT;
+    case "missing":
+      return REMINDER_SCHEDULER_MISSING_EVENT;
+  }
+}
 
 // Pure, deterministic decision — the testable core. Given the computed
 // status and whether an UNRESOLVED ops alert already exists for the matching
 // event, decide whether to record a new one.
-//   healthy            -> no alert
-//   stale + no dupe    -> warning  reminder_scheduler_stale
-//   missing + no dupe  -> critical reminder_scheduler_missing
-//   stale/missing dupe -> no alert (deduped)
+//   healthy              -> no alert
+//   degraded + no dupe   -> warning  reminder_scheduler_degraded
+//   stale + no dupe      -> CRITICAL reminder_scheduler_stale
+//   missing + no dupe    -> CRITICAL reminder_scheduler_missing
+//   any unhealthy + dupe -> no alert (deduped)
+//
+// PR OPS-01: `stale` is CRITICAL, not warning. recordOpsAlert only emails
+// OPS_ALERT_EMAILS for critical severity, so the previous warning meant a dead
+// scheduler produced no operator email until the 24h heartbeat TTL expired the
+// key into `missing` — up to ~48h of silence. Escalating `stale` makes the
+// FIRST daily health check after 45 minutes of scheduler silence email the
+// operator. `degraded` stays a warning on purpose: it is the early cadence
+// signal (row + admin card), and paging on it would train operators to ignore
+// the channel.
 export function decideReminderSchedulerAlert(
   status: ReminderSchedulerStatus,
   hasUnresolvedAlertForEvent: boolean,
 ): ReminderSchedulerAlertPlan {
-  if (status.status === "healthy") {
+  const event = reminderSchedulerAlertEventFor(status.status);
+  if (event === null) {
     return { shouldAlert: false, reason: "healthy" };
   }
   if (hasUnresolvedAlertForEvent) {
     return { shouldAlert: false, reason: "deduped" };
   }
-  if (status.status === "missing") {
-    return {
-      shouldAlert: true,
-      event: REMINDER_SCHEDULER_MISSING_EVENT,
-      severity: "critical",
-    };
-  }
   return {
     shouldAlert: true,
-    event: REMINDER_SCHEDULER_STALE_EVENT,
-    severity: "warning",
+    event,
+    severity: status.status === "degraded" ? "warning" : "critical",
   };
 }
 
@@ -221,21 +290,36 @@ export function reminderSchedulerAlertSafeDetails(
     last_success_at: status.lastSuccessAt,
     age_minutes: status.ageMinutes,
     cadence_minutes: status.cadenceMinutes,
+    degraded_after_minutes: status.degradedAfterMinutes,
     stale_after_minutes: status.staleAfterMinutes,
     checked_at: new Date(nowMs).toISOString(),
   };
 }
 
-function reminderSchedulerAlertMessage(status: "stale" | "missing"): string {
-  return status === "missing"
-    ? "The external appointment-reminder scheduler has no recorded successful run (missing heartbeat). Appointment reminders may be silently stopped. Check the external scheduler (cron-job.org), the CRON_SECRET configuration, and recent Vercel logs; resolve this alert after the scheduler is confirmed healthy."
-    : "The external appointment-reminder scheduler heartbeat is stale (no successful run within the stale threshold). Appointment reminders may be delayed or stopped. Check the external scheduler (cron-job.org), the CRON_SECRET configuration, and recent Vercel logs; resolve this alert after the scheduler is confirmed healthy.";
+function reminderSchedulerAlertMessage(
+  status: "degraded" | "stale" | "missing",
+): string {
+  const remedy =
+    "Check the external scheduler (cron-job.org), the CRON_SECRET configuration, and recent Vercel logs; resolve this alert after the scheduler is confirmed healthy.";
+  if (status === "missing") {
+    return `The external appointment-reminder scheduler has no recorded successful run (missing heartbeat). Appointment reminders may be silently stopped. ${remedy}`;
+  }
+  if (status === "degraded") {
+    return `The external appointment-reminder scheduler is running slower than its required cadence (last success older than twice the expected interval). The 2h reminder window is only as wide as twice the cadence, so at this rate some appointments can stop receiving a 2h reminder. ${remedy}`;
+  }
+  return `The external appointment-reminder scheduler heartbeat is stale (no successful run within the stale threshold). Appointment reminders may be delayed or stopped. ${remedy}`;
 }
 
 // Best-effort, fail-open. Reads the heartbeat, classifies, and records ONE
-// deduped ops alert when the scheduler is stale/missing. Never throws — a
-// health-check failure must never break the daily cron that calls it.
+// deduped ops alert when the scheduler is degraded/stale/missing. Never throws
+// — a health-check failure must never break the daily cron that calls it.
 // `nowMs` is injected so tests are time-independent.
+//
+// SAFE TO CALL FROM SEVERAL DAILY CRONS. The dedupe below keys on an
+// UNRESOLVED ops_alerts row for the same event, so the 08:00, 09:00 and 09:30
+// UTC checks record at most ONE alert per outage per event — the second and
+// third callers of the day dedupe. This is what makes the monitor survive any
+// single daily cron route failing.
 export async function recordReminderSchedulerHealthAlert(
   nowMs: number = Date.now(),
 ): Promise<ReminderSchedulerHealthAlertResult> {
@@ -249,11 +333,9 @@ export async function recordReminderSchedulerHealthAlert(
   if (status.status === "healthy") {
     return { status: "healthy", alerted: false, deduped: false };
   }
-
-  const event =
-    status.status === "missing"
-      ? REMINDER_SCHEDULER_MISSING_EVENT
-      : REMINDER_SCHEDULER_STALE_EVENT;
+  // Narrowed to the unhealthy states, so the event mapping is total.
+  const unhealthy: "degraded" | "stale" | "missing" = status.status;
+  const event = reminderSchedulerAlertEventFor(unhealthy) as ReminderSchedulerAlertEvent;
 
   // Dedupe on an existing UNRESOLVED alert for this exact event. On a read
   // error, fall through (hasUnresolved=false) and record — recordOpsAlert is
@@ -284,7 +366,7 @@ export async function recordReminderSchedulerHealthAlert(
   await recordOpsAlert({
     severity: plan.severity,
     event: plan.event,
-    message: reminderSchedulerAlertMessage(status.status),
+    message: reminderSchedulerAlertMessage(unhealthy),
     route: HEALTH_ALERT_ROUTE,
     safeDetails: reminderSchedulerAlertSafeDetails(status, nowMs),
   });

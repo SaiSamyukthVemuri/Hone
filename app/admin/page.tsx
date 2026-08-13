@@ -346,18 +346,25 @@ function StudioSetupCard() {
 }
 
 function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) {
+  // Four states, four distinct presentations. A ternary chain whose final
+  // `else` meant "Missing" would have silently rendered the new `degraded`
+  // state as "Missing" — an explicit map keeps the card total.
   const tone =
     status.status === "healthy"
       ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
-      : status.status === "stale"
+      : status.status === "degraded"
         ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
-        : "border-neutral-300 bg-neutral-50 text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300";
+        : status.status === "stale"
+          ? "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          : "border-neutral-300 bg-neutral-50 text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300";
   const label =
     status.status === "healthy"
       ? "Healthy"
-      : status.status === "stale"
-        ? "Stale"
-        : "Missing";
+      : status.status === "degraded"
+        ? "Degraded"
+        : status.status === "stale"
+          ? "Stale"
+          : "Missing";
   return (
     <section className={`rounded-lg border p-5 ${tone}`}>
       <div className="flex items-center justify-between gap-3">
@@ -385,12 +392,21 @@ function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) 
             (cron-job.org) required
           </dd>
         </div>
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="opacity-70">Health thresholds:</dt>
+          <dd>
+            degraded over {status.degradedAfterMinutes} min · stale over{" "}
+            {status.staleAfterMinutes} min
+          </dd>
+        </div>
       </dl>
       {status.status !== "healthy" && (
         <p className="mt-3 max-w-prose text-sm">
           {status.status === "missing"
             ? "No successful reminder run recorded recently. "
-            : `Last success was over ${status.staleAfterMinutes} minutes ago. `}
+            : status.status === "degraded"
+              ? `Last success was over ${status.degradedAfterMinutes} minutes ago — the scheduler is running slower than its required cadence, and the 2h reminder window is only ${status.degradedAfterMinutes} minutes wide. `
+              : `Last success was over ${status.staleAfterMinutes} minutes ago. `}
           Confirm the external scheduler is enabled and calling{" "}
           <code>GET /api/cron/appointment-reminders</code> every{" "}
           {status.cadenceMinutes} min with the{" "}
