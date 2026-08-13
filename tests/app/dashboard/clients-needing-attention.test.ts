@@ -113,34 +113,64 @@ describe("buildClientsNeedingAttention", () => {
     expect(out.totalClients).toBe(0);
   });
 
-  it("newest watch/plan source wins per client (PR #203 rule)", () => {
-    // The invariant is recency: the newest session carrying watch/plan content
-    // is the ONLY source consulted, so a stale caution can never override it.
-    // Under DASH-TRUTH-01 that rule now has a stronger consequence — the newest
-    // source holding only a plan leaves nothing to act on, and the superseded
-    // caution must not resurrect the client.
-    const staleCaution = buildClientsNeedingAttention(
-      [
-        session("new", "c1", "2026-06-10T10:00:00Z", "Newest plan."),
-        session("old", "c1", "2026-06-01T10:00:00Z"),
-      ],
-      [block("old", { caution_note: "stale caution" })],
-    );
-    expect(staleCaution.totalClients).toBe(0);
-
-    // ...and the same recency rule the other way round: a newest watch wins
-    // over an older plan, and supplies the preview line.
+  it("newest WATCH source wins per client (PR #203 rule)", () => {
+    // The recency rule still holds for watch notes: the newest session
+    // carrying a caution is the source, and an older one never overrides it.
     const freshWatch = buildClientsNeedingAttention(
       [
         session("new", "c1", "2026-06-10T10:00:00Z"),
-        session("old", "c1", "2026-06-01T10:00:00Z", "Stale plan."),
+        session("old", "c1", "2026-06-01T10:00:00Z"),
       ],
-      [block("new", { caution_note: "Newest caution." })],
+      [
+        block("new", { caution_note: "Newest caution." }),
+        block("old", { caution_note: "Stale caution." }),
+      ],
     );
     const c = freshWatch.clients[0];
     expect(c.hasWatch).toBe(true);
-    expect(c.hasPlan).toBe(false); // the older plan is not the source
     expect(c.previewLine).toBe("Newest caution.");
+  });
+
+  it("a plan-only newer session does NOT suppress an older watch note", () => {
+    // Review 3778510290 — a clinical-safety regression introduced by
+    // DASH-TRUTH-01, and a correction to what this file previously asserted.
+    //
+    // The old rule was "newest session with watch OR PLAN content wins". That
+    // was coherent while a plan was itself an inclusion reason: a plan-only
+    // newest session hid the older caution, but the client still appeared, for
+    // the plan. Once plan stopped being an inclusion signal, the same path
+    // dropped the client entirely and a genuine watch note vanished from To do.
+    //
+    // "Plan is not To-do content in ANY position" has to include supersession.
+    const out = buildClientsNeedingAttention(
+      [
+        session("new", "c1", "2026-06-10T10:00:00Z", "Plan for next visit."),
+        session("old", "c1", "2026-06-01T10:00:00Z"),
+      ],
+      [block("old", { caution_note: "Go gentler on the chin." })],
+    );
+    expect(out.totalClients).toBe(1);
+    const c = out.clients[0];
+    expect(c.hasWatch).toBe(true);
+    expect(c.previewLine).toBe("Go gentler on the chin.");
+    // the plan is still only context, and its TEXT never travels
+    expect(c.hasPlan).toBe(true);
+    expect(JSON.stringify(out)).not.toContain("Plan for next visit.");
+  });
+
+  it("a newer CAUTION still supersedes an older one, and plans do not interfere", () => {
+    const out = buildClientsNeedingAttention(
+      [
+        session("new", "c1", "2026-06-10T10:00:00Z", "A plan."),
+        session("mid", "c1", "2026-06-05T10:00:00Z"),
+        session("old", "c1", "2026-06-01T10:00:00Z"),
+      ],
+      [
+        block("mid", { caution_note: "Middle caution." }),
+        block("old", { caution_note: "Oldest caution." }),
+      ],
+    );
+    expect(out.clients[0].previewLine).toBe("Middle caution.");
   });
 
   it("sorting: watch first, then date desc; a plan-only client never consumes the cap", () => {

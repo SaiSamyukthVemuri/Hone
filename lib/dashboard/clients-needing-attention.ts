@@ -106,7 +106,7 @@ export function buildClientsNeedingAttention(
     watchText: string | null;
     notableReactionLabel: string | null;
     latestToleranceRating: number | null;
-    sourceFound: boolean;
+    watchSourceFound: boolean;
     latestChartedSeen: boolean;
   };
   const byClient = new Map<string, Acc>();
@@ -120,7 +120,7 @@ export function buildClientsNeedingAttention(
       watchText: null,
       notableReactionLabel: null,
       latestToleranceRating: null,
-      sourceFound: false,
+      watchSourceFound: false,
       latestChartedSeen: false,
     };
     const sessionBlocks = blocksBySession.get(s.id) ?? [];
@@ -144,27 +144,42 @@ export function buildClientsNeedingAttention(
       }
     }
 
-    // Newest session with ANY watch/plan content wins (the PR #203
-    // pre-client rule, per client). Earlier sessions never override.
-    if (!acc.sourceFound) {
+    // Newest session carrying a WATCH note wins (the PR #203 pre-client rule,
+    // per client). Earlier sessions never override it.
+    //
+    // Review 3778510290. A plan must not TERMINATE this search. The rule used
+    // to be "newest session with watch OR plan content wins", which was
+    // coherent while a plan was itself an inclusion reason: a plan-only newest
+    // session set sourceFound, hid any older caution, and the client still
+    // appeared — for the plan. Once DASH-TRUTH-01 removed plan as an inclusion
+    // signal, that same path dropped the client entirely and a genuine
+    // clinical watch note disappeared from To do.
+    //
+    // "Plan is not To-do content in ANY position" has to include this one:
+    // not inclusion, not ranking, not reason, not detail, not preview, and not
+    // supersession. So the watch search is now driven by cautions alone. A
+    // caution is superseded only by a newer caution — which surfaces the
+    // client anyway — so the failure direction is a watch note persisting,
+    // never one silently vanishing.
+    if (!acc.watchSourceFound) {
       const cautionBlock = sessionBlocks.find(
         (b) => b.caution_for_next_session || b.caution_note?.trim(),
       );
-      const plan = s.next_session_note?.trim() || null;
-      if (cautionBlock || plan) {
-        acc.sourceFound = true;
-        acc.hasWatch = !!cautionBlock;
+      if (cautionBlock) {
+        acc.watchSourceFound = true;
+        acc.hasWatch = true;
         acc.watchText =
-          cautionBlock?.caution_note?.trim() ||
-          (cautionBlock ? "Previously noted" : null);
-        // DASH-TRUTH-01 / P2. Whether a plan EXISTS is retained as context;
-        // the plan TEXT is deliberately not carried on this path at all, so it
-        // cannot reach To-do presentation by any later edit. The text itself
-        // stays available where it belongs — Treatment Memory, appointment
-        // prep, history and Today → Remember all read
-        // sessions.next_session_note directly and are untouched.
-        acc.hasPlan = !!plan;
+          cautionBlock.caution_note?.trim() || "Previously noted";
       }
+    }
+
+    // Whether a plan EXISTS, tracked INDEPENDENTLY of the watch search so the
+    // two cannot suppress one another. Context only — a boolean, never the
+    // note. The text stays where it belongs: Treatment Memory, appointment
+    // prep, history and Today → Remember all read sessions.next_session_note
+    // directly and are untouched.
+    if (!acc.hasPlan && (s.next_session_note?.trim() || null)) {
+      acc.hasPlan = true;
     }
     byClient.set(s.client_id, acc);
   }
