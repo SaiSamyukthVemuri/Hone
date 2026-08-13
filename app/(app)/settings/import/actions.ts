@@ -16,8 +16,19 @@ import {
   type ExistingClient,
   type PlannedGroup,
 } from "@/lib/import/quick-import";
+import {
+  isImportOperator,
+  IMPORT_OPERATOR_ASSISTED_DENIAL,
+} from "@/lib/import/operator-assist";
 import type { ImportSourceType } from "@/lib/types/database";
 
+// IMPORT-01 (mitigation): execution is OPERATOR-ASSISTED ONLY. An ordinary
+// studio owner is refused in ownerContext() below, before any statement runs,
+// because a part-finished import leaves client rows behind that a retry then
+// skips. The pipeline itself is untouched and stays here so the eventual
+// staged/transactional/resumable rebuild can be built from it. See
+// lib/import/operator-assist.ts for the full reasoning.
+//
 // PR #257: Quick Import V1 server actions. Owner-only. Reads/writes go through
 // the RLS-backed authenticated client (createClient) — NO service role: the
 // 0089 owner-INSERT policies + the 0087 clients member-INSERT policy let the
@@ -78,15 +89,25 @@ type OwnerContext = {
   userId: string;
 };
 
-// Owner gate. getCurrentPractitionerWithStudio() is the throwing variant; the
-// (app) shell already guarantees an authenticated practitioner+studio, so any
-// throw here is a genuine error. Returns null context + error for non-owners.
+// Owner gate + IMPORT-01 operator gate. getCurrentPractitionerWithStudio() is
+// the throwing variant; the (app) shell already guarantees an authenticated
+// practitioner+studio, so any throw here is a genuine error. Returns an error
+// (never a context) for non-owners AND for owners without operator standing.
+//
+// BOTH server actions route through here, and it runs before the first
+// statement of either — so a direct POST to the action, bypassing the page
+// entirely, is refused on exactly the same terms as a click.
 async function ownerContext(): Promise<
   { ctx: OwnerContext } | { error: string }
 > {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active || practitioner.role !== "owner") {
     return { error: "Only studio owners can import." };
+  }
+  // Operator standing is checked on the AUTH user, not on the practitioner
+  // row, and is required in addition to ownership — never instead of it.
+  if (!(await isImportOperator())) {
+    return { error: IMPORT_OPERATOR_ASSISTED_DENIAL };
   }
   return {
     ctx: {
