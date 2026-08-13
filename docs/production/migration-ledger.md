@@ -14,7 +14,70 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-13, post-0180 apply)
+## Current state (verified 2026-08-13, post-0181 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0181** (`0181_multi_studio_command_authority.sql`, applied 2026-08-13) |
+| **Repo migration max** | **0181** — **hosted == repo.** Nothing pending. Next free number is **0182** (available, not claimed). |
+| **Total migrations in repo** | **180** (`0001` … `0157`, `0159` … `0181` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **180**, each applied **exactly once**. Applied count moved 179 → 180. |
+| **`0181` raw checksum (frozen)** | `2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f` |
+| **Deployed 5-arg body (frozen)** | md5 `aeb2aaab97ce887739725ddd749dd355`, length `6569` |
+| **Deployed 4-arg wrapper body (frozen)** | md5 `82a3c07bd53d48661089bb0454703902`, length `1042` |
+| **Apply exit status** | **exit code 0 CAPTURED.** The push was backgrounded specifically so a harness timeout could not obscure it — the exact failure that left the 0180 apply with no client exit code. |
+| **Applied from** | the authorized #573 head `634a06a7c9a7d81eb1c78ae4fc6803af263215ac` — **DATABASE FIRST, before any application merge** |
+| **Application merge** | `ac9c1c0f77439f201dcd432c188a5e7265b8d289` (PR #573), normal two-parent merge, parent 1 `10426997bea765b02f3e66f1eadfcb849d964adb` |
+| **Production deployment** | Vercel `dpl_9H5fTFTBUWBk2RXSGyGdgpYXY6QC`, Ready; hone.care **proven** to route to it by matching live request logs |
+| **Production branch governance** | protected throughout — PR required, four stable CI contexts, force push and deletion blocked, linear history not required, `enforce_admins` true; not bypassed |
+
+> ✅ **REPOSITORY AND HOSTED MIGRATION TRUTH ARE RECONCILED AT 0181.**
+>
+> **THE P1 INCIDENT.** A practitioner with **two active studio memberships** could open
+> `/clients/<id>/sessions/new` (HTTP 200) and then get **HTTP 500** on selecting a modality:
+> `Failed to start session: Client not found in this studio.` (digest `2140849265`).
+> 0167 resolved the acting studio with `where user_id = auth.uid() and active = true limit 1` —
+> **no studio input, no predicate, no `ORDER BY`**. The application resolves it correctly through
+> `getCurrentPractitionerWithStudio()`, which honours the validated studio selection, so the page
+> rendered against the **selected** studio while the command ran against an **arbitrary** one.
+> `start_session` was the only session command that had to resolve a studio at all — every other
+> command in 0167 anchors to an existing session row — so it was the one place forced to guess.
+>
+> **THE FIX.** An explicit `p_studio_id` (no `DEFAULT`), **not taken on trust**: an ACTIVE
+> practitioner row for `auth.uid()` in that studio is re-proven at the SECURITY DEFINER boundary and
+> the practitioner id is derived from that same row. `ORDER BY` was rejected — no ordering rule
+> expresses "the studio this human is working in".
+>
+> **A SECOND DEFECT WAS CLOSED IN THE SAME FILE.** 0167 claimed `FOR UPDATE` closed the
+> read-then-insert race. That is **false when the coalesce window is empty** — `for update` locks
+> rows, and an empty result set locks nothing — so two overlapping first taps could both insert.
+> 0181 takes a transaction-scoped **advisory lock** keyed on (studio, client, practitioner,
+> modality), after authority is proven and before the lookup. A read-only census before the apply
+> found **0 suspicious pairs across 167 live sessions**: the race was possible but never fired.
+>
+> **MIGRATION-FIRST WAS MANDATORY AND WAS FOLLOWED.** The four-argument signature is retained as a
+> thin delegating wrapper — studio derived from the **client** plus an active membership, no
+> arbitrary pick — so OLD APP + NEW DB is safe. The database was applied first and verified, the old
+> application was confirmed healthy against the new database, and only then was #573 merged. The
+> application also carries a **PGRST202 single-retry floor** for the reverse skew (new app,
+> rolled-back DB), which degrades to today's behaviour rather than a total outage.
+>
+> **LIVE-SCHEMA CENSUS: unsafe unconstrained `auth.uid()` practitioner LIMIT-1 resolvers = 0.**
+> `treatment_image_actor` carried the same defect class but was **already fixed by 0178** — verified
+> against the live schema, not migration file text.
+>
+> **ZERO BUSINESS-ROW MUTATION.** No table DDL, no index change, no backfill, no row mutation.
+> Post-deploy logs on the new deployment: **zero** `Client not found in this studio`, **zero**
+> `start_session_studio_aware_signature_missing`, zero error-level rows.
+>
+> ⚠️ **OUTSTANDING:** no authenticated production session was created. The end-to-end
+> `profile -> Log session -> Electrolysis` smoke on a previously failing account is **not done** and
+> must be performed manually. A read-only structural proof stands in for it: production holds
+> exactly 2 users with 2+ active memberships; before 0181 four reachable clients per user failed the
+> arbitrary pick (one user could reach **none** of its four); after 0181 **54/54 and 4/4 pass, 0
+> still broken**.
+
+## Previous state (verified 2026-08-13, post-0180 apply)
 
 | Field | Value |
 |---|---|
