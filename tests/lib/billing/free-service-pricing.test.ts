@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decideExecutionPricingPermission } from "@/lib/billing/execution-pricing-permission";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -9,6 +10,15 @@ import { deriveAppointmentPaymentState } from "@/lib/billing/appointment-payment
 // FREE-01. A deliberately $0 service is a DECIDED price of nothing. A NULL
 // price is an absent decision. Conflating them made a free consultation look
 // like a configuration error AND let it reach Checkout.
+
+// Strips line comments so a guard cannot be satisfied by prose that merely
+// quotes the forbidden token. (Same helper idiom as live-mode-disabled.)
+function codeOnly(src: string): string {
+  return src
+    .split("\n")
+    .filter((l) => !/^\s*\/\//.test(l))
+    .join("\n");
+}
 
 const svc = (price_cents: number | null) => ({ name: "Consultation", price_cents });
 const base = { appointmentDurationMinutes: 30, today: "2026-08-13" };
@@ -194,33 +204,112 @@ describe("FREE-01 no money-moving path", () => {
     expect(CARD).toMatch(/\{isFreeNow && !settledOrInFlightAttempt && \(/);
   });
 
-  it("F11 the execution free-check FAILS CLOSED on every unresolved path", () => {
-    // Anchor on the DECLARATION and on the actual CALL. Anchoring on the bare
-    // name matched the doc-comment header first and produced an empty slice —
-    // a vacuously passing test.
+  it("F11 permission is granted ONLY by a currently resolved price", () => {
+    // Strengthened from a source slice into a direct test of the decision
+    // itself. Every kind in the union is enumerated, so this fails if a new
+    // kind is ever added and silently allowed. (The behavioural proof that a
+    // block really means zero charges lives in
+    // tests/app/sessions/execute-pricing-permission.test.ts.)
+    const allow = decideExecutionPricingPermission({
+      ok: true,
+      result: {
+        kind: "resolved",
+        amountCents: 12_000,
+        source: "service_price",
+        serviceName: "E",
+        durationMinutes: 30,
+        customPricingNote: null,
+      },
+      appointmentId: "a1",
+    });
+    expect(allow.allow).toBe(true);
+
+    const blocked: Array<[string, ReturnType<typeof decideExecutionPricingPermission>]> = [
+      ["no context at all", decideExecutionPricingPermission(null)],
+      [
+        "load failure",
+        decideExecutionPricingPermission({
+          ok: false,
+          failure: { kind: "session_not_found" },
+        }),
+      ],
+      [
+        "free",
+        decideExecutionPricingPermission({
+          ok: true,
+          result: { kind: "free", serviceName: "Consultation", durationMinutes: 30 },
+          appointmentId: "a1",
+        }),
+      ],
+      [
+        "missing_service",
+        decideExecutionPricingPermission({
+          ok: true,
+          result: { kind: "missing_service" },
+          appointmentId: null,
+        }),
+      ],
+      [
+        "missing_price",
+        decideExecutionPricingPermission({
+          ok: true,
+          result: { kind: "missing_price", serviceName: "E" },
+          appointmentId: "a1",
+        }),
+      ],
+      [
+        "ambiguous_custom_pricing",
+        decideExecutionPricingPermission({
+          ok: true,
+          result: {
+            kind: "ambiguous_custom_pricing",
+            serviceName: "E",
+            candidateCents: [1, 2],
+          },
+          appointmentId: "a1",
+        }),
+      ],
+    ];
+    for (const [label, decision] of blocked) {
+      expect(decision.allow, label).toBe(false);
+      // every refusal carries copy the practitioner can act on
+      expect(!decision.allow && decision.error.length, label).toBeGreaterThan(20);
+    }
+    // and free says so specifically
+    const free = blocked.find(([l]) => l === "free")![1];
+    expect(!free.allow && free.error).toMatch(/is free — no payment is required/);
+  });
+
+  it("F11b the permission module is exhaustive and is NOT an amount source", () => {
+    const MOD = read("lib/billing/execution-pricing-permission.ts");
+    // No `default` arm: adding a pricing kind must break the BUILD rather than
+    // silently inheriting permission to charge. This is the structural
+    // property a chain of `if` refusals could never have.
+    expect(codeOnly(MOD)).not.toMatch(/default:/);
+    expect(codeOnly(MOD)).toMatch(/case "resolved":/);
+    expect(codeOnly(MOD)).toMatch(/case "free":/);
+    expect(codeOnly(MOD)).toMatch(/case "missing_service":/);
+    expect(codeOnly(MOD)).toMatch(/case "missing_price":/);
+    expect(codeOnly(MOD)).toMatch(/case "ambiguous_custom_pricing":/);
+    // It decides permission; it must never expose or carry an amount.
+    expect(codeOnly(MOD)).not.toMatch(/amountCents|amount_cents/);
+  });
+
+  it("F11c execution has exactly ONE path to the charge runner", () => {
+    // The action must not regain a second, unguarded route.
     const exec = ACTIONS.slice(
       ACTIONS.indexOf("export async function executeSessionPaymentChargeAction"),
     );
-    const guardStart = exec.indexOf("const admin = createAdminClient();");
-    const guardEnd = exec.indexOf(
-      "const result: SessionPaymentChargeResult = await runSessionPaymentCharge(",
+    expect(exec).toMatch(/decideExecutionPricingPermission\(/);
+    expect(exec).toMatch(/if \(!permission\.allow\)/);
+    // one call to the runner in the whole action
+    expect(codeOnly(exec).match(/await runSessionPaymentCharge\(/g) ?? []).toHaveLength(1);
+    // and the permission decision precedes it
+    expect(exec.indexOf("runSessionPaymentCharge({")).toBeGreaterThan(
+      exec.indexOf("decideExecutionPricingPermission("),
     );
-    expect(guardStart).toBeGreaterThan(-1);
-    expect(guardEnd).toBeGreaterThan(guardStart); // the slice is non-empty
-    const guard = exec.slice(guardStart, guardEnd);
-    expect(guard.length).toBeGreaterThan(200);
-    // an unreadable attempt row, or one with no session, blocks
-    expect(guard).toMatch(/if \(attemptRowError \|\| !attemptSessionId\) \{/);
-    // a failed authoritative reload blocks
-    expect(guard).toMatch(/if \(!repriced\.ok\) \{/);
-    // free blocks
-    expect(guard).toMatch(/if \(repriced\.result\.kind === "free"\) \{/);
-    // every one of those three is a BLOCK, never a fall-through
-    expect(guard.match(/outcome: "blocked"/g) ?? []).toHaveLength(3);
-    // the old fail-open shape is gone: freeness is no longer conjoined with ok
-    expect(guard).not.toMatch(/repriced\.ok && repriced\.result\.kind === "free"/);
-    // and the refusal precedes the charge in source order
-    expect(guardEnd).toBeGreaterThan(guard.indexOf('kind === "free"'));
+    // execution still derives no amount of its own
+    expect(codeOnly(exec)).not.toMatch(/amountCents|amount_cents/);
   });
 
   it("no Stripe call was introduced by this change", () => {

@@ -104,7 +104,6 @@ export function buildClientsNeedingAttention(
     hasWatch: boolean;
     hasPlan: boolean;
     watchText: string | null;
-    planText: string | null;
     notableReactionLabel: string | null;
     latestToleranceRating: number | null;
     sourceFound: boolean;
@@ -119,7 +118,6 @@ export function buildClientsNeedingAttention(
       hasWatch: false,
       hasPlan: false,
       watchText: null,
-      planText: null,
       notableReactionLabel: null,
       latestToleranceRating: null,
       sourceFound: false,
@@ -159,8 +157,13 @@ export function buildClientsNeedingAttention(
         acc.watchText =
           cautionBlock?.caution_note?.trim() ||
           (cautionBlock ? "Previously noted" : null);
+        // DASH-TRUTH-01 / P2. Whether a plan EXISTS is retained as context;
+        // the plan TEXT is deliberately not carried on this path at all, so it
+        // cannot reach To-do presentation by any later edit. The text itself
+        // stays available where it belongs — Treatment Memory, appointment
+        // prep, history and Today → Remember all read
+        // sessions.next_session_note directly and are untouched.
         acc.hasPlan = !!plan;
-        acc.planText = plan;
       }
     }
     byClient.set(s.client_id, acc);
@@ -187,9 +190,14 @@ export function buildClientsNeedingAttention(
       hasPlan: a.hasPlan,
       notableReactionLabel: a.notableReactionLabel,
       latestToleranceRating: a.latestToleranceRating,
+      // DASH-TRUTH-01 / P2. A plan for the next visit is not To-do content in
+      // ANY position — not inclusion, ranking, reason, detail or preview. It
+      // used to sit here as the second fallback, so a client included for a
+      // notable REACTION could still have their plan text rendered as the
+      // row's detail. The row is included because of a watch note or a
+      // reaction, so the preview says one of exactly those two things.
       previewLine:
         a.watchText ??
-        a.planText ??
         (a.notableReactionLabel
           ? `Latest recorded reaction: ${a.notableReactionLabel}`
           : ""),

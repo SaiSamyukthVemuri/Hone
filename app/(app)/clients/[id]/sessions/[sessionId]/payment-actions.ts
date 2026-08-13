@@ -10,6 +10,7 @@ import {
   loadFailureMessage,
 } from "@/lib/billing/authoritative-session-payment";
 import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
+import { decideExecutionPricingPermission } from "@/lib/billing/execution-pricing-permission";
 import {
   getSessionPaymentEligibility,
 } from "@/lib/billing/session-payment-eligibility";
@@ -414,24 +415,18 @@ export async function executeSessionPaymentChargeAction(
     };
   }
 
-  // FREE-01 / review 3777045531. A `ready` attempt prepared at a POSITIVE price
-  // survives a later change of the service to $0. This action otherwise works
-  // purely from the stored row, so it would happily charge the stale positive
-  // amount for a visit every other surface now presents as "No payment
-  // required". Re-resolve the CURRENT authoritative price and refuse if it is
-  // free.
+  // FREE-01. An already-prepared attempt may be executed ONLY while its
+  // session is still in a currently authoritative, currently CHARGEABLE state.
+  // The whole rule lives in decideExecutionPricingPermission; see that module
+  // for why it is one exhaustive decision rather than a chain of refusals.
   //
   // The session id is read from the attempt ROW, never from the browser — the
   // form's session_id is used only for revalidatePath and is untrusted here.
   // The lookup is studio-scoped, so it cannot reach another tenant's attempt.
   //
-  // Review 3777045543. This check FAILS CLOSED. Every way of not reaching a
-  // verdict — the attempt row not reading, it carrying no session, or the
-  // authoritative reload failing to establish pricing context — previously
-  // fell through to runSessionPaymentCharge, which reads the stored attempt
-  // independently and would happily charge its positive amount. A guard that
-  // is skipped whenever it cannot answer is not a guard. Refusing to charge is
-  // recoverable by retrying; charging a visit that is currently free is not.
+  // This is a PERMISSION check, not a pricing one: nothing below reads an
+  // amount from the re-resolved result. The prepared attempt remains the sole
+  // execution amount, so the stale-price-at-prepare protections are untouched.
   {
     const admin = createAdminClient();
     const { data: attemptRow, error: attemptRowError } = await admin
@@ -442,33 +437,17 @@ export async function executeSessionPaymentChargeAction(
       .maybeSingle();
     const attemptSessionId = (attemptRow as { session_id?: string | null } | null)
       ?.session_id;
-    if (attemptRowError || !attemptSessionId) {
-      return {
-        ok: false,
-        outcome: "blocked",
-        error:
-          "The current price for this session could not be confirmed, so this charge was not run. Please try again.",
-      };
-    }
-    const repriced = await getAuthoritativeSessionPaymentAmount({
-      studioId,
-      sessionId: attemptSessionId,
-      studioTimezone,
-    });
-    if (!repriced.ok) {
-      return {
-        ok: false,
-        outcome: "blocked",
-        error:
-          "The current price for this session could not be confirmed, so this charge was not run. Please try again.",
-      };
-    }
-    if (repriced.result.kind === "free") {
-      return {
-        ok: false,
-        outcome: "blocked",
-        error: `${repriced.result.serviceName} is free — no payment is required, so this charge was not run.`,
-      };
+    const permission = decideExecutionPricingPermission(
+      attemptRowError || !attemptSessionId
+        ? null
+        : await getAuthoritativeSessionPaymentAmount({
+            studioId,
+            sessionId: attemptSessionId,
+            studioTimezone,
+          }),
+    );
+    if (!permission.allow) {
+      return { ok: false, outcome: "blocked", error: permission.error };
     }
   }
 
