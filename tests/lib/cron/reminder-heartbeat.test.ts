@@ -8,6 +8,7 @@ import {
   mergeReminderHeartbeat,
   REMINDER_DEGRADED_AFTER_MINUTES,
   REMINDER_STALE_AFTER_MINUTES,
+  REMINDER_FUTURE_TOLERANCE_MINUTES,
   type ReminderHeartbeat,
   type ReminderSchedulerHealth,
   type ReminderSchedulerStatus,
@@ -659,16 +660,36 @@ describe("sub-minute precision at the threshold boundaries", () => {
     expect(s.status).toBe(expected);
   });
 
-  it("the DISPLAYED value is still a friendly rounded minute count", () => {
+  // The displayed number must never contradict the band it is shown beside.
+  // Rounding to NEAREST showed "30 minutes" next to a degraded status the
+  // runbook defines as starting above 30 (Codex 3775648205); ceiling keeps the
+  // shown value inside the same band as the classification.
+  it("the DISPLAYED value never contradicts its health band", () => {
     const s = computeReminderSchedulerStatus(
       { at: at(T0), invokedAt: at(T0), previousInvokedAt: at(T0 - (30 * MIN + 29_000)) },
       T0 + 60_000,
     );
-    // classification used the raw interval...
     expect(s.status).toBe("degraded");
-    // ...while the operator-facing number stays readable.
-    expect(s.observedIntervalMinutes).toBe(30);
+    expect(s.observedIntervalMinutes).toBe(31);
+    expect(s.observedIntervalMinutes).toBeGreaterThan(30);
   });
+
+  it.each([
+    [30 * MIN, 30, "healthy"],
+    [30 * MIN + 1_000, 31, "degraded"],
+    [45 * MIN, 45, "degraded"],
+    [45 * MIN + 1_000, 46, "stale"],
+  ])(
+    "an interval of %i ms displays as %i and classifies %s, consistently",
+    (deltaMs, shown, expected) => {
+      const s = computeReminderSchedulerStatus(
+        { at: at(T0), invokedAt: at(T0), previousInvokedAt: at(T0 - (deltaMs as number)) },
+        T0 + 60_000,
+      );
+      expect(s.observedIntervalMinutes).toBe(shown);
+      expect(s.status).toBe(expected);
+    },
+  );
 
   it("a 29:59 interval is still healthy (no over-correction)", () => {
     const s = computeReminderSchedulerStatus(
@@ -1004,16 +1025,17 @@ describe("P2: hour-24 timestamps are not orderable", () => {
     expect(merged.at).toBe(T("10:16:00"));
   });
 
-  // The two sides are deliberately NOT symmetric here, and that is safe.
-  // "2026-08-13T24:00:00.000Z" is a genuinely valid instant to Date.parse
-  // (Aug 14 00:00, later than the candidate), so the pure merge correctly keeps
-  // it as the more recent completion. The Lua is stricter and would replace it.
-  // Strictness on the WRITE side only ever causes replacement — it can never
-  // wedge the heartbeat — whereas the reverse (Lua accepting what JS rejects)
-  // is precisely the defect this guard exists to prevent.
-  it("a Date.parse-VALID hour-24 instant is kept by the pure merge, not discarded", () => {
-    const merged = mergeReminderHeartbeat({ at: "2026-08-13T24:00:00.000Z" }, good);
-    expect(Date.parse(merged.at)).toBe(Date.parse("2026-08-14T00:00:00.000Z"));
+  // "2026-08-13T24:00:00.000Z" parses fine (Aug 14 00:00) but is in the FUTURE
+  // relative to the run recording the heartbeat, so the plausibility bound now
+  // rejects it on both sides. That closes the last way a well-formed value could
+  // outrank every real candidate forever.
+  it("an hour-24 instant that is in the future is replaced, not preserved", () => {
+    const merged = mergeReminderHeartbeat(
+      { at: "2026-08-13T24:00:00.000Z" },
+      good,
+      Date.parse(T("10:17:00")),
+    );
+    expect(merged.at).toBe(T("10:16:00"));
   });
 
   it("health recovers rather than staying missing", () => {
@@ -1021,5 +1043,73 @@ describe("P2: hour-24 timestamps are not orderable", () => {
     expect(
       computeReminderSchedulerStatus(healed, Date.parse(T("10:17:00"))).status,
     ).not.toBe("missing");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 — Codex review 3775648194 (P2). THE STRUCTURAL FIX.
+//
+// Four rounds of this review found the same shape of defect: a stored value
+// that is well-formed enough to be treated as orderable, sorts AFTER every real
+// candidate, is therefore never replaced, has its TTL refreshed forever, and
+// leaves health permanently wrong. "not-a-date", "9999-99-99T...",
+// "T24:59:59.000Z" and now "2099-01-01T..." are all instances.
+//
+// Widening the shape check each time only narrowed the gap. A future-date
+// PLAUSIBILITY bound closes the family: a timestamp that cannot describe a run
+// that already happened is not evidence of one, whatever its syntax.
+// ---------------------------------------------------------------------------
+describe("P2: implausibly future heartbeats cannot mask an outage", () => {
+  const T = (s: string) => `2026-08-13T${s}.000Z`;
+  const NOW = Date.parse(T("10:17:00"));
+  const good: ReminderHeartbeat = { at: T("10:16:00"), invokedAt: T("10:15:00") };
+
+  it("a future value sorts after every real candidate (why it is dangerous)", () => {
+    expect("2099-01-01T00:00:00.000Z" >= T("10:16:00")).toBe(true);
+  });
+
+  it("without a bound the negative age would clamp to 0 and read healthy", () => {
+    expect(Math.max(0, Math.ceil((NOW - Date.parse("2099-01-01T00:00:00.000Z")) / 60000))).toBe(0);
+  });
+
+  it("a far-future stored `at` is REPLACED by a real successful run", () => {
+    const merged = mergeReminderHeartbeat({ at: "2099-01-01T00:00:00.000Z" }, good, NOW);
+    expect(merged.at).toBe(T("10:16:00"));
+    expect(merged.invokedAt).toBe(T("10:15:00"));
+  });
+
+  it("a far-future heartbeat does NOT report healthy — it reports missing", () => {
+    const s = computeReminderSchedulerStatus({ at: "2099-01-01T00:00:00.000Z" }, NOW);
+    expect(s.status).toBe("missing");
+    expect(s.status).not.toBe("healthy");
+  });
+
+  it("a far-future invokedAt cannot fabricate cadence evidence", () => {
+    const s = computeReminderSchedulerStatus(
+      { at: T("10:16:00"), invokedAt: "2099-01-01T00:00:00.000Z", previousInvokedAt: T("10:00:00") },
+      NOW,
+    );
+    expect(s.cadenceEvidence).toBe("unavailable");
+    expect(s.observedIntervalMinutes).toBeNull();
+  });
+
+  it("modest clock skew inside the tolerance is still accepted", () => {
+    const skewed = new Date(NOW + 60_000).toISOString(); // 1 min ahead
+    const s = computeReminderSchedulerStatus({ at: skewed }, NOW);
+    expect(s.status).toBe("healthy");
+    expect(s.ageMinutes).toBe(0);
+  });
+
+  it("the tolerance is a named constant, not a literal", () => {
+    expect(REMINDER_FUTURE_TOLERANCE_MINUTES).toBeGreaterThan(0);
+    const beyond = new Date(
+      NOW + (REMINDER_FUTURE_TOLERANCE_MINUTES + 1) * 60_000,
+    ).toISOString();
+    expect(computeReminderSchedulerStatus({ at: beyond }, NOW).status).toBe("missing");
+  });
+
+  it("health recovers on the next successful run instead of staying wrong", () => {
+    const healed = mergeReminderHeartbeat({ at: "2099-01-01T00:00:00.000Z" }, good, NOW);
+    expect(computeReminderSchedulerStatus(healed, NOW).status).not.toBe("missing");
   });
 });

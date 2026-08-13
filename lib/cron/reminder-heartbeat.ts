@@ -68,6 +68,14 @@ const HEARTBEAT_TTL_SECONDS = 60 * 60 * 24; // 24h
 // now closes: ages between 30 and 45 minutes were reported as fully "healthy"
 // (a silent cadence regression), and a genuinely dead scheduler only produced
 // an EMAIL once the 24h heartbeat TTL expired it into "missing" — up to ~48h.
+// A stored timestamp more than this far in the FUTURE is not evidence of a
+// recent run — it is corruption or a badly skewed clock. Without this bound a
+// future-dated value sorts after every real candidate, so it is never replaced,
+// its TTL is refreshed on every run, and the negative age is clamped to 0 and
+// reported HEALTHY — permanently masking a dead scheduler. The allowance covers
+// ordinary clock skew between the app instance and whatever wrote the value.
+export const REMINDER_FUTURE_TOLERANCE_MINUTES = 5;
+
 export const REMINDER_DEGRADED_AFTER_MINUTES = CRON_INTERVAL_MINUTES * 2; // 30
 export const REMINDER_STALE_AFTER_MINUTES = CRON_INTERVAL_MINUTES * 3; // 45
 
@@ -147,11 +155,17 @@ function coerceHeartbeat(raw: unknown): ReminderHeartbeat | null {
 export function mergeReminderHeartbeat(
   current: ReminderHeartbeat | null,
   candidate: ReminderHeartbeat,
+  nowMs: number = Date.now(),
 ): ReminderHeartbeat {
+  // A timestamp is usable only if it parses AND is not implausibly in the
+  // future. The future bound is what stops a corrupt "2099-..." value from
+  // winning every comparison forever.
+  const horizon = nowMs + REMINDER_FUTURE_TOLERANCE_MINUTES * 60_000;
   const t = (iso: string | undefined): number | null => {
     if (!iso) return null;
     const ms = Date.parse(iso);
-    return Number.isNaN(ms) ? null : ms;
+    if (Number.isNaN(ms)) return null;
+    return ms > horizon ? null : ms;
   };
   // A stored heartbeat whose completion timestamp is unusable cannot be ordered
   // against, so this run replaces it outright rather than being compared to it.
@@ -240,6 +254,7 @@ const HEARTBEAT_MERGE_LUA = `
 -- cross-component rule buys nothing here: toISOString() NEVER emits hour 24
 -- (it normalises to 00:00 of the next day), so no timestamp this module writes
 -- can contain it, and rejecting it is the strict-and-safe direction.
+local maxIso = ARGV[3]
 local function ts(v)
   if v == nil or v == cjson.null or type(v) ~= 'string' then return nil end
   local y, mo, d, h, mi, sec =
@@ -250,6 +265,9 @@ local function ts(v)
   if mo < 1 or mo > 12 then return nil end
   if d < 1 or d > 31 then return nil end
   if h > 23 or mi > 59 or sec > 59 then return nil end
+  -- Plausibility bound. Without it a future-dated value wins every comparison,
+  -- is never replaced, and has its TTL refreshed forever.
+  if maxIso ~= nil and v > maxIso then return nil end
   return v
 end
 local raw = redis.call('GET', KEYS[1])
@@ -313,10 +331,17 @@ export async function recordReminderRunSuccess(
   try {
     const redis = getRedis();
     if (!redis) return;
+    const maxPlausibleIso = new Date(
+      Date.now() + REMINDER_FUTURE_TOLERANCE_MINUTES * 60_000,
+    ).toISOString();
     await redis.eval(
       HEARTBEAT_MERGE_LUA,
       [HEARTBEAT_KEY],
-      [JSON.stringify(heartbeat), String(HEARTBEAT_TTL_SECONDS)],
+      [
+        JSON.stringify(heartbeat),
+        String(HEARTBEAT_TTL_SECONDS),
+        maxPlausibleIso,
+      ],
     );
   } catch {
     // A heartbeat write must never break the reminder run.
@@ -440,7 +465,12 @@ export function computeReminderSchedulerStatus(
     degradedAfterMinutes: REMINDER_DEGRADED_AFTER_MINUTES,
     staleAfterMinutes: REMINDER_STALE_AFTER_MINUTES,
   };
-  const parsed = heartbeat?.at ? Date.parse(heartbeat.at) : NaN;
+  const parsedRaw = heartbeat?.at ? Date.parse(heartbeat.at) : NaN;
+  // An implausibly future completion time is corruption, not a recent run. Left
+  // unchecked the age below goes negative, is clamped to 0, and reports healthy.
+  const futureHorizon = nowMs + REMINDER_FUTURE_TOLERANCE_MINUTES * 60_000;
+  const parsed =
+    !Number.isNaN(parsedRaw) && parsedRaw > futureHorizon ? NaN : parsedRaw;
   if (Number.isNaN(parsed)) {
     return {
       status: "missing",
@@ -456,7 +486,11 @@ export function computeReminderSchedulerStatus(
   }
   // Raw elapsed time drives classification; the rounded value is for display.
   const ageMs = Math.max(0, nowMs - parsed);
-  const ageMinutes = Math.round(ageMs / 60000);
+  // CEIL, not round: the bands are exclusive above the threshold, so a value of
+  // 30:29 must not display as "30" beside a degraded status the runbook defines
+  // as starting above 30. Ceiling keeps the shown number inside the same band as
+  // the classification for every input.
+  const ageMinutes = Math.ceil(ageMs / 60000);
 
   // CADENCE axis — measured between the two most recent successful
   // INVOCATIONS (review 3775042692). Completion times are deliberately not used
@@ -468,8 +502,10 @@ export function computeReminderSchedulerStatus(
   // "unavailable" for one cycle rather than being invented from `at`.
   const invRaw = heartbeat?.invokedAt;
   const prevInvRaw = heartbeat?.previousInvokedAt;
-  const invParsed = invRaw ? Date.parse(invRaw) : NaN;
-  const prevInvParsed = prevInvRaw ? Date.parse(prevInvRaw) : NaN;
+  const inHorizon = (ms: number): number =>
+    !Number.isNaN(ms) && ms > futureHorizon ? NaN : ms;
+  const invParsed = inHorizon(invRaw ? Date.parse(invRaw) : NaN);
+  const prevInvParsed = inHorizon(prevInvRaw ? Date.parse(prevInvRaw) : NaN);
   const cadenceMeasured =
     !Number.isNaN(invParsed) &&
     !Number.isNaN(prevInvParsed) &&
@@ -478,7 +514,7 @@ export function computeReminderSchedulerStatus(
     ? Math.max(0, invParsed - prevInvParsed)
     : null;
   const observedIntervalMinutes =
-    intervalMs === null ? null : Math.round(intervalMs / 60000);
+    intervalMs === null ? null : Math.ceil(intervalMs / 60000);
 
   const recencyStatus = classifyElapsedMs(ageMs);
   const cadenceStatus = intervalMs === null ? null : classifyElapsedMs(intervalMs);

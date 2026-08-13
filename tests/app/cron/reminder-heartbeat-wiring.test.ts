@@ -718,3 +718,38 @@ describe("P3 3775518514: the runbook health table describes BOTH axes", () => {
     expect(DOC).toMatch(/reported as `unavailable` until two successive invocations/);
   });
 });
+
+describe("P2 3775648194: the plausibility bound closes the ordering family", () => {
+  it("the Lua receives a max-plausible timestamp and enforces it", () => {
+    expect(HEARTBEAT).toMatch(/local maxIso = ARGV\[3\]/);
+    expect(HEARTBEAT).toMatch(/if maxIso ~= nil and v > maxIso then return nil end/);
+  });
+
+  it("the caller derives that bound from the same clock that stamps the heartbeat", () => {
+    expect(HEARTBEAT).toMatch(/const maxPlausibleIso = new Date\(/);
+    expect(HEARTBEAT).toMatch(/REMINDER_FUTURE_TOLERANCE_MINUTES \* 60_000/);
+    expect(HEARTBEAT).toMatch(/maxPlausibleIso,/);
+  });
+
+  it("the JS specification applies the same bound", () => {
+    expect(HEARTBEAT).toMatch(/return ms > horizon \? null : ms;/);
+    expect(HEARTBEAT).toMatch(/parsedRaw > futureHorizon \? NaN : parsedRaw/);
+  });
+
+  it("the tolerance is exported as a named constant", () => {
+    expect(HEARTBEAT).toMatch(/export const REMINDER_FUTURE_TOLERANCE_MINUTES/);
+  });
+});
+
+describe("P2 3775648205: displayed minutes cannot contradict their band", () => {
+  it("display uses CEIL, never round-to-nearest", () => {
+    expect(HEARTBEAT).toMatch(/Math\.ceil\(ageMs \/ 60000\)/);
+    expect(HEARTBEAT).toMatch(/Math\.ceil\(intervalMs \/ 60000\)/);
+    expect(HEARTBEAT).not.toMatch(/Math\.round\(ageMs \/ 60000\)/);
+    expect(HEARTBEAT).not.toMatch(/Math\.round\(intervalMs \/ 60000\)/);
+  });
+
+  it("the reason is recorded next to the code", () => {
+    expect(HEARTBEAT).toMatch(/CEIL, not round/);
+  });
+});
