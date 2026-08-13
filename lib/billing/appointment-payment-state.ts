@@ -61,11 +61,25 @@ async function getFreeAppointmentIds(
   if (appointmentIds.length === 0) return free;
   const supabase = await createClient();
 
-  const { data: apptRows } = await supabase
+  // Review 3778160194 — same class as the authoritative loader (3777890267),
+  // in the batched DISPLAY path. Every read here used to discard `error`, so a
+  // failed query became "no rows". For client_pricing that inverts a price: a
+  // $0 menu service overridden by a POSITIVE custom price resolves to `free`
+  // once the custom rows vanish, and the Dashboard then shows "No payment
+  // required" and suppresses Checkout for a visit that is genuinely chargeable.
+  //
+  // Freeness is a POSITIVE claim, so it must never be inferred from a read we
+  // cannot vouch for. On any read failure this returns an empty set — nothing
+  // is asserted to be free — and each appointment falls back to its ordinary
+  // state. That is the safe direction: it shows Checkout rather than hiding it,
+  // and it moves no money, because preparation and execution re-resolve
+  // authoritatively and fail closed on their own.
+  const { data: apptRows, error: apptError } = await supabase
     .from("appointments")
     .select("id, client_id, service_id, duration_minutes")
     .eq("studio_id", studioId)
     .in("id", [...appointmentIds]);
+  if (apptError) return free;
   const appts = (apptRows ?? []) as Array<{
     id: string;
     client_id: string | null;
@@ -77,13 +91,14 @@ async function getFreeAppointmentIds(
   const serviceIds = [...new Set(appts.map((a) => a.service_id).filter(Boolean))] as string[];
   const clientIds = [...new Set(appts.map((a) => a.client_id).filter(Boolean))] as string[];
 
-  const { data: serviceRows } = serviceIds.length
+  const { data: serviceRows, error: serviceError } = serviceIds.length
     ? await supabase
         .from("services")
         .select("id, name, price_cents")
         .eq("studio_id", studioId)
         .in("id", serviceIds)
-    : { data: [] as never[] };
+    : { data: [] as never[], error: null };
+  if (serviceError) return free;
   const serviceById = new Map<string, { name: string; price_cents: number | null }>();
   for (const r of (serviceRows ?? []) as Array<{
     id: string;
@@ -93,13 +108,16 @@ async function getFreeAppointmentIds(
     serviceById.set(r.id, { name: r.name, price_cents: r.price_cents });
   }
 
-  const { data: pricingRows } = clientIds.length
+  const { data: pricingRows, error: pricingError } = clientIds.length
     ? await supabase
         .from("client_pricing")
         .select("client_id, service_name, price_cents, notes, effective_from")
         .eq("studio_id", studioId)
         .in("client_id", clientIds)
-    : { data: [] as never[] };
+    : { data: [] as never[], error: null };
+  // The one Codex named: without this, a positive custom price silently
+  // disappears and its $0 menu service reads as free.
+  if (pricingError) return free;
   const pricingByClient = new Map<
     string,
     Array<{ service_name: string; price_cents: number; notes: string | null; effective_from: string }>
