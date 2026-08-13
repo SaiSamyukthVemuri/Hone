@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
@@ -21,7 +22,8 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // ---------------------------------------------------------------------------
 
 const FILE = "supabase/migrations/0180_card_payment_method_replacement_integrity.sql";
-const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
+const SQL_PATH = join(__dirname, "..", "..", FILE);
+const SQL = readFileSync(SQL_PATH, "utf8");
 
 // Executable SQL only — the header deliberately DESCRIBES the removed
 // two-write pattern, so a raw-text scope assertion would fail on its own prose.
@@ -45,16 +47,122 @@ describe("0180 — migration state", () => {
   });
 });
 
-describe("0180 — production truth: PENDING", () => {
+describe("0180 — production truth: APPLIED (CURRENT STATE — moves on the next apply)", () => {
   const rec = JSON.parse(
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("is authored but NOT yet applied — hosted stays at 0179", () => {
-    // Recording the apply is a SEPARATE change that also converts this block
-    // and hands 0179's floor forward.
-    expect(rec.hosted_migration_max).toBe("0179");
-    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeLessThan(180);
+  it("is applied — hosted max is 0180", () => {
+    expect(rec.hosted_migration_max).toBe("0180");
+    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeGreaterThanOrEqual(180);
+  });
+
+  it("repo and hosted agree, with nothing pending", () => {
+    expect(isRepoMax("0180")).toBe(true);
+    expect(versionsAbove("0180")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PERMANENT apply facts (FROZEN; must survive 0181+).
+//
+// These read the FROZEN 0180 ledger section and the FROZEN migration bytes.
+// They deliberately DO NOT read the moving current-state note field in
+// migration-state.json, which is rewritten by the next apply — coupling
+// permanent facts to a moving field is the exact mistake made twice during the
+// 0179 rollout. The block above owns current state; this block owns history and
+// must stay true forever. (The field name is never spelled literally anywhere
+// in this block: the guard below scans this very region for it.)
+// ---------------------------------------------------------------------------
+describe("0180 — PERMANENT apply facts (frozen; must survive 0181+)", () => {
+  const LEDGER = readFileSync(
+    join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
+    "utf8",
+  );
+  // The frozen 0180 section, sliced at its own heading so a later migration
+  // prepending a new Current state cannot make these assertions read the wrong
+  // block. Bounded to this section only.
+  const SECTION_START = LEDGER.indexOf("post-0180 apply)");
+  const SECTION = LEDGER.slice(
+    SECTION_START,
+    LEDGER.indexOf("post-0179 apply)", SECTION_START),
+  );
+
+  it("the ledger carries a 0180 apply section", () => {
+    expect(SECTION_START).toBeGreaterThan(-1);
+    expect(SECTION.length).toBeGreaterThan(500);
+  });
+
+  it("pins the frozen RAW checksum of the applied bytes", () => {
+    expect(SECTION).toContain(
+      "d5d8271da38588a89e0727ce7a2a5c417ee8e079ad283acdc1fa55f90727eb8d",
+    );
+  });
+
+  it("pins the frozen EXECUTABLE checksum of the applied bytes", () => {
+    expect(SECTION).toContain(
+      "160b39a7ad419438df96e240003bf814146e601dfeefc83bd5c1bbff23f5c4ea",
+    );
+  });
+
+  it("the checksums still describe the migration file on disk", () => {
+    // The bytes themselves are the other half of the proof: an applied
+    // migration is frozen, so the file must still hash to what was applied.
+    const raw = createHash("sha256").update(readFileSync(SQL_PATH)).digest("hex");
+    expect(raw).toBe(
+      "d5d8271da38588a89e0727ce7a2a5c417ee8e079ad283acdc1fa55f90727eb8d",
+    );
+    const exec = createHash("sha256")
+      .update(
+        SQL.split("\n")
+          .map((l) => l.replace(/--.*$/, ""))
+          .join("\n")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .split("\n")
+          .map((l) => l.replace(/\s+$/, ""))
+          .filter((l) => l.trim())
+          .join("\n") + "\n",
+      )
+      .digest("hex");
+    expect(exec).toBe(
+      "160b39a7ad419438df96e240003bf814146e601dfeefc83bd5c1bbff23f5c4ea",
+    );
+  });
+
+  it("records that it reached PRODUCTION", () => {
+    expect(SECTION).toMatch(/applied 2026-08-13/);
+    expect(SECTION).toContain("PRODUCTION-CLOSED");
+  });
+
+  it("records the UNKNOWN client exit status honestly — never claims exit 0", () => {
+    // The db push client was killed by the harness timeout. Any record that
+    // asserts a successful client exit is fabricating evidence.
+    expect(SECTION).toMatch(/CLIENT PROCESS EXIT CODE WAS NOT CAPTURED/i);
+    expect(SECTION).not.toMatch(/exit code 0|exited 0|exit 0/i);
+  });
+
+  it("records the SERVER-SIDE completion evidence that replaces it", () => {
+    expect(SECTION).toMatch(/proven independently/i);
+    // The deployed body is the strongest single witness.
+    expect(SECTION).toContain("9bdcfd4d67a2c6c7538c37a7c5b34fd4");
+    expect(SECTION).toContain("4432");
+    // The final object statement proves the transaction body ran to the end.
+    expect(SECTION).toMatch(/COMMENT/);
+  });
+
+  it("does NOT depend on the moving current-state note field", () => {
+    // Guards this block against the 0179 mistake being repeated: permanent
+    // facts must not be coupled to current state.
+    //
+    // The field name is ASSEMBLED rather than written literally — spelling it
+    // out here would put the very token this test forbids inside the region it
+    // scans, and the assertion would then always fail on itself.
+    const movingField = ["hosted", "note"].join("_");
+    const src = readFileSync(__filename, "utf8");
+    const permanent = src.slice(src.indexOf("PERMANENT apply facts"));
+    expect(permanent).not.toContain(movingField);
+    // ...and the block genuinely reads the FROZEN ledger instead.
+    expect(permanent).toContain("migration-ledger.md");
   });
 });
 
