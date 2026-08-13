@@ -121,6 +121,17 @@ describe("execution requires a currently authoritative CHARGEABLE price", () => 
     expect(runCharge).toHaveBeenCalledTimes(0);
   });
 
+  it("E1b a read ERROR blocks even when a row IS returned", async () => {
+    // Same distinguishing case as M5b: a null row would block regardless, so
+    // only an error alongside a usable row proves the error is honoured.
+    attemptLookup.row = { session_id: "sess-1" };
+    attemptLookup.error = { message: "boom" };
+    const res = await executeSessionPaymentChargeAction(form());
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ outcome: "blocked" });
+    expect(runCharge).toHaveBeenCalledTimes(0);
+  });
+
   it("E2 attempt row unavailable / no trusted session_id -> blocked, runner never called", async () => {
     attemptLookup.row = { session_id: null };
     const res = await executeSessionPaymentChargeAction(form());
