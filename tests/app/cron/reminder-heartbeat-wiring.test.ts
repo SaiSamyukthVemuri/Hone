@@ -611,8 +611,8 @@ describe("P2 3774838345: operator copy names the axis that failed", () => {
 describe("P2 3775193411: the Lua validates timestamps before ordering", () => {
   it("defines a shape-validating ts() helper", () => {
     expect(HEARTBEAT).toMatch(/local function ts\(v\)/);
-    // canonical ISO-8601 prefix check
-    expect(HEARTBEAT).toMatch(/%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d/);
+    // canonical ISO-8601 form check (with component captures)
+    expect(HEARTBEAT).toMatch(/%d%d%d%d\)%-\(%d%d\)%-\(%d%d\)T/);
   });
 
   it("every ordering comparison runs on validated values, never raw fields", () => {
@@ -633,5 +633,57 @@ describe("P2 3775193411: the Lua validates timestamps before ordering", () => {
 
   it("the JS specification applies the identical guard", () => {
     expect(HEARTBEAT).toMatch(/if \(!current \|\| t\(current\.at\) === null\) return \{ \.\.\.candidate \};/);
+  });
+});
+
+describe("P2 3775413510: the Lua rejects impossible dates, not just bad shapes", () => {
+  it("matches the FULL canonical ISO form, anchored at both ends", () => {
+    expect(HEARTBEAT).toMatch(/\^\(%d%d%d%d\)%-\(%d%d\)%-\(%d%d\)T\(%d%d\):\(%d%d\):\(%d%d\)%\.%d%d%dZ\$/);
+  });
+
+  it("range-checks every component", () => {
+    expect(HEARTBEAT).toMatch(/if mo < 1 or mo > 12 then return nil end/);
+    expect(HEARTBEAT).toMatch(/if d < 1 or d > 31 then return nil end/);
+    expect(HEARTBEAT).toMatch(/if h > 24 or mi > 59 or sec > 59 then return nil end/);
+  });
+
+  it("documents that it must never be more permissive than Date.parse", () => {
+    // the comment wraps across lines, so match across the newline
+    expect(HEARTBEAT).toMatch(/never be MORE permissive[\s\S]{0,12}than Date\.parse/);
+  });
+});
+
+describe("P3 3775413519: documented safe_details keys match the builder", () => {
+  const DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
+
+  it("the runbook lists the keys the builder actually emits", () => {
+    for (const key of [
+      "invoked_at",
+      "previous_invoked_at",
+      "failing_axis",
+      "observed_interval_minutes",
+      "cadence_evidence",
+    ]) {
+      expect(DOC).toContain(`\`${key}\``);
+    }
+  });
+
+  it("the removed key is gone from the runbook", () => {
+    expect(DOC).not.toMatch(/`previous_success_at`/);
+  });
+
+  it("every key the builder emits appears in the runbook", () => {
+    const builder =
+      HEARTBEAT.match(
+        /export function reminderSchedulerAlertSafeDetails\([\s\S]*?\n\}/,
+      )?.[0] ?? "";
+    expect(builder).not.toBe("");
+    const emitted = [...builder.matchAll(/^\s{4}([a-z_]+):/gm)].map((m) => m[1]);
+    expect(emitted.length).toBeGreaterThan(5);
+    for (const key of emitted) {
+      expect(DOC, `runbook is missing safe_details key "${key}"`).toContain(
+        `\`${key}\``,
+      );
+    }
   });
 });

@@ -215,15 +215,34 @@ export function mergeReminderHeartbeat(
 const HEARTBEAT_MERGE_LUA = `
 -- Every timestamp this module writes is a canonical ISO-8601 UTC string from
 -- Date.prototype.toISOString(), so LEXICOGRAPHIC order equals chronological
--- order — but ONLY for values that actually have that shape. A stored value can
--- be valid JSON and still hold a corrupt timestamp ("not-a-date"), which sorts
--- AFTER any real "2026-..." string and would therefore pin the heartbeat in a
--- corrupt state forever, unrecoverable without manual intervention. So every
--- timestamp is shape-validated before it is compared, mirroring the Date.parse
--- guards in mergeReminderHeartbeat. Unvalidated values are treated as absent.
+-- order — but ONLY for values that are genuinely well-formed. A stored value
+-- can be valid JSON and still hold a corrupt timestamp, and corrupt values tend
+-- to sort AFTER real ones ("not-a-date", and digit-shaped impossibilities like
+-- "9999-99-99T99:99:99.000Z"). Either would pin the heartbeat in a broken state
+-- forever: Lua would keep it, Date.parse would reject it, and health would read
+-- "missing" after every successful run with no way to recover.
+--
+-- So a stored timestamp is orderable only if it matches the FULL canonical form
+-- AND its components are in range. The ranges below mirror what Date.parse
+-- actually accepts (month 1-12, day 1-31 — it rolls Feb 31 over rather than
+-- rejecting it, hour 0-24, minute/second 0-59; it rejects month 99 and
+-- second 60).
+--
+-- The asymmetry is deliberate: this validator must never be MORE permissive
+-- than Date.parse, because accepting something JS later rejects is exactly the
+-- wedge described above. Being slightly STRICTER is harmless — it only means
+-- the value is treated as absent and the current run replaces it, so the
+-- heartbeat still heals.
 local function ts(v)
   if v == nil or v == cjson.null or type(v) ~= 'string' then return nil end
-  if string.match(v, '^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d') == nil then return nil end
+  local y, mo, d, h, mi, sec =
+    string.match(v, '^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)%.%d%d%dZ$')
+  if y == nil then return nil end
+  mo = tonumber(mo); d = tonumber(d)
+  h = tonumber(h); mi = tonumber(mi); sec = tonumber(sec)
+  if mo < 1 or mo > 12 then return nil end
+  if d < 1 or d > 31 then return nil end
+  if h > 24 or mi > 59 or sec > 59 then return nil end
   return v
 end
 local raw = redis.call('GET', KEYS[1])

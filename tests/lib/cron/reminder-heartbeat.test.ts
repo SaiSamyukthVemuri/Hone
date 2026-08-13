@@ -929,3 +929,51 @@ describe("P2: a corrupt stored heartbeat is replaced, not preserved", () => {
     expect(s.status).not.toBe("missing");
   });
 });
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 — Codex review 3775413510 (P2): a digit-shaped IMPOSSIBLE date must
+// not be treated as orderable. "9999-99-99T99:99:99.000Z" matches a naive
+// prefix pattern and sorts after every real timestamp, so it would wedge the
+// heartbeat exactly like "not-a-date" did.
+// ---------------------------------------------------------------------------
+describe("P2: impossible dates are rejected, not merely ill-shaped ones", () => {
+  const T = (s: string) => `2026-08-13T${s}.000Z`;
+  const good: ReminderHeartbeat = { at: T("10:16:00"), invokedAt: T("10:15:00") };
+
+  it("the impossible value sorts AFTER a real one (why it is dangerous)", () => {
+    expect("9999-99-99T99:99:99.000Z" >= T("10:16:00")).toBe(true);
+  });
+
+  it.each([
+    "9999-99-99T99:99:99.000Z",
+    "2026-13-01T00:00:00.000Z", // month 13
+    "2026-00-10T00:00:00.000Z", // month 0
+    "2026-08-00T00:00:00.000Z", // day 0
+    "2026-08-13T25:00:00.000Z", // hour 25
+    "2026-08-13T10:60:00.000Z", // minute 60
+    "2026-08-13T10:00:60.000Z", // second 60
+  ])("a stored `at` of %s is replaced by a successful run", (bad) => {
+    const merged = mergeReminderHeartbeat({ at: bad }, good);
+    expect(merged.at).toBe(T("10:16:00"));
+    expect(merged.invokedAt).toBe(T("10:15:00"));
+  });
+
+  it("an impossible invokedAt does not block the cadence point", () => {
+    const merged = mergeReminderHeartbeat(
+      { at: T("10:00:00"), invokedAt: "9999-99-99T99:99:99.000Z" },
+      good,
+    );
+    expect(merged.invokedAt).toBe(T("10:15:00"));
+  });
+
+  it("health recovers rather than staying missing", () => {
+    const healed = mergeReminderHeartbeat({ at: "9999-99-99T99:99:99.000Z" }, good);
+    const s = computeReminderSchedulerStatus(healed, Date.parse(T("10:17:00")));
+    expect(s.status).not.toBe("missing");
+  });
+
+  it("genuinely valid timestamps are still accepted (no over-correction)", () => {
+    const merged = mergeReminderHeartbeat({ at: T("10:00:00") }, good);
+    expect(merged.at).toBe(T("10:16:00"));
+  });
+});
