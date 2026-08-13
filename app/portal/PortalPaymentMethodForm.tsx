@@ -4,7 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { TEST_MODE_CARD_NOTE } from "@/lib/payments/portal-card-copy";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe, type Stripe as StripeJs } from "@stripe/stripe-js";
-import { createCardSetupIntentAction } from "./payment-method-actions";
+import { useRouter } from "next/navigation";
+import {
+  confirmCardPersistedAction,
+  createCardSetupIntentAction,
+} from "./payment-method-actions";
+import {
+  CONFIRM_MAX_ATTEMPTS,
+  pollForCardPersistence,
+} from "@/lib/payments/card-finalization";
 
 // PR #135. Portal Add card surface. PR #151 extends it with a
 // Replace card mode that surfaces in /portal when the client
@@ -36,7 +44,7 @@ type Mode = "add" | "replace";
 type StartState =
   | { kind: "idle" }
   | { kind: "starting" }
-  | { kind: "ready"; clientSecret: string; stripeAccountId: string }
+  | { kind: "ready"; clientSecret: string; stripeAccountId: string; setupIntentId: string }
   | { kind: "error"; message: string };
 
 const COPY: Record<
@@ -45,7 +53,11 @@ const COPY: Record<
     idleButton: string;
     saveButton: string;
     saveButtonPending: string;
+    // Three DISTINCT states. Stripe accepting the card is not Hone saving it.
+    submittedHeadline: string;
     successHeadline: string;
+    stillFinalizingHeadline: string;
+    rejectedHeadline: string;
     introCopy: string | null;
     // PR #152. Copy shown while the client_secret is being fetched.
     startingHeadline: string;
@@ -57,7 +69,12 @@ const COPY: Record<
     idleButton: "Add card on file",
     saveButton: "Save card on file",
     saveButtonPending: "Saving...",
-    successHeadline: "Card saved. It may take a moment to appear on the page.",
+    submittedHeadline: "Card submitted. Finalizing with Hone...",
+    successHeadline: "Card saved.",
+    stillFinalizingHeadline:
+      "Your card was accepted, but we have not confirmed it yet. Do not enter it again \u2014 check status again below, or contact the studio if it does not confirm.",
+    rejectedHeadline:
+      "Your card was accepted by our payment provider, but we could not attach it to your file. Please contact the studio \u2014 do not re-enter your card.",
     introCopy: null,
     startingHeadline: "Preparing secure card form...",
     startErrorMessage:
@@ -67,8 +84,12 @@ const COPY: Record<
     idleButton: "Replace card",
     saveButton: "Save new card",
     saveButtonPending: "Saving...",
-    successHeadline:
-      "Card updated. The new card may take a moment to appear on the page.",
+    submittedHeadline: "New card submitted. Finalizing with Hone...",
+    successHeadline: "Card updated. Your new card is now on file.",
+    stillFinalizingHeadline:
+      "Your new card was accepted, but we have not confirmed it yet. Your existing card stays on file and remains the card we will use until the new one is confirmed. Do not enter it again \u2014 check status again below, or contact the studio.",
+    rejectedHeadline:
+      "Your new card was accepted by our payment provider, but we could not attach it to your file. Your previous card is unchanged. Please contact the studio \u2014 do not re-enter your card.",
     introCopy:
       `Your current card will be replaced after the new card is saved. ${TEST_MODE_CARD_NOTE}`,
     startingHeadline: "Preparing secure card form...",
@@ -138,6 +159,7 @@ export function PortalPaymentMethodForm({
         kind: "ready",
         clientSecret: r.clientSecret,
         stripeAccountId: r.stripeAccountId,
+        setupIntentId: r.setupIntentId,
       });
     })();
   }
@@ -305,6 +327,7 @@ export function PortalPaymentMethodForm({
       publishableKey={publishableKey}
       stripeAccountId={start.stripeAccountId}
       clientSecret={start.clientSecret}
+      setupIntentId={start.setupIntentId}
       copy={copy}
       introCopy={introCopy}
       onCancel={onCancel}
@@ -316,6 +339,7 @@ function StripeElementsBoundary({
   publishableKey,
   stripeAccountId,
   clientSecret,
+  setupIntentId,
   copy,
   introCopy,
   onCancel,
@@ -323,6 +347,7 @@ function StripeElementsBoundary({
   publishableKey: string;
   stripeAccountId: string;
   clientSecret: string;
+  setupIntentId: string;
   copy: (typeof COPY)[Mode];
   introCopy: string | null;
   onCancel?: () => void;
@@ -340,35 +365,60 @@ function StripeElementsBoundary({
       stripe={stripePromise}
       options={{ clientSecret, appearance: { theme: "stripe" } }}
     >
-      <PaymentForm copy={copy} introCopy={introCopy} onCancel={onCancel} />
+      <PaymentForm
+        copy={copy}
+        introCopy={introCopy}
+        onCancel={onCancel}
+        setupIntentId={setupIntentId}
+      />
     </Elements>
   );
 }
+
+// The finalization state machine lives in lib/payments/card-finalization.ts so
+// it can be behaviourally tested — this component cannot be rendered in the
+// unit lane, and the fake-Stripe browser lane cannot drive Elements. See that
+// module's header for the three bounds and why they exist.
+
+type SubmitPhase =
+  | "idle"
+  | "submitting" // confirmSetup in flight
+  | "finalizing" // Stripe accepted; waiting for Hone's own record
+  | "saved" // Hone has an ACTIVE row for this SetupIntent
+  | "notConfirmed" // accepted, not confirmed within the window — RECOVERABLE
+  | "rechecking" // an explicit "Check status again" is in flight
+  | "rejected"; // Hone durably refused the payload
 
 function PaymentForm({
   copy,
   introCopy,
   onCancel,
+  setupIntentId,
 }: {
   copy: (typeof COPY)[Mode];
   introCopy: string | null;
   onCancel?: () => void;
+  setupIntentId: string;
 }) {
   const stripe = useStripe();
   const elements = useElements();
-  const [submitting, setSubmitting] = useState(false);
+  const router = useRouter();
+  const [phase, setPhase] = useState<SubmitPhase>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const cancelled = useRef(false);
+  const submitting = phase === "submitting" || phase === "finalizing";
 
   useEffect(() => {
-    // No-op effect; here so a future analytic / preview hook has a
-    // mounting point without changing the component tree.
+    cancelled.current = false;
+    return () => {
+      cancelled.current = true;
+    };
   }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!stripe || !elements) return;
-    setSubmitting(true);
+    setPhase("submitting");
     setError(null);
     const { error: stripeErr } = await stripe.confirmSetup({
       elements,
@@ -385,17 +435,87 @@ function PaymentForm({
     });
     if (stripeErr) {
       setError(stripeErr.message ?? "Couldn't save the card.");
-      setSubmitting(false);
+      setPhase("idle");
       return;
     }
-    setDone(true);
-    setSubmitting(false);
+
+    // Stripe accepted. Hone has NOT saved anything yet — the webhook does that.
+    // Poll Hone's own record before claiming the card is saved.
+    setPhase("finalizing");
+    const settled = await pollForPersistence();
+    if (!cancelled.current && settled === "pending") setPhase("notConfirmed");
   }
 
-  if (done) {
+  // Shared by the initial window and the explicit "Check status again" button.
+  // NEVER mints a SetupIntent and NEVER calls confirmSetup — it only asks Hone
+  // about the SetupIntent Stripe already accepted.
+  async function pollForPersistence(
+    attempts: number = CONFIRM_MAX_ATTEMPTS,
+  ): Promise<"saved" | "rejected" | "pending"> {
+    const { outcome } = await pollForCardPersistence({
+      setupIntentId,
+      confirm: confirmCardPersistedAction,
+      attempts,
+      isCancelled: () => cancelled.current,
+    });
+    if (cancelled.current) return "pending";
+    if (outcome === "saved") {
+      setPhase("saved");
+      // Surface the newly authoritative card on the rest of the page.
+      router.refresh();
+      return "saved";
+    }
+    if (outcome === "rejected") {
+      setPhase("rejected");
+      return "rejected";
+    }
+    return "pending";
+  }
+
+  async function onCheckAgain() {
+    setPhase("rechecking");
+    // A short burst, same SetupIntent. No new card is ever submitted.
+    const settled = await pollForPersistence(3);
+    if (!cancelled.current && settled === "pending") setPhase("notConfirmed");
+  }
+
+  if (phase === "saved") {
     return (
       <p className="text-[14px]" style={{ color: "#0A0A0A" }} role="status">
         {copy.successHeadline}
+      </p>
+    );
+  }
+
+  if (phase === "notConfirmed" || phase === "rechecking") {
+    // NOT a dead end. Stripe holds the card; Hone has not confirmed it yet.
+    // The only offered action re-reads the SAME SetupIntent.
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-[14px]" style={{ color: "#0A0A0A" }} role="status">
+          {copy.stillFinalizingHeadline}
+        </p>
+        <button
+          type="button"
+          onClick={onCheckAgain}
+          disabled={phase === "rechecking"}
+          className="self-start px-5 py-2 text-[12px] font-medium uppercase disabled:opacity-50"
+          style={{
+            backgroundColor: "#0A0A0A",
+            color: "#FAFAF7",
+            letterSpacing: "0.1em",
+          }}
+        >
+          {phase === "rechecking" ? "Checking..." : "Check status again"}
+        </button>
+      </div>
+    );
+  }
+
+  if (phase === "rejected") {
+    return (
+      <p className="text-[14px]" style={{ color: "#A03030" }} role="alert">
+        {copy.rejectedHeadline}
       </p>
     );
   }
@@ -427,7 +547,11 @@ function PaymentForm({
             letterSpacing: "0.1em",
           }}
         >
-          {submitting ? copy.saveButtonPending : copy.saveButton}
+          {phase === "finalizing"
+            ? copy.submittedHeadline
+            : submitting
+              ? copy.saveButtonPending
+              : copy.saveButton}
         </button>
         {onCancel && !submitting && (
           <button
