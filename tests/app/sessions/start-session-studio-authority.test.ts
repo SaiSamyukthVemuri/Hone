@@ -77,3 +77,54 @@ describe("startSessionAction — the browser never chooses tenant scope", () => 
     );
   });
 });
+
+describe("startSessionAction — reverse-skew floor (new app, old database)", () => {
+  // 0181's four-argument wrapper protects OLD app / NEW database. This covers
+  // the other direction: a rolled-back migration, or a deploy that outran the
+  // apply, leaves only the four-argument signature and PostgREST answers
+  // PGRST202 — which without a fallback would fail EVERY session start for
+  // EVERY practitioner, including the single-studio majority the incident
+  // never touched. Raised by Codex on PR #573; the code was confirmed
+  // empirically against local PostgREST, not assumed.
+
+  it("falls back to the four-argument signature ONLY on PGRST202", () => {
+    expect(CODE).toMatch(/startErr\?\.code === "PGRST202"/);
+    // No broad catch-all retry: exactly this code, nothing else.
+    expect(CODE).not.toMatch(/startErr\?\.code\s*!==\s*["'`]/);
+  });
+
+  it("retries at most once, and the retry omits p_studio_id", () => {
+    const calls = [...CODE.matchAll(/rpc\("start_session"/g)];
+    expect(calls).toHaveLength(2);
+    const second = CODE.slice(
+      CODE.indexOf('rpc("start_session"', calls[0].index! + 1),
+    );
+    const body = second.slice(0, second.indexOf("})"));
+    expect(body).toMatch(/p_client_id/);
+    expect(body).toMatch(/p_modality/);
+    expect(body).toMatch(/p_appointment_id/);
+    expect(body).toMatch(/p_coalesce_minutes/);
+    // The legacy signature takes FOUR arguments; sending five is what fails.
+    expect(body).not.toMatch(/p_studio_id/);
+  });
+
+  it("emits a structural operational signal carrying no identity", () => {
+    expect(CODE).toMatch(/start_session_studio_aware_signature_missing/);
+    // Scope to the LOGGED OBJECT only. A looser window runs past the closing
+    // brace into the retry RPC call, which legitimately contains `clientId` —
+    // the assertion would then fail on code it was never meant to police.
+    const at = CODE.indexOf("start_session_studio_aware_signature_missing");
+    const evt = CODE.slice(at, CODE.indexOf("}),", at));
+    // PII guard: never a client, practitioner or studio identifier, and the
+    // key must be `errorClass` — the guard bans `*Name*`.
+    expect(evt).not.toMatch(/clientId|client_id|practitioner|studio\.id|studioId/);
+    expect(evt).toMatch(/errorClass/);
+    expect(evt).not.toMatch(/errorName/);
+  });
+
+  it("still throws on every non-PGRST202 error rather than swallowing it", () => {
+    expect(CODE).toMatch(
+      /if \(startErr\) \{[\s\S]{0,120}Failed to start session/,
+    );
+  });
+});
