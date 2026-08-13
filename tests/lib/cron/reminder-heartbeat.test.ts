@@ -868,3 +868,64 @@ describe("P2-B: monotonic heartbeat merge", () => {
     expect(merged.previousInvokedAt).toBe(T("10:15:00"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 — Codex review 3775193411 (P2):
+// timestamps must be shape-validated before any ordering comparison. Canonical
+// ISO strings sort chronologically, but a corrupt-yet-valid-JSON value like
+// "not-a-date" sorts AFTER every real "2026-..." timestamp — so a naive
+// comparison would keep the corrupt value forever and the heartbeat could never
+// self-heal.
+// ---------------------------------------------------------------------------
+describe("P2: a corrupt stored heartbeat is replaced, not preserved", () => {
+  const T = (s: string) => `2026-08-13T${s}.000Z`;
+  const good: ReminderHeartbeat = {
+    at: T("10:16:00"),
+    invokedAt: T("10:15:00"),
+  };
+
+  it("lexicographic order alone would keep the corrupt value (the defect)", () => {
+    // Demonstrates why the guard is required, not that the code does this.
+    expect(T("10:16:00") >= "not-a-date").toBe(false);
+  });
+
+  it("a corrupt `at` is replaced by the successful run", () => {
+    const merged = mergeReminderHeartbeat({ at: "not-a-date" }, good);
+    expect(merged.at).toBe(T("10:16:00"));
+    expect(merged.invokedAt).toBe(T("10:15:00"));
+  });
+
+  it("a corrupt `at` AND `invokedAt` are both replaced", () => {
+    const merged = mergeReminderHeartbeat(
+      { at: "not-a-date", invokedAt: "not-a-date" },
+      good,
+    );
+    expect(merged.at).toBe(T("10:16:00"));
+    expect(merged.invokedAt).toBe(T("10:15:00"));
+  });
+
+  it("a valid `at` with a corrupt `invokedAt` still adopts the new invocation", () => {
+    const merged = mergeReminderHeartbeat(
+      { at: T("10:00:00"), invokedAt: "not-a-date" },
+      good,
+    );
+    expect(merged.invokedAt).toBe(T("10:15:00"));
+  });
+
+  it("a corrupt `previousInvokedAt` does not poison the cadence axis", () => {
+    const merged = mergeReminderHeartbeat(
+      { at: T("10:00:00"), invokedAt: T("10:00:00"), previousInvokedAt: "junk" },
+      good,
+    );
+    expect(merged.invokedAt).toBe(T("10:15:00"));
+    expect(merged.previousInvokedAt).toBe(T("10:00:00"));
+    const s = computeReminderSchedulerStatus(merged, Date.parse(T("10:17:00")));
+    expect(s.observedIntervalMinutes).toBe(15);
+  });
+
+  it("the heartbeat can therefore self-heal on the very next successful run", () => {
+    const healed = mergeReminderHeartbeat({ at: "not-a-date" }, good);
+    const s = computeReminderSchedulerStatus(healed, Date.parse(T("10:17:00")));
+    expect(s.status).not.toBe("missing");
+  });
+});

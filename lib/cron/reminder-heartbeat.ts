@@ -153,7 +153,12 @@ export function mergeReminderHeartbeat(
     const ms = Date.parse(iso);
     return Number.isNaN(ms) ? null : ms;
   };
-  if (!current) return { ...candidate };
+  // A stored heartbeat whose completion timestamp is unusable cannot be ordered
+  // against, so this run replaces it outright rather than being compared to it.
+  // The Lua applies the identical guard — without it, a corrupt-but-valid-JSON
+  // value would sort AFTER every real ISO timestamp and pin the heartbeat in a
+  // broken state forever.
+  if (!current || t(current.at) === null) return { ...candidate };
 
   const curAt = t(current.at);
   const candAt = t(candidate.at);
@@ -208,31 +213,44 @@ export function mergeReminderHeartbeat(
 // ARGV[1] = candidate heartbeat JSON
 // ARGV[2] = TTL seconds
 const HEARTBEAT_MERGE_LUA = `
+-- Every timestamp this module writes is a canonical ISO-8601 UTC string from
+-- Date.prototype.toISOString(), so LEXICOGRAPHIC order equals chronological
+-- order — but ONLY for values that actually have that shape. A stored value can
+-- be valid JSON and still hold a corrupt timestamp ("not-a-date"), which sorts
+-- AFTER any real "2026-..." string and would therefore pin the heartbeat in a
+-- corrupt state forever, unrecoverable without manual intervention. So every
+-- timestamp is shape-validated before it is compared, mirroring the Date.parse
+-- guards in mergeReminderHeartbeat. Unvalidated values are treated as absent.
+local function ts(v)
+  if v == nil or v == cjson.null or type(v) ~= 'string' then return nil end
+  if string.match(v, '^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d') == nil then return nil end
+  return v
+end
 local raw = redis.call('GET', KEYS[1])
 local cand = cjson.decode(ARGV[1])
 local cur = nil
 if raw then
   local ok, decoded = pcall(cjson.decode, raw)
-  if ok and type(decoded) == 'table' and decoded.at then cur = decoded end
+  -- A stored heartbeat whose completion timestamp is unusable is not a
+  -- heartbeat we can order against; treat it as absent so this run replaces it.
+  if ok and type(decoded) == 'table' and ts(decoded.at) ~= nil then cur = decoded end
 end
 if cur == nil then
   redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
   return 1
 end
-local function ts(v)
-  if v == nil or v == cjson.null then return nil end
-  return v
-end
 local out = {}
 for k, v in pairs(cur) do out[k] = v end
--- recency: later completion wins
-if ts(cand.at) ~= nil and (ts(cur.at) == nil or cand.at >= cur.at) then
+-- recency: the later completion wins, so it never regresses
+local ca = ts(cand.at)
+local ua = ts(cur.at)
+if ca ~= nil and (ua == nil or ca >= ua) then
   for k, v in pairs(cand) do out[k] = v end
-  out.at = cand.at
+  out.at = ca
   out.invokedAt = cur.invokedAt
   out.previousInvokedAt = cur.previousInvokedAt
 end
--- cadence: invocation ordering, never completion ordering
+-- cadence: ordered by INVOCATION, never by completion or arrival
 local ci = ts(cand.invokedAt)
 local ui = ts(cur.invokedAt)
 local up = ts(cur.previousInvokedAt)

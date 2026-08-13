@@ -469,7 +469,8 @@ describe("OPS-01.1 P2-B: the heartbeat write is ONE atomic operation", () => {
   });
 
   it("the Lua keeps recency on the later completion", () => {
-    expect(HEARTBEAT).toMatch(/cand\.at >= cur\.at/);
+    // compared via the validated locals, never the raw fields
+    expect(HEARTBEAT).toMatch(/if ca ~= nil and \(ua == nil or ca >= ua\) then/);
   });
 
   it("the Lua still applies the TTL", () => {
@@ -604,5 +605,33 @@ describe("P2 3774838345: operator copy names the axis that failed", () => {
   it("the admin card branches on the failing axis too", () => {
     expect(ADMIN).toMatch(/status\.failingAxis === "cadence"/);
     expect(ADMIN).toMatch(/still firing/);
+  });
+});
+
+describe("P2 3775193411: the Lua validates timestamps before ordering", () => {
+  it("defines a shape-validating ts() helper", () => {
+    expect(HEARTBEAT).toMatch(/local function ts\(v\)/);
+    // canonical ISO-8601 prefix check
+    expect(HEARTBEAT).toMatch(/%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d/);
+  });
+
+  it("every ordering comparison runs on validated values, never raw fields", () => {
+    // recency
+    expect(HEARTBEAT).toMatch(/local ca = ts\(cand\.at\)/);
+    expect(HEARTBEAT).toMatch(/local ua = ts\(cur\.at\)/);
+    expect(HEARTBEAT).toMatch(/ca >= ua/);
+    // cadence
+    expect(HEARTBEAT).toMatch(/local ci = ts\(cand\.invokedAt\)/);
+    expect(HEARTBEAT).toMatch(/local ui = ts\(cur\.invokedAt\)/);
+    // the unvalidated forms must be gone
+    expect(HEARTBEAT).not.toMatch(/cand\.at >= cur\.at/);
+  });
+
+  it("a stored value with an unusable completion timestamp is treated as absent", () => {
+    expect(HEARTBEAT).toMatch(/ts\(decoded\.at\) ~= nil then cur = decoded/);
+  });
+
+  it("the JS specification applies the identical guard", () => {
+    expect(HEARTBEAT).toMatch(/if \(!current \|\| t\(current\.at\) === null\) return \{ \.\.\.candidate \};/);
   });
 });
