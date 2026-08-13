@@ -644,7 +644,7 @@ describe("P2 3775413510: the Lua rejects impossible dates, not just bad shapes",
   it("range-checks every component", () => {
     expect(HEARTBEAT).toMatch(/if mo < 1 or mo > 12 then return nil end/);
     expect(HEARTBEAT).toMatch(/if d < 1 or d > 31 then return nil end/);
-    expect(HEARTBEAT).toMatch(/if h > 24 or mi > 59 or sec > 59 then return nil end/);
+    expect(HEARTBEAT).toMatch(/if h > 23 or mi > 59 or sec > 59 then return nil end/);
   });
 
   it("documents that it must never be more permissive than Date.parse", () => {
@@ -685,5 +685,36 @@ describe("P3 3775413519: documented safe_details keys match the builder", () => 
         `\`${key}\``,
       );
     }
+  });
+});
+
+describe("P2 3775518504: the Lua rejects hour 24 outright", () => {
+  it("bounds the hour at 23, not 24", () => {
+    expect(HEARTBEAT).toMatch(/if h > 23 or mi > 59 or sec > 59 then return nil end/);
+    expect(HEARTBEAT).not.toMatch(/if h > 24/);
+  });
+
+  it("explains why rejecting it loses nothing", () => {
+    expect(HEARTBEAT).toMatch(/toISOString\(\) NEVER emits hour 24/);
+  });
+});
+
+describe("P3 3775518514: the runbook health table describes BOTH axes", () => {
+  const DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
+
+  it("states that health is the worse of recency and cadence", () => {
+    expect(DOC).toMatch(/worse of two independent axes/i);
+  });
+
+  it("gives the cadence-only example an operator would otherwise misread", () => {
+    expect(DOC).toMatch(/10 minutes old is still \*\*degraded\*\*/);
+  });
+
+  it("the table column is not framed as heartbeat age alone", () => {
+    expect(DOC).toMatch(/\| State \| Worse axis \(recency \*\*or\*\* cadence\) \|/);
+  });
+
+  it("documents the unavailable-cadence warm-up honestly", () => {
+    expect(DOC).toMatch(/reported as `unavailable` until two successive invocations/);
   });
 });

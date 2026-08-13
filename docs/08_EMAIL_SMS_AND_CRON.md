@@ -195,12 +195,21 @@ The PR #265 heartbeat was **passive** — an operator only learned the external 
 
 **Health states.** Both thresholds are multiples of `CRON_INTERVAL_MINUTES`, so a cadence change moves the monitoring contract with it — there is no second magic 15. Health is the **worse of two axes** (OPS-01.1): **recency** (minutes since the last success) and **observed cadence** (minutes between the last two successes). Recency alone is not evidence of cadence — a scheduler firing 07:50 / 08:30 / 09:10 / 09:50 runs a 40-minute cadence, yet checks at 08:00 / 09:00 / 09:30 see ages of only 10 / 30 / 20 minutes and would each read healthy. The heartbeat therefore carries `invokedAt` and `previousInvokedAt` — the run's INVOCATION time (the route's `startedAt`), not its completion time, because scheduler cadence is the spacing between invocations: a run that starts late but finishes fast would otherwise look on time, and a slow run would make an on-time scheduler look late. When that evidence is absent (a pre-OPS-01.1 heartbeat) or corrupt, the classifier falls back to recency only and reports `cadence_evidence: "unavailable"` — it never fabricates an interval or implies cadence was proven.
 
-| State | Heartbeat age | Severity | Emails? | Meaning |
+Health is the **worse of two independent axes**, and the same thresholds apply to each:
+
+- **recency** — minutes since the latest successful run *completed*;
+- **cadence** — minutes between the latest two successful *invocations*.
+
+So a heartbeat only 10 minutes old is still **degraded** if the last two invocations were 40 minutes apart. The alert and the admin card name which axis failed, so the reported cause always matches the numbers shown beside it.
+
+| State | Worse axis (recency **or** cadence) | Severity | Emails? | Meaning |
 |---|---|---|---|---|
-| **Healthy** | ≤ 30 min (2× cadence) | — | — | Cadence contract met |
-| **Degraded** | 31–45 min | warning | no | **Cadence margin lost.** The 2h reminder window is only 30 min wide, so once the effective cadence exceeds 30 min appointment offsets start being missed outright (at 45 min: 19/60 offsets; at 60 min: 29/60). |
-| **Stale** | > 45 min (3× cadence) | **critical** | **yes** | Three missed cycles — sustained failure |
+| **Healthy** | both ≤ 30 min (2× cadence) | — | — | Cadence contract met |
+| **Degraded** | either 31–45 min | warning | no | **Cadence margin lost.** The 2h reminder window is only 30 min wide, so once the effective cadence exceeds 30 min appointment offsets start being missed outright (at 45 min: 19/60 offsets; at 60 min: 29/60). |
+| **Stale** | either > 45 min (3× cadence) | **critical** | **yes** | Three missed cycles — sustained failure |
 | **Missing** | no valid heartbeat | critical | yes | No run recorded, or the 24h heartbeat key expired |
+
+Cadence is reported as `unavailable` until two successive invocations have been recorded (for example immediately after a deploy that introduced the invocation fields); recency alone then decides, and nothing claims cadence was proven.
 
 *Why 2× and 3×:* the reliability invariant in `lib/cron/reminder-schedule.ts` is that a window `W` minutes wide sampled every `P` minutes is only missable when `W < P`. The 2h window is `W = 30`, so `P ≤ 30` is still correct and `P > 30` is not — that is exactly the degraded boundary. `3×` matches the 3-strike `MAX_ATTEMPTS` posture of the route itself.
 

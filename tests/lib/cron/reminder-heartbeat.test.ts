@@ -977,3 +977,49 @@ describe("P2: impossible dates are rejected, not merely ill-shaped ones", () => 
     expect(merged.at).toBe(T("10:16:00"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// OPS-01.1 — Codex review 3775518504 (P2): hour 24 is only valid to Date.parse
+// when minute/second/ms are all zero, so a range check of h <= 24 still accepts
+// values JS rejects ("T24:59:59.000Z") — the same wedge again.
+// toISOString() never emits hour 24, so it is rejected outright.
+// ---------------------------------------------------------------------------
+describe("P2: hour-24 timestamps are not orderable", () => {
+  const T = (s: string) => `2026-08-13T${s}.000Z`;
+  const good: ReminderHeartbeat = { at: T("10:16:00"), invokedAt: T("10:15:00") };
+
+  it("Date.parse rejects hour 24 unless the rest is zero (the asymmetry)", () => {
+    expect(Number.isNaN(Date.parse("9999-12-31T24:59:59.000Z"))).toBe(true);
+    expect(Number.isNaN(Date.parse("2026-08-13T24:00:00.000Z"))).toBe(false);
+  });
+
+  it("toISOString never produces hour 24, so rejecting it loses nothing", () => {
+    expect(new Date(Date.UTC(2026, 7, 13, 24, 0, 0)).toISOString()).toBe(
+      "2026-08-14T00:00:00.000Z",
+    );
+  });
+
+  it("a stored `at` that Date.parse REJECTS is replaced by a successful run", () => {
+    const merged = mergeReminderHeartbeat({ at: "9999-12-31T24:59:59.000Z" }, good);
+    expect(merged.at).toBe(T("10:16:00"));
+  });
+
+  // The two sides are deliberately NOT symmetric here, and that is safe.
+  // "2026-08-13T24:00:00.000Z" is a genuinely valid instant to Date.parse
+  // (Aug 14 00:00, later than the candidate), so the pure merge correctly keeps
+  // it as the more recent completion. The Lua is stricter and would replace it.
+  // Strictness on the WRITE side only ever causes replacement — it can never
+  // wedge the heartbeat — whereas the reverse (Lua accepting what JS rejects)
+  // is precisely the defect this guard exists to prevent.
+  it("a Date.parse-VALID hour-24 instant is kept by the pure merge, not discarded", () => {
+    const merged = mergeReminderHeartbeat({ at: "2026-08-13T24:00:00.000Z" }, good);
+    expect(Date.parse(merged.at)).toBe(Date.parse("2026-08-14T00:00:00.000Z"));
+  });
+
+  it("health recovers rather than staying missing", () => {
+    const healed = mergeReminderHeartbeat({ at: "9999-12-31T24:59:59.000Z" }, good);
+    expect(
+      computeReminderSchedulerStatus(healed, Date.parse(T("10:17:00"))).status,
+    ).not.toBe("missing");
+  });
+});

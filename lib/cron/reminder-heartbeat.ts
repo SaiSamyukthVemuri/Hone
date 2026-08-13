@@ -233,6 +233,13 @@ const HEARTBEAT_MERGE_LUA = `
 -- wedge described above. Being slightly STRICTER is harmless — it only means
 -- the value is treated as absent and the current run replaces it, so the
 -- heartbeat still heals.
+--
+-- Hour 24 is therefore rejected OUTRIGHT rather than range-allowed. Date.parse
+-- accepts "T24:00:00.000Z" but rejects "T24:59:59.000Z" — hour 24 is legal only
+-- when minute, second and millisecond are all zero. Encoding that
+-- cross-component rule buys nothing here: toISOString() NEVER emits hour 24
+-- (it normalises to 00:00 of the next day), so no timestamp this module writes
+-- can contain it, and rejecting it is the strict-and-safe direction.
 local function ts(v)
   if v == nil or v == cjson.null or type(v) ~= 'string' then return nil end
   local y, mo, d, h, mi, sec =
@@ -242,7 +249,7 @@ local function ts(v)
   h = tonumber(h); mi = tonumber(mi); sec = tonumber(sec)
   if mo < 1 or mo > 12 then return nil end
   if d < 1 or d > 31 then return nil end
-  if h > 24 or mi > 59 or sec > 59 then return nil end
+  if h > 23 or mi > 59 or sec > 59 then return nil end
   return v
 end
 local raw = redis.call('GET', KEYS[1])
