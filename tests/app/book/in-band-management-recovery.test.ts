@@ -53,12 +53,33 @@ const conversions: unknown[] = [];
 const practitionerNotifications: unknown[] = [];
 const smsCalls: unknown[] = [];
 const confirmationEmails: unknown[] = [];
+const practitionerEmails: unknown[] = [];
 const clientUpdates: unknown[] = [];
 
 const scenario = {
   sendConfirmationEmails: true,
   emailOk: true,
+  // BOOK-01 P2-A throw injection. Each flag makes one POST-COMMIT dependency
+  // raise an unexpected exception. The thrown message deliberately carries a
+  // POISON string so the secrecy assertions can prove `err.message` is never
+  // recorded — a real template or provider error can carry the recipient
+  // address or a URL embedding the raw token.
+  originThrows: false,
+  intakeThrows: false,
+  treatmentTimeThrows: false,
+  emailThrows: false,
+  attemptWriteThrows: false,
+  practitionerNotificationThrows: false,
+  practitionerEmailThrows: false,
+  revalidateThrows: false,
+  showTreatmentTime: false,
+  notifyPractitioner: false,
+  commandRefuses: false,
 };
+
+/** Any real error message could carry a token or address; none may be logged. */
+const POISON = "POISONED-secret-token-A1b2C3d4E5f6G7h8I9j0K1l2/manage/LEAKED";
+const boom = (what: string) => new Error(`${what} exploded ${POISON}`);
 
 // --- in-memory admin client ------------------------------------------------
 //
@@ -156,6 +177,9 @@ const admin = {
   async rpc(fn: string, args: Record<string, unknown>) {
     rpcCalls.push({ fn, args });
     if (fn === "create_public_appointment") {
+      if (scenario.commandRefuses) {
+        return { data: [{ result: "time_unavailable" }], error: null };
+      }
       return {
         data: [
           {
@@ -176,14 +200,23 @@ const admin = {
 };
 
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => admin }));
-vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("next/cache", () => ({
+  revalidatePath: () => {
+    if (scenario.revalidateThrows) throw boom("revalidatePath");
+  },
+}));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/rate-limit/public", () => ({
   limitPublicBooking: async () => ({ allowed: true }),
   limitPublicSlots: async () => ({ allowed: true }),
   RATE_LIMIT_MESSAGE: "rate limited",
 }));
-vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => ORIGIN }));
+vi.mock("@/lib/app-origin", () => ({
+  getRequiredAppOrigin: () => {
+    if (scenario.originThrows) throw boom("app origin");
+    return ORIGIN;
+  },
+}));
 vi.mock("@/lib/booking/queries", () => ({
   getStudioBySlug: async () => ({
     id: STUDIO_ID,
@@ -193,8 +226,8 @@ vi.mock("@/lib/booking/queries", () => ({
     buffer_minutes: 0,
     public_booking_horizon_months: 6,
     send_confirmation_emails: scenario.sendConfirmationEmails,
-    show_treatment_time_to_clients: false,
-    notify_practitioner_on_new_booking: false,
+    show_treatment_time_to_clients: scenario.showTreatmentTime,
+    notify_practitioner_on_new_booking: scenario.notifyPractitioner,
   }),
 }));
 vi.mock("@/lib/booking/slots", () => ({
@@ -211,20 +244,31 @@ vi.mock("@/lib/booking/horizon", () => ({
   maxPublicBookingHorizonDays: () => 400,
 }));
 vi.mock("@/lib/intake/queries", () => ({
-  ensureIntakeForClient: async () => null,
+  ensureIntakeForClient: async () => {
+    if (scenario.intakeThrows) throw boom("intake");
+    return { id: "intake-1", url: `${ORIGIN}/intake/abc` };
+  },
 }));
 vi.mock("@/lib/treatment-time/queries", () => ({
-  buildTreatmentTimeLine: () => null,
-  getTreatmentTimeContextForEmail: async () => null,
+  buildTreatmentTimeLine: () => "Treatment time so far: 1h.",
+  getTreatmentTimeContextForEmail: async () => {
+    if (scenario.treatmentTimeThrows) throw boom("treatment time");
+    return { sessionCount: 1, totalMinutes: 60 };
+  },
 }));
 vi.mock("@/lib/email/send-appointment", () => ({
   sendBookingConfirmationToClient: async (payload: unknown) => {
     confirmationEmails.push(payload);
+    if (scenario.emailThrows) throw boom("confirmation email");
     return scenario.emailOk
       ? { ok: true }
       : { ok: false, error: "provider refused", retryable: true };
   },
-  sendBookingNotificationToPractitioner: async () => ({ ok: true }),
+  sendBookingNotificationToPractitioner: async (payload: unknown) => {
+    practitionerEmails.push(payload);
+    if (scenario.practitionerEmailThrows) throw boom("practitioner email");
+    return { ok: true };
+  },
   recordEmailAttempt: async (
     _admin: unknown,
     appointmentId: string,
@@ -232,6 +276,7 @@ vi.mock("@/lib/email/send-appointment", () => ({
     success: boolean,
   ) => {
     emailAttempts.push({ appointmentId, emailType, success });
+    if (scenario.attemptWriteThrows) throw boom("attempt write");
   },
   logEmailFailure: (payload: unknown) => {
     emailFailures.push(payload);
@@ -254,8 +299,9 @@ vi.mock("@/lib/analytics/server", () => ({
   },
 }));
 vi.mock("@/lib/notifications/practitioner-notifications", () => ({
-  recordPractitionerNotification: async (payload: unknown) => {
+  recordPractitionerNotification: (payload: unknown) => {
     practitionerNotifications.push(payload);
+    if (scenario.practitionerNotificationThrows) throw boom("notification");
   },
 }));
 
@@ -311,8 +357,20 @@ beforeEach(() => {
   smsCalls.length = 0;
   confirmationEmails.length = 0;
   clientUpdates.length = 0;
+  practitionerEmails.length = 0;
   scenario.sendConfirmationEmails = true;
   scenario.emailOk = true;
+  scenario.originThrows = false;
+  scenario.intakeThrows = false;
+  scenario.treatmentTimeThrows = false;
+  scenario.emailThrows = false;
+  scenario.attemptWriteThrows = false;
+  scenario.practitionerNotificationThrows = false;
+  scenario.practitionerEmailThrows = false;
+  scenario.revalidateThrows = false;
+  scenario.showTreatmentTime = false;
+  scenario.notifyPractitioner = false;
+  scenario.commandRefuses = false;
   errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     consoleErrors.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
   });
@@ -520,5 +578,255 @@ describe("BOOK-01 T1 — confirmation surface structure", () => {
     // Reuses app/portal/login's ?studio=<slug> contract; invents no new URL and
     // never gates the primary Manage action behind a sign-in.
     expect(SRC).toContain("/portal/login?studio=");
+  });
+});
+
+// ===========================================================================
+// BOOK-01 P2-A / P2-B — the POST-COMMIT LAW.
+// ===========================================================================
+//
+// Once `create_public_appointment` returns 'created' the appointment and its
+// audit row are DURABLE. From that point NO optional secondary dependency may
+// turn the response into `{ ok: false }` or an exception: the client must always
+// leave with `{ ok:true, appointmentId, manageUrl, confirmationEmailStatus }`.
+//
+// Each case below injects a real unexpected throw into one post-commit
+// dependency and asserts the law holds. The thrown messages all carry POISON, so
+// every case simultaneously proves the failure evidence records the error's
+// CLASS and never its message.
+//
+// P2-B is the mirror image: configuration that can fail deterministically is
+// resolved BEFORE the durability boundary, so the same misconfiguration refuses
+// with nothing committed at all.
+//
+// WHAT THIS DOES NOT CLAIM. A hard process death after the commit but before the
+// HTTP response cannot be converted into a response by try/catch — there is no
+// response. That case remains owned by the portal and the reminder passes. This
+// suite is about unexpected APPLICATION EXCEPTIONS, which are now contained.
+
+function manageToken(url: string): string {
+  return url.slice(`${ORIGIN}/manage/`.length);
+}
+
+/** The committed-success shape every post-commit failure must still produce. */
+async function expectSettledSuccess(overrides?: Record<string, string>) {
+  const r = await book(overrides);
+  expect(r.ok, `committed booking reported failure: ${r.ok ? "" : r.error}`).toBe(true);
+  if (!r.ok) throw new Error("unreachable");
+  expect(r.appointmentId).toBe(APPT_ID);
+  expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+  expect(manageToken(r.manageUrl)).toMatch(/^[A-Za-z0-9_-]{32}$/);
+  return r;
+}
+
+/** The command ran exactly once and committed. */
+function expectCommitted() {
+  expect(rpcCalls.filter((c) => c.fn === "create_public_appointment").length).toBe(1);
+}
+
+/** Safe evidence for `event` exists, and no POISON anywhere in the logs. */
+function expectSafeEvidence(event: string) {
+  const joined = consoleErrors.join(" ");
+  expect(joined, `no evidence recorded for ${event}`).toContain(event);
+  expect(joined, "err.message leaked into evidence").not.toContain(POISON);
+  expect(joined).not.toContain("exploded");
+  // The error CLASS is what we keep — never its message.
+  expect(joined).toContain("errorClass");
+}
+
+describe("BOOK-01 P2-A — a committed booking survives every post-commit failure", () => {
+  it("CASE A: all post-commit dependencies succeed", async () => {
+    const r = await expectSettledSuccess();
+    expectCommitted();
+    expect(r.confirmationEmailStatus).toBe("sent");
+    // The intake link the (succeeding) helper produced reached the email.
+    expect(JSON.stringify(confirmationEmails)).toContain("/intake/abc");
+    expect(consoleErrors.join(" ")).not.toContain("_threw");
+  });
+
+  it("CASE B: ensureIntakeForClient throws — booking succeeds, intake omitted", async () => {
+    scenario.intakeThrows = true;
+    const r = await expectSettledSuccess();
+    expectCommitted();
+    // The email still went out, just without the intake section.
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expect(confirmationEmails.length).toBe(1);
+    expect((confirmationEmails[0] as { intakeUrl: string | null }).intakeUrl).toBeNull();
+    expectSafeEvidence("public_booking_intake_threw");
+  });
+
+  it("CASE C: treatment-time context throws — booking succeeds, email still sent", async () => {
+    scenario.showTreatmentTime = true;
+    scenario.treatmentTimeThrows = true;
+    const r = await expectSettledSuccess();
+    expectCommitted();
+    // Only the optional enrichment degrades: the confirmation is still delivered,
+    // so the status follows the PROVIDER and stays truthful.
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expect(confirmationEmails.length).toBe(1);
+    expect(
+      (confirmationEmails[0] as { treatmentTimeLine: string | null }).treatmentTimeLine,
+    ).toBeNull();
+    expectSafeEvidence("public_booking_treatment_time_threw");
+  });
+
+  it("CASE D: email construction/send throws — booking succeeds, status is `failed`", async () => {
+    scenario.emailThrows = true;
+    const r = await expectSettledSuccess();
+    expectCommitted();
+    // We do NOT know the client received anything, so we must not claim `sent`.
+    expect(r.confirmationEmailStatus).toBe("failed");
+    expectSafeEvidence("public_booking_confirmation_email_threw");
+  });
+
+  it("CASE E: provider returns failure normally — existing truthful path intact", async () => {
+    scenario.emailOk = false;
+    const r = await expectSettledSuccess();
+    expect(r.confirmationEmailStatus).toBe("failed");
+    // A normal refusal is NOT an exception, so no throw-evidence is recorded.
+    expect(consoleErrors.join(" ")).not.toContain("public_booking_confirmation_email_threw");
+    expect(emailAttempts).toEqual([
+      { appointmentId: APPT_ID, emailType: "confirmation", success: false },
+    ]);
+  });
+
+  it("CASE F: recordEmailAttempt throws after provider SUCCESS — status stays `sent`", async () => {
+    scenario.attemptWriteThrows = true;
+    const r = await expectSettledSuccess();
+    expectCommitted();
+    // Provider truth is authoritative for what the browser is told. A failed
+    // bookkeeping write cannot downgrade a real delivery.
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expectSafeEvidence("public_booking_email_attempt_write_threw");
+  });
+
+  it("CASE G: recordEmailAttempt throws after provider FAILURE — status stays `failed`", async () => {
+    scenario.emailOk = false;
+    scenario.attemptWriteThrows = true;
+    const r = await expectSettledSuccess();
+    expect(r.confirmationEmailStatus).toBe("failed");
+    expectSafeEvidence("public_booking_email_attempt_write_threw");
+  });
+
+  it("CASE H: practitioner notification throws — client booking unaffected", async () => {
+    scenario.practitionerNotificationThrows = true;
+    const r = await expectSettledSuccess();
+    expectCommitted();
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expectSafeEvidence("public_booking_practitioner_notification_threw");
+  });
+
+  it("CASE H2: the practitioner EMAIL throws — client booking unaffected", async () => {
+    scenario.notifyPractitioner = true;
+    scenario.practitionerEmailThrows = true;
+    const r = await expectSettledSuccess();
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expect(practitionerEmails.length).toBe(1);
+    expectSafeEvidence("public_booking_practitioner_email_threw");
+  });
+
+  it("CASE H3: revalidatePath throws — client booking unaffected", async () => {
+    scenario.revalidateThrows = true;
+    const r = await expectSettledSuccess();
+    expect(r.confirmationEmailStatus).toBe("sent");
+    expectSafeEvidence("public_booking_revalidate_threw");
+  });
+
+  it("CASE I: several post-commit failures together — still settles, still no leak", async () => {
+    scenario.intakeThrows = true;
+    scenario.showTreatmentTime = true;
+    scenario.treatmentTimeThrows = true;
+    scenario.emailThrows = true;
+    scenario.attemptWriteThrows = true;
+    scenario.practitionerNotificationThrows = true;
+    scenario.notifyPractitioner = true;
+    scenario.practitionerEmailThrows = true;
+    scenario.revalidateThrows = true;
+
+    const r = await expectSettledSuccess();
+    expectCommitted();
+    expect(r.confirmationEmailStatus).toBe("failed");
+
+    // Every failure recorded its own safe evidence...
+    for (const event of [
+      "public_booking_intake_threw",
+      "public_booking_treatment_time_threw",
+      "public_booking_confirmation_email_threw",
+      "public_booking_email_attempt_write_threw",
+      "public_booking_practitioner_notification_threw",
+      "public_booking_practitioner_email_threw",
+      "public_booking_revalidate_threw",
+    ]) {
+      expect(consoleErrors.join(" "), `missing evidence: ${event}`).toContain(event);
+    }
+    // ...and none of it carried a secret, a message, or the management path.
+    const raw = manageToken(r.manageUrl);
+    const logs = consoleErrors.join(" ");
+    expect(logs).not.toContain(POISON);
+    expect(logs).not.toContain(raw);
+    expect(logs).not.toContain(r.manageUrl);
+    expect(logs).not.toContain("/manage/");
+    expect(logs).not.toContain(EMAIL);
+    expect(allEmittedPayloads()).not.toContain(raw);
+  });
+});
+
+describe("BOOK-01 P2-B — required configuration resolves BEFORE the durability boundary", () => {
+  it("CASE J: a missing app origin refuses with NOTHING committed", async () => {
+    scenario.originThrows = true;
+    const r = await book();
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    // The established safe refusal — never the raw config error.
+    expect(r.error).not.toContain("APPOINTMENT");
+    expect(r.error).not.toContain(POISON);
+    expect(Object.keys(r)).not.toContain("manageUrl");
+    expect(Object.keys(r)).not.toContain("confirmationEmailStatus");
+    // THE POINT: no appointment, no audit row, no token hash persisted.
+    expect(rpcCalls.filter((c) => c.fn === "create_public_appointment")).toEqual([]);
+    // No client-facing delivery was attempted either.
+    expect(confirmationEmails).toEqual([]);
+    expect(smsCalls).toEqual([]);
+    // Safe evidence, error CLASS only.
+    const logs = consoleErrors.join(" ");
+    expect(logs).toContain("public_booking_app_origin_unresolved");
+    expect(logs).toContain("errorClass");
+    expect(logs).not.toContain(POISON);
+  });
+
+  it("CASE K: the booking command itself refuses — normal failure, no management URL", async () => {
+    scenario.commandRefuses = true;
+    const r = await book();
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(Object.keys(r)).not.toContain("manageUrl");
+    // The command ran and declined; nothing downstream was attempted.
+    expectCommitted();
+    expect(confirmationEmails).toEqual([]);
+    expect(smsCalls).toEqual([]);
+  });
+
+  it("the origin is resolved before the command in the SOURCE order too", () => {
+    // A behavioural test can prove "no commit when the origin fails", but not
+    // "the resolution SITS above the command" — a future edit could reintroduce
+    // a second, later resolution and still pass CASE J. This pins the order.
+    // EXECUTABLE SQL/TS ONLY. The header above the new call explains the change
+    // and NAMES the helper, so a count over the raw text sees two occurrences
+    // and a position check could be satisfied by the prose rather than the code.
+    // Comment lines are stripped first — the repository's standing idiom.
+    const src = readFileSync(
+      join(__dirname, "..", "..", "..", "app/book/[slug]/actions.ts"),
+      "utf8",
+    )
+      .split("\n")
+      .filter((l) => !l.trimStart().startsWith("//"))
+      .join("\n");
+    const originAt = src.indexOf("getRequiredAppOrigin()");
+    const commandAt = src.indexOf('"create_public_appointment"');
+    expect(originAt).toBeGreaterThan(-1);
+    expect(commandAt).toBeGreaterThan(-1);
+    expect(originAt).toBeLessThan(commandAt);
+    // And it is resolved exactly ONCE, so no later call can throw post-commit.
+    expect(src.match(/getRequiredAppOrigin\(\)/g) ?? []).toHaveLength(1);
   });
 });
