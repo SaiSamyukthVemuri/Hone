@@ -80,6 +80,12 @@ Endpoint: `/api/twilio/inbound-sms`.
 - Idempotent: writes `clients.sms_opted_out_at` only when currently null.
 - Generic response regardless of whether the number was known to Hone.
 
+This endpoint is **not** a cron endpoint and does **not** use `CRON_SECRET`. It authenticates on the Twilio `X-Twilio-Signature` header (HMAC-SHA1 over the full URL plus sorted POST fields) validated inside the route handler; `middleware.ts` allows the exact path `/api/twilio/inbound-sms` unauthenticated for the same reason `/api/stripe/webhook` is allowed — the route itself is the auth gate.
+
+**Twilio Console wiring** (carried over from the retired `CRON_SETUP.md`, PR OPS-01): Messaging → Services → (your service) → Inbound Settings → *Process inbound messages* → **Send a webhook**; Webhook URL `https://hone.care/api/twilio/inbound-sms`; Method `HTTP POST`; Save. Set `TWILIO_WEBHOOK_BASE_URL=https://hone.care` in the Vercel production env so the signature validator builds the canonical URL deterministically regardless of which internal Vercel hostname the runtime sees.
+
+STOP keywords (`STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`) opt out every Hone client whose stored phone normalizes to the inbound `From` digits, writing one `audit_logs` row per matched client. Non-STOP inbound messages are acknowledged with empty TwiML and not persisted (v1 is opt-out only, not conversational). After STOP, **email** reminders for that client continue; only SMS sends are blocked.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.
@@ -93,38 +99,47 @@ Endpoint: `/api/twilio/inbound-sms`.
 | Route | How it is scheduled |
 |---|---|
 | `/api/cron/appointment-reminders` | **External scheduler (cron-job.org), `GET` every 15 min** with `Authorization: Bearer $CRON_SECRET`. (NOT in `vercel.json` — `*/15` exceeds the current plan's once-per-day cron cap. If the project moves to Vercel Pro, add `{ "path": "/api/cron/appointment-reminders", "schedule": "*/15 * * * *" }` to `vercel.json` and drop the external job — that schedule string is `APPOINTMENT_REMINDER_CRON_SCHEDULE`.) |
-| `/api/cron/materialize-recurring-breaks` | **Vercel Cron, `vercel.json`, `0 8 * * *`** (daily, 08:00 UTC — allowed on every plan). |
+| `/api/cron/materialize-recurring-breaks` | **Vercel Cron, `vercel.json`, `0 8 * * *`** (daily, 08:00 UTC — allowed on every plan). Also runs the reminder-scheduler health check in a `finally` (PR OPS-01). |
 | `/api/cron/calendar-reconcile` | **Vercel Cron, `vercel.json`, `0 9 * * *`** (daily, B2.3-c3 — daily because the plan caps cron at once/day). **DORMANT:** the reconciliation sweep finds zero intent-eligible studios while every studio outbound flag is OFF. Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
 | `/api/cron/calendar-sync` | **Vercel Cron, `vercel.json`, `30 9 * * *`** (daily, B2.3-c3, after reconciliation). **DORMANT:** `worker_enabled=false` → the claim RPC returns zero rows and mutates nothing → no-work. The **first scheduled run doubles as the B2.3-c2 no-work production validation** (Vercel Cron auto-supplies the production `CRON_SECRET`). Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
 | `/api/cron/no-show-check` | **intentionally NOT scheduled** (disabled, non-mutating stub). |
 
-### Reminder scheduler: CODE is proven, PRODUCTION OPERATION is not — **OPEN**
+### Reminder scheduler: RUNTIME OPERATION PROVEN 2026-08-12 · HUMAN OWNERSHIP still OPEN
 
-These are two different claims and the repository can only substantiate one of
-them. Conflating them is how a silently dead reminder job would go unnoticed:
-every test would stay green, because the tests prove the route, not the caller.
+These are two different claims and they must never be conflated. The runtime
+claim is now evidenced; the ownership claim is not, and no probe can supply it.
 
-| Layer | Status | Evidence |
-|---|---|---|
-| **CODE** | ✅ implemented and tested | The route, the ≤15-minute cadence invariant (`tests/lib/cron/reminder-schedule.test.ts` proves every minute offset 0–59 is covered at 15-min cadence and that hourly + a 30-min window fails), the `vercel.json` config pin (`tests/app/cron-config.test.ts`), claim/record idempotency, the 3-strike cap and the exhaustion alert. |
-| **PRODUCTION OPERATION** | ⚠️ **OPEN — requires externally verified evidence** | **None in this repository.** The schedule lives in a third-party dashboard (`cron-job.org`) that no test, migration, or CI lane can observe. `vercel.json` deliberately does **not** own it, so a green deploy proves nothing about whether reminders are firing. |
+**Evidence run: 2026-08-12, against production SHA `773dbc7008b5`.** Method:
+read-only Vercel request logs for the production deployment
+(`dpl_ErKKmeUfJ4qCp8iBZzZmXxB9RzXq`, aliased to `hone.care`, built from the
+`773dbc7008b5` merge commit 4 seconds after it landed) plus one *unauthenticated*
+probe. **No authenticated reminder invocation was made, no reminder was sent, no
+production DB was touched, and the `CRON_SECRET` value was never read.**
 
-**This finding stays OPEN until every item below is evidenced.** Nothing here
-has been checked against the live scheduler; do not record it as verified on the
-strength of the code being correct.
+#### PROVEN RUNTIME FACTS (observed, dated)
 
-- [ ] External scheduler account identified, and its **owner named** (who can log in, and who takes over if they are unavailable).
-- [ ] The reminder job **exists and is enabled** (not paused).
-- [ ] Exact URL correct: `https://hone.care/api/cron/appointment-reminders`.
-- [ ] Cadence **≤ 15 minutes** — the 2h window is only 30 minutes wide, so an hourly job silently misses roughly half of all appointment minute offsets.
-- [ ] `Authorization: Bearer $CRON_SECRET` configured on the job, and the value matches the production `CRON_SECRET`.
-- [ ] **Recent successful executions visible** in the scheduler's own history (HTTP 200s, at the expected cadence, not a wall of failures).
-- [ ] **One authenticated production response checked by hand** and its JSON body inspected (`ok: true`, plausible `scanned`/`sent`/`skipped` counts).
-- [ ] Operator **alerting/monitoring ownership named** — who is paged when reminders stop, and where `reminder_send_exhausted` alerts land.
-- [ ] **No second competing scheduler** exists — a duplicate job doubles the load against the claim RPC and burns the 3-strike budget faster. (The claim RPC makes a duplicate *safe*, not *harmless*.)
+| Fact | Evidence |
+|---|---|
+| The external job **is firing** | Three consecutive requests to `GET /api/cron/appointment-reminders` on `hone.care`: **23:00:19Z, 23:15:10Z, 23:30:14Z** (2026-08-12) |
+| Cadence is **~15 minutes** | Intervals of **+14.85 min** and **+15.07 min** — an hourly job cannot produce a 15-minute interval |
+| The scheduler **authenticates successfully** | All three returned **HTTP 200**; `200` is reachable only via the route's full success path |
+| The endpoint **is auth-gated** | One unauthenticated GET returned exactly `401 {"ok":false,"error":"Unauthorized"}` — the gate is the first statement of the handler, so a 401 touches no admin client, claim, provider, or heartbeat |
+| Exact URL is correct | `https://hone.care/api/cron/appointment-reminders`, production branch, production deployment |
+| `CRON_SECRET` **is configured in production** | Present in the Vercel Production environment (presence proven via `vercel env ls`; the value was never displayed) |
+| **No duplicate scheduler** on any axis we can observe | `vercel.json` does not register it and `vercel crons ls` returns exactly 3 jobs (none of them reminders); no `pg_cron`/`pg_net` in any migration; no `supabase/functions`; the only GitHub Actions schedule is the nightly CI matrix against `localhost` with a dummy secret; and the request logs show exactly **one** request per 15-minute slot |
 
-Until this checklist is complete, treat client reminder delivery as
-**unverified in production** in any launch-readiness or audit statement.
+#### OPERATOR / HUMAN FACTS STILL TO VERIFY
+
+No log line can establish these. They stay unchecked until a human confirms them.
+
+- [ ] External scheduler account identified, and its **owner named** (who can log in).
+- [ ] **Backup owner** named (who takes over if the primary is unavailable).
+- [ ] **Single enabled job** confirmed in the cron-job.org dashboard — the request logs rule out a duplicate hitting *this* app, but only the dashboard rules out a second job configured inside the provider.
+- [ ] Operator **alerting ownership named** — who acts on `reminder_scheduler_*` / `reminder_send_exhausted`, and which inbox `OPS_ALERT_EMAILS` resolves to.
+- [ ] The `/admin` **Reminder scheduler** card observed reading **Healthy** — this is the one remaining *runtime* gap: an HTTP 200 proves the run succeeded but **not** that the Upstash heartbeat was persisted, because the heartbeat write is deliberately fail-open.
+
+Until the ownership boxes are checked, describe reminder delivery as
+**"running in production, ownership unattested"** — not as fully verified.
 
 **Reminder schedule/window compatibility (why every 15 min):** a reminder window `W` minutes wide, sampled by a cron firing every `P` minutes, is only missable when `W < P` (a closed window of width `≥ P` always contains a point of the `P`-minute grid). The 24h window is `[23h, 25h]` (120 min, safe at any cadence). The 2h window is `[105, 135]` (30 min) — at the old assumed **hourly** cadence (`P = 60`) a 30-min window silently misses ~half of all appointment minute offsets; at every-15-minutes (`P = 15`) `W = 30 = 2·P`, so every appointment is eligible at least once **and** a single skipped fire still leaves a grid point in-window. So the external scheduler MUST be configured at ≤15-minute cadence (the `reminder-schedule` invariant assumes it). `tests/lib/cron/reminder-schedule.test.ts` proves every minute offset 0–59 is covered at 15-min cadence and that the hourly + 30-min combination fails; `tests/app/cron-config.test.ts` pins the `vercel.json` config + the required cadence. **Max-attempt posture:** after a reminder fails `MAX_ATTEMPTS` (3) it is filtered out of the window query; PR #258 emits a `reminder_send_exhausted` ops alert (warning) with non-sensitive metadata only (studio_id, appointment_id, reminder_type, attempt_count, retryable, reason — no client email/phone/notes/token/free-text). The route also re-checks appointment `status='confirmed'` immediately before sending (both the email and SMS passes) so a reminder is never sent for an appointment cancelled after the window query. *(Point-in-time note; supervised live session payments are now live for approved studios — see [docs/production/current-state.md](./production/current-state.md).)*
 
@@ -154,7 +169,7 @@ Events:
 - `sms_send_failed` (warning): emitted from `logSmsFailure` under the same threshold.
 - `cron_route_failed` (critical): emitted from the catch block at the top of `/api/cron/appointment-reminders/route.ts` and `/api/cron/materialize-recurring-breaks/route.ts`.
 - `recurring_break_materialization_failures` (warning): emitted once per run when at least one rule failed.
-- `reminder_scheduler_stale` (warning) / `reminder_scheduler_missing` (critical) — **PR #283**: recorded by the daily `materialize-recurring-breaks` cron's best-effort scheduler-health check (`recordReminderSchedulerHealthAlert`, `lib/cron/reminder-heartbeat.ts`) when the external every-15-min reminder scheduler's heartbeat is stale (>45 min) or missing (no recorded run). Deduped on an existing unresolved `ops_alerts` row for the same event, so repeated daily checks never spam. `safe_details` carry only `status`, `last_success_at`, `age_minutes`, `cadence_minutes`, `stale_after_minutes`, `checked_at` — never `CRON_SECRET`, an Authorization header, client phone/email/PII, reminder contents, or a provider payload. The check NEVER sends reminders and never calls `/api/cron/appointment-reminders`.
+- `reminder_scheduler_degraded` (warning) / `reminder_scheduler_stale` (**critical**) / `reminder_scheduler_missing` (critical) — **PR #283, hardened by PR OPS-01**: recorded by the best-effort scheduler-health check (`recordReminderSchedulerHealthAlert`, `lib/cron/reminder-heartbeat.ts`), which now runs from **three** independent daily Vercel crons. Deduped on an existing unresolved `ops_alerts` row for the same event, so three daily callers still record at most **one** alert per outage per event. `safe_details` carry only `status`, `last_success_at`, `age_minutes`, `cadence_minutes`, `degraded_after_minutes`, `stale_after_minutes`, `checked_at` — never `CRON_SECRET`, an Authorization header, client phone/email/PII, reminder contents, or a provider payload. The check NEVER sends reminders and never calls `/api/cron/appointment-reminders`.
 
 The no-show-check route is intentionally non-mutating (responds with `{ ok: true, disabled: true }`) and does NOT emit cron alerts.
 
@@ -168,21 +183,34 @@ The no-show-check route is intentionally non-mutating (responds with `{ ok: true
 
 The PR #265 heartbeat was **passive** — an operator only learned the external scheduler had stopped if they happened to open `/admin`. PR #283 makes it **active** without a new scheduler, cron route, or migration.
 
-**How it works.** The **existing daily** `materialize-recurring-breaks` cron (`0 8 * * *`) now runs a best-effort `recordReminderSchedulerHealthAlert()` after its own work. That cron fires automatically and **independently** of the external every-15-min scheduler, so it can detect a dead scheduler that never calls its own route. The check reads the heartbeat, classifies it (`computeReminderSchedulerStatus`), and records ONE deduped ops alert when stale/missing. It **never sends reminders** and never calls `/api/cron/appointment-reminders`; a failure of the check can never break the daily cron (it is wrapped). The always-on admin **Reminder scheduler** card remains the **real-time read-only** view.
+**How it works (PR OPS-01).** The best-effort `recordReminderSchedulerHealthAlert()` runs from **three** existing daily Vercel crons — `materialize-recurring-breaks` (`0 8 * * *`), `calendar-reconcile` (`0 9 * * *`) and `calendar-sync` (`30 9 * * *`). All three fire automatically and **independently** of the external every-15-min scheduler, so they can detect a dead scheduler that never calls its own route. The check reads the heartbeat, classifies it (`computeReminderSchedulerStatus`), and records ONE deduped ops alert when degraded/stale/missing. It **never sends reminders** and never calls `/api/cron/appointment-reminders`; a failure of the check can never break the host cron (it is wrapped, and in the two routes with their own auth gate it runs in a `finally` that contains no `return`/`throw`, so it cannot alter the route's real result). The always-on admin **Reminder scheduler** card remains the **real-time read-only** view.
+
+*Why three callers:* PR #283 had exactly one, inside the materialize happy path — so an unrelated recurring-break lookup failure took its `return 500` and skipped reminder monitoring for the whole day, and that single cron was a silent single point of failure. Dedupe (an unresolved `ops_alerts` row for the same event) is what keeps three daily callers from producing three alerts.
 
 **Scheduler facts.**
 - **URL:** `/api/cron/appointment-reminders` — the external scheduler (cron-job.org) remains the source of reminder execution.
 - **Auth:** `Authorization: Bearer <CRON_SECRET>` (validated by `lib/cron/auth.ts`; missing/wrong → `401`).
-- **Cadence:** every **15 minutes**.
-- **Expected success:** `2xx` response → heartbeat (`reminder_cron:last_success`) updates → admin status **Healthy** (≤45 min).
+- **Cadence:** every **15 minutes** (`CRON_INTERVAL_MINUTES`).
+- **Expected success:** `2xx` response → heartbeat (`reminder_cron:last_success`) updates → admin status **Healthy**.
+
+**Health states.** Both thresholds are multiples of `CRON_INTERVAL_MINUTES`, so a cadence change moves the monitoring contract with it — there is no second magic 15.
+
+| State | Heartbeat age | Severity | Emails? | Meaning |
+|---|---|---|---|---|
+| **Healthy** | ≤ 30 min (2× cadence) | — | — | Cadence contract met |
+| **Degraded** | 31–45 min | warning | no | **Cadence margin lost.** The 2h reminder window is only 30 min wide, so once the effective cadence exceeds 30 min appointment offsets start being missed outright (at 45 min: 19/60 offsets; at 60 min: 29/60). |
+| **Stale** | > 45 min (3× cadence) | **critical** | **yes** | Three missed cycles — sustained failure |
+| **Missing** | no valid heartbeat | critical | yes | No run recorded, or the 24h heartbeat key expired |
+
+*Why 2× and 3×:* the reliability invariant in `lib/cron/reminder-schedule.ts` is that a window `W` minutes wide sampled every `P` minutes is only missable when `W < P`. The 2h window is `W = 30`, so `P ≤ 30` is still correct and `P > 30` is not — that is exactly the degraded boundary. `3×` matches the 3-strike `MAX_ATTEMPTS` posture of the route itself.
 
 **Failure meanings.**
-- **`401`** = missing/bad `CRON_SECRET` (the scheduler is calling but unauthorized).
+- **`401`** = missing/bad `CRON_SECRET` (the scheduler is calling but unauthorized). ⚠️ The route returns 401 *before* any alerting, so a 401 storm is **silent app-side** — it surfaces only as a heartbeat going degraded → stale.
 - **`5xx`** = app/runtime/provider issue inside the route (records `cron_route_failed` critical).
-- **stale** = the scheduler is not calling, or recent runs failed: last success older than 45 min → `reminder_scheduler_stale` (warning).
-- **missing** = no successful run has ever been recorded (or the 24h heartbeat key expired) → `reminder_scheduler_missing` (critical, emails `OPS_ALERT_EMAILS`).
 
-**Alert + dedupe behavior.** stale/missing records **one** deduped ops alert; while an unresolved alert for the same event exists, repeated daily checks record **nothing** (no spam). **Detection latency is up to ~24h** (the daily cron cadence); the admin card is the real-time view for anyone who looks sooner. **No auto-resolve** — the operator resolves the alert manually on the admin **Ops alerts** page after the scheduler is confirmed healthy.
+**Alert + dedupe behavior.** Each unhealthy state records **one** deduped ops alert; while an unresolved alert for that event exists, later checks record **nothing** (no spam). The three states are **separate events**, so a worsening outage still escalates: an unresolved `degraded` warning does not suppress the `stale` critical.
+
+**Detection latency (PR OPS-01).** `stale` is now **critical**, so it **emails `OPS_ALERT_EMAILS` on the first daily check after 45 minutes of silence**. Previously `stale` was a warning — which never emails — so a dead scheduler produced no operator email until the 24h heartbeat TTL expired the key into `missing`, i.e. **~25–48h**. With checks at 08:00 / 09:00 / 09:30 UTC the worst case is now **≈22.5h** (dying just after 09:30, caught at 08:00 the next day) and the best case ~1h. The admin card remains the real-time view for anyone who looks sooner. **No auto-resolve** — the operator resolves the alert manually on the admin **Ops alerts** page after the scheduler is confirmed healthy.
 
 **Operator response (do NOT manually trigger reminders unless explicitly approved):**
 1. Check the **external scheduler provider** (cron-job.org) — is the job enabled and firing every 15 min?
@@ -190,6 +218,23 @@ The PR #265 heartbeat was **passive** — an operator only learned the external 
 3. Check the **Vercel deployment / logs** for the reminder route (`5xx`, exceptions).
 4. Check the **admin Ops alerts** page for the `reminder_scheduler_*` (and `cron_route_failed` / `reminder_send_exhausted`) alerts + details.
 5. After the scheduler is confirmed healthy (admin card returns to **Healthy**), **resolve** the alert manually.
+
+#### Scheduler ownership register — UNVERIFIED, fill in by hand
+
+Code cannot establish who owns a third-party dashboard account. These stay
+unchecked until a human confirms each one; **do not tick a box on the strength
+of the runtime evidence above** — a job that is provably firing today still has
+no named owner to call when it stops.
+
+| # | Fact | Status | Value |
+|---|---|---|---|
+| 1 | cron-job.org **primary account owner** (who can log in) | ☐ unverified | _(record here)_ |
+| 2 | **Backup owner** (who takes over if the primary is unavailable) | ☐ unverified | _(record here)_ |
+| 3 | **Exactly one enabled reminder job** in the provider dashboard | ☐ unverified | request logs show one call per slot, but only the dashboard rules out a second configured job |
+| 4 | **Alert owner / on-call recipient** — who acts on `reminder_scheduler_*`, and which inbox `OPS_ALERT_EMAILS` resolves to | ☐ unverified | _(record here)_ |
+| 5 | `/admin` **Reminder scheduler** card observed reading **Healthy** | ☐ unverified | proves the Upstash heartbeat is actually being persisted — an HTTP 200 does **not**, because the write is fail-open |
+
+Never record a credential, token, or the `CRON_SECRET` in this table.
 
 *(Point-in-time note; supervised live session payments are now live for approved studios — see [docs/production/current-state.md](./production/current-state.md). Unrelated to this change.)*
 

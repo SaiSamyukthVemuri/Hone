@@ -158,20 +158,6 @@ export async function GET(req: Request) {
       });
     }
 
-    // PR #283: piggyback a best-effort reminder-scheduler health check on
-    // this daily cron. It runs independently of the external every-15-min
-    // appointment-reminder scheduler, so a stale/missing scheduler becomes a
-    // deduped ops alert within ~24h instead of staying a passive admin-card
-    // signal. This does NOT send reminders or call the appointment-reminders
-    // route; it only reads the heartbeat and may record an ops alert. Wrapped
-    // so a health-check failure can never turn a successful materialization
-    // run into a cron_route_failed.
-    try {
-      await recordReminderSchedulerHealthAlert();
-    } catch {
-      // Never let the scheduler-health check break the daily cron.
-    }
-
     return NextResponse.json({
       ok: failures.length === 0,
       rules_processed: rules.length,
@@ -193,5 +179,43 @@ export async function GET(req: Request) {
       { ok: false, error: "cron_failed" },
       { status: 500 },
     );
+  } finally {
+    // PR OPS-01: the reminder-scheduler health check runs in `finally`, NOT at
+    // the end of the happy path.
+    //
+    // Why: this daily Vercel cron is one of the independent detectors for a
+    // dead external reminder scheduler. Previously the call sat after the rule
+    // loop, so the early `return 500` on a rule-lookup failure above skipped it
+    // entirely — an unrelated recurring-break problem silently disabled that
+    // day's reminder-scheduler monitoring. `finally` runs on every exit path:
+    // success, the early 500, and the catch.
+    //
+    // Control-flow safety: this block contains NO `return` and NO `throw`, so
+    // it CANNOT override or mask the route's real result — a `finally` only
+    // changes the completion value if it completes abruptly, and this one never
+    // does. The inner try/catch guarantees that: a health-check failure can
+    // never turn a successful materialization into a cron_route_failed, and
+    // never converts a real 500 into a false success.
+    //
+    // The check itself is read-only w.r.t. reminders: it reads the heartbeat
+    // and may record an ops alert. It NEVER sends a reminder and never calls
+    // /api/cron/appointment-reminders.
+    try {
+      await recordReminderSchedulerHealthAlert();
+    } catch (healthErr) {
+      // Observable, not swallowed: the helper is already fail-open, so
+      // reaching here means something genuinely unexpected. Log a structured,
+      // non-sensitive line (no CRON_SECRET, no PII, no reminder content) so
+      // the failure is visible in Vercel logs instead of vanishing.
+      console.error(
+        JSON.stringify({
+          event: "reminder_scheduler_health_check_threw",
+          route: "/api/cron/materialize-recurring-breaks",
+          err_message:
+            healthErr instanceof Error ? healthErr.message : String(healthErr),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
   }
 }

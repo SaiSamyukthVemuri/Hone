@@ -271,14 +271,22 @@ Transactional email via Resend (confirmation, reminder, postcare, portal) is liv
 fail-soft. **Postcare auto-send is deployed but defaults to `manual`** — opt-in per studio,
 skipped if the Resend key or postcare text is missing.
 
-⚠️ **Appointment reminders: code proven, production operation UNVERIFIED (OPEN).** The
-reminder route and its ≤15-minute cadence invariant are implemented and tested, but the
+✅⚠️ **Appointment reminders: production operation PROVEN 2026-08-12; scheduler OWNERSHIP still unverified.** The
 schedule is owned by an **external scheduler outside this repository** — `vercel.json`
 deliberately does not register it, so neither CI nor a successful deploy says anything
-about whether reminders are actually firing. Do not claim reminder delivery is verified in
-production until the operational checklist in
-[docs/08_EMAIL_SMS_AND_CRON.md](../08_EMAIL_SMS_AND_CRON.md) ("Reminder scheduler: CODE is
-proven, PRODUCTION OPERATION is not") is complete.
+about whether reminders are firing. That gap was closed by direct observation rather than
+inference: at production SHA `773dbc7008b5`, read-only Vercel request logs show
+`GET /api/cron/appointment-reminders` on `hone.care` at **23:00:19Z / 23:15:10Z /
+23:30:14Z** (2026-08-12), all **HTTP 200**, ~15 minutes apart, with an unauthenticated
+probe returning `401`. **No authenticated invocation was made and no reminder was sent.**
+
+What remains unverified is **human**, not runtime: the cron-job.org account owner, a backup
+owner, a single-enabled-job dashboard confirmation, the named alert recipient, and one
+observation of the `/admin` **Reminder scheduler** card reading Healthy (an HTTP 200 proves
+the run, not that the fail-open Upstash heartbeat persisted). Until those are recorded,
+describe reminder delivery as **running in production, ownership unattested** — see the
+ownership register in
+[docs/08_EMAIL_SMS_AND_CRON.md](../08_EMAIL_SMS_AND_CRON.md).
 
 **SMS is pilot scale only**, env-gated on `TWILIO_*` with a per-studio toggle and per-client
 consent, STOP/HELP handled. Broad-SaaS SMS (A2P/10DLC registration, sender strategy, rate

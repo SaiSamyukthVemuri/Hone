@@ -65,9 +65,15 @@ If a contributor cannot figure out which doc to update, default to:
 
 ## How to mark a doc deprecated
 
-Hone keeps four historical docs at the repo root:
+Hone keeps two historical docs at the repo root. `CRON_SETUP.md` was **deleted**
+in PR OPS-01 — deprecation was not enough: it had drifted into instructing an
+*hourly* reminder cadence, which the 30-minute 2h window cannot tolerate (an
+hourly job silently misses 29 of 60 appointment minute offsets), and a reader
+following it would have mis-configured production. Its live content now lives in
+[docs/08](./08_EMAIL_SMS_AND_CRON.md) and
+[docs/10](./10_DEPLOYMENT_AND_ENV.md), and
+`tests/docs/reminder-cadence-truthfulness.test.ts` stops it coming back.
 
-- `CRON_SETUP.md`; pre-Stripe-hardening cron notes. Still useful for setting up the external scheduler, but the `no-show` route described there is now non-mutating and must NOT be externally scheduled.
 - `TESTING_EMAIL_SYSTEM.md`; Session-19.2 end-to-end email walk-through. The test recipe is still valid even though the surrounding email types have grown.
 - `PRE_STRIPE_HARDENING_NOTES.md`; review + deployment notes for the operational-hardening migration 0033.
 
@@ -81,6 +87,24 @@ To mark a doc deprecated:
    ```
 2. If the deprecated doc still contains useful operational steps not covered elsewhere, port them into the relevant `docs/` file and reference back to the deprecated doc by file name (so a `git log` reader can find the origin).
 3. Do NOT delete useful historical docs.
+
+### When to DELETE instead of deprecate (PR OPS-01)
+
+A deprecation banner makes a doc *lower priority*; it does not make wrong
+instructions safe. `CRON_SETUP.md` carried a banner from PR #148 and still told
+an operator to schedule the reminder job **hourly** — a setting that silently
+breaks the 2h reminder for roughly half of all appointments. Nobody reading it
+would have known the banner mattered more than the numbered steps.
+
+Delete rather than deprecate when **all** of these hold:
+
+- the doc gives an instruction that would **mis-configure production** if followed;
+- every still-live claim in it is already carried by a canonical `docs/` file (port anything that is not, first);
+- its inbound references are proven and updated — a live pointer must be removed, while frozen historical records (`PRE_STRIPE_HARDENING_NOTES.md`, `docs/audits/**`) may keep naming it and are **not** rewritten;
+- a test pins the deletion so the footgun cannot silently return.
+
+Git history remains the archive. The point is that a wrong instruction should not
+be reachable by someone browsing the repository today.
 
 ## How to keep docs readable for non-technical readers
 

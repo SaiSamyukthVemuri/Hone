@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { handleWorkerRoute } from "@/lib/google-calendar/sync/worker-runtime";
+import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
 
 // Google Calendar — Phase B2.3-c2: the authenticated, bounded worker-drain route.
 //
@@ -32,5 +33,34 @@ export const maxDuration = 180;
 
 export async function GET(req: Request) {
   const { status, body } = await handleWorkerRoute(req);
+  // PR OPS-01: THIRD independent detector for a dead external reminder
+  // scheduler (this cron runs 09:30 UTC; materialize 08:00, reconcile 09:00).
+  //
+  // Auth for this route lives inside the worker seam, so there is no local gate
+  // to sit behind. Gating on `status !== 401` preserves the same contract every
+  // other caller has — an unauthorized request records nothing — without
+  // reaching into the seam or duplicating its auth logic.
+  //
+  // Deliberately does NOT touch the seam, the outbound-sync tables, or the
+  // worker flags; it only reads the reminder heartbeat and may record a deduped
+  // ops alert. It NEVER sends a reminder and never calls
+  // /api/cron/appointment-reminders. Best-effort: a health-check failure must
+  // not alter this route's worker result, so the response is built after it and
+  // the call is wrapped.
+  if (status !== 401) {
+    try {
+      await recordReminderSchedulerHealthAlert();
+    } catch (healthErr) {
+      console.error(
+        JSON.stringify({
+          event: "reminder_scheduler_health_check_threw",
+          route: "/api/cron/calendar-sync",
+          err_message:
+            healthErr instanceof Error ? healthErr.message : String(healthErr),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+  }
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }

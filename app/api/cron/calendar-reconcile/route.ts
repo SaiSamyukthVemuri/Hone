@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
 import { runReconciliation } from "@/lib/google-calendar/sync/reconcile";
 import {
   createReconcileObservability,
@@ -192,5 +193,33 @@ export async function GET(req: Request) {
       // fail-open
     }
     return NextResponse.json({ ok: false, error: "cron_failed" }, { status: 500 });
+  } finally {
+    // PR OPS-01: SECOND independent detector for a dead external reminder
+    // scheduler. This is a separate Vercel cron (09:00 UTC) from
+    // materialize-recurring-breaks (08:00 UTC), so a failure of either route —
+    // or of either job's registration — no longer removes reminder monitoring
+    // for the day. Dedupe inside recordReminderSchedulerHealthAlert (an
+    // unresolved ops_alerts row for the same event) means several daily
+    // callers still produce at most ONE alert per outage, not one per cron.
+    //
+    // Same control-flow contract as the materialize route: no `return`, no
+    // `throw` in this block, so it cannot mask the route's real result — this
+    // route's 202 "skipped_held", 200 "degraded" and 500 paths all pass through
+    // unchanged. Runs only after the auth gate above (a 401 returns before the
+    // try, so an unauthorized request records nothing). It NEVER sends a
+    // reminder and never calls /api/cron/appointment-reminders.
+    try {
+      await recordReminderSchedulerHealthAlert();
+    } catch (healthErr) {
+      console.error(
+        JSON.stringify({
+          event: "reminder_scheduler_health_check_threw",
+          route: "/api/cron/calendar-reconcile",
+          err_message:
+            healthErr instanceof Error ? healthErr.message : String(healthErr),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
   }
 }
