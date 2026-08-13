@@ -2616,3 +2616,117 @@ export async function markReviewedOutOfBand(
     await client.end();
   }
 }
+
+// ---------------------------------------------------------------------------
+// MULTI-STUDIO MEMBERSHIP (0181 regression).
+//
+// The production P1 that 0181 fixes only exists for a human who is an ACTIVE
+// practitioner in TWO studios: the page rendered against the SELECTED studio
+// while start_session resolved a DIFFERENT one with an unordered `limit 1`.
+// The single-studio fixture every other spec uses is structurally incapable of
+// reproducing it, which is exactly why the incident reached production.
+//
+// This attaches a SECOND studio to the SAME auth user as `seed`, with its own
+// client, so a spec can drive the real chooser and then chart in either studio.
+// ---------------------------------------------------------------------------
+export type SecondStudio = {
+  studioId: string;
+  studioName: string;
+  slug: string;
+  practitionerId: string;
+  clientId: string;
+  clientName: string;
+};
+
+export async function seedSecondStudioForSameUser(
+  seed: E2eSeed,
+): Promise<SecondStudio> {
+  const uniq = randomUUID().slice(0, 8);
+  const studioId = randomUUID();
+  const clientId = randomUUID();
+  const studioName = `E2E Studio B ${uniq}`;
+  const slug = `e2e-studio-b-${uniq}`;
+  const clientName = `E2E Client B ${uniq}`;
+
+  const owner = await sql<{ user_id: string; email: string }>(
+    `select pr.user_id, pr.email from public.practitioners pr
+      where pr.studio_id = $1 and pr.role = 'owner' limit 1`,
+    [seed.studioId],
+  );
+  const userId = owner[0]?.user_id;
+  if (!userId) throw new Error("seed failed: no owner user for the first studio");
+
+  await sql(
+    `insert into public.studios
+       (id, name, owner_email, slug, timezone, buffer_minutes,
+        default_appointment_duration_minutes)
+     values ($1, $2, $3, $4, $5, 0, 30)`,
+    [studioId, studioName, owner[0].email, slug, timezoneWithLocalMorning()],
+  );
+
+  // The SAME human, active in the second studio. This is the trigger.
+  const pr = await sql<{ id: string }>(
+    `insert into public.practitioners
+       (studio_id, user_id, display_name, email, role, active,
+        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+     values ($1, $2, $3, $4, 'owner', true,
+             now(), '2026-05-22', now(), '2026-05-22')
+     returning id`,
+    [studioId, userId, `E2E Owner B ${uniq}`, owner[0].email],
+  );
+
+  await sql(
+    `insert into public.clients (id, studio_id, name) values ($1, $2, $3)`,
+    [clientId, studioId, clientName],
+  );
+
+  return {
+    studioId,
+    studioName,
+    slug,
+    practitionerId: pr[0]!.id,
+    clientId,
+    clientName,
+  };
+}
+
+// The practitioner row id for the FIRST studio's owner (the A-side membership),
+// so a spec can assert WHICH membership was attributed rather than merely that
+// a session appeared.
+export async function getOwnerPractitionerIdForStudio(
+  studioId: string,
+): Promise<string> {
+  const rows = await sql<{ id: string }>(
+    `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+    [studioId],
+  );
+  if (!rows[0]) throw new Error("no owner practitioner for studio");
+  return rows[0].id;
+}
+
+// A client seeded directly into the FIRST studio, so the A-side of the
+// multi-studio journey has something to chart without going through the UI.
+export async function seedClientInStudio(
+  studioId: string,
+  label: string,
+): Promise<{ clientId: string; clientName: string }> {
+  const clientId = randomUUID();
+  const clientName = `E2E ${label} ${randomUUID().slice(0, 8)}`;
+  await sql(
+    `insert into public.clients (id, studio_id, name) values ($1, $2, $3)`,
+    [clientId, studioId, clientName],
+  );
+  return { clientId, clientName };
+}
+
+// The session rows a spec must inspect to prove tenant binding.
+export async function getSessionsForClient(clientId: string): Promise<
+  Array<{ id: string; studio_id: string; practitioner_id: string; modality: string }>
+> {
+  return sql(
+    `select id, studio_id, practitioner_id, modality
+       from public.sessions where client_id = $1 and deleted_at is null
+      order by started_at desc`,
+    [clientId],
+  );
+}
