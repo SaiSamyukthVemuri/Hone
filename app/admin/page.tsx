@@ -470,7 +470,7 @@ function Flag({ ok, label }: { ok: boolean; label: string }) {
           : "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400"
       }`}
     >
-      <span aria-hidden="true">{ok ? "✓" : "—"}</span>
+      <span aria-hidden="true">{ok ? "✓" : "✕"}</span>
       {label}
     </span>
   );
@@ -527,7 +527,7 @@ function StudiosSection({ studios }: { studios: StudioRow[] }) {
                         /book/{s.slug}
                       </Link>
                     ) : (
-                      <span className="text-neutral-400">—</span>
+                      <span className="text-neutral-400">Not set</span>
                     )}
                   </Td>
                   <Td className="text-neutral-600 dark:text-neutral-400">

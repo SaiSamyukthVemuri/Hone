@@ -32,7 +32,7 @@ function metaSummary(metadata: AdminActionEventRow["metadata"]): string {
   const parts = Object.entries(metadata ?? {})
     .filter(([, v]) => v != null && typeof v !== "object")
     .map(([k, v]) => `${k}: ${String(v)}`);
-  return parts.length ? parts.join(" · ") : "—";
+  return parts.length ? parts.join(" · ") : "None";
 }
 
 export default async function AdminAuditPage() {
@@ -86,14 +86,14 @@ export default async function AdminAuditPage() {
                     <FormattedDateTime iso={e.createdAt} />
                   </td>
                   <td className="px-3 py-2 text-xs">
-                    {e.actorEmail ?? e.actorUserId ?? "—"}
+                    {e.actorEmail ?? e.actorUserId ?? "Unknown"}
                   </td>
                   <td className="px-3 py-2">{e.action}</td>
                   <td className={`px-3 py-2 font-medium ${outcomeClass(e.outcome)}`}>
                     {e.outcome}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-neutral-500">
-                    {e.studioId ? `${e.studioId.slice(0, 8)}…` : "—"}
+                    {e.studioId ? `${e.studioId.slice(0, 8)}…` : "None"}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-neutral-500">
                     {e.targetType}

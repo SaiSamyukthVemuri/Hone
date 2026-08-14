@@ -301,7 +301,7 @@ function ManufacturerPicker({ defaultValue }: { defaultValue?: string }) {
           onChange={(e) => setSel(e.target.value)}
           className={INPUT_CLS}
         >
-          <option value="">— Select —</option>
+          <option value="">Select...</option>
           {MANUFACTURER_OPTIONS.map((m) => (
             <option key={m} value={m}>
               {m}

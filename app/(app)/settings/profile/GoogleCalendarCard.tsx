@@ -367,7 +367,7 @@ export function GoogleCalendarCard({
 
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-neutral-700 dark:text-neutral-300">
             <dt className="text-neutral-500">Google account</dt>
-            <dd>{connection?.googleAccountEmail ?? "—"}</dd>
+            <dd>{connection?.googleAccountEmail ?? "Not connected"}</dd>
             <dt className="text-neutral-500">Destination</dt>
             <dd>
               {destinationMode === "dedicated_app_created"
@@ -377,14 +377,14 @@ export function GoogleCalendarCard({
                   : "Not chosen"}
             </dd>
             <dt className="text-neutral-500">Selected calendar</dt>
-            <dd>{connection?.selectedCalendarDisplayName ?? "—"}</dd>
+            <dd>{connection?.selectedCalendarDisplayName ?? "Not selected"}</dd>
             <dt className="text-neutral-500">Setup status</dt>
             <dd>{READINESS_LABEL[readiness]}</dd>
             <dt className="text-neutral-500">Last authorized</dt>
             <dd>
               {connection?.lastSuccessfulAuthAt
                 ? new Date(connection.lastSuccessfulAuthAt).toLocaleString()
-                : "—"}
+                : "Never"}
             </dd>
           </dl>
 

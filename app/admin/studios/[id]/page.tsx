@@ -211,7 +211,7 @@ export default async function AdminStudioPage({
               /book/{studio.slug}
             </Link>
           ) : (
-            <span className="text-neutral-400">—</span>
+            <span className="text-neutral-400">Not set</span>
           )}
         </Row>
         <Row label="Timezone">{studio.timezone}</Row>
@@ -375,7 +375,7 @@ function Flag({ ok, label }: { ok: boolean; label: string }) {
           : "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400"
       }`}
     >
-      <span aria-hidden="true">{ok ? "✓" : "—"}</span>
+      <span aria-hidden="true">{ok ? "✓" : "✕"}</span>
       {label}
     </span>
   );
