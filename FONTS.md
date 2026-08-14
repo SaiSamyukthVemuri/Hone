@@ -97,6 +97,33 @@ copyright line; the two bodies differ only in known upstream formatting variants
 files must move with them.** `tests/source-guards/self-hosted-fonts-guards.test.ts`
 fails if either goes missing or stops being a real OFL 1.1 notice.
 
+### What the BROWSER receives
+
+The `.txt` notices stay in the repository — Next emits only the `.woff2` files
+into `.next/static/media/`, and it does not copy sibling text files. That is not
+a gap, because clause 2 also accepts the notice "in the appropriate
+machine-readable metadata fields within text or binary files", and these subsets
+carry it. Read out of the shipped binaries:
+
+| name ID | Field | Inter | Fraunces |
+|---|---|---|---|
+| 0 | Copyright | `Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)` | `Copyright 2020 The Fraunces Project Authors (github.com/undercasetype/Fraunces)` |
+| 14 | License Info URL | `https://openfontlicense.org` | `https://scripts.sil.org/OFL` |
+| 13 | License Description | **absent** | **absent** |
+
+So every served copy carries its own copyright notice and a pointer to the
+licence. Name ID 13, which would carry the licence *body*, is stripped by
+Google's subsetting — which is precisely why the full text is vendored as
+`LICENSE-*.txt` as well. Note this is **unchanged from before self-hosting**:
+`next/font/google` downloaded and served these same subsetted bytes, with no
+licence text anywhere in the repository at all. Vendoring improves the position
+rather than weakening it.
+
+The guard asserts name IDs 0, 1 and 14 on **every** vendored `.woff2` by parsing
+the WOFF2 name table (`tests/source-guards/woff2-name-table.ts`), so a future
+re-vendor that produced binaries stripped of their copyright would fail rather
+than quietly shipping an unattributed face.
+
 The vendored `.woff2` files in `app/_fonts/` are **the exact bytes the previous
 `next/font/google` build downloaded from Google Fonts** and served from
 `/_next/static/media/`. They were lifted from that build's output rather than

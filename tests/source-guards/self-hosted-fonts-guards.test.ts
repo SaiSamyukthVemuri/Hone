@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { NAME_ID, readWoff2NameTable } from "./woff2-name-table";
 
 // SOURCE GUARDS - self-hosted Inter + Fraunces.
 //
@@ -227,6 +228,36 @@ describe("the faces are loaded from local files", () => {
       expect(text).toContain(
         "contains the above copyright notice and this license",
       );
+    }
+  });
+
+  it("every SERVED binary carries its own copyright and OFL pointer", () => {
+    // The .txt notices stay in the repository - Next emits only the fonts into
+    // .next/static/media, so a sibling file is not what makes the BROWSER copy
+    // compliant. OFL 1.1 clause 2 accepts the notice "in the appropriate
+    // machine-readable metadata fields within text or binary files", and these
+    // subsets carry it: name ID 0 (copyright) and name ID 14 (licence URL).
+    //
+    // Google's subsetting strips name ID 13 (the full licence body), which is
+    // why LICENSE-Inter.txt / LICENSE-Fraunces.txt exist alongside them. If a
+    // future re-vendor produced binaries stripped of name ID 0 as well, the
+    // served copy would carry no notice at all and nothing else would notice.
+    const fonts = readdirSync(path.join(ROOT, "app/_fonts")).filter((f) =>
+      f.endsWith(".woff2"),
+    );
+    expect(fonts.length).toBeGreaterThan(0);
+    for (const file of fonts) {
+      const names = readWoff2NameTable(path.join(ROOT, "app/_fonts", file));
+      const family = file.startsWith("inter") ? "Inter" : "Fraunces";
+      const holder =
+        family === "Inter"
+          ? "The Inter Project Authors"
+          : "The Fraunces Project Authors";
+      expect(names[NAME_ID.copyright], `${file} name ID 0`).toContain(holder);
+      expect(names[NAME_ID.licenseInfoUrl], `${file} name ID 14`).toMatch(
+        /openfontlicense\.org|scripts\.sil\.org\/OFL/,
+      );
+      expect(names[NAME_ID.family], `${file} name ID 1`).toBe(family);
     }
   });
 
