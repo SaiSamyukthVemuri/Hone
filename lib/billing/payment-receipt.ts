@@ -83,6 +83,14 @@ export type SendPaymentChargeReceiptResult =
         | "studio_missing"
         | "send_failed_retryable"
         | "send_failed_terminal"
+        // The send FAILED (retryably or terminally) and the follow-up
+        // write recording that failure ALSO failed, so the row is
+        // stranded at receipt_status='sending'. The claim admits only
+        // (null, 'failed') and the UI hides Send on 'sending', so the
+        // receipt is unretryable until an operator clears the row.
+        // Distinct from send_failed_retryable precisely because "try
+        // again in a moment" is advice that can never succeed here.
+        | "send_failed_state_not_recorded"
         // PR #175 patch. The Resend call returned ok:true but the
         // follow-up UPDATE to stamp receipt_status='sent' failed.
         // Returning ok:true here would lose the truthful state:
@@ -113,6 +121,11 @@ const SEND_FAILED_RETRYABLE_MESSAGE =
   "Receipt email failed temporarily. Try again in a moment.";
 const SEND_FAILED_TERMINAL_MESSAGE =
   "Receipt email failed and cannot be retried automatically.";
+// Deliberately does NOT say "try again": the row is stuck in 'sending',
+// so a retry cannot get past the claim. It also does not say the receipt
+// was sent -- in this branch the provider reported failure.
+const SEND_FAILED_STATE_NOT_RECORDED_MESSAGE =
+  "The receipt did not send, and Hone could not record that. This charge needs an operator to clear it before another attempt.";
 const GENERIC_DB_MESSAGE =
   "We could not record the receipt send. Please try again.";
 
@@ -132,6 +145,55 @@ function logInternal(event: string, detail: unknown): void {
 
 function sanitiseSafe(s: string, max: number): string {
   return s.replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+// A send FAILED and the follow-up write that records that failure also
+// failed, so the row is stranded at receipt_status='sending'. Shared by
+// the retryable-release and terminal-park branches because the operator
+// consequence is identical: the claim predicate admits only
+// (null, 'failed') and the UI hides Send on 'sending', so nothing can
+// move this row without a hand fix.
+//
+// Deliberately NOT shared with the provider-SUCCESS persistence failure
+// (`sent_but_record_update_failed`): there an email is already in the
+// wild and the operator instruction is the opposite one -- do not send
+// again. Collapsing the two would lose exactly the distinction PR #175
+// was written to preserve.
+//
+// No email is sent, re-sent, or retried here. It only reports.
+async function reportSettlementFailure(args: {
+  event: string;
+  message: string;
+  attempt: AttemptRow;
+  studioId: string;
+  dbError: { code?: string | null; message?: string | null };
+  providerError: string;
+}): Promise<SendPaymentChargeReceiptResult> {
+  logInternal(args.event, {
+    code: args.dbError.code ?? null,
+    message: args.dbError.message ?? null,
+    attemptId: args.attempt.id,
+  });
+  await recordOpsAlert({
+    severity: "critical",
+    event: args.event,
+    message: args.message,
+    studioId: args.studioId,
+    clientId: args.attempt.client_id,
+    route: "lib/billing/payment-receipt:sendPaymentChargeReceipt",
+    safeDetails: {
+      attempt_id: args.attempt.id,
+      charge_reason: args.attempt.charge_reason,
+      stuck_receipt_status: "sending",
+      provider_error: args.providerError,
+      db_code: args.dbError.code ?? null,
+    },
+  });
+  return {
+    ok: false,
+    reason: "send_failed_state_not_recorded",
+    message: SEND_FAILED_STATE_NOT_RECORDED_MESSAGE,
+  };
 }
 
 type AttemptRow = {
@@ -460,7 +522,7 @@ export async function sendPaymentChargeReceipt(args: {
   // forever; the retryable path releases the claim back to null
   // so a manual click can try again.
   if (sendResult.retryable) {
-    await admin
+    const { error: releaseErr } = await admin
       .from("payment_charge_attempts")
       .update({
         receipt_status: null,
@@ -470,6 +532,25 @@ export async function sendPaymentChargeReceipt(args: {
       .eq("id", attempt.id)
       .eq("studio_id", args.studioId)
       .eq("receipt_status", "sending");
+    if (releaseErr) {
+      // The release is what makes a retryable failure retryable. If it
+      // fails the row stays 'sending', the claim admits only
+      // (null, 'failed'), and ReceiptSubPanel hides the Send button on
+      // 'sending' -- so the receipt is permanently unretryable through
+      // the normal path. Saying "try again in a moment" here would be
+      // advice that can never succeed, so this returns a distinct
+      // outcome and raises the persistence failure (not the provider
+      // failure) to the operator.
+      return await reportSettlementFailure({
+        event: "payment_receipt_release_failed",
+        message:
+          "Receipt send failed retryably, but Hone could not release receipt_status back to null. The row is stuck in 'sending' and the receipt cannot be retried until an operator clears it.",
+        attempt,
+        studioId: args.studioId,
+        dbError: releaseErr,
+        providerError: sanitiseSafe(sendResult.error, 200),
+      });
+    }
     await recordOpsAlert({
       severity: "warning",
       event: "payment_receipt_send_failed_retryable",
@@ -496,7 +577,7 @@ export async function sendPaymentChargeReceipt(args: {
   // sees the message via the ops alert.
   const safeCode = sanitiseSafe("send_failed", 100);
   const safeMessage = sanitiseSafe(sendResult.error, 1000);
-  await admin
+  const { error: terminalErr } = await admin
     .from("payment_charge_attempts")
     .update({
       receipt_status: "failed",
@@ -506,6 +587,22 @@ export async function sendPaymentChargeReceipt(args: {
     .eq("id", attempt.id)
     .eq("studio_id", args.studioId)
     .eq("receipt_status", "sending");
+  if (terminalErr) {
+    // Same stuck-'sending' shape as the release path above, plus the
+    // failure code/message never land, so ReceiptSubPanel cannot even
+    // render "Receipt failed: <code>". Parking the row as 'failed' is
+    // what makes a terminal failure operator-visible AND retryable
+    // after investigation; without it the row is neither.
+    return await reportSettlementFailure({
+      event: "payment_receipt_terminal_record_failed",
+      message:
+        "Receipt send failed terminally, but Hone could not persist receipt_status='failed'. The row is stuck in 'sending' and the receipt cannot be retried until an operator clears it.",
+      attempt,
+      studioId: args.studioId,
+      dbError: terminalErr,
+      providerError: safeMessage,
+    });
+  }
   await recordOpsAlert({
     severity: "critical",
     event: "payment_receipt_send_failed_terminal",

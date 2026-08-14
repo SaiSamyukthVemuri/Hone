@@ -529,6 +529,12 @@ export type SendPaymentReceiptActionResult =
         | "studio_missing"
         | "send_failed_retryable"
         | "send_failed_terminal"
+        // The send failed AND the write recording that failure also
+        // failed, so the row is stranded at receipt_status='sending'
+        // and cannot be retried until an operator clears it. Distinct
+        // from send_failed_retryable, whose "try again" advice would
+        // never succeed in this state.
+        | "send_failed_state_not_recorded"
         // PR #175 patch. The email landed but the row UPDATE to
         // receipt_status='sent' failed; the UI surfaces a warning
         // and tells the practitioner not to send again until an
