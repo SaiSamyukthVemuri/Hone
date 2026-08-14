@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 //
 // adminQuery (postgres, bypassrls) is used for the FK-violation cases to prove the
 // composite FK holds even for the service-role/admin path (FKs are enforced
-// regardless of BYPASSRLS — the strongest guarantee); a userQuery pair shows the
+// regardless of BYPASSRLS, the strongest guarantee); a userQuery pair shows the
 // authenticated app path; an RLS read is the confidentiality regression.
 
 const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
@@ -130,7 +130,7 @@ describe("0151: cross-studio references are rejected (23503)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T4.1 — the FK is defence in depth for the role that ACTUALLY writes.
+  // T4.1, the FK is defence in depth for the role that ACTUALLY writes.
   //
   // This used to be proven on the authenticated app path ("RLS WITH CHECK
   // passes, the FK still fails"). Migration 0172 removed that path: an
@@ -138,7 +138,7 @@ describe("0151: cross-studio references are rejected (23503)", () => {
   // reaches the FK, so the old test could no longer prove what it claimed.
   //
   // Flipping its expected SQLSTATE from 23503 to 42501 would have DESTROYED the
-  // FK coverage — a privilege refusal proves nothing about the constraint. The
+  // FK coverage, a privilege refusal proves nothing about the constraint. The
   // proof is therefore re-pointed at `service_role`, which is the role the
   // command layer actually writes as, and which 0172 deliberately leaves
   // untouched. That is a STRONGER guarantee than the old one: service_role
@@ -153,7 +153,7 @@ describe("0151: cross-studio references are rejected (23503)", () => {
   // about a CONSTRAINT. 0174 GROUP 10.1 now revokes service_role's INSERT too,
   // so the same argument applies one level up: the proof moves to `postgres`,
   // the table owner and migration channel, which is the only role that still
-  // holds INSERT and which also carries BYPASSRLS — so, again, nothing but the
+  // holds INSERT and which also carries BYPASSRLS, so, again, nothing but the
   // constraint itself can be stopping it.
   //
   // The privilege posture that forced this move is NOT left implicit: T4.1c
@@ -161,7 +161,7 @@ describe("0151: cross-studio references are rejected (23503)", () => {
   // two separate, independently failing assertions rather than one conflated
   // green.
   // -------------------------------------------------------------------------
-  it("(T4.1) postgres — the only role that can still INSERT — is blocked by the composite FK", async () => {
+  it("(T4.1) postgres: the only role that can still INSERT, is blocked by the composite FK", async () => {
     const { start, end } = nextSlot();
     await expect(
       adminQuery(
@@ -176,7 +176,7 @@ describe("0151: cross-studio references are rejected (23503)", () => {
     void isFk;
   });
 
-  it("(T4.1b) postgres CAN insert the same-studio row — so 23503 above is the FK, not a lost privilege", async () => {
+  it("(T4.1b) postgres CAN insert the same-studio row, so 23503 above is the FK, not a lost privilege", async () => {
     // Two-way self-test. Without it, a privilege revoke would turn the test
     // above green for entirely the wrong reason (42501 is not 23503, but a
     // future widening of the expectation would hide it).
@@ -193,7 +193,7 @@ describe("0151: cross-studio references are rejected (23503)", () => {
     ).resolves.toBeDefined();
   });
 
-  it("(T4.1c) B5/0174: service_role is refused BEFORE the FK is consulted — by privilege", async () => {
+  it("(T4.1c) B5/0174: service_role is refused BEFORE the FK is consulted, by privilege", async () => {
     // The reason T4.1 had to move. Asserted with the MESSAGE as well as the
     // SQLSTATE, because an RLS WITH CHECK violation raises 42501 too and only
     // /permission denied/ vs /row-level security/ separates them.
@@ -219,13 +219,13 @@ describe("0151: cross-studio references are rejected (23503)", () => {
     expect(failure!.message).not.toMatch(/row-level security/i);
   });
 
-  it("(T4.5) an authenticated Alpha owner can no longer insert AT ALL — refused by privilege, before the FK", async () => {
+  it("(T4.5) an authenticated Alpha owner can no longer insert AT ALL, refused by privilege, before the FK", async () => {
     // The case 0172 closes. Before it, RLS WITH CHECK is_studio_member(A)
     // PASSED here (own studio_id) and only the composite FK stopped the forged
     // Beta client_id. Now the statement never reaches either.
     //
     // 42501 is asserted with its MESSAGE, because an RLS WITH CHECK violation
-    // raises the very same SQLSTATE — /permission denied/ vs /row-level
+    // raises the very same SQLSTATE, /permission denied/ vs /row-level
     // security/ is the only thing that tells them apart.
     const { start, end } = nextSlot();
     let failure: { code?: string; message?: string } | null = null;
@@ -378,7 +378,7 @@ describe("0151: exactly one FK per parent (13) + correct definitions (7,15)", ()
     return r.rows.map((x) => x.def as string);
   }
 
-  it("(13) exactly one appointments FK to each of clients / services — and FOUR to practitioners after B5", async () => {
+  it("(13) exactly one appointments FK to each of clients / services, and FOUR to practitioners after B5", async () => {
     expect(await fkDefs("clients")).toHaveLength(1);
     expect(await fkDefs("services")).toHaveLength(1);
     // B5/0174 added three PRACTITIONER-ATTRIBUTION FKs alongside the single
@@ -437,11 +437,11 @@ describe("0151: preflight fails safely on corrupt data, unchanged otherwise (14)
     // Reproduce 0151's preflight against a deliberately corrupted fixture WITHOUT
     // mutating the live schema: one autocommit DO block drops the composite FK,
     // inserts a forged cross-studio appointment, runs the SAME preflight count, and
-    // RAISES — so the whole statement (drop + insert) rolls back atomically. This
+    // RAISES, so the whole statement (drop + insert) rolls back atomically. This
     // proves the preflight both detects corruption and aborts before any persistent
     // constraint change.
     // A DO block cannot take bind parameters, so the trusted seed UUIDs
-    // (randomUUID() — hex + hyphens only, no injection surface) are inlined.
+    // (randomUUID(), hex + hyphens only, no injection surface) are inlined.
     await expect(
       adminQuery(
         `do $$

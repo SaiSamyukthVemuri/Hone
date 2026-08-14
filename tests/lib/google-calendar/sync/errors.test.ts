@@ -6,9 +6,9 @@ import {
   parseRetryAfter,
 } from "@/lib/google-calendar/sync/errors";
 
-// Phase B2.1 — Google error taxonomy + Retry-After parsing.
+// Phase B2.1: Google error taxonomy + Retry-After parsing.
 
-describe("classifyGoogleResponse — full matrix", () => {
+describe("classifyGoogleResponse: full matrix", () => {
   const cases: Array<[number, unknown, string]> = [
     [200, {}, "success"],
     [204, null, "success"],
@@ -20,8 +20,8 @@ describe("classifyGoogleResponse — full matrix", () => {
     [500, { error: {} }, "transient"],
     [503, { error: {} }, "transient"],
     [408, { error: {} }, "transient"], // Request Timeout is retryable
-    [400, { error: {} }, "permanent_error"], // invalid request — unrecoverable
-    [405, { error: {} }, "permanent_error"], // unsupported method — unrecoverable
+    [400, { error: {} }, "permanent_error"], // invalid request, unrecoverable
+    [405, { error: {} }, "permanent_error"], // unsupported method, unrecoverable
     [422, { error: {} }, "permanent_error"], // other 4xx -> permanent
   ];
   it.each(cases)("status %i -> kind %s", (status, body, kind) => {

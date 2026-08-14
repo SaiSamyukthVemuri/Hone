@@ -37,7 +37,7 @@ const ALL_STRINGS: string[] = [
 ];
 const HAYSTACK = ALL_STRINGS.join("  ").toLowerCase();
 
-describe("marketing content — CTA truthfulness (addendum §3)", () => {
+describe("marketing content: CTA truthfulness (addendum §3)", () => {
   it("treats /demo as a lead-capture flow", () => {
     expect(DEMO_FLOW).toBe("lead_capture");
   });
@@ -62,7 +62,7 @@ describe("marketing content — CTA truthfulness (addendum §3)", () => {
   });
 });
 
-describe("marketing content — CAD pricing (prompt §15)", () => {
+describe("marketing content: CAD pricing (prompt §15)", () => {
   it("declares CAD as the SaaS currency", () => {
     expect(CURRENCY).toBe("CAD");
   });
@@ -87,7 +87,7 @@ describe("marketing content — CAD pricing (prompt §15)", () => {
   });
 });
 
-describe("marketing content — no forbidden language", () => {
+describe("marketing content: no forbidden language", () => {
   it("never leads with banned SaaS filler or claims (prompt §4)", () => {
     for (const banned of [
       "all-in-one",
@@ -118,14 +118,14 @@ describe("marketing content — no forbidden language", () => {
     }
   });
 
-  it("never markets Google Calendar synchronization (DORMANT — prompt §3)", () => {
+  it("never markets Google Calendar synchronization (DORMANT, prompt §3)", () => {
     for (const banned of ["google calendar", "calendar sync", "two-way sync", "busy import"]) {
       expect(HAYSTACK).not.toContain(banned);
     }
   });
 });
 
-describe("marketing content — navigation is dead-link free (prompt §8, §9)", () => {
+describe("marketing content: navigation is dead-link free (prompt §8, §9)", () => {
   const SHIPPED_PATHS = new Set<string>([
     "/",
     "/electrolysis-software",
@@ -172,7 +172,7 @@ describe("marketing content — navigation is dead-link free (prompt §8, §9)",
   });
 });
 
-describe("marketing content — page metadata (prompt §21, §22)", () => {
+describe("marketing content: page metadata (prompt §21, §22)", () => {
   it("pins the required titles", () => {
     const byPath = Object.fromEntries(MARKETING_PAGES.map((p) => [p.path, p]));
     expect(byPath["/"].title).toBe(
@@ -213,7 +213,7 @@ describe("marketing content — page metadata (prompt §21, §22)", () => {
   });
 });
 
-describe("marketing content — analytics events are non-PII (prompt §24)", () => {
+describe("marketing content: analytics events are non-PII (prompt §24)", () => {
   it("exposes namespaced event names only", () => {
     for (const name of Object.values(ANALYTICS_EVENTS)) {
       expect(name).toMatch(/^marketing:[a-z_]+$/);

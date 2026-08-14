@@ -8,7 +8,7 @@ import { OpsStoreError } from "@/lib/google-calendar/sync/link-transition-store"
 import type { AppointmentState, LinkRow, OpsLinkStore, TransitionArgs, TransitionResult } from "@/lib/google-calendar/sync/link-transition-store";
 import { createCalendarSyncOperations, type OperationDeps } from "@/lib/google-calendar/sync/operations";
 
-// Phase B2.3-c1 — create / placeholder-update / real-update / delete + provider
+// Phase B2.3-c1: create / placeholder-update / real-update / delete + provider
 // reconciliation, at the MOCKED-OPERATION unit level (GoogleRestClient methods and
 // the transactional store are mocked). Actual REST transport composition is covered
 // separately in operations-transport.test.ts. No real Google call, no DB.
@@ -192,7 +192,7 @@ describe("create / placeholder create-and-bind", () => {
       return { status: "ok", code: a.action };
     } });
     // After bound_older_version the op re-fences; the (still-placeholder) mock link stays create-mode,
-    // so it retries bind and succeeds — proving the reject is not a silent success.
+    // so it retries bind and succeeds, proving the reject is not a silent success.
     const res = await run("event.create", { rest: r, store: st }, ctx());
     expect(res.code).toBe("ok");
     expect(calls.filter((c) => c.action === "bind_confirmed").length).toBeGreaterThanOrEqual(1);
@@ -466,7 +466,7 @@ describe("fresh-ETag required on recovery paths (§3)", () => {
   });
 });
 
-describe("re-fence DELETE follow-up (§4) — state changes between GET and the 2nd DELETE", () => {
+describe("re-fence DELETE follow-up (§4): state changes between GET and the 2nd DELETE", () => {
   const realLink = () => link({ googleEventId: deriveEventId(STUDIO, LINK_ID), googleEtag: "e-old" });
   const del = () => ctx({ opType: "event.delete", payload: { sync_version: 3 } });
 

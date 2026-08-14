@@ -4,7 +4,7 @@ import path from "node:path";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 
-// Move appointment — the SERVER-CONTROLLED own-reservation slot exclusion.
+// Move appointment: the SERVER-CONTROLLED own-reservation slot exclusion.
 //
 // When a practitioner moves an appointment, its OWN shadow reservation must not
 // count as a conflict against its new candidate times (otherwise the current time
@@ -15,7 +15,7 @@ import { utcInstantFromLocal } from "@/lib/booking/tz";
 //   * the appointment's own (source_kind, source_id) reservation is dropped, so
 //     its own current time becomes selectable again;
 //   * EVERY other reservation (other appointments, blocks, breaks, blockouts)
-//     still blocks — the exclusion is one exact pair, never a category;
+//     still blocks, the exclusion is one exact pair, never a category;
 //   * the match requires BOTH kind AND id (a same-id row of a different kind is
 //     NOT excluded);
 //   * passing no exclusion (public booking / reschedule) is byte-for-byte the
@@ -136,7 +136,7 @@ describe("move slot exclusion: everything else still blocks", () => {
     expect(starts(slots)).not.toContain(localISO("14:00"));
   });
 
-  it("matching requires BOTH kind and id — a same-id row of another kind still blocks", async () => {
+  it("matching requires BOTH kind and id, a same-id row of another kind still blocks", async () => {
     const sameIdOtherKind: Res = {
       starts_at: localISO("10:00"),
       ends_at: localISO("11:00"),

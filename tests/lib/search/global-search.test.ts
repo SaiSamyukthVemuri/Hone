@@ -20,7 +20,7 @@ import {
 // V2-A: the page-shortcut list became the permission-aware navigation
 // registry. Its own behaviour (matching, aliases, visibility, href validity,
 // coverage tripwire) lives in tests/lib/search/navigation-registry.test.ts;
-// what stays HERE is the shared result plumbing — grouping and the caps.
+// what stays HERE is the shared result plumbing, grouping and the caps.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -114,7 +114,7 @@ describe("result caps", () => {
     expect(capResults(flat)).toEqual(once);
     expect(capResults(once)).toEqual(once);
     // Order within a category is exactly the producer's order, so the same
-    // input always yields the same visible rows — the first NAV_RESULT_CAP
+    // input always yields the same visible rows, the first NAV_RESULT_CAP
     // navigation rows the producer emitted, never an arbitrary subset.
     expect(once.filter((r) => r.type === "page").map((r) => r.id)).toEqual(
       Array.from({ length: NAV_RESULT_CAP }, (_, i) => `page:${i}`),
@@ -183,7 +183,7 @@ describe("server action posture (source pins)", () => {
   });
 
   it("navigation visibility is derived server-side, never accepted as input", () => {
-    // The action takes exactly one parameter — the query string. Role and
+    // The action takes exactly one parameter, the query string. Role and
     // feature flags come from the resolved session, so no caller can ask to
     // be treated as an owner.
     expect(ACTION).toMatch(

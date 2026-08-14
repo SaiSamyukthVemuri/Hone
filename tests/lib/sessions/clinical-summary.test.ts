@@ -113,7 +113,7 @@ describe("per-area summaries (the Chloe fix)", () => {
 
   it("structured multi-area block shows EVERY area + laterality (never just one)", () => {
     // The exact Chloe blocker: one settings block treats Left cheek + Right
-    // sideburn. The summary must show BOTH, in order, with laterality — the
+    // sideburn. The summary must show BOTH, in order, with laterality, the
     // legacy projection here (primary_area='Cheeks', side=null for mixed) must
     // NOT collapse the record to a single area.
     const s = buildLastSessionSummary({

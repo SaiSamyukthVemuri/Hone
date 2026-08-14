@@ -137,7 +137,7 @@ describe("docs/18: legacy fee executor is no longer presented as runtime", () =>
   // SUPERSEDED PIN (2026-07-27). This test previously read
   //   expect(AUDIT).toMatch(/NOT READY FOR LIVE PAYMENTS/);
   //   expect(AUDIT).toMatch(/Live payments remain disabled/);
-  // Both strings are still present in docs/18 — but they are the DATED
+  // Both strings are still present in docs/18, but they are the DATED
   // 2026-06-10 audit verdict, not current state. As written, the guard let a
   // historical verdict silently satisfy a test whose name asserted it was the
   // present posture. Live owner-run session payments are now enabled for
@@ -146,7 +146,7 @@ describe("docs/18: legacy fee executor is no longer presented as runtime", () =>
   // to require the document to DISTINGUISH the two, rather than to require the
   // stale claim to exist unqualified.
   it("distinguishes its dated historical verdict from today's supervised-live posture", () => {
-    // The historical verdict may remain — but only explicitly marked as historical.
+    // The historical verdict may remain, but only explicitly marked as historical.
     expect(AUDIT).toMatch(
       /\*\*Verdict \(2026-06-10 — HISTORICAL; superseded[^)]*\): NOT READY FOR LIVE PAYMENTS\.\*\*/,
     );

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// B7 / 0176 — the OLD DB + NEW APP deployment-skew contract.
+// B7 / 0176: the OLD DB + NEW APP deployment-skew contract.
 //
 // This is a BEHAVIOURAL test of the adapter, not a measurement of PostgREST
 // overload resolution. Resolution was measured separately; what matters here is
@@ -18,7 +18,7 @@ const rpcCalls: Array<{ args: Record<string, unknown> }> = [];
 
 // Simulates a 0175 database: the seven-argument command does not exist, so
 // PostgREST answers PGRST202. The five-argument command IS still installed and
-// would happily cancel — which is exactly why the action must not call it.
+// would happily cancel, which is exactly why the action must not call it.
 function rpcResponse(args: Record<string, unknown>) {
   const isNewCommand =
     "p_presented_policy_hash" in args || "p_acknowledged_policy" in args;
@@ -56,7 +56,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       // A resolvable appointment row: the action looks this up BOTH to resolve
       // the token and to recover the stored hash it passes to the command. If
       // either returns null the action collapses before the RPC and the test
-      // would prove nothing — which is why the first test asserts that exactly
+      // would prove nothing, which is why the first test asserts that exactly
       // one RPC call actually happened.
       q.maybeSingle = async () => ({
         data: { id: "appt-1", cancellation_token_hash: "b".repeat(64) },
@@ -88,7 +88,7 @@ vi.mock("@/lib/rate-limit/public", () => ({
 
 // A resolvable token, so the action reaches the RPC rather than collapsing
 // earlier for an unrelated reason. Without this the test could pass while
-// proving nothing — see the guard assertion in the first test.
+// proving nothing, see the guard assertion in the first test.
 vi.mock("@/lib/booking/tokens", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
   return {
@@ -114,7 +114,7 @@ beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
-describe("B7 — OLD DB + NEW APP fails closed", () => {
+describe("B7: OLD DB + NEW APP fails closed", () => {
   it("PGRST202 refuses, and NEVER calls the legacy five-argument command", async () => {
     const res = await publicCancelAppointmentAction(fd());
 
@@ -122,8 +122,8 @@ describe("B7 — OLD DB + NEW APP fails closed", () => {
     expect(res.ok).toBe(false);
 
     // THE LOAD-BEARING ASSERTION. Exactly one RPC attempt was made, and it
-    // carried the new presentation-proof arguments. A second call — the legacy
-    // five-argument shape — would have cancelled the appointment with no
+    // carried the new presentation-proof arguments. A second call, the legacy
+    // five-argument shape, would have cancelled the appointment with no
     // acknowledgement and no hash comparison.
     expect(rpcCalls).toHaveLength(1);
     expect(rpcCalls[0].args).toHaveProperty("p_presented_policy_hash");
@@ -139,7 +139,7 @@ describe("B7 — OLD DB + NEW APP fails closed", () => {
     const res = await publicCancelAppointmentAction(fd());
     expect(res.ok).toBe(false);
     if (res.ok === false) {
-      // The public collapse copy — the same string an unknown token gets, so
+      // The public collapse copy: the same string an unknown token gets, so
       // this cannot be used to probe token validity or infer a deploy window.
       expect(res.error).not.toMatch(/PGRST|schema cache|function|deploy|migration/i);
       expect(res.code).toBeUndefined();

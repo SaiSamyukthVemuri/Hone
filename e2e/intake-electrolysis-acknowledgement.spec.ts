@@ -15,13 +15,13 @@ import {
 } from "@/lib/intake/acknowledgements";
 import { INTAKE_STEPS } from "@/lib/intake/questions";
 
-// PR #518 — the versioned electrolysis acknowledgement, proven in a real
+// PR #518: the versioned electrolysis acknowledgement, proven in a real
 // browser against the real local database.
 //
 // DATABASE STATE IS THE ORACLE, exactly as in intake-review-integrity.spec.ts:
 // every assertion that matters reads client_intake_forms back with
 // getIntakeRow(). On-screen copy is asserted only where the copy IS the
-// deliverable — the approved v1 wording, the help text, and the four
+// deliverable, the approved v1 wording, the help text, and the four
 // practitioner-facing states, which are the whole point of the feature.
 //
 // WHY THE WORDING IS NOT WRITTEN OUT HERE. lib/intake/acknowledgements.ts is
@@ -33,7 +33,7 @@ import { INTAKE_STEPS } from "@/lib/intake/questions";
 // approved text actually reaches the client's screen, unclipped, at the width
 // the operator's clients use.
 //
-// WHAT THIS IS NOT. An acknowledgement checkbox inside the health intake — not
+// WHAT THIS IS NOT. An acknowledgement checkbox inside the health intake, not
 // consent, not an electronic signature, not clearance to treat. The assertions
 // below include that boundary rather than assuming it.
 
@@ -101,7 +101,7 @@ async function assertNoHorizontalOverflow(page: Page): Promise<void> {
   expect(o.scroll).toBeLessThanOrEqual(o.client + 1);
 }
 
-// Measured in a live layout — a screenshot cannot prove this.
+// Measured in a live layout, a screenshot cannot prove this.
 async function assertWithinViewport(
   locator: Locator,
   viewportWidth: number,
@@ -124,11 +124,11 @@ test.beforeAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// A. Client intake — the checkbox itself
+// A. Client intake, the checkbox itself
 // ---------------------------------------------------------------------------
 
 // RETIRED (#518): describes A (client collection), B (390px control) and C
-// (control accessibility) drove a checkbox that no longer exists — #529's real
+// (control accessibility) drove a checkbox that no longer exists, #529's real
 // studio consent forms replaced it and are proven in
 // e2e/intake-live-consent-forms.spec.ts. They are removed with the collection
 // they covered.

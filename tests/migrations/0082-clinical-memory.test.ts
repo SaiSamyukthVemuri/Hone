@@ -102,7 +102,7 @@ describe("0082: safety posture", () => {
     // Charting unification added REACTION_CHIP_LABELS / NOTABLE_REACTION_LABELS to
     // this module, so a whole-file scan for quoted snake_case tokens now also picks
     // up NOTABLE_REACTION_LABELS' members. Scope the extraction to the canonical
-    // REACTION_TYPES enum array — the SINGLE source the 0082 CHECK mirrors — so we
+    // REACTION_TYPES enum array, the SINGLE source the 0082 CHECK mirrors, so we
     // still verify exactly those 7 values map into the migration's constraint.
     const enumBlock = lib.slice(
       lib.indexOf("export const REACTION_TYPES = ["),

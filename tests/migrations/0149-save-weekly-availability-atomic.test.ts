@@ -7,7 +7,7 @@ const SQL = readFileSync(
   "utf8",
 );
 
-describe("0149 — atomic weekly availability save", () => {
+describe("0149: atomic weekly availability save", () => {
   it("takes the lock order (studios row FOR UPDATE, then the advisory lock)", () => {
     const rowLock = SQL.indexOf("from public.studios s where s.id = p_studio_id for update");
     const advisory = SQL.indexOf("acquire_studio_capacity_lock");

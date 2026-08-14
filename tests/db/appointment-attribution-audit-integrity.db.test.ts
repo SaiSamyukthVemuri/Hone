@@ -9,7 +9,7 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// APPOINTMENT BOUNDARY B5 — migration 0174 behavioural proof, fresh chain.
+// APPOINTMENT BOUNDARY B5, migration 0174 behavioural proof, fresh chain.
 // ===========================================================================
 //
 // 0174 does four things, and this suite proves each of them against the REAL
@@ -191,7 +191,7 @@ afterAll(async () => {
 // 1. ATTRIBUTION
 // ===========================================================================
 
-describe("B5 attribution — created_by_practitioner_id", () => {
+describe("B5 attribution: created_by_practitioner_id", () => {
   it("an INTERNAL booking records the server-resolved ACTOR as creator", async () => {
     const f = await seedFixture("create-internal");
     const { result, id } = await internalCreate(f, { startsAt: at(30, 10) });
@@ -221,7 +221,7 @@ describe("B5 attribution — created_by_practitioner_id", () => {
     expect(row.created_by_practitioner_id, "created by the OWNER").toBe(f.ownerId);
   });
 
-  it("a PUBLIC booking leaves the practitioner creator NULL — no manufactured actor", async () => {
+  it("a PUBLIC booking leaves the practitioner creator NULL, no manufactured actor", async () => {
     const f = await seedFixture("create-public");
     const r = await adminQuery(
       `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
@@ -237,7 +237,7 @@ describe("B5 attribution — created_by_practitioner_id", () => {
     ).toBeNull();
 
     // POSITIVE CONTROL: the appointment really was created and the fact IS
-    // recorded — as actor_type 'client'. NULL here is a truthful record, not a
+    // recorded, as actor_type 'client'. NULL here is a truthful record, not a
     // dropped write.
     const audit = await auditRows(id);
     expect(audit).toHaveLength(1);
@@ -250,8 +250,8 @@ describe("B5 attribution — created_by_practitioner_id", () => {
   });
 });
 
-// RETIRED (B6 / 0175). This block proved that the two LEGACY appointment RPCs
-// — create_internal_appointment and practitioner_move_appointment — also wrote
+// RETIRED (B6 / 0175). This block proved that the two LEGACY appointment RPCs,
+// create_internal_appointment and practitioner_move_appointment, also wrote
 // correct B5 attribution, precisely because B5 could not retire them and a
 // still-installed legacy writer could otherwise emit a malformed row. Its own
 // comment named B6 as the owner of that retirement.
@@ -263,7 +263,7 @@ describe("B5 attribution — created_by_practitioner_id", () => {
 // tests/migrations/0175-appointment-transition-integrity.test.ts plus the
 // pg_proc absence check in tests/db/appointment-transition-integrity.db.test.ts.
 
-describe("B5 attribution — cancelled_by_practitioner_id", () => {
+describe("B5 attribution: cancelled_by_practitioner_id", () => {
   it("a PRACTITIONER cancellation records WHICH practitioner, and keeps the role word", async () => {
     const f = await seedFixture("cancel-prac");
     const appt = await mkAppt(f, { startsAt: at(33, 10) });
@@ -276,7 +276,7 @@ describe("B5 attribution — cancelled_by_practitioner_id", () => {
 
     const row = await apptRow(appt.id);
     expect(row.cancelled_by_practitioner_id).toBe(f.ownerId);
-    // The role word is COMPLEMENTED, never replaced — it is what distinguishes
+    // The role word is COMPLEMENTED, never replaced, it is what distinguishes
     // client- from practitioner-initiated and it is server-derived.
     expect(row.cancelled_by).toBe("owner");
     expect(row.status).toBe("cancelled");
@@ -296,7 +296,7 @@ describe("B5 attribution — cancelled_by_practitioner_id", () => {
     expect(row.status, "POSITIVE CONTROL: it really was cancelled").toBe("cancelled");
     expect(
       row.cancelled_by_practitioner_id,
-      "the real actor is the CLIENT — do not fake a practitioner",
+      "the real actor is the CLIENT, do not fake a practitioner",
     ).toBeNull();
   });
 
@@ -336,7 +336,7 @@ describe("B5 attribution — cancelled_by_practitioner_id", () => {
   });
 });
 
-describe("B5 attribution — the outside-hours override actor (PR #520 D3)", () => {
+describe("B5 attribution: the outside-hours override actor (PR #520 D3)", () => {
   it("an owner override records the authoriser, the role AT THE TIME, and when", async () => {
     const f = await seedFixture("override-set");
     // 03:00 is inside this fixture's 00:00-23:59 availability, so the override
@@ -408,7 +408,7 @@ describe("B5 attribution — the outside-hours override actor (PR #520 D3)", () 
   });
 });
 
-describe("B5 attribution — the same-studio FKs", () => {
+describe("B5 attribution: the same-studio FKs", () => {
   it("ACCEPTS a same-studio practitioner in every attribution column", async () => {
     // The positive control for the three rejections below. Without it they
     // would pass on a schema where the columns simply did not accept anything.
@@ -438,7 +438,7 @@ describe("B5 attribution — the same-studio FKs", () => {
       const b = await seedFixture(`fk-x-${col.slice(0, 6)}-b`);
       const appt = await mkAppt(a, { startsAt: at(43, 10) });
 
-      // Studio B's practitioner is a perfectly real practitioner — it is the
+      // Studio B's practitioner is a perfectly real practitioner, it is the
       // TENANT pairing the composite FK refuses, which is exactly the identity
       // corruption the composite shape exists to prevent.
       //
@@ -481,7 +481,7 @@ describe("B5 attribution — the same-studio FKs", () => {
 // 2. AUDIT ACTOR MODEL
 // ===========================================================================
 
-describe("B5 audit actor — derived, validated, never invented", () => {
+describe("B5 audit actor: derived, validated, never invented", () => {
   it("a practitioner audit row carries a valid actor_practitioner_id", async () => {
     const f = await seedFixture("actor-prac");
     const { id } = await internalCreate(f, { startsAt: at(45, 10) });
@@ -572,12 +572,12 @@ describe("B5 audit actor — derived, validated, never invented", () => {
 // 3. TENANT DURABILITY + PARENT DELETE
 // ===========================================================================
 
-describe("B5 durability — an audit row outlives its appointment", () => {
+describe("B5 durability: an audit row outlives its appointment", () => {
   // ---------------------------------------------------------------------
   // THESE TWO TESTS ARE DELIBERATELY SPLIT, and the split is the point.
   //
   // Three different defects all break "parent delete", and a single combined
-  // test reports the SAME failing name for two of them — which makes the
+  // test reports the SAME failing name for two of them, which makes the
   // report useless for telling them apart:
   //
   //   A. the FK is CASCADE again      -> the delete SUCCEEDS, the audit row is
@@ -594,8 +594,8 @@ describe("B5 durability — an audit row outlives its appointment", () => {
     // The discriminator between failure modes A and C, which are otherwise
     // indistinguishable from the report: BOTH make the parent delete fail.
     //
-    // Under a restored CASCADE the delete does NOT quietly erase the audit row
-    // — the append-only DELETE arm refuses the cascade and the whole statement
+    // Under a restored CASCADE the delete does NOT quietly erase the audit row,
+    // the append-only DELETE arm refuses the cascade and the whole statement
     // raises. That is the "sequencing is load-bearing" hazard from PR #521
     // showing up as a hard failure, which is the safe direction, but it means
     // (1) and (2) alone cannot say WHICH defect is present. This test can: it
@@ -609,7 +609,7 @@ describe("B5 durability — an audit row outlives its appointment", () => {
     expect(r.rows[0].confdeltype, "n = SET NULL; c = CASCADE").toBe("n");
   });
 
-  it("(1) the parent DELETE is PERMITTED — the append-only guard does not block the FK detach", async () => {
+  it("(1) the parent DELETE is PERMITTED, the append-only guard does not block the FK detach", async () => {
     // Isolates failure mode C. PostgreSQL referential actions do NOT bypass
     // user triggers: ON DELETE SET NULL is implemented as an ordinary UPDATE
     // against appointment_audit, and a naive "reject every UPDATE" guard makes
@@ -656,7 +656,7 @@ describe("B5 durability — an audit row outlives its appointment", () => {
     );
   });
 
-  it("the studio FK is RESTRICT — a tenant with history cannot be silently erased", async () => {
+  it("the studio FK is RESTRICT, a tenant with history cannot be silently erased", async () => {
     const f = await seedFixture("studio-restrict");
     await internalCreate(f, { startsAt: at(51, 10) });
     await expect(
@@ -668,8 +668,8 @@ describe("B5 durability — an audit row outlives its appointment", () => {
   });
 });
 
-describe("B5 durability — RLS reads through studio_id, including orphans", () => {
-  it("own-studio audit is visible to a member; foreign-studio audit is not — live AND orphaned", async () => {
+describe("B5 durability: RLS reads through studio_id, including orphans", () => {
+  it("own-studio audit is visible to a member; foreign-studio audit is not, live AND orphaned", async () => {
     const a = await seedFixture("rls-a");
     const b = await seedFixture("rls-b");
 
@@ -699,7 +699,7 @@ describe("B5 durability — RLS reads through studio_id, including orphans", () 
     expect(seen.has(liveAAudit), "own-studio LIVE audit must be visible").toBe(true);
     expect(
       seen.has(orphanAAudit),
-      "own-studio ORPHANED audit must remain visible — the whole point of 0174",
+      "own-studio ORPHANED audit must remain visible, the whole point of 0174",
     ).toBe(true);
     expect(seen.has(liveBAudit), "other-studio LIVE audit must be hidden").toBe(false);
     expect(
@@ -713,7 +713,7 @@ describe("B5 durability — RLS reads through studio_id, including orphans", () 
 // 4. APPEND-ONLY + TRUSTED created_at
 // ===========================================================================
 
-describe("B5 integrity — appointment_audit is structurally append-only", () => {
+describe("B5 integrity: appointment_audit is structurally append-only", () => {
   it("even the table OWNER cannot UPDATE or DELETE an audit row", async () => {
     // Structural, not privilege-based. This is what survives a privilege being
     // re-granted out of band by platform tooling (0172:150-152).
@@ -779,7 +779,7 @@ describe("B5 integrity — appointment_audit is structurally append-only", () =>
     }
   });
 
-  it("the append-only exception is EXACTLY the FK detach — a gratuitous detach is refused", async () => {
+  it("the append-only exception is EXACTLY the FK detach, a gratuitous detach is refused", async () => {
     // The rule permits appointment_id NOT NULL -> NULL only when the parent is
     // ALREADY GONE. Without that clause it would be a general "orphan any row"
     // bypass that hides a live audit row from the appointment detail view.
@@ -812,7 +812,7 @@ describe("B5 integrity — appointment_audit is structurally append-only", () =>
     const auditId = (await auditRows(id!))[0].id as string;
 
     // Even with the parent gone, changing anything ELSE alongside the detach is
-    // refused — the guard compares the whole row, not a column list.
+    // refused, the guard compares the whole row, not a column list.
     await adminQuery(`delete from public.appointments where id = $1`, [id]);
     await expect(
       adminQuery(
@@ -823,7 +823,7 @@ describe("B5 integrity — appointment_audit is structurally append-only", () =>
   });
 });
 
-describe("B5 integrity — created_at is the database's, not the caller's", () => {
+describe("B5 integrity: created_at is the database's, not the caller's", () => {
   it("a back-dated INSERT is silently dragged forward to the database clock", async () => {
     const f = await seedFixture("createdat-forge");
     const appt = await mkAppt(f, { startsAt: at(58, 10) });
@@ -857,10 +857,10 @@ describe("B5 integrity — created_at is the database's, not the caller's", () =
     expect(ts).toBeLessThanOrEqual(new Date(after.rows[0].n as string).getTime());
   });
 
-  it("historical fixtures exist ONLY in the harness — no runtime path can set created_at", async () => {
+  it("historical fixtures exist ONLY in the harness, no runtime path can set created_at", async () => {
     // B4's repair window is measured from created_at DESC, so tests genuinely
     // need old rows. They get them by disabling the derive trigger as the table
-    // OWNER — a capability that ships in no migration and that anon,
+    // OWNER, a capability that ships in no migration and that anon,
     // authenticated and service_role cannot reach.
     const f = await seedFixture("createdat-fixture");
     const appt = await mkAppt(f, { startsAt: at(60, 10) });
@@ -880,7 +880,7 @@ describe("B5 integrity — created_at is the database's, not the caller's", () =
       9 * 24 * 60 * 60 * 1000,
     );
 
-    // And the trigger is BACK ON afterwards — the fixture must not leave the
+    // And the trigger is BACK ON afterwards, the fixture must not leave the
     // table unprotected for every later test in the lane.
     await adminQuery(
       `insert into public.appointment_audit

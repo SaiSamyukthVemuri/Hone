@@ -62,7 +62,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("0131 amendment — calendar_connections provisioning-state columns", () => {
+describe("0131 amendment: calendar_connections provisioning-state columns", () => {
   it("provisioning columns default to NULL (additive + dormant)", async () => {
     const r = await adminQuery(
       `select destination_provisioning_attempt_token, destination_provisioning_started_at,
@@ -144,7 +144,7 @@ describe("0131 amendment — calendar_connections provisioning-state columns", (
   });
 });
 
-describe("0131 amendment — google_oauth_states destination binding", () => {
+describe("0131 amendment: google_oauth_states destination binding", () => {
   it("accepts a plain connect (both destination columns NULL)", async () => {
     await insertState({ destinationMode: null, requiredScope: null });
   });

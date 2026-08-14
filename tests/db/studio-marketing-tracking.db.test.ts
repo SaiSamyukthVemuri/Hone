@@ -9,7 +9,7 @@ import {
 
 // Exercises migration 0106 against the REAL migrated DB: RLS studio isolation,
 // the uniqueness/dedup constraints, and the claim_conversion_delivery RPC.
-// (No tracking is enabled and nothing is sent — this is schema-only.)
+// (No tracking is enabled and nothing is sent, this is schema-only.)
 
 let a: SeededStudio;
 let b: SeededStudio;
@@ -30,7 +30,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("studio_tracking_providers — RLS isolation + uniqueness", () => {
+describe("studio_tracking_providers: RLS isolation + uniqueness", () => {
   it("a studio member sees their own provider config", async () => {
     const res = await asUser(a.userId, (q) =>
       q(`select provider, enabled from public.studio_tracking_providers where studio_id = $1`, [a.studioId]),
@@ -70,7 +70,7 @@ describe("studio_tracking_providers — RLS isolation + uniqueness", () => {
   });
 });
 
-describe("conversion_event_deliveries — dedup + claim RPC + RLS", () => {
+describe("conversion_event_deliveries: dedup + claim RPC + RLS", () => {
   it("claim_conversion_delivery returns true once, then false (deterministic dedup)", async () => {
     const first = await adminQuery(
       `select public.claim_conversion_delivery($1, 'meta', 'booking_confirmed', 'hone_booking_evt1') as won`,
@@ -112,7 +112,7 @@ describe("conversion_event_deliveries — dedup + claim RPC + RLS", () => {
   });
 });
 
-describe("booking_tracking_consents — studio-scoped", () => {
+describe("booking_tracking_consents: studio-scoped", () => {
   beforeAll(async () => {
     await adminQuery(
       `insert into public.booking_tracking_consents

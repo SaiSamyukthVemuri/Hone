@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 // PR #268. "Chart parts" / treatment-area context made visible across charting,
-// saved entries, and treatment memory — reusing the existing session_blocks
+// saved entries, and treatment memory, reusing the existing session_blocks
 // area fields (primary_area / side / custom_area_detail, migration 0039) and
 // the imported treatment_area_text. Display/labeling only: NO migration, NO
 // image storage / body-map / sketch / upload / OCR / AI, and NO copied Jane

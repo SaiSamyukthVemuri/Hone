@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// Google Calendar — Phase B, PR B1. Static SQL pins for migration 0124: the
+// Google Calendar: Phase B, PR B1. Static SQL pins for migration 0124: the
 // dormant outbound-sync schema + queue foundation. Proves the shape, the
 // four-state model, the constraints/indexes, RLS/grants, the trusted RPC posture
 // incl. the stale-lease dead transition, and that NO behavior is introduced.
@@ -11,7 +11,7 @@ const DIR = join(process.cwd(), "supabase/migrations");
 const FILE = "0124_google_calendar_outbound_sync_foundation.sql";
 const SQL = readFileSync(join(DIR, FILE), "utf8");
 
-describe("0124 — migration identity + additive/dormant", () => {
+describe("0124: migration identity + additive/dormant", () => {
   it("advances the repo migration max to 0124 with a purpose-encoding filename", () => {
     const max = Math.max(
       ...readdirSync(DIR)
@@ -39,7 +39,7 @@ describe("0124 — migration identity + additive/dormant", () => {
   });
 });
 
-describe("0124 — calendar_event_links", () => {
+describe("0124: calendar_event_links", () => {
   it("exists, polymorphic (no FK to appointments/blocks), same-studio composite FK RESTRICT", () => {
     expect(SQL).toMatch(/create table if not exists public\.calendar_event_links/);
     expect(SQL).toMatch(/hone_entity_type\s+text not null[\s\S]{0,80}check \(hone_entity_type in \('appointment','timed_block'\)\)/);
@@ -67,7 +67,7 @@ describe("0124 — calendar_event_links", () => {
   });
 });
 
-describe("0124 — calendar_sync_outbox (four-state + constraints)", () => {
+describe("0124: calendar_sync_outbox (four-state + constraints)", () => {
   it("uses EXACTLY the four-state model (no 'failed')", () => {
     expect(SQL).toMatch(/check \(status in \('pending','processing','done','dead'\)\)/);
     expect(SQL).not.toMatch(/'failed'/);
@@ -119,7 +119,7 @@ describe("0124 — calendar_sync_outbox (four-state + constraints)", () => {
   });
 });
 
-describe("0124 — claim + result RPCs (trusted, service-role only)", () => {
+describe("0124: claim + result RPCs (trusted, service-role only)", () => {
   it("both RPCs are SECURITY DEFINER with a pinned search_path, executable by service_role only", () => {
     for (const fn of ["claim_calendar_sync_op", "record_calendar_sync_result"]) {
       expect(SQL).toMatch(new RegExp(`create or replace function public\\.${fn}`));

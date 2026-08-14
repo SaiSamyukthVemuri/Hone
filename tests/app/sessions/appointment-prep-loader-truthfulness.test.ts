@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// APPOINTMENT-PREP LOADER TRUTHFULNESS — the two final-review P2 blockers.
+// APPOINTMENT-PREP LOADER TRUTHFULNESS: the two final-review P2 blockers.
 //
 // These drive the REAL `loadLastChartedTreatmentForClient` with a stubbed
 // Supabase client, so what is asserted is the shipped loader's behaviour rather
 // than a restatement of it. Both defects were invisible to every other lane
 // because both produce a perfectly well-formed, entirely wrong answer.
 //
-// BLOCKER 1 — a failed `session_blocks` read rendered as a clinical denial.
+// BLOCKER 1, a failed `session_blocks` read rendered as a clinical denial.
 //   selectFromCandidates returned `null` on error, the companion hardcoded
 //   `unavailable: false`, and the page printed "No previous treatment charted
 //   for this client." for a client who has one. Never infer failure from an
 //   absent value.
 //
-// BLOCKER 2 — a client whose whole prior history is UNCHARTED lost their
+// BLOCKER 2, a client whose whole prior history is UNCHARTED lost their
 //   next-visit plan and legacy session_notes. `newestPlanOf(candidates)` sat
 //   after the `if (!selected) return null` early exit, so a consultation-only
 //   visit carrying "Client started doxycycline, do not treat" was silenced.
@@ -115,7 +115,7 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// R1 — block read failure must never read as "no treatment"
+// R1, block read failure must never read as "no treatment"
 // ---------------------------------------------------------------------------
 
 describe("R1. a failed block read is reported as UNAVAILABLE, never as absence", () => {
@@ -129,7 +129,7 @@ describe("R1. a failed block read is reported as UNAVAILABLE, never as absence",
     expect(r.treatment).toBeNull();
   });
 
-  it("POSITIVE CONTROL — successful reads with nothing charted are NOT unavailable", async () => {
+  it("POSITIVE CONTROL: successful reads with nothing charted are NOT unavailable", async () => {
     // Same null treatment, opposite meaning. If this ever flips to true the
     // page would cry wolf on every genuine first visit.
     sessionsOutcome = { data: [sessionRow()], error: null };
@@ -151,7 +151,7 @@ describe("R1. a failed block read is reported as UNAVAILABLE, never as absence",
     expect(r.narrative.legacySessionNotes).toBeNull();
   });
 
-  it("logs classification only — no raw message, no client/session id", async () => {
+  it("logs classification only: no raw message, no client/session id", async () => {
     sessionsOutcome = { data: [sessionRow()], error: null };
     blocksOutcome = { data: null, error: { code: "57014", message: "SELECT ... FROM session_blocks" } };
 
@@ -168,7 +168,7 @@ describe("R1. a failed block read is reported as UNAVAILABLE, never as absence",
 });
 
 // ---------------------------------------------------------------------------
-// R2 — plan-only prior history
+// R2, plan-only prior history
 // ---------------------------------------------------------------------------
 
 describe("R2. an UNCHARTED prior visit still surfaces its next-visit plan", () => {
@@ -190,7 +190,7 @@ describe("R2. an UNCHARTED prior visit still surfaces its next-visit plan", () =
     expect(r.narrative.plan?.sessionId).toBe("s-consult");
   });
 
-  it("and NO treatment is fabricated from it — the selector is untouched", async () => {
+  it("and NO treatment is fabricated from it, the selector is untouched", async () => {
     sessionsOutcome = { data: [planOnly()], error: null };
     blocksOutcome = { data: [], error: null };
 
@@ -200,7 +200,7 @@ describe("R2. an UNCHARTED prior visit still surfaces its next-visit plan", () =
     expect(r.unavailable).toBe(false);
   });
 
-  it("the empty-state branch cannot hide it — narrative is non-empty", async () => {
+  it("the empty-state branch cannot hide it, narrative is non-empty", async () => {
     sessionsOutcome = { data: [planOnly()], error: null };
     blocksOutcome = { data: [], error: null };
 
@@ -212,7 +212,7 @@ describe("R2. an UNCHARTED prior visit still surfaces its next-visit plan", () =
 });
 
 // ---------------------------------------------------------------------------
-// R3 — legacy session_notes regression
+// R3, legacy session_notes regression
 // ---------------------------------------------------------------------------
 
 describe("R3. legacy session_notes on an uncharted newest row still has a channel", () => {
@@ -233,7 +233,7 @@ describe("R3. legacy session_notes on an uncharted newest row still has a channe
     expect(r.narrative.legacySessionNotes?.text).toContain("\n");
   });
 
-  it("takes the NEWEST row, not a scan — matching the pre-1D rule", async () => {
+  it("takes the NEWEST row, not a scan, matching the pre-1D rule", async () => {
     sessionsOutcome = {
       data: [
         sessionRow({ id: "s-newest", started_at: "2026-07-20T10:00:00.000Z" }),
@@ -244,14 +244,14 @@ describe("R3. legacy session_notes on an uncharted newest row still has a channe
     blocksOutcome = { data: [], error: null };
 
     const r = await load();
-    // The newest row has no notes, so — exactly as before Session 1D — nothing
+    // The newest row has no notes, so, exactly as before Session 1D, nothing
     // is shown. Broadening this into a historical scan is out of scope.
     expect(r.narrative.legacySessionNotes).toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------
-// R4 — genuine first visit
+// R4, genuine first visit
 // ---------------------------------------------------------------------------
 
 describe("R4. a genuine first visit stays a calm, truthful empty state", () => {
@@ -269,14 +269,14 @@ describe("R4. a genuine first visit stays a calm, truthful empty state", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R5 — partial failure
+// R5, partial failure
 // ---------------------------------------------------------------------------
 
 describe("R5. a partial failure keeps the narrative that WAS loaded", () => {
   it("block read fails, but the safety-relevant plan survives", async () => {
     // The candidate rows loaded successfully, so their narrative is known. To
     // throw it away because the treatment-detail read failed would compound the
-    // failure — this is the case where the plan matters most.
+    // failure, this is the case where the plan matters most.
     sessionsOutcome = {
       data: [
         sessionRow({
@@ -309,7 +309,7 @@ describe("R5. a partial failure keeps the narrative that WAS loaded", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R6 — no duplication
+// R6, no duplication
 // ---------------------------------------------------------------------------
 
 describe("R6. when a treatment IS selected the card owns the narrative", () => {

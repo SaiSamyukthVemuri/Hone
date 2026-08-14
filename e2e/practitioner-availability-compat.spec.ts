@@ -3,13 +3,13 @@ import { seedE2eStudio, getStudioWeeklyDefaults, type E2eSeed } from "./helpers/
 import { loginAsOwner } from "./helpers/flows";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
-// PR B — availability-save COMPATIBILITY contract. Proves the real
+// PR B: availability-save COMPATIBILITY contract. Proves the real
 // saveWeeklyDefaultsAction still persists studio-wide weekly hours through
 // PostgREST AFTER migration 0135 (which re-keyed uniqueness to a
 // UNIQUE NULLS NOT DISTINCT (studio_id, day_of_week, practitioner_id)). The
 // regression this guards against: the action's `onConflict` no longer matched
 // any constraint (42P10), silently breaking the flag-OFF owner save. The second
-// preset apply is the load-bearing case — it exercises the ON CONFLICT DO
+// preset apply is the load-bearing case, it exercises the ON CONFLICT DO
 // UPDATE path against an existing row.
 //
 // SAFETY: a fresh synthetic studio on the LOCAL stack, flag OFF. Never Willow.
@@ -48,7 +48,7 @@ test("flag-OFF owner can save AND update weekly studio hours (0135 upsert compat
   const afterFirst = await getStudioWeeklyDefaults(seed.studioId);
   expect(afterFirst.every((r) => r.practitioner_id === null)).toBe(true);
 
-  // 2) Second save (ON CONFLICT DO UPDATE path — the regression case): switch to
+  // 2) Second save (ON CONFLICT DO UPDATE path, the regression case): switch to
   //    "Weekdays 10–6". If the upsert conflict target were broken, this would
   //    42P10 and the hours would NOT change.
   await page.getByRole("button", { name: /Weekdays 10/ }).click();
@@ -57,7 +57,7 @@ test("flag-OFF owner can save AND update weekly studio hours (0135 upsert compat
     .poll(async () => weekdayHours(await getStudioWeeklyDefaults(seed.studioId)).sort())
     .toEqual(["10:00-18:00", "10:00-18:00", "10:00-18:00", "10:00-18:00", "10:00-18:00"]);
 
-  // Still exactly the studio-wide rows — the update did not duplicate.
+  // Still exactly the studio-wide rows, the update did not duplicate.
   const afterSecond = await getStudioWeeklyDefaults(seed.studioId);
   expect(afterSecond.filter((r) => r.practitioner_id === null).length).toBe(
     afterSecond.length,

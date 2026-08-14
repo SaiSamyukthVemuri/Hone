@@ -3,7 +3,7 @@ import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
 import { dropSynthStudio, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 (migration 0144) — final-target integrity on EVERY move (Item 1) +
+// PR B Part 4 (migration 0144), final-target integrity on EVERY move (Item 1) +
 // the 0133 legacy compatibility wrapper (Item 3). Studio B, capacity ON, booking
 // ON, UTC, buffer 0. Never Willow.
 
@@ -56,7 +56,7 @@ const move = (id: string, actor: string, target: string, es: string, ee: string,
     .then((r) => ({ ok: true as const, result: r.rows[0].result as string, row: r.rows[0] as Record<string, unknown> }))
     .catch((e) => ({ ok: false as const, code: (e as { code?: string }).code }));
 // B6 / 0175: the retired wrapper's exact behaviour, expressed on the governed
-// successor. A NULL target is the documented time-only form — it keeps the
+// successor. A NULL target is the documented time-only form, it keeps the
 // appointment's current practitioner, which is precisely what the 6-arg
 // wrapper did.
 const legacyMove = (id: string, actor: string, es: string, ee: string, ns: string): Promise<Out> =>
@@ -73,7 +73,7 @@ const removeElig = (pid: string) =>
   adminQuery(`delete from public.service_practitioners where service_id=$1 and practitioner_id=$2`, [serviceId, pid]);
 
 // ---------------------------------------------------------------------------
-describe("0144 Item 1 — final-target integrity on EVERY move", () => {
+describe("0144 Item 1: final-target integrity on EVERY move", () => {
   it("time-only move retaining an INACTIVE current practitioner -> practitioner_reassignment_required", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     await deactivate(P(1));
@@ -160,7 +160,7 @@ describe("time-only move inherits the full target-integrity contract", () => {
     });
   });
 
-  it("remains service_role only — anon + authenticated denied (42501)", async () => {
+  it("remains service_role only: anon + authenticated denied (42501)", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     const call = (q: (t: string, p?: unknown[]) => Promise<unknown>) =>
       q(`select public.move_or_reassign_appointment($1,$2,$3,null,$4::timestamptz,$5::timestamptz,$6::timestamptz,false)`, [

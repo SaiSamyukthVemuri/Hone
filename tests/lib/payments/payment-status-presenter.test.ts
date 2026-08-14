@@ -124,7 +124,7 @@ describe("PortalCardCapability", () => {
 });
 
 describe("Booking-time card collection", () => {
-  it("off copy: collection off, booking still works — never implies portal unavailability", () => {
+  it("off copy: collection off, booking still works, never implies portal unavailability", () => {
     const copy = bookingCardCopy("off");
     expect(copy).toBe(
       "Booking-time card collection is off. Clients can still book without entering a card.",

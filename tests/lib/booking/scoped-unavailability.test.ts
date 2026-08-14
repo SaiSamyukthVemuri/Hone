@@ -7,7 +7,7 @@ import {
   type ScopeLoad,
 } from "@/lib/booking/scoped-unavailability";
 
-// PR B Part 3E-5 — the migration-order-safe SCOPED loaders. Legacy queries
+// PR B Part 3E-5: the migration-order-safe SCOPED loaders. Legacy queries
 // practitioner_id IS NULL; studio-default loads everything; a practitioner
 // scope loads studio-wide + that practitioner; fall back to the legacy unscoped
 // query ONLY on the undefined-column error; FAIL CLOSED on anything else.
@@ -47,7 +47,7 @@ function mockQueue(results: Res[]) {
 
 const NOW = "2031-01-01T00:00:00Z";
 
-describe("getScopedUpcomingTimedBlocksSafe — scope construction", () => {
+describe("getScopedUpcomingTimedBlocksSafe: scope construction", () => {
   it("legacy: filters practitioner_id IS NULL (studio-wide only)", async () => {
     const q = mockQueue([{ data: [{ id: "b1" }], error: null }]);
     const rows = await getScopedUpcomingTimedBlocksSafe(q.mock, "s1", NOW, {
@@ -99,7 +99,7 @@ describe("getScopedUpcomingTimedBlocksSafe — scope construction", () => {
     expect(q.calls()).toBe(2);
   });
 
-  it("FAILS CLOSED on any other error — no fallback, no data leak", async () => {
+  it("FAILS CLOSED on any other error, no fallback, no data leak", async () => {
     const q = mockQueue([{ data: null, error: { code: "42501" } }]);
     await expect(
       getScopedUpcomingTimedBlocksSafe(q.mock, "s1", NOW, { mode: "legacy" }),
@@ -108,7 +108,7 @@ describe("getScopedUpcomingTimedBlocksSafe — scope construction", () => {
   });
 });
 
-describe("getScopedRecurringBreakRulesSafe — scope construction", () => {
+describe("getScopedRecurringBreakRulesSafe: scope construction", () => {
   it("legacy filters NULL; practitioner uses the OR filter; studio-default neither", async () => {
     const legacy = mockQueue([{ data: [], error: null }]);
     await getScopedRecurringBreakRulesSafe(legacy.mock, "s1", { mode: "legacy" });

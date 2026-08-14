@@ -40,7 +40,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("client_portal_access_events — RLS + tenant isolation + append-only", () => {
+describe("client_portal_access_events: RLS + tenant isolation + append-only", () => {
   it("service-role insert persisted studio A's events", async () => {
     const { rows } = await adminQuery(
       `select event_type from public.client_portal_access_events

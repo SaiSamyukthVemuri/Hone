@@ -10,7 +10,7 @@ const PAGE = read("app/(app)/settings/tracking/page.tsx");
 const SELECTOR = read("app/(app)/settings/tracking/TrackingProviderSelector.tsx");
 const FORM = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
 
-describe("tracking page — provider-agnostic intro + delegates to the selector", () => {
+describe("tracking page: provider-agnostic intro + delegates to the selector", () => {
   it("intro says studio-owned providers, Meta available now, not Meta-only", () => {
     expect(PAGE).toMatch(/studio-owned marketing and analytics providers/);
     expect(PAGE).toMatch(/Meta is available now\./);
@@ -29,7 +29,7 @@ describe("tracking page — provider-agnostic intro + delegates to the selector"
   });
 });
 
-describe("selector — renders every provider; Meta editable, others read-only", () => {
+describe("selector: renders every provider; Meta editable, others read-only", () => {
   it("maps the whole registry into the provider <select>", () => {
     expect(SELECTOR).toMatch(/PROVIDER_REGISTRY\.map\(\(p\) =>/);
     expect(SELECTOR).toMatch(/<option key=\{p\.provider\}/);
@@ -49,7 +49,7 @@ describe("selector — renders every provider; Meta editable, others read-only",
   });
 });
 
-describe("selector — coming-soon panels are INERT (no fields/forms/actions)", () => {
+describe("selector: coming-soon panels are INERT (no fields/forms/actions)", () => {
   const comingSoon = SELECTOR.slice(
     SELECTOR.indexOf("function ComingSoonPanel"),
     SELECTOR.indexOf("export function TrackingProviderSelector"),
@@ -72,7 +72,7 @@ describe("selector — coming-soon panels are INERT (no fields/forms/actions)", 
   });
 });
 
-describe("selector — help links / video are safe", () => {
+describe("selector: help links / video are safe", () => {
   it("renders official help links + a video fallback, no inline youtube", () => {
     expect(SELECTOR).toMatch(/entry\.helpLinks\.map/);
     expect(SELECTOR).toMatch(/VIDEO_COMING_SOON_FALLBACK/);

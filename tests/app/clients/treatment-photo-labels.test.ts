@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { treatmentPhotoScopeLabel } from "@/app/(app)/clients/[id]/images/photo-context";
 
-// PR #304 — treatment photo UX cleanup (Chloe pilot feedback). The gallery
+// PR #304: treatment photo UX cleanup (Chloe pilot feedback). The gallery
 // stops showing the raw .jpg filename and titles a photo with its SESSION date
 // (upload-date fallback); the "Block photo" card label is unified with the
-// upload selector's "Treatment area photo". Render-only — no sanitizer /
+// upload selector's "Treatment area photo". Render-only, no sanitizer /
 // storage / signed-URL / archive / schema change.
 
 const root = path.resolve(__dirname, "../../../");

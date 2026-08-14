@@ -97,7 +97,7 @@ describe("buildMissingRecordsAssistant item types", () => {
 
   // DASH-TRUTH-01: a for-next-visit note with nothing booked is clinical
   // memory, not a missing record. The assistant must not manufacture a task
-  // from it — the note itself is untouched and still shows in Today/Remember,
+  // from it, the note itself is untouched and still shows in Today/Remember,
   // Treatment Memory, appointment prep and history.
   // Review 3779063526. This used to be proved by passing a plan into the
   // builder and asserting nothing came out. The plan fields are gone from this
@@ -318,7 +318,7 @@ describe("dashboard wiring (source pins)", () => {
   // action is a real link, and the list never submits a form, invokes a server
   // action, or fetches. DASH-TRUTH-02 adds one purely presentational disclosure
   // toggle (show/hide already-loaded rows), which mutates nothing and is
-  // explicitly permitted — so the check now targets the real hazards.
+  // explicitly permitted, so the check now targets the real hazards.
   it("the unified list stays link-only for ACTIONS (no form, no server action, no fetch)", () => {
     expect(LIST).not.toMatch(/<form|action=|fetch\(/);
     // each row action is still a Link, never a button

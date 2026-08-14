@@ -16,14 +16,14 @@ import {
 // SESSION 1A × SESSION 1B INTEGRATION.
 //
 // Session 1A widened the clinical-response classifier: the three safety-relevant
-// chips — "Redness (erythema)", "Slight swelling (edema)", "Sensitive skin" —
+// chips, "Redness (erythema)", "Slight swelling (edema)", "Sensitive skin",
 // carry response meaning even though they have no coded enum member of their
 // own, and they rank through a declared coded PEER.
 //
 // The point-of-care memory card must CONSUME that contract, not re-implement it.
 // It has no classifier of its own: buildPointOfCareMemory calls
 // unifiedReactionLabels, so a change to 1A's central helper flows straight into
-// the card. These tests assert exactly that seam — if the classifier is ever
+// the card. These tests assert exactly that seam, if the classifier is ever
 // narrowed again, or if the memory card grows a second copy of the vocabulary,
 // they go red.
 //
@@ -138,7 +138,7 @@ describe("ordinary morphology chips stay out of the response line", () => {
 describe("a legacy 'none' never suppresses a real recorded response", () => {
   it("legacy reaction_type='none' + Sensitive skin chip surfaces the real response", () => {
     const m = memoryWith(["Sensitive skin"], { reaction_type: "none" });
-    // Both are retained — the historical coded value AND the real response.
+    // Both are retained: the historical coded value AND the real response.
     expect(m.areas[0].responseLine).toContain("Sensitive skin");
     // And the contradictory "No visible reaction" does not stand alone.
     expect(m.areas[0].responseLine).not.toBe("No visible reaction");

@@ -91,7 +91,7 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
   );
 
   // Owner invitation + a REAL local GoTrue auth user. handle_new_user is a
-  // no-op (migration 0141) — provisioning + acceptance now happen at sign-in —
+  // no-op (migration 0141), provisioning + acceptance now happen at sign-in,
   // so the test fixture provisions the fully-onboarded owner DIRECTLY (genuine
   // current-version acceptance stamps) and marks the invitation accepted, which
   // is equivalent to completing the acceptance flow.
@@ -211,7 +211,7 @@ export async function seedE2eMember(
   return { email, displayName, practitionerId: pr[0]!.id };
 }
 
-// PR B Part 2 — E2E helpers for the flag-ON owner schedule UI.
+// PR B Part 2: E2E helpers for the flag-ON owner schedule UI.
 export async function setStudioCapacityEnabled(
   studioId: string,
   enabled: boolean,
@@ -223,7 +223,7 @@ export async function setStudioCapacityEnabled(
   );
 }
 
-// Part 4 Item 6 — the SECOND flag (0136): capacity ON alone still rejects new
+// Part 4 Item 6: the SECOND flag (0136): capacity ON alone still rejects new
 // bookings (booking_paused). Enabling internal booking requires this too. The
 // studios_capacity_booking_valid CHECK forbids cap=false+book=true, so enable the
 // structural flag first.
@@ -268,7 +268,7 @@ export async function seedStudioWideDefault(
 }
 
 // Seeds a practitioner-scoped weekday row (requires the flag ON + active
-// practitioner — the 0135 guard runs; this runs as superuser so RLS is bypassed
+// practitioner, the 0135 guard runs; this runs as superuser so RLS is bypassed
 // but the guard still applies).
 export async function seedPractitionerDefault(
   studioId: string,
@@ -305,7 +305,7 @@ export async function getPractitionerWeekday(
   return rows[0] ?? null;
 }
 
-// PR B 3E — scoped block / recurring-break contract helpers (Studio B spec).
+// PR B 3E: scoped block / recurring-break contract helpers (Studio B spec).
 export async function setPractitionerActive(
   practitionerId: string,
   active: boolean,
@@ -326,7 +326,7 @@ export async function setStudioTimeFormat(
   ]);
 }
 
-// Part 4 Item 6 — the single seeded service for an E2E studio.
+// Part 4 Item 6: the single seeded service for an E2E studio.
 export async function getE2eServiceId(studioId: string): Promise<string> {
   const rows = await sql<{ id: string }>(
     `select id from public.services where studio_id = $1 limit 1`,
@@ -438,7 +438,7 @@ export async function getTimedBlocksByNote(
 }
 
 // Confirm an appointment is unchanged (interval + status) after a nearby block
-// attempt — proves a rolled-back block write never touched the appointment.
+// attempt, proves a rolled-back block write never touched the appointment.
 export async function getAppointmentInterval(
   appointmentId: string,
 ): Promise<{ starts_at: string; ends_at: string; status: string } | null> {
@@ -510,7 +510,7 @@ export async function seedConfirmedAppointment(
   return rows[0]!.id;
 }
 
-// PR #253: seed a NO-STUDIO auth user — a real local GoTrue user for an
+// PR #253: seed a NO-STUDIO auth user, a real local GoTrue user for an
 // email with NO pending invitation. The 0081 handle_new_user trigger
 // fires on creation, finds no invitation, and creates NOTHING (no studio,
 // no practitioner). Used to prove the invite-only gate: this user can
@@ -549,7 +549,7 @@ export async function seedNoStudioAuthUser(): Promise<{ email: string }> {
 
 // PR #254: the internal New Studio Wizard operator. A REAL auth user whose
 // email is in ADMIN_EMAILS (local-env.ts) so isAdmin() is true, but who is
-// uninvited — so handle_new_user creates NO practitioner and they are a
+// uninvited, so handle_new_user creates NO practitioner and they are a
 // no-studio operator. The PR #254 middleware carve-out lets this admin reach
 // /admin without a studio. Fixed (not run-scoped) email so it matches the
 // allowlist; idempotent so Playwright retries don't fail on a duplicate.
@@ -669,7 +669,7 @@ export async function insertPendingInvite(
   );
 }
 
-// A practitioner row carrying CURRENT-version terms+privacy acceptance — the
+// A practitioner row carrying CURRENT-version terms+privacy acceptance, the
 // reusable evidence the reconcile RPC copies. `active` controls whether it also
 // counts as a live membership (active=false = evidence only, 0 active studios).
 export async function insertEvidenceMembership(
@@ -774,7 +774,7 @@ export async function seedWelcomeEmailInProgress(
   return attemptId;
 }
 
-// Count studios / pending invitations matching an owner email — proves a resend
+// Count studios / pending invitations matching an owner email, proves a resend
 // never duplicates the studio or its invitation.
 export async function countStudiosByOwnerEmail(email: string): Promise<number> {
   const rows = await sql<{ count: string }>(
@@ -810,7 +810,7 @@ export async function setStudioOnboardingV2Enabled(
   );
 }
 
-// Google Calendar — Phase A. Toggle the studio-scoped connection flag so the
+// Google Calendar: Phase A. Toggle the studio-scoped connection flag so the
 // e2e can exercise the flag gate (card hidden when OFF, shown when ON).
 export async function setStudioGoogleCalendarConnectionEnabled(
   studioId: string,
@@ -822,7 +822,7 @@ export async function setStudioGoogleCalendarConnectionEnabled(
   );
 }
 
-// Toggle the OWNER practitioner's active flag — proves the inactive-practitioner
+// Toggle the OWNER practitioner's active flag, proves the inactive-practitioner
 // server-side denial in the destination E2E.
 export async function setE2eOwnerActive(studioId: string, active: boolean): Promise<void> {
   await sql(
@@ -868,7 +868,7 @@ export async function getE2eCalendarSyncCounts(): Promise<{ outbox: number; link
   return { outbox: Number(outbox[0]?.n ?? "0"), links: Number(links[0]?.n ?? "0") };
 }
 
-// Google Calendar — Phase B2.2. Seed a CONNECTED owner connection (+ a dummy
+// Google Calendar: Phase B2.2. Seed a CONNECTED owner connection (+ a dummy
 // encrypted secret so readiness sees a usable token) so the e2e can exercise the
 // derived readiness rendering (Grant-event-access CTA vs ready) WITHOUT a live
 // Google round-trip. The ciphertext is never decrypted for readiness (existence
@@ -952,7 +952,7 @@ export async function seedE2eDraftSessionWithLegacyChipEntry(
   return { clientId, sessionId, blockId, entryId };
 }
 
-// Read-back the stored observation_chips of a session's electrolysis entry —
+// Read-back the stored observation_chips of a session's electrolysis entry,
 // 'first' (earliest, edited by block-setup-form) or 'last' (newest, created by
 // SimplifiedEntryForm). Ground truth for the chip save-cycle e2e.
 export async function getEntryObservationChips(
@@ -993,7 +993,7 @@ export async function seedE2eDraftElectrolysisSession(
   return { clientId, sessionId };
 }
 
-// Count the live settings blocks on a session — used to prove the in-form copy
+// Count the live settings blocks on a session, used to prove the in-form copy
 // persists NOTHING until the practitioner explicitly saves.
 // 0157 whole-session copy: a client with a PREVIOUS session that has one saved
 // treatment area (block + area + setup entry), plus an EMPTY today session. The
@@ -1061,7 +1061,7 @@ export async function getSessionBlockCount(sessionId: string): Promise<number> {
 // saved area, i.e. the destination just created through the UI) + its primary
 // entry, flattened, so a test can assert exactly what was saved (settings
 // persisted, outcomes blank) as DB ground truth after a UI save + reload. Reads
-// the NEWEST block deliberately — the earliest block is any pre-seeded source.
+// the NEWEST block deliberately, the earliest block is any pre-seeded source.
 export async function getSavedBlockSetup(
   sessionId: string,
 ): Promise<Record<string, unknown> | null> {
@@ -1102,7 +1102,7 @@ export async function getSavedBlockSetup(
 // Seed a saved thermolysis settings block (+ its primary entry with mode-gated
 // machine readings) into an existing draft session, so the in-form "Copy
 // settings from another area in this session" control has a source. Outcomes
-// are left blank — this is a settings source, not a completed treatment.
+// are left blank, this is a settings source, not a completed treatment.
 export async function seedE2eChartedThermolysisBlock(
   seed: E2eSeed,
   sessionId: string,
@@ -1163,7 +1163,7 @@ export async function seedE2eChartedThermolysisBlock(
 // galvanic_intensity_percent value, so tests can prove: (a) the in-form "Copy
 // settings" control never resurrects that retired field into a new draft, and
 // (b) an unrelated edit of this block preserves the stored value server-side.
-// Outcomes are left blank — this is a settings/history source, not an outcome.
+// Outcomes are left blank, this is a settings/history source, not an outcome.
 export async function seedE2eChartedBlendBlockWithGalvanicIntensity(
   seed: E2eSeed,
   sessionId: string,
@@ -1243,7 +1243,7 @@ export async function seedE2eBareBlock(
   return { blockId };
 }
 
-// Read a SPECIFIC block's primary (earliest live) entry — DB ground truth for a
+// Read a SPECIFIC block's primary (earliest live) entry, DB ground truth for a
 // block a test edits in place (getSavedBlockSetup reads the NEWEST block, so it
 // can't target a pre-seeded source once a second block exists).
 export async function getBlockPrimaryEntry(
@@ -1275,7 +1275,7 @@ export async function getBlockEntryCount(blockId: string): Promise<number> {
 // (record_keeping_sterile_items) so the charting probe-lot selector has an
 // ACTIVE (or expired) candidate. expiryDate null = never expires.
 // Chloe probe-lot auto-fill: seed a PRIOR charted settings block that records a
-// probe lot the practitioner typed, with NO inventory link — i.e. exactly the
+// probe lot the practitioner typed, with NO inventory link, i.e. exactly the
 // shape a studio with no probe inventory accumulates. `probeKey` null + a
 // `probeLabel` seeds the LEGACY free-text row the normalized-label fallback is
 // for. Returns the block id.
@@ -1406,7 +1406,7 @@ export async function getBlockPrimaryArea(
 // test can construct the exact shape Global Search recall depends on: a legacy
 // `primary_area` that names only the FIRST area, plus child rows carrying the
 // rest. Used for the cross-studio negative control, where the block must exist
-// and be perfectly findable by its own studio — otherwise "no result" would
+// and be perfectly findable by its own studio, otherwise "no result" would
 // prove nothing.
 export async function seedE2eBlockWithStructuredAreas(
   seed: E2eSeed,
@@ -1438,7 +1438,7 @@ export async function seedE2eBlockWithStructuredAreas(
 
 // Retire a session to a LEGACY inactive state for search-exclusion tests.
 // Two migration-0159 guards shape this: a session cannot be INSERTed as void,
-// and once void it is archived and read-only — so it must be charted first and
+// and once void it is archived and read-only, so it must be charted first and
 // retired last. `deleted` is the ordinary soft delete.
 export async function seedE2eInactivateSession(
   sessionId: string,
@@ -1690,7 +1690,7 @@ export async function seedE2eRepeatClientTwoAreas(seed: E2eSeed): Promise<{
 }
 
 // Every live block of a session with its setup AND its today's-facts columns,
-// ordered by sort_order — the ground truth the fast-charting journey asserts.
+// ordered by sort_order, the ground truth the fast-charting journey asserts.
 export async function getSessionBlocksWithFacts(sessionId: string): Promise<
   Array<{
     id: string;
@@ -1729,7 +1729,7 @@ export async function getSessionBlocksWithFacts(sessionId: string): Promise<
   );
 }
 
-// The 0157 provenance ledger rows for a target session — the at-most-once proof
+// The 0157 provenance ledger rows for a target session, the at-most-once proof
 // that a double submit produced ONE committed copy, not two.
 export async function getCopyOperationCount(sessionId: string): Promise<number> {
   const rows = await sql<{ n: string }>(
@@ -1771,7 +1771,7 @@ export async function bumpSourceBlockEnergy(sessionId: string): Promise<void> {
   );
 }
 
-// Seed N services all sharing the LEGACY sort_order = 100 — the real production
+// Seed N services all sharing the LEGACY sort_order = 100, the real production
 // shape (0021 defaults to 100 and the "next" allocator is scoped per modality,
 // so a studio with more than one modality is guaranteed to have ties). Returns
 // name -> id. Used by the service-order e2e to reproduce Chloe's defect.
@@ -1792,7 +1792,7 @@ export async function seedE2eTiedServices(
   return out;
 }
 
-// The order the PUBLIC BOOKING page's own query returns — its exact filter and
+// The order the PUBLIC BOOKING page's own query returns, its exact filter and
 // ORDER BY (app/book/[slug]/page.tsx). Used to prove settings and public booking
 // resolve to the identical order without depending on the separate
 // practitioner-eligibility filtering the booking FORM applies afterwards.
@@ -1822,8 +1822,8 @@ export async function getStudioServiceOrder(
 }
 
 // Seed a client with (a) a completed prior session carrying a full treatment
-// setup and an optional caution note — the two things the dashboard's "Before
-// today" preview renders — and (b) a confirmed appointment TODAY in the studio's
+// setup and an optional caution note, the two things the dashboard's "Before
+// today" preview renders, and (b) a confirmed appointment TODAY in the studio's
 // local timezone so the client appears on the Today roster.
 //
 // The caution note becomes the "Remember:" line; the block's machine settings
@@ -1831,7 +1831,7 @@ export async function getStudioServiceOrder(
 // full text is rendered at iPhone width.
 export async function seedE2eDashboardMemoryClient(
   seed: E2eSeed,
-  // `nextVisitNote` is the PLAN note (sessions.next_session_note) — a distinct
+  // `nextVisitNote` is the PLAN note (sessions.next_session_note), a distinct
   // fact from the caution. The combined Today card labels them separately, so
   // tests need to set them independently.
   opts: { cautionNote: string | null; nextVisitNote?: string | null },
@@ -1896,7 +1896,7 @@ export async function seedE2eDashboardMemoryClient(
   return { clientId, appointmentId };
 }
 
-// A SECOND appointment today for an EXISTING client — the case that proves the
+// A SECOND appointment today for an EXISTING client, the case that proves the
 // combined view joins by appointment id, not client id. Two appointments for
 // one person must stay two cards.
 export async function seedE2eSecondAppointmentToday(
@@ -1922,7 +1922,7 @@ export async function seedE2eSecondAppointmentToday(
   return { appointmentId };
 }
 
-// A session LINKED to an appointment that has already ENDED — the state the
+// A session LINKED to an appointment that has already ENDED, the state the
 // Finish appointment workflow exists for. `postcare` seeds the send-state
 // columns so the sent / failed / sending branches can be exercised without ever
 // touching a provider.
@@ -2067,7 +2067,7 @@ export async function seedE2eLaserSessionWithEntry(
 }
 
 // A session whose sessions.appointment_id points at an appointment belonging to
-// a DIFFERENT client — the lineage the Finish query must reject.
+// a DIFFERENT client, the lineage the Finish query must reject.
 export async function seedE2eCrossClientLinkedSession(
   seed: E2eSeed,
 ): Promise<{ clientId: string; sessionId: string; appointmentId: string }> {
@@ -2311,7 +2311,7 @@ function base64Url(buf: Buffer): string {
 
 // Mint the signed link for a KNOWN intake row. Extracted from
 // getIntakeTokenForClient so a spec that seeded its own intake can follow the
-// same link without a round trip through the client's email — there is exactly
+// same link without a round trip through the client's email, there is exactly
 // one token format in this harness, and it lives here.
 export function mintIntakeToken(intakeId: string): string {
   const expiresAt = new Date(Date.now() + 13 * 24 * 60 * 60 * 1000);
@@ -2383,8 +2383,8 @@ export async function getAppointmentsForClient(
 // confirmation email carried can no longer be read back from the DB. The
 // public /cancel, /reschedule, and /manage routes all accept the stateless
 // HMAC fallback (the same token the portal + reminders mint), so this
-// helper mints one — matching lib/booking/tokens.ts byte-for-byte using
-// the dummy e2e signing secret the dev server runs with — so the e2e can
+// helper mints one, matching lib/booking/tokens.ts byte-for-byte using
+// the dummy e2e signing secret the dev server runs with, so the e2e can
 // drive a working manage/cancel/reschedule link end to end.
 function base64url(buf: Buffer): string {
   return buf
@@ -2421,7 +2421,7 @@ export async function getCancellationToken(
   return `${payloadB64}.${sig}`;
 }
 
-// Read a service's persisted calendar_color (0153) — used by the color e2e.
+// Read a service's persisted calendar_color (0153), used by the color e2e.
 export async function getServiceCalendarColor(serviceId: string): Promise<string | null> {
   const rows = await sql<{ calendar_color: string | null }>(
     `select calendar_color from public.services where id=$1`,
@@ -2430,7 +2430,7 @@ export async function getServiceCalendarColor(serviceId: string): Promise<string
   return rows[0]?.calendar_color ?? null;
 }
 
-// Count treatment plans for a client — proves the create-from-appointment flow
+// Count treatment plans for a client, proves the create-from-appointment flow
 // creates ZERO rows on open/cancel and exactly one on Save.
 export async function getTreatmentPlanCount(clientId: string): Promise<number> {
   const rows = await sql<{ n: string }>(
@@ -2445,7 +2445,7 @@ export async function getTreatmentPlanCount(clientId: string): Promise<number> {
 // the BEFORE trigger keeps studio_id synced to the parent client.
 // Chloe Session 1A: seed the RETIRED legacy `clients.skin_notes` column so a
 // browser test can prove historical text is still displayed read-only under the
-// "Legacy skin notes" heading. This writes the column directly on purpose — the
+// "Legacy skin notes" heading. This writes the column directly on purpose, the
 // application no longer has any writer for it, which is the point.
 export async function seedLegacyClientSkinNotes(
   clientId: string,
@@ -2527,7 +2527,7 @@ export type E2eIntakeRow = {
   reviewed_by: string | null;
   practitioner_notes: string | null;
   // The stored answers. Included so a spec can assert what was actually
-  // persisted — e.g. that the versioned acknowledgement record carries the
+  // persisted, e.g. that the versioned acknowledgement record carries the
   // server's own wording and timestamp rather than whatever the browser sent.
   responses: Record<string, unknown>;
 };
@@ -2548,7 +2548,7 @@ export async function getIntakeRow(intakeId: string): Promise<E2eIntakeRow | nul
   return rows[0] ?? null;
 }
 
-// Counts how many intakes for this studio are currently reviewed — used to
+// Counts how many intakes for this studio are currently reviewed, used to
 // prove that a double confirm produced exactly ONE transition, not two.
 export async function countReviewedIntakes(studioId: string): Promise<number> {
   const rows = await sql<{ n: string }>(
@@ -2564,7 +2564,7 @@ export async function countReviewedIntakes(studioId: string): Promise<number> {
 //
 // MIGRATION 0162 CHANGED HOW THIS MUST BE DONE. It previously ran as plain
 // service-role SQL, which migration 0118 exempted because auth.uid() is null.
-// 0162 deliberately removes that exemption for the incoming review transition —
+// 0162 deliberately removes that exemption for the incoming review transition,
 // no runtime service-role path marks an intake reviewed, so a service-role
 // review now FAILS CLOSED. Doing it that way would raise 23514 and break this
 // helper.

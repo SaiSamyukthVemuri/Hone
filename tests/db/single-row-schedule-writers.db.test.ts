@@ -9,7 +9,7 @@ import {
 } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 (migration 0150, Item 2) — the single-row schedule writers take the
+// PR B Part 4 (migration 0150, Item 2), the single-row schedule writers take the
 // studios-row + capacity advisory lock. Functional + serialization proofs.
 
 let B: SynthStudio;
@@ -75,7 +75,7 @@ const book = (actor: string, target: string, start: string) =>
     [B.studioId, actor, target, B.clientId, serviceId, start, hash64()],
   ).then((r) => r.rows[0].result as string);
 
-describe("0150 — functional: locked single-row schedule writers", () => {
+describe("0150, functional: locked single-row schedule writers", () => {
   it("studio-wide + practitioner weekday upsert, single + full-week reset", async () => {
     expect(await dayUpsert(owner(), null, 1, true, "08:00", "12:00")).toBe("ok");
     expect(await dayUpsert(owner(), P(1), 1, true, "10:00", "14:00")).toBe("ok");
@@ -143,7 +143,7 @@ describe("0150 — functional: locked single-row schedule writers", () => {
   });
 });
 
-describe("0150 — serialization (booking/move vs. schedule mutation)", () => {
+describe("0150: serialization (booking/move vs. schedule mutation)", () => {
   async function withHold(
     holdSql: string,
     holdParams: unknown[],

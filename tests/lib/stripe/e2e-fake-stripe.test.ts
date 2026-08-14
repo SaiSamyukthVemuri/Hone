@@ -19,7 +19,7 @@ import {
 // exact local-E2E shape is present, and impossible in any deployed runtime.
 
 // The exact approved local-E2E shape (the Playwright server runs `next start`, so
-// NODE_ENV=production — the guard intentionally does NOT gate on NODE_ENV; the
+// NODE_ENV=production, the guard intentionally does NOT gate on NODE_ENV; the
 // positive HONE_E2E_* markers + the Vercel/deployment rejection are the boundary).
 const LOCAL_E2E_ENV = {
   HONE_E2E_FAKE_STRIPE: "1",
@@ -27,14 +27,14 @@ const LOCAL_E2E_ENV = {
   NODE_ENV: "production", // local `next start`
 } as unknown as NodeJS.ProcessEnv;
 
-describe("activation guard — ALLOWED only in the exact local-E2E shape", () => {
+describe("activation guard: ALLOWED only in the exact local-E2E shape", () => {
   it("allows fake mode with the flag + a valid run id + no deployment markers", () => {
     expect(() => assertE2eFakeStripeAllowed(LOCAL_E2E_ENV)).not.toThrow();
     expect(isE2eFakeStripeEnabled(LOCAL_E2E_ENV)).toBe(true);
   });
 });
 
-describe("activation guard — REJECTED matrix (fail-closed)", () => {
+describe("activation guard: REJECTED matrix (fail-closed)", () => {
   const reject = (env: Record<string, string | undefined>) => {
     const e = env as unknown as NodeJS.ProcessEnv;
     expect(() => assertE2eFakeStripeAllowed(e)).toThrow();
@@ -136,7 +136,7 @@ describe("exposure / dependency guards (no browser or request control)", () => {
       expect(src.trimStart().startsWith('import "server-only"')).toBe(true);
     }
   });
-  it("uses only server-only env markers — never a NEXT_PUBLIC_* control", () => {
+  it("uses only server-only env markers, never a NEXT_PUBLIC_* control", () => {
     for (const src of [GUARD, FAKE, SEAM]) {
       expect(src).not.toMatch(/NEXT_PUBLIC_[A-Z_]*FAKE/);
       expect(src).not.toMatch(/process\.env\.NEXT_PUBLIC_/);
@@ -144,7 +144,7 @@ describe("exposure / dependency guards (no browser or request control)", () => {
     expect(GUARD).toMatch(/HONE_E2E_FAKE_STRIPE/);
     expect(GUARD).toMatch(/HONE_E2E_RUN_ID/);
   });
-  it("selects the processor from env only — no request header/cookie/query/form", () => {
+  it("selects the processor from env only, no request header/cookie/query/form", () => {
     for (const src of [GUARD, FAKE, SEAM]) {
       expect(src).not.toMatch(/headers\(\)|cookies\(\)|searchParams|nextUrl|req\.headers|formData/);
     }
@@ -184,7 +184,7 @@ describe("production-path invariance (seam)", () => {
   });
 });
 
-describe("fake-call recorder — invocation vs effect, run-isolated, test-safe", () => {
+describe("fake-call recorder: invocation vs effect, run-isolated, test-safe", () => {
   const RUN = "run-testABC123";
   const prev = process.env.HONE_E2E_RUN_ID;
   afterEach(() => {
@@ -257,7 +257,7 @@ describe("fake-call recorder — invocation vs effect, run-isolated, test-safe",
     expect(effects(RUN)).toHaveLength(2);
   });
 
-  it("isolates calls by run id — one run cannot read another run's calls", async () => {
+  it("isolates calls by run id, one run cannot read another run's calls", async () => {
     process.env.HONE_E2E_RUN_ID = RUN;
     const s1 = createFakeStripe();
     await (s1.paymentIntents.create as unknown as (p: unknown, o: unknown) => Promise<unknown>)(

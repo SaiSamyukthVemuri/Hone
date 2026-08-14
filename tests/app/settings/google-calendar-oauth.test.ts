@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Google Calendar — Phase A. Behavioral tests of the connect/disconnect/select/
+// Google Calendar: Phase A. Behavioral tests of the connect/disconnect/select/
 // designate server actions (flag gate, state minting, nonce cookie, calendar
 // validation), plus source pins for the callback route + UI dormant messaging.
 
@@ -85,7 +85,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.clearAllMocks());
 
-describe("startGoogleCalendarConnectAction — flag gate + state + nonce cookie", () => {
+describe("startGoogleCalendarConnectAction: flag gate + state + nonce cookie", () => {
   it("rejects when the studio connection flag is OFF (server-side, not just UI)", async () => {
     setActor({ flag: false });
     const r = await startGoogleCalendarConnectAction();
@@ -144,7 +144,7 @@ describe("startGoogleCalendarConnectAction — flag gate + state + nonce cookie"
   });
 });
 
-describe("disconnectGoogleCalendarAction — revoke then destroy", () => {
+describe("disconnectGoogleCalendarAction: revoke then destroy", () => {
   it("revokes at Google then clears local connection state", async () => {
     const r = await disconnectGoogleCalendarAction();
     expect(r.ok).toBe(true);
@@ -160,7 +160,7 @@ describe("disconnectGoogleCalendarAction — revoke then destroy", () => {
   });
 });
 
-describe("selectWriteCalendarAction — validate against Google's own list", () => {
+describe("selectWriteCalendarAction: validate against Google's own list", () => {
   it("rejects an arbitrary/browser-supplied calendar id not in the account's list", async () => {
     const fd = new FormData();
     fd.set("calendar_id", "attacker-controlled@group.calendar.google.com");
@@ -178,7 +178,7 @@ describe("selectWriteCalendarAction — validate against Google's own list", () 
   });
 });
 
-describe("designateSelfAsCalendarOwnerAction — owner-only", () => {
+describe("designateSelfAsCalendarOwnerAction: owner-only", () => {
   it("rejects a non-owner", async () => {
     setActor({ role: "practitioner" });
     const r = await designateSelfAsCalendarOwnerAction();
@@ -201,7 +201,7 @@ describe("designateSelfAsCalendarOwnerAction — owner-only", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Source pins — the callback route + UI invariants the Vitest node env can't
+// Source pins, the callback route + UI invariants the Vitest node env can't
 // exercise directly.
 // ---------------------------------------------------------------------------
 const ROOT = process.cwd();
@@ -212,7 +212,7 @@ const CALLBACK = readFileSync(
 const CARD = readFileSync(join(ROOT, "app/(app)/settings/profile/GoogleCalendarCard.tsx"), "utf8");
 const PAGE = readFileSync(join(ROOT, "app/(app)/settings/profile/page.tsx"), "utf8");
 
-describe("callback route — validation order + safety (source)", () => {
+describe("callback route: validation order + safety (source)", () => {
   it("runs on the Node runtime, force-dynamic", () => {
     expect(CALLBACK).toMatch(/export const runtime = "nodejs"/);
     expect(CALLBACK).toMatch(/export const dynamic = "force-dynamic"/);
@@ -239,7 +239,7 @@ describe("callback route — validation order + safety (source)", () => {
   });
 });
 
-describe("GoogleCalendarCard — dormant messaging + iCal distinction (source)", () => {
+describe("GoogleCalendarCard: dormant messaging + iCal distinction (source)", () => {
   it("states synchronization is off while dormant (B2.4 wording)", () => {
     expect(CARD).toMatch(/Synchronization is off\. Hone is not creating or changing appointment events\./i);
   });
@@ -255,14 +255,14 @@ describe("GoogleCalendarCard — dormant messaging + iCal distinction (source)",
 
 // Review 3785134030. NULL-STATE VOCABULARY. This definition list renders inside
 // the isConnected branch, so each fallback must be true of a CONNECTED account.
-// The em-dash cleanup replaced bare "—" placeholders with words, and the first
+// The em-dash cleanup replaced bare typographic placeholders with words, and the first
 // attempt inferred each null's meaning from its field name rather than from
 // what the data can actually be. That produced "Google account: Not connected"
 // underneath "Google Calendar is connected."
 //
 // No component rendering exists in this repo's vitest setup (node environment,
 // no jsdom), so these are source pins in the file's existing convention.
-describe("GoogleCalendarCard — null-state vocabulary is truthful (source)", () => {
+describe("GoogleCalendarCard: null-state vocabulary is truthful (source)", () => {
   it("a connected account with no email says the EMAIL is unavailable", () => {
     // fetchUserInfo accepts a valid `sub` with no email and returns
     // email: null, so this is a reachable state for a connected account.
@@ -298,7 +298,7 @@ describe("GoogleCalendarCard — null-state vocabulary is truthful (source)", ()
   });
 });
 
-describe("profile page — card gated on the studio flag (source)", () => {
+describe("profile page: card gated on the studio flag (source)", () => {
   it("renders the Google card ONLY when google_calendar_connection_enabled is true", () => {
     expect(PAGE).toMatch(/google_calendar_connection_enabled === true/);
     expect(PAGE).toMatch(/\{googleEnabled && \(\s*\n?\s*<GoogleCalendarCard/);

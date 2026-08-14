@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// "Start intake with client" — the Health & Forms entry point into the
+// "Start intake with client": the Health & Forms entry point into the
 // practitioner-assisted workflow.
 //
 // Section 1 is BEHAVIOURAL: the real server action runs against an in-memory
@@ -231,7 +231,7 @@ describe("1. starting an intake with the client present", () => {
     );
   });
 
-  it("sends NO email — the client is standing in the room", async () => {
+  it("sends NO email: the client is standing in the room", async () => {
     const res = await startAssistedIntakeAction(fd());
     expect(res.ok).toBe(true);
     // The email itself is never sent...
@@ -264,7 +264,7 @@ describe("1. starting an intake with the client present", () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     // The bearer link the creation helper minted must not reach the browser
-    // through this path — the practitioner is going to the authenticated
+    // through this path, the practitioner is going to the authenticated
     // assisted route, and the hand-off owns the token.
     expect(res).not.toHaveProperty("intakeUrl");
     expect(JSON.stringify(res)).not.toContain("tok-secret");
@@ -306,7 +306,7 @@ describe("2. duplicate safety", () => {
     expect(res.intakeId).toBe("newer");
   });
 
-  it("a submitted or reviewed record is not reused — a fresh one is created", async () => {
+  it("a submitted or reviewed record is not reused, a fresh one is created", async () => {
     for (const status of ["submitted", "reviewed"]) {
       createIntakeRequestForClient.mockClear();
       state.intakes = [intakeRow({ status })];
@@ -440,7 +440,7 @@ describe("4. failure behaviour", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Source pins — the button and the Health & Forms card.
+// Source pins, the button and the Health & Forms card.
 // ---------------------------------------------------------------------------
 
 const ROOT = process.cwd();
@@ -478,7 +478,7 @@ describe("5. the button", () => {
     expect(BUTTON_CODE).toMatch(/inFlight\.current = true;/);
     // Exactly one release site, and it is in a `finally`. Releasing only on
     // the refusal path would leave the latch shut forever if the action threw
-    // rather than returned — the button would look enabled and be inert.
+    // rather than returned, the button would look enabled and be inert.
     expect(BUTTON_CODE.match(/inFlight\.current = false/g) ?? []).toHaveLength(1);
     expect(BUTTON_CODE).toMatch(
       /\} finally \{[\s\S]{0,300}?if \(!navigating\) inFlight\.current = false;/,
@@ -600,7 +600,7 @@ describe("6. the Health & Forms card", () => {
     expect(branch).not.toContain("StartAssistedIntakeButton");
   });
 
-  it("the in-progress branch is unchanged — resend, not create", () => {
+  it("the in-progress branch is unchanged, resend, not create", () => {
     const branch = healthBranch('{intake?.status === "in_progress" && (');
     expect(branch).toContain("<IntakeResendCard");
     expect(branch).not.toContain("StartAssistedIntakeButton");

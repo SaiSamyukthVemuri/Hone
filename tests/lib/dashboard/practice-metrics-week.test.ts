@@ -10,7 +10,7 @@ import {
 } from "@/lib/booking/tz";
 
 // ===========================================================================
-// Dashboard V2 Part 1 — the dashboard reporting week runs SUNDAY -> SATURDAY.
+// Dashboard V2 Part 1, the dashboard reporting week runs SUNDAY -> SATURDAY.
 // ===========================================================================
 //
 // WHY THIS FILE EXISTS
@@ -34,7 +34,7 @@ import {
 //      so a broken helper cannot also define what "Sunday" means.
 //   2. A source guard that the dashboard still DELEGATES. Without it, someone
 //      could reintroduce a local copy that happens to agree today and drifts
-//      later — which is exactly how these two got out of sync.
+//      later, which is exactly how these two got out of sync.
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -56,7 +56,7 @@ const MON = "2026-08-10";
 const SAT = "2026-08-15";
 const NEXT_SUN = "2026-08-16";
 
-describe("dashboard week — the anchor is Sunday", () => {
+describe("dashboard week: the anchor is Sunday", () => {
   it("the fixture dates really are the weekdays this file claims", () => {
     // Guards the whole file: if these drift, every case below is meaningless.
     expect(weekdayOf(SUN)).toBe("Sun");
@@ -65,10 +65,10 @@ describe("dashboard week — the anchor is Sunday", () => {
     expect(weekdayOf(NEXT_SUN)).toBe("Sun");
   });
 
-  it("SUNDAY starts a NEW week — it is the first day, not the last", () => {
+  it("SUNDAY starts a NEW week, it is the first day, not the last", () => {
     // The exact case that was broken. Under the old Monday anchor this
     // returned 2026-08-03 (the PREVIOUS Monday), putting Sunday at the END of
-    // the previous week — a full week away from the calendar.
+    // the previous week, a full week away from the calendar.
     const r = week(SUN);
     expect(r.startLocal).toBe(SUN);
     expect(weekdayOf(r.startLocal)).toBe("Sun");
@@ -115,9 +115,9 @@ describe("dashboard week — the anchor is Sunday", () => {
   });
 });
 
-describe("dashboard week — boundaries that are not week boundaries", () => {
+describe("dashboard week: boundaries that are not week boundaries", () => {
   it("crosses a MONTH boundary without truncating to the 1st", () => {
-    // 2026-09-01 is a Tuesday; its week starts Sunday 2026-08-30 — in August.
+    // 2026-09-01 is a Tuesday; its week starts Sunday 2026-08-30, in August.
     expect(weekdayOf("2026-09-01")).toBe("Tue");
     const r = week("2026-09-01");
     expect(r.startLocal).toBe("2026-08-30");
@@ -126,7 +126,7 @@ describe("dashboard week — boundaries that are not week boundaries", () => {
   });
 
   it("crosses a YEAR boundary without truncating to Jan 1", () => {
-    // 2027-01-01 is a Friday; its week starts Sunday 2026-12-27 — in 2026.
+    // 2027-01-01 is a Friday; its week starts Sunday 2026-12-27, in 2026.
     expect(weekdayOf("2027-01-01")).toBe("Fri");
     const r = week("2027-01-01");
     expect(r.startLocal).toBe("2026-12-27");
@@ -143,7 +143,7 @@ describe("dashboard week — boundaries that are not week boundaries", () => {
   });
 
   it("resolves the DST weeks to the right Sundays", () => {
-    // America/Toronto springs forward 2026-03-08 and falls back 2026-11-01 —
+    // America/Toronto springs forward 2026-03-08 and falls back 2026-11-01,
     // both Sundays, i.e. both are week STARTS.
     for (const [inside, expectedStart] of [
       ["2026-03-11", "2026-03-08"],
@@ -156,7 +156,7 @@ describe("dashboard week — boundaries that are not week boundaries", () => {
     }
   });
 
-  it("the ACTUAL UTC window absorbs DST — 167h in spring, 169h in autumn", () => {
+  it("the ACTUAL UTC window absorbs DST, 167h in spring, 169h in autumn", () => {
     // The case above is date-string arithmetic, which is DST-free BY
     // CONSTRUCTION: it would pass against an implementation with no timezone
     // handling at all. What actually matters is the conversion the metrics
@@ -164,7 +164,7 @@ describe("dashboard week — boundaries that are not week boundaries", () => {
     // on BOTH ends separately). If that ever became "start + 168 hours", or if
     // utcInstantFromLocal lost its re-sample step, the window would silently
     // include one wrong hour of the next Sunday AND double-count it against the
-    // following week — with every date-string assertion above still green.
+    // following week, with every date-string assertion above still green.
     const TZ = "America/Toronto";
     const H = 3_600_000;
     for (const [inside, expectedHours] of [
@@ -182,7 +182,7 @@ describe("dashboard week — boundaries that are not week boundaries", () => {
     }
   });
 
-  it("consecutive weeks abut exactly across a DST transition — no gap, no overlap", () => {
+  it("consecutive weeks abut exactly across a DST transition, no gap, no overlap", () => {
     const TZ = "America/Toronto";
     for (const sunday of ["2026-03-01", "2026-03-08", "2026-10-25", "2026-11-01"]) {
       const a = week(sunday);
@@ -196,7 +196,7 @@ describe("dashboard week — boundaries that are not week boundaries", () => {
   });
 });
 
-describe("dashboard week — it is the SAME boundary the calendar uses", () => {
+describe("dashboard week: it is the SAME boundary the calendar uses", () => {
   it("agrees with startOfWeek() on every day of a full year", () => {
     // The strongest form of "one algorithm": 365 days, no disagreement.
     let d = "2026-01-01";
@@ -206,7 +206,7 @@ describe("dashboard week — it is the SAME boundary the calendar uses", () => {
     }
   });
 
-  it("agrees with the calendar ON A SUNDAY — the case that was broken", () => {
+  it("agrees with the calendar ON A SUNDAY, the case that was broken", () => {
     expect(week(SUN).startLocal).toBe(startOfWeek(SUN));
   });
 
@@ -228,7 +228,7 @@ describe("dashboard week — it is the SAME boundary the calendar uses", () => {
   });
 });
 
-describe("dashboard week — the other periods are untouched", () => {
+describe("dashboard week: the other periods are untouched", () => {
   it("'today' is still a single day", () => {
     const r = resolvePeriodRange(MON, "today");
     expect(r.startLocal).toBe(MON);

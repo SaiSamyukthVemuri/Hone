@@ -16,12 +16,12 @@ import { join } from "node:path";
 // module lib/stripe/e2e-fake-ledger.ts. The Playwright runner is a SEPARATE
 // process and CANNOT import that module (it is `import "server-only"` and uses
 // the `@/` build alias). So this test-runner helper reads / writes the SAME
-// run-scoped temp files directly — the file format is the cross-process
+// run-scoped temp files directly, the file format is the cross-process
 // contract, and the temp file is the only thing the two processes share.
 //
 // Safety properties (mirrors the server module, pinned by the security specs):
 //   * The path is built ONLY from os.tmpdir() + a fixed prefix + the validated
-//     run id — never from browser input, a request value, or a user path — so
+//     run id, never from browser input, a request value, or a user path, so
 //     it cannot escape the temp dir and the browser can never read or steer it.
 //   * The run id must pass the SAME regex the server guard enforces; a missing
 //     or malformed run id throws loudly rather than touching a guessed path.
@@ -105,7 +105,7 @@ export function countFakeStripeCalls(
 
 // INVOCATIONS = every fake paymentIntents.create call (including replays). This
 // count MUST reflect duplicate app-level server calls even when the idempotency
-// key was already seen — the fake can never hide a second invocation.
+// key was already seen, the fake can never hide a second invocation.
 export function readFakeStripeInvocations(
   runId: string = activeRunId(),
 ): FakeStripeCall[] {
@@ -131,7 +131,7 @@ export function countFakeStripeEffects(runId: string = activeRunId()): number {
 
 // Account-scoped variants. The ledger is shared per-JOB (one HONE_E2E_RUN_ID), so
 // scoping counts to a scenario's unique synthetic connected account proves one
-// spec's calls can never contaminate another's — even though every spec appends
+// spec's calls can never contaminate another's, even though every spec appends
 // to the same run-scoped file.
 export function invocationsForAccount(
   account: string,
@@ -157,7 +157,7 @@ export function countEffectsForAccount(
 ): number {
   return effectsForAccount(account, runId).length;
 }
-// Any fake call (any method) touching this account — for no-refund / isolation proofs.
+// Any fake call (any method) touching this account, for no-refund / isolation proofs.
 export function callsForAccount(
   account: string,
   runId: string = activeRunId(),

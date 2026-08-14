@@ -59,7 +59,7 @@ describe("vercel.json cron config (fixes the reported empty-crons bug)", () => {
 
   // B2.3-c3: the two Google Calendar cron routes are now registered as DAILY crons
   // (the plan caps cron at once/day), staggered after the 08:00 materialize-breaks
-  // cron, reconciliation BEFORE the worker. Registration is DORMANT — worker_enabled
+  // cron, reconciliation BEFORE the worker. Registration is DORMANT, worker_enabled
   // stays false so the claim RPC returns zero rows and mutates nothing.
   it("schedules the daily calendar-reconcile cron at the canonical (daily) cadence", () => {
     expect(byPath.get("/api/cron/calendar-reconcile")).toBe(CALENDAR_RECONCILE_CRON_SCHEDULE);
@@ -122,7 +122,7 @@ describe("reminder route preserves claim-before-send, idempotency, and auth", ()
     expect(ROUTE_CODE).toMatch(/reminder_send_exhausted/);
     expect(ROUTE_CODE).toMatch(/alertIfReminderExhausted\(/);
     // The alert helper's body must carry NO client PII / token / free-text
-    // error — only studio/appointment ids + reminder type/attempt metadata.
+    // error, only studio/appointment ids + reminder type/attempt metadata.
     const start = ROUTE_CODE.indexOf("async function alertIfReminderExhausted");
     const end = ROUTE_CODE.indexOf("async function sendReminderPass", start);
     const body = ROUTE_CODE.slice(start, end);
@@ -178,7 +178,7 @@ describe("an unauthorized reminder invocation is side-effect free (PR OPS-01)", 
   // Proven in production during the OPS-01 recon: an unauthenticated GET to
   // https://hone.care/api/cron/appointment-reminders returned
   // 401 {"ok":false,"error":"Unauthorized"}. This pins the source property that
-  // makes such a probe safe — the gate is the FIRST thing in the handler, so a
+  // makes such a probe safe, the gate is the FIRST thing in the handler, so a
   // 401 touches no admin client, no claim, no provider, no heartbeat.
   it("the auth gate is the first statement of GET, before any work", () => {
     const handler = ROUTE.slice(ROUTE.indexOf("export async function GET"));

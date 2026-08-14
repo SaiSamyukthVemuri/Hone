@@ -38,7 +38,7 @@ describe("move actions: atomic same-record move via the one RPC", () => {
   it("routes the move through move_or_reassign_appointment and nothing else", () => {
     expect(c).toMatch(/rpc\(\s*["']move_or_reassign_appointment["']/);
   });
-  it("never cancels + rebooks — no appointment insert / cancel / delete in the move path", () => {
+  it("never cancels + rebooks: no appointment insert / cancel / delete in the move path", () => {
     expect(c).not.toMatch(/\.insert\(/);
     expect(c).not.toMatch(/\.delete\(/);
     expect(c).not.toMatch(/cancel_appointment|mark_appointment|cancelAppointment/i);
@@ -127,7 +127,7 @@ describe("move notification: best-effort, PHI-free, no confirmation-claim reuse"
     expect(c).not.toMatch(/sendSms|sendSMS|twilio|passesConsentGate/i);
   });
   it("records only a PHI-free ops signal on failure (no client identity)", () => {
-    // The safeDetails object carries only a static channel + reason CATEGORY —
+    // The safeDetails object carries only a static channel + reason CATEGORY,
     // never an interpolated value, an email address, or a client name.
     const safe = c.match(/safeDetails:\s*{[^}]*}/)?.[0] ?? "";
     expect(safe).toMatch(/channel/); // the block exists and was captured
@@ -189,7 +189,7 @@ describe("move: closed mode contract + owner-only custom time", () => {
   it("canUseCustomTime is derived ONLY from the server role", () => {
     expect(c).toMatch(/canUseCustomTime\s*=\s*practitioner\.role === "owner"/);
   });
-  it("still ONE dialog, ONE action, ONE RPC — no second mutation path", () => {
+  it("still ONE dialog, ONE action, ONE RPC, no second mutation path", () => {
     // Exactly one rpc call site to the move RPC.
     expect((code(ACTIONS).match(/rpc\(\s*["']move_or_reassign_appointment["']/g) ?? []).length).toBe(1);
     // The dialog mutates only through the two exported actions.

@@ -9,7 +9,7 @@ import {
 
 // Behavioral tests for the fail-closed browser-event boundary
 // (P1-ANALYTICS-01/-02). Real event-shaped payloads (as PostHog serializes
-// them) are run through the actual `before_send` guard — not source-string
+// them) are run through the actual `before_send` guard, not source-string
 // scans. All UUIDs/tokens/names below are synthetic.
 
 const HOST = "https://hone.care";
@@ -57,7 +57,7 @@ describe("marketing surface derivation", () => {
   });
 });
 
-describe("Scenario 8 — the 12 exact marketing paths permit $pageview/$pageleave", () => {
+describe("Scenario 8: the 12 exact marketing paths permit $pageview/$pageleave", () => {
   for (const path of MARKETING_ROUTES) {
     it(`allows $pageview on ${path}`, () => {
       expect(guardBrowserEvent(ev("$pageview", `${HOST}${path}`))).not.toBeNull();
@@ -68,7 +68,7 @@ describe("Scenario 8 — the 12 exact marketing paths permit $pageview/$pageleav
   }
 });
 
-describe("Scenarios 1-3 — authenticated pageview/pageleave dropped", () => {
+describe("Scenarios 1-3: authenticated pageview/pageleave dropped", () => {
   it("drops $pageview from an authenticated client route (/clients/<uuid>)", () => {
     expect(guardBrowserEvent(ev("$pageview", `${HOST}/clients/${U1}`))).toBeNull();
   });
@@ -86,7 +86,7 @@ describe("Scenarios 1-3 — authenticated pageview/pageleave dropped", () => {
   });
 });
 
-describe("Scenario 4 — token-route browser events dropped, not redacted", () => {
+describe("Scenario 4: token-route browser events dropped, not redacted", () => {
   for (const url of TOKEN_ROUTE_URLS) {
     it(`drops every event on ${new URL(url).pathname.split("/")[1]}`, () => {
       for (const name of ["$pageview", "$pageleave", "$autocapture", "$rageclick"]) {
@@ -96,28 +96,28 @@ describe("Scenario 4 — token-route browser events dropped, not redacted", () =
   }
 });
 
-describe("Scenario 5 — public booking browser events dropped", () => {
+describe("Scenario 5: public booking browser events dropped", () => {
   it("drops events on /book/*", () => {
     expect(guardBrowserEvent(ev("$pageview", `${HOST}/book/willow-electrolysis`))).toBeNull();
     expect(guardBrowserEvent(ev("$autocapture", `${HOST}/book/willow-electrolysis`))).toBeNull();
   });
 });
 
-describe("Scenario 6 — portal events dropped", () => {
+describe("Scenario 6: portal events dropped", () => {
   it("drops events on /portal and /portal/login", () => {
     expect(guardBrowserEvent(ev("$pageview", `${HOST}/portal`))).toBeNull();
     expect(guardBrowserEvent(ev("$pageview", `${HOST}/portal/login`))).toBeNull();
   });
 });
 
-describe("Scenario 7 — login/auth events dropped", () => {
+describe("Scenario 7: login/auth events dropped", () => {
   it("drops events on /login and /auth/*", () => {
     expect(guardBrowserEvent(ev("$pageview", `${HOST}/login`))).toBeNull();
     expect(guardBrowserEvent(ev("$pageview", `${HOST}/auth/callback`))).toBeNull();
   });
 });
 
-describe("Scenario 9 — unknown route under an allowed prefix is denied", () => {
+describe("Scenario 9: unknown route under an allowed prefix is denied", () => {
   it("denies /resources/future-user-content (no prefix escalation)", () => {
     expect(
       guardBrowserEvent(ev("$pageview", `${HOST}/resources/future-user-content`)),
@@ -131,7 +131,7 @@ describe("Scenario 9 — unknown route under an allowed prefix is denied", () =>
   });
 });
 
-describe("Scenario 10 — marketing URLs drop unapproved query params + fragments", () => {
+describe("Scenario 10: marketing URLs drop unapproved query params + fragments", () => {
   it("keeps only reviewed attribution params on $current_url", () => {
     const out = guardBrowserEvent(
       ev(
@@ -149,7 +149,7 @@ describe("Scenario 10 — marketing URLs drop unapproved query params + fragment
   });
 });
 
-describe("Scenario 11 — marketing referrers cannot carry token paths or sensitive query", () => {
+describe("Scenario 11: marketing referrers cannot carry token paths or sensitive query", () => {
   it("redacts a token path and strips sensitive query in $referrer", () => {
     const out = guardBrowserEvent(
       ev("$pageview", `${HOST}/`, {
@@ -178,7 +178,7 @@ describe("Scenario 11 — marketing referrers cannot carry token paths or sensit
   });
 });
 
-describe("Scenario 12 — $identify never leaves the browser", () => {
+describe("Scenario 12: $identify never leaves the browser", () => {
   it("drops $identify even on a marketing surface (identify is server-side)", () => {
     expect(
       guardBrowserEvent(
@@ -188,7 +188,7 @@ describe("Scenario 12 — $identify never leaves the browser", () => {
   });
 });
 
-describe("Scenario 13 — unknown event names fail closed", () => {
+describe("Scenario 13: unknown event names fail closed", () => {
   it("drops non-allowlisted event names even on marketing", () => {
     for (const name of ["$snapshot", "$web_vitals", "$feature_flag_called", "custom_event"]) {
       expect(guardBrowserEvent(ev(name, `${HOST}/pricing`)), name).toBeNull();

@@ -1,4 +1,4 @@
-// APPOINTMENT BOUNDARY B8 × B4 — the cross-command invariant.
+// APPOINTMENT BOUNDARY B8 × B4, the cross-command invariant.
 //
 // B8/0177 introduces a state B4/0173 has never seen: an appointment with an
 // external email IN FLIGHT. The two commands are independently correct and
@@ -20,8 +20,8 @@
 // has accepted would discard evidence of a real email and make Hone LESS
 // truthful. The lifecycle change is blocked before it can happen.
 //
-// WHAT THIS FILE IS BUILT AROUND. Every case drives the REAL commands —
-// claim_postcare_send, settle_postcare_send, revert_appointment_outcome — and
+// WHAT THIS FILE IS BUILT AROUND. Every case drives the REAL commands,
+// claim_postcare_send, settle_postcare_send, revert_appointment_outcome, and
 // never hand-writes a postcare column to fake a state. A test that seeded
 // `postcare_email_claimed_at` with an UPDATE would prove the new predicate
 // fires, but not that the CLAIM COMMAND produces a state the REPAIR COMMAND
@@ -48,7 +48,7 @@ const VALID_REASON = "Marked complete by mistake, client rebooked";
 
 /**
  * A COMPLETED appointment with the audit baseline the 72-hour repair window is
- * measured from, and nothing else — no session, no payment, no fee, no
+ * measured from, and nothing else, no session, no payment, no fee, no
  * successor. Everything that could block a repair is therefore attributable to
  * postcare alone.
  */
@@ -160,9 +160,9 @@ async function postcareState(id: string) {
 }
 
 // ---------------------------------------------------------------------------
-// R1 — the race itself
+// R1, the race itself
 // ---------------------------------------------------------------------------
-describe("R1 — an unresolved postcare claim blocks outcome repair", () => {
+describe("R1: an unresolved postcare claim blocks outcome repair", () => {
   it("refuses with blocked_postcare_in_flight and changes NOTHING", async () => {
     const studio = await seedStudio("b8b4-inflight");
     const appt = await seedCompletedRepairable(studio);
@@ -216,9 +216,9 @@ describe("R1 — an unresolved postcare claim blocks outcome repair", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R2 — the block lifts when the send RESOLVES
+// R2, the block lifts when the send RESOLVES
 // ---------------------------------------------------------------------------
-describe("R2 — a settled FAILURE releases the appointment for repair", () => {
+describe("R2: a settled FAILURE releases the appointment for repair", () => {
   it("stops blocking once settlement clears the claim, when nothing else blocks", async () => {
     const studio = await seedStudio("b8b4-failed");
     const appt = await seedCompletedRepairable(studio);
@@ -244,9 +244,9 @@ describe("R2 — a settled FAILURE releases the appointment for repair", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R3 — precedence: a SETTLED SUCCESS is still postcare_sent
+// R3, precedence: a SETTLED SUCCESS is still postcare_sent
 // ---------------------------------------------------------------------------
-describe("R3 — a successful send keeps reporting blocked_postcare_sent", () => {
+describe("R3: a successful send keeps reporting blocked_postcare_sent", () => {
   it("does not get relabelled by the new class", async () => {
     const studio = await seedStudio("b8b4-sent");
     const appt = await seedCompletedRepairable(studio);
@@ -260,7 +260,7 @@ describe("R3 — a successful send keeps reporting blocked_postcare_sent", () =>
     expect(state.postcare_email_sent_at).not.toBeNull();
     expect(state.postcare_email_claimed_at).toBeNull();
 
-    // The pre-existing class, unchanged — the practitioner is told the
+    // The pre-existing class, unchanged: the practitioner is told the
     // authoritative thing: aftercare has already been emailed.
     expect(await blockingClass(studio, appt)).toBe("postcare_sent");
     expect(await revert(studio, appt)).toBe("blocked_postcare_sent");
@@ -269,9 +269,9 @@ describe("R3 — a successful send keeps reporting blocked_postcare_sent", () =>
 });
 
 // ---------------------------------------------------------------------------
-// R4 — precedence under a RESEND, where BOTH conditions are true at once
+// R4, precedence under a RESEND, where BOTH conditions are true at once
 // ---------------------------------------------------------------------------
-describe("R4 — a resend claim over a historical send stays postcare_sent", () => {
+describe("R4: a resend claim over a historical send stays postcare_sent", () => {
   it("postcare_sent remains authoritative when both classes apply", async () => {
     // This is the ordering assertion. A resend sets claimed_at while sent_at is
     // already non-null, so both branches match; appending postcare_in_flight
@@ -299,9 +299,9 @@ describe("R4 — a resend claim over a historical send stays postcare_sent", () 
 });
 
 // ---------------------------------------------------------------------------
-// R5 — the other four classes are untouched by this migration
+// R5, the other four classes are untouched by this migration
 // ---------------------------------------------------------------------------
-describe("R5 — the replacement preserves the 0173 helper's existing behaviour", () => {
+describe("R5: the replacement preserves the 0173 helper's existing behaviour", () => {
   it("still returns NULL for a plain repairable appointment", async () => {
     const studio = await seedStudio("b8b4-null");
     const appt = await seedCompletedRepairable(studio);
@@ -352,9 +352,9 @@ describe("R5 — the replacement preserves the 0173 helper's existing behaviour"
 });
 
 // ---------------------------------------------------------------------------
-// R6 — privilege posture survives CREATE OR REPLACE
+// R6, privilege posture survives CREATE OR REPLACE
 // ---------------------------------------------------------------------------
-describe("R6 — the replaced helper keeps its service-role-only posture", () => {
+describe("R6: the replaced helper keeps its service-role-only posture", () => {
   it("is executable by service_role and by nobody else", async () => {
     const r = await adminQuery(
       `select

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Google Calendar — Phase B2.3-c2 correction: the production ConnectionStore's
+// Google Calendar: Phase B2.3-c2 correction: the production ConnectionStore's
 // loadRefreshCiphertext must DISTINGUISH a genuinely-absent secret (null) from a
 // FAILED/uncertain read (throw RefreshSecretReadError), so the token manager never
 // mistakes a transient DB error for a missing token. No raw error is surfaced.

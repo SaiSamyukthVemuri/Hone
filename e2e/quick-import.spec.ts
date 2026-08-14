@@ -11,13 +11,13 @@ import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
-// IMPORT-01 — Quick Import is OPERATOR-ASSISTED ONLY, proven on the real local
+// IMPORT-01: Quick Import is OPERATOR-ASSISTED ONLY, proven on the real local
 // stack against a real ordinary studio owner.
 //
 // This spec used to drive the full paste -> preview -> confirm flow as an
 // ordinary owner. That flow is exactly what the mitigation removes: a run that
 // failed after the client insert left clients behind with no history, and a
-// retry skipped them. What is proven now is the replacement contract —
+// retry skipped them. What is proven now is the replacement contract,
 //   * the ordinary owner reaches the route and is told the truth,
 //   * there is no executable control anywhere on the page for them,
 //   * the server refuses even when the page is bypassed entirely, and
@@ -124,7 +124,7 @@ test.describe("an ordinary studio owner gets an informational surface only", () 
 // The ordinary-owner specs above are an ABSENCE claim, and an absence claim is
 // only worth what its positive control is worth: if `/settings/import` were
 // broken for everyone, they would all still pass. This proves the other half
-// in a real browser — the island renders, and the SAME gated server action the
+// in a real browser, the island renders, and the SAME gated server action the
 // ordinary owner is refused by succeeds for an operator.
 //
 // No production authorization was weakened and no test-only bypass exists: the
@@ -135,7 +135,7 @@ test.describe("an ordinary studio owner gets an informational surface only", () 
 //
 // `e2e@harness.local` is the allowlisted address that NO other spec claims.
 // (`e2e-operator@harness.local` is the other one, and seedOperatorAuthUser()
-// asserts it holds no practitioner row — giving it a membership here would
+// asserts it holds no practitioner row, giving it a membership here would
 // break e2e/new-studio-wizard.spec.ts.)
 
 const OPERATOR_EMAIL = "e2e@harness.local";
@@ -172,7 +172,7 @@ async function seedOperatorOwnedStudio(): Promise<E2eSeed> {
 }
 
 test.describe("a platform operator who owns the studio gets the real island", () => {
-  test("the import UI renders and a preview runs — with zero writes", async ({
+  test("the import UI renders and a preview runs, with zero writes", async ({
     page,
   }) => {
     const seed = await seedOperatorOwnedStudio();
@@ -199,7 +199,7 @@ test.describe("a platform operator who owns the studio gets the real island", ()
     ).toBeVisible();
 
     // previewImportAction goes through the SAME ownerContext() gate as confirm,
-    // so a successful preview is the operator-authorization proof — and it is
+    // so a successful preview is the operator-authorization proof, and it is
     // the read-only half, which is why this stops here.
     const tsv = [
       "client_name\temail\ttreatment_area\tlast_visit_date",
@@ -226,7 +226,7 @@ test.describe("a platform operator who owns the studio gets the real island", ()
     ).toBeVisible();
     await expect(page.getByText(/Upper lip/).first()).toBeVisible();
 
-    // Confirm is now offered — deliberately NOT clicked. This lane treats the
+    // Confirm is now offered: deliberately NOT clicked. This lane treats the
     // local database as disposable and attempts no cleanup, and a real confirm
     // creates real client rows that migration 0087 forbids deleting. The write
     // path is proven by the behavioural positive control in

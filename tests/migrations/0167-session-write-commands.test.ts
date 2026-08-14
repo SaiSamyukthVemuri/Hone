@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 // ===========================================================================
-// L18 Phase 3 — migration 0167 source contract.
+// L18 Phase 3, migration 0167 source contract.
 //
 // Deterministic assertions about the migration BYTES. Behaviour lives in
 // tests/db/session-write-commands.db.test.ts; this file pins the shape that
@@ -35,7 +35,7 @@ const ALL = [...PUBLIC_COMMANDS, ...HELPERS];
 // The "nothing above me" tripwire moved to 0168's own test when that migration
 // landed: only the CURRENT repository maximum may assert it.
 
-describe("0167 — function shape", () => {
+describe("0167: function shape", () => {
   it("declares exactly eight public commands and two internal helpers", () => {
     const declared = [...SQL.matchAll(/create or replace function public\.(\w+)\(/g)].map(
       (m) => m[1],
@@ -55,7 +55,7 @@ describe("0167 — function shape", () => {
 
   it("never consults current_user as the actor", () => {
     // Inside a SECURITY DEFINER function current_user is the OWNER, not the
-    // authenticated practitioner. Strip comments first — the migration
+    // authenticated practitioner. Strip comments first, the migration
     // DOCUMENTS this rule in prose, which is the point.
     const code = SQL.split("\n")
       .filter((l) => !l.trimStart().startsWith("--"))
@@ -96,7 +96,7 @@ describe("0167 — function shape", () => {
     expect(FLAT).not.toMatch(/legacy_classification/);
   });
 
-  it("soft delete is SOFT — no hard DELETE against sessions anywhere", () => {
+  it("soft delete is SOFT: no hard DELETE against sessions anywhere", () => {
     expect(FLAT).not.toMatch(/delete from public\.sessions/i);
     expect(SQL).toMatch(/set deleted_at\s*=\s*now\(\)/);
     expect(SQL).toMatch(/deleted_by\s*=\s*v_practitioner/);
@@ -115,7 +115,7 @@ describe("0167 — function shape", () => {
   });
 });
 
-describe("0167 — privileges", () => {
+describe("0167: privileges", () => {
   it("revokes every signature from all four grantees, literally", () => {
     for (const f of ALL) {
       for (const role of ["public", "anon", "service_role", "authenticated"]) {
@@ -150,7 +150,7 @@ describe("0167 — privileges", () => {
   });
 });
 
-describe("0167 — additive and honest about scope", () => {
+describe("0167: additive and honest about scope", () => {
   it("revokes no TABLE privilege and drops no policy", () => {
     expect(FLAT).not.toMatch(/revoke[^;]*on public\.sessions/i);
     expect(FLAT).not.toMatch(/revoke[^;]*on table/i);

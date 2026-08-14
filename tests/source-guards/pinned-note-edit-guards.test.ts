@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Source guards for editing a mutable pinned client note (client_pinned_notes —
+// Source guards for editing a mutable pinned client note (client_pinned_notes,
 // an operational reminder, NOT the append-only immutable client_clinical_notes).
 // These pin the safety contract the DB test can't see: the edit is an in-place
 // UPDATE (never delete+recreate), authorized from the session, tenant-scoped, and
@@ -28,7 +28,7 @@ function editBody(): string {
   return src.slice(from, to);
 }
 
-describe("pinned-note edit — server action contract", () => {
+describe("pinned-note edit: server action contract", () => {
   it("exports editClientPinnedNoteAction", () => {
     expect(code(ACTIONS)).toMatch(/export async function editClientPinnedNoteAction/);
   });
@@ -48,7 +48,7 @@ describe("pinned-note edit — server action contract", () => {
     expect(b).not.toMatch(/\.delete\(/);
   });
 
-  it("mutates ONLY text — never id / created_by / created_at / studio_id / client_id", () => {
+  it("mutates ONLY text: never id / created_by / created_at / studio_id / client_id", () => {
     const b = editBody();
     for (const forbidden of ["created_", "studio_id", "client_id", "\\bid\\b"]) {
       expect(b).not.toMatch(new RegExp(`\\.update\\(\\{[^}]*${forbidden}`));
@@ -78,7 +78,7 @@ describe("pinned-note edit — server action contract", () => {
   });
 });
 
-describe("pinned-note edit — UI wiring", () => {
+describe("pinned-note edit: UI wiring", () => {
   it("the card exposes an Edit control + an inline editor pre-filled with the current text", () => {
     const c = read(CARD);
     expect(c).toMatch(/editAction/);

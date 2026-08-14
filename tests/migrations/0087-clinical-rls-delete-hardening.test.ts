@@ -140,7 +140,7 @@ describe("app compatibility", () => {
   // failed but the block had already committed. `create_block_with_entry`
   // (migration 0166) now owns both writes in one transaction, so there is
   // nothing left to compensate for and the cleanup is gone entirely. What 0087
-  // actually protects — no hard DELETE of a clinical block, ever — is asserted
+  // actually protects, no hard DELETE of a clinical block, ever, is asserted
   // more strongly than before: not "the cleanup uses update", but "no runtime
   // code issues row DML against session_blocks at all".
   it("the block-creation cleanup is gone: the write is atomic, and nothing hard-deletes a block", () => {

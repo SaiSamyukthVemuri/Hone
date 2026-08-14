@@ -11,7 +11,7 @@ const ACTIONS = "app/(app)/settings/services/actions.ts";
 const CONTROLS = "app/(app)/settings/services/ServiceFormControls.tsx";
 const COLORS = "lib/calendar/service-colors.ts";
 
-describe("service calendar color — settings server contract", () => {
+describe("service calendar color: settings server contract", () => {
   const src = code(ACTIONS);
   it("validates the color against the allowlist (isServiceColorKey), rejecting invalid/rose/red", () => {
     expect(src).toMatch(/import \{ isServiceColorKey \} from "@\/lib\/calendar\/service-colors"/);
@@ -34,7 +34,7 @@ describe("service calendar color — settings server contract", () => {
   });
 });
 
-describe("service calendar color — settings UI", () => {
+describe("service calendar color: settings UI", () => {
   const c = read(CONTROLS);
   it("CalendarColorField renders six named accessible swatches + a hidden calendar_color input, pre-selected", () => {
     expect(c).toMatch(/export function CalendarColorField/);
@@ -50,7 +50,7 @@ describe("service calendar color — settings UI", () => {
   });
 });
 
-describe("service calendar color — canonical mapping is the authority", () => {
+describe("service calendar color: canonical mapping is the authority", () => {
   it("the color module never emits rose/red and hashing is no longer the view authority", () => {
     const m = read(COLORS);
     expect(m).toMatch(/export function appointmentCardClasses/);

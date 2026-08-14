@@ -114,7 +114,7 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     //
     // L18 Phase 3 sent NEITHER value: 0167's start_session derived the studio
     // itself. 0181 REVERSED HALF of that, and the reversal is the fix for a
-    // production P1 — 0167 derived the studio with an unordered `limit 1` over
+    // production P1, 0167 derived the studio with an unordered `limit 1` over
     // every active membership, so a practitioner active in two studios could
     // render the page against the SELECTED studio and have the command run
     // against the other one ("Client not found in this studio.", HTTP 500).
@@ -122,7 +122,7 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // So p_studio_id IS now sent. The invariant this case actually protects is
     // unchanged and is asserted directly instead of by absence: the value comes
     // from the SERVER-RESOLVED studio, and no studio ever comes from the form.
-    // The practitioner is still never sent — the command derives it from the
+    // The practitioner is still never sent, the command derives it from the
     // named studio's own membership row.
     const params = SOURCE.slice(
       SOURCE.indexOf('rpc("start_session"'),
@@ -173,7 +173,7 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // additionally guarded by .is("appointment_id", null) so the
     // promotion is atomic with respect to a concurrent write.
     // L18 Phase 3: the promotion moved INSIDE start_session, where it is
-    // genuinely atomic — the coalesce lookup is taken FOR UPDATE, so the old
+    // genuinely atomic, the coalesce lookup is taken FOR UPDATE, so the old
     // read-then-write window (two clicks could both miss and duplicate the
     // session) is closed rather than merely guarded.
     const MIGRATION = readFileSync(

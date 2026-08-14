@@ -4,22 +4,22 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// B8 / 0177 — DEPLOYMENT SKEW, STATE C: new database, OLD application.
+// B8 / 0177: DEPLOYMENT SKEW, STATE C: new database, OLD application.
 //
 // If 0177 is applied before the new application deploys, the still-running old
 // code performs its direct postcare claim UPDATE. That write now hits a revoked
 // privilege. The state is safe only if the denial happens BEFORE the provider
-// call — otherwise an email would go out that the database could never record.
+// call, otherwise an email would go out that the database could never record.
 //
 // Two independent facts are required, and this file owns the second:
 //
-//   C1 — the DB denies it. Proved behaviourally by T34/T35 in
+//   C1, the DB denies it. Proved behaviourally by T34/T35 in
 //        tests/db/postcare-write-boundary.db.test.ts: service_role UPDATE of
 //        each former postcare column, and a combined update, both raise 42501.
 //
-//   C2 — HERE. The old code reached that UPDATE before it reached the provider.
+//   C2, HERE. The old code reached that UPDATE before it reached the provider.
 //
-// C2 reads the EXACT production base, never the working tree — the working
+// C2 reads the EXACT production base, never the working tree, the working
 // tree no longer contains the old implementation, and copying it back into
 // runtime source just to test it would reintroduce the forbidden direct-DML the
 // census guards. The base is carried as a hash-pinned fixture (see below) so
@@ -37,7 +37,7 @@ const REPO_ROOT = join(__dirname, "..", "..", "..");
 //
 // So the two old files are committed verbatim under tests/fixtures/, pinned by
 // sha256. The ordering assertions read the fixture and therefore run
-// everywhere. When git history IS available — locally, or any full clone — an
+// everywhere. When git history IS available, locally, or any full clone, an
 // extra assertion verifies the fixture is byte-identical to what the base
 // actually contains, so the fixture cannot silently drift into fiction.
 const FIXTURES: Record<string, { file: string; sha256: string }> = {
@@ -78,15 +78,15 @@ const codeOnly = (src: string) =>
     .filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l))
     .join("\n");
 
-describe("STATE C2 — the OLD application claimed before it sent", () => {
+describe("STATE C2: the OLD application claimed before it sent", () => {
   it("the frozen fixtures are byte-identical to the real base (full clone only)", () => {
     // Where history exists, prove the fixtures ARE the base. Where it does not
-    // (a shallow CI checkout), this cannot run — and the test says so out loud
+    // (a shallow CI checkout), this cannot run, and the test says so out loud
     // rather than passing silently, because a skipped verification that looks
     // like a pass is exactly the failure mode this suite guards against.
     if (!baseAvailable()) {
       // Shallow checkout (GitHub's pull_request ref is fetched at depth 1), or
-      // a repository archive. The provenance COMPARISON cannot run — but this
+      // a repository archive. The provenance COMPARISON cannot run, but this
       // does not degrade into a silent pass: every showAtBase() read verifies
       // the fixture's sha256, so tampering still fails loudly, and the ordering
       // proof below is owned entirely by the fixture.

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Google Calendar — Phase A, migration 0121 (connection foundation). Static SQL
+// Google Calendar: Phase A, migration 0121 (connection foundation). Static SQL
 // pins: additive + dormant, default-OFF flags, same-studio composite FKs, the
 // one-connection / one-owner uniques, and the browser-inaccessible secret table.
 
@@ -11,7 +11,7 @@ const SQL = readFileSync(
   "utf8",
 );
 
-describe("0121 — studio feature flags (all default OFF)", () => {
+describe("0121: studio feature flags (all default OFF)", () => {
   it("adds the four Google Calendar flags, all NOT NULL DEFAULT false", () => {
     for (const flag of [
       "google_calendar_connection_enabled",
@@ -32,7 +32,7 @@ describe("0121 — studio feature flags (all default OFF)", () => {
   });
 });
 
-describe("0121 — calendar_connections", () => {
+describe("0121: calendar_connections", () => {
   it("is created with the required non-secret columns incl. is_studio_calendar_owner", () => {
     expect(SQL).toMatch(/create table if not exists public\.calendar_connections/);
     for (const col of [
@@ -90,7 +90,7 @@ describe("0121 — calendar_connections", () => {
   });
 });
 
-describe("0121 — calendar_connection_secrets (browser-inaccessible ciphertext)", () => {
+describe("0121: calendar_connection_secrets (browser-inaccessible ciphertext)", () => {
   it("holds the encrypted refresh token + key version, and NOT token expiry", () => {
     expect(SQL).toMatch(/create table if not exists public\.calendar_connection_secrets/);
     expect(SQL).toMatch(/encrypted_refresh_token\s+text/);
@@ -119,7 +119,7 @@ describe("0121 — calendar_connection_secrets (browser-inaccessible ciphertext)
   });
 });
 
-describe("0121 — no event-sync tables (Phase A scope)", () => {
+describe("0121: no event-sync tables (Phase A scope)", () => {
   it("does NOT create any later-phase sync tables", () => {
     for (const table of [
       "calendar_event_links",

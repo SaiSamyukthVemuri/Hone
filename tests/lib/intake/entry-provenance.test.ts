@@ -46,7 +46,7 @@ describe("the reserved key can never become a questionnaire answer", () => {
     expect(KEY).not.toBe(ELECTROLYSIS_ACKNOWLEDGEMENT.questionKey);
   });
 
-  it("is dropped by the PUBLIC sanitizer — the client cannot author it", () => {
+  it("is dropped by the PUBLIC sanitizer, the client cannot author it", () => {
     const forged = {
       legal_name: "Dana",
       [KEY]: {
@@ -63,7 +63,7 @@ describe("the reserved key can never become a questionnaire answer", () => {
     expect(out.legal_name).toBe("Dana");
   });
 
-  it("is dropped by the ASSISTED sanitizer too — it is never client input", () => {
+  it("is dropped by the ASSISTED sanitizer too, it is never client input", () => {
     const out = sanitizePractitionerAssistedAnswers({
       legal_name: "Dana",
       [KEY]: { mode: "practitioner_assisted" },
@@ -193,8 +193,8 @@ describe("recordAssistedEntry", () => {
   });
 
   it("cannot be told who started by the value it is given", () => {
-    // A forged existing value whose started_by is well-formed IS honoured —
-    // that is the point of preserving it — but it can only ever come from the
+    // A forged existing value whose started_by is well-formed IS honoured,
+    // that is the point of preserving it, but it can only ever come from the
     // stored row, never from request input (proved in the action tests). What
     // must NOT happen is a malformed claim silently becoming attribution.
     const malformed = { mode: "practitioner_assisted", started_by: "prac-evil" };
@@ -340,7 +340,7 @@ describe("review copy stays truthful", () => {
   //
   // The previous version of this test grepped three phrases
   // (/verified identity|proves|confirmed identity/i) that none of the
-  // constants would ever plausibly contain — it was named for the PR's most
+  // constants would ever plausibly contain, it was named for the PR's most
   // load-bearing truthfulness property and asserted nothing about it. Adversarial
   // review caught that. This one is written as a predicate plus a TWO-WAY
   // self-test, so the guard is proven to bite before it is trusted.
@@ -425,7 +425,7 @@ describe("regressions found by adversarial review", () => {
   it("a display_name longer than the parser accepts is bounded on WRITE", () => {
     // Previously the write stored the actor verbatim while the read rejected
     // any field over the cap, so an oversize name produced a record this
-    // module's own parser refused — attribution vanished as "unreadable".
+    // module's own parser refused, attribution vanished as "unreadable".
     const long = { practitioner_id: "prac-a", display_name: "N".repeat(5000) };
     const rec = recordAssistedEntry(undefined, long, T1);
     const view = readAssistedEntry({ [KEY]: rec });
@@ -455,7 +455,7 @@ describe("regressions found by adversarial review", () => {
   });
 
   it("handoff_by is carried into the view so it can be rendered", () => {
-    // It was stored and projected but never displayed — the one actor fact the
+    // It was stored and projected but never displayed, the one actor fact the
     // record genuinely holds was the one omitted.
     const started = recordAssistedEntry(undefined, A, T1);
     const handed = recordAssistedHandoff(started, B, T2)!;

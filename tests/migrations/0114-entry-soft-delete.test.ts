@@ -10,7 +10,7 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0114_entry_soft_delete.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0114 — number", () => {
+describe("0114: number", () => {
   it("0114 exists; the repo-max tripwire now lives in the 0115 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
@@ -24,7 +24,7 @@ describe("0114 — number", () => {
   });
 });
 
-describe("0114 — entry soft-delete columns", () => {
+describe("0114: entry soft-delete columns", () => {
   it("adds deleted_at/deleted_by/delete_reason to BOTH pass tables", () => {
     for (const tbl of ["electrolysis_entries", "laser_entries"]) {
       const chunk = SQL.slice(SQL.indexOf(`alter table public.${tbl}`));

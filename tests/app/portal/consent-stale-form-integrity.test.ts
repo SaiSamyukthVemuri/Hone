@@ -8,7 +8,7 @@ import { buildConsentTemplateSnapshot } from "@/lib/consent/template-snapshot";
 // that exact title/body, types their name, and submits. Between render and
 // submit the studio edits the template: updateConsentTemplateAction
 // (app/(app)/settings/consent/actions.ts) rewrites title/body and bumps
-// version to N+1 while touching NEITHER `status` NOR `is_live` — so the row
+// version to N+1 while touching NEITHER `status` NOR `is_live`, so the row
 // stays active + live and the signing action's four-clause lookup still
 // resolves it. The action then snapshots the CURRENT row.
 //
@@ -156,7 +156,7 @@ function signPayload(over: Record<string, string> = {}) {
 }
 
 /** Simulates updateConsentTemplateAction: rewrites content, bumps version,
- *  and deliberately leaves status/is_live alone — which is what makes the
+ *  and deliberately leaves status/is_live alone, which is what makes the
  *  race reachable at all. */
 function studioEditsTemplate(patch: Row) {
   const row = db.consent_form_templates.find((r) => r.id === TEMPLATE_ID)!;

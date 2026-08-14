@@ -10,7 +10,7 @@ const RECURRING = read("app/(app)/settings/availability/RecurringBreaksSection.t
 const TIMED = read("app/(app)/settings/availability/TimedBlocksSection.tsx");
 const DRAWER = read("app/(app)/calendar/TimedBlockEditDrawer.tsx");
 
-describe("defect #4 — owner-facing action results never interpolate raw DB text", () => {
+describe("defect #4: owner-facing action results never interpolate raw DB text", () => {
   it("has NO `${...message}` interpolation anywhere in the actions file", () => {
     // Catches `${error.message}`, `${loadErr.message}`, `${lookupErr.message}`, …
     const matches = ACTIONS.match(/\$\{[^}]*\.message\s*\}/g) ?? [];
@@ -24,7 +24,7 @@ describe("defect #4 — owner-facing action results never interpolate raw DB tex
 
   it("routes unexpected DB errors through the bounded operational logger (action:stage:code only)", () => {
     expect(ACTIONS).toMatch(/function logAvailabilityDbError/);
-    // The marker encodes only the three safe tokens — no message, no row data.
+    // The marker encodes only the three safe tokens, no message, no row data.
     expect(ACTIONS).toMatch(
       /availability_action_db_error:\$\{action\}:\$\{stage\}:\$\{code \?\? "unknown"\}/,
     );
@@ -47,7 +47,7 @@ describe("defect #4 — owner-facing action results never interpolate raw DB tex
   });
 });
 
-describe("defect #3 — RecurringBreaksSection honours the studio 12h/24h preference", () => {
+describe("defect #3: RecurringBreaksSection honours the studio 12h/24h preference", () => {
   it("uses the shared formatClockLabel + a timeFormat prop, not a hardcoded 12h formatter", () => {
     expect(RECURRING).toMatch(/import \{[\s\S]*formatClockLabel[\s\S]*type TimeFormat[\s\S]*\}/);
     expect(RECURRING).toMatch(/timeFormat: TimeFormat;/);
@@ -56,7 +56,7 @@ describe("defect #3 — RecurringBreaksSection honours the studio 12h/24h prefer
   });
 });
 
-describe("item #5 — conflict messages honour the studio TimeFormat (no hardcoded hour12)", () => {
+describe("item #5: conflict messages honour the studio TimeFormat (no hardcoded hour12)", () => {
   it("formatTimeInTz delegates to the shared formatTimeForStudio with a TimeFormat", () => {
     expect(ACTIONS).toMatch(/function formatTimeInTz\(iso: string, tz: string, format: TimeFormat\)/);
     expect(ACTIONS).toMatch(/return formatTimeForStudio\(new Date\(iso\), tz, format\)/);
@@ -68,7 +68,7 @@ describe("item #5 — conflict messages honour the studio TimeFormat (no hardcod
   });
 });
 
-describe("item #4 — all-day timed blocks are fully editable (not delete+recreate)", () => {
+describe("item #4: all-day timed blocks are fully editable (not delete+recreate)", () => {
   it("updateTimedBlockAction has an all-day branch (buildAllDayBlockUtcRange used on create AND update)", () => {
     expect(ACTIONS).toMatch(/const allDay = trimmed\(formData\.get\("all_day"\)\)/);
     // buildAllDayBlockUtcRange is referenced by BOTH create and update actions.
@@ -84,7 +84,7 @@ describe("item #4 — all-day timed blocks are fully editable (not delete+recrea
   });
 });
 
-describe("item #3 — the submit button is disabled while pending (prevents duplicate creation)", () => {
+describe("item #3: the submit button is disabled while pending (prevents duplicate creation)", () => {
   it("both section submit buttons bind disabled={pending} and drive a single in-flight transition", () => {
     for (const src of [TIMED, RECURRING]) {
       expect(src).toMatch(/disabled=\{pending\}/);

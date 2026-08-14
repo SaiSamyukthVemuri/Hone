@@ -100,7 +100,7 @@ describe("5. whole-session copy is TEMPORARILY CONTAINED (zero writes)", () => {
     expect(action).not.toContain("previousSessionId)"); // never dereferenced
   });
 
-  it("the control is a NON-INTERACTIVE notice — it never calls the action", () => {
+  it("the control is a NON-INTERACTIVE notice, it never calls the action", () => {
     expect(COPY_BUTTON).not.toContain("copyPreviousSessionAreasAction");
     expect(COPY_BUTTON).not.toContain('"use client"');
     expect(COPY_BUTTON).not.toContain("onClick");

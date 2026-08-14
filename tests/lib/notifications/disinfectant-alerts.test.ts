@@ -15,7 +15,7 @@ const rec = (over: Partial<{ id: string; disinfectant_name: string | null; disca
 
 const TODAY = "2026-07-13";
 
-describe("computeOverdueDisinfectantAlerts — eligibility", () => {
+describe("computeOverdueDisinfectantAlerts: eligibility", () => {
   it("emits nothing for a future (scheduled) due date", () => {
     expect(
       computeOverdueDisinfectantAlerts([rec({ discard_due_date: "2026-08-01" })], TODAY),
@@ -59,7 +59,7 @@ describe("computeOverdueDisinfectantAlerts — eligibility", () => {
   });
 });
 
-describe("computeOverdueDisinfectantAlerts — timezone boundary", () => {
+describe("computeOverdueDisinfectantAlerts: timezone boundary", () => {
   it("a due date equal to a LATER local today is overdue; equal to today is not", () => {
     const record = rec({ discard_due_date: "2026-07-13" });
     // Studio still on 2026-07-13 → due today → not overdue.
@@ -71,7 +71,7 @@ describe("computeOverdueDisinfectantAlerts — timezone boundary", () => {
   });
 });
 
-describe("computeOverdueDisinfectantAlerts — identity / severity / action / privacy", () => {
+describe("computeOverdueDisinfectantAlerts: identity / severity / action / privacy", () => {
   it("uses a stable dedup identity derived from the record id", () => {
     const a = computeOverdueDisinfectantAlerts([rec({ id: "abc", discard_due_date: "2026-07-01" })], TODAY);
     const b = computeOverdueDisinfectantAlerts([rec({ id: "abc", discard_due_date: "2026-07-01" })], TODAY);
@@ -86,7 +86,7 @@ describe("computeOverdueDisinfectantAlerts — identity / severity / action / pr
     expect(alert.title).toBe("Replace disinfectant now");
     expect(alert.body).toBe("A disinfectant record is overdue for replacement.");
   });
-  it("carries only non-sensitive operational context — no client/PHI/db-id in title or body", () => {
+  it("carries only non-sensitive operational context, no client/PHI/db-id in title or body", () => {
     const [alert] = computeOverdueDisinfectantAlerts(
       [rec({ id: "rec-secret-uuid", disinfectant_name: "Cavicide", discard_due_date: "2026-07-01" })],
       TODAY,
@@ -106,7 +106,7 @@ describe("computeOverdueDisinfectantAlerts — identity / severity / action / pr
   });
 });
 
-describe("computeOverdueDisinfectantAlerts — multiple + ordering", () => {
+describe("computeOverdueDisinfectantAlerts: multiple + ordering", () => {
   it("emits one alert per overdue record, most-overdue first, deterministic tiebreak", () => {
     const alerts = computeOverdueDisinfectantAlerts(
       [

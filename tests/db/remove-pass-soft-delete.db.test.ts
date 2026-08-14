@@ -10,7 +10,7 @@ import {
 import { randomUUID } from "node:crypto";
 
 // ===========================================================================
-// "Remove pass" after the L18 FINAL revocation (migration 0169) — behavioural.
+// "Remove pass" after the L18 FINAL revocation (migration 0169), behavioural.
 // ===========================================================================
 //
 // 0169 revoked INSERT/UPDATE/DELETE from `authenticated` on electrolysis_entries
@@ -25,7 +25,7 @@ import { randomUUID } from "node:crypto";
 // database rather than by reading the source: the exact production statement is
 // executed here, and every isolation property is asserted against real rows.
 //
-// THE STATEMENT UNDER TEST — byte-for-byte the predicate the action issues
+// THE STATEMENT UNDER TEST, byte-for-byte the predicate the action issues
 // (`.eq("id").eq("session_id").is("deleted_at", null).select("id")`):
 const SOFT_DELETE = (table: "electrolysis_entries" | "laser_entries") => `
   update public.${table}
@@ -167,7 +167,7 @@ describe("the service-role soft-delete affects exactly the selected pass", () =>
     });
   });
 
-  it("is a SOFT delete — the clinical row survives and is never hard-deleted", async () => {
+  it("is a SOFT delete: the clinical row survives and is never hard-deleted", async () => {
     const target = await seedElectrolysisEntry(sessionA, "lip");
     await asRole("service_role", async (q) => {
       await q(SOFT_DELETE("electrolysis_entries"), [
@@ -206,7 +206,7 @@ describe("the service-role soft-delete affects exactly the selected pass", () =>
   });
 });
 
-describe("lineage isolation — the filter is the whole tenant boundary", () => {
+describe("lineage isolation: the filter is the whole tenant boundary", () => {
   it("cannot remove an entry through an UNRELATED session id", async () => {
     const target = await seedElectrolysisEntry(sessionA, "chin");
     const unrelated = randomUUID();
@@ -222,7 +222,7 @@ describe("lineage isolation — the filter is the whole tenant boundary", () => 
   });
 
   it("cannot remove ANOTHER STUDIO's entry using this studio's session id", async () => {
-    // studio B's pass, addressed with studio A's session — the shape a forged
+    // studio B's pass, addressed with studio A's session, the shape a forged
     // entry id would take once the actor has passed A's own lineage check.
     const foreign = await seedElectrolysisEntry(sessionB, "chin");
     await asRole("service_role", async (q) => {

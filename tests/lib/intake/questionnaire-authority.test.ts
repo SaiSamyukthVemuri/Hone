@@ -27,8 +27,8 @@ import {
 // verbatim from production commit 88d9949 (PR #518 merge). They are the
 // reference oracle: every assertion in this file compares the shared exports
 // against them over the real INTAKE_STEPS catalogue and a broad set of
-// response maps. If anyone edits the shared predicate — or reintroduces a
-// private fork that drifts — these go red.
+// response maps. If anyone edits the shared predicate, or reintroduces a
+// private fork that drifts, these go red.
 
 // --- ORIGINAL: IntakeWizard.tsx isVisible (88d9949, lines 250-259) ----------
 const EMAIL_RE_ORIGINAL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -274,7 +274,7 @@ describe("the practitioner-enterable / client-owned step split", () => {
 
   it("no practitioner-enterable step contains a checkbox", () => {
     // If one ever does, it becomes client-owned automatically (proved in
-    // entry-provenance.test.ts) — this asserts today's shape so the change
+    // entry-provenance.test.ts), this asserts today's shape so the change
     // is noticed rather than silently reducing what a practitioner can enter.
     for (const s of PRACTITIONER_ENTERABLE_STEPS) {
       for (const q of s.questions) {

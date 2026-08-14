@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildEventMarker } from "@/lib/google-calendar/sync/event-id";
 import { buildAppointmentEventPayload } from "@/lib/google-calendar/sync/serializer";
 
-// Phase B2.3-c1 — the fixed, minimal appointment serializer (frozen v1 allow-list).
+// Phase B2.3-c1: the fixed, minimal appointment serializer (frozen v1 allow-list).
 
 const LINK = "11111111-2222-3333-4444-555555555555";
 const BASE = {

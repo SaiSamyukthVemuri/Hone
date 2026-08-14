@@ -12,7 +12,7 @@ import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 2 — flag-ON owner schedule-management contract on a synthetic
+// PR B Part 2: flag-ON owner schedule-management contract on a synthetic
 // three-practitioner studio (owner + 2 members). Exercises the REAL scope
 // selector + per-practitioner customize/reset actions through the browser, and
 // asserts both browser-visible state AND the scoped DB rows.
@@ -75,7 +75,7 @@ test("owner customizes and resets a practitioner weekday; other practitioners st
     page.getByRole("listitem").filter({ hasText: "Monday" }).getByText("Custom hours"),
   ).toBeVisible();
 
-  // Member B is untouched — still inherits, and has NO scoped row.
+  // Member B is untouched: still inherits, and has NO scoped row.
   await page.goto(`/settings/availability?practitioner=${memberB.practitionerId}`);
   await expect(
     page.getByRole("listitem").filter({ hasText: "Monday" }).getByText("Using studio default"),
@@ -108,7 +108,7 @@ test("a tampered / unknown practitioner id falls back to Studio default scope", 
     "aria-current",
     "page",
   );
-  // The per-practitioner editor is NOT rendered — its full-week control (unique
+  // The per-practitioner editor is NOT rendered, its full-week control (unique
   // to PractitionerWeekEditor) is absent in the studio-scope fallback.
   await expect(
     page.getByRole("button", { name: "Customize full week from studio default" }),

@@ -12,7 +12,7 @@ import type { BlockArea } from "@/lib/sessions/block-areas";
 //
 // THE DEFECT THIS PINS. The multi-area settings-block editor treated every
 // AreaPicker onChange as a committed area, and the picker's free-text input
-// fired onChange on every keystroke — so typing "Glabella" appended EIGHT selected
+// fired onChange on every keystroke, so typing "Glabella" appended EIGHT selected
 // rows ("G", "Gl", "Gla", "Glab", "Glabe", "Glabel", "Glabell", "Glabella") and all eight were persisted
 // as session_block_areas rows. These tests pin the pure half of the fix: a
 // keystroke is never a commit, and one commit adds at most one row.
@@ -85,7 +85,7 @@ describe("areaAlreadySelected", () => {
   });
 });
 
-describe("commitAreaToSet — one submission adds exactly one row", () => {
+describe("commitAreaToSet: one submission adds exactly one row", () => {
   it("appends exactly one row with the default N/A laterality", () => {
     const result = commitAreaToSet([], "Glabella");
     expect(result.status).toBe("added");
@@ -100,7 +100,7 @@ describe("commitAreaToSet — one submission adds exactly one row", () => {
   it("REGRESSION: no keystroke prefix of a typed area can ever be committed blank-first", () => {
     // The defect signature: committing each prefix of "Glabella" in turn used to
     // leave one row per keystroke. The commit rule itself is now the only way in, and each
-    // prefix is a distinct area — which is exactly why the COMPONENT must never
+    // prefix is a distinct area, which is exactly why the COMPONENT must never
     // call it per keystroke. This test documents the arithmetic that made the
     // defect visible in production.
     const prefixes = ["G", "Gl", "Gla", "Glab", "Glabe", "Glabel", "Glabell", "Glabella"];

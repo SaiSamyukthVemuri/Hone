@@ -39,7 +39,7 @@ describe("regression: the reported chips are canonical + round-trip", () => {
   });
 });
 
-describe("resolveDisplayChips — structured rows", () => {
+describe("resolveDisplayChips: structured rows", () => {
   it("shows the structured chips and keeps the full comment as the note", () => {
     const r = resolveDisplayChips([A, B], "tender near jaw");
     expect(r.chips).toEqual([A, B]);
@@ -47,7 +47,7 @@ describe("resolveDisplayChips — structured rows", () => {
   });
 });
 
-describe("resolveDisplayChips — LEGACY rows (chips stored in comments)", () => {
+describe("resolveDisplayChips: LEGACY rows (chips stored in comments)", () => {
   it("hydrates chips from a comma-joined legacy comment; note = chip-stripped free-text", () => {
     const r = resolveDisplayChips([], `${A}, ${B}, ${C}`);
     expect(r.chips).toEqual([A, B, C]);
@@ -81,7 +81,7 @@ describe("resolveDisplayChips — LEGACY rows (chips stored in comments)", () =>
   });
 });
 
-// Gate 5 — mixed legacy + structured data behaviour (the six required row shapes).
+// Gate 5: mixed legacy + structured data behaviour (the six required row shapes).
 describe("mixed legacy/structured rows", () => {
   it("(1) legacy chip tokens ONLY → chips render, empty note", () => {
     expect(resolveDisplayChips([], `${A}, ${B}`)).toEqual({ chips: [A, B], note: "" });
@@ -98,7 +98,7 @@ describe("mixed legacy/structured rows", () => {
   it("(4) structured chips PLUS historical comments → structured takes precedence; comment stays the note; NO double-display", () => {
     // The comment even mentions a chip word; it is NOT re-extracted (structured wins).
     const r = resolveDisplayChips([A], `${B} noted earlier, follow up`);
-    expect(r.chips).toEqual([A]); // only the structured chip — B is not double-added
+    expect(r.chips).toEqual([A]); // only the structured chip, B is not double-added
     expect(r.note).toBe(`${B} noted earlier, follow up`); // comment shown as-is
   });
   it("(5) RENAMED/variant legacy value uses an explicit alias (not dropped)", () => {
@@ -107,7 +107,7 @@ describe("mixed legacy/structured rows", () => {
     expect(resolveDisplayChips([], "hyper pigmentation").chips).toEqual(["Hyperpigmentation"]);
     expect(normalizeChips(["hyper-pigmentation"])).toEqual(["Hyperpigmentation"]);
   });
-  it("(6) UNKNOWN historical value is never discarded — it stays visible as a note", () => {
+  it("(6) UNKNOWN historical value is never discarded, it stays visible as a note", () => {
     const r = resolveDisplayChips([], `${A}, some bespoke observation the studio typed`);
     expect(r.chips).toEqual([A]);
     expect(r.note).toBe("some bespoke observation the studio typed"); // preserved, not dropped
@@ -126,7 +126,7 @@ describe("mixed legacy/structured rows", () => {
   });
   it("(9) HYPHENATION/punctuation variant resolves via the explicit alias only", () => {
     expect(resolveDisplayChips([], "hyper-pigmentation").chips).toEqual(["Hyperpigmentation"]);
-    // A punctuation variant with NO alias is NOT guessed — it stays as a note.
+    // A punctuation variant with NO alias is NOT guessed, it stays as a note.
     expect(resolveDisplayChips([], "coarse-hair").chips).toEqual([]);
     expect(resolveDisplayChips([], "coarse-hair").note).toBe("coarse-hair");
   });
@@ -155,7 +155,7 @@ describe("mixed legacy/structured rows", () => {
   });
 });
 
-// Gate 4 — STRICT persisted-row verification. Unlike a normalize-both-sides
+// Gate 4: STRICT persisted-row verification. Unlike a normalize-both-sides
 // equality, this inspects the RAW stored array and must NOT let a database
 // duplicate / non-canonical / non-array value pass as a verified success.
 describe("verifyStoredChips (strict read-back contract)", () => {

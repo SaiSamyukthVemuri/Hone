@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Finding 3 — the completion path must NEVER surface a raw Supabase/Postgres
+// Finding 3: the completion path must NEVER surface a raw Supabase/Postgres
 // error.message (which can carry studio names, ids, or DB internals). It returns
 // fixed owner-facing codes and logs only a bounded marker.
 
@@ -46,7 +46,7 @@ describe("completion/celebration never leak raw DB error text", () => {
   it("the bounded marker is onboarding_action_db_error:<op>:<safe_code>, no leaky interpolation", () => {
     const marker = block(STATE, /function logOnboardingDbError[\s\S]*?\n\}/);
     expect(marker).toMatch(/onboarding_action_db_error:\$\{op\}:\$\{code\}/);
-    // The only interpolations are the safe op + code — nothing DB/PII-shaped.
+    // The only interpolations are the safe op + code, nothing DB/PII-shaped.
     expect(marker).not.toMatch(/\$\{\s*(error|studio|user|data)/i);
     expect(marker).not.toMatch(/\.message/);
   });

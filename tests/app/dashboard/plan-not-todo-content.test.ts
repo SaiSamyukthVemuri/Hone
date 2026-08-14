@@ -13,7 +13,7 @@ import { buildTodayWorkflow, type TodayWorkflowInput } from "@/lib/dashboard/tod
 
 // DASH-TRUTH-01 / P2. THE PRODUCT LAW, stated once and proved end to end:
 //
-//   A plan for the next visit is NOT To-do content — not as inclusion, not as
+//   A plan for the next visit is NOT To-do content, not as inclusion, not as
 //   ranking, not as a reason, not as detail, not as preview.
 //
 // It remains valid clinical memory everywhere else, so the last test proves we
@@ -74,7 +74,7 @@ const NO_STUDIO: BuildDashboardTodoInput["studio"] = {
 
 // The To-do model takes the attention output; every other domain is empty so
 // the only rows under test are treatment-memory ones. Built from the REAL
-// input type — an `as unknown as` cast here would let a wrong fixture compile
+// input type, an `as unknown as` cast here would let a wrong fixture compile
 // and prove nothing.
 function todoFor(
   sessions: AttentionSessionInput[],
@@ -130,7 +130,7 @@ describe("plan for next visit never becomes To-do content", () => {
     expect(attention.totalClients).toBe(1);
     const row = todo.items.find((i) => i.subject.id === "c1")!;
     expect(row).toBeDefined();
-    // the reaction context survives — we removed the plan, not the signal
+    // the reaction context survives: we removed the plan, not the signal
     expect(`${row.reason} ${row.detail ?? ""}`).toMatch(/Swelling/i);
     expect(row.reason).not.toContain(SENTINEL);
     expect(row.detail ?? "").not.toContain(SENTINEL);
@@ -156,7 +156,7 @@ describe("plan for next visit never becomes To-do content", () => {
     expect(JSON.stringify(row)).not.toContain(SENTINEL);
   });
 
-  it("P5 the SAME plan still reaches Today → Remember — this is a To-do change, not a deletion", () => {
+  it("P5 the SAME plan still reaches Today → Remember, this is a To-do change, not a deletion", () => {
     // Proves the field itself is intact. If this ever goes red at the same
     // time as P1–P4 go green, we deleted clinical memory instead of relocating
     // a presentation decision.
@@ -180,7 +180,7 @@ describe("plan for next visit never becomes To-do content", () => {
     expect(workflow.items[0].remember).toBe(SENTINEL);
   });
 
-  it("the To-do path cannot reach plan TEXT at all — the field is not carried", () => {
+  it("the To-do path cannot reach plan TEXT at all, the field is not carried", () => {
     // Structural, not a promise: the attention row has no plan-text field, so
     // no future edit to presentation can re-leak it. `hasPlan` (whether one
     // exists) is retained as context and is a boolean, never the note.

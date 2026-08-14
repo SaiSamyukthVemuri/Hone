@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// 0171 — structural contract for the public reschedule command.
+// 0171, structural contract for the public reschedule command.
 // ===========================================================================
 //
 // Behavioural proof lives in tests/db/public-reschedule-*.db.test.ts. This file
@@ -37,13 +37,13 @@ const SIGS: Record<string, string> = {
 };
 
 // 0172 superseded 0171 as the repository maximum. Per CLAUDE.md §2, ONLY the
-// current maximum migration's own test may assert isRepoMax — an older
+// current maximum migration's own test may assert isRepoMax, an older
 // per-migration test that keeps the pin turns every subsequent migration into a
 // mechanical sweep, which is exactly how 0163/0164/0165 each went red after
 // push. The "nothing above me" tripwire is served centrally by the current
 // maximum's test (tests/migrations/0172-appointment-dml-revocation.test.ts).
 
-describe("0171 — declares exactly the three intended functions", () => {
+describe("0171: declares exactly the three intended functions", () => {
   it("creates only the reschedule candidate helper, validator and command", () => {
     const declared = [...SQL.matchAll(/create or replace function public\.(\w+)\(/g)].map(
       (m) => m[1],
@@ -56,7 +56,7 @@ describe("0171 — declares exactly the three intended functions", () => {
   });
 });
 
-describe("0171 — transaction and lock discipline", () => {
+describe("0171: transaction and lock discipline", () => {
   it("opens its own transaction (db push does not wrap the file)", () => {
     expect(SQL).toMatch(/^begin;$/m);
     expect(SQL).toMatch(/^commit;$/m);
@@ -85,7 +85,7 @@ describe("0171 — transaction and lock discipline", () => {
   });
 });
 
-describe("0171 — function security", () => {
+describe("0171: function security", () => {
   it.each(FUNCTIONS)("%s is SECURITY DEFINER with search_path = ''", (fn) => {
     const start = SQL.indexOf(`create or replace function public.${fn}(`);
     expect(start).toBeGreaterThan(-1);
@@ -125,7 +125,7 @@ describe("0171 — function security", () => {
   });
 });
 
-describe("0171 — additive only", () => {
+describe("0171: additive only", () => {
   it("revokes no table DML", () => {
     expect(SQL).not.toMatch(/revoke\s+(insert|update|delete|truncate|all)\b/i);
     expect(SQL).not.toMatch(/revoke[^;]*\bon table\b/i);
@@ -148,7 +148,7 @@ describe("0171 — additive only", () => {
   });
 });
 
-describe("0171 — deployment skew safety", () => {
+describe("0171: deployment skew safety", () => {
   it("does NOT drop the legacy reschedule_appointment", () => {
     expect(SQL).not.toMatch(/drop\s+function[^;]*reschedule_appointment\b/i);
   });
@@ -170,7 +170,7 @@ describe("0171 — deployment skew safety", () => {
   });
 });
 
-describe("0171 — must not disturb existing trigger functions", () => {
+describe("0171: must not disturb existing trigger functions", () => {
   // Production's snapshot_appointment_buffer carries an out-of-band GUC bypass
   // (`app.bypass_appointment_buffer_snapshot`) that is ABSENT from this
   // repository and from a locally-reset database. Any migration that
@@ -190,7 +190,7 @@ describe("0171 — must not disturb existing trigger functions", () => {
   });
 });
 
-describe("0171 — reuses the reviewed 0170 primitives", () => {
+describe("0171: reuses the reviewed 0170 primitives", () => {
   it("calls public_booking_local_to_utc rather than adding a third DST port", () => {
     expect(SQL).toContain("public.public_booking_local_to_utc(");
     expect(SQL).not.toContain(
@@ -214,7 +214,7 @@ describe("0171 — reuses the reviewed 0170 primitives", () => {
   });
 });
 
-describe("0171 — extension qualification", () => {
+describe("0171: extension qualification", () => {
   it("schema-qualifies pgcrypto and uuid generation", () => {
     expect(SQL).toContain("extensions.digest(");
     expect(SQL).toContain("extensions.gen_random_uuid()");
@@ -226,7 +226,7 @@ describe("0171 — extension qualification", () => {
   });
 });
 
-describe("0171 — the command's authority contract", () => {
+describe("0171: the command's authority contract", () => {
   it("accepts no end time, duration, status, studio, client, service or practitioner", () => {
     const start = SQL.indexOf("create or replace function public.reschedule_appointment_v2(");
     const sigEnd = SQL.indexOf(")", SQL.indexOf("p_presented_policy_snapshot_hash"));

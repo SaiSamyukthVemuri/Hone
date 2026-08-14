@@ -10,9 +10,9 @@ import { loginAsOwner } from "./helpers/flows";
 
 // Chloe: "Today and the Daily Prep Brief are redundant."
 //
-// THE DEFECT. Every appointment rendered TWICE on one screen — once
+// THE DEFECT. Every appointment rendered TWICE on one screen, once
 // chronologically in Today, again in the priority-sorted Daily Prep Brief a few
-// hundred pixels lower — and the two disagreed about the same facts. The worst
+// hundred pixels lower, and the two disagreed about the same facts. The worst
 // case was the note: `compactBeforeToday` collapses a briefing into
 // `rememberLine = watchLines[0] ?? plan`, so the Today card printed the CAUTION
 // under "Remember:", and the brief printed that same text again under
@@ -90,8 +90,8 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
         ).trim();
         expect(name.length).toBeGreaterThan(0);
         // ...and the client is named once WITHIN that workflow. (Other
-        // dashboard sections — Needs Attention, Follow-up Assistant, birthdays
-        // — legitimately name clients for their own purposes; the redundancy
+        // dashboard sections, Needs Attention, Follow-up Assistant, birthdays,
+        // legitimately name clients for their own purposes; the redundancy
         // Chloe reported was a second APPOINTMENT list, which is gone.)
         await expect(section.getByText(name, { exact: true })).toHaveCount(1);
       });
@@ -247,8 +247,8 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
     // -----------------------------------------------------------------------
     // Review intake from Today.
     //
-    // THE DEFECT. Today already KNEW the intake state — it renders the "Intake
-    // awaiting review" pill — but stated it as inert text. Preparing for an
+    // THE DEFECT. Today already KNEW the intake state, it renders the "Intake
+    // awaiting review" pill, but stated it as inert text. Preparing for an
     // appointment therefore meant leaving the working screen entirely:
     //
     //   Today -> client profile -> Health & Forms -> intake -> review
@@ -286,7 +286,7 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       await test.step("the appointment card offers Review intake, once", async () => {
         await expect(cta).toHaveCount(1);
         await expect(cta).toHaveText("Review intake");
-        // The canonical AUTHENTICATED practitioner route — never the client's
+        // The canonical AUTHENTICATED practitioner route, never the client's
         // /intake/<token> bearer page.
         await expect(cta).toHaveAttribute("href", `/clients/${clientId}/intake`);
         // Truthful state, stated once beside it.
@@ -314,7 +314,7 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
         expect(await detail.count()).toBeGreaterThan(0);
         await expect(detail.first()).toBeVisible();
         await expect(page.getByText(/^Submitted /).first()).toBeVisible();
-        // The existing review surface is intact — its review control is here.
+        // The existing review surface is intact, its review control is here.
         await expect(page.getByRole("heading", { name: "Allergies summary" })).toBeVisible();
         await expectNoHorizontalScroll(page);
       });

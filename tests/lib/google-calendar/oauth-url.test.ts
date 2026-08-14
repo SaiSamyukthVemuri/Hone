@@ -30,7 +30,7 @@ afterEach(() => {
   process.env.NEXT_PUBLIC_APP_ORIGIN = saved.origin;
 });
 
-describe("Phase A scopes — least privilege", () => {
+describe("Phase A scopes: least privilege", () => {
   it("requests ONLY identity + calendar-list discovery (NO event read/write)", () => {
     expect(REQUESTED_SCOPES).toEqual(PHASE_A_SCOPES);
     expect(PHASE_A_SCOPES).toContain("openid");
@@ -117,7 +117,7 @@ describe("PKCE + hashing", () => {
   });
 });
 
-describe("safeReturnPath — open-redirect guard", () => {
+describe("safeReturnPath: open-redirect guard", () => {
   it("allows only allow-listed internal paths, defaulting otherwise", () => {
     expect(safeReturnPath("/settings/profile")).toBe("/settings/profile");
     expect(safeReturnPath("https://evil.example.com")).toBe("/settings/profile");

@@ -7,7 +7,7 @@
 // below, every entry has purpose/why/scopeGuard, and each scopeGuard is present in
 // its file. Adding/removing a usage requires editing this list.
 //
-// This is an INVENTORY + DRIFT gate — it proves each site HAS a guard symbol, not
+// This is an INVENTORY + DRIFT gate, it proves each site HAS a guard symbol, not
 // that every query is perfectly scoped. High-risk areas still need deeper audits.
 
 export type ServiceRoleAllowlistEntry = {
@@ -34,30 +34,30 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(app)/calendar/appointment-repair-actions.ts",
     purpose:
-      "APPOINTMENT BOUNDARY B4 — governed appointment repair: revert_appointment_outcome (owner-only terminal -> confirmed) and set_appointment_notes (member notes correction).",
+      "APPOINTMENT BOUNDARY B4, governed appointment repair: revert_appointment_outcome (owner-only terminal -> confirmed) and set_appointment_notes (member notes correction).",
     // The scopeGuard is the RPC NAME rather than the generic
     // `getCurrentPractitionerWithStudio` that appears in nearly every
     // authenticated action, following the PR B1 tightening applied to
     // move-appointment-actions.ts. If this file ever stops going through the
-    // governed command — for example by reintroducing a direct appointments
-    // UPDATE — the allowlist test fails rather than silently continuing to
+    // governed command, for example by reintroducing a direct appointments
+    // UPDATE, the allowlist test fails rather than silently continuing to
     // vouch for a justification that is no longer true.
-    why: "Both actions resolve the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and pass the server-derived studio.id + practitioner.user_id; the browser never supplies a studio_id, practitioner_id, user_id or role. All writes go through revert_appointment_outcome / set_appointment_notes (service_role-only; EXECUTE revoked from public/anon/authenticated in 0173), which independently re-derive the actor's membership and role from (studio_id, user_id), scope the appointment lookup by BOTH id and studio_id, and own every lifecycle decision — terminality, the 72h audit-anchored repair window, the five blocking-dependent classes and the 23P01 slot collision. This file performs no appointment DML of its own.",
+    why: "Both actions resolve the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and pass the server-derived studio.id + practitioner.user_id; the browser never supplies a studio_id, practitioner_id, user_id or role. All writes go through revert_appointment_outcome / set_appointment_notes (service_role-only; EXECUTE revoked from public/anon/authenticated in 0173), which independently re-derive the actor's membership and role from (studio_id, user_id), scope the appointment lookup by BOTH id and studio_id, and own every lifecycle decision, terminality, the 72h audit-anchored repair window, the five blocking-dependent classes and the 23P01 slot collision. This file performs no appointment DML of its own.",
     scopeGuard: "revert_appointment_outcome",
   },
   {
     path: "app/(app)/calendar/move-appointment-actions.ts",
-    purpose: "Practitioner Move/reassign appointment — authorized available-slot lookup + the atomic move (move_or_reassign_appointment).",
+    purpose: "Practitioner Move/reassign appointment, authorized available-slot lookup + the atomic move (move_or_reassign_appointment).",
     // PR B1 CORRECTION. This entry previously named `practitioner_move_appointment`
     // (migration 0133) as the RPC the move goes through. That has been false since
     // 0143: the action calls `move_or_reassign_appointment`, whose EFFECTIVE
     // definition is 0152, and `practitioner_move_appointment` (effective 0145) is
-    // now a caller-less legacy delegate — `tests/app/calendar/move-reassign-source.test.ts`
+    // now a caller-less legacy delegate, `tests/app/calendar/move-reassign-source.test.ts`
     // positively asserts the old name is absent from this file.
     //
     // The scopeGuard is deliberately the RPC NAME rather than the generic
     // `getCurrentPractitionerWithStudio` that appears in nearly every authenticated
-    // action. That is a strict TIGHTENING, not a permission change — and it is what
+    // action. That is a strict TIGHTENING, not a permission change, and it is what
     // stops this corrected justification from going stale the same way, because the
     // companion test requires the scopeGuard string to be present in the file.
     why: "Both actions resolve the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and scope every read/RPC to studio.id + practitioner.id; the browser never supplies a studio_id/practitioner_id. The move goes only through move_or_reassign_appointment (service_role-only; EXECUTE revoked from public/anon/authenticated), which re-derives the actor's role, re-validates target-practitioner membership and the availability contract inside one transaction, and the slot lookup only excludes the appointment's OWN server-derived reservation.",
@@ -65,7 +65,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts",
-    purpose: "Whole-session 'Copy areas & settings' commit (0157) — the single writer for a reviewed batch.",
+    purpose: "Whole-session 'Copy areas & settings' commit (0157), the single writer for a reviewed batch.",
     why: "The action resolves the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and asserts session lineage before calling copy_session_setup (service_role-only, revoked from authenticated so the browser cannot call it directly); it passes the server-derived studio.id + practitioner.id (never a browser-supplied id), and the RPC independently re-checks membership + source/target invariants.",
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
@@ -89,13 +89,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "lib/google-calendar/sync/connection-store.ts",
-    purpose: "Google Calendar Phase B2.1 worker ConnectionStore — service-role reads/writes of the connection + ciphertext for the background sync worker (dormant; not activated).",
-    why: "Every read/write is re-derived by (connectionId, studioId) — the worker never trusts a job payload's ids alone — so a connection/secret can never cross studios; the ciphertext table stays browser-inaccessible.",
+    purpose: "Google Calendar Phase B2.1 worker ConnectionStore, service-role reads/writes of the connection + ciphertext for the background sync worker (dormant; not activated).",
+    why: "Every read/write is re-derived by (connectionId, studioId), the worker never trusts a job payload's ids alone, so a connection/secret can never cross studios; the ciphertext table stays browser-inaccessible.",
     scopeGuard: '.eq("studio_id", studioId)',
   },
   {
     path: "lib/google-calendar/sync/link-transition-store.ts",
-    purpose: "Google Calendar Phase B2.3-c1 worker link store — service-role reads of calendar_event_links/appointments + the transactional calendar_event_link_transition RPC (dormant; not activated, no route).",
+    purpose: "Google Calendar Phase B2.3-c1 worker link store, service-role reads of calendar_event_links/appointments + the transactional calendar_event_link_transition RPC (dormant; not activated, no route).",
     why: "Link/appointment reads are studio-scoped and the transition RPC itself re-validates studio/connection/entity binding + the claim token in one transaction; it never transitions the outbox (record_calendar_sync_result stays the sole outbox authority).",
     scopeGuard: '.eq("studio_id", studioId)',
   },
@@ -138,7 +138,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
     purpose:
-      "Remove pass — the audited soft-delete of ONE electrolysis/laser entry (0114 columns).",
+      "Remove pass, the audited soft-delete of ONE electrolysis/laser entry (0114 columns).",
     why: "Migration 0169 (L18 FINAL) left `authenticated` with SELECT only on electrolysis_entries/laser_entries, so the soft-delete UPDATE must run as service_role. Service_role bypasses RLS, so isolation is carried entirely by the code path: getCurrentPractitionerWithStudio() resolves an ACTIVE practitioner + studio server-side (never browser-supplied), assertSessionVisible(studio.id, clientId, sessionId) proves the session belongs to that studio AND the route client through the AUTHENTICATED client, and the mutation is then pinned to `.eq(\"id\")` (primary key, so at most one row) + `.eq(\"session_id\")` (the proved session; session_id is NOT NULL and FK-constrained, and neither pass table has its own studio_id/client_id) + `.is(\"deleted_at\", null)`. Exactly one changed row is required; zero is a safe failure. The table name is constrained by a two-member union type, never caller-supplied.",
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
@@ -168,7 +168,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/(app)/settings/team/actions.ts",
-    purpose: "Owner team management — practitioner deactivation via the locked set_practitioner_active_locked command (Part 4 Item 2).",
+    purpose: "Owner team management, practitioner deactivation via the locked set_practitioner_active_locked command (Part 4 Item 2).",
     why: "removePractitionerAction resolves the owner + studio server-side (assertOwner → getCurrentPractitionerWithStudio) then calls the service-role-only locked RPC with the server-derived studio + actor ids; the RPC re-validates active-owner and same-studio target.",
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
@@ -198,8 +198,8 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "lib/audit/admin-actions.ts",
-    purpose: "Admin action audit log — sole writer + reader of admin_action_events (migration 0113).",
-    why: "admin_action_events is RLS-locked to service-role (a cross-studio, append-only OPERATOR audit log — no tenant scope by design; there is no is_admin() SQL function). Called only from isAdmin-gated /admin server code; it records/reads audit rows and stores no secrets/PII (metadata is allowlisted + redacted before insert).",
+    purpose: "Admin action audit log, sole writer + reader of admin_action_events (migration 0113).",
+    why: "admin_action_events is RLS-locked to service-role (a cross-studio, append-only OPERATOR audit log, no tenant scope by design; there is no is_admin() SQL function). Called only from isAdmin-gated /admin server code; it records/reads audit rows and stores no secrets/PII (metadata is allowlisted + redacted before insert).",
     scopeGuard: "admin_action_events",
   },
   {
@@ -253,13 +253,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/(auth)/accept-invitation/actions.ts",
     purpose: "Authoritative invitation-acceptance adapter (existing-user onboarding).",
-    why: "The user is being provisioned and has no practitioner session yet; the acceptance command admin_accept_pending_invitation is service-role ONLY (browser roles revoked). The adapter validates the current-policy checkbox and resolves the user from the verified session (auth.getUser), then passes ONLY that session user id — the command self-derives the email + policy versions and accepts nothing else from the browser.",
+    why: "The user is being provisioned and has no practitioner session yet; the acceptance command admin_accept_pending_invitation is service-role ONLY (browser roles revoked). The adapter validates the current-policy checkbox and resolves the user from the verified session (auth.getUser), then passes ONLY that session user id, the command self-derives the email + policy versions and accepts nothing else from the browser.",
     scopeGuard: "auth.getUser",
   },
   {
     path: "lib/onboarding/state.ts",
     purpose: "Trusted onboarding completion + celebration adapters (wizard).",
-    why: "completed_at / celebrated_at / status='completed' / the 'done' marker are PROTECTED fields — a SECURITY INVOKER guard trigger blocks any direct browser write. Completion + celebration are therefore the service-role-ONLY commands admin_complete_onboarding / admin_mark_onboarding_celebrated (public/anon/authenticated execute revoked). The adapter passes ONLY the session user id (resolved server-side by the owner-gated action) + the studio id; each command re-verifies IN-DB that the user is an ACTIVE OWNER of that studio AND onboarding_v2 is enabled, and accepts no role/status/timestamp/step state from the browser.",
+    why: "completed_at / celebrated_at / status='completed' / the 'done' marker are PROTECTED fields, a SECURITY INVOKER guard trigger blocks any direct browser write. Completion + celebration are therefore the service-role-ONLY commands admin_complete_onboarding / admin_mark_onboarding_celebrated (public/anon/authenticated execute revoked). The adapter passes ONLY the session user id (resolved server-side by the owner-gated action) + the studio id; each command re-verifies IN-DB that the user is an ACTIVE OWNER of that studio AND onboarding_v2 is enabled, and accepts no role/status/timestamp/step state from the browser.",
     scopeGuard: "admin_complete_onboarding",
   },
   {
@@ -276,14 +276,14 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/api/cron/calendar-reconcile/route.ts",
-    purpose: "Google Calendar Phase B2.3-b reconciliation sweep (session-less; dormant — no cron registration).",
-    why: "Runs with no user session; authorized by the CRON_SECRET bearer (isAuthorizedCronRequest). Never trusts a browser-supplied id — the eligible studio set is derived server-side and every reconcile read/actuation is studio-scoped; it only orchestrates the existing repair RPCs + prunes PHI-free telemetry, never enabling the worker or any flag.",
+    purpose: "Google Calendar Phase B2.3-b reconciliation sweep (session-less; dormant, no cron registration).",
+    why: "Runs with no user session; authorized by the CRON_SECRET bearer (isAuthorizedCronRequest). Never trusts a browser-supplied id, the eligible studio set is derived server-side and every reconcile read/actuation is studio-scoped; it only orchestrates the existing repair RPCs + prunes PHI-free telemetry, never enabling the worker or any flag.",
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
     path: "lib/google-calendar/sync/worker-runtime.ts",
-    purpose: "Google Calendar Phase B2.3-c2 worker-drain runtime — the server-only seam behind /api/cron/calendar-sync (dormant; route unscheduled, worker OFF).",
-    why: "The admin client is built only after handleWorkerRoute authenticates the CRON_SECRET bearer (isAuthorizedCronRequest, before any admin client). It drives ONLY the service-role-only claim_calendar_sync_op / record_calendar_sync_result RPCs (the claim RPC self-gates on worker_enabled and re-derives every tenant id from the row — the route supplies NO caller-selected studio/connection/provider id) plus a studio-scoped google_calendar_outbound_sync_enabled read; the handler re-validates tenant + destination before any op.",
+    purpose: "Google Calendar Phase B2.3-c2 worker-drain runtime, the server-only seam behind /api/cron/calendar-sync (dormant; route unscheduled, worker OFF).",
+    why: "The admin client is built only after handleWorkerRoute authenticates the CRON_SECRET bearer (isAuthorizedCronRequest, before any admin client). It drives ONLY the service-role-only claim_calendar_sync_op / record_calendar_sync_result RPCs (the claim RPC self-gates on worker_enabled and re-derives every tenant id from the row, the route supplies NO caller-selected studio/connection/provider id) plus a studio-scoped google_calendar_outbound_sync_enabled read; the handler re-validates tenant + destination before any op.",
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
@@ -343,7 +343,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "app/portal/consent-actions.ts",
     purpose: "Client-portal consent signing (thin wrapper over the shared ceremony).",
-    why: "Constructs the service-role client and hands it to recordConsentSignature (lib/consent/sign-consent-form.ts), which owns every query. Identity is NOT client-supplied: getCurrentPortalSession() resolves (studioId, clientId) and those server-resolved values are what the core scopes its clients / consent_form_templates lookups and its client_consent_signatures INSERT to. The core is deliberately NOT on this inventory because it constructs no client of its own — the allowlist should keep naming the surfaces that resolve identity.",
+    why: "Constructs the service-role client and hands it to recordConsentSignature (lib/consent/sign-consent-form.ts), which owns every query. Identity is NOT client-supplied: getCurrentPortalSession() resolves (studioId, clientId) and those server-resolved values are what the core scopes its clients / consent_form_templates lookups and its client_consent_signatures INSERT to. The core is deliberately NOT on this inventory because it constructs no client of its own, the allowlist should keep naming the surfaces that resolve identity.",
     scopeGuard: "getCurrentPortalSession",
   },
   {
@@ -457,8 +457,8 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
     path: "lib/intake/consent-gate.ts",
     purpose:
-      "Live consent forms inside the client intake — resolve the studio's live treatment/photo templates for render, and re-resolve them at the final submit gate.",
-    why: "The public intake is token-authenticated with no Supabase session, so it cannot satisfy member RLS on consent_form_templates. READ-ONLY: this module never inserts, updates or deletes, and never touches client_consent_signatures. The studio_id is taken from the intake row the verified token addresses — never from the request — and every query filters that studio_id plus is_live/status/form_type, so a token can only ever resolve its own studio's live forms.",
+      "Live consent forms inside the client intake, resolve the studio's live treatment/photo templates for render, and re-resolve them at the final submit gate.",
+    why: "The public intake is token-authenticated with no Supabase session, so it cannot satisfy member RLS on consent_form_templates. READ-ONLY: this module never inserts, updates or deletes, and never touches client_consent_signatures. The studio_id is taken from the intake row the verified token addresses, never from the request, and every query filters that studio_id plus is_live/status/form_type, so a token can only ever resolve its own studio's live forms.",
     scopeGuard: '.eq("studio_id", studioId)',
   },
   {
@@ -505,8 +505,8 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/(app)/clients/[id]/portal-link-actions.ts",
-    purpose: "Practitioner 'Send portal link' — issue a portal magic link for a known client.",
-    why: "Authenticated practitioner action (studio resolved via getCurrentPractitionerWithStudio); the client lookup + magic-link insert are explicitly scoped to that studio.id — a client in another studio is not found.",
+    purpose: "Practitioner 'Send portal link', issue a portal magic link for a known client.",
+    why: "Authenticated practitioner action (studio resolved via getCurrentPractitionerWithStudio); the client lookup + magic-link insert are explicitly scoped to that studio.id, a client in another studio is not found.",
     scopeGuard: '.eq("studio_id", studio.id)',
   },
   {

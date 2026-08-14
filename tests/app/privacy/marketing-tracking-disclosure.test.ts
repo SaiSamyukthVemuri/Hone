@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // Provider-agnostic marketing/analytics privacy + consent framework (docs/UI
-// copy only — no tracking enabled, no sender, no provider receives data).
+// copy only, no tracking enabled, no sender, no provider receives data).
 
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
@@ -14,7 +14,7 @@ const TERMS = read("app/terms/page.tsx");
 const PLAN = read("docs/23_STUDIO_MARKETING_TRACKING_PLAN.md");
 const META_LIB = read("lib/conversion/meta-capi.ts");
 
-describe("privacy policy — marketing/analytics disclosure", () => {
+describe("privacy policy: marketing/analytics disclosure", () => {
   it("no longer makes the unconditional 'no advertising cookies ever' claim", () => {
     expect(PRIVACY).not.toMatch(
       /We do not use third-party advertising cookies, behavioral tracking\s+cookies, or analytics cookies that share data with advertising\s+networks\./,
@@ -68,7 +68,7 @@ describe("privacy policy — marketing/analytics disclosure", () => {
   });
 });
 
-describe("terms — studio-owned provider responsibility", () => {
+describe("terms: studio-owned provider responsibility", () => {
   it("clarifies studios own their provider accounts/datasets and configure them", () => {
     expect(TERMS).toMatch(/Studio-controlled marketing and analytics providers/);
     expect(TERMS).toMatch(/your own ad accounts, pixels, datasets/);
@@ -83,7 +83,7 @@ describe("terms — studio-owned provider responsibility", () => {
   });
 });
 
-describe("plan doc — provider-agnostic model + data minimization", () => {
+describe("plan doc: provider-agnostic model + data minimization", () => {
   it("is titled as the generic Studio Marketing plan, Meta only the first foundation", () => {
     expect(PLAN).toMatch(/# Studio Marketing and Conversion Tracking Plan/);
     expect(PLAN).toMatch(/provider-agnostic/i);
@@ -138,13 +138,13 @@ describe("plan doc — provider-agnostic model + data minimization", () => {
   });
 });
 
-describe("guardrails — nothing is enabled or wired", () => {
+describe("guardrails: nothing is enabled or wired", () => {
   it("the Meta foundation (#345) remains inert: no network, no token/env, imported nowhere", () => {
     expect(META_LIB).not.toContain("fetch(");
     expect(META_LIB).not.toContain("graph.facebook");
     expect(META_LIB).not.toContain("process.env");
     expect(META_LIB).not.toContain("META_CAPI_TOKEN");
-    // Imported only by its own test — no app/lib wiring.
+    // Imported only by its own test, no app/lib wiring.
     const importers = read("lib/conversion/meta-capi.ts"); // existence check
     expect(importers.length).toBeGreaterThan(0);
   });

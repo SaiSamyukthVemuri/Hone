@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
-// 0175 — B6 appointment transition integrity. STATIC contract.
+// 0175: B6 appointment transition integrity. STATIC contract.
 //
 // Behaviour is proved against a real migrated database in
 // tests/db/appointment-transition-integrity.db.test.ts. This file pins the
@@ -13,21 +13,21 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 const FILE = "supabase/migrations/0175_appointment_transition_integrity.sql";
 const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 
-// EXECUTABLE SQL ONLY — line comments stripped.
+// EXECUTABLE SQL ONLY: line comments stripped.
 //
 // The migration's header deliberately NAMES what it does not touch
 // (snapshot_appointment_buffer, no-show, the dormant charge-attempt RPC, B7's
 // public cancellation, B8's postcare grant) so a reader knows those omissions
 // are decisions rather than oversights. A scope assertion run against the raw
-// text would therefore fail on the very prose that documents the discipline —
+// text would therefore fail on the very prose that documents the discipline,
 // and, worse, a test that cannot tell a comment from a statement would also
 // miss a real violation sitting inside one.
 const EXEC = SQL.split("\n")
   .map((l) => l.replace(/--.*$/, ""))
   .join("\n");
 
-describe("0175 — migration state", () => {
-  it("is no longer the repository maximum — B7 spent 0176 above it", () => {
+describe("0175: migration state", () => {
+  it("is no longer the repository maximum, B7 spent 0176 above it", () => {
     // Per CLAUDE.md only the CURRENT max may assert isRepoMax; that role passed
     // to 0176 when B7 landed. 0175 keeps the narrower claim that is still true.
     expect(isRepoMax("0175")).toBe(false);
@@ -36,13 +36,13 @@ describe("0175 — migration state", () => {
 
   it("consumes exactly ONE number", () => {
     // No successor reservation is pinned here. "0177 still reserved" went red
-    // the moment B8 authored it — the same stale-owner defect 0174's test hit
+    // the moment B8 authored it, the same stale-owner defect 0174's test hit
     // three times. A successor's number is that successor's own test's job.
     expect(countVersion("0176")).toBe(1);
   });
 });
 
-describe("0175 — transaction envelope", () => {
+describe("0175: transaction envelope", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     // `supabase db push` does not wrap a migration file in a transaction, so a
     // bare SET LOCAL emits 25P01 and never arms.
@@ -58,7 +58,7 @@ describe("0175 — transaction envelope", () => {
   });
 });
 
-describe("0175 — STANDING PROHIBITION: snapshot_appointment_buffer is untouched", () => {
+describe("0175, STANDING PROHIBITION: snapshot_appointment_buffer is untouched", () => {
   it("never creates, replaces or drops it", () => {
     // Production carries out-of-band GUC behaviour in that function which is
     // not fully represented in this repository's migration source, so
@@ -69,7 +69,7 @@ describe("0175 — STANDING PROHIBITION: snapshot_appointment_buffer is untouche
   });
 });
 
-describe("0175 — A: completion boundary moved to starts_at", () => {
+describe("0175, A: completion boundary moved to starts_at", () => {
   const fn =
     SQL.match(/create or replace function public\.mark_appointment_complete[\s\S]*?\n\$\$;/)?.[0] ?? "";
 
@@ -81,7 +81,7 @@ describe("0175 — A: completion boundary moved to starts_at", () => {
     expect(fn).toMatch(/returns void/);
   });
 
-  it("refuses on starts_at, not ends_at — and the boundary is inclusive", () => {
+  it("refuses on starts_at, not ends_at, and the boundary is inclusive", () => {
     // `starts_at > now()` refuses, so exactly starts_at is allowed. A `>=`
     // here would silently make the boundary exclusive.
     expect(fn).toMatch(/v_starts_at\s*>\s*now\(\)/);
@@ -114,12 +114,12 @@ describe("0175 — A: completion boundary moved to starts_at", () => {
     expect(SQL).toMatch(/grant execute on function public\.mark_appointment_complete\(uuid, uuid, uuid\)\s*\n\s*to service_role;/);
   });
 
-  it("does NOT touch no-show — that clock does not move", () => {
+  it("does NOT touch no-show: that clock does not move", () => {
     expect(EXEC).not.toMatch(/mark_appointment_no_show/);
   });
 });
 
-describe("0175 — B: transition guard is structural only", () => {
+describe("0175, B: transition guard is structural only", () => {
   const trg =
     SQL.match(/create or replace function public\.enforce_appointment_transition[\s\S]*?\n\$\$;/)?.[0] ?? "";
   const pred =
@@ -160,7 +160,7 @@ describe("0175 — B: transition guard is structural only", () => {
   });
 });
 
-describe("0175 — C: updated_at uses the established helper", () => {
+describe("0175, C: updated_at uses the established helper", () => {
   it("attaches public.set_updated_at() rather than inventing a framework", () => {
     expect(SQL).toMatch(/create trigger appointments_set_updated_at_trg\s*\n\s*before update on public\.appointments/);
     expect(SQL).toMatch(/execute function public\.set_updated_at\(\);/);
@@ -171,20 +171,20 @@ describe("0175 — C: updated_at uses the established helper", () => {
   });
 });
 
-describe("0175 — D: capacity_enabled stops following lifecycle", () => {
+describe("0175, D: capacity_enabled stops following lifecycle", () => {
   it("re-creates the trigger WITHOUT status in its UPDATE OF list", () => {
     const t = SQL.match(/create trigger appointments_set_capacity_enabled_trg[\s\S]*?;/)?.[0] ?? "";
     expect(t).toMatch(/before insert or update of studio_id, practitioner_id\s*\n\s*on public\.appointments/);
     expect(t).not.toMatch(/status/);
   });
 
-  it("does NOT redefine set_appointment_capacity_enabled() — the function was correct", () => {
+  it("does NOT redefine set_appointment_capacity_enabled(): the function was correct", () => {
     // It was being called at the wrong times, not computing the wrong thing.
     expect(EXEC).not.toMatch(/create or replace function public\.set_appointment_capacity_enabled/);
   });
 });
 
-describe("0175 — E: three legacy RPCs dropped by EXACT signature", () => {
+describe("0175, E: three legacy RPCs dropped by EXACT signature", () => {
   it("drops each with its full argument list, never by bare name", () => {
     expect(SQL).toMatch(
       /drop function if exists public\.reschedule_appointment\(\s*uuid, text, timestamptz, timestamptz, integer, text\s*\);/,
@@ -216,9 +216,9 @@ describe("0175 — E: three legacy RPCs dropped by EXACT signature", () => {
   });
 });
 
-describe("0175 — scope discipline: nothing from B7, B8 or payments", () => {
+describe("0175, scope discipline: nothing from B7, B8 or payments", () => {
   it("executes nothing against any charge-attempt function", () => {
-    // create_or_claim_charge_attempt is not dormant — 0032 created it and 0103
+    // create_or_claim_charge_attempt is not dormant: 0032 created it and 0103
     // dropped it, so no such function exists to touch. The live paths are the
     // per-flow claim functions, which B6 also leaves alone.
     expect(EXEC).not.toMatch(/create_or_claim_charge_attempt/);
@@ -226,11 +226,11 @@ describe("0175 — scope discipline: nothing from B7, B8 or payments", () => {
     expect(EXEC).not.toMatch(/claim_manual_fee_charge_attempt/);
   });
 
-  it("does not touch public cancellation — B7 / 0176 owns that", () => {
+  it("does not touch public cancellation, B7 / 0176 owns that", () => {
     expect(EXEC).not.toMatch(/public_cancel_appointment_with_token/);
   });
 
-  it("does not alter the six-column postcare grant — B8 / 0177 owns that", () => {
+  it("does not alter the six-column postcare grant, B8 / 0177 owns that", () => {
     expect(EXEC).not.toMatch(/postcare_email_/);
   });
 

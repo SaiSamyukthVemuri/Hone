@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The diabetes / thyroid subtype on the PRACTITIONER-ASSISTED path (#525/#527).
 //
 // A practitioner sitting with the client may record what the client tells them
-// about their health history — the subtype is health history, so it belongs to
+// about their health history, the subtype is health history, so it belongs to
 // them. What must NOT change is the boundary that work established: the
 // client's own first-person confirmations stay the client's, provenance is
 // still derived on the server from the session, and nothing a practitioner does
@@ -302,7 +302,7 @@ describe("2. the assisted path is not the soft way in", () => {
     });
 
     expect(res.ok).toBe(false);
-    // Nothing landed — not the bad value, and not the parent answer alongside it.
+    // Nothing landed: not the bad value, and not the parent answer alongside it.
     expect(storedResponses().diabetes_type).toBeUndefined();
     expect(storedResponses().medical_conditions).toBeUndefined();
     expect(currentIntake().updated_at).toBe(T0);
@@ -319,7 +319,7 @@ describe("2. the assisted path is not the soft way in", () => {
     expect(storedResponses().legal_name).toBeUndefined();
   });
 
-  it("still allows an incomplete save — a work in progress is normal", async () => {
+  it("still allows an incomplete save, a work in progress is normal", async () => {
     // Recording the condition now and the type in a moment must not be refused;
     // only a PRESENT value that is not on the list is.
     const res = await save({ medical_conditions: ["diabetes"] });

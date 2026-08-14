@@ -19,15 +19,15 @@ import {
 //
 // The browser spec needs TWO things the DB-integration lane did not:
 //   1. A login-capable owner. seedStudio (tests/db/helpers/harness.ts) inserts a
-//      BARE auth.users row directly — perfect for the node-pg `asUser` JWT
+//      BARE auth.users row directly, perfect for the node-pg `asUser` JWT
 //      simulation, but NOT a GoTrue user that can complete a real magic-link
 //      login. So after seeding the proven eligible scenario we create a real
 //      GoTrue user (invite-only handle_new_user creates NOTHING for it) and
 //      RE-POINT the already-seeded owner practitioner at it. No new studio, no
-//      duplicated payment inserts — the eligibility chain is 100% the proven
+//      duplicated payment inserts, the eligibility chain is 100% the proven
 //      fixture (seedEligibleQuickCheckoutScenario).
 //   2. A deterministic "today" so the completed appointment (starts 90 min ago)
-//      lands on the Dashboard roster regardless of the CI clock — we set the
+//      lands on the Dashboard roster regardless of the CI clock, we set the
 //      studio timezone to a fixed-offset zone whose local time reads ~09:00.
 //
 // Everything else (studio_payment_settings / card / customer / consent / session /
@@ -44,7 +44,7 @@ export type PaymentSeed = E2eSeed & {
   appointmentId: string;
   sessionId: string;
   expectedAmountMinor: number;
-  // This scenario's unique synthetic connected account (acct_test_e2e_<runId>) —
+  // This scenario's unique synthetic connected account (acct_test_e2e_<runId>),
   // used to scope fake-ledger counts to THIS scenario so specs can't contaminate.
   connectedAccountId: string;
 };

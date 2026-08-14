@@ -9,7 +9,7 @@ import {
 } from "./helpers/harness";
 import { randomUUID } from "node:crypto";
 
-// PR #257: Quick Import V1 — the live RLS write path on the real migrated DB.
+// PR #257: Quick Import V1, the live RLS write path on the real migrated DB.
 // PR #252 already proved table-level RLS/constraints/audit; this proves the
 // IMPORT-SHAPED write: an OWNER can create a batch + a client + multiple
 // grouped imported-memory rows through the authenticated (RLS) client, the
@@ -78,7 +78,7 @@ describe("owner import write path (the action's RLS-backed inserts)", () => {
     expect(appts.rows[0].n).toBe(0);
 
     // The audit trigger recorded the batch + memory inserts (append-only,
-    // written only by the SECURITY DEFINER trigger — the app writes none).
+    // written only by the SECURITY DEFINER trigger, the app writes none).
     const batchAudit = await adminQuery(
       `select count(*)::int as n from public.imported_treatment_memory_audit_events
         where record_type = 'import_batch' and record_id = $1 and action = 'created'`,

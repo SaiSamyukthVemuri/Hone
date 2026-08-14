@@ -11,8 +11,8 @@ import {
 } from "./helpers/harness";
 
 // Willow P1-B: the soft_delete_session_area RPC (migration 0123) removes a whole
-// treatment AREA from a DRAFT chart in ONE atomic soft-delete transaction — the
-// block + its block-scoped passes + its block-scoped images — never a hard
+// treatment AREA from a DRAFT chart in ONE atomic soft-delete transaction, the
+// block + its block-scoped passes + its block-scoped images, never a hard
 // delete, finalized-safe, same-studio only, fully audited.
 
 afterAll(async () => {
@@ -56,7 +56,7 @@ async function removeArea(userId: string, sessionId: string, blockId: string, re
   return r.rows[0];
 }
 
-describe("soft_delete_session_area — aggregate soft-delete", () => {
+describe("soft_delete_session_area: aggregate soft-delete", () => {
   it("removes an empty draft area: block soft-deleted, row preserved", async () => {
     const studio = await seedStudio("areaEmpty");
     const { sessionId, blockId } = await seedSession(studio);
@@ -74,7 +74,7 @@ describe("soft_delete_session_area — aggregate soft-delete", () => {
     expect(block.rows[0].delete_reason).toMatch(/wrong client/);
   });
 
-  it("removes an area WITH children atomically — passes + images soft-deleted, none orphaned", async () => {
+  it("removes an area WITH children atomically, passes + images soft-deleted, none orphaned", async () => {
     const studio = await seedStudio("areaChildren");
     const { sessionId, blockId } = await seedSession(studio);
     const e1 = await addEntry(sessionId, blockId);

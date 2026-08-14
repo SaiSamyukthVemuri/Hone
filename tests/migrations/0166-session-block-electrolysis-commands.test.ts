@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// Migration 0166 — L18 Phase 2. Narrow commands for session_blocks +
+// Migration 0166: L18 Phase 2. Narrow commands for session_blocks +
 // electrolysis_entries. Behavioural proof lives in
 // tests/db/session-block-electrolysis-commands.db.test.ts.
 //
-// The repo max is DERIVED (PR #502) — this file hard-codes only its own version.
+// The repo max is DERIVED (PR #502), this file hard-codes only its own version.
 
-/** This file's own migration version — the ONLY number it hard-codes. */
+/** This file's own migration version, the ONLY number it hard-codes. */
 const SELF_VERSION = "0166";
 
 const MIG_DIR = join(process.cwd(), "supabase/migrations");
@@ -31,16 +31,16 @@ const HELPERS = [
   "apply_block_extra_fields",
 ];
 
-describe("0166 — repo migration-max tripwire (derived)", () => {
+describe("0166: repo migration-max tripwire (derived)", () => {
   // The "nothing above me" tripwire moved to 0167's own test when that
   // migration landed: only the CURRENT repository maximum may assert it.
-  // 0166 keeps only the claim that is true forever — its own transition.
+  // 0166 keeps only the claim that is true forever, its own transition.
   it("declares its migration-max transition", () => {
     expect(PROSE).toMatch(/Migration max 0165 -> 0166/i);
   });
 });
 
-describe("0166 — transactional with an armed lock_timeout", () => {
+describe("0166: transactional with an armed lock_timeout", () => {
   it("opens its own transaction and commits once", () => {
     expect(CODE.match(/^\s*begin\s*;/gim) ?? []).toHaveLength(1);
     expect(CODE.match(/^\s*commit\s*;/gim) ?? []).toHaveLength(1);
@@ -50,7 +50,7 @@ describe("0166 — transactional with an armed lock_timeout", () => {
   });
 });
 
-describe("0166 — every command meets the security contract", () => {
+describe("0166: every command meets the security contract", () => {
   for (const fn of [...COMMANDS, ...HELPERS]) {
     it(`${fn}: SECURITY DEFINER with an empty search_path`, () => {
       const body = FLAT.slice(FLAT.indexOf(`create or replace function public.${fn}`));
@@ -95,7 +95,7 @@ describe("0166 — every command meets the security contract", () => {
   });
 
   it("accepts no arbitrary column/value update map for entries", () => {
-    // Bound the slice to THIS function — otherwise it runs on into the grant
+    // Bound the slice to THIS function, otherwise it runs on into the grant
     // DO-block, whose `execute format` is legitimate DDL, not a value map.
     const start = FLAT.indexOf("function public.write_electrolysis_entry");
     const next = FLAT.indexOf("create or replace function", start + 10);
@@ -132,7 +132,7 @@ describe("0166 — every command meets the security contract", () => {
     expect(FLAT).toMatch(/public\.apply_block_extra_fields\(p_block_id, p_block_extra\)/);
   });
 
-  it("soft-deletes only — never a hard delete of clinical history", () => {
+  it("soft-deletes only: never a hard delete of clinical history", () => {
     expect(FLAT).not.toMatch(/delete from public\.(session_blocks|electrolysis_entries)/i);
     expect(FLAT).toMatch(/set deleted_at = now\(\)/);
   });
@@ -153,7 +153,7 @@ describe("0166 — every command meets the security contract", () => {
   });
 });
 
-describe("0166 — least-privilege EXECUTE", () => {
+describe("0166: least-privilege EXECUTE", () => {
   it("revokes from PUBLIC, anon, service_role AND authenticated for EVERY function", () => {
     for (const fn of [...COMMANDS, ...HELPERS]) {
       for (const role of ["public", "anon", "service_role", "authenticated"]) {
@@ -197,7 +197,7 @@ describe("0166 — least-privilege EXECUTE", () => {
   });
 });
 
-describe("0166 — additive and honest about scope", () => {
+describe("0166: additive and honest about scope", () => {
   it("revokes no table privilege and drops no policy", () => {
     expect(FLAT).not.toMatch(/revoke[^;]*on public\.(session_blocks|electrolysis_entries|sessions)/i);
     expect(FLAT).not.toMatch(/drop policy/i);
@@ -237,7 +237,7 @@ describe("0166 — additive and honest about scope", () => {
 // 0129 without these would have stopped persisting real clinical data.
 // ===========================================================================
 
-describe("0166 — no field 0129 drops is silently lost", () => {
+describe("0166: no field 0129 drops is silently lost", () => {
   const ALLOW = /v_allowed constant text\[\] := array\[([\s\S]*?)\];/.exec(SQL)?.[1] ?? "";
 
   it("the block patch allow-list is exactly the seven 0129 does not own", () => {

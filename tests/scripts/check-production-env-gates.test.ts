@@ -90,7 +90,7 @@ describe("check-production-env-gates script (PR #262)", () => {
     expect(r.stdout).toMatch(/^PASS ops-alert-delivery-env/m);
   });
 
-  it("never prints env VALUES — only variable NAMES (all-present case)", () => {
+  it("never prints env VALUES: only variable NAMES (all-present case)", () => {
     const r = run({
       VERCEL_ENV: "production",
       UPSTASH_REDIS_REST_URL: URL_SENTINEL,
@@ -185,7 +185,7 @@ describe("check-production-env-gates script (PR #262)", () => {
   });
 
   it("is a NO-OP when VERCEL_ENV is unset (local / CI build)", () => {
-    // No VERCEL_ENV and no Upstash vars — the local/CI build path. Must
+    // No VERCEL_ENV and no Upstash vars, the local/CI build path. Must
     // not fail, even though `next build` sets NODE_ENV=production.
     const r = run({ NODE_ENV: "production" });
     expect(r.status, r.stdout + r.stderr).toBe(0);

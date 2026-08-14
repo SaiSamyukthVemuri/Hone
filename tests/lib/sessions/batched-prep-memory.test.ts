@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // ===========================================================================
-// Dashboard V2 Part 2A — the BATCHED previous-treatment loader.
+// Dashboard V2 Part 2A, the BATCHED previous-treatment loader.
 // ===========================================================================
 //
 // WHY THIS FILE EXISTS
@@ -13,12 +13,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 //
 //   1. CROSS-CLIENT BLEED. One `.in(...)` read returns every client's rows in
 //      one array. Route them wrongly and a practitioner prepares for the wrong
-//      person's treatment — the worst failure this feature can have.
+//      person's treatment, the worst failure this feature can have.
 //   2. SHARED BOUNDS. Each appointment has its OWN `before` (its starts_at) and
 //      its own exclusion. A batch that applies one client's bound to another
 //      silently shows a treatment that has not happened yet.
 //   3. SILENT TRUNCATION. One read shares a row budget. A client crowded out of
-//      the window has NOT been shown to have no history — and rendering that as
+//      the window has NOT been shown to have no history, and rendering that as
 //      "new client" is exactly the failure the charted-session authority exists
 //      to prevent.
 //
@@ -124,7 +124,7 @@ async function run(
 
 // ---------------------------------------------------------------------------
 
-describe("batched prep memory — one client cannot receive another's treatment", () => {
+describe("batched prep memory: one client cannot receive another's treatment", () => {
   it("routes each client's session to that client and no other", async () => {
     const { out } = await run(
       {
@@ -179,7 +179,7 @@ describe("batched prep memory — one client cannot receive another's treatment"
   });
 });
 
-describe("batched prep memory — each appointment keeps its OWN boundary", () => {
+describe("batched prep memory: each appointment keeps its OWN boundary", () => {
   it("a per-client `before` excludes a session that starts after that appointment", async () => {
     const rows = {
       sessions: [
@@ -203,7 +203,7 @@ describe("batched prep memory — each appointment keeps its OWN boundary", () =
     // clientId, so two requests for the same client overwrote each other and
     // both appointments received whichever was written last. The dashboard then
     // read `prepLoads.get(appt.client_id)`, so a client with a morning and an
-    // afternoon appointment saw ONE answer on both rows — the afternoon
+    // afternoon appointment saw ONE answer on both rows, the afternoon
     // appointment's previous treatment shown against the morning one.
     //
     // The previous test for this ran the two requests in SEPARATE loader
@@ -222,7 +222,7 @@ describe("batched prep memory — each appointment keeps its OWN boundary", () =
       { requestKey: "appt-late", clientId: ALICE, before: "2026-03-01T00:00:00Z" },
     ]);
 
-    // Asserted SIMULTANEOUSLY from one batch — the whole point.
+    // Asserted SIMULTANEOUSLY from one batch, the whole point.
     expect(out.get("appt-early")?.treatment?.session.id).toBe("s-early");
     expect(out.get("appt-late")?.treatment?.session.id).toBe("s-mid");
     // ...and they are genuinely different answers, not one value read twice.
@@ -286,7 +286,7 @@ describe("batched prep memory — each appointment keeps its OWN boundary", () =
   });
 });
 
-describe("batched prep memory — truncation is reported, never guessed", () => {
+describe("batched prep memory: truncation is reported, never guessed", () => {
   it("a client crowded out of a full window reads UNAVAILABLE, not 'no history'", async () => {
     // limitPerClient 1 with two clients ⇒ budget 2, and both rows belong to Bob.
     // Alice was not proven to have nothing; the window simply never reached her.
@@ -322,7 +322,7 @@ describe("batched prep memory — truncation is reported, never guessed", () => 
   });
 });
 
-describe("batched prep memory — no per-appointment query loop", () => {
+describe("batched prep memory: no per-appointment query loop", () => {
   it("issues a CONSTANT number of reads regardless of appointment count", async () => {
     const many = Array.from({ length: 12 }, (_, i) => `client-${i}`);
     const { issued } = await run(

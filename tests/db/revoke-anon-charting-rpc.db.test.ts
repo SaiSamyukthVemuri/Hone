@@ -9,8 +9,8 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// Behavioural proof of migration 0130 — the residual anon EXECUTE grant on the
-// two 0129 multi-area charting RPCs is revoked, restoring least privilege —
+// Behavioural proof of migration 0130, the residual anon EXECUTE grant on the
+// two 0129 multi-area charting RPCs is revoked, restoring least privilege,
 // against the REAL migrated local DB (reset applies every migration through
 // 0130). The in-function is_studio_member guard is the security boundary; 0130
 // aligns the grant layer with it. Migration sequence applying cleanly from zero
@@ -33,8 +33,8 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("0130 — grant matrix", () => {
-  it("the EXECUTE grantees are exactly {authenticated, postgres, service_role} — no anon, no PUBLIC", async () => {
+describe("0130: grant matrix", () => {
+  it("the EXECUTE grantees are exactly {authenticated, postgres, service_role}, no anon, no PUBLIC", async () => {
     for (const proname of [
       "create_session_block_with_areas",
       "update_session_block_with_areas",
@@ -75,7 +75,7 @@ describe("0130 — grant matrix", () => {
   });
 });
 
-describe("0130 — anon is denied at the grant layer", () => {
+describe("0130: anon is denied at the grant layer", () => {
   it("anon cannot execute the CREATE RPC (permission denied)", async () => {
     const { sessionId } = await seedSession(a);
     await expect(
@@ -102,7 +102,7 @@ describe("0130 — anon is denied at the grant layer", () => {
   });
 });
 
-describe("0130 — the reviewed authenticated path still works; body unchanged", () => {
+describe("0130: the reviewed authenticated path still works; body unchanged", () => {
   it("an authenticated same-studio practitioner CAN execute CREATE (block + areas persist)", async () => {
     const { sessionId } = await seedSession(a);
     const blockId = await asUser(a.userId, async (q) => {
@@ -142,7 +142,7 @@ describe("0130 — the reviewed authenticated path still works; body unchanged",
     ).rejects.toThrow(/not authorized/i);
   });
 
-  it("service_role RETAINS execute — it reaches the body's authorization (not a grant error)", async () => {
+  it("service_role RETAINS execute: it reaches the body's authorization (not a grant error)", async () => {
     const { sessionId } = await seedSession(a);
     // service_role has no auth.uid() → is_studio_member is false → the BODY raises
     // 'not authorized' (proving EXECUTE is granted; it is NOT a 42501 grant error).

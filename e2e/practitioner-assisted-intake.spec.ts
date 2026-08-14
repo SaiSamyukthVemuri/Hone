@@ -21,7 +21,7 @@ import { PRACTITIONER_ASSISTED_ENTRY } from "@/lib/intake/entry-provenance";
 //
 // DATABASE STATE IS THE ORACLE. Every assertion that matters reads
 // client_intake_forms back with getIntakeRow(). On-screen copy is asserted
-// only where the copy IS the deliverable — the assisted banner, the
+// only where the copy IS the deliverable, the assisted banner, the
 // "Client confirmation required" hand-off, and the review-page provenance
 // section, which are the whole point of the feature.
 //
@@ -234,7 +234,7 @@ test.describe("practitioner-assisted intake", () => {
 
     // --- hand over
     await page.getByRole("button", { name: "Hand to client" }).click();
-    // NOT waitForURL("**/intake/**") — that also matches the assist route we
+    // NOT waitForURL("**/intake/**"): that also matches the assist route we
     // are leaving, so it resolves before the handoff has landed. The database
     // is the oracle; the navigation is asserted separately below.
     await expect
@@ -344,7 +344,7 @@ test.describe("practitioner-assisted intake", () => {
     // this lane runs with a dummy RESEND_API_KEY, so the send is genuinely
     // attempted, fails ("API key is invalid"), and the column is never
     // stamped either way. The load-bearing proof that this path cannot email
-    // lives in the unit lane — tests/app/clients/start-intake-with-client.ts
+    // lives in the unit lane, tests/app/clients/start-intake-with-client.ts
     // asserts the sender is never called and the client-email rate limiter is
     // never even consulted, and those DO go red on that mutation.
     expect(rows[0].intake_link_last_sent_at).toBeNull();
@@ -391,8 +391,8 @@ test.describe("practitioner-assisted intake", () => {
 
   // Journey B for live consent forms (PR: intake live consent). The
   // practitioner records the questionnaire and hands over; the studio's real
-  // consent forms are the CLIENT's to complete and must not be reachable — or
-  // prefillable — from the practitioner's side.
+  // consent forms are the CLIENT's to complete and must not be reachable, or
+  // prefillable, from the practitioner's side.
   //
   // Deliberately does NOT re-drive every #525 question: the assisted flow is
   // proven above. This asserts only the consent boundary across the handoff.
@@ -452,7 +452,7 @@ test.describe("practitioner-assisted intake", () => {
     }
     await page.getByRole("button", { name: "Continue" }).click();
 
-    // NOW the studio's real form is on screen — on the client's own surface.
+    // NOW the studio's real form is on screen, on the client's own surface.
     await expect(page.getByText(CONSENT_BODY)).toBeVisible();
     const agree = page.getByTestId("intake-consent-agree");
     await expect(agree, "must start unticked for the client").not.toBeChecked();
@@ -487,7 +487,7 @@ test.describe("practitioner-assisted intake", () => {
     await expect(
       page.getByRole("heading", { name: "Health intake" }),
     ).toBeVisible();
-    // The section must be entirely absent — not empty, absent.
+    // The section must be entirely absent, not empty, absent.
     await expect(
       page.getByRole("heading", { name: "Intake entry" }),
     ).toHaveCount(0);

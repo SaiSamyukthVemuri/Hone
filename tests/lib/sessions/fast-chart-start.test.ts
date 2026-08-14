@@ -6,7 +6,7 @@ import {
   resolveAutoEditBlockId,
 } from "@/lib/sessions/fast-chart-start";
 
-// Repeat-client fast charting — the pure landing model. This module carries the
+// Repeat-client fast charting: the pure landing model. This module carries the
 // ONE concept the fast path adds on top of the governed 0157 copy: which
 // just-created treatment area the practitioner lands in, and how that survives
 // the server round trip. It performs no I/O and owns no write path.
@@ -15,7 +15,7 @@ const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
 const C = "33333333-3333-4333-8333-333333333333";
 
-describe("landingBlockId — the FIRST area created by the batch", () => {
+describe("landingBlockId: the FIRST area created by the batch", () => {
   it("is element 0, which copy_session_setup assigns sort_order 1", () => {
     expect(landingBlockId([A, B, C])).toBe(A);
   });
@@ -38,7 +38,7 @@ describe("landingBlockId — the FIRST area created by the batch", () => {
   });
 });
 
-describe("fastChartUrl — a same-origin path carrying the landing area", () => {
+describe("fastChartUrl: a same-origin path carrying the landing area", () => {
   it("is path-only (no origin, no protocol) so it can never navigate off-site", () => {
     const url = fastChartUrl("client-1", "session-1", A);
     expect(url.startsWith("/clients/")).toBe(true);
@@ -57,7 +57,7 @@ describe("fastChartUrl — a same-origin path carrying the landing area", () => 
   });
 });
 
-describe("resolveAutoEditBlockId — fails closed against anything not on this chart", () => {
+describe("resolveAutoEditBlockId: fails closed against anything not on this chart", () => {
   const live = [A, B];
 
   it("honours a live block id on this session", () => {
@@ -82,7 +82,7 @@ describe("resolveAutoEditBlockId — fails closed against anything not on this c
     expect(resolveAutoEditBlockId([A], live)).toBeNull();
   });
 
-  it("cannot be used to widen anything — it only ever names a block already rendered", () => {
+  it("cannot be used to widen anything, it only ever names a block already rendered", () => {
     // Whatever the browser sends, the result is either null or a member of the
     // live list the server itself computed.
     for (const hostile of [

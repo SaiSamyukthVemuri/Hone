@@ -35,7 +35,7 @@ describe("numbing vocabulary (item 1)", () => {
   });
 });
 
-describe("tolerance labels (item 6) — labels over raw 1-5, storage unchanged", () => {
+describe("tolerance labels (item 6): labels over raw 1-5, storage unchanged", () => {
   it("offers five labeled options mapped to the stored 1-5 (best -> hardest)", () => {
     expect(TOLERANCE_OPTIONS.map((o) => o.value)).toEqual([5, 4, 3, 2, 1]);
     expect(TOLERANCE_OPTIONS.map((o) => o.label)).toEqual([

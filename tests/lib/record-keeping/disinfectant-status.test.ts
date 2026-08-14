@@ -8,7 +8,7 @@ import {
 
 // PR #280 (Chloe record-keeping feedback): read-time due/overdue status for a
 // disinfectant batch's discard/replace-by date. Pure + deterministic ("today"
-// is passed in as a studio-tz YYYY-MM-DD), so it is naturally idempotent — a
+// is passed in as a studio-tz YYYY-MM-DD), so it is naturally idempotent, a
 // computed display, never a stored or sent reminder.
 
 const TODAY = "2026-06-29";

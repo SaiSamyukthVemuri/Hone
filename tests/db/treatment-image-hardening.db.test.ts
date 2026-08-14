@@ -41,7 +41,7 @@ function insertAsOwner(overrides: Record<string, unknown> = {}) {
     uploaded_by: s.practitionerId,
     ...overrides,
   };
-  // Fixture only — after 0169 `authenticated` holds no direct INSERT on this
+  // Fixture only: after 0169 `authenticated` holds no direct INSERT on this
   // table. The properties under test below are the identity-column freezes,
   // which are trigger-enforced and role-independent.
   return adminQuery(
@@ -231,7 +231,7 @@ describe("FK detach (ON DELETE SET NULL) is allowed; re-point is blocked", () =>
       ),
     ).rejects.toThrow();
     // Hard-deleting the parent session SET-NULLs session_id + session_block_id
-    // (cascade through session_blocks) — the trigger must allow the detach.
+    // (cascade through session_blocks), the trigger must allow the detach.
     await adminQuery("delete from public.sessions where id = $1", [sess.sessionId]);
     const r = await adminQuery(
       "select session_id, session_block_id from public.treatment_images where id = $1",

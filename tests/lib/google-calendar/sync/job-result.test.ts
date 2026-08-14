@@ -9,7 +9,7 @@ import {
   type JobResultCode,
 } from "@/lib/google-calendar/sync/job-result";
 
-// Phase B2.1 — the closed JobResult enum + its mapping to the
+// Phase B2.1: the closed JobResult enum + its mapping to the
 // record_calendar_sync_result outcomes (done / retry / dead).
 
 describe("JobResult enum is closed + partitioned", () => {

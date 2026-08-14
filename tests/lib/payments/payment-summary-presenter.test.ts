@@ -42,7 +42,7 @@ function attempt(
   };
 }
 
-describe("maskReceiptEmail — never reveals the full address", () => {
+describe("maskReceiptEmail: never reveals the full address", () => {
   it("masks the local part, keeps first char + full domain (min three bullets)", () => {
     expect(maskReceiptEmail("a@example.com")).toBe("a•••@example.com");
     expect(maskReceiptEmail("chloe@example.com")).toBe("c••••@example.com");
@@ -71,7 +71,7 @@ describe("maskReceiptEmail — never reveals the full address", () => {
   });
 });
 
-describe("humanChargeFailure — practitioner-friendly, never the raw code", () => {
+describe("humanChargeFailure: practitioner-friendly, never the raw code", () => {
   it("maps declined / expired / insufficient families to safe copy", () => {
     expect(humanChargeFailure("card_declined")).toMatch(/declined/i);
     expect(humanChargeFailure("generic_decline")).toMatch(/declined/i);
@@ -90,7 +90,7 @@ describe("humanChargeFailure — practitioner-friendly, never the raw code", () 
   });
 });
 
-describe("derivePaymentSummary — one current headline per state", () => {
+describe("derivePaymentSummary: one current headline per state", () => {
   it("null attempt → Not charged", () => {
     expect(derivePaymentSummary(null)).toMatchObject({
       kind: "not_charged",
@@ -132,7 +132,7 @@ describe("derivePaymentSummary — one current headline per state", () => {
   });
 });
 
-describe("deriveReceiptLine — masked, delivery-status separate", () => {
+describe("deriveReceiptLine: masked, delivery-status separate", () => {
   it("sent → masked address (or plain 'sent' when no stored email)", () => {
     expect(
       deriveReceiptLine({ receiptStatus: "sent", receiptEmailTo: "chloe@example.com" }),
@@ -154,7 +154,7 @@ describe("deriveReceiptLine — masked, delivery-status separate", () => {
   });
 });
 
-describe("technicalRowsForAttempt — enumerates the owner-only fields", () => {
+describe("technicalRowsForAttempt: enumerates the owner-only fields", () => {
   it("carries the processor ids/codes/email so the component can gate them", () => {
     const rows = technicalRowsForAttempt(
       attempt({

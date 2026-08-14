@@ -44,8 +44,8 @@ function logCall(event: string): string {
 //
 // BOOK-01 P2-A WIDENED THIS. The post-commit fail-soft helper logs through
 // `logInternalBookingError(event, {...})` with the event as a VARIABLE, so the
-// `("`-only anchor skipped it entirely and a whole new logging path — one that
-// runs on every unexpected post-commit exception — was invisible to every
+// `("`-only anchor skipped it entirely and a whole new logging path, one that
+// runs on every unexpected post-commit exception, was invisible to every
 // invariant below. The second pattern closes that hole. The function DEFINITION
 // is still excluded because it is `logInternalBookingError(event: string`, with
 // a type annotation rather than a comma.
@@ -127,7 +127,7 @@ describe("public_booking_unique_race_unresolved logs no raw PII", () => {
 
 // ---------------------------------------------------------------------------
 // Whole-surface invariant: NO public booking log payload may carry a raw
-// email, a raw client UUID, or a raw DB message — now or in future edits.
+// email, a raw client UUID, or a raw DB message, now or in future edits.
 // ---------------------------------------------------------------------------
 
 describe("every public booking log payload is PII-minimized", () => {
@@ -137,7 +137,7 @@ describe("every public booking log payload is PII-minimized", () => {
   // payload keys and fail on anything else, forcing a reviewer to
   // consciously approve any new field a public booking log emits.
   const ALLOWED_PAYLOAD_KEYS = new Set([
-    "code", // Postgres sqlstate — low-cardinality, non-PII
+    "code", // Postgres sqlstate, low-cardinality, non-PII
     "studioId", // tenant id (already logged historically)
     "emailFingerprint", // salted SHA-256 of the normalized email
     "archivedClientCollision", // non-identifying boolean discriminator
@@ -166,7 +166,7 @@ describe("every public booking log payload is PII-minimized", () => {
       for (const key of payloadKeys(block)) {
         expect(
           ALLOWED_PAYLOAD_KEYS.has(key),
-          `Unexpected key "${key}" in a public booking log payload — if it is safe, add it to ALLOWED_PAYLOAD_KEYS; if it is PII, remove it:\n${block}`,
+          `Unexpected key "${key}" in a public booking log payload, if it is safe, add it to ALLOWED_PAYLOAD_KEYS; if it is PII, remove it:\n${block}`,
         ).toBe(true);
       }
     }

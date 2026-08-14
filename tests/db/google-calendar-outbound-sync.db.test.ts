@@ -8,7 +8,7 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// Google Calendar — Phase B, PR B1. Behavioral proof of the outbound-sync
+// Google Calendar: Phase B, PR B1. Behavioral proof of the outbound-sync
 // foundation (migration 0124): constraints, tenant isolation, the deterministic
 // idempotency key, the four-state model, and the claim/result RPCs incl. the
 // stale-lease dead transition + backoff bounds + token validation.
@@ -106,7 +106,7 @@ const result = (
   ]);
 
 // =========================================================================
-describe("calendar_event_links — constraints + isolation", () => {
+describe("calendar_event_links: constraints + isolation", () => {
   it("same-studio insert succeeds; cross-studio connection is rejected", async () => {
     const a = await seedStudio("elA");
     const b = await seedStudio("elB");
@@ -212,7 +212,7 @@ describe("calendar_event_links — constraints + isolation", () => {
 });
 
 // =========================================================================
-describe("calendar_sync_outbox — constraints + idempotency + isolation", () => {
+describe("calendar_sync_outbox: constraints + idempotency + isolation", () => {
   it("deterministic idempotency key: accepted once, duplicate rejected, a done row still blocks it", async () => {
     const a = await seedStudio("obKey");
     const conn = await seedConnection(a);
@@ -222,7 +222,7 @@ describe("calendar_sync_outbox — constraints + idempotency + isolation", () =>
     await expect(
       insertOutbox(a, conn, { hone_entity_id: entity, idempotency_key: key }),
     ).rejects.toThrow();
-    // Move it to done (claim metadata cleared) — the key must STILL block a re-enqueue.
+    // Move it to done (claim metadata cleared), the key must STILL block a re-enqueue.
     await adminQuery("update public.calendar_sync_outbox set status='done', processed_at=now() where idempotency_key=$1", [key]);
     await expect(
       insertOutbox(a, conn, { hone_entity_id: entity, idempotency_key: key }),

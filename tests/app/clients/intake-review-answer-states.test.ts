@@ -12,7 +12,7 @@ import { REVIEW_ANSWER_COPY } from "@/lib/intake/review-answers";
 // The projection's LOGIC is proven properly, as pure functions, in
 // tests/lib/intake/diabetes-thyroid-conditionals.test.ts §5.
 //
-// What these pins protect is the wiring between the two — specifically that the
+// What these pins protect is the wiring between the two, specifically that the
 // grid cannot quietly go back to printing whatever is in the jsonb. The failure
 // mode is invisible to a logic test: reviewAnswerState can be perfectly correct
 // while the page ignores it.
@@ -38,8 +38,8 @@ describe("the review grid asks the projection, not the raw response map", () => 
 
   it("renders the stored answer ONLY in the answered state", () => {
     // The load-bearing shape: renderResponse is reached through a conditional
-    // on `state === "answered"`. If that guard is dropped, a stale child value
-    // — one whose parent the client unselected — is printed as their answer.
+    // on `state === "answered"`. If that guard is dropped, a stale child value,
+    // one whose parent the client unselected, is printed as their answer.
     expect(PAGE_CODE).toMatch(
       /state === "answered"[\s\S]{0,200}renderResponse\(/,
     );
@@ -58,8 +58,8 @@ describe("the review grid asks the projection, not the raw response map", () => 
 
   it("uses the shared copy constants rather than inventing strings", () => {
     expect(PAGE_CODE).toMatch(/REVIEW_ANSWER_COPY\[state\]/);
-    // And the one remaining literal path — a present-but-empty value inside
-    // renderResponse — goes through the same constant.
+    // And the one remaining literal path, a present-but-empty value inside
+    // renderResponse, goes through the same constant.
     expect(PAGE_CODE).toMatch(/REVIEW_ANSWER_COPY\.unanswered/);
   });
 

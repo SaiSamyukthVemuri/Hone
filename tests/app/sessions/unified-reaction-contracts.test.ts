@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Charting unification — SOURCE-CONTRACT guards for the reaction-driven safety
+// Charting unification: SOURCE-CONTRACT guards for the reaction-driven safety
 // consumers. These enforce, at the source level, the query + data-handling
 // properties the runtime tests can't easily assert: set-based (no N+1) embedded
 // reads, studio scoping (no cross-studio leakage), historical-data preservation,
@@ -22,7 +22,7 @@ const CONSUMERS: Array<{ label: string; file: string }> = [
 
 describe("(15) reaction consumers read the unified rep via ONE set-based embedded query (no N+1)", () => {
   for (const { label, file } of CONSUMERS) {
-    it(`${label}: embeds electrolysis_entries(observation_chips ...) — not a per-row query`, () => {
+    it(`${label}: embeds electrolysis_entries(observation_chips ...), not a per-row query`, () => {
       const src = read(file);
       expect(src).toMatch(/electrolysis_entries\(observation_chips[^)]*\)/);
       // No per-block/per-client await inside a loop for reactions.
@@ -62,7 +62,7 @@ describe("(5/8/9) galvanic intensity + reaction_type historical-data preservatio
     expect(FORM).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
     expect(read(`${BASE}/simplified-entry-form.tsx`)).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
   });
-  it("neither form hydrates or sends galvanic_intensity_percent — history is preserved SERVER-SIDE, not via a browser round-trip", () => {
+  it("neither form hydrates or sends galvanic_intensity_percent, history is preserved SERVER-SIDE, not via a browser round-trip", () => {
     // Final amendment: galvanic intensity is a RETIRED reading. The form no longer
     // hydrates it into the draft nor sends it on save (no hidden browser-controlled
     // clinical field). Preservation is server-authoritative: the update path omits
@@ -75,13 +75,13 @@ describe("(5/8/9) galvanic intensity + reaction_type historical-data preservatio
     // `write_electrolysis_entry` (migration 0166) has NO parameter for
     // galvanic_intensity_percent: its INSERT hard-codes NULL and its UPDATE
     // omits the column entirely, so a new row cannot carry a value and a
-    // historical one cannot be overwritten — server-authoritative in the
+    // historical one cannot be overwritten, server-authoritative in the
     // strongest sense, since there is no longer an application literal to edit.
     const MIGRATION = read("supabase/migrations/0166_session_block_electrolysis_commands.sql");
     expect(MIGRATION).not.toMatch(/p_galvanic_intensity_percent/);
     expect(MIGRATION).toMatch(/galvanic_intensity_percent/); // named in the INSERT column list
     // Strip comments first: both modules still DOCUMENT the retirement in prose,
-    // which is the point — what must be absent is any code that writes it.
+    // which is the point, what must be absent is any code that writes it.
     const blockCode = BLOCK_ACTIONS.split("\n")
       .map((l) => l.replace(/\/\/.*$/, ""))
       .join("\n");
@@ -95,7 +95,7 @@ describe("(5/8/9) galvanic intensity + reaction_type historical-data preservatio
       /reactionType:[\s\S]{0,220}isChipSelected\([\s\S]{0,80}reactionTypeLabel\([\s\S]{0,80}\?\s*draft\.reactionType\s*:\s*null/,
     );
   });
-  it("today's minutes are never part of the copy — form has no minutes in the merged findings box", () => {
+  it("today's minutes are never part of the copy, form has no minutes in the merged findings box", () => {
     // (Guard against a future accidental re-add of minutes into observations.)
     expect(FORM).toMatch(/OBSERVATIONS_RESPONSE_HEADING/);
   });

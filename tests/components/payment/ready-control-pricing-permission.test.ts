@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-permission";
 
-// Review 3780286321 — READY-CONTROL PERMISSION.
+// Review 3780286321: READY-CONTROL PERMISSION.
 //
 // `ready` is the only attempt status carrying a money-moving control, and it
 // may expose that control ONLY while current authoritative pricing is
@@ -12,7 +12,7 @@ import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-pe
 // The previous gate was free-only, so an attempt whose service price had since
 // been cleared to NULL, whose custom pricing had become ambiguous, or whose
 // pricing read had failed still rendered Run charge. Execution already refuses
-// all of those — money safety was intact — but the practitioner saw an
+// all of those, money safety was intact, but the practitioner saw an
 // apparently runnable control and only discovered the block after submitting.
 // Worse, the pricing explanations were gated on `showPrepareForm`, which is
 // false whenever an attempt is active, so the explanation was suppressed
@@ -243,7 +243,7 @@ describe("source wiring", () => {
   });
 
   it("execution authority and prepared-amount semantics are untouched", () => {
-    // PrepareForm still requires a strictly `resolved` amount — the rule moved
+    // PrepareForm still requires a strictly `resolved` amount, the rule moved
     // into the presentation decision (review 3780746701), so assert it there.
     expect(PERM).toMatch(
       /showPrepareForm && amountResult\?\.kind === "resolved" \? amountResult : null/,
@@ -254,12 +254,12 @@ describe("source wiring", () => {
 });
 
 describe("exactly ONE ready-control authority", () => {
-  // Review 3780573779. The module used to export the ready decision twice —
+  // Review 3780573779. The module used to export the ready decision twice,
   // as `runChargeVisible` and again as `readyControl.canRun`. The tests
   // asserted the first, the card consumed the second, and they agreed only
   // because one was derived from the other. A later edit could have made them
   // diverge with this matrix still green and the UI doing the opposite.
-  it("the panel CANNOT be gated on pricing — there is no field to do it with", () => {
+  it("the panel CANNOT be gated on pricing, there is no field to do it with", () => {
     // Census outcome A. "A persisted active attempt is always visible" needs no
     // presentation field: it is exactly "an attempt exists". A `panelVisible`
     // boolean restating that was a second representation the card had to

@@ -55,7 +55,7 @@ test.describe("invite-only login page", () => {
     ).toHaveCount(0);
 
     // The gate is the checkbox: the Send button is disabled until the invited-
-    // email confirmation is ticked, then enabled — no acceptance is implied.
+    // email confirmation is ticked, then enabled, no acceptance is implied.
     const sendBtn = page.getByRole("button", { name: /send magic link/i });
     await page.locator("#login-email").fill("someone@studio.com");
     await expect(sendBtn).toBeDisabled();

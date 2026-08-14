@@ -13,9 +13,9 @@ import { randomUUID } from "node:crypto";
 // PR #253: invite-only posture, proven at the RLS layer on the real
 // migrated DB. Studio creation and owner membership happen ONLY via the
 // service-role new-studio path + the SECURITY DEFINER handle_new_user
-// trigger (invitation -> practitioner). No normal authenticated user —
+// trigger (invitation -> practitioner). No normal authenticated user,
 // and especially no "no-studio" user (an uninvited sign-in: an
-// auth.users row with no practitioner) — can create a studio, add
+// auth.users row with no practitioner), can create a studio, add
 // themselves as a practitioner, write an invitation, or escalate a role.
 
 let s: SeededStudio; // an established studio + owner
@@ -27,7 +27,7 @@ beforeAll(async () => {
   s = await seedStudio("inviteonly");
   member = await seedMember(s, "inviteonly-member");
   foreign = await seedStudio("inviteonly-foreign");
-  // A bare auth user with NO practitioner row — the uninvited-sign-in case.
+  // A bare auth user with NO practitioner row, the uninvited-sign-in case.
   noStudioUserId = randomUUID();
   await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [
     noStudioUserId,
@@ -60,7 +60,7 @@ describe("a no-studio authenticated user cannot bootstrap access", () => {
          values ($1, $2, $3, 'Self Add', 'self@example.com', 'owner', true)`,
         [randomUUID(), s.studioId, noStudioUserId],
       ),
-      // 0178: refused by PRIVILEGE now — a stranger cannot even reach the
+      // 0178: refused by PRIVILEGE now, a stranger cannot even reach the
       // policy layer to be rejected by it.
     ).rejects.toMatchObject({ code: "42501" });
   });
@@ -89,11 +89,11 @@ describe("a no-studio authenticated user cannot bootstrap access", () => {
 });
 
 describe("a non-owner member cannot create memberships or escalate", () => {
-  it("cannot INSERT a practitioner — now refused by PRIVILEGE, not RLS", async () => {
+  it("cannot INSERT a practitioner: now refused by PRIVILEGE, not RLS", async () => {
     // 0178 revoked INSERT on public.practitioners from every runtime role, so
     // this is refused one layer EARLIER than it used to be: `42501 permission
-    // denied` instead of a policy violation. The property this test exists for
-    // — a non-owner cannot manufacture a membership — is unchanged and is now
+    // denied` instead of a policy violation. The property this test exists for,
+    // a non-owner cannot manufacture a membership, is unchanged and is now
     // enforced by something RLS cannot be misconfigured around.
     await expect(
       userQuery(
@@ -117,12 +117,12 @@ describe("a non-owner member cannot create memberships or escalate", () => {
     ).rejects.toThrow(/row-level security/i);
   });
 
-  it("cannot escalate their own role to owner — now a hard error, not a silent no-op", async () => {
+  it("cannot escalate their own role to owner, now a hard error, not a silent no-op", async () => {
     // THIS ASSERTION USED TO READ `expect(r.rowCount).toBe(0)`.
     //
     // That is the shape 0178 exists to remove: under the owner-gated policy the
     // statement SUCCEEDED and simply matched no row, so a refusal and a
-    // no-op were indistinguishable — the same ambiguity that made three
+    // no-op were indistinguishable, the same ambiguity that made three
     // "self-service" profile actions silently do nothing for non-owners.
     // With UPDATE revoked the escalation attempt now fails loudly.
     await expect(

@@ -3,12 +3,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 // ===========================================================================
-// B8 / 0177 — independent-review P1-1.
+// B8 / 0177, independent-review P1-1.
 //
 // THE DEFECT. `sendPostcareEmailAction` distinguishes three outcomes, and the
 // server side was already correct: an ordinary refusal, a real success, and the
 // one case where the PROVIDER ACCEPTED the email but the database settlement
-// did not commit — returned as `code: "provider_sent_status_unrecorded"`.
+// did not commit, returned as `code: "provider_sent_status_unrecorded"`.
 // The modal collapsed all three into two. Every `ok:false` became
 // `setError(r.error)` under "Could not send. … Try again", so the practitioner
 // was told a sent email had failed and was invited to send it again. Once the
@@ -17,7 +17,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 //
 // WHY THESE ARE BEHAVIOURAL TESTS, NOT SOURCE GREPS. A substring test over
 // PostcareSendButton.tsx would pass on a component that merely MENTIONS the
-// code while still rendering the generic branch — the exact class of vacuous
+// code while still rendering the generic branch, the exact class of vacuous
 // guard this program has been caught by before. So:
 //
 //   * the CONTROLLER is driven with a MOCKED action, which is what makes
@@ -77,10 +77,10 @@ function renderFooter(
 }
 
 // ---------------------------------------------------------------------------
-// U1 — the controller, driven with a mocked action
+// U1, the controller, driven with a mocked action
 // ---------------------------------------------------------------------------
-describe("U1 — provider accepted, settlement unrecorded: the controller", () => {
-  it("classifies it as its own outcome — never success, never a plain error", async () => {
+describe("U1, provider accepted, settlement unrecorded: the controller", () => {
+  it("classifies it as its own outcome, never success, never a plain error", async () => {
     const send = vi.fn().mockResolvedValue(unrecordedResult());
     const refresh = vi.fn();
 
@@ -136,7 +136,7 @@ describe("U1 — provider accepted, settlement unrecorded: the controller", () =
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("does not auto-close — the practitioner is being asked to act", async () => {
+  it("does not auto-close: the practitioner is being asked to act", async () => {
     // Only an ordinary success dismisses itself. This state asks for a refresh,
     // so it must stay on screen.
     expect(postcareAutoCloses({ kind: "provider_unrecorded", message: "x" })).toBe(
@@ -147,9 +147,9 @@ describe("U1 — provider accepted, settlement unrecorded: the controller", () =
 });
 
 // ---------------------------------------------------------------------------
-// U2 — what the practitioner actually sees (real render)
+// U2, what the practitioner actually sees (real render)
 // ---------------------------------------------------------------------------
-describe("U2 — provider accepted, settlement unrecorded: rendered copy", () => {
+describe("U2, provider accepted, settlement unrecorded: rendered copy", () => {
   const outcome = classifyPostcareSendResult(unrecordedResult());
   const html = renderNotice(outcome);
 
@@ -189,16 +189,16 @@ describe("U2 — provider accepted, settlement unrecorded: rendered copy", () =>
 });
 
 // ---------------------------------------------------------------------------
-// U3 — the control that could duplicate the email is withdrawn
+// U3, the control that could duplicate the email is withdrawn
 // ---------------------------------------------------------------------------
-describe("U3 — no enabled Confirm send/resend while the state is displayed", () => {
+describe("U3: no enabled Confirm send/resend while the state is displayed", () => {
   it("withdraws the confirm button entirely for first send AND resend", () => {
     for (const isResend of [false, true]) {
       const html = renderFooter(
         { kind: "provider_unrecorded", message: UNRECORDED_ERROR },
         { isResend, canConfirm: true },
       );
-      // Not merely disabled — absent. `canConfirm: true` is passed on purpose:
+      // Not merely disabled: absent. `canConfirm: true` is passed on purpose:
       // if the footer keyed off that flag instead of the outcome, this is where
       // it would leak an enabled control.
       expect(html).not.toContain('data-testid="postcare-confirm"');
@@ -232,9 +232,9 @@ describe("U3 — no enabled Confirm send/resend while the state is displayed", (
 });
 
 // ---------------------------------------------------------------------------
-// U4 — the successful-send copy does not overclaim delivery (review P2)
+// U4, the successful-send copy does not overclaim delivery (review P2)
 // ---------------------------------------------------------------------------
-describe("U4 — successful send copy is provider handoff, not delivery", () => {
+describe("U4: successful send copy is provider handoff, not delivery", () => {
   const html = renderNotice({ kind: "sent" });
 
   it("says the email was handed to the provider", () => {
@@ -245,8 +245,8 @@ describe("U4 — successful send copy is provider handoff, not delivery", () => 
   });
 
   it("never claims delivery, receipt, reading, or a delivery window", () => {
-    // B8 defines sent_at as PROVIDER HANDOFF only. The previous copy — "The
-    // client will receive it within a minute" — asserted an outcome Hone has no
+    // B8 defines sent_at as PROVIDER HANDOFF only. The previous copy, "The
+    // client will receive it within a minute", asserted an outcome Hone has no
     // evidence for: there is no delivery receipt and no bounce feedback.
     expect(html).not.toMatch(/\b(delivered|received|will receive|opened|read)\b/i);
     expect(html).not.toMatch(/within a minute/i);
@@ -254,9 +254,9 @@ describe("U4 — successful send copy is provider handoff, not delivery", () => 
 });
 
 // ---------------------------------------------------------------------------
-// U5 — the ordinary error path is unchanged
+// U5, the ordinary error path is unchanged
 // ---------------------------------------------------------------------------
-describe("U5 — ordinary failures keep their existing copy", () => {
+describe("U5: ordinary failures keep their existing copy", () => {
   it("still renders 'Could not send. … Try again …'", () => {
     const html = renderNotice({
       kind: "error",
@@ -266,7 +266,7 @@ describe("U5 — ordinary failures keep their existing copy", () => {
     expect(html).toContain("This client has no email on file.");
     expect(html).toContain(POSTCARE_ERROR_SUFFIX);
     // The apostrophe stays typographic (U+2019), as it was when this was JSX
-    // text carrying `&rsquo;` — a straight quote would be escaped to &#x27;.
+    // text carrying `&rsquo;`, a straight quote would be escaped to &#x27;.
     expect(html).toContain("client’s email");
   });
 
@@ -276,9 +276,9 @@ describe("U5 — ordinary failures keep their existing copy", () => {
 });
 
 // ---------------------------------------------------------------------------
-// U6 — the shell is wired to the presenter (not a substitute for the above)
+// U6, the shell is wired to the presenter (not a substitute for the above)
 // ---------------------------------------------------------------------------
-describe("U6 — PostcareSendButton composes the presenter", () => {
+describe("U6: PostcareSendButton composes the presenter", () => {
   it("holds no second outcome model of its own", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");

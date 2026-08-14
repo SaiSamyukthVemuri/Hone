@@ -18,14 +18,14 @@ import type {
   PointOfCareEntry,
 } from "@/lib/sessions/point-of-care-memory";
 
-// APPOINTMENT PREPARATION MEMORY — behavioural contract.
+// APPOINTMENT PREPARATION MEMORY: behavioural contract.
 //
 // Two halves are proved here:
-//   * SELECTION — that the appointment page asks the shared selector the right
+//   * SELECTION, that the appointment page asks the shared selector the right
 //     question. The selector's own rules are proved in charted-session.test.ts;
 //     what is new for 1D is the appointment BOUNDARY (strictly before
 //     starts_at) and the linked-session exclusion.
-//   * THE MODEL — that every recorded setting and outcome survives into the
+//   * THE MODEL, that every recorded setting and outcome survives into the
 //     view model, that the narrative is complete, whole, deduplicated and
 //     attributable, and that an absent value is never fabricated into a normal
 //     result.
@@ -100,7 +100,7 @@ function memoryOf(
 }
 
 // ---------------------------------------------------------------------------
-// SELECTION — the appointment boundary
+// SELECTION, the appointment boundary
 // ---------------------------------------------------------------------------
 
 type Candidate = ChartedSessionCandidate & { appointment_id?: string | null };
@@ -123,7 +123,7 @@ function pick(sessions: Candidate[], blocks = BLOCKS) {
   });
 }
 
-describe("selection — the newest CHARTED treatment before this appointment", () => {
+describe("selection: the newest CHARTED treatment before this appointment", () => {
   it("1. selects the newest charted block session", () => {
     const older = candidate("s-older", "2026-05-01T10:00:00.000Z");
     const blocks = new Map([
@@ -133,7 +133,7 @@ describe("selection — the newest CHARTED treatment before this appointment", (
     expect(pick([older, CHARTED], blocks)?.id).toBe("s-charted");
   });
 
-  it("2. ignores a NEWER empty session — the defect this replaces", () => {
+  it("2. ignores a NEWER empty session, the defect this replaces", () => {
     const empty = candidate("s-empty", "2026-08-01T10:00:00.000Z");
     expect(pick([empty, CHARTED])?.id).toBe("s-charted");
   });
@@ -176,7 +176,7 @@ describe("selection — the newest CHARTED treatment before this appointment", (
     expect(pick([future, CHARTED], blocks)?.id).toBe("s-charted");
   });
 
-  it("7. ignores a session starting exactly AT the appointment start — the bound is strict", () => {
+  it("7. ignores a session starting exactly AT the appointment start, the bound is strict", () => {
     const atStart = candidate("s-at", APPT_STARTS_AT);
     const blocks = new Map([
       ["s-charted", [{ deleted_at: null }]],
@@ -228,7 +228,7 @@ describe("selection — the newest CHARTED treatment before this appointment", (
     expect(pick([other, CHARTED], blocks)?.id).toBe("s-other-appt");
   });
 
-  it("9. selects a laser-only session — it IS the last treatment mid-transition", () => {
+  it("9. selects a laser-only session, it IS the last treatment mid-transition", () => {
     const laser = candidate("s-laser", "2026-08-01T10:00:00.000Z", {
       laser_entries: [{ deleted_at: null }],
     });
@@ -276,8 +276,8 @@ describe("selection — the newest CHARTED treatment before this appointment", (
 // SETTINGS + OUTCOMES
 // ---------------------------------------------------------------------------
 
-describe("settings and outcomes — complete, per area, mode-valid", () => {
-  it("13. every structured treatment area appears — never only the first", () => {
+describe("settings and outcomes: complete, per area, mode-valid", () => {
+  it("13. every structured treatment area appears, never only the first", () => {
     const m = memoryOf();
     expect(m.areas[0].areaParts).toEqual(["Left Cheek", "Right Sideburn"]);
     expect(m.areas[0].areaLabel).toBe("Left Cheek · Right Sideburn");
@@ -333,7 +333,7 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
     expect(new Set(m.areas.map((a) => a.key)).size).toBe(m.areas.length);
   });
 
-  it("16. readings are MODE-VALID — thermolysis never shows stale galvanic values", () => {
+  it("16. readings are MODE-VALID: thermolysis never shows stale galvanic values", () => {
     const thermo = memoryOf({
       blocks: [
         block({
@@ -382,7 +382,7 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
     expect(byField.unitsOfLye).toBe("30 UL");
     expect(byField.galvanicDurationSeconds).toBe("8s");
     expect(byField.galvanicMa).toBe("1.2 mA");
-    // 3dp exact — a stored 0.733 must never render as 0.73 or 0.
+    // 3dp exact: a stored 0.733 must never render as 0.73 or 0.
     expect(byField.thermolysisDurationSeconds).toBe("0.733 seconds");
     expect(byField.thermolysisIntensityPercent).toBe("40%");
     expect(byField.pulseCount).toBe("1 pulse");
@@ -405,7 +405,7 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
   });
 
   it("16d. divergent readings between passes are FLAGGED, not silently dropped", () => {
-    // The readings shown are the canonical (first) pass's — Session 1B's shared
+    // The readings shown are the canonical (first) pass's, Session 1B's shared
     // rule. When a later pass differs, the card must say so; preparing to 40%
     // for a session that ended at 55% is exactly the miss this card exists to
     // prevent.
@@ -498,7 +498,7 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
     expect(m.totalHairs).toBe(65);
   });
 
-  it("19. soft-deleted passes contribute nothing — no hairs, no count, no note", () => {
+  it("19. soft-deleted passes contribute nothing, no hairs, no count, no note", () => {
     const m = memoryOf({
       blocks: [
         block({
@@ -519,7 +519,7 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
     expect(JSON.stringify(m)).not.toMatch(/9999|REMOVED PASS NOTE/);
   });
 
-  it("20. an absent value reads as absent — minutes, hairs and response are never fabricated", () => {
+  it("20. an absent value reads as absent, minutes, hairs and response are never fabricated", () => {
     const bare = memoryOf({
       blocks: [
         block({
@@ -557,7 +557,7 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
   // is shared with the live charting card and changing it is a 1B contract
   // change, out of scope here. It is asserted rather than left implicit so the
   // next reader is not misled by test 20b's name.
-  it("20a-note. zero HAIRS still read as absent — an inherited 1B rule, stated not hidden", () => {
+  it("20a-note. zero HAIRS still read as absent, an inherited 1B rule, stated not hidden", () => {
     const zeroHairs = memoryOf({
       blocks: [block({ entries: [entry({ hairs_treated: 0 })] })],
     });
@@ -628,7 +628,7 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
     // REGRESSION (adversarial review, P1). The compact summary has always
     // rendered a note-less flag as "<area>: flagged to watch." inside the
     // warning band. Collecting only caution_note demoted a safety flag to an
-    // unstyled chip in the same wrap row as "30 min" — below the fold.
+    // unstyled chip in the same wrap row as "30 min", below the fold.
     const flagged = memoryOf({
       blocks: [block({ caution_for_next_session: true, caution_note: null })],
     });
@@ -714,7 +714,7 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
 const MULTILINE =
   "First paragraph about the treatment.\n\nSecond paragraph.\nThird line follows immediately.";
 
-describe("narrative — complete, whole, grouped, deduplicated", () => {
+describe("narrative: complete, whole, grouped, deduplicated", () => {
   it("23. the prior session's general notes are shown in full", () => {
     const m = memoryOf({
       session: {
@@ -761,7 +761,7 @@ describe("narrative — complete, whole, grouped, deduplicated", () => {
     // SETTLED CONTRACT (was: the external plan overrode the own plan, and the
     // own plan then rendered nowhere). Session 1D promises the COMPLETE
     // narrative from the selected treatment, so its own plan stays. A newer
-    // instruction from another visit is real too — it renders on its own
+    // instruction from another visit is real too, it renders on its own
     // attributed surface, proved by the provenance truth table rows 2 and 4.
     const m = memoryOf();
     expect(m.notes.forNextVisit?.text).toBe("Start lower on the sideburn");
@@ -895,7 +895,7 @@ describe("narrative — complete, whole, grouped, deduplicated", () => {
     expect(m.notes.general[0].text).toHaveLength(4000);
     expect(m.notes.responses[0].text).toHaveLength(4000);
     expect(m.notes.cautions[0].text).toHaveLength(4000);
-    // No ellipsis anywhere — the compact summary's 140-char drop and the
+    // No ellipsis anywhere: the compact summary's 140-char drop and the
     // point-of-care card's 180-char excerpt are both absent here.
     expect(JSON.stringify(m)).not.toContain("…");
   });
@@ -1007,9 +1007,9 @@ describe("narrative — complete, whole, grouped, deduplicated", () => {
     expect(m.areas[0].outcome.notes).toEqual([]);
   });
 
-  it("32b. a LEGACY pass's comments survive WHOLE — chip hydration must not eat them", () => {
+  it("32b. a LEGACY pass's comments survive WHOLE, chip hydration must not eat them", () => {
     // REGRESSION (adversarial review, P1). resolveDisplayChips promotes
-    // canonical tokens out of `comments` into a chip list — but ONLY when
+    // canonical tokens out of `comments` into a chip list, but ONLY when
     // observation_chips is empty, which is exactly when the response line
     // (built from that same raw column) is empty too. Taking the hydration
     // REMAINDER therefore deleted text that nothing else on this card renders.
@@ -1174,7 +1174,7 @@ describe("narrative — complete, whole, grouped, deduplicated", () => {
 // BLOCKLESS TREATMENTS
 // ---------------------------------------------------------------------------
 
-describe("blockless treatments — truthful, never 'not recorded'", () => {
+describe("blockless treatments: truthful, never 'not recorded'", () => {
   const laserEntries: PrepLaserEntry[] = [
     {
       id: "l1",
@@ -1224,10 +1224,10 @@ describe("blockless treatments — truthful, never 'not recorded'", () => {
     expect(m.blocklessNote).not.toMatch(/Area not recorded|Setup not recorded/i);
   });
 
-  it("35b. a BLOCKLESS legacy pass's notes reach the card — they have no other channel", () => {
+  it("35b. a BLOCKLESS legacy pass's notes reach the card, they have no other channel", () => {
     // REGRESSION (adversarial review, P1). Pre-0019 electrolysis charted
     // straight into entries with block_id NULL. Narrative was harvested only
-    // from areas, and a blockless visit has none — so the card printed the
+    // from areas, and a blockless visit has none, so the card printed the
     // blockless copy AND "No notes recorded at the last session." while the
     // text sat in the record.
     const m = memoryOf({
@@ -1270,7 +1270,7 @@ describe("blockless treatments — truthful, never 'not recorded'", () => {
   it("35b-i. a pass whose BLOCK was soft-deleted still reaches the notes", () => {
     // REGRESSION (adversarial review, P2). soft_delete_session_block (0166)
     // does not cascade to its entries, and the block read filters deleted
-    // blocks out — so a live entry pointing at a dead block reached neither the
+    // blocks out, so a live entry pointing at a dead block reached neither the
     // area channel nor the orphan channel, and the card said there were none.
     const m = memoryOf({
       session: {
@@ -1289,13 +1289,13 @@ describe("blockless treatments — truthful, never 'not recorded'", () => {
           block_id: "b-soft-deleted",
           deleted_at: null,
           area: "Chin",
-          comments: "Reacted strongly on the chin — start lower",
+          comments: "Reacted strongly on the chin, start lower",
         },
       ],
     });
     expect(m.notes.hasAny).toBe(true);
     expect(m.notes.additional[0].text).toBe(
-      "Reacted strongly on the chin — start lower",
+      "Reacted strongly on the chin, start lower",
     );
   });
 
@@ -1399,7 +1399,7 @@ describe("safety", () => {
     expect(bare.areas[0].areaParts).toEqual([]);
   });
 
-  it("38. the builder is pure — it mutates nothing it was handed", () => {
+  it("38. the builder is pure, it mutates nothing it was handed", () => {
     const blocks = [block()];
     const snapshot = JSON.stringify(blocks);
     buildAppointmentPrepMemory({
@@ -1446,7 +1446,7 @@ const model = (over: Parameters<typeof buildPrepProvenanceModel>[0]) =>
 
 const texts = (items: ReadonlyArray<{ text: string }>) => items.map((i) => i.text);
 
-describe("provenance truth table — treatment + plan", () => {
+describe("provenance truth table: treatment + plan", () => {
   it("1. own plan, no external plan", () => {
     const r = model({ selected: TREAT, ownPlan: OWN_PLAN, windowPlan: { ...TREAT, text: OWN_PLAN } });
     expect(texts(r.owned)).toEqual([OWN_PLAN]);
@@ -1455,7 +1455,7 @@ describe("provenance truth table — treatment + plan", () => {
     expect(r.external).toEqual([]);
   });
 
-  it("2. own plan + NEWER external plan — both survive, external attributed", () => {
+  it("2. own plan + NEWER external plan, both survive, external attributed", () => {
     const r = model({
       selected: TREAT,
       ownPlan: OWN_PLAN,
@@ -1484,7 +1484,7 @@ describe("provenance truth table — treatment + plan", () => {
     expect(r.external[0].text).toBe(EXT_PLAN);
   });
 
-  it("5. NO own plan + OLDER external plan — THE BLOCKER: never unattributed", () => {
+  it("5. NO own plan + OLDER external plan, THE BLOCKER: never unattributed", () => {
     // Selected Jul 20, plan from Jun 1. Rendering it undated read as "written
     // at the treatment above", inverting the status of an instruction that may
     // already have been carried out at Jul 20.
@@ -1510,7 +1510,7 @@ describe("provenance truth table — treatment + plan", () => {
   });
 });
 
-describe("provenance truth table — treatment + legacy session notes", () => {
+describe("provenance truth table: treatment + legacy session notes", () => {
   it("7. selected treatment owns the newest legacy notes", () => {
     const r = model({
       selected: TREAT,
@@ -1548,7 +1548,7 @@ describe("provenance truth table — treatment + legacy session notes", () => {
   });
 });
 
-describe("provenance truth table — combined", () => {
+describe("provenance truth table: combined", () => {
   it("11. own plan + own session notes both render, both owned", () => {
     const r = model({ selected: TREAT, ownPlan: OWN_PLAN, ownLegacyNotes: OWN_NOTES });
     expect(texts(r.owned).sort()).toEqual([OWN_PLAN, OWN_NOTES].sort());
@@ -1622,7 +1622,7 @@ describe("provenance truth table — combined", () => {
   });
 });
 
-describe("provenance truth table — read state", () => {
+describe("provenance truth table: read state", () => {
   it("16. successful full read with everything present", () => {
     const r = model({
       selected: TREAT,
@@ -1635,7 +1635,7 @@ describe("provenance truth table — read state", () => {
     expect(r.external).toHaveLength(2);
   });
 
-  it("17. block-read failure + external plan — no treatment, plan attributed", () => {
+  it("17. block-read failure + external plan, no treatment, plan attributed", () => {
     // selected === null models a failed block read: no treatment could be
     // resolved, but the candidate narrative was already fetched.
     const r = model({ selected: null, windowPlan: { ...NEWER_V, text: EXT_PLAN } });
@@ -1648,7 +1648,7 @@ describe("provenance truth table — read state", () => {
     expect(texts(r.external)).toEqual([EXT_NOTES]);
   });
 
-  it("19. genuine first visit — nothing at all", () => {
+  it("19. genuine first visit: nothing at all", () => {
     expect(model({ selected: null })).toEqual({ owned: [], external: [] });
   });
 

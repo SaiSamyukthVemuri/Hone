@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 // studio-scoped SELECT only, and every write goes through the trusted
 // SECURITY DEFINER commands. The trigger/constraint coverage below therefore
 // drives the table through the OWNER connection (adminQuery), which is the only
-// way left to exercise a raw INSERT — the member-facing posture (SELECT yes, direct DML no) is proven in
+// way left to exercise a raw INSERT, the member-facing posture (SELECT yes, direct DML no) is proven in
 // tests/db/clinical-finalization-retired.db.test.ts.
 
 let a: SeededStudio;
@@ -104,7 +104,7 @@ describe("tenant isolation + studio-derive", () => {
   });
   it("studio B cannot INSERT an area onto studio A's block", async () => {
     // Post-0159 the denial lands at the privilege layer (42501) before RLS is
-    // consulted at all — a strictly stronger guarantee than the RLS-only check
+    // consulted at all, a strictly stronger guarantee than the RLS-only check
     // this test originally asserted.
     await expect(
       asUser(b.userId, (q) => q(INS, [aBlockId, b.studioId, "Cheek", "left", 0])),
@@ -117,7 +117,7 @@ describe("tenant isolation + studio-derive", () => {
   it("…and for service_role, the one NON-OWNER role that still holds DML (0159)", async () => {
     // The derive trigger is SECURITY INVOKER and reads public.session_blocks, so
     // it behaves differently per role. After 0159 revoked browser DML, service_role
-    // is the only non-owner role that can still exercise it — keep that covered.
+    // is the only non-owner role that can still exercise it, keep that covered.
     const r = await asRole("service_role", (q) =>
       q(INS, [aBlockId, b.studioId /* spoofed */, "Jawline", "right", 0]),
     );
@@ -188,7 +188,7 @@ describe("editable + cascade", () => {
 // delete-then-insert app write; the whole block + area set commits together.
 const AREAS = (arr: Array<{ area: string; laterality: string }>) => JSON.stringify(arr);
 
-describe("0129 — atomic block + area writes (RPCs)", () => {
+describe("0129: atomic block + area writes (RPCs)", () => {
   it("create_session_block_with_areas creates the block + areas + projection together", async () => {
     const { sessionId } = await seedSession(a);
     const blockId = await asUser(a.userId, async (q) => {
@@ -231,14 +231,14 @@ describe("0129 — atomic block + area writes (RPCs)", () => {
         [a.studioId, sessionId, blockId,
           AREAS([{ area: "Chin", laterality: "left" }, { area: "Upper lip", laterality: "right" }])]));
     // A replacement whose new set violates the unique(block, area, laterality)
-    // constraint must roll the WHOLE function back — delete included.
+    // constraint must roll the WHOLE function back, delete included.
     await expect(
       asUser(a.userId, (q) =>
         q(`select public.update_session_block_with_areas($1,$2,$3,'{}'::jsonb,$4::jsonb)`,
           [a.studioId, sessionId, blockId,
             AREAS([{ area: "Neck", laterality: "left" }, { area: "Neck", laterality: "left" }])])),
     ).rejects.toThrow();
-    // The committed prior set is intact — nothing was deleted-without-replacement.
+    // The committed prior set is intact, nothing was deleted-without-replacement.
     const rows = await adminQuery(
       `select area, laterality from public.session_block_areas where session_block_id=$1 order by display_order`,
       [blockId]);
@@ -266,7 +266,7 @@ describe("0129 — atomic block + area writes (RPCs)", () => {
   });
 });
 
-describe("0129 — area-set transitions are canonical + atomic (no stale rows)", () => {
+describe("0129: area-set transitions are canonical + atomic (no stale rows)", () => {
   const readAreas = async (blockId: string) =>
     (
       await adminQuery(
@@ -346,7 +346,7 @@ describe("0129 — area-set transitions are canonical + atomic (no stale rows)",
       ),
     );
     const row = await adminQuery(`select studio_id, session_id, id, mode from public.session_blocks where id=$1`, [blockId]);
-    expect(row.rows[0].studio_id).toBe(a.studioId); // unchanged — injection ignored
+    expect(row.rows[0].studio_id).toBe(a.studioId); // unchanged, injection ignored
     expect(row.rows[0].session_id).toBe(sessionId);
     expect(row.rows[0].id).toBe(blockId);
     expect(row.rows[0].mode).toBe("thermo"); // the allow-listed field WAS applied

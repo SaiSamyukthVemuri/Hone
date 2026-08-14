@@ -2,10 +2,10 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, seedStudio, userQuery, type SeededStudio } from "./helpers/harness";
 
-// Google Calendar — Phase B2.2 DB integration (LOCAL disposable Supabase only).
+// Google Calendar: Phase B2.2 DB integration (LOCAL disposable Supabase only).
 // granted_scopes is about to become the gate outbound enablement trusts, so this
-// pins that a browser role can NEVER change it (or any connection field / secret)
-// — the column moves only through the trusted service-role callback path.
+// pins that a browser role can NEVER change it (or any connection field / secret),
+// the column moves only through the trusted service-role callback path.
 
 const PHASE_A = ["https://www.googleapis.com/auth/calendar.calendarlist.readonly"];
 const EVENTS = "https://www.googleapis.com/auth/calendar.events";

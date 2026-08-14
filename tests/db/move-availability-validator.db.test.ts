@@ -3,7 +3,7 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 (migration 0148) — move/reassign now runs the shared availability
+// PR B Part 4 (migration 0148), move/reassign now runs the shared availability
 // validator on the FINAL target + resulting interval. Working hours, closed days,
 // blockouts apply; the OWNER outside-availability bypass skips ONLY working hours;
 // a member can never forge it. Studio B, cap ON, UTC, weekday window 09:00–17:00.
@@ -63,7 +63,7 @@ const move = (
     [id, B.studioId, actor, target, es, ee, ns, outside],
   ).then((r) => r.rows[0] as { result: string });
 
-describe("0148 — move/reassign availability validation", () => {
+describe("0148: move/reassign availability validation", () => {
   it("time-only move WITHIN hours → moved; move OUTSIDE hours → outside_availability", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     expect((await move(a.id, owner(), null, a.exp, a.expEnd, T("11:00"))).result).toBe("moved");
@@ -92,7 +92,7 @@ describe("0148 — move/reassign availability validation", () => {
 
   it("blockout is NEVER bypassed, even with the owner override", async () => {
     // Blockout on a DIFFERENT day than the appointment (a full-day blockout and an
-    // appointment cannot coexist on the same resource/day — they collide in the
+    // appointment cannot coexist on the same resource/day, they collide in the
     // shadow). The appt lives on the open DATE; we move it onto the blocked day.
     const BLOCKED = "2031-09-16";
     await adminQuery(

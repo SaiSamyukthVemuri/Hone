@@ -18,7 +18,7 @@ const DATA_ACTIONS = read("app/(app)/settings/data/actions.ts");
 const PRIVACY = read("app/privacy/page.tsx");
 const TERMS = read("app/terms/page.tsx");
 
-describe("#7 — data residency claims cannot contradict the Privacy Policy", () => {
+describe("#7: data residency claims cannot contradict the Privacy Policy", () => {
   // The Privacy Policy states the database is Supabase on AWS US-East-1
   // (Northern Virginia). The settings page simultaneously said "Hone stores
   // this data in Canada" and "Data hosted in Canada". Both cannot be true.
@@ -44,7 +44,7 @@ describe("#7 — data residency claims cannot contradict the Privacy Policy", ()
   });
 });
 
-describe("#6 — retention promises match current capability", () => {
+describe("#6: retention promises match current capability", () => {
   // Neither an automatic 30-day hard purge nor a 90-day backup purge is
   // implemented: there is no retention job anywhere in the tree, and
   // vercel.json registers no purge cron.
@@ -60,7 +60,7 @@ describe("#6 — retention promises match current capability", () => {
 
   it("both documents say plainly that no automatic timed purge runs today", () => {
     // JSX wraps prose across lines, so match on whitespace rather than a
-    // single-line phrase — otherwise a reflow silently disarms this guard.
+    // single-line phrase, otherwise a reflow silently disarms this guard.
     const noTimedPurge = /do not currently\s+operate an automatic timed purge/i;
     expect(PRIVACY).toMatch(noTimedPurge);
     expect(TERMS).toMatch(noTimedPurge);
@@ -76,8 +76,8 @@ describe("#6 — retention promises match current capability", () => {
   });
 
   it("neither document claims a documented deletion PROCESS that does not exist", () => {
-    // There is no operator deletion runbook in docs/runbooks/ — they are all
-    // migration rollouts — so "actioned through our deletion process" was
+    // There is no operator deletion runbook in docs/runbooks/, they are all
+    // migration rollouts, so "actioned through our deletion process" was
     // itself an overclaim, just a smaller one than the 30/90-day promise.
     for (const [name, src] of [
       ["privacy", PRIVACY],
@@ -90,7 +90,7 @@ describe("#6 — retention promises match current capability", () => {
   });
 
   it("both use the conservative review-and-respond wording instead", () => {
-    // JSX reflows prose freely, so every gap here must tolerate a line break —
+    // JSX reflows prose freely, so every gap here must tolerate a line break,
     // a guard that a re-wrap can disarm is not a guard.
     const reviewAndRespond =
       /review\s+permanent-deletion\s+requests[\s\S]{0,90}respond\s+based\s+on\s+what\s+can\s+be\s+deleted/i;
@@ -104,7 +104,7 @@ describe("#6 — retention promises match current capability", () => {
   });
 });
 
-describe("#4b — the manifest does not overclaim completeness", () => {
+describe("#4b: the manifest does not overclaim completeness", () => {
   const ACTIONS = DATA_ACTIONS;
 
   it("nothing says the manifest alone confirms the export is complete", () => {
@@ -140,7 +140,7 @@ describe("#4b — the manifest does not overclaim completeness", () => {
   });
 });
 
-describe("#8 — the Terms do not describe automated Hone subscription billing as live", () => {
+describe("#8: the Terms do not describe automated Hone subscription billing as live", () => {
   // Census at this baseline found ZERO Hone-to-studio subscription machinery:
   // no subscriptions.create, no stripe_subscription / subscription_id, no
   // entitlements, no dunning, no customer.subscription or
@@ -161,8 +161,8 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
   });
 
   it("studio-to-client Stripe payments are explicitly NOT changed", () => {
-    // Section 8 governs what the studio pays Hone. The separate product — what
-    // the studio charges its own clients — must not be swept up by this edit.
+    // Section 8 governs what the studio pays Hone. The separate product, what
+    // the studio charges its own clients, must not be swept up by this edit.
     expect(TERMS).toMatch(/separate from the payments your studio takes from its own clients/i);
   });
 
@@ -178,7 +178,7 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
   });
 });
 
-describe("#4 — the export is not sold as a database backup", () => {
+describe("#4: the export is not sold as a database backup", () => {
   it("the data page never calls the ZIP a backup", () => {
     expect(DATA_PAGE).not.toMatch(/use this as a backup/i);
     expect(DATA_PAGE).not.toMatch(/keep it\s*\n?\s*as a backup/i);
@@ -207,12 +207,12 @@ describe("#4 — the export is not sold as a database backup", () => {
 });
 
 describe("export privilege posture is unchanged (E7, E8)", () => {
-  it("E7 — the owner-only gate is still enforced", () => {
+  it("E7: the owner-only gate is still enforced", () => {
     expect(DATA_ACTIONS).toMatch(/practitioner\.role !== "owner"/);
     expect(DATA_ACTIONS).toMatch(/You do not have permission to export data\./);
   });
 
-  it("E8 — the export never widens to a service-role / admin client", () => {
+  it("E8: the export never widens to a service-role / admin client", () => {
     for (const forbidden of [
       "createAdminClient",
       "admin-server",
@@ -231,7 +231,7 @@ describe("export privilege posture is unchanged (E7, E8)", () => {
   it("pagination did not smuggle in a second client", () => {
     // Assert on IMPORTS, not on any occurrence of the word. A first version of
     // this test used `.not.toContain("supabase")` and failed on a COMMENT
-    // citing supabase/config.toml — a guard a comment can satisfy is a guard
+    // citing supabase/config.toml, a guard a comment can satisfy is a guard
     // that proves nothing about the code.
     const PAGINATE = read("lib/export/paginate.ts");
     const imports = PAGINATE.match(/^\s*import .*$/gm) ?? [];
@@ -240,13 +240,13 @@ describe("export privilege posture is unchanged (E7, E8)", () => {
   });
 });
 
-describe("#9 — reminder scheduler: proven runtime and unproven ownership stay separate claims", () => {
+describe("#9, reminder scheduler: proven runtime and unproven ownership stay separate claims", () => {
   const CRON_DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
   const CURRENT_STATE = read("docs/production/current-state.md");
 
   // PR OPS-01 closed the RUNTIME half of this finding with dated production
-  // evidence (three observed 200s at ~15-minute spacing). The HUMAN half —
-  // who owns the third-party scheduler account — is not closable by any probe
+  // evidence (three observed 200s at ~15-minute spacing). The HUMAN half,
+  // who owns the third-party scheduler account, is not closable by any probe
   // and must never be folded into the same claim.
   it("the two claims are stated separately, not merged", () => {
     expect(CRON_DOC).toMatch(/PROVEN RUNTIME FACTS/);

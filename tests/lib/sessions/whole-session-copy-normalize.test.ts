@@ -44,7 +44,7 @@ const OUTCOME_KEYS = [
   "probe_inventory_item_id", "probe_lot_id",
 ];
 
-describe("normalizeWholeSessionCopy — happy path", () => {
+describe("normalizeWholeSessionCopy: happy path", () => {
   it("derives probe decomposition + primary_area/side server-side; never copies minutes or outcomes", () => {
     const r = normalizeWholeSessionCopy([draft()]);
     expect(r.ok).toBe(true);
@@ -126,7 +126,7 @@ describe("normalizeWholeSessionCopy — happy path", () => {
   });
 });
 
-describe("normalizeWholeSessionCopy — forgery / invalid values are REJECTED (not NULL-coerced)", () => {
+describe("normalizeWholeSessionCopy: forgery / invalid values are REJECTED (not NULL-coerced)", () => {
   it("rejects an unknown probe key", () => {
     const r = normalizeWholeSessionCopy([draft({ setup: { ...draft().setup, probeKey: "totally-made-up-key" } })]);
     expect(r.ok).toBe(false);
@@ -210,10 +210,10 @@ describe("normalizeWholeSessionCopy — forgery / invalid values are REJECTED (n
 });
 
 // Phase B reconciliation: galvanic_intensity_percent is a RETIRED reading (Phase
-// A). The normalizer is the canonical server-side authority — it must never emit
+// A). The normalizer is the canonical server-side authority, it must never emit
 // it into the spec, even from a forged draft, and must preserve Chloe's exact
 // PicoBlend decimals with zero loss.
-describe("normalizeWholeSessionCopy — galvanic intensity retired + PicoBlend precision", () => {
+describe("normalizeWholeSessionCopy: galvanic intensity retired + PicoBlend precision", () => {
   it("(2/3) emits valid galvanic mA/duration/units but NO galvanic_intensity_percent", () => {
     const r = normalizeWholeSessionCopy([draft()]);
     expect(r.ok).toBe(true);
@@ -227,7 +227,7 @@ describe("normalizeWholeSessionCopy — galvanic intensity retired + PicoBlend p
     expect(Object.keys(entry)).not.toContain("galvanic_intensity_percent");
   });
 
-  it("(7) a FORGED draft carrying galvanicIntensityPercent is ignored — never reaches the spec", () => {
+  it("(7) a FORGED draft carrying galvanicIntensityPercent is ignored, never reaches the spec", () => {
     // The input type has no such field; a forged client casts around it. The
     // normalizer only reads known fields, so the value can never influence output.
     const forged = draft();

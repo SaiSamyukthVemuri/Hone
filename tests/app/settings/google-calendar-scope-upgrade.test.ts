@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Phase B2.4 — the DESTINATION-AWARE event-scope upgrade server action
+// Phase B2.4: the DESTINATION-AWARE event-scope upgrade server action
 // (behavioral, mocked deps) plus source pins for the callback route + settings
 // card. The requested scope now DERIVES from the connection's chosen destination:
 // dedicated -> calendar.app.created, existing_owned -> calendar.events.owned.
-// Broad `calendar.events` (the old EVENT_WRITE_SCOPE) was REMOVED — it is
+// Broad `calendar.events` (the old EVENT_WRITE_SCOPE) was REMOVED, it is
 // requested nowhere. The exact bound scope is carried on the OAuth state so the
 // callback can reject a destination/scope that changed.
 
@@ -56,7 +56,7 @@ import {
 } from "@/lib/google-calendar/destination-scopes";
 import { startGoogleCalendarEventScopeUpgradeAction } from "@/app/(app)/settings/profile/google-calendar-actions";
 
-// Broad `calendar.events` — the prefix trap. It must NEVER be requested.
+// Broad `calendar.events`: the prefix trap. It must NEVER be requested.
 const EVENTS_BROAD = "https://www.googleapis.com/auth/calendar.events";
 
 const mockCtx = (
@@ -87,7 +87,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-describe("startGoogleCalendarEventScopeUpgradeAction — destination-derived scope", () => {
+describe("startGoogleCalendarEventScopeUpgradeAction: destination-derived scope", () => {
   it("existing_owned requests ONLY calendar.events.owned (never broad calendar.events)", async () => {
     mockCtx();
     vi.mocked(getOwnConnectionMetadata).mockResolvedValue(conn({ destinationMode: "existing_owned" }));
@@ -132,7 +132,7 @@ describe("startGoogleCalendarEventScopeUpgradeAction — destination-derived sco
     );
   });
 
-  it("rejects when NO destination has been chosen yet (mode null) — scope has nothing to derive from", async () => {
+  it("rejects when NO destination has been chosen yet (mode null), scope has nothing to derive from", async () => {
     mockCtx();
     vi.mocked(getOwnConnectionMetadata).mockResolvedValue(conn({ destinationMode: null }));
     const r = await startGoogleCalendarEventScopeUpgradeAction();
@@ -181,10 +181,10 @@ describe("startGoogleCalendarEventScopeUpgradeAction — destination-derived sco
 });
 
 // ---------------------------------------------------------------------------
-// Source pins — the callback route + settings card invariants the Vitest node
+// Source pins, the callback route + settings card invariants the Vitest node
 // env can't exercise directly (updated to the B2.4 destination contract).
 // ---------------------------------------------------------------------------
-describe("callback route — source pins for the B2.4 destination guards", () => {
+describe("callback route: source pins for the B2.4 destination guards", () => {
   const src = readFileSync(
     join(process.cwd(), "app/api/google-calendar/oauth/callback/route.ts"),
     "utf8",
@@ -212,7 +212,7 @@ describe("callback route — source pins for the B2.4 destination guards", () =>
   });
 });
 
-describe("settings card — B2.4 destination-driven UX source pins", () => {
+describe("settings card: B2.4 destination-driven UX source pins", () => {
   const src = readFileSync(
     join(process.cwd(), "app/(app)/settings/profile/GoogleCalendarCard.tsx"),
     "utf8",

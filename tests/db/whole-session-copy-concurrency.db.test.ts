@@ -9,11 +9,11 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// Migration 0157 — REAL two-connection concurrency for copy_session_setup
+// Migration 0157: REAL two-connection concurrency for copy_session_setup
 // (P1-1). The commit locks the TARGET session row (FOR UPDATE), which serializes
 // every copy for that target INDEPENDENTLY of the idempotency key. So:
 //   * two DIFFERENT-key commits racing → exactly one batch; the loser sees the
-//     now-nonempty target and rejects (HN003) — no duplicate.
+//     now-nonempty target and rejects (HN003), no duplicate.
 //   * two SAME-key commits racing → exactly one batch; the loser converges to a
 //     clean idempotent replay (not a raw unique-violation).
 // Both cases complete without a deadlock.
@@ -105,7 +105,7 @@ async function ledgerCount(target: string): Promise<number> {
   return (await adminQuery("select count(*)::int n from public.session_copy_operations where target_session_id=$1", [target])).rows[0].n;
 }
 
-describe("copy_session_setup — two-connection concurrency", () => {
+describe("copy_session_setup: two-connection concurrency", () => {
   it("DIFFERENT keys racing → exactly one batch; the loser rejects (HN003), no deadlock", async () => {
     const { source, target, fp } = await seedScenario();
     const { results, count, ledger } = await withTwoClients(async (ca, cb) => {
@@ -149,7 +149,7 @@ describe("copy_session_setup — two-connection concurrency", () => {
 
 // Helper: run `hold` in txn A (leaving it OPEN, holding a lock), then `attempt`
 // on B with a short statement_timeout; return the settled result of `attempt`
-// and whether it was blocked (57014) — never a deadlock (40P01).
+// and whether it was blocked (57014), never a deadlock (40P01).
 async function raceSourceEdit(
   editSql: string,
   editParams: unknown[],
@@ -162,7 +162,7 @@ async function raceSourceEdit(
     await editor.query("begin");
     await editor.query(editSql, editParams.map((p) => (p === "__SOURCE__" ? source : p)));
     // Copy runs concurrently; it must WAIT on the source locks, then (after the
-    // editor commits) see the changed fingerprint and reject HN005 — or, if it
+    // editor commits) see the changed fingerprint and reject HN005, or, if it
     // grabs the locks first, the editor waits. We commit the editor shortly after
     // firing the copy so the copy proceeds to its fingerprint recheck.
     const copyClient = new Client({ connectionString: resolveLocalDbUrl() });
@@ -184,7 +184,7 @@ async function raceSourceEdit(
   }
 }
 
-describe("copy_session_setup — source is locked against concurrent edits", () => {
+describe("copy_session_setup: source is locked against concurrent edits", () => {
   it("a source block UPDATE that starts before the copy → copy sees the change and rejects HN005 (zero rows)", async () => {
     const { copyResult, targetBlocks, ledger } = await raceSourceEdit(
       "update public.session_blocks set energy_level = 77 where session_id = $1",

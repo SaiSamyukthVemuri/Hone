@@ -27,10 +27,10 @@ if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === "undefined") {
   (globalThis as { WebSocket?: unknown }).WebSocket = class WebSocketStub {};
 }
 
-// Stage A — real-resolver smoke test. Proves the CI DB-integration lane can
+// Stage A: real-resolver smoke test. Proves the CI DB-integration lane can
 // invoke the REAL getSessionPaymentEligibility (server-only, createAdminClient →
 // local Supabase REST, nested card-authorization resolver, Stripe livemode
-// inference) against seeded data — NOTHING is mocked. A bare seeded session
+// inference) against seeded data, NOTHING is mocked. A bare seeded session
 // (no linked appointment, no card) must resolve as INELIGIBLE with the exact
 // application reasons.
 
@@ -56,7 +56,7 @@ afterAll(async () => {
 
 let studio: SeededStudio;
 
-describe("Stage A — the CI DB lane runs the REAL getSessionPaymentEligibility", () => {
+describe("Stage A: the CI DB lane runs the REAL getSessionPaymentEligibility", () => {
   beforeAll(async () => {
     studio = await seedStudio("qc-elig-smoke");
   });
@@ -100,7 +100,7 @@ describe("Stage A — the CI DB lane runs the REAL getSessionPaymentEligibility"
   });
 });
 
-describe("Stage C/D — the core eligible fixture proves ELIGIBLE via the real resolver", () => {
+describe("Stage C/D: the core eligible fixture proves ELIGIBLE via the real resolver", () => {
   it("seeds the full chain and getSessionPaymentEligibility returns eligible", async () => {
     const s = await seedEligibleQuickCheckoutScenario();
     try {
@@ -137,7 +137,7 @@ describe("Stage C/D — the core eligible fixture proves ELIGIBLE via the real r
   });
 });
 
-describe("Stage E — variants resolve to the correct state via the real resolver", () => {
+describe("Stage E: variants resolve to the correct state via the real resolver", () => {
   const cases: Array<{ name: string; opts: Parameters<typeof seedQuickCheckoutScenario>[0]; expect: RegExp }> = [
     { name: "no saved card", opts: { withCard: false }, expect: /card on file/i },
     { name: "removed card", opts: { cardStatus: "removed" }, expect: /card on file/i },
@@ -166,7 +166,7 @@ describe("Stage E — variants resolve to the correct state via the real resolve
       try {
         const elig = await resolve(s.studioId, s.sessionId!);
         // The "ready attempt" variant surfaces as an existing active attempt
-        // (the card renders it), not necessarily a blockingReason — assert the
+        // (the card renders it), not necessarily a blockingReason, assert the
         // attempt is present instead.
         if (c.name.startsWith("existing ready")) {
           expect(elig.existingAttempts.some((a) => a.status === "ready")).toBe(true);
@@ -204,7 +204,7 @@ describe("Stage E — variants resolve to the correct state via the real resolve
   });
 });
 
-describe("Stage F — real DB constraints reject unsafe fixture states", () => {
+describe("Stage F: real DB constraints reject unsafe fixture states", () => {
   it("the active-session-payment uniqueness rejects a second active attempt", async () => {
     const s = await seedEligibleQuickCheckoutScenario({ attempt: "ready" });
     try {
@@ -240,7 +240,7 @@ describe("Stage F — real DB constraints reject unsafe fixture states", () => {
   });
 });
 
-describe("Stage H — dashboard batch state maps correctly + bounded (no N+1)", () => {
+describe("Stage H: dashboard batch state maps correctly + bounded (no N+1)", () => {
   it("a mixed roster yields the correct per-appointment state; query count is constant", async () => {
     const { deriveAppointmentPaymentState } = await import(
       "@/lib/billing/appointment-payment-state"
@@ -303,7 +303,7 @@ describe("Stage H — dashboard batch state maps correctly + bounded (no N+1)", 
   });
 });
 
-describe("Stage I — parallel isolation + targeted cleanup", () => {
+describe("Stage I: parallel isolation + targeted cleanup", () => {
   it("two runs don't collide, and cleaning run A leaves run B intact", async () => {
     const a = await seedEligibleQuickCheckoutScenario({ label: "iso-a" });
     const b = await seedEligibleQuickCheckoutScenario({ label: "iso-b" });
@@ -323,7 +323,7 @@ describe("Stage I — parallel isolation + targeted cleanup", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Stage J — B6 / 0175: early completion and session-payment eligibility.
+// Stage J, B6 / 0175: early completion and session-payment eligibility.
 //
 // This is the LIVE-HELPER proof. tests/lib/billing/b6-early-completion-payment-
 // eligibility.test.ts is a SOURCE-CONTRACT proof and says so; it reasons about
@@ -333,9 +333,9 @@ describe("Stage I — parallel isolation + targeted cleanup", () => {
 //
 // The question B6 raises: completion is now legal from starts_at, so a session
 // can be charged while its appointment's booked interval is still running. Does
-// that open a payment path that was previously closed? It must not — the
+// that open a payment path that was previously closed? It must not, the
 // appointment gate is a LIFECYCLE gate, and it was never an ends_at gate.
-describe("Stage J — B6 early completion does not change payment eligibility", () => {
+describe("Stage J: B6 early completion does not change payment eligibility", () => {
   it("an EARLY-completed appointment (completed before ends_at) is eligible", async () => {
     const s = await seedEligibleQuickCheckoutScenario({ label: "b6-early" });
     try {
@@ -383,7 +383,7 @@ describe("Stage J — B6 early completion does not change payment eligibility", 
       expect(elig.eligible).toBe(false);
       if (elig.eligible === false) {
         const joined = elig.blockingReasons.join(" | ");
-        // Refused because the appointment is not COMPLETED — the same reason it
+        // Refused because the appointment is not COMPLETED, the same reason it
         // would give for a confirmed appointment at any other time. The refusal
         // must not mention ending/elapsing, which would mean an ends_at rule had
         // crept into the payment path.

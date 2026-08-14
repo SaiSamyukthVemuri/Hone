@@ -16,7 +16,7 @@ import {
   type SearchResult,
 } from "@/lib/search/global-search";
 
-// Global Search V2-A — the navigation/settings registry.
+// Global Search V2-A: the navigation/settings registry.
 //
 // Four things are proved here, in order of how badly they would hurt:
 //   1. PERMISSIONS. An owner-only surface is never advertised to a
@@ -30,7 +30,7 @@ import {
 //      page, case and whitespace are irrelevant, and the output is capped and
 //      deterministic.
 //   4. COVERAGE. A newly-added authenticated page cannot silently become
-//      undiscoverable — it has to be registered or explicitly excluded.
+//      undiscoverable, it has to be registered or explicitly excluded.
 
 const ROOT = path.resolve(__dirname, "../../..");
 const OWNER: NavSearchContext = { isOwner: true, googleCalendarEnabled: false };
@@ -124,7 +124,7 @@ function routeOf(href: string): string {
 // 1. Permissions
 // ---------------------------------------------------------------------------
 
-describe("permissions — search advertises only what the caller can already open", () => {
+describe("permissions: search advertises only what the caller can already open", () => {
   const OWNER_ONLY = NAV_ENTRIES.filter((e) => e.visibility === "owner");
 
   it("there are owner-only entries to protect (the test is not vacuous)", () => {
@@ -262,7 +262,7 @@ describe("permissions — search advertises only what the caller can already ope
 // 2. Href integrity
 // ---------------------------------------------------------------------------
 
-describe("href integrity — every registered destination is real", () => {
+describe("href integrity: every registered destination is real", () => {
   it("the route table was actually built (the test is not vacuous)", () => {
     expect(ROUTE_TABLE.size).toBeGreaterThan(30);
     expect(ROUTE_TABLE.has("/dashboard")).toBe(true);
@@ -398,7 +398,7 @@ describe("href integrity — every registered destination is real", () => {
     // says WHY it holds. If the header component (or the client-safe module
     // it shares with the action) ever imports the registry, every
     // practitioner's browser bundle would carry the titles and descriptions
-    // of owner-only surfaces — filtered out of the results, but readable in
+    // of owner-only surfaces, filtered out of the results, but readable in
     // the JavaScript. Verified empirically against a production build: the
     // registry's strings appear in .next/server and never in .next/static.
     // Matched on the IMPORT, not on any mention: both files legitimately
@@ -456,7 +456,7 @@ function relativeImportsOf(file: string): string[] {
 // 3. Matching
 // ---------------------------------------------------------------------------
 
-describe("matching — the words Chloe actually types", () => {
+describe("matching: the words Chloe actually types", () => {
   it("resolves the product brief's worked examples", () => {
     const cases: Array<[string, string]> = [
       ["reminder", "Appointment reminders"],
@@ -560,7 +560,7 @@ describe("matching — the words Chloe actually types", () => {
   it("the nav cap can never trim the pre-typing shortcut state", () => {
     // groupResults applies NAV_RESULT_CAP on the way to the screen, so a cap
     // below the number of default shortcuts would render fewer rows than the
-    // action returned — a silent regression of the V1 empty state that no
+    // action returned, a silent regression of the V1 empty state that no
     // registry-level test would see.
     const shortcuts = NAV_ENTRIES.filter((e) => e.defaultShortcut === true);
     expect(shortcuts).toHaveLength(6);
@@ -570,7 +570,7 @@ describe("matching — the words Chloe actually types", () => {
     );
   });
 
-  it("is deterministic — same query, same context, same order", () => {
+  it("is deterministic: same query, same context, same order", () => {
     for (const query of ["settings", "calendar", "booking", "record", ""]) {
       const first = matchNavEntries(query, OWNER).map((m) => m.entry.id);
       for (let i = 0; i < 3; i += 1) {
@@ -583,7 +583,7 @@ describe("matching — the words Chloe actually types", () => {
 
   it("never returns an unbounded list", () => {
     // "settings" matches most of the registry through its category. The
-    // matcher is allowed to return them all — the caller caps — but the
+    // matcher is allowed to return them all, the caller caps, but the
     // registry itself must stay small enough that this is a bounded scan.
     expect(NAV_ENTRIES.length).toBeLessThan(80);
     expect(matchNavEntries("settings", OWNER).length).toBeLessThanOrEqual(
@@ -596,7 +596,7 @@ describe("matching — the words Chloe actually types", () => {
 // 4. Coverage tripwire
 // ---------------------------------------------------------------------------
 
-describe("coverage tripwire — a new destination needs an explicit decision", () => {
+describe("coverage tripwire: a new destination needs an explicit decision", () => {
   it("collected the authenticated route set (the tripwire is not vacuous)", () => {
     expect(AUTH_ROUTES.length).toBeGreaterThanOrEqual(20);
     expect(AUTH_ROUTES).toContain("/settings/availability");
@@ -677,12 +677,12 @@ describe("coverage tripwire — a new destination needs an explicit decision", (
     // tab. Search must not be a second, drifting opinion: if a tab moves
     // behind the owner gate, the registry entry has to move with it or this
     // fails. Search is allowed to be STRICTER (a sub-surface of a shared page
-    // can be owner-only while the page is not) — never looser.
+    // can be owner-only while the page is not), never looser.
     const layout = readFileSync(
       path.join(ROOT, "app/(app)/settings/layout.tsx"),
       "utf8",
     );
-    // Anchor on the SPREAD, not the first mention of `isOwner` — the boolean
+    // Anchor on the SPREAD, not the first mention of `isOwner`, the boolean
     // is declared well above the item list, and slicing there would leave the
     // "open" region empty and quietly assert nothing.
     const gateStart = layout.indexOf("...(isOwner");

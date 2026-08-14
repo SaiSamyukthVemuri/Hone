@@ -12,7 +12,7 @@ import {
   canonicalizeTokenPaths,
 } from "@/lib/security/token-routes";
 
-// F-PRIV-001 — bearer credentials in token-bearing URL PATHS must never reach
+// F-PRIV-001: bearer credentials in token-bearing URL PATHS must never reach
 // Sentry.
 //
 // The pre-existing scrubbers already handled query strings, cookies, headers,
@@ -43,7 +43,7 @@ function expectNoCanary(payload: unknown, note: string) {
   const serialized = JSON.stringify(payload);
   for (const canary of ALL_CANARIES) {
     expect(serialized, `${note}: raw canary survived`).not.toContain(canary);
-    // No prefix/suffix fingerprint either — a head or tail of a bearer token is
+    // No prefix/suffix fingerprint either: a head or tail of a bearer token is
     // a brute-force head start, not a redaction.
     expect(serialized, `${note}: canary prefix survived`).not.toContain(
       canary.slice(0, 12),
@@ -58,7 +58,7 @@ function errorEvent(over: Partial<ErrorEvent> = {}): ErrorEvent {
   return { event_id: "e1", ...over } as ErrorEvent;
 }
 
-describe("F-PRIV-001 A. request.url — every route family, every URL form", () => {
+describe("F-PRIV-001 A. request.url: every route family, every URL form", () => {
   for (const prefix of TOKEN_ROUTE_PREFIXES) {
     const token = CANARY[prefix];
     const forms = [
@@ -87,7 +87,7 @@ describe("F-PRIV-001 A. request.url — every route family, every URL form", () 
   }
 });
 
-describe("F-PRIV-001 B. event.transaction — the surface with NO prior scrub", () => {
+describe("F-PRIV-001 B. event.transaction: the surface with NO prior scrub", () => {
   for (const prefix of TOKEN_ROUTE_PREFIXES) {
     const token = CANARY[prefix];
     for (const transaction of [
@@ -111,7 +111,7 @@ describe("F-PRIV-001 B. event.transaction — the surface with NO prior scrub", 
     }
   }
 
-  it("an HTTP method prefix is preserved — it is diagnostic, not secret", () => {
+  it("an HTTP method prefix is preserved, it is diagnostic, not secret", () => {
     const out = scrubErrorEvent(
       errorEvent({ transaction: `GET /intake/${CANARY["/intake"]}` }),
     );
@@ -159,7 +159,7 @@ describe("F-PRIV-001 C. breadcrumbs", () => {
     // Token removal on this surface is defended TWICE (the explicit URL
     // sanitize, and deepScrub routing every string through redactString), so a
     // token canary cannot prove the explicit call is doing anything. Its
-    // unique contribution is stripping query/fragment from ORDINARY URLs —
+    // unique contribution is stripping query/fragment from ORDINARY URLs,
     // Supabase/Stripe filters embed identifiers there. Asserted directly so
     // removing that call is caught.
     for (const category of ["fetch", "xhr"]) {
@@ -217,7 +217,7 @@ describe("F-PRIV-001 D. errors, spans and recursive containers", () => {
   }
 });
 
-describe("F-PRIV-001 E. credential shapes — independence from token syntax", () => {
+describe("F-PRIV-001 E. credential shapes: independence from token syntax", () => {
   // The defect is precisely that the old value patterns only knew STRUCTURED
   // credentials. These are all opaque.
   const shapes: Record<string, string> = {
@@ -248,7 +248,7 @@ describe("F-PRIV-001 E. credential shapes — independence from token syntax", (
   }
 });
 
-describe("F-PRIV-001 F. non-regression — diagnostics stay useful", () => {
+describe("F-PRIV-001 F. non-regression: diagnostics stay useful", () => {
   it("ordinary routes keep their identifiers", () => {
     for (const url of [
       "https://hone.care/dashboard",
@@ -320,7 +320,7 @@ describe("F-PRIV-001 G. idempotence", () => {
 });
 
 describe("F-PRIV-001 H. generated-token matrix (deterministic)", () => {
-  // Bounded, seeded, reproducible in CI — no Math.random.
+  // Bounded, seeded, reproducible in CI, no Math.random.
   const ALPHABET =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~";
   function generated(seed: number): string {

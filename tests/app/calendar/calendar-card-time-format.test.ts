@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { formatClockLabel } from "@/lib/booking/tz";
 
-// P1: a VISIBLE calendar card inside the scroll grid — the live drag-selection
-// preview overlay — still showed raw 24h ("11:45 to 14:00") when the studio
+// P1: a VISIBLE calendar card inside the scroll grid, the live drag-selection
+// preview overlay, still showed raw 24h ("11:45 to 14:00") when the studio
 // prefers 12h. It now formats per the studio preference. Appointment + block
 // cards were already fixed in PR #359 (dispStart/dispEnd via formatTimeForStudio);
 // this pins every visible card label + confirms machine values stay 24h.

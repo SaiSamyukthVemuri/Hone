@@ -7,13 +7,13 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Chloe charting-usability polish — real browser, real stack, 390px iPhone
+// Chloe charting-usability polish: real browser, real stack, 390px iPhone
 // width. Proves the three narrow behaviours end to end:
 //   A. a zero-block session starts on the compact CTA (form not auto-open);
 //      opening then cancelling writes NO block; saving writes exactly ONE.
 //   B. Charting UNIFICATION: the form has ONE merged "Treatment observations &
 //      skin response" multi-select box (observation presets PLUS the former
-//      reaction labels). Every selection — including a reaction chip — persists
+//      reaction labels). Every selection, including a reaction chip, persists
 //      to observation_chips as a MULTI-select; a fresh record never writes the
 //      legacy single-select reaction_type. On reload each pick shows as a
 //      pressed chip.
@@ -80,7 +80,7 @@ test("collapse CTA, no-write open/cancel, one-block save, merged observation+rea
     await expect(page.getByText("Client / skin response")).toHaveCount(0);
 
     // The merged box is MULTI-select. Pick two observation chips AND a reaction
-    // chip — all three are toggles in the SAME list, all writing observation_chips.
+    // chip, all three are toggles in the SAME list, all writing observation_chips.
     await page.getByTestId("obs-chip-Dehydrated follicles").click();
     await page.getByTestId("obs-chip-Coarse hair").click();
     // The former reaction is now a multi-select chip in the merged list (stable
@@ -100,7 +100,7 @@ test("collapse CTA, no-write open/cancel, one-block save, merged observation+rea
 
   await test.step("reload + DB: all three picks (incl. the reaction) persist to observation_chips; reaction_type stays NULL; notes round-trip exactly", async () => {
     const saved = await getSavedBlockSetup(sessionId);
-    // Every selection — the two observations AND the reaction — is captured in the
+    // Every selection: the two observations AND the reaction, is captured in the
     // ONE canonical multi-select store (observation_chips).
     const chips = (saved?.entry as { observation_chips?: string[] } | null)
       ?.observation_chips;
@@ -108,7 +108,7 @@ test("collapse CTA, no-write open/cancel, one-block save, merged observation+rea
     expect(chips).toContain("Dehydrated follicles");
     expect(chips).toContain("Coarse hair");
     expect(chips).toContain("Mild redness");
-    // A fresh record NEVER writes the legacy single-select reaction_type — the
+    // A fresh record NEVER writes the legacy single-select reaction_type, the
     // reaction lives entirely in observation_chips now.
     expect(saved?.reaction_type).toBeNull();
     // Additional notes round-trips exactly (tolerate CRLF normalization).
@@ -123,7 +123,7 @@ test("collapse CTA, no-write open/cancel, one-block save, merged observation+rea
       /line one\s+line two\s+line three/,
       { timeout: T },
     );
-    // Multi-select reload: every pick — the two observations AND the reaction —
+    // Multi-select reload: every pick, the two observations AND the reaction,
     // comes back as a PRESSED chip in the merged list (a selected chip renders its
     // bare label without the leading "+", so assert via the stable testid).
     for (const label of ["Dehydrated follicles", "Coarse hair", "Mild redness"]) {

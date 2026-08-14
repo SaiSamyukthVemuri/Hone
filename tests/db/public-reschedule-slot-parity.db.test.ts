@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 // loader against the real local Supabase, and the real SQL function against the
 // same rows.
 //
-// The two dimensions 0171 adds over 0170's booking helper — and the ONLY two —
+// The two dimensions 0171 adds over 0170's booking helper, and the ONLY two,
 // are exercised here:
 //   * the original appointment's own reservation is excluded;
 //   * capacity ON uses practitioner-scoped availability precedence and
@@ -189,7 +189,7 @@ afterAll(async () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 reschedule slot parity — empty day", () => {
+describe("0171 reschedule slot parity: empty day", () => {
   it("agrees on the opening anchor + hourly fallback family", async () => {
     const f = await seed("empty");
     const day = localDay(20, f.tz);
@@ -199,7 +199,7 @@ describe("0171 reschedule slot parity — empty day", () => {
   });
 });
 
-describe("0171 reschedule slot parity — the ORIGINAL reservation exclusion", () => {
+describe("0171 reschedule slot parity: the ORIGINAL reservation exclusion", () => {
   it("agrees that the original's own interval is offered again", async () => {
     const f = await seed("exclusion");
     const day = localDay(21, f.tz);
@@ -219,7 +219,7 @@ describe("0171 reschedule slot parity — the ORIGINAL reservation exclusion", (
   //
   // An earlier version of this suite placed the original at 11:00 with a
   // 45-minute duration and a 15-minute buffer. Its two derived anchors are then
-  // 11:45+15 = 12:00 and 11:00-45-15 = 10:00 — BOTH already members of the
+  // 11:45+15 = 12:00 and 11:00-45-15 = 10:00, BOTH already members of the
   // hourly fallback family. Deleting the exclusion from the candidate-
   // GENERATION loop therefore changed nothing observable and the negative
   // control passed, i.e. the test proved nothing about that half.
@@ -232,8 +232,8 @@ describe("0171 reschedule slot parity — the ORIGINAL reservation exclusion", (
   // The OVERLAP-FILTER half is covered by the on-grid test above, where the
   // original's own 11:00 start IS a candidate and survives only because the
   // filter ignores its reservation. Note that an off-grid original's own start
-  // is correctly offered by NEITHER engine — once its reservation is excluded,
-  // nothing generates 11:20 at all — so this test must not assert it.
+  // is correctly offered by NEITHER engine, once its reservation is excluded,
+  // nothing generates 11:20 at all, so this test must not assert it.
   it("is observable in the candidate-generation loop (off-grid original)", async () => {
     const f = await seed("offgridexcl", { buffer: 25, duration: 50 });
     const day = localDay(33, f.tz);
@@ -298,7 +298,7 @@ describe("0171 reschedule slot parity — the ORIGINAL reservation exclusion", (
   });
 });
 
-describe("0171 reschedule slot parity — capacity ON", () => {
+describe("0171 reschedule slot parity: capacity ON", () => {
   it("agrees when capacity is ON with practitioner-scoped reservations", async () => {
     const f = await seed("capon", { capacity: true });
     const day = localDay(24, f.tz);
@@ -356,14 +356,14 @@ describe("0171 reschedule slot parity — capacity ON", () => {
 });
 
 // ===========================================================================
-// CAPACITY-OFF HISTORICAL ASSIGNMENT — end-to-end parity.
+// CAPACITY-OFF HISTORICAL ASSIGNMENT, end-to-end parity.
 // ===========================================================================
 //
 // This is the amendment's load-bearing parity case. The capacity-OFF loader
 // never consults practitioner activity or service_practitioners, so the SQL
 // validator must not either. If it does, the page offers a slot the command
-// refuses — permanently, for every slot, with no action the visitor can take.
-describe("0171 reschedule slot parity — capacity OFF ignores current roster state", () => {
+// refuses, permanently, for every slot, with no action the visitor can take.
+describe("0171 reschedule slot parity: capacity OFF ignores current roster state", () => {
   it("offers the same slots when the preserved practitioner is INACTIVE, and the validator clears one", async () => {
     const f = await seed("offinactive-parity"); // capacity OFF
     const day = localDay(34, f.tz);
@@ -374,7 +374,7 @@ describe("0171 reschedule slot parity — capacity OFF ignores current roster st
     const originalStart = new Date(r.rows[0].t).toISOString();
     await appointment(f, f.originalId, originalStart, f.duration);
 
-    // Deactivate AFTER the appointment was booked — the historical case.
+    // Deactivate AFTER the appointment was booked, the historical case.
     await adminQuery(`update public.practitioners set active = false where id = $1`, [f.ownerId]);
 
     // TS and SQL still agree on the offered set.
@@ -434,7 +434,7 @@ describe("0171 reschedule slot parity — capacity OFF ignores current roster st
   });
 });
 
-describe("0171 reschedule slot parity — closed days and blockouts", () => {
+describe("0171 reschedule slot parity: closed days and blockouts", () => {
   it("agrees on a closed weekday (both empty)", async () => {
     const f = await seed("closed");
     const day = localDay(27, f.tz);
@@ -480,10 +480,10 @@ describe("0171 reschedule slot parity — closed days and blockouts", () => {
   });
 });
 
-describe("0171 reschedule slot parity — DST and timezones", () => {
+describe("0171 reschedule slot parity: DST and timezones", () => {
   // America/Toronto spring-forward 2027-03-14, fall-back 2027-11-07. Both are
   // far enough out that a 3-month horizon would refuse a BOOKING, but the
-  // candidate helper itself has no horizon — it is a pure grid function, so
+  // candidate helper itself has no horizon, it is a pure grid function, so
   // these dates exercise the DST port directly.
   it.each([
     ["spring forward", "2027-03-14"],
@@ -507,7 +507,7 @@ describe("0171 reschedule slot parity — DST and timezones", () => {
   });
 });
 
-describe("0171 reschedule slot parity — window edges", () => {
+describe("0171 reschedule slot parity: window edges", () => {
   it("agrees that the trailing buffer MAY spill past close", async () => {
     const f = await seed("spill", { buffer: 30, duration: 60, open: "09:00", close: "17:00" });
     const day = localDay(31, f.tz);

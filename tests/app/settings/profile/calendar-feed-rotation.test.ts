@@ -55,7 +55,7 @@ describe("rotateCalendarFeedTokenAction: writes ONLY the hash (phase 2 / 0116)",
     expect(ACTIONS).not.toMatch(/p_token_hash: token\b/);
   });
 
-  it("scopes the write to the calling practitioner — now in the DATABASE", () => {
+  it("scopes the write to the calling practitioner, now in the DATABASE", () => {
     // STRONGER than the old `.eq("id", practitioner.id)`: no practitioner id is
     // sent at all. The command binds the actor to auth.uid() and the explicit
     // studio, so the caller cannot name a row to write even if it wanted to.
@@ -90,7 +90,7 @@ describe("rotateCalendarFeedTokenAction: writes ONLY the hash (phase 2 / 0116)",
 
 describe("clearCalendarFeedTokenAction: nulls ONLY the hash (phase 2 / 0116)", () => {
   it("nulls calendar_feed_token_hash and NOT the raw column", () => {
-    // 0178: NULL is passed as a VALUE to the governed command — revoking a feed
+    // 0178: NULL is passed as a VALUE to the governed command, revoking a feed
     // is a real operation, not "leave unchanged".
     expect(ACTIONS).toMatch(/p_token_hash: null/);
     expect(ACTIONS).not.toMatch(/calendar_feed_token: null,/);

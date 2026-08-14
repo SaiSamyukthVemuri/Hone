@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Review 3778160194 — the same read-failure class as 3777890267, in the
+// Review 3778160194: the same read-failure class as 3777890267, in the
 // batched DISPLAY loader.
 //
 // FREENESS IS A POSITIVE CLAIM. It must never be inferred from a read we
@@ -13,8 +13,8 @@ import { join } from "node:path";
 // "No payment required" and suppress Checkout for a visit that should be paid.
 //
 // The safe direction on failure is to assert nothing is free: the appointment
-// falls back to its ordinary state, Checkout stays visible, and no money moves
-// — preparation and execution re-resolve authoritatively and fail closed on
+// falls back to its ordinary state, Checkout stays visible, and no money moves,
+// preparation and execution re-resolve authoritatively and fail closed on
 // their own.
 
 type Rows = { data: unknown; error: unknown };
@@ -50,7 +50,7 @@ import { getAppointmentPaymentStates } from "@/lib/billing/appointment-payment-s
 const APPT = "appt-1";
 const TZ = "America/Toronto";
 
-// A $0 menu service — free ONLY if no positive custom price overrides it.
+// A $0 menu service: free ONLY if no positive custom price overrides it.
 function baseRows(servicePriceCents: number | null) {
   responses.appointments = {
     data: [

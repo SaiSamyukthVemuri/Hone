@@ -17,7 +17,7 @@ import { createAccessTokenCache } from "@/lib/google-calendar/sync/access-token-
 import type { ClaimedJob } from "@/lib/google-calendar/sync/job-result";
 import type { ConnectionStore, TokenCrypto } from "@/lib/google-calendar/sync/token-manager";
 
-// Google Calendar — Phase B2.3-c2: the bounded drain accounting (§10) + the
+// Google Calendar: Phase B2.3-c2: the bounded drain accounting (§10) + the
 // production runtime composition (§12/§22-amended). No Supabase, no Redis, no Google.
 
 function job(id: string, over: Partial<ClaimedJob> = {}): ClaimedJob {
@@ -41,7 +41,7 @@ function job(id: string, over: Partial<ClaimedJob> = {}): ClaimedJob {
 
 const NO_DEADLINE = { startedAt: 0, deadlineMs: 1e12, now: () => 0 };
 
-describe("drainCalendarSyncQueue — bounded accounting", () => {
+describe("drainCalendarSyncQueue: bounded accounting", () => {
   it("no work: ok + no_work, nothing handled or recorded", async () => {
     const handle = vi.fn(async () => ({ code: "ok" as const }));
     const record = vi.fn<RecordPort>(async () => "done");
@@ -243,7 +243,7 @@ describe("drainCalendarSyncQueue — bounded accounting", () => {
   });
 });
 
-describe("createProductionWorkerRuntime — composition (§12/§22)", () => {
+describe("createProductionWorkerRuntime: composition (§12/§22)", () => {
   const eligibleConn: ConnectionStore = {
     async loadConnection(id, s) {
       return {
@@ -327,7 +327,7 @@ describe("createProductionWorkerRuntime — composition (§12/§22)", () => {
         ran = true;
       }),
     ).rejects.toBeTruthy();
-    expect(ran).toBe(false); // inProcessOnly WOULD have run fn — this proves it is not used
+    expect(ran).toBe(false); // inProcessOnly WOULD have run fn, this proves it is not used
   });
 
   it("the claim adapter calls claim_calendar_sync_op with ONLY the fixed batch size (no tenant/provider target)", async () => {

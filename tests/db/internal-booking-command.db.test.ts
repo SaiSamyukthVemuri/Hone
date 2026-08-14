@@ -4,7 +4,7 @@ import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./help
 import { dropSynthStudio, seedSynthStudioA, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 — create_internal_appointment (migration 0142): the canonical
+// PR B Part 4: create_internal_appointment (migration 0142): the canonical
 // atomic internal booking command. Contracts + concurrency on synthetic Studio B
 // (owner P0 + members P1, P2). Capacity ON + booking ON unless a test toggles it.
 // Never Willow.
@@ -34,7 +34,7 @@ beforeEach(async () => {
   );
   serviceId = svc.rows[0].id as string;
   // The 0134 default_eligibility_for_service() AFTER-INSERT trigger already made
-  // every ACTIVE practitioner (P0/P1/P2) eligible — no manual inserts (they'd
+  // every ACTIVE practitioner (P0/P1/P2) eligible, no manual inserts (they'd
   // collide on service_practitioners_unique). The ineligible test deletes a row.
 });
 afterEach(async () => {
@@ -52,16 +52,16 @@ const book = (
   opts: { client?: string; service?: string; dur?: number } = {},
 ): Promise<BookOut> =>
   // B6 / 0175 REPOINTED to the governed successor. Every invariant this suite
-  // proves — per-practitioner collision, parallel practitioners, scoped blocks,
+  // proves, per-practitioner collision, parallel practitioners, scoped blocks,
   // actor authorization, capacity pause, advisory-lock serialization, EXECUTE
-  // posture — is a property of internal booking, not of the retired wrapper.
+  // posture, is a property of internal booking, not of the retired wrapper.
   //
   // THE ARGUMENT ORDER IS NOT THE SAME and a name-only swap would have
   // silently mis-bound: the retired wrapper took
   //   (..., starts_at, duration, token_hash, notes)
   // while v2 takes
   //   (..., starts_at, token_hash, notes, duration_override, allow_outside)
-  // so duration and token_hash would have traded places — a 30 landing in a
+  // so duration and token_hash would have traded places, a 30 landing in a
   // token column and a hex digest landing in an integer. Mapped explicitly.
   adminQuery(
     `select * from public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`,
@@ -78,7 +78,7 @@ const book = (
       // the appointment's length; v2's `p_duration_override_minutes` is an
       // OWNER-ONLY override layered over the service default, and v2 returns
       // not_authorized if a non-owner sends one at all. Passing the old 30
-      // unconditionally therefore made every MEMBER booking unauthorized —
+      // unconditionally therefore made every MEMBER booking unauthorized,
       // which looked like a v2 authorization defect and was really a
       // mis-port. Default to null so the service's own 30-minute default
       // applies (identical geometry, so every collision case is unchanged),
@@ -159,7 +159,7 @@ describe("0142 booking-state contract", () => {
   });
 
   it("Legacy (capacity OFF) preserves studio-wide single-chair booking, self-assigned", async () => {
-    // Booking OFF first, then capacity OFF — cap=false requires book=false
+    // Booking OFF first, then capacity OFF, cap=false requires book=false
     // (studios_capacity_booking_valid).
     await setBooking(false);
     await setCap(false); // Legacy
@@ -183,7 +183,7 @@ describe("0142 concurrency + privilege", () => {
         `select public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`,
         [B.studioId, owner().practitionerId, P(1), B.clientId, serviceId, T("09:00"), hash64(), null, 30, false],
       );
-      // B tries to book (different practitioner, different time) — must WAIT on the
+      // B tries to book (different practitioner, different time), must WAIT on the
       // shared studio advisory lock A holds, proving serialization.
       await b.query("begin");
       await b.query("set local statement_timeout = '900ms'");
@@ -236,7 +236,7 @@ describe("0142 concurrency + privilege", () => {
     }
   });
 
-  it("is service_role only — anon and authenticated are denied (42501)", async () => {
+  it("is service_role only: anon and authenticated are denied (42501)", async () => {
     const call = (q: (t: string, p?: unknown[]) => Promise<unknown>) =>
       q(`select public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`, [
         B.studioId, owner().practitionerId, P(1), B.clientId, serviceId, T("10:00"), hash64(), null, 30, false,

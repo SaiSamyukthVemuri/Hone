@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// CARD-ON-FILE PERSISTENCE TRUTH — structural contracts.
+// CARD-ON-FILE PERSISTENCE TRUTH: structural contracts.
 //
 // The behaviour of the atomic command is proved against a real database in
 // tests/db/card-replacement-atomicity.db.test.ts. This file pins the things a
@@ -16,7 +16,7 @@ const FORM = root("app/portal/PortalPaymentMethodForm.tsx");
 const ACTIONS = root("app/portal/payment-method-actions.ts");
 const WEBHOOK = root("app/api/stripe/webhook/route.ts");
 
-// Executable source only — the headers deliberately DESCRIBE the removed
+// Executable source only: the headers deliberately DESCRIBE the removed
 // patterns, so a raw-text assertion would fail on its own documentation.
 const exec = (s: string) =>
   s
@@ -27,12 +27,12 @@ const exec = (s: string) =>
 const FORM_EXEC = exec(FORM);
 const WEBHOOK_EXEC = exec(WEBHOOK);
 
-describe("Stripe acceptance is not Hone persistence — the client cannot claim otherwise", () => {
+describe("Stripe acceptance is not Hone persistence, the client cannot claim otherwise", () => {
   it("never reaches a saved state directly from confirmSetup", () => {
     // The defect: `setDone(true)` fired the instant confirmSetup resolved, so
     // the portal said "Card saved" while Hone held no row at all.
     expect(FORM_EXEC).not.toMatch(/setDone\(true\)/);
-    // Anchor on the actual CALL, not the word — a type-union member carries an
+    // Anchor on the actual CALL, not the word, a type-union member carries an
     // inline "confirmSetup in flight" comment earlier in the file.
     const call = FORM_EXEC.indexOf("stripe.confirmSetup(");
     expect(call).toBeGreaterThan(-1);
@@ -55,7 +55,7 @@ describe("Stripe acceptance is not Hone persistence — the client cannot claim 
     expect(FORM_EXEC).toMatch(/phase === "saved"[\s\S]{0,200}copy\.successHeadline/);
   });
 
-  it("bounds the confirmation poll — no infinite waiting", () => {
+  it("bounds the confirmation poll: no infinite waiting", () => {
     // OWNERSHIP MOVED: the bounds now live with the state machine so they can be
     // behaviourally exercised (tests/lib/payments/card-finalization.test.ts).
     const LIB = root("lib/payments/card-finalization.ts");
@@ -125,7 +125,7 @@ describe("finalization is recoverable, not a dead end", () => {
     expect(LIB).toMatch(/CONFIRM_DEADLINE_MS/);
     expect(LIB).toMatch(/CONFIRM_ATTEMPT_TIMEOUT_MS/);
     expect(LIB).toMatch(/CONFIRM_MAX_ATTEMPTS/);
-    // The state machine issues no Stripe call of any kind — a confirmation
+    // The state machine issues no Stripe call of any kind, a confirmation
     // timeout can therefore never submit another card. Asserted on executable
     // source: the header mentions js.stripe.com when explaining why Elements
     // cannot be driven in the e2e lane.
@@ -134,7 +134,7 @@ describe("finalization is recoverable, not a dead end", () => {
   });
 });
 
-describe("setup_intent.succeeded — terminal rejection is never silent", () => {
+describe("setup_intent.succeeded: terminal rejection is never silent", () => {
   it("has no bare `rejected` return left in the handler", () => {
     // Every one of the eight rejection branches used to return a summary that
     // the parent then marked processed, with no alert of any kind.
@@ -160,7 +160,7 @@ describe("setup_intent.succeeded — terminal rejection is never silent", () => 
   // The ownership binding, pinned to the ownership QUERY specifically.
   //
   // The previous version of this guard asserted `.eq("client_id",
-  // session.clientId)` against the whole function slice — and that slice runs
+  // session.clientId)` against the whole function slice, and that slice runs
   // to end of file and contains TWO client-bound queries
   // (client_payment_methods and client_stripe_customers). Deleting the binding
   // from the OWNERSHIP query left the other one matching, so the guard passed
@@ -181,7 +181,7 @@ describe("setup_intent.succeeded — terminal rejection is never silent", () => 
     const end = src.indexOf(terminator, start);
     expect(end, `no ${terminator} after .from("${table}")`).toBeGreaterThan(start);
     const expr = src.slice(start, end + terminator.length);
-    // Exactly ONE query in the slice — if a restructure moved the terminator,
+    // Exactly ONE query in the slice, if a restructure moved the terminator,
     // this catches it instead of the assertions below passing on a neighbour.
     expect(
       (expr.match(/\.from\(/g) ?? []).length,
@@ -226,8 +226,8 @@ describe("setup_intent.succeeded — terminal rejection is never silent", () => 
       ".maybeSingle()",
     );
     expect(card).not.toBe(ownership);
-    // Both are client-bound — which is exactly why a whole-function regex was
-    // ambiguous — but only the ownership one carries the Stripe lineage.
+    // Both are client-bound: which is exactly why a whole-function regex was
+    // ambiguous, but only the ownership one carries the Stripe lineage.
     expect(card).toMatch(/\.eq\("client_id", session\.clientId\)/);
     expect(card).not.toMatch(/stripe_customer_id/);
     expect(ownership).toMatch(/stripe_customer_id/);

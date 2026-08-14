@@ -8,11 +8,11 @@ import {
 } from "../../security/helpers/supabase-write-census";
 
 // ===========================================================================
-// Chloe Session 1A — `clients.skin_notes` is RETIRED as a practitioner editor.
+// Chloe Session 1A, `clients.skin_notes` is RETIRED as a practitioner editor.
 // ===========================================================================
 //
 // THE DEFECT. Hone already had the correct skin/hair clinical record:
-// client_clinical_notes with kind='skin_hair_analysis' — append-only,
+// client_clinical_notes with kind='skin_hair_analysis', append-only,
 // attributed to a practitioner, carrying an event date and a supersession
 // lineage. But the older `clients.skin_notes` column remained a plain editable
 // textarea with quick-tap condition chips, and it OUTRANKED the real record:
@@ -33,7 +33,7 @@ import {
 const ROOT = join(__dirname, "..", "..", "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
-/** Source with comments stripped — prose about a pattern is not the pattern. */
+/** Source with comments stripped: prose about a pattern is not the pattern. */
 function code(src: string): string {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -60,7 +60,7 @@ describe("client form no longer edits legacy skin notes", () => {
 
   it("drops skin_notes from the form value contract entirely", () => {
     // handleSubmit serialises EVERY key of `values` into FormData, so a
-    // lingering key would still be submitted — and on the edit screen it would
+    // lingering key would still be submitted, and on the edit screen it would
     // round-trip (or, if seeded empty, WIPE) the historical text. Removing it
     // from the type is what makes "the form cannot submit it" structural.
     expect(src).not.toMatch(/skin_notes:\s*string/);
@@ -101,7 +101,7 @@ describe("no runtime writer persists clients.skin_notes", () => {
   // skin_notes write expressions" and looped over FIVE hand-listed files. The
   // name was false. A writer added to any other server action, an onboarding
   // helper, an import path, a script, middleware, or behind a variable table
-  // expression would have survived while this stayed green — the exact failure
+  // expression would have survived while this stayed green, the exact failure
   // mode a static guard in this repo has already been believed on twice.
   //
   // It now walks app/ lib/ components/ scripts/ + middleware.ts with the
@@ -118,7 +118,7 @@ describe("no runtime writer persists clients.skin_notes", () => {
   it("no UNRESOLVABLE write could be hiding one", () => {
     // Silence is not absence. A computed table, an opaque spread, a chained
     // factory receiver, a conditional target or a helper-returned patch object
-    // means the analyzer cannot prove the column is untouched — so it fails.
+    // means the analyzer cannot prove the column is untouched, so it fails.
     const { unresolved } = writesToColumn("clients", "skin_notes");
     expect(
       unresolved,
@@ -137,7 +137,7 @@ describe("no runtime writer persists clients.skin_notes", () => {
     const clientWrites = all.filter((s) => s.table === "clients");
     expect(
       clientWrites.length,
-      "no writes to `clients` were found at all — the analyzer has gone blind, " +
+      "no writes to `clients` were found at all, the analyzer has gone blind, " +
         "not the writers away",
     ).toBeGreaterThan(0);
     // ...and those surviving client writes carry OTHER columns, proving the
@@ -183,8 +183,8 @@ describe("legacy data is preserved and clearly labelled", () => {
   });
 
   it("the helper copy points at where the canonical form ACTUALLY is", () => {
-    // It used to say the append-only section was "below". It is not on this tab
-    // — it is behind Consultation — so the sentence sent practitioners looking
+    // It used to say the append-only section was "below". It is not on this tab,
+    // it is behind Consultation, so the sentence sent practitioners looking
     // for something that was not there, and the legacy textarea was the nearest
     // editable thing. The copy now names the action rendered directly above and
     // the tab, and "below" is banned outright inside the block.
@@ -195,7 +195,7 @@ describe("legacy data is preserved and clearly labelled", () => {
     // The ban applies to what a practitioner READS. Scanning the raw source
     // instead would trip on the neighbouring code comments, which legitimately
     // use "below" to describe render ORDER ("rendered BEFORE the legacy block
-    // below") — true of the layout, and not copy anyone sees.
+    // below"), true of the layout, and not copy anyone sees.
     const rendered = code(PROFILE);
     const rIdx = rendered.indexOf("Legacy skin notes");
     expect(rIdx).toBeGreaterThan(-1);
@@ -212,7 +212,7 @@ describe("legacy data is preserved and clearly labelled", () => {
   });
 
   it("the data export still retains the historical column", () => {
-    // Retention promise is unchanged — retiring the EDITOR must not remove the
+    // Retention promise is unchanged: retiring the EDITOR must not remove the
     // value from what a studio can export.
     expect(EXPORT).toContain("skin_notes");
   });
@@ -251,7 +251,7 @@ describe("the canonical action outranks the legacy display", () => {
   });
 
   it("the canonical record is still the append-only clinical-notes flow", () => {
-    // Unchanged by this PR — asserted so a future edit cannot quietly point the
+    // Unchanged by this PR: asserted so a future edit cannot quietly point the
     // canonical action at a new overwriteable field.
     expect(PROFILE).toContain("<ClinicalNotesSection");
     expect(PROFILE).toContain("addClinicalNoteAction");

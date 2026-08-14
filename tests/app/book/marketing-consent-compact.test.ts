@@ -22,11 +22,11 @@ describe("default + booking-not-blocked (unchanged)", () => {
     // never hard-coded as checked / prechecked
     expect(FORM).not.toMatch(/type="checkbox"[\s\S]{0,140}checked=\{true\}/);
   });
-  it("consent is optional — the marketing checkbox is not `required`, so declining still books", () => {
+  it("consent is optional: the marketing checkbox is not `required`, so declining still books", () => {
     expect(FORM).not.toMatch(/checked=\{marketingConsent\}[\s\S]{0,120}required/);
     expect(FORM).not.toMatch(/required[\s\S]{0,120}checked=\{marketingConsent\}/);
   });
-  it("parseMarketingConsent: only explicit 'true' is consent — both false and true paths book", () => {
+  it("parseMarketingConsent: only explicit 'true' is consent, both false and true paths book", () => {
     expect(parseMarketingConsent("true")).toBe(true); // consent given → booking proceeds
     expect(parseMarketingConsent("false")).toBe(false); // declined → booking proceeds
     expect(parseMarketingConsent(null)).toBe(false); // absent → declined

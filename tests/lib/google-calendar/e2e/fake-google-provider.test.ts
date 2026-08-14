@@ -43,7 +43,7 @@ async function postJson(url: string, obj: unknown) {
   return fakeGoogleFetch(url, { method: "POST", body: JSON.stringify(obj) });
 }
 
-describe("fakeGoogleFetch — token / tokeninfo / userinfo", () => {
+describe("fakeGoogleFetch: token / tokeninfo / userinfo", () => {
   it("code exchange returns the scenario's granted scopes + a refresh token", async () => {
     setFakeGoogleScenario(RUN_ID, { grantedScopes: [DISCOVERY, OWNED] });
     const r = await postForm(GOOGLE_TOKEN_ENDPOINT, "grant_type=authorization_code&code=x");
@@ -67,7 +67,7 @@ describe("fakeGoogleFetch — token / tokeninfo / userinfo", () => {
   });
 });
 
-describe("fakeGoogleFetch — calendarList + calendars.insert scenarios", () => {
+describe("fakeGoogleFetch: calendarList + calendars.insert scenarios", () => {
   it("calendarList returns the configured calendars (with roles)", async () => {
     setFakeGoogleScenario(RUN_ID, {
       calendarList: [

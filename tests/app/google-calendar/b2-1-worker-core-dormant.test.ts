@@ -2,20 +2,20 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// Google Calendar — Phase B2.1/c2/c3: static proof the worker stays DORMANT even
+// Google Calendar: Phase B2.1/c2/c3: static proof the worker stays DORMANT even
 // though it is now wired AND scheduled.
 //
 // The transport-neutral worker core + REST client + token lifecycle live under
 // lib/google-calendar/sync. B2.3-c2 wires EXACTLY ONE authenticated worker-drain
 // route (app/api/cron/calendar-sync) to that core through the approved server-only
 // runtime seam (lib/google-calendar/sync/worker-runtime); no app route imports the
-// low-level drain primitives (handler/adapters/the loop) directly — they go through
+// low-level drain primitives (handler/adapters/the loop) directly, they go through
 // the seam. B2.3-c3 registers BOTH calendar cron routes (calendar-reconcile +
 // calendar-sync) as DAILY Vercel schedules in vercel.json.
 //
 // The worker nonetheless remains DORMANT because worker_enabled=false (the claim RPC
 // returns zero rows and mutates nothing) and every studio outbound/inbound/two-way
-// intent flag is false. SCHEDULE REGISTRATION IS NOT RUNTIME ACTIVATION — the claim
+// intent flag is false. SCHEDULE REGISTRATION IS NOT RUNTIME ACTIVATION, the claim
 // RPC + the studio intent flags remain the authoritative gates. The invariants below
 // assert exactly this registered-but-dormant surface.
 
@@ -82,7 +82,7 @@ describe("B2.1 worker core is not activated", () => {
     expect(cronRoutes.some((f) => /calendar-reconcile/.test(f))).toBe(true);
     expect(cronRoutes.length).toBe(2);
     // Both are registered in vercel.json at exactly the approved DAILY schedules
-    // (B2.3-c3 registration — not runtime activation), with no duplicate cron path.
+    // (B2.3-c3 registration, not runtime activation), with no duplicate cron path.
     const crons =
       (JSON.parse(readFileSync(join(ROOT, "vercel.json"), "utf8")) as {
         crons?: { path: string; schedule: string }[];

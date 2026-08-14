@@ -108,7 +108,7 @@ describe("admin console surfaces the scheduler status (operator-only)", () => {
     expect(ADMIN).toMatch(/external scheduler/i);
   });
 
-  it("does NOT record/alert on render — the admin page only reads + classifies (no write-on-render)", () => {
+  it("does NOT record/alert on render, the admin page only reads + classifies (no write-on-render)", () => {
     // The health-alert recorder must not run during admin page render.
     expect(ADMIN).not.toMatch(/recordReminderSchedulerHealthAlert/);
   });
@@ -199,7 +199,7 @@ describe("daily materialize cron runs the health check best-effort (PR #283)", (
   });
 
   it("does NOT send reminders or call the appointment-reminders route", () => {
-    // Code only — a comment may legitimately name the route it deliberately
+    // Code only: a comment may legitimately name the route it deliberately
     // does NOT call.
     const code = codeOnly(MATERIALIZE);
     expect(code).not.toMatch(/appointment-reminders/);
@@ -228,7 +228,7 @@ describe("health check is failure-independent inside materialize (PR OPS-01)", (
 
   // The regression: an early `return NextResponse.json(..., { status: 500 })`
   // on the rule-lookup failure must NOT skip the health evaluation. Positional
-  // proof — the check must sit after that early return in the source, and in a
+  // proof, the check must sit after that early return in the source, and in a
   // `finally`, which is the only construct that still runs on that path.
   it("the early rule-lookup 500 return does not bypass the health check", () => {
     const earlyReturn = MATERIALIZE.indexOf('stage: "rule_lookup"');
@@ -260,7 +260,7 @@ describe("health check is failure-independent inside materialize (PR OPS-01)", (
   it("the failure log carries no secret or PII", () => {
     // Code only: the comment above the logger legitimately NAMES the things it
     // must never log ("no CRON_SECRET, no PII"), which would otherwise trip
-    // this grep — the same reason codeOnly() exists for every other PII pin.
+    // this grep, the same reason codeOnly() exists for every other PII pin.
     const block = codeOnly(
       MATERIALIZE.slice(MATERIALIZE.indexOf("} finally {")),
     );
@@ -389,7 +389,7 @@ describe("admin card renders all four states (PR OPS-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 — the two P1s from the #569 review, pinned at the wiring layer.
+// OPS-01.1, the two P1s from the #569 review, pinned at the wiring layer.
 //   3774540589  measure cadence rather than only heartbeat recency
 //   3774540599  do not dedupe critical stale alerts against legacy warnings
 // ---------------------------------------------------------------------------
@@ -510,11 +510,11 @@ describe("OPS-01.1 P1-B: dedupe reads severity, not just existence", () => {
     expect(HEARTBEAT).toMatch(/critical: 1/);
   });
 
-  // D6 — a failed dedupe lookup must fail OPEN (record), never silently drop
+  // D6: a failed dedupe lookup must fail OPEN (record), never silently drop
   // a scheduler-down alert.
   it("D6 a read error falls open toward recording the alert", () => {
     // Slice to a STABLE end anchor. A non-greedy `\n  }` stops at the first
-    // nested block close, which sits before the catch — the slice would then
+    // nested block close, which sits before the catch, the slice would then
     // silently exclude the very thing under test.
     const start = HEARTBEAT.indexOf("let existingUnresolved");
     const end = HEARTBEAT.indexOf("const plan = decideReminderSchedulerAlert");
@@ -544,7 +544,7 @@ describe("OPS-01.1 admin card surfaces measured cadence honestly", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 follow-up — Codex review on the OPS-01.1 head.
+// OPS-01.1 follow-up, Codex review on the OPS-01.1 head.
 //   3774838342 (P2) refresh the heartbeat even when the prior read fails
 //   3774838345 (P2) distinguish cadence failures from recency failures
 // ---------------------------------------------------------------------------

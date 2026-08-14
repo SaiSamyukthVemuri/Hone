@@ -2,13 +2,13 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// 0180 — CARD-ON-FILE REPLACEMENT INTEGRITY, proved against real PostgreSQL.
+// 0180: CARD-ON-FILE REPLACEMENT INTEGRITY, proved against real PostgreSQL.
 //
 // The defect these tests exist for: `client_payment_methods_one_active_per_pair`
 // is a partial unique index on (studio_id, client_id, stripe_livemode) WHERE
 // status='active', so a replacement MUST retire the old active row before
 // inserting the new one. The webhook did that as two independent PostgREST
-// writes, each in its own transaction — so any non-23505 failure of the INSERT
+// writes, each in its own transaction, so any non-23505 failure of the INSERT
 // left the client with ZERO ACTIVE CARDS after their working card had already
 // been retired.
 //
@@ -85,7 +85,7 @@ async function activeCards(f: { studioId: string; clientId: string }) {
   return r.rows;
 }
 
-describe("0180 — atomic card replacement", () => {
+describe("0180: atomic card replacement", () => {
   it("inserts the first card and reports no previous card", async () => {
     const f = await seedCardStudio("card-first");
     const out = await saveCard(f);
@@ -108,7 +108,7 @@ describe("0180 — atomic card replacement", () => {
     expect(active).toHaveLength(1);
     expect(active[0].id).toBe(second.card_id);
 
-    // The old card is retired, not deleted — history survives.
+    // The old card is retired, not deleted, history survives.
     const old = await adminQuery(
       `select status, removed_at from public.client_payment_methods where id=$1`,
       [first.card_id],
@@ -143,7 +143,7 @@ describe("0180 — atomic card replacement", () => {
     );
     expect(code).not.toBe("NO_ERROR");
 
-    // The previous card is STILL ACTIVE — the retire rolled back with the insert.
+    // The previous card is STILL ACTIVE, the retire rolled back with the insert.
     const active = await activeCards(f);
     expect(active).toHaveLength(1);
     expect(active[0].id).toBe(first.card_id);
@@ -169,7 +169,7 @@ describe("0180 — atomic card replacement", () => {
     const f = await seedCardStudio("card-concurrent");
     await saveCard(f);
 
-    // Two DIFFERENT SetupIntents racing — claim_stripe_event only serialises
+    // Two DIFFERENT SetupIntents racing: claim_stripe_event only serialises
     // redeliveries of the SAME event, so this race is real.
     const [r1, r2] = await Promise.allSettled([
       saveCard(f, { seti: `seti_${randomUUID().slice(0, 12)}` }),
@@ -240,19 +240,19 @@ describe("0180 — atomic card replacement", () => {
   });
 });
 
-describe("0180 — negative control: the pre-0180 two-write sequence really did lose the card", () => {
+describe("0180, negative control: the pre-0180 two-write sequence really did lose the card", () => {
   it("retire-then-failing-insert as SEPARATE transactions leaves ZERO active cards", async () => {
     // This reproduces EXACTLY what the webhook used to do: a PostgREST UPDATE
     // that retires the active row, then a separate PostgREST INSERT. Each is
     // its own transaction, so the retire is already committed when the insert
     // fails. Without this control the atomicity test above could pass
-    // vacuously — it proves the failure mode 0180 exists to remove is real,
+    // vacuously, it proves the failure mode 0180 exists to remove is real,
     // and that this suite would catch a regression back to it.
     const f = await seedCardStudio("card-nc-twowrite");
     const first = await saveCard(f);
     expect(await activeCards(f)).toHaveLength(1);
 
-    // Write 1 — retire (commits on its own, exactly as PostgREST would).
+    // Write 1: retire (commits on its own, exactly as PostgREST would).
     await adminQuery(
       `update public.client_payment_methods
           set status='removed', removed_at=now()
@@ -260,7 +260,7 @@ describe("0180 — negative control: the pre-0180 two-write sequence really did 
       [f.studioId, f.clientId, LIVEMODE],
     );
 
-    // Write 2 — insert fails (same check violation used above).
+    // Write 2: insert fails (same check violation used above).
     const code = await codeOf(() =>
       adminQuery(
         `insert into public.client_payment_methods
@@ -291,7 +291,7 @@ describe("0180 — negative control: the pre-0180 two-write sequence really did 
   });
 });
 
-describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
+describe("B/D: terminal rejection is CLIENT-BOUND and fail-closed", () => {
   // The portal's rejection authority is stripe_events.payload_summary (committed
   // by mark_stripe_event_processed), NOT ops_alerts, whose insert is
   // best-effort. But durability alone is not authorization: stripe_events.studio_id
@@ -368,7 +368,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     return false;
   }
 
-  it("A — the owning client sees their own terminal rejection", async () => {
+  it("A: the owning client sees their own terminal rejection", async () => {
     const f = await seedCardStudio("bind-owner");
     const seti = `seti_${randomUUID().slice(0, 12)}`;
     await seedRejection(seti, {
@@ -380,7 +380,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(true);
   });
 
-  it("B — SAME STUDIO, different client cannot see it even with the exact SetupIntent id", async () => {
+  it("B: SAME STUDIO, different client cannot see it even with the exact SetupIntent id", async () => {
     // THE MISSING CONTROL. A SetupIntent id is not authorization.
     const a = await seedCardStudio("bind-same-a");
     const otherClientId = randomUUID();
@@ -400,7 +400,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     expect(await rejectedForClient(a.studioId, otherClientId, seti)).toBe(false);
   });
 
-  it("C — a different studio cannot see it", async () => {
+  it("C: a different studio cannot see it", async () => {
     const a = await seedCardStudio("bind-studio-a");
     const b = await seedCardStudio("bind-studio-b");
     const seti = `seti_${randomUUID().slice(0, 12)}`;
@@ -414,7 +414,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     expect(await rejectedForClient(b.studioId, b.clientId, seti)).toBe(false);
   });
 
-  it("D — missing_account_context (studio_id NULL) is still visible when the customer binds", async () => {
+  it("D: missing_account_context (studio_id NULL) is still visible when the customer binds", async () => {
     // Deliberate: the event carries no studio, but the customer still resolves
     // through client_stripe_customers, so ownership IS provable.
     const f = await seedCardStudio("bind-noacct");
@@ -428,7 +428,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(true);
   });
 
-  it("E — studio_metadata_mismatch stored under ANOTHER studio still binds by customer", async () => {
+  it("E: studio_metadata_mismatch stored under ANOTHER studio still binds by customer", async () => {
     // stripe_events.studio_id names the account's studio, which may differ from
     // the portal client's. Binding by customer is what makes this correct.
     const f = await seedCardStudio("bind-mismatch");
@@ -444,9 +444,9 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     expect(await rejectedForClient(other.studioId, other.clientId, seti)).toBe(false);
   });
 
-  it("D/E — an UNATTRIBUTABLE rejection fails closed to not-confirmed, never rejected", async () => {
+  it("D/E: an UNATTRIBUTABLE rejection fails closed to not-confirmed, never rejected", async () => {
     // missing_customer / customer_lineage_mismatch can leave no usable customer.
-    // Nobody may see these as "rejected" — the portal shows not-confirmed.
+    // Nobody may see these as "rejected", the portal shows not-confirmed.
     const f = await seedCardStudio("bind-unattributable");
     const seti = `seti_${randomUUID().slice(0, 12)}`;
     await seedRejection(seti, {
@@ -458,7 +458,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(false);
   });
 
-  it("F — durable truth is used with NO ops_alerts row present at all", async () => {
+  it("F: durable truth is used with NO ops_alerts row present at all", async () => {
     const f = await seedCardStudio("bind-noalert");
     const seti = `seti_${randomUUID().slice(0, 12)}`;
     await seedRejection(seti, {
@@ -475,7 +475,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(true);
   });
 
-  it("an UNPROCESSED event is not a rejection — Stripe may still retry it", async () => {
+  it("an UNPROCESSED event is not a rejection, Stripe may still retry it", async () => {
     const f = await seedCardStudio("bind-unprocessed");
     const seti = `seti_${randomUUID().slice(0, 12)}`;
     await seedRejection(seti, {
@@ -486,7 +486,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
     expect(await rejectedForClient(f.studioId, f.clientId, seti)).toBe(false);
   });
 
-  it("G — malformed or unknown SetupIntent ids leak nothing", async () => {
+  it("G: malformed or unknown SetupIntent ids leak nothing", async () => {
     const f = await seedCardStudio("bind-unknown");
     expect(await rejectedForClient(f.studioId, f.clientId, "seti_does_not_exist")).toBe(false);
     expect(await rejectedForClient(f.studioId, f.clientId, "not-a-setup-intent")).toBe(false);
@@ -513,7 +513,7 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
   });
 });
 
-describe("0180 — command authority", () => {
+describe("0180: command authority", () => {
   it("is service_role-only; PUBLIC, anon and authenticated cannot execute it", async () => {
     const r = await adminQuery(`
       select has_function_privilege('anon',          p.oid, 'EXECUTE') as anon,

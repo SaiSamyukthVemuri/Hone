@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
-// 0176 — B7 public cancellation atomicity. STATIC contract.
+// 0176: B7 public cancellation atomicity. STATIC contract.
 //
 // Behaviour lives in tests/db/public-cancellation-atomicity.db.test.ts. This
 // file pins what a behavioural test cannot see: what the migration is allowed
@@ -15,7 +15,7 @@ const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 // EXECUTABLE SQL ONLY. The header deliberately NAMES what it does not touch
 // (snapshot_appointment_buffer, B8's postcare grant, payments), so a scope
 // assertion over the raw text would fail on the very prose documenting the
-// discipline — and a test that cannot tell a comment from a statement would
+// discipline, and a test that cannot tell a comment from a statement would
 // also miss a real violation hidden inside one.
 const EXEC = SQL.split("\n")
   .map((l) => l.replace(/--.*$/, ""))
@@ -34,8 +34,8 @@ const SHIM5 =
     /create or replace function public\.public_cancel_appointment_with_token\(\s*\n\s*p_token\s+text,\s*\n\s*p_reason\s+text,\s*\n\s*p_reason_label\s+text,\s*\n\s*p_note\s+text,\s*\n\s*p_follow_up_allowed boolean\s*\n\)[\s\S]*?\n\$\$;/,
   )?.[0] ?? "";
 
-describe("0176 — migration state", () => {
-  it("is no longer the repository maximum — B8 spent 0177 above it", () => {
+describe("0176: migration state", () => {
+  it("is no longer the repository maximum, B8 spent 0177 above it", () => {
     // Per CLAUDE.md only the CURRENT max may assert isRepoMax; that role passed
     // to 0177 when B8 landed.
     expect(isRepoMax("0176")).toBe(false);
@@ -49,7 +49,7 @@ describe("0176 — migration state", () => {
   });
 });
 
-describe("0176 — transaction envelope", () => {
+describe("0176: transaction envelope", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     // `supabase db push` does not wrap a migration file in a transaction, so a
     // bare SET LOCAL emits 25P01 and never arms.
@@ -65,7 +65,7 @@ describe("0176 — transaction envelope", () => {
   });
 });
 
-describe("0176 — STANDING PROHIBITION: snapshot_appointment_buffer untouched", () => {
+describe("0176, STANDING PROHIBITION: snapshot_appointment_buffer untouched", () => {
   it("never creates, replaces, drops or alters it", () => {
     // Production carries out-of-band GUC behaviour in that function which this
     // repository's migration source does not represent, so re-emitting it from
@@ -79,7 +79,7 @@ describe("0176 — STANDING PROHIBITION: snapshot_appointment_buffer untouched",
   });
 });
 
-describe("0176 — the atomic command", () => {
+describe("0176: the atomic command", () => {
   it("appends the two presentation-proof inputs to the existing command name", () => {
     expect(CMD7).not.toBe("");
     expect(CMD7).toMatch(/p_acknowledged_policy\s+boolean/);
@@ -87,7 +87,7 @@ describe("0176 — the atomic command", () => {
     expect(CMD7).toMatch(/policy_acknowledgement_id uuid/);
   });
 
-  it("locks studios BEFORE appointments — the established order", () => {
+  it("locks studios BEFORE appointments: the established order", () => {
     // 0170, 0171 and 0174 all take studios -> [advisory] -> appointments.
     // Reversing it here would create a fresh deadlock cycle against all three.
     const studioLock = CMD7.indexOf("from public.studios s");
@@ -149,7 +149,7 @@ describe("0176 — the atomic command", () => {
     expect((CMD7.match(/update public\.appointments/g) ?? []).length).toBe(1);
   });
 
-  it("does NOT assign updated_at by hand — B6's trigger owns it", () => {
+  it("does NOT assign updated_at by hand, B6's trigger owns it", () => {
     const upd = CMD7.match(/update public\.appointments[\s\S]*?where id = v_appt\.id;/)?.[0] ?? "";
     expect(upd).not.toMatch(/updated_at/);
   });
@@ -169,7 +169,7 @@ describe("0176 — the atomic command", () => {
   });
 });
 
-describe("0176 — the legacy 5-arg entry point cannot be a bypass", () => {
+describe("0176: the legacy 5-arg entry point cannot be a bypass", () => {
   it("is redefined rather than dropped, so an app rollback stays safe", () => {
     expect(SHIM5).not.toBe("");
     expect(EXEC).not.toMatch(/drop function[^;]*public_cancel_appointment_with_token/);
@@ -190,7 +190,7 @@ describe("0176 — the legacy 5-arg entry point cannot be a bypass", () => {
   });
 });
 
-describe("0176 — privilege posture", () => {
+describe("0176: privilege posture", () => {
   it("revokes from public/anon/authenticated and grants ONLY service_role", () => {
     for (const sig of [
       "text, text, text, text, boolean, boolean, text",
@@ -207,7 +207,7 @@ describe("0176 — privilege posture", () => {
   });
 });
 
-describe("0176 — scope discipline", () => {
+describe("0176: scope discipline", () => {
   it("does not touch B6's objects", () => {
     for (const obj of [
       "enforce_appointment_transition",

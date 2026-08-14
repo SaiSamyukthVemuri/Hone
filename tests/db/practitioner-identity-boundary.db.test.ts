@@ -1,9 +1,9 @@
-// PRACTITIONER IDENTITY + MUTATION BOUNDARY — behavioural suite for 0178.
+// PRACTITIONER IDENTITY + MUTATION BOUNDARY, behavioural suite for 0178.
 //
 // WHAT THIS FILE HAS TO PROVE, and why each half is necessary:
 //
 //   SAFE PATH EXISTS      a practitioner can still manage their own
-//                         preferences — including the non-owners for whom the
+//                         preferences, including the non-owners for whom the
 //                         old owner-gated RLS silently did nothing;
 //   ESCAPE HATCH IS GONE  no runtime role can reach the practitioner table
 //                         directly any more, by DML *or* by TRUNCATE.
@@ -14,7 +14,7 @@
 // THREE TRAPS THIS SUITE IS BUILT AROUND
 //
 // 1. A ZERO-ROW WRITE LOOKS LIKE SUCCESS. Under RLS an UPDATE that matches no
-//    row returns rowCount 0 with NO error — indistinguishable from a refusal.
+//    row returns rowCount 0 with NO error, indistinguishable from a refusal.
 //    That is the exact bug 0178 fixes, so the privilege probes below use
 //    predicates matching NO row: with the privilege still granted the statement
 //    SUCCEEDS and the test fails. A silent pass is impossible.
@@ -23,7 +23,7 @@
 //    multi-studio cases seed ONE auth user into TWO studios and assert the
 //    resolved actor per studio. Under the old helper the answer was whichever
 //    row Postgres returned first, so these cases would be flaky rather than
-//    cleanly red — which is why they assert the *specific* practitioner id.
+//    cleanly red, which is why they assert the *specific* practitioner id.
 //
 // 3. NON-DISCLOSURE. A caller who is not a member of the resource's studio must
 //    be refused the same way a caller naming a nonexistent resource is refused.
@@ -51,7 +51,7 @@ const PALETTE_OK = "teal";
 /**
  * A RUN-UNIQUE feed-token hash. `calendar_feed_token_hash` carries a UNIQUE
  * constraint, so a constant literal collides the second time this suite runs
- * against the same database — fixtures isolate by identity here, never by
+ * against the same database, fixtures isolate by identity here, never by
  * cleanup.
  */
 const feedHash = () => createHash("sha256").update(randomUUID()).digest("hex");
@@ -111,9 +111,9 @@ const setFrequency = (userId: string, studioId: string, freq: string | null) =>
   ]) as Promise<{ id: string | null }>;
 
 // ---------------------------------------------------------------------------
-// P — PRIVILEGE CLOSURE. The escape hatch must be gone.
+// P, PRIVILEGE CLOSURE. The escape hatch must be gone.
 // ---------------------------------------------------------------------------
-describe("0178 — public.practitioners is SELECT-only for runtime roles", () => {
+describe("0178: public.practitioners is SELECT-only for runtime roles", () => {
   it.each(["anon", "authenticated", "service_role"] as const)(
     "%s retains SELECT",
     async (role) => {
@@ -125,7 +125,7 @@ describe("0178 — public.practitioners is SELECT-only for runtime roles", () =>
   );
 
   it.each(["anon", "authenticated", "service_role"] as const)(
-    "%s holds NOTHING but SELECT — every PostgreSQL 17 table privilege enumerated",
+    "%s holds NOTHING but SELECT, every PostgreSQL 17 table privilege enumerated",
     async (role) => {
       // MAINTAIN IS HERE BECAUSE IT WAS MISSED ONCE. An earlier revision revoked
       // a hand-written list of verbs; this database is PostgreSQL 17, which adds
@@ -231,9 +231,9 @@ describe("0178 — public.practitioners is SELECT-only for runtime roles", () =>
 });
 
 // ---------------------------------------------------------------------------
-// S — OWN PREFERENCES. The safe path must exist, for NON-OWNERS especially.
+// S, OWN PREFERENCES. The safe path must exist, for NON-OWNERS especially.
 // ---------------------------------------------------------------------------
-describe("0178 — a practitioner manages their OWN preferences", () => {
+describe("0178: a practitioner manages their OWN preferences", () => {
   it("an ACTIVE NON-OWNER can set name, colour, feed hash and frequency", async () => {
     // This is the bug fix: every one of these was a silent zero-row write for a
     // non-owner before 0178.
@@ -273,7 +273,7 @@ describe("0178 — a practitioner manages their OWN preferences", () => {
     expect(after.calendar_feed_token_hash).toBeNull();
   });
 
-  it("authority fields are UNREACHABLE — they are not parameters at all", async () => {
+  it("authority fields are UNREACHABLE: they are not parameters at all", async () => {
     const studio = await seedStudio("p0178-auth");
     const m = await seedMember(studio, "p0178-auth-m");
     const before = await row(m.practitionerId);
@@ -310,7 +310,7 @@ describe("0178 — a practitioner manages their OWN preferences", () => {
     const b = await seedMember(studio, "p0178-b");
     const bBefore = await row(b.practitionerId);
 
-    // A's command resolves to A's OWN row — B is unreachable because no
+    // A's command resolves to A's OWN row, B is unreachable because no
     // practitioner id crosses the boundary.
     expect((await updateProfile(a.userId, studio.studioId, "Only A", null)).id)
       .toBe(a.practitionerId);
@@ -338,7 +338,7 @@ describe("0178 — a practitioner manages their OWN preferences", () => {
     expect((await row(m.practitionerId)).display_name).toBe(before.display_name);
   });
 
-  it("accepts any well-formed colour token — the palette stays canonical in CODE", async () => {
+  it("accepts any well-formed colour token, the palette stays canonical in CODE", async () => {
     // `lib/practitioner-colors.ts` says adding a colour is a pure code change
     // needing no migration, so SQL must NOT enumerate the eight current tokens.
     // A hypothetical future token therefore has to work here today.
@@ -352,7 +352,7 @@ describe("0178 — a practitioner manages their OWN preferences", () => {
   });
 
   it("still rejects a malformed or oversized colour token, a blank name and bad enums", async () => {
-    // The generic shape backstop — length and character class only.
+    // The generic shape backstop: length and character class only.
     const studio = await seedStudio("p0178-validate");
     const m = await seedMember(studio, "p0178-validate-m");
     await expect(updateProfile(m.userId, studio.studioId, null, "Not A Token!")).rejects.toThrow();
@@ -362,7 +362,7 @@ describe("0178 — a practitioner manages their OWN preferences", () => {
     await expect(setFeedHash(m.userId, studio.studioId, "not-a-hash")).rejects.toThrow();
   });
 
-  it("imposes NO length ceiling on display_name — the column is `text not null`", async () => {
+  it("imposes NO length ceiling on display_name, the column is `text not null`", async () => {
     // An earlier revision invented a 120-character limit. This migration moves an
     // existing behaviour behind a boundary; narrowing the accepted value domain
     // is a separate product decision needing UI and DB agreement.
@@ -377,9 +377,9 @@ describe("0178 — a practitioner manages their OWN preferences", () => {
 });
 
 // ---------------------------------------------------------------------------
-// M — MULTI-STUDIO. One human, two memberships, deterministic per studio.
+// M, MULTI-STUDIO. One human, two memberships, deterministic per studio.
 // ---------------------------------------------------------------------------
-describe("0178 — multi-studio membership is deterministic", () => {
+describe("0178: multi-studio membership is deterministic", () => {
   it("the SAME auth user resolves to the correct practitioner PER STUDIO", async () => {
     const a = await seedStudio("p0178-multi-a");
     const b = await seedStudio("p0178-multi-b");
@@ -395,7 +395,7 @@ describe("0178 — multi-studio membership is deterministic", () => {
     expect((await row(inB)).display_name).toBe("Name In B");
   });
 
-  it("multiple OWNERS remain valid — no singleton-owner assumption", async () => {
+  it("multiple OWNERS remain valid: no singleton-owner assumption", async () => {
     const studio = await seedStudio("p0178-owners");
     const second = await seedMember(studio, "p0178-owner2");
     await adminQuery(`update public.practitioners set role='owner' where id=$1`, [
@@ -415,9 +415,9 @@ describe("0178 — multi-studio membership is deterministic", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T — TEAM LIFECYCLE. Unchanged by 0178; proved not broken by the revoke.
+// T, TEAM LIFECYCLE. Unchanged by 0178; proved not broken by the revoke.
 // ---------------------------------------------------------------------------
-describe("0178 — the governed team lifecycle still works after the revoke", () => {
+describe("0178: the governed team lifecycle still works after the revoke", () => {
   const setActive = (studioId: string, actor: string, target: string, active: boolean) =>
     adminQuery(`select public.set_practitioner_active_locked($1,$2,$3,$4) code`, [
       studioId,

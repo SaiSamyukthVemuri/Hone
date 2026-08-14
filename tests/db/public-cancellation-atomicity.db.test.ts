@@ -10,7 +10,7 @@ import {
 } from "./helpers/harness";
 import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
 
-// B7 / 0176 — public cancellation + policy acknowledgement atomicity.
+// B7 / 0176: public cancellation + policy acknowledgement atomicity.
 //
 // The property under test is not "cancellation works". It is that the
 // cancellation and the EVIDENCE that the client saw the policy they were
@@ -166,8 +166,8 @@ const countOutbox = async (id: string) =>
  * A GENUINELY outbound-enabled Google fixture.
  *
  * enqueue_calendar_outbound() only enqueues a cancellation when ALL of these
- * hold, so a fixture missing any one of them makes the outbox assertion vacuous
- * — it would "pass" by enqueueing nothing:
+ * hold, so a fixture missing any one of them makes the outbox assertion vacuous,
+ * it would "pass" by enqueueing nothing:
  *   1. a calendar_connections row that is_studio_calendar_owner with a
  *      write_calendar_id;
  *   2. studios.google_calendar_outbound_sync_enabled;
@@ -217,8 +217,8 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T1/T7 — the happy paths", () => {
-  it("T1 — policy + correct presented hash + acknowledged => cancelled", async () => {
+describe("T1/T7: the happy paths", () => {
+  it("T1: policy + correct presented hash + acknowledged => cancelled", async () => {
     const f = await seedStudio("b7-t1");
     await setPolicy(f.studioId, POLICY_A, POLICY_A_NS);
     const { apptId, token } = await seedCancelable(f);
@@ -234,14 +234,14 @@ describe("T1/T7 — the happy paths", () => {
     expect((await apptRow(apptId)).status).toBe("cancelled");
   });
 
-  it("T7 — no policy at render AND at submit => cancelled with NO acknowledgement row", async () => {
+  it("T7: no policy at render AND at submit => cancelled with NO acknowledgement row", async () => {
     const f = await seedStudio("b7-t7");
     await setPolicy(f.studioId, null, null);
     const { apptId, token } = await seedCancelable(f);
 
     const out = await cancelV7(token, {
       acknowledged: false,
-      // The page still posts a hash — of the EMPTY snapshot.
+      // The page still posts a hash, of the EMPTY snapshot.
       presentedHash: hashOf(null, null),
     });
 
@@ -253,8 +253,8 @@ describe("T1/T7 — the happy paths", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T2-T6 — every way the policy evidence can be wrong fails CLOSED", () => {
-  it("T2 — policy configured, acknowledged=false => ack_required, zero mutation", async () => {
+describe("T2-T6: every way the policy evidence can be wrong fails CLOSED", () => {
+  it("T2: policy configured, acknowledged=false => ack_required, zero mutation", async () => {
     const f = await seedStudio("b7-t2");
     await setPolicy(f.studioId, POLICY_A, null);
     const { apptId, token } = await seedCancelable(f);
@@ -269,7 +269,7 @@ describe("T2-T6 — every way the policy evidence can be wrong fails CLOSED", ()
     await expectZeroMutation(apptId, res);
   });
 
-  it("T3 — presented hash differs from current => policy_changed, zero mutation", async () => {
+  it("T3: presented hash differs from current => policy_changed, zero mutation", async () => {
     const f = await seedStudio("b7-t3");
     await setPolicy(f.studioId, POLICY_A, null);
     const { apptId, token } = await seedCancelable(f);
@@ -284,7 +284,7 @@ describe("T2-T6 — every way the policy evidence can be wrong fails CLOSED", ()
     await expectZeroMutation(apptId, res);
   });
 
-  it("T3b — a MISSING presented hash is a mismatch, never consent", async () => {
+  it("T3b: a MISSING presented hash is a mismatch, never consent", async () => {
     // An older client that posts only the checkbox must not be able to
     // acknowledge text it never displayed.
     const f = await seedStudio("b7-t3b");
@@ -298,7 +298,7 @@ describe("T2-T6 — every way the policy evidence can be wrong fails CLOSED", ()
     await expectZeroMutation(apptId, res);
   });
 
-  it("T4 — policy EDITED after render => policy_changed", async () => {
+  it("T4: policy EDITED after render => policy_changed", async () => {
     const f = await seedStudio("b7-t4");
     await setPolicy(f.studioId, POLICY_A, null);
     const { apptId, token } = await seedCancelable(f);
@@ -312,7 +312,7 @@ describe("T2-T6 — every way the policy evidence can be wrong fails CLOSED", ()
     await expectZeroMutation(apptId, res);
   });
 
-  it("T5 — policy ADDED after a no-policy render => policy_changed", async () => {
+  it("T5: policy ADDED after a no-policy render => policy_changed", async () => {
     const f = await seedStudio("b7-t5");
     await setPolicy(f.studioId, null, null);
     const { apptId, token } = await seedCancelable(f);
@@ -326,11 +326,11 @@ describe("T2-T6 — every way the policy evidence can be wrong fails CLOSED", ()
     await expectZeroMutation(apptId, res);
   });
 
-  it("T6 — policy REMOVED after a policy render => policy_changed", async () => {
+  it("T6: policy REMOVED after a policy render => policy_changed", async () => {
     // THE CASE 0171'S SHAPE WOULD HAVE MISSED. With the hash comparison nested
     // inside "does this studio need an acknowledgement", a studio that DELETES
     // its policy makes the check evaporate and the cancellation commits as
-    // though nothing changed — the client reviewed a policy that no longer
+    // though nothing changed, the client reviewed a policy that no longer
     // exists and no evidence records it. B7 compares unconditionally.
     const f = await seedStudio("b7-t6");
     await setPolicy(f.studioId, POLICY_A, POLICY_A_NS);
@@ -347,8 +347,8 @@ describe("T2-T6 — every way the policy evidence can be wrong fails CLOSED", ()
 });
 
 // ---------------------------------------------------------------------------
-describe("T8-T11 — what a successful cancellation records", () => {
-  it("T8 — exactly ONE cancellation audit row and exactly ONE acknowledgement", async () => {
+describe("T8-T11: what a successful cancellation records", () => {
+  it("T8: exactly ONE cancellation audit row and exactly ONE acknowledgement", async () => {
     const f = await seedStudio("b7-t8");
     await setPolicy(f.studioId, POLICY_A, POLICY_A_NS);
     const { apptId, token } = await seedCancelable(f);
@@ -362,7 +362,7 @@ describe("T8-T11 — what a successful cancellation records", () => {
     expect(await countAck(apptId)).toBe(1);
   });
 
-  it("T9 — the stored snapshot and hash are the EXACT live policy", async () => {
+  it("T9: the stored snapshot and hash are the EXACT live policy", async () => {
     const f = await seedStudio("b7-t9");
     // Untrimmed on purpose: the snapshot must be the column content, not a
     // tidied rendering of it.
@@ -390,7 +390,7 @@ describe("T8-T11 — what a successful cancellation records", () => {
     expect(row.client_id).toBe(f.clientId);
   });
 
-  it("T10 — CLIENT actor semantics: no fabricated practitioner attribution", async () => {
+  it("T10, CLIENT actor semantics: no fabricated practitioner attribution", async () => {
     const f = await seedStudio("b7-t10");
     await setPolicy(f.studioId, POLICY_A, null);
     const { apptId, token } = await seedCancelable(f);
@@ -414,7 +414,7 @@ describe("T8-T11 — what a successful cancellation records", () => {
     expect(a.cancelled_by_practitioner_id, "must NOT invent a practitioner").toBeNull();
   });
 
-  it("T11 — reason, label, note and follow_up_allowed are preserved exactly", async () => {
+  it("T11: reason, label, note and follow_up_allowed are preserved exactly", async () => {
     const f = await seedStudio("b7-t11");
     await setPolicy(f.studioId, POLICY_A, null);
     const { apptId, token } = await seedCancelable(f);
@@ -446,8 +446,8 @@ describe("T8-T11 — what a successful cancellation records", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T12/T13 — lifecycle gates are unchanged", () => {
-  it("T12 — a terminal appointment cannot be cancelled", async () => {
+describe("T12/T13: lifecycle gates are unchanged", () => {
+  it("T12: a terminal appointment cannot be cancelled", async () => {
     const f = await seedStudio("b7-t12");
     await setPolicy(f.studioId, null, null);
     const { apptId, token } = await seedCancelable(f);
@@ -460,7 +460,7 @@ describe("T12/T13 — lifecycle gates are unchanged", () => {
     expect((await apptRow(apptId)).status).toBe("completed");
   });
 
-  it("T13 — an appointment at/past starts_at cannot be cancelled", async () => {
+  it("T13: an appointment at/past starts_at cannot be cancelled", async () => {
     const f = await seedStudio("b7-t13");
     await setPolicy(f.studioId, null, null);
     const { apptId, token } = await seedCancelable(f, "-1 hours");
@@ -483,14 +483,14 @@ describe("T12/T13 — lifecycle gates are unchanged", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T14/T15 — concurrency", () => {
+describe("T14/T15: concurrency", () => {
   async function conn(): Promise<Client> {
     const c = new Client({ connectionString: resolveLocalDbUrl() });
     await c.connect();
     return c;
   }
 
-  it("T14 — concurrent double-submit: exactly ONE success, ONE audit, ONE acknowledgement", async () => {
+  it("T14, concurrent double-submit: exactly ONE success, ONE audit, ONE acknowledgement", async () => {
     const f = await seedStudio("b7-t14");
     await setPolicy(f.studioId, POLICY_A, null);
     const { apptId, token } = await seedCancelable(f);
@@ -514,7 +514,7 @@ describe("T14/T15 — concurrency", () => {
     expect(await countAck(apptId)).toBe(1);
   });
 
-  it("T15 — a policy edit cannot race through: the studio lock serializes it", async () => {
+  it("T15, a policy edit cannot race through: the studio lock serializes it", async () => {
     // Deterministic, not sleep-based. The editor takes the studio row lock and
     // HOLDS it; the cancellation must block on that lock rather than reading a
     // stale policy. When the editor commits its change, the cancellation
@@ -566,8 +566,8 @@ describe("T14/T15 — concurrency", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T16 — rollback: a failing acknowledgement takes the whole cancellation with it", () => {
-  it("T16 — appointment, audit, ack, reservation and outbox all roll back", async () => {
+describe("T16, rollback: a failing acknowledgement takes the whole cancellation with it", () => {
+  it("T16: appointment, audit, ack, reservation and outbox all roll back", async () => {
     const f = await seedStudio("b7-t16");
     await setPolicy(f.studioId, POLICY_A, null);
     const { apptId, token } = await seedCancelable(f);
@@ -575,7 +575,7 @@ describe("T16 — rollback: a failing acknowledgement takes the whole cancellati
     const outboxBefore = await countOutbox(apptId);
 
     // TEST-ONLY fault: a trigger that raises on acknowledgement insert. The
-    // PRODUCT ships no fault-injection parameter — a runtime hook that can
+    // PRODUCT ships no fault-injection parameter, a runtime hook that can
     // abort a cancellation is itself a defect. Installed and dropped here.
     await adminQuery(`
       create or replace function public.b7_test_fail_ack() returns trigger
@@ -602,7 +602,7 @@ describe("T16 — rollback: a failing acknowledgement takes the whole cancellati
       await adminQuery(`drop function if exists public.b7_test_fail_ack()`);
     }
 
-    // EVERYTHING rolled back — including the status flip that had already run.
+    // EVERYTHING rolled back: including the status flip that had already run.
     const a = await apptRow(apptId);
     expect(a.status, "appointment must still be confirmed").toBe("confirmed");
     expect(a.cancelled_at).toBeNull();
@@ -622,8 +622,8 @@ describe("T16 — rollback: a failing acknowledgement takes the whole cancellati
 });
 
 // ---------------------------------------------------------------------------
-describe("T17/T18 — trigger-owned side effects are transactional", () => {
-  it("T17 — the appointment-backed calendar reservation is released by the SAME transaction", async () => {
+describe("T17/T18: trigger-owned side effects are transactional", () => {
+  it("T17: the appointment-backed calendar reservation is released by the SAME transaction", async () => {
     const f = await seedStudio("b7-t17");
     await setPolicy(f.studioId, null, null);
     const { apptId, token } = await seedCancelable(f);
@@ -634,12 +634,12 @@ describe("T17/T18 — trigger-owned side effects are transactional", () => {
     expect(out.result).toBe("cancelled");
 
     // sync_appointment_to_calendar_reservation keeps reservations only for
-    // confirmed/completed, so cancelling releases the capacity — and it did so
+    // confirmed/completed, so cancelling releases the capacity, and it did so
     // inside the command's transaction, with no manual DELETE anywhere in 0176.
     expect(await countReservation(apptId), "cancelled => reservation released").toBe(0);
   });
 
-  it("T18 — the Google outbox enqueues under a NON-VACUOUS Google-enabled fixture", async () => {
+  it("T18: the Google outbox enqueues under a NON-VACUOUS Google-enabled fixture", async () => {
     const f = await seedStudio("b7-t18");
     await setPolicy(f.studioId, null, null);
     const { apptId, token } = await seedCancelable(f);
@@ -685,7 +685,7 @@ describe("T17/T18 — trigger-owned side effects are transactional", () => {
     // CLEAN UP THE GLOBAL QUEUE. calendar_sync_outbox is read UNSCOPED by the
     // Google suites (claim_calendar_sync_op orders and caps across the whole
     // queue, and the reconcile pager walks every candidate), so a row left here
-    // changes their results — a fixture in this file would otherwise fail a
+    // changes their results, a fixture in this file would otherwise fail a
     // test in another. Namespacing cannot help against a global count; removing
     // exactly the rows this test created can.
     await adminQuery(
@@ -709,8 +709,8 @@ describe("T17/T18 — trigger-owned side effects are transactional", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T19/T20 — B6 inheritance", () => {
-  it("T19 — the confirmed -> cancelled edge really travels through B6's guard", async () => {
+describe("T19/T20: B6 inheritance", () => {
+  it("T19: the confirmed -> cancelled edge really travels through B6's guard", async () => {
     // Positive control: the guard is installed and enabled on this database, so
     // the successful cancellation above passed THROUGH it rather than round it.
     const trg = (
@@ -734,12 +734,12 @@ describe("T19/T20 — B6 inheritance", () => {
     ).rejects.toThrow(/illegal appointment status transition/i);
   });
 
-  it("T20 — updated_at stays DB-authoritative across the cancellation", async () => {
+  it("T20: updated_at stays DB-authoritative across the cancellation", async () => {
     const f = await seedStudio("b7-t20");
     await setPolicy(f.studioId, null, null);
     const { apptId, token } = await seedCancelable(f);
 
-    // Try to pin a stale value. B6's BEFORE trigger must overwrite it — that
+    // Try to pin a stale value. B6's BEFORE trigger must overwrite it, that
     // backdating is IMPOSSIBLE is the property, and it is why 0176 deliberately
     // does not assign updated_at by hand.
     await adminQuery(
@@ -772,8 +772,8 @@ describe("T19/T20 — B6 inheritance", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T21/T22/T24 — the legacy 5-argument entry point cannot bypass the policy", () => {
-  it("T21/T24 — legacy caller CANNOT cancel a policy-bearing appointment, and writes nothing", async () => {
+describe("T21/T22/T24: the legacy 5-argument entry point cannot bypass the policy", () => {
+  it("T21/T24: legacy caller CANNOT cancel a policy-bearing appointment, and writes nothing", async () => {
     const f = await seedStudio("b7-t21");
     await setPolicy(f.studioId, POLICY_A, POLICY_A_NS);
     const { apptId, token } = await seedCancelable(f);
@@ -785,7 +785,7 @@ describe("T21/T22/T24 — the legacy 5-argument entry point cannot bypass the po
     await expectZeroMutation(apptId, res);
   });
 
-  it("T22 — legacy caller remains safe for a genuinely no-policy studio", async () => {
+  it("T22: legacy caller remains safe for a genuinely no-policy studio", async () => {
     const f = await seedStudio("b7-t22");
     await setPolicy(f.studioId, null, null);
     const { apptId, token } = await seedCancelable(f);
@@ -810,8 +810,8 @@ describe("T21/T22/T24 — the legacy 5-argument entry point cannot bypass the po
 });
 
 // ---------------------------------------------------------------------------
-describe("T23 — privilege posture", () => {
-  it("T23 — both commands are service_role only", async () => {
+describe("T23: privilege posture", () => {
+  it("T23: both commands are service_role only", async () => {
     for (const sig of [
       "public.public_cancel_appointment_with_token(text,text,text,text,boolean,boolean,text)",
       "public.public_cancel_appointment_with_token(text,text,text,text,boolean)",
@@ -830,7 +830,7 @@ describe("T23 — privilege posture", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T25 — TS and SQL derive byte-identical hashes", () => {
+describe("T25: TS and SQL derive byte-identical hashes", () => {
   const CASES: Array<[string, string | null, string | null]> = [
     ["both null", null, null],
     ["both empty", "", ""],
@@ -843,7 +843,7 @@ describe("T25 — TS and SQL derive byte-identical hashes", () => {
     ["separator lookalike in the text", "a\n---\nb", "c"],
   ];
 
-  it.each(CASES)("T25 — %s", async (_label, cancel, noShow) => {
+  it.each(CASES)("T25: %s", async (_label, cancel, noShow) => {
     const sql = await adminQuery(
       `select encode(extensions.digest(coalesce($1::text,'') || E'\\n---\\n' || coalesce($2::text,''), 'sha256'), 'hex') as h`,
       [cancel, noShow],

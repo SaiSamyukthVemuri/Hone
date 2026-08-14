@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { hashAppointmentToken } from "@/lib/booking/appointment-token";
 
 // ===========================================================================
-// BOOK-01 Tranche 1 — behavioural proof that a COMMITTED public booking leaves
+// BOOK-01 Tranche 1, behavioural proof that a COMMITTED public booking leaves
 // the client with a working management path, and that the copy stays truthful.
 // ===========================================================================
 //
@@ -16,7 +16,7 @@ import { hashAppointmentToken } from "@/lib/booking/appointment-token";
 // appointmentId }` while holding a valid `/manage/<token>` URL in memory, and
 // the confirmation card told the client their cancel/reschedule links were in
 // an email that may never have arrived. The raw token is a one-time in-memory
-// secret — only its SHA-256 is persisted — so discarding it discarded the
+// secret, only its SHA-256 is persisted, so discarding it discarded the
 // client's in-band route to their own appointment.
 //
 // THE SECRECY WALL. The management URL is bearer authority. It may reach the
@@ -62,7 +62,7 @@ const scenario = {
   // BOOK-01 P2-A throw injection. Each flag makes one POST-COMMIT dependency
   // raise an unexpected exception. The thrown message deliberately carries a
   // POISON string so the secrecy assertions can prove `err.message` is never
-  // recorded — a real template or provider error can carry the recipient
+  // recorded, a real template or provider error can carry the recipient
   // address or a URL embedding the raw token.
   originThrows: false,
   intakeThrows: false,
@@ -323,11 +323,11 @@ function form(overrides: Record<string, string> = {}): FormData {
 
 /**
  * Every payload the action handed to a collaborator that PERSISTS, LOGS or
- * EMITS — the surfaces the management URL must never reach.
+ * EMITS, the surfaces the management URL must never reach.
  *
  * `confirmationEmails` and `smsCalls` are deliberately EXCLUDED: those are the
  * client's own delivery channels and carrying the link is their entire purpose.
- * `practitionerNotifications` IS included — that payload goes to studio staff
+ * `practitionerNotifications` IS included, that payload goes to studio staff
  * and to the notifications table, so a management link appearing there would be
  * both a leak and a persistence.
  */
@@ -385,8 +385,8 @@ async function book(overrides?: Record<string, string>) {
   return publicBookAppointmentAction(form(overrides));
 }
 
-describe("BOOK-01 T1 — a committed booking returns an in-band management path", () => {
-  it("case A: email succeeds — manageUrl returned and status is `sent`", async () => {
+describe("BOOK-01 T1: a committed booking returns an in-band management path", () => {
+  it("case A: email succeeds, manageUrl returned and status is `sent`", async () => {
     const r = await book();
     expect(r.ok, `action failed: ${r.ok ? "" : r.error}`).toBe(true);
     if (!r.ok) return;
@@ -398,7 +398,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     ]);
   });
 
-  it("case B/C: provider refuses — manageUrl STILL returned, status is `failed`", async () => {
+  it("case B/C: provider refuses, manageUrl STILL returned, status is `failed`", async () => {
     scenario.emailOk = false;
     const r = await book();
     expect(r.ok).toBe(true);
@@ -413,7 +413,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     expect(emailFailures.length).toBe(1);
   });
 
-  it("case C: studio has confirmations disabled — manageUrl returned, status is `disabled`", async () => {
+  it("case C: studio has confirmations disabled, manageUrl returned, status is `disabled`", async () => {
     scenario.sendConfirmationEmails = false;
     const r = await book();
     expect(r.ok).toBe(true);
@@ -459,14 +459,14 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
   });
 });
 
-describe("BOOK-01 T1 — the returned URL is a real, route-shaped capability", () => {
+describe("BOOK-01 T1: the returned URL is a real, route-shaped capability", () => {
   it("is the /manage entry point carrying the raw token whose SHA-256 the command stored", async () => {
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
     const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
-    // 24 random bytes, base64url — the shape /manage/[token] resolves by
+    // 24 random bytes, base64url: the shape /manage/[token] resolves by
     // hashing and matching appointments.cancellation_token_hash.
     expect(raw).toMatch(/^[A-Za-z0-9_-]{32}$/);
 
@@ -474,7 +474,7 @@ describe("BOOK-01 T1 — the returned URL is a real, route-shaped capability", (
     expect(create).toBeDefined();
     const storedHash = create!.args.p_cancellation_token_hash as string;
     // The command received the HASH, and it is genuinely the hash of the raw
-    // token in the URL — so the returned link resolves against what was stored.
+    // token in the URL, so the returned link resolves against what was stored.
     expect(storedHash).toBe(hashAppointmentToken(raw));
     expect(storedHash).toMatch(/^[0-9a-f]{64}$/);
     // And the raw token itself never crossed the DB boundary.
@@ -482,7 +482,7 @@ describe("BOOK-01 T1 — the returned URL is a real, route-shaped capability", (
   });
 });
 
-describe("BOOK-01 T1 — the secrecy wall", () => {
+describe("BOOK-01 T1: the secrecy wall", () => {
   for (const [label, setup] of [
     ["email sent", () => {}],
     ["email failed", () => void (scenario.emailOk = false)],
@@ -502,7 +502,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
       expect(emitted, "a /cancel link leaked").not.toContain("/cancel/");
       expect(emitted, "a /reschedule link leaked").not.toContain("/reschedule/");
 
-      // Analytics carries studio scope only — never client identity or tokens.
+      // Analytics carries studio scope only, never client identity or tokens.
       expect(JSON.stringify(analyticsEvents)).not.toContain(EMAIL);
       // Server logs must not carry the raw email either (PR #261 fingerprints).
       expect(consoleErrors.join(" ")).not.toContain(EMAIL);
@@ -542,7 +542,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
 // caught by nothing at all. The pins below are deliberately narrow and are a
 // SUPPLEMENT to the behavioural tests above, not a substitute: they assert
 // structural facts a renderer would otherwise prove.
-describe("BOOK-01 T1 — confirmation surface structure", () => {
+describe("BOOK-01 T1: confirmation surface structure", () => {
   const SRC = readFileSync(
     join(__dirname, "..", "..", "..", "app/book/[slug]/PublicBookForm.tsx"),
     "utf8",
@@ -554,8 +554,8 @@ describe("BOOK-01 T1 — confirmation surface structure", () => {
 
   it("branches on the email outcome NOWHERE in the component", () => {
     // Every status decision belongs to the pure copy builder, which the tests
-    // above execute for real. A conditional here — including one wrapped around
-    // the Manage anchor — moves an untestable rule back into the JSX.
+    // above execute for real. A conditional here, including one wrapped around
+    // the Manage anchor, moves an untestable rule back into the JSX.
     expect(SRC).not.toMatch(/emailStatus\s*===/);
     expect(SRC).not.toMatch(/emailStatus\s*!==/);
     expect(SRC).not.toMatch(/emailStatus\s*\?/);
@@ -582,7 +582,7 @@ describe("BOOK-01 T1 — confirmation surface structure", () => {
 });
 
 // ===========================================================================
-// BOOK-01 P2-A / P2-B — the POST-COMMIT LAW.
+// BOOK-01 P2-A / P2-B, the POST-COMMIT LAW.
 // ===========================================================================
 //
 // Once `create_public_appointment` returns 'created' the appointment and its
@@ -600,7 +600,7 @@ describe("BOOK-01 T1 — confirmation surface structure", () => {
 // with nothing committed at all.
 //
 // WHAT THIS DOES NOT CLAIM. A hard process death after the commit but before the
-// HTTP response cannot be converted into a response by try/catch — there is no
+// HTTP response cannot be converted into a response by try/catch, there is no
 // response. That case remains owned by the portal and the reminder passes. This
 // suite is about unexpected APPLICATION EXCEPTIONS, which are now contained.
 
@@ -630,11 +630,11 @@ function expectSafeEvidence(event: string) {
   expect(joined, `no evidence recorded for ${event}`).toContain(event);
   expect(joined, "err.message leaked into evidence").not.toContain(POISON);
   expect(joined).not.toContain("exploded");
-  // The error CLASS is what we keep — never its message.
+  // The error CLASS is what we keep, never its message.
   expect(joined).toContain("errorClass");
 }
 
-describe("BOOK-01 P2-A — a committed booking survives every post-commit failure", () => {
+describe("BOOK-01 P2-A: a committed booking survives every post-commit failure", () => {
   it("CASE A: all post-commit dependencies succeed", async () => {
     const r = await expectSettledSuccess();
     expectCommitted();
@@ -644,7 +644,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     expect(consoleErrors.join(" ")).not.toContain("_threw");
   });
 
-  it("CASE B: ensureIntakeForClient throws — booking succeeds, intake omitted", async () => {
+  it("CASE B: ensureIntakeForClient throws, booking succeeds, intake omitted", async () => {
     scenario.intakeThrows = true;
     const r = await expectSettledSuccess();
     expectCommitted();
@@ -655,7 +655,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     expectSafeEvidence("public_booking_intake_threw");
   });
 
-  it("CASE C: treatment-time context throws — booking succeeds, email still sent", async () => {
+  it("CASE C: treatment-time context throws, booking succeeds, email still sent", async () => {
     scenario.showTreatmentTime = true;
     scenario.treatmentTimeThrows = true;
     const r = await expectSettledSuccess();
@@ -670,7 +670,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     expectSafeEvidence("public_booking_treatment_time_threw");
   });
 
-  it("CASE D: email construction/send throws — booking succeeds, status is `failed`", async () => {
+  it("CASE D: email construction/send throws, booking succeeds, status is `failed`", async () => {
     scenario.emailThrows = true;
     const r = await expectSettledSuccess();
     expectCommitted();
@@ -679,7 +679,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     expectSafeEvidence("public_booking_confirmation_email_threw");
   });
 
-  it("CASE E: provider returns failure normally — existing truthful path intact", async () => {
+  it("CASE E: provider returns failure normally, existing truthful path intact", async () => {
     scenario.emailOk = false;
     const r = await expectSettledSuccess();
     expect(r.confirmationEmailStatus).toBe("failed");
@@ -690,7 +690,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     ]);
   });
 
-  it("CASE F: recordEmailAttempt throws after provider SUCCESS — status stays `sent`", async () => {
+  it("CASE F: recordEmailAttempt throws after provider SUCCESS, status stays `sent`", async () => {
     scenario.attemptWriteThrows = true;
     const r = await expectSettledSuccess();
     expectCommitted();
@@ -700,7 +700,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     expectSafeEvidence("public_booking_email_attempt_write_threw");
   });
 
-  it("CASE G: recordEmailAttempt throws after provider FAILURE — status stays `failed`", async () => {
+  it("CASE G: recordEmailAttempt throws after provider FAILURE, status stays `failed`", async () => {
     scenario.emailOk = false;
     scenario.attemptWriteThrows = true;
     const r = await expectSettledSuccess();
@@ -708,7 +708,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     expectSafeEvidence("public_booking_email_attempt_write_threw");
   });
 
-  it("CASE H: practitioner notification throws — client booking unaffected", async () => {
+  it("CASE H: practitioner notification throws, client booking unaffected", async () => {
     scenario.practitionerNotificationThrows = true;
     const r = await expectSettledSuccess();
     expectCommitted();
@@ -716,7 +716,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     expectSafeEvidence("public_booking_practitioner_notification_threw");
   });
 
-  it("CASE H2: the practitioner EMAIL throws — client booking unaffected", async () => {
+  it("CASE H2: the practitioner EMAIL throws, client booking unaffected", async () => {
     scenario.notifyPractitioner = true;
     scenario.practitionerEmailThrows = true;
     const r = await expectSettledSuccess();
@@ -725,14 +725,14 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     expectSafeEvidence("public_booking_practitioner_email_threw");
   });
 
-  it("CASE H3: revalidatePath throws — client booking unaffected", async () => {
+  it("CASE H3: revalidatePath throws, client booking unaffected", async () => {
     scenario.revalidateThrows = true;
     const r = await expectSettledSuccess();
     expect(r.confirmationEmailStatus).toBe("sent");
     expectSafeEvidence("public_booking_revalidate_threw");
   });
 
-  it("CASE I: several post-commit failures together — still settles, still no leak", async () => {
+  it("CASE I: several post-commit failures together, still settles, still no leak", async () => {
     scenario.intakeThrows = true;
     scenario.showTreatmentTime = true;
     scenario.treatmentTimeThrows = true;
@@ -771,13 +771,13 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
   });
 });
 
-describe("BOOK-01 P2-B — required configuration resolves BEFORE the durability boundary", () => {
+describe("BOOK-01 P2-B: required configuration resolves BEFORE the durability boundary", () => {
   it("CASE J: a missing app origin refuses with NOTHING committed", async () => {
     scenario.originThrows = true;
     const r = await book();
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("unreachable");
-    // The established safe refusal — never the raw config error.
+    // The established safe refusal: never the raw config error.
     expect(r.error).not.toContain("APPOINTMENT");
     expect(r.error).not.toContain(POISON);
     expect(Object.keys(r)).not.toContain("manageUrl");
@@ -794,7 +794,7 @@ describe("BOOK-01 P2-B — required configuration resolves BEFORE the durability
     expect(logs).not.toContain(POISON);
   });
 
-  it("CASE K: the booking command itself refuses — normal failure, no management URL", async () => {
+  it("CASE K: the booking command itself refuses, normal failure, no management URL", async () => {
     scenario.commandRefuses = true;
     const r = await book();
     expect(r.ok).toBe(false);
@@ -808,12 +808,12 @@ describe("BOOK-01 P2-B — required configuration resolves BEFORE the durability
 
   it("the origin is resolved before the command in the SOURCE order too", () => {
     // A behavioural test can prove "no commit when the origin fails", but not
-    // "the resolution SITS above the command" — a future edit could reintroduce
+    // "the resolution SITS above the command", a future edit could reintroduce
     // a second, later resolution and still pass CASE J. This pins the order.
     // EXECUTABLE SQL/TS ONLY. The header above the new call explains the change
     // and NAMES the helper, so a count over the raw text sees two occurrences
     // and a position check could be satisfied by the prose rather than the code.
-    // Comment lines are stripped first — the repository's standing idiom.
+    // Comment lines are stripped first, the repository's standing idiom.
     const src = readFileSync(
       join(__dirname, "..", "..", "..", "app/book/[slug]/actions.ts"),
       "utf8",

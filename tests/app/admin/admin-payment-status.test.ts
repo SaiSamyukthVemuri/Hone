@@ -31,7 +31,7 @@ describe("redaction-first helper", () => {
     expect(redactAccountId(null)).toBeNull();
   });
 
-  it("selects capability/status/count columns only — no sensitive identifiers", () => {
+  it("selects capability/status/count columns only: no sensitive identifiers", () => {
     // The ONLY columns the helper ever selects:
     expect(HELPER).toMatch(/stripe_livemode, stripe_account_id, stripe_account_status, stripe_charges_enabled, stripe_payouts_enabled/);
     expect(HELPER).toMatch(/select\("stripe_livemode"\)/); // cards: mode only

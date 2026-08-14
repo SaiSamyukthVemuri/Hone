@@ -10,7 +10,7 @@ import { isE2eFakeGoogleEnabled } from "@/lib/google-calendar/e2e/fake-google-gu
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
-describe("fake Google — not exposed in a production build", () => {
+describe("fake Google: not exposed in a production build", () => {
   it("the fake authorize route is guarded and 404s when the guard fails", () => {
     const src = read("app/api/google-calendar/e2e/authorize/route.ts");
     expect(src).toMatch(/assertE2eFakeGoogleAllowed\(process\.env\)/);
@@ -27,7 +27,7 @@ describe("fake Google — not exposed in a production build", () => {
     expect(src.indexOf("isE2eFakeGoogleEnabled()")).toBeLessThan(src.indexOf("return fetch(input, init)"));
   });
 
-  it("oauth.ts makes NO raw network fetch — every Google call goes through googleFetch", () => {
+  it("oauth.ts makes NO raw network fetch, every Google call goes through googleFetch", () => {
     const src = read("lib/google-calendar/oauth.ts");
     expect(src).not.toMatch(/await fetch\(/);
     expect(src).toMatch(/await googleFetch\(/);

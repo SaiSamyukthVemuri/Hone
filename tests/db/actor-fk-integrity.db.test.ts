@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
 
-// 0179 — actor FK integrity, proved against a real local PostgreSQL.
+// 0179: actor FK integrity, proved against a real local PostgreSQL.
 //
 // The static contract (which relationships 0179 may touch) is pinned in
 // tests/migrations/0179-actor-fk-integrity.test.ts. This file proves the
@@ -28,7 +28,7 @@ async function codeOf(fn: () => Promise<unknown>): Promise<string> {
   }
 }
 
-describe("0179 — durable ACTOR attribution is same-studio", () => {
+describe("0179: durable ACTOR attribution is same-studio", () => {
   it("rejects a cross-studio actor on clients.created_by", async () => {
     const a = await seedStudio("fk-clients-a");
     const b = await seedStudio("fk-clients-b");
@@ -52,7 +52,7 @@ describe("0179 — durable ACTOR attribution is same-studio", () => {
     expect(code).toBe("NO_ERROR");
   });
 
-  it("still accepts a NULL actor — nullable truth is preserved", async () => {
+  it("still accepts a NULL actor, nullable truth is preserved", async () => {
     const a = await seedStudio("fk-clients-null");
     const code = await codeOf(() =>
       adminQuery(
@@ -94,10 +94,10 @@ describe("0179 — durable ACTOR attribution is same-studio", () => {
   });
 });
 
-describe("0179 — durable actor attribution survives a practitioner delete", () => {
+describe("0179: durable actor attribution survives a practitioner delete", () => {
   it("RESTRICTs deleting a practitioner who authored a clinical note, and the note survives", async () => {
     // THE SECTION-3 CHANGE. Before 0179 this FK was ON DELETE CASCADE, so
-    // deleting the practitioner would have DESTROYED their clinical notes —
+    // deleting the practitioner would have DESTROYED their clinical notes,
     // contradicting the 0119 retention contract that historical attribution
     // survives account deletion.
     const a = await seedStudio("fk-del-a");
@@ -120,7 +120,7 @@ describe("0179 — durable actor attribution survives a practitioner delete", ()
       [noteId],
     );
     expect(rows.rowCount).toBe(1);
-    // Attribution intact — not nulled, not cascaded away.
+    // Attribution intact: not nulled, not cascaded away.
     expect(rows.rows[0].practitioner_id).toBe(author.practitionerId);
   });
 
@@ -151,7 +151,7 @@ describe("0179 — durable actor attribution survives a practitioner delete", ()
   });
 });
 
-describe("0179 — NON-actor relationships are behaviourally unchanged", () => {
+describe("0179: NON-actor relationships are behaviourally unchanged", () => {
   it("record_keeping_disinfectants.operator_practitioner_id still accepts a cross-studio value", async () => {
     // DOMAIN SUBJECT, not the mutating actor: the operator is picked from a
     // dropdown (app/(app)/records/actions.ts), while created_by_practitioner_id
@@ -182,7 +182,7 @@ describe("0179 — NON-actor relationships are behaviourally unchanged", () => {
     expect(code).toBe("NO_ERROR");
   });
 
-  it("electrolysis_entries.deleted_by (Class C) is untouched — no local studio lineage", async () => {
+  it("electrolysis_entries.deleted_by (Class C) is untouched, no local studio lineage", async () => {
     const a = await seedStudio("fk-elec-a");
     const b = await seedStudio("fk-elec-b");
     const s = await adminQuery(
@@ -249,11 +249,11 @@ const OWNED_0179 = [
   "client_personal_notes_updated_by_same_studio_fk",
 ];
 
-describe("0179 — a successful apply means 39/39 VALIDATED", () => {
+describe("0179: a successful apply means 39/39 VALIDATED", () => {
   // THE BINDING RULE. 0179 aborts rather than commit with an unvalidated actor
   // relationship, so on any database where it applied, every one of its
   // constraints must exist AND carry convalidated = true. An aggregate
-  // composite/simple count cannot see this — an unvalidated constraint is still
+  // composite/simple count cannot see this, an unvalidated constraint is still
   // a composite constraint.
   it("owns exactly 39 named constraints", () => {
     expect(OWNED_0179).toHaveLength(39);
@@ -293,7 +293,7 @@ describe("0179 — a successful apply means 39/39 VALIDATED", () => {
     }
   });
 
-  it("carries the CANONICAL clinical-notes name — no 0179 candidate survives", async () => {
+  it("carries the CANONICAL clinical-notes name, no 0179 candidate survives", async () => {
     // The replacement was added and validated as
     // client_clinical_notes_practitioner_same_studio_0179 because the old
     // CASCADE constraint held the canonical name through validation. Section 6
@@ -351,7 +351,7 @@ describe("0179 — a successful apply means 39/39 VALIDATED", () => {
   });
 });
 
-describe("0179 — catalog shape", () => {
+describe("0179: catalog shape", () => {
   it("leaves exactly the expected nine simple practitioner FKs", async () => {
     const res = await adminQuery(`
       select ct.relname || '.' ||
@@ -406,7 +406,7 @@ describe("0179 — catalog shape", () => {
     }
   });
 
-  it("auth.users provenance is untouched — still four columns, still auth.users", async () => {
+  it("auth.users provenance is untouched: still four columns, still auth.users", async () => {
     const res = await adminQuery(`
       select ct.relname || '.' ||
              (select a.attname from pg_attribute a

@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { seedE2eStudio, seedE2eDashboardMemoryClient } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Dashboard memory visibility (Chloe production feedback) — real browser, real
+// Dashboard memory visibility (Chloe production feedback), real browser, real
 // local stack.
 //
 // REPRODUCED DEFECT. The Today appointment card clipped the two lines Chloe
@@ -10,7 +10,7 @@ import { loginAsOwner } from "./helpers/flows";
 // Remember note AND Tailwind's `truncate` (overflow:hidden; text-overflow:
 // ellipsis; white-space:nowrap) on BOTH that line and the latest-settings line.
 // At 390px the usable text column is ~246px, so the CSS clamp bit at roughly
-// 30-35 characters — long before the 70-character cap. The full text was
+// 30-35 characters, long before the 70-character cap. The full text was
 // already in the payload; only the render threw it away.
 //
 // These specs assert the rendered text at iPhone width, not the source: the
@@ -19,7 +19,7 @@ import { loginAsOwner } from "./helpers/flows";
 
 const T = 20_000;
 
-// Deliberately long, multi-line, and containing an unbroken token — the three
+// Deliberately long, multi-line, and containing an unbroken token, the three
 // things that could break the layout once the clamp is removed. Clinical
 // wording only; no client name, nothing from the reporter's screenshots.
 const LONG_NOTE_LINE_1 =
@@ -37,7 +37,7 @@ function rememberLine(page: Page) {
 }
 
 // The combined Today card labels the watch line "Caution:" and the plan note
-// "Remember:" — the old card collapsed both into one "Remember:" line, which is
+// "Remember:", the old card collapsed both into one "Remember:" line, which is
 // exactly the duplication the combined workflow removed.
 function cautionLine(page: Page) {
   return page.locator("span").filter({ hasText: /^Caution: / }).first();
@@ -62,7 +62,7 @@ test.describe("iPhone profile", () => {
     await loginAsOwner(page, seed);
     await openDashboard(page);
 
-    await test.step("the WHOLE note is rendered — no ellipsis, nothing dropped", async () => {
+    await test.step("the WHOLE note is rendered, no ellipsis, nothing dropped", async () => {
       const text = await rememberLine(page).innerText();
       expect(text).toContain(LONG_NOTE_LINE_1);
       expect(text).toContain(LONG_NOTE_LINE_2);
@@ -121,7 +121,7 @@ test.describe("iPhone profile", () => {
       const noteEl = rememberLine(page);
       const note = await noteEl.boundingBox();
       expect(note).not.toBeNull();
-      // Only controls that are NOT ancestors of the note itself — the row is
+      // Only controls that are NOT ancestors of the note itself, the row is
       // wrapped in a Link that legitimately contains it.
       const overlaps = await noteEl.evaluate((el) => {
         const nb = el.getBoundingClientRect();
@@ -201,7 +201,7 @@ test.describe("desktop is unaffected", () => {
 // ---------------------------------------------------------------------------
 // This used to be the "Daily Prep Brief" block: the brief re-rendered the same
 // note a few hundred pixels lower under a different label, with its own
-// 90-character cap. The brief is retired — the caution now renders ONCE, on the
+// 90-character cap. The brief is retired, the caution now renders ONCE, on the
 // appointment's own card, labelled "Caution:" and visually distinct from the
 // plan note. The full-text guarantees it proved are asserted here instead.
 test.describe("the caution line at iPhone width", () => {

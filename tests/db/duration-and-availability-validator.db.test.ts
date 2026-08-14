@@ -3,7 +3,7 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 (migration 0146) — Item 2 authoritative duration + Item 3 the one
+// PR B Part 4 (migration 0146), Item 2 authoritative duration + Item 3 the one
 // shared, target-aware availability validator. Studio B, capacity ON + booking ON,
 // UTC, studio-wide window 09:00–17:00 on the test date's weekday.
 
@@ -75,7 +75,7 @@ const overrideOpen = (target: string | null, open: string, close: string, isOpen
     [B.studioId, target, DATE, isOpen, isOpen ? open : null, isOpen ? close : null],
   );
 
-describe("0146 validator — working hours, blockouts, membership, eligibility", () => {
+describe("0146 validator: working hours, blockouts, membership, eligibility", () => {
   it("within the window → ok", async () => {
     expect(await validate(P(1), T("10:00"), T("10:30"))).toBe("ok");
   });
@@ -125,7 +125,7 @@ describe("0146 validator — working hours, blockouts, membership, eligibility",
   });
 });
 
-describe("0146 v2 command — authoritative duration + owner-only overrides", () => {
+describe("0146 v2 command: authoritative duration + owner-only overrides", () => {
   it("normal booking derives duration from the service row (30 min)", async () => {
     const r = await book(member(), member(), T("10:00"));
     expect(r.result).toBe("created");

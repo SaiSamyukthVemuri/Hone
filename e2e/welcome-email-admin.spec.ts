@@ -12,21 +12,21 @@ import {
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
-// Defect 4 — welcome-email delivery hardening, proven END TO END through the
+// Defect 4: welcome-email delivery hardening, proven END TO END through the
 // REAL admin "Resend welcome email" control (/admin/studios/[id]) against the
 // local stack + the fake-Resend transport. Per-recipient mode control lets a
 // single server run exercise every send outcome by seeding the studio's
 // owner_email with a mode prefix (success / reject+ / throw+ / failonce+).
 //
-// The DB-fault + CAS properties that can't be driven through the UI —
+// The DB-fault + CAS properties that can't be driven through the UI,
 // claim-DB-failure (no false success), stamp-write-failure (bounded marker),
-// and stale-attempt-cannot-overwrite — are proven at the adapter/DB layer:
+// and stale-attempt-cannot-overwrite, are proven at the adapter/DB layer:
 //   tests/lib/email/deliver-welcome-email.test.ts (claim error -> failed, no
 //     send; stamp write error -> sent + bounded marker; superseded stamp)
 //   tests/db/welcome-email-claim.db.test.ts (compare-and-set: a stale attempt
 //     cannot overwrite a newer result; two concurrent claims -> exactly one).
 
-test.describe("welcome-email admin resend — fake Resend", () => {
+test.describe("welcome-email admin resend: fake Resend", () => {
   test.skip(
     process.env.HONE_E2E_FAKE_RESEND !== "1",
     "requires HONE_E2E_FAKE_RESEND=1",

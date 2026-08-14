@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// Dashboard V2 Part 1 — the operational hierarchy.
+// Dashboard V2 Part 1, the operational hierarchy.
 // ===========================================================================
 //
 //     TODAY        what do I need to do now?
@@ -16,7 +16,7 @@ import { join } from "node:path";
 // The order is the product decision. Before this PR the dashboard rendered
 // Today, then the Practice Snapshot (reporting, including its own "Action
 // needed" block), then Follow-up assistant, Supplies expiring, Needs attention,
-// the booking card, and only then Birthdays — so reporting sat above actionable
+// the booking card, and only then Birthdays, so reporting sat above actionable
 // work and relationship context was tangled in the middle of it.
 //
 // Nothing enforced that order, and nothing would have noticed it drifting back:
@@ -24,7 +24,7 @@ import { join } from "node:path";
 // asserts CONTENT, not POSITION. This file asserts position only.
 //
 // It reads the page SOURCE rather than rendering, because the dashboard page is
-// an async server component with a dozen awaited loaders — the repo has no
+// an async server component with a dozen awaited loaders, the repo has no
 // harness that renders it, and standing one up to assert ordering would be a
 // far larger change than the ordering itself. Source-order assertions are the
 // established idiom here (tests/app/chloe-pilot-feedback.test.ts does the same
@@ -46,7 +46,7 @@ const DASH = readFileSync(
  * Every "this copy must NOT appear" assertion below reads THIS, never DASH.
  * The page documents its own product decisions in comments, so the note
  * explaining why the Pilot learning card was deleted necessarily contains the
- * words "Pilot learning" — and a naive whole-file grep would be satisfied by
+ * words "Pilot learning", and a naive whole-file grep would be satisfied by
  * the explanation of the removal rather than by the removal. That failure mode
  * has bitten this repo before; strip first, then assert.
  */
@@ -82,7 +82,7 @@ const TODO = '<h2 className="text-lg font-medium">To do</h2>';
 const BIRTHDAYS = "<BirthdaysThisMonth";
 const SNAPSHOT = "<PracticeSnapshot";
 
-describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
+describe("dashboard hierarchy: Today, then To do, then Birthdays", () => {
   it("Today comes before To do", () => {
     expect(at(TODAY)).toBeLessThan(at(TODO));
   });
@@ -112,7 +112,7 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
     // here and be a deliberate decision, not a drive-by addition.
     //
     // Scoped to headings declared IN THE PAGE. "Practice snapshot" is a fourth
-    // top-level h2, declared inside practice-snapshot.tsx and asserted below —
+    // top-level h2, declared inside practice-snapshot.tsx and asserted below,
     // it is demoted, not absent, and it must keep a heading of its own or its
     // cards nest under Birthdays in the accessibility tree.
     const h2s = [...DASH.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map((m) => m[1]);
@@ -122,8 +122,8 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
   it("the demoted Practice Snapshot still has a heading of its OWN", () => {
     // Its only h2 used to be "Action needed", which moved to To do. Without a
     // replacement, a screen-reader user navigating by heading would find
-    // "Service value" and "Payments" as children of "Birthdays this month" —
-    // the preceding h2 — because heading level, not DOM nesting, defines the
+    // "Service value" and "Payments" as children of "Birthdays this month",
+    // the preceding h2, because heading level, not DOM nesting, defines the
     // a11y outline.
     const snapshot = readFileSync(
       join(process.cwd(), "app/(app)/dashboard/practice-snapshot.tsx"),
@@ -135,18 +135,18 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
   });
 });
 
-describe("dashboard hierarchy — reporting and setup are DEMOTED, not deleted", () => {
+describe("dashboard hierarchy: reporting and setup are DEMOTED, not deleted", () => {
   it("the Practice Snapshot sits below Birthdays", () => {
     // It is reporting, not an action. The owner-only Financials route that will
     // eventually own service value / payment posture does not exist yet, so the
-    // snapshot is demoted rather than removed — deleting the only surface that
+    // snapshot is demoted rather than removed, deleting the only surface that
     // shows them before their replacement exists would destroy functionality.
     expect(at(BIRTHDAYS)).toBeLessThan(at(SNAPSHOT));
   });
 
   it("the Getting started card sits below the operational sections", () => {
     // Setup is not daily work. It used to render directly under Today.
-    // Still the INCOMPLETE branch only — see the CHLOE D3 block below.
+    // Still the INCOMPLETE branch only, see the CHLOE D3 block below.
     expect(at(BIRTHDAYS)).toBeLessThan(at("{!onboardingV2On && !setupComplete && ("));
   });
 
@@ -162,15 +162,15 @@ describe("dashboard hierarchy — reporting and setup are DEMOTED, not deleted",
 });
 
 // ===========================================================================
-// CHLOE (this PR) — finished setup and pilot-only tooling leave the Dashboard.
+// CHLOE (this PR), finished setup and pilot-only tooling leave the Dashboard.
 // ===========================================================================
 // The three deletions below are the product decision, exactly like the ordering
 // above: nothing enforced them, and a drive-by edit could put any of them back
 // without a single test noticing. Each is asserted as a POSITIVE absence, and
-// each is paired with the surface that must SURVIVE it — a cleanup that also
+// each is paired with the surface that must SURVIVE it, a cleanup that also
 // deletes the incomplete-setup path, or the /getting-started route, or the
 // shared feedback helper, is a regression, not a cleanup.
-describe("dashboard cleanup — completed setup and pilot tooling do not render", () => {
+describe("dashboard cleanup: completed setup and pilot tooling do not render", () => {
   it("D2: the booking setup card is gated on readiness NOT being ready", () => {
     // Chloe saw "Booking page ready / Your public booking page is live" plus a
     // column of ticks, permanently. Complete readiness must render nothing.
@@ -194,7 +194,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     expect(DASH_CODE).not.toMatch(/Booking page ready/);
   });
 
-  it("D2: derived readiness stays the ONLY authority — no new completion flag", () => {
+  it("D2: derived readiness stays the ONLY authority, no new completion flag", () => {
     // "Do not create a new completion flag if current state already determines
     // readiness." The page must keep deriving from computeBookingReadiness and
     // must not invent a persisted booking-complete signal.
@@ -231,7 +231,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
 
   it("D3: a COMPLETED setup renders no Getting Started card or footer", () => {
     // The retired footer said "Setup complete." and then offered the setup
-    // checklist — the exact contradiction Chloe reported.
+    // checklist, the exact contradiction Chloe reported.
     expect(DASH_CODE).not.toMatch(/\{!onboardingV2On && setupComplete && \(/);
     expect(DASH_CODE).not.toMatch(/Setup complete\./);
     expect(DASH_CODE).not.toMatch(/Getting started checklist/);
@@ -292,7 +292,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // DASH-TRUTH-04 finished the job the earlier cleanup started: the two quiet
     // <PilotFeedbackPrompt> footers under Today and To do are gone, so the daily
     // product no longer routes practitioner feedback to the founder. The SHARED
-    // helper and component files are deliberately kept — this requirement is
+    // helper and component files are deliberately kept, this requirement is
     // Dashboard-specific, and deleting shared code is a wider decision than this
     // tranche was asked to make.
     expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(true);
@@ -314,14 +314,14 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
   });
 });
 
-describe("dashboard hierarchy — the To do section owns the actionable work", () => {
+describe("dashboard hierarchy: the To do section owns the actionable work", () => {
   /**
    * The SOURCE SPAN of the JSX element that encloses the To do heading, found
    * by walking tags and tracking depth.
    *
    * "Is the index between the To do heading and Birthdays?" is NOT good enough
    * and was the original mistake here: it is satisfied by a page where the
-   * <section> has been dissolved and the four surfaces are bare peers again —
+   * <section> has been dissolved and the four surfaces are bare peers again,
    * precisely the state this PR exists to fix. A mutation that moved the
    * closing </section> up to just after the heading passed every assertion in
    * this file. Containment has to be real.
@@ -351,8 +351,8 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
   });
 
   it("the four independent visible sub-sections are GONE", () => {
-    // This is the Part 2B contract. Their data still reaches the practitioner
-    // — through the normalized model — but not as four peer surfaces.
+    // This is the Part 2B contract. Their data still reaches the practitioner,
+    // through the normalized model, but not as four peer surfaces.
     for (const marker of [
       "<ActionNeeded",
       "<FollowUpAssistantCard",
@@ -380,13 +380,13 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
     expect(sec).not.toContain("<PracticeSnapshot");
   });
 
-  it("the To do section is UNCONDITIONAL — no role or flag can empty it", () => {
+  it("the To do section is UNCONDITIONAL, no role or flag can empty it", () => {
     // A mutation wrapping the section in `{isOwner && ...}` removed the whole
     // To-do surface for every non-owner practitioner, and this file stayed
     // green. The heading must not sit behind a guard, and neither may the list.
     // (Owner-ONLY *rows* are filtered inside the model, where they belong.)
     const sec = todoSection();
-    // The gate lives OUTSIDE the element — `{isOwner && <section ...>}` — so
+    // The gate lives OUTSIDE the element, `{isOwner && <section ...>}`, so
     // looking only inside the section misses it entirely. That mutation was
     // still green after the first fix here. Inspect what immediately precedes
     // the opening tag.
@@ -407,7 +407,7 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
     }
   });
 
-  it("To do owns the only heading in the group — the list adds NO sub-headings", () => {
+  it("To do owns the only heading in the group, the list adds NO sub-headings", () => {
     // Part 1 gave the four children h3s so they read as items of one group.
     // Part 2B removes the competing headings altogether: one list, one grammar.
     const list = readFileSync(
@@ -428,7 +428,7 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
     // PracticeSnapshot never takes or renders `attention`...
     expect(snapshot).toMatch(/export function PracticeSnapshot\(\{\s*\n\s*metrics,\s*\n\s*livemode/);
     expect(DASH).not.toMatch(/<PracticeSnapshot[^/]*attention=/);
-    // ...and ActionNeeded no longer exists at all — Part 2B retired it.
+    // ...and ActionNeeded no longer exists at all, Part 2B retired it.
     expect(snapshot).not.toMatch(/export function ActionNeeded/);
     expect(snapshot).not.toMatch(/ClientsNeedingAttention/);
   });
@@ -459,7 +459,7 @@ describe("dashboard hierarchy — the To do section owns the actionable work", (
   });
 });
 
-describe("dashboard hierarchy — no new data loading", () => {
+describe("dashboard hierarchy: no new data loading", () => {
   // §7: a rearrangement must not make the page issue more queries. These are
   // the loaders whose results the moved components consume.
   it.each([
@@ -501,7 +501,7 @@ describe("dashboard hierarchy — no new data loading", () => {
   });
 });
 
-describe("dashboard hierarchy — nothing operational was removed", () => {
+describe("dashboard hierarchy: nothing operational was removed", () => {
   it.each([
     "<OnboardingSurface",
     // Part 2B: the four To-do sub-sections collapsed into this single list.
@@ -509,7 +509,7 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
     "<BookingSetupCard",
     "<BirthdaysThisMonth",
     "<PracticeSnapshot",
-    // "<PilotLearningCard" deliberately left this list — see the CHLOE D4
+    // "<PilotLearningCard" deliberately left this list, see the CHLOE D4
     // block below, which asserts its ABSENCE rather than merely dropping the
     // row. A removed guard proves nothing; a positive absence assertion does.
     "<PilotFeedbackPrompt",
@@ -535,7 +535,7 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
     }
   });
 
-  it("Birthdays is rendered unconditionally — relationship context is not owner-gated", () => {
+  it("Birthdays is rendered unconditionally: relationship context is not owner-gated", () => {
     const i = at("<BirthdaysThisMonth");
     const line = DASH.slice(DASH.lastIndexOf("\n", i), i);
     expect(line, "Birthdays must not be behind a && guard").not.toMatch(/&&/);
@@ -550,14 +550,14 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
 
   it("the dashboard page never WRITES an appointment, by any route", () => {
     // Honest framing: this is a standing property of the page, NOT a diff
-    // guard. It passed identically at the base commit — which is the point; it
+    // guard. It passed identically at the base commit, which is the point; it
     // must keep passing. The parallel appointment-DML boundary work (B3/B4) is
     // enforced by tests/security/appointment-direct-dml-guard.test.ts, which
     // censuses the whole tree with the TypeScript compiler API and is resistant
     // to the alias and detached-receiver evasions a regex here cannot see.
     //
     // Whole-chain scan rather than a bounded lookahead, so a write far below
-    // the `.from()` — or through a detached receiver — is still caught.
+    // the `.from()`, or through a detached receiver, is still caught.
     const chains = [...DASH.matchAll(/\.from\(\s*["']appointments["']\s*\)/g)];
     expect(chains.length, "one batched read, no more").toBe(1);
     for (const c of chains) {
@@ -578,8 +578,8 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
   it("no async work is introduced inside the appointment RENDER map", () => {
     // The earlier version of this guard sliced only the pure input-building
     // block, so an async child component fetching per appointment inside the
-    // JSX map — a textbook N+1 — left every loader count at 1 and went unseen.
-    // The JSX map specifically — `{visibleAppointments.map((appt) => (`.
+    // JSX map, a textbook N+1, left every loader count at 1 and went unseen.
+    // The JSX map specifically, `{visibleAppointments.map((appt) => (`.
     // There are earlier PURE maps over the same array (client_id projections);
     // indexOf() found one of those and made this assertion meaningless.
     const start = DASH.indexOf("{visibleAppointments.map((appt) => (");

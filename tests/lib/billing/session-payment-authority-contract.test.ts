@@ -28,7 +28,7 @@ describe("the retired display-default resolver is gone", () => {
   it("no PRODUCTION code imports or calls the retired exports", () => {
     // Scoped to shipped code. Tests legitimately name the retired symbols in
     // NEGATIVE assertions ("must not appear"), and the docs/audit history
-    // legitimately records that it once existed — neither is a live reference.
+    // legitimately records that it once existed, neither is a live reference.
     const dirs = ["app", "components", "lib"];
     const files: string[] = [];
     const walk = (d: string) => {
@@ -125,7 +125,7 @@ describe("trusted loading and lineage", () => {
     // studio_id) FK means a studio-scoped appointment can only reference a
     // service in the same studio. Selecting studio_id INSIDE the embed also
     // broke PostgREST resolution and returned a null service, which would have
-    // blocked every payment — so the check is pinned here instead.
+    // blocked every payment, so the check is pinned here instead.
     const MIG = read("supabase/migrations/0151_appointment_tenant_consistency.sql");
     expect(MIG).toMatch(/service_id, studio_id/);
     expect(LOADER).toMatch(/service:services\(name, price_cents\)/);
@@ -165,7 +165,7 @@ describe("session detail and quick checkout share one authority", () => {
 
 describe("preparation remains the pricing boundary; execution may only REFUSE", () => {
   // The invariant this protects is that execution never DECIDES or CHANGES an
-  // amount — the prepared row stays the single charge authority. FREE-01 added
+  // amount, the prepared row stays the single charge authority. FREE-01 added
   // a check in the opposite direction: an attempt prepared at a positive price
   // survives its service later becoming free (or losing its price entirely),
   // and execution otherwise works purely from the stored row, so it would

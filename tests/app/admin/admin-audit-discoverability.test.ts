@@ -43,7 +43,7 @@ describe("scoped to the admin area; audit page stays admin-gated", () => {
 });
 
 describe("no audit schema / logging / behavior change", () => {
-  it("the dashboard card is a plain link — no audit-logging or data mutation", () => {
+  it("the dashboard card is a plain link, no audit-logging or data mutation", () => {
     expect(ADMIN_HOME).not.toMatch(/logAdminAction|admin_action_events/);
     // no payment/email/SMS surface introduced by this change
     expect(ADMIN_HOME).not.toMatch(/sendEmail|twilio|sendSms/i);

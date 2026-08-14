@@ -35,7 +35,7 @@ const csvHeader = csvRows[0];
 const csvData = csvRows.slice(1);
 const col = (name: string) => csvHeader.indexOf(name);
 
-describe("findings register — CSV structural integrity", () => {
+describe("findings register: CSV structural integrity", () => {
   // The first frozen-head review found the CSV shipped with 21 headers and 20
   // fields on every row: `production_reachable` was missing from the row builder,
   // silently shifting every later column left by one. A register whose columns do
@@ -60,7 +60,7 @@ describe("findings register — CSV structural integrity", () => {
   });
 });
 
-describe("findings register — source preservation", () => {
+describe("findings register: source preservation", () => {
   it("every source finding appears exactly once per register", () => {
     const seen = new Map<string, number>();
     for (const r of csvData) {
@@ -92,7 +92,7 @@ describe("findings register — source preservation", () => {
   });
 });
 
-describe("findings register — classification integrity", () => {
+describe("findings register: classification integrity", () => {
   const OPEN_ISH = ["OPEN", "PARTIALLY_FIXED"];
 
   it("every OPEN/PARTIALLY_FIXED P0 or P1 has a remediation wave", () => {
@@ -176,7 +176,7 @@ describe("findings register — classification integrity", () => {
   });
 });
 
-describe("findings register — counts agree across Markdown, CSV and JSON", () => {
+describe("findings register: counts agree across Markdown, CSV and JSON", () => {
   const sev = (s: string) => REG.findings.filter((f: any) => f.current_severity === s).length;
 
   it("JSON counts block matches the findings array and is self-describing", () => {
@@ -220,10 +220,10 @@ describe("findings register — counts agree across Markdown, CSV and JSON", () 
 // ---------------------------------------------------------------------------
 // Pass-2 guards. Each corresponds to a defect the first frozen-head review found.
 // ---------------------------------------------------------------------------
-describe("findings register — source preservation is diffed, not asserted", () => {
-  // Pass 2 found five source columns dropped for every historical row — July-18
+describe("findings register: source preservation is diffed, not asserted", () => {
+  // Pass 2 found five source columns dropped for every historical row, July-18
   // willow_impact and rationale on all 34, July-10 business impact / risk-at-stake /
-  // confidence on all 40 — while the map claimed full carry-through. The July-18
+  // confidence on all 40, while the map claimed full carry-through. The July-18
   // register is in-repo, so the claim is now proved by diff rather than by assertion.
   const j18Path = join(process.cwd(), "docs/roadmap/P1_MASTER_REGISTER_2026-07-18.csv");
   const j18 = parseCSV(readFileSync(j18Path, "utf8"));
@@ -265,7 +265,7 @@ describe("findings register — source preservation is diffed, not asserted", ()
 
   it("July-10 source columns land in columns whose names mean the same thing", () => {
     // Pass 1 filed `Existing controls` under source_production_evidence and
-    // `Required regression tests` under source_test_limitations — inverting both.
+    // `Required regression tests` under source_test_limitations, inverting both.
     for (const c of ["source_existing_controls", "source_why_controls_insufficient",
                      "source_required_regression_tests", "source_reproduction",
                      "source_risk_at_stake", "source_business_impact", "source_confidence"]) {
@@ -284,7 +284,7 @@ describe("findings register — source preservation is diffed, not asserted", ()
   });
 });
 
-describe("findings register — source preservation is real, not claimed", () => {
+describe("findings register: source preservation is real, not claimed", () => {
   const rowsOf = (reg: string) => csvData.filter((r) => r[col("source_register")].includes(reg));
 
   it("every July-10 row carries its acceptance criteria and recommended remediation", () => {
@@ -317,7 +317,7 @@ describe("findings register — source preservation is real, not claimed", () =>
   });
 });
 
-describe("findings register — trains, PRs and gates", () => {
+describe("findings register: trains, PRs and gates", () => {
   const OPENISH = ["OPEN", "PARTIALLY_FIXED", "EVIDENCE_LIMITATION"];
   const TRAIN = readFileSync(join(DIR, "FIRST_REMEDIATION_PR_TRAIN.md"), "utf8");
 
@@ -361,7 +361,7 @@ describe("findings register — trains, PRs and gates", () => {
 
   // Pass 2 mutation-proved the previous version of this guard useless: deleting real
   // "Depends on" cells from the PR train left the suite 34/34 green, so every PR
-  // ordering edge — including the L18 app-first constraint — was unguarded. This
+  // ordering edge, including the L18 app-first constraint, was unguarded. This
   // version reads the train table itself.
   it("every PR's stated dependencies match the derived graph, and PR-11 waits for PR-10 deployed", () => {
     const train = read("FIRST_REMEDIATION_PR_TRAIN.md");
@@ -450,7 +450,7 @@ describe("findings register — trains, PRs and gates", () => {
   it("a closed finding carries no forward gate and no schedule", () => {
     // NOT_A_LAUNCH_REQUIREMENT is excluded deliberately: it means "not required for the
     // current phase", and its gate records the phase at which it WOULD become required.
-    // The statuses below are terminal — a forward gate on any of them is a contradiction.
+    // The statuses below are terminal, a forward gate on any of them is a contradiction.
     // DEPLOYED_NOT_VERIFIED means the fix shipped but the reporter has not accepted it.
     // It carries no forward gate and no remediation, like the other terminal statuses.
     const CLOSED = ["RETIRED", "SUPERSEDED_BY_PRODUCT_DECISION",
@@ -470,7 +470,7 @@ describe("findings register — trains, PRs and gates", () => {
   });
 });
 
-describe("findings register — pass-2 corrections hold", () => {
+describe("findings register: pass-2 corrections hold", () => {
   const find = (id: string) => REG.findings.find((f: any) => f.source_ids[0] === id);
 
   it("F-PAY-001 is P1 and scheduled", () => {
@@ -551,7 +551,7 @@ describe("findings register — pass-2 corrections hold", () => {
   });
 });
 
-describe("findings register — pass-2 review corrections hold", () => {
+describe("findings register: pass-2 review corrections hold", () => {
   const OPEN = ["OPEN", "PARTIALLY_FIXED"];
   const openish = REG.findings.filter((f: any) => OPEN.includes(f.current_status));
 
@@ -712,7 +712,7 @@ describe("findings register — pass-2 review corrections hold", () => {
 // The pass-3 independent review mutation-proved that almost every human-readable
 // artifact was unguarded: the production SHA could be falsified in all nine
 // documents, three live P1s could be downgraded in the CSV, the gate matrix could
-// lose its blocker bullets, and whole report files could be replaced — all with
+// lose its blocker bullets, and whole report files could be replaced, all with
 // the suite fully green. The register is only trustworthy if the documents a
 // reader actually opens are DERIVED from it and checked here.
 // ---------------------------------------------------------------------------
@@ -729,7 +729,7 @@ const findingBy = (id: string) => REG.findings.find((f: any) => f.source_ids[0] 
 const prMembers = (pr: string) => REG.findings.filter((f: any) => (f.required_prs ?? []).includes(pr));
 const canonRows = () => csvData.filter((r) => r[col("canonical_id")] !== "UNMAPPED_HISTORICAL" && r[col("canonical_id")] !== "");
 
-describe("findings register — every artifact carries the same baseline", () => {
+describe("findings register: every artifact carries the same baseline", () => {
   // Mutation-proved gap: the SHA and migration max could be falsified in all nine
   // Markdown files while the suite stayed green. Every document's H1 states the
   // baseline as its provenance claim, so every document must be checked.
@@ -769,10 +769,10 @@ describe("findings register — every artifact carries the same baseline", () =>
   });
 });
 
-describe("findings register — the CSV and the JSON cannot disagree", () => {
+describe("findings register: the CSV and the JSON cannot disagree", () => {
   // Mutation-proved gap: F-PAY-001, F-CLIN-004 and N-DOC-001 could each be set to
-  // P3 / PRODUCTION_VERIFIED / POST_GA / no-PR in the CSV — the file a non-engineer
-  // opens — while the JSON still held them as live P1s, and the suite stayed green.
+  // P3 / PRODUCTION_VERIFIED / POST_GA / no-PR in the CSV, the file a non-engineer
+  // opens, while the JSON still held them as live P1s, and the suite stayed green.
   it("every canonical CSV row matches the JSON field for field", () => {
     const bad: string[] = [];
     for (const r of canonRows()) {
@@ -820,7 +820,7 @@ describe("findings register — the CSV and the JSON cannot disagree", () => {
       const got = createHash("sha256").update(lines.join(SEP2)).digest("hex");
       expect(pinned.digests[key], `no digest pinned for ${key}`).toBeDefined();
       expect(lines.length, `${key} row count changed`).toBe(pinned.digests[key].rows);
-      expect(got, `${key} preserved source content changed — a source cell was emptied, truncated or rewritten`)
+      expect(got, `${key} preserved source content changed, a source cell was emptied, truncated or rewritten`)
         .toBe(pinned.digests[key].sha256);
     }
   });
@@ -843,7 +843,7 @@ describe("findings register — the CSV and the JSON cannot disagree", () => {
   });
 });
 
-describe("findings register — the reports are derived, not written", () => {
+describe("findings register: the reports are derived, not written", () => {
   it("LAUNCH_GATE_MATRIX.md's summary table matches the register row for row", () => {
     const doc = read("LAUNCH_GATE_MATRIX.md");
     const gates = [...new Set(REG.findings.map((f: any) => f.launch_gate))] as string[];
@@ -875,7 +875,7 @@ describe("findings register — the reports are derived, not written", () => {
       const gate = s.split(" ")[0];
       const listed = new Set([...s.matchAll(/^- `([A-Za-z0-9-]+)`/gm)].map((m) => m[1]));
       // The section lists open blockers AND, in its own labelled subsection, any
-      // evidence-limited row at that gate — which the heading advertises and which
+      // evidence-limited row at that gate, which the heading advertises and which
       // must therefore be visible rather than merely counted.
       const expected = new Set<string>(
         REG.findings
@@ -923,7 +923,7 @@ describe("findings register — the reports are derived, not written", () => {
   });
 });
 
-describe("findings register — the PR train is derived from the register", () => {
+describe("findings register: the PR train is derived from the register", () => {
   const trainRows = () =>
     read("FIRST_REMEDIATION_PR_TRAIN.md").split("\n").filter((l) => /^\| \*\*PR-\d+\*\*/.test(l))
       .map((l) => { const c = l.split("|").map((x) => x.trim());
@@ -1069,7 +1069,7 @@ describe("findings register — the PR train is derived from the register", () =
   });
 });
 
-describe("findings register — the scope bar holds across every artifact", () => {
+describe("findings register: the scope bar holds across every artifact", () => {
   // Mutation-proved gap: the sanitization guard read only the five Chloe CSV rows,
   // so a client name or treatment detail inserted into a canonical JSON finding,
   // or into any report, passed green.
@@ -1092,10 +1092,10 @@ describe("findings register — the scope bar holds across every artifact", () =
     for (const [name, text] of corpus) {
       for (const [re, why] of BANNED) {
         const m = text.match(re);
-        if (m) bad.push(`${name}: ${why} — "${m[0]}"`);
+        if (m) bad.push(`${name}: ${why}, "${m[0]}"`);
       }
     }
-    expect(bad, "the audit records sanitized reports only — no names, treatment content or screenshots").toEqual([]);
+    expect(bad, "the audit records sanitized reports only, no names, treatment content or screenshots").toEqual([]);
   });
 
   it("the Chloe rows record that they are sanitized", () => {
@@ -1108,7 +1108,7 @@ describe("findings register — the scope bar holds across every artifact", () =
   });
 });
 
-describe("findings register — each acceptance criterion belongs to its own finding", () => {
+describe("findings register: each acceptance criterion belongs to its own finding", () => {
   // Pass 3 found the L19a / L19b / L20 acceptance criteria rotated: L19b carried L20's
   // closure test, so PR-09 would have built the wrong fix and L19b would have stayed
   // open on evidence that never mentions it. Nothing detected the rotation.
@@ -1144,7 +1144,7 @@ describe("findings register — each acceptance criterion belongs to its own fin
   });
 });
 
-describe("findings register — the retired direction cannot re-enter through acceptance criteria", () => {
+describe("findings register: the retired direction cannot re-enter through acceptance criteria", () => {
   it("no scheduled finding's acceptance criterion asks for a retired capability", () => {
     // The July-27 criteria predate the retirement; three of them named finalized
     // states, a finalization/correction surface and a snapshot migration.
@@ -1169,14 +1169,14 @@ describe("findings register — the retired direction cannot re-enter through ac
 // reports but not to their CELLS: a live P1 could be shown NOT_REACHABLE at
 // POST_GA, a P2 could be shown PRODUCTION_VERIFIED, an entire canonical finding
 // could be deleted and every artifact regenerated, and the pass-3 severity
-// raises could be silently reverted — all with the suite green.
+// raises could be silently reverted, all with the suite green.
 //
 // It also proved the limit of this approach, which is stated in
 // EVIDENCE_LIMITATIONS.md rather than left for a later pass to discover: these
 // guards make STRUCTURED drift detectable. They cannot make prose self-verifying.
 // ---------------------------------------------------------------------------
 
-describe("findings register — the canonical set itself is pinned", () => {
+describe("findings register: the canonical set itself is pinned", () => {
   // Mutation-proved gap: F-OPS-004 could be deleted from the register, its CSV row
   // relabelled UNMAPPED_HISTORICAL, and every derived artifact regenerated, green.
   it("every non-historical source row maps to a canonical finding, and the mapped count is pinned", () => {
@@ -1237,7 +1237,7 @@ describe("findings register — the canonical set itself is pinned", () => {
   });
 });
 
-describe("findings register — report cells, not just report rows", () => {
+describe("findings register: report cells, not just report rows", () => {
   it("every cell of the P1 table matches the register", () => {
     const doc = read("CURRENT_P0_P1_REPORT.md");
     const table = doc.slice(doc.indexOf("| ID | Title"), doc.indexOf("### Evidence per P1"));
@@ -1337,7 +1337,7 @@ describe("findings register — report cells, not just report rows", () => {
   });
 });
 
-describe("findings register — the closure register cannot be hollowed out", () => {
+describe("findings register: the closure register cannot be hollowed out", () => {
   it("every disposition row carries a defect, a correction and a verification", () => {
     // Mutation-proved gap: all 91 rows could be blanked, and every disposition
     // flipped, with the suite green.
@@ -1395,7 +1395,7 @@ describe("findings register — the closure register cannot be hollowed out", ()
   });
 });
 
-describe("findings register — remaining artifact integrity", () => {
+describe("findings register: remaining artifact integrity", () => {
   it("the manifest and the JSON carry the same baseline as the reports", () => {
     const manifest = read("AUDIT_INPUT_MANIFEST.json");
     for (const text of [manifest, read("MASTER_FINDINGS_REGISTER.json")]) {

@@ -169,7 +169,7 @@ describe("buildTreatmentIntelligence: areas", () => {
 
   it("migration 0128: legacy single-area grouping is unchanged (no split by side)", () => {
     // A legacy block charted left one visit, right the next still groups under a
-    // single "Cheek" area — laterality does not fragment the memory card.
+    // single "Cheek" area, laterality does not fragment the memory card.
     const out = buildTreatmentIntelligence({
       sessionsNewestFirst: [
         session("new", "2026-06-10T10:00:00Z"),

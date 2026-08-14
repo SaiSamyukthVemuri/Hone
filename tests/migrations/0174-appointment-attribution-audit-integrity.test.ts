@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { isRepoMax, versionsAbove, countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
-// 0174 — APPOINTMENT BOUNDARY B5 source contract.
+// 0174, APPOINTMENT BOUNDARY B5 source contract.
 //
 // Behaviour lives in tests/db/appointment-attribution-audit-integrity.db.test.ts
 // (and in the B2/B3/B4 suites this migration must not regress). This file pins
@@ -13,7 +13,7 @@ import { isRepoMax, versionsAbove, countVersion } from "./helpers/migration-stat
 // safe.
 //
 // Cloned from tests/migrations/0173-appointment-repair-commands.test.ts, which
-// is the repository's template for a boundary migration test — including its
+// is the repository's template for a boundary migration test, including its
 // hard-won lesson about anchored regexes (see EXECUTABLE below).
 // ===========================================================================
 
@@ -22,8 +22,8 @@ const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 
 /**
  * The migration with `--` comment lines stripped. The header discusses every
- * forbidden pattern at length — `snapshot_appointment_buffer`, `revoke all`,
- * a generic audit trigger, the B8 grant it does NOT remove — so prose
+ * forbidden pattern at length, `snapshot_appointment_buffer`, `revoke all`,
+ * a generic audit trigger, the B8 grant it does NOT remove, so prose
  * describing a prohibition must never satisfy a guard looking for it.
  */
 const CODE = SQL.split("\n")
@@ -44,7 +44,7 @@ const PROSE = SQL.split("\n")
  * against a truncated head. The dollar-quote tags are tracked so a body is one
  * statement.
  *
- * NOT `^create` anywhere below either — anchoring at column 0 makes a statement
+ * NOT `^create` anywhere below either, anchoring at column 0 makes a statement
  * indented by a single space INVISIBLE to every guard built on it. The 0172
  * adversarial pass demonstrated four mutants that survived a full suite exactly
  * that way. Leading whitespace is consumed everywhere.
@@ -95,11 +95,11 @@ const POSTCARE_COLUMNS = [
 
 // ---------------------------------------------------------------------------
 
-describe("0174 — migration state", () => {
+describe("0174: migration state", () => {
   // The CENTRAL tripwire, moved here from
   // tests/migrations/0173-appointment-repair-commands.test.ts when B5 landed.
   // Only the current maximum migration's own test carries it (CLAUDE.md §2).
-  it("is no longer the repository maximum — B6 spent 0175 above it", () => {
+  it("is no longer the repository maximum, B6 spent 0175 above it", () => {
     // Per CLAUDE.md only the CURRENT max may assert isRepoMax; that role passed
     // to 0175 when B6 landed. 0174 keeps a narrower, still-true claim: exactly
     // one migration sits above it.
@@ -119,19 +119,19 @@ describe("0174 — migration state", () => {
 
     // WHAT THIS DELIBERATELY NO LONGER ASSERTS: that 0177, 0178, ... are still
     // unspent. Those were "still reserved for B7/B8" pins, and each one turned
-    // this file red the moment the next boundary migration was authored — the
+    // this file red the moment the next boundary migration was authored, the
     // same defect as the repo/hosted equality assertion below, found by running
     // the historical block against a temporary local 0177.
     //
     // A successor's number is the successor's own test to defend
     // (`0176-…test.ts` asserts 0177 is free, and 0177's will assert 0178).
     // 0174 asserting it created a second, stale owner that had to be edited by
-    // every future boundary — which is exactly what this amendment exists to
+    // every future boundary, which is exactly what this amendment exists to
     // stop.
   });
 });
 
-describe("0174 — production truth: APPLIED 2026-08-10", () => {
+describe("0174, production truth: APPLIED 2026-08-10", () => {
   const LEDGER = readFileSync(
     join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
     "utf8",
@@ -145,7 +145,7 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     // This block has now asserted three different current-state values in turn:
     // hosted 0173 (B5 authoring), hosted 0174 with 0175 pending (B6 authoring),
     // and now hosted 0175. `hosted_migration_max` is a statement about
-    // PRODUCTION, not about this repository — it moves when an apply happens,
+    // PRODUCTION, not about this repository, it moves when an apply happens,
     // never when a file lands. 0175 (B6) was applied 2026-08-10T11:56:35Z.
     // Asserted as a floor, so the NEXT apply does not re-break a test whose
     // subject is 0174's history rather than the current head.
@@ -156,7 +156,7 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     // Earlier revisions of this block pinned, in turn: hosted 0173; hosted 0174
     // with exactly ["0175"] above; hosted 0175 with exactly ["0176"] above; and
     // then isRepoMax(hosted) === true. Every one of them went red the moment
-    // the NEXT boundary migration was authored — four edits to a test whose
+    // the NEXT boundary migration was authored, four edits to a test whose
     // subject is 0174's production history and which has no stake in what
     // number the repository is currently working on.
     //
@@ -168,7 +168,7 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     // by the CURRENT migration's own migration-state test, and by
     // docs/production/migration-state.json. This block owns one thing: that
     // 0174's apply is still truthfully recorded. The floor assertion above is
-    // enough for that — a hosted max BELOW 0174 would mean the record had been
+    // enough for that, a hosted max BELOW 0174 would mean the record had been
     // falsified, and anything at or above it is somebody else's business.
   });
 
@@ -183,7 +183,7 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     expect(rec.hosted_note).toContain(sha);
   });
 
-  it("earlier applies stay recorded — 0173, 0172 and 0171 checksums are not dropped", () => {
+  it("earlier applies stay recorded: 0173, 0172 and 0171 checksums are not dropped", () => {
     // A new apply record supersedes its predecessor; it does not erase the
     // frozen history behind it.
     expect(rec.hosted_note).toContain(
@@ -202,7 +202,7 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
     // superseded 0174 as hosted max. They are asserted at their new home rather
     // than dropped: cardinality was measured either side of the apply, and the
     // PostgREST probe is recorded as NOT RUN rather than quietly claimed.
-    // (The line breaks are real — the ledger wraps, so match across whitespace.)
+    // (The line breaks are real, the ledger wraps, so match across whitespace.)
     expect(LEDGER).toMatch(/appointments \*\*308 → 308\*\*/);
     expect(LEDGER).toMatch(/appointment_audit\s+\*\*260 → 260\*\*/);
     expect(LEDGER).toMatch(/`appointment_audit_actor_id_type_ck` is intentionally `NOT VALID`/);
@@ -214,7 +214,7 @@ describe("0174 — production truth: APPLIED 2026-08-10", () => {
   });
 });
 
-describe("0174 — transaction and locking conventions", () => {
+describe("0174: transaction and locking conventions", () => {
   it("opens its own transaction and arms lock_timeout inside it", () => {
     // `supabase db push` does not wrap a migration file in a transaction, so a
     // bare SET LOCAL emits 25P01 and never arms (0159 lesson, 0169:70-76).
@@ -224,7 +224,7 @@ describe("0174 — transaction and locking conventions", () => {
     expect(at(/^set local lock_timeout = '5s'$/)).toBe(at(/^begin$/) + 1);
   });
 
-  it("sets no statement_timeout — no migration in this repository does", () => {
+  it("sets no statement_timeout: no migration in this repository does", () => {
     expect(CODE).not.toMatch(/statement_timeout/);
   });
 
@@ -239,7 +239,7 @@ describe("0174 — transaction and locking conventions", () => {
   });
 });
 
-describe("0174 — the standing prohibitions B5 inherits", () => {
+describe("0174: the standing prohibitions B5 inherits", () => {
   it("never touches snapshot_appointment_buffer or any appointments trigger function", () => {
     // Production carries out-of-band GUC behaviour in that function which
     // exists in NO migration here (0172:212-218, 0173:32-38). Emitting
@@ -249,7 +249,7 @@ describe("0174 — the standing prohibitions B5 inherits", () => {
     expect(PROSE).toMatch(/snapshot_appointment_buffer/); // discussed, never emitted
   });
 
-  it("uses no `revoke all` on a TABLE — every verb is named (the 0169 doctrine)", () => {
+  it("uses no `revoke all` on a TABLE, every verb is named (the 0169 doctrine)", () => {
     for (const stmt of EXECUTABLE) {
       if (/^revoke all/i.test(stmt)) {
         // `revoke all on function` is the correct, narrow form for a new
@@ -262,7 +262,7 @@ describe("0174 — the standing prohibitions B5 inherits", () => {
     }
   });
 
-  it("grants NO table privilege to anon or authenticated — B3 is not reopened", () => {
+  it("grants NO table privilege to anon or authenticated, B3 is not reopened", () => {
     for (const stmt of EXECUTABLE) {
       if (/^grant\b/i.test(stmt) && /\bon table\b/i.test(stmt)) {
         expect(stmt, `no browser-role table grant:\n${stmt}`).not.toMatch(
@@ -279,7 +279,7 @@ describe("0174 — the standing prohibitions B5 inherits", () => {
     expect(policies[0]).toMatch(/for select to authenticated/i);
   });
 
-  it("does NOT add a generic appointments audit trigger — the REJECTED architecture", () => {
+  it("does NOT add a generic appointments audit trigger, the REJECTED architecture", () => {
     // 0174's header rejects inferring a business action from an arbitrary row
     // change. Any trigger on `appointments` created here would be that design.
     const triggers = EXECUTABLE.filter((s) => /^create trigger/i.test(s));
@@ -306,7 +306,7 @@ describe("0174 — the standing prohibitions B5 inherits", () => {
   });
 });
 
-describe("0174 — attribution columns and their FKs", () => {
+describe("0174: attribution columns and their FKs", () => {
   const ATTRIBUTION = [
     "created_by_practitioner_id",
     "cancelled_by_practitioner_id",
@@ -347,7 +347,7 @@ describe("0174 — attribution columns and their FKs", () => {
     }
   });
 
-  it("each attribution FK is then VALIDATEd — the backfill is proved, not assumed", () => {
+  it("each attribution FK is then VALIDATEd, the backfill is proved, not assumed", () => {
     for (const name of [
       "appointments_created_by_practitioner_same_studio_fk",
       "appointments_cancelled_by_practitioner_same_studio_fk",
@@ -361,7 +361,7 @@ describe("0174 — attribution columns and their FKs", () => {
     }
   });
 
-  it("the audit studio FK is RESTRICT — the append-only convention, not CASCADE", () => {
+  it("the audit studio FK is RESTRICT, the append-only convention, not CASCADE", () => {
     // clinical_audit_events, clinical_record_amendments and
     // clinical_record_snapshots all use RESTRICT for their studio key. CASCADE
     // would be the one remaining path that can ERASE audit history.
@@ -385,7 +385,7 @@ describe("0174 — attribution columns and their FKs", () => {
   });
 });
 
-describe("0174 — backfill never invents an actor", () => {
+describe("0174: backfill never invents an actor", () => {
   const BACKFILLS = EXECUTABLE.filter((s) => /^update public\./i.test(s));
 
   it("performs exactly the five deterministic backfills", () => {
@@ -434,7 +434,7 @@ describe("0174 — backfill never invents an actor", () => {
   // any appointment with more than one qualifying row (`count(*)`), while the
   // override block deliberately admits ONE actor with several events
   // (`count(distinct actor_id)`) so a repeat authorisation still resolves.
-  it("F5 — the override backfill takes the LATEST qualifying event, never the earliest", () => {
+  it("F5: the override backfill takes the LATEST qualifying event, never the earliest", () => {
     const ovr = BACKFILLS.find((b) =>
       /outside_availability_authorized_by_practitioner_id = ev\.actor_id/.test(b),
     );
@@ -447,14 +447,14 @@ describe("0174 — backfill never invents an actor", () => {
     expect(ovr!, "min() would mean 'first authorised', not 'authorised'").not.toMatch(
       /min\(aa\.created_at\)/,
     );
-    // Ambiguity is still NULL, and the actor is still the single distinct one —
+    // Ambiguity is still NULL, and the actor is still the single distinct one,
     // n = 1 is what stops max() pairing one actor's id with another's timestamp.
     expect(ovr!).toMatch(/count\(distinct aa\.actor_id\)/);
     expect(ovr!).toMatch(/ev\.n = 1/);
     expect(ovr!).toMatch(/min\(aa\.actor_id::text\)::uuid/);
   });
 
-  it("F5 — the creator/canceller backfills are NOT changed by it", () => {
+  it("F5: the creator/canceller backfills are NOT changed by it", () => {
     // They exclude repeats outright (`count(*)`) and write no timestamp, so the
     // latest-vs-earliest question cannot arise there. Pinned so a future sweep
     // does not "consistently" apply max() where it would change meaning.
@@ -487,7 +487,7 @@ describe("0174 — backfill never invents an actor", () => {
   });
 });
 
-describe("0174 — ordering is load-bearing", () => {
+describe("0174: ordering is load-bearing", () => {
   it("the FK re-point to SET NULL comes BEFORE the append-only trigger", () => {
     // Installed the other way round, the DELETE arm would be live while the FK
     // still cascaded and EVERY appointment delete in the tree would fail.
@@ -501,7 +501,7 @@ describe("0174 — ordering is load-bearing", () => {
   it("the backfills come BEFORE the derive trigger and the append-only trigger", () => {
     // The derive trigger forces created_at to now(); had it been installed
     // first it would still not affect UPDATEs, but the append-only trigger
-    // absolutely would — the audit backfills are UPDATEs on that table.
+    // absolutely would, the audit backfills are UPDATEs on that table.
     const lastBackfill = EXECUTABLE.map((s, i) => (/^update public\./i.test(s) ? i : -1))
       .filter((i) => i >= 0)
       .pop()!;
@@ -529,7 +529,7 @@ describe("0174 — ordering is load-bearing", () => {
   });
 });
 
-describe("0174 — the parent FK really moves off CASCADE", () => {
+describe("0174: the parent FK really moves off CASCADE", () => {
   it("drops the cascading FK and re-adds it as ON DELETE SET NULL", () => {
     expect(CODE).toMatch(/drop constraint if exists appointment_audit_appointment_id_fkey/);
     const add = EXECUTABLE.find((s) =>
@@ -543,7 +543,7 @@ describe("0174 — the parent FK really moves off CASCADE", () => {
   });
 });
 
-describe("0174 — trusted INSERT derivation", () => {
+describe("0174: trusted INSERT derivation", () => {
   const derive = EXECUTABLE.find((s) =>
     /create or replace function public\.appointment_audit_derive_trusted_fields/i.test(s),
   );
@@ -559,7 +559,7 @@ describe("0174 — trusted INSERT derivation", () => {
   });
 
   it("OVERWRITES created_at with the database clock unconditionally", () => {
-    // Not `coalesce(new.created_at, now())` — that would still let a caller
+    // Not `coalesce(new.created_at, now())`: that would still let a caller
     // choose. An unconditional assignment is the only form that closes it.
     expect(derive!).toMatch(/new\.created_at\s*:=\s*now\(\)/);
     expect(derive!).not.toMatch(/coalesce\s*\(\s*new\.created_at/i);
@@ -579,7 +579,7 @@ describe("0174 — trusted INSERT derivation", () => {
   });
 });
 
-describe("0174 — append-only with ONE exact referential exception", () => {
+describe("0174: append-only with ONE exact referential exception", () => {
   const guard = EXECUTABLE.find((s) =>
     /create or replace function public\.guard_appointment_audit_append_only/i.test(s),
   );
@@ -594,7 +594,7 @@ describe("0174 — append-only with ONE exact referential exception", () => {
     expect(guard).toBeDefined();
     expect(guard!).toMatch(/old\.appointment_id is not null/);
     expect(guard!).toMatch(/new\.appointment_id is null/);
-    // Whole-row jsonb comparison, NOT a hand-written column list — a column
+    // Whole-row jsonb comparison, NOT a hand-written column list, a column
     // added after today would be silently mutable under a column list.
     expect(guard!).toMatch(/to_jsonb\(new\)\s*-\s*'appointment_id'/);
     expect(guard!).toMatch(/to_jsonb\(old\)\s*-\s*'appointment_id'/);
@@ -617,7 +617,7 @@ describe("0174 — append-only with ONE exact referential exception", () => {
   });
 });
 
-describe("0174 — service_role narrowing (Option E)", () => {
+describe("0174: service_role narrowing (Option E)", () => {
   const REVOKED = ["insert", "update", "delete", "truncate", "references", "trigger", "maintain"];
 
   for (const table of ["appointments", "appointment_audit"]) {
@@ -629,7 +629,7 @@ describe("0174 — service_role narrowing (Option E)", () => {
       for (const verb of REVOKED) {
         expect(stmt!, `${table} must revoke ${verb}`).toMatch(new RegExp(`\\b${verb}\\b`));
       }
-      // SELECT must NOT be named — server reads depend on it.
+      // SELECT must NOT be named, server reads depend on it.
       expect(stmt!, `${table} must not revoke SELECT`).not.toMatch(/\bselect\b/i);
     });
   }
@@ -712,7 +712,7 @@ describe("0174 — service_role narrowing (Option E)", () => {
   });
 });
 
-describe("0174 — the re-emitted commands keep their existing contracts", () => {
+describe("0174: the re-emitted commands keep their existing contracts", () => {
   const emitted = (name: string) =>
     EXECUTABLE.find((s) =>
       new RegExp(`create or replace function public\\.${name}\\(`, "i").test(s),
@@ -767,7 +767,7 @@ describe("0174 — the re-emitted commands keep their existing contracts", () =>
 
   it("move_or_reassign_appointment CLEARS override attribution when the flag goes false", () => {
     const fn = emitted("move_or_reassign_appointment")!;
-    // `case when <flag> then <actor> end` with no ELSE yields NULL — that is
+    // `case when <flag> then <actor> end` with no ELSE yields NULL, that is
     // the clearing arm. PR #520 A-P2-01: "a later move preserves it silently".
     expect(fn).toMatch(
       /outside_availability_authorized_by_practitioner_id\s*=\s*case when p_allow_outside_availability then p_actor_practitioner_id end/,
@@ -781,7 +781,7 @@ describe("0174 — the re-emitted commands keep their existing contracts", () =>
     expect(fn).toMatch(/v_appt\.ends_at is distinct from p_expected_ends_at/);
   });
 
-  it("the public/client commands are NOT re-emitted — their actor is genuinely the client", () => {
+  it("the public/client commands are NOT re-emitted, their actor is genuinely the client", () => {
     for (const fn of [
       "create_public_appointment",
       "reschedule_appointment_v2",
@@ -789,7 +789,7 @@ describe("0174 — the re-emitted commands keep their existing contracts", () =>
     ]) {
       expect(
         CODE,
-        `${fn} must not be touched — writing a practitioner there would manufacture one`,
+        `${fn} must not be touched, writing a practitioner there would manufacture one`,
       ).not.toMatch(new RegExp(`create or replace function public\\.${fn}\\(`, "i"));
     }
   });

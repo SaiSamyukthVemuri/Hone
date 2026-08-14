@@ -60,7 +60,7 @@ function functionSource(source: string, name: string): string {
 // ---------------------------------------------------------------------------
 // 1-4. The state matrix. The CTA must be truthful.
 // ---------------------------------------------------------------------------
-describe("resolveTodayIntakeAction — state matrix", () => {
+describe("resolveTodayIntakeAction: state matrix", () => {
   it("submitted intake: Review intake, to the practitioner review route", () => {
     expect(
       resolveTodayIntakeAction({ status: "submitted", clientId: "c1" }),
@@ -80,7 +80,7 @@ describe("resolveTodayIntakeAction — state matrix", () => {
     );
   });
 
-  it("in_progress intake: NOT labelled Review intake — no action at all", () => {
+  it("in_progress intake: NOT labelled Review intake, no action at all", () => {
     // The client has not finished it. Offering "Review intake" would promise a
     // completed record that does not exist.
     expect(
@@ -134,7 +134,7 @@ describe("navigation contract", () => {
     expect(executable).not.toMatch(/supabase|createClient|fetch\(|Date\.now/);
   });
 
-  it("the Today CTA renders the resolved action only — never a literal token route", () => {
+  it("the Today CTA renders the resolved action only, never a literal token route", () => {
     expect(PAGE).toMatch(/href=\{intakeAction\.href\}/);
     expect(PAGE).toMatch(/\{intakeAction\.label\}/);
     expect(PAGE).not.toMatch(/href=\{`\/intake\//);
@@ -221,7 +221,7 @@ describe("selectCurrentIntakeByClient", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8-10. Tenant scoping, privacy/read width, and no N+1 — pinned at the source,
+// 8-10. Tenant scoping, privacy/read width, and no N+1, pinned at the source,
 // because they are properties of the dashboard's single query.
 // ---------------------------------------------------------------------------
 describe("Today intake projection (source pins)", () => {
@@ -246,7 +246,7 @@ describe("Today intake projection (source pins)", () => {
     expect(PAGE).not.toMatch(/createAdminClient/);
   });
 
-  it("9. the projection is narrow — no responses / medical answers", () => {
+  it("9. the projection is narrow, no responses / medical answers", () => {
     expect(LOADER_CODE).toMatch(/\.select\("client_id, status, created_at"\)/);
     expect(LOADER_CODE).not.toMatch(/responses/);
     expect(LOADER_CODE).not.toMatch(/\.select\("\*"\)/);
@@ -259,7 +259,7 @@ describe("Today intake projection (source pins)", () => {
 
   it("10. no N+1: one batched query, resolved in memory, not per appointment", () => {
     expect(LOADER).toMatch(/selectCurrentIntakeByClient/);
-    // The loader is awaited ONCE, in the page's batched Promise.all — never
+    // The loader is awaited ONCE, in the page's batched Promise.all, never
     // inside the appointment map.
     expect(PAGE.match(/loadIntakeStatusByClient\(/g) ?? []).toHaveLength(2); // decl + 1 call
     expect(PAGE).toMatch(
@@ -304,7 +304,7 @@ describe("appointment prep surface", () => {
   it("names the practitioner task instead of vague View/Review copy", () => {
     const line = functionSource(APPOINTMENT, "IntakeStatusLine");
     expect(line).toMatch(/IntakeStatusLine/);
-    // Exactly the two linked states — submitted and reviewed.
+    // Exactly the two linked states, submitted and reviewed.
     expect(line.match(/>\s*Review intake\s*</g) ?? []).toHaveLength(2);
     expect(line).not.toMatch(/>\s*View\s*</);
     expect(line).not.toMatch(/>\s*Review\s*</);

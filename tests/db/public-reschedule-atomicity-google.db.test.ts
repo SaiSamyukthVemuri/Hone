@@ -3,11 +3,11 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { randomUUID } from "node:crypto";
 
 // ===========================================================================
-// 0171 — FAILURE-INJECTION ATOMICITY + REAL GOOGLE LINK REBIND
+// 0171, FAILURE-INJECTION ATOMICITY + REAL GOOGLE LINK REBIND
 // ===========================================================================
 //
 // WHY THIS FILE EXISTS. The concurrency suite proves that a caller-issued
-// ROLLBACK undoes the command — which is ordinary Postgres, not evidence about
+// ROLLBACK undoes the command, which is ordinary Postgres, not evidence about
 // the command. What matters is that a failure of a MANDATORY INTERNAL STEP,
 // after earlier statements in the same command have already executed, rolls the
 // whole thing back: original still confirmed, its reservation intact, no
@@ -17,8 +17,8 @@ import { randomUUID } from "node:crypto";
 // and dropped in afterEach. They fire only on a synthetic row belonging to the
 // test's own fixture, raise a uniquely identifiable SQLSTATE, and touch nothing
 // in the migration. No production GUC or bypass is introduced, and
-// `snapshot_appointment_buffer` — which is DRIFTED in production and must never
-// be redefined from repo source — is not touched.
+// `snapshot_appointment_buffer`, which is DRIFTED in production and must never
+// be redefined from repo source, is not touched.
 //
 // The Google half seeds a REAL outbound-intent configuration so
 // `enqueue_calendar_outbound` runs its live branches for the first time: the
@@ -207,8 +207,8 @@ async function expectFullRollback(f: Fixture): Promise<void> {
 
 // ===========================================================================
 
-describe("0171 — mandatory-step failure injection rolls the whole command back", () => {
-  it("STEP D — original cancellation UPDATE fails", async () => {
+describe("0171: mandatory-step failure injection rolls the whole command back", () => {
+  it("STEP D: original cancellation UPDATE fails", async () => {
     const f = await seed("stepD");
     await inject(
       "t_fail_cancel",
@@ -221,7 +221,7 @@ describe("0171 — mandatory-step failure injection rolls the whole command back
     await expectFullRollback(f);
   });
 
-  it("STEP E — successor INSERT fails AFTER the original was already cancelled", async () => {
+  it("STEP E: successor INSERT fails AFTER the original was already cancelled", async () => {
     const f = await seed("stepE");
     await inject(
       "t_fail_insert",
@@ -237,7 +237,7 @@ describe("0171 — mandatory-step failure injection rolls the whole command back
     await expectFullRollback(f);
   });
 
-  it("STEP G(1) — the original's cancellation audit fails", async () => {
+  it("STEP G(1): the original's cancellation audit fails", async () => {
     const f = await seed("stepG1");
     await inject(
       "t_fail_audit_cancel",
@@ -250,7 +250,7 @@ describe("0171 — mandatory-step failure injection rolls the whole command back
     await expectFullRollback(f);
   });
 
-  it("STEP G(2) — the successor's creation audit fails, after the first audit succeeded", async () => {
+  it("STEP G(2): the successor's creation audit fails, after the first audit succeeded", async () => {
     const f = await seed("stepG2");
     await inject(
       "t_fail_audit_create",
@@ -264,7 +264,7 @@ describe("0171 — mandatory-step failure injection rolls the whole command back
     await expectFullRollback(f);
   });
 
-  it("STEP F — the reverse-lineage UPDATE fails", async () => {
+  it("STEP F: the reverse-lineage UPDATE fails", async () => {
     const f = await seed("stepF");
     await inject(
       "t_fail_reverse_lineage",
@@ -274,11 +274,11 @@ describe("0171 — mandatory-step failure injection rolls the whole command back
       `new.id = '${f.originalId}'::uuid and new.rescheduled_to_appointment_id is not null`,
     );
     await expect(call(f, at(11, 10, 0))).rejects.toThrow(/injected failure: t_fail_reverse_lineage/);
-    // The successor existed at the moment this fired — it must be gone.
+    // The successor existed at the moment this fired, it must be gone.
     await expectFullRollback(f);
   });
 
-  it("STEP H — the policy acknowledgement INSERT fails", async () => {
+  it("STEP H: the policy acknowledgement INSERT fails", async () => {
     const f = await seed("stepH", { policy: "Cancel 24h ahead." });
     const presented = (
       await adminQuery(
@@ -303,7 +303,7 @@ describe("0171 — mandatory-step failure injection rolls the whole command back
     await expectFullRollback(f);
   });
 
-  it("TRIGGER — successor reservation synchronisation fails", async () => {
+  it("TRIGGER: successor reservation synchronisation fails", async () => {
     const f = await seed("stepRes");
     await inject(
       "t_fail_reservation",
@@ -316,7 +316,7 @@ describe("0171 — mandatory-step failure injection rolls the whole command back
     await expectFullRollback(f);
   });
 
-  it("CONTROL — with no injection the same fixture succeeds", async () => {
+  it("CONTROL: with no injection the same fixture succeeds", async () => {
     const f = await seed("stepControl");
     const out = await call(f, at(11, 10, 0));
     expect(out.result).toBe("success");
@@ -324,14 +324,14 @@ describe("0171 — mandatory-step failure injection rolls the whole command back
 });
 
 // ===========================================================================
-// GOOGLE CALENDAR — the deployed transition, exercised for the first time.
+// GOOGLE CALENDAR, the deployed transition, exercised for the first time.
 // ===========================================================================
 
 type GoogleFixture = Fixture & { connectionId: string; linkId: string | null };
 
 /**
  * Seeds outbound INTENT (studio flag + owner connection + write calendar), and
- * optionally an active predecessor link. The WORKER stays off — enqueue intent
+ * optionally an active predecessor link. The WORKER stays off, enqueue intent
  * does not require worker execution, and nothing here contacts Google.
  */
 async function seedGoogle(
@@ -369,7 +369,7 @@ async function seedGoogle(
   return { ...f, connectionId, linkId };
 }
 
-describe("0171 Google — G1: the predecessor link is REBOUND onto the successor", () => {
+describe("0171 Google, G1: the predecessor link is REBOUND onto the successor", () => {
   it("rebinds in place, keeps the provider identity, and enqueues no delete", async () => {
     const f = await seedGoogle("g1", { withPredecessorLink: true });
     const before = (
@@ -409,14 +409,14 @@ describe("0171 Google — G1: the predecessor link is REBOUND onto the successor
     expect(after.id).toBe(f.linkId);
     expect(after.hone_entity_id).toBe(out.new_appointment_id);
     expect(after.deleted_at).toBeNull();
-    // External identity preserved — the client's calendar event is not recreated.
+    // External identity preserved: the client's calendar event is not recreated.
     expect(after.google_event_id).toBe("hone1evt_predecessor");
     expect(after.google_calendar_id).toBe("cal_harness");
     expect(after.connection_id).toBe(f.connectionId);
   });
 });
 
-describe("0171 Google — G2: the exact successor operation", () => {
+describe("0171 Google, G2: the exact successor operation", () => {
   it("enqueues exactly one event.update for the successor, with no delete+create pair", async () => {
     const f = await seedGoogle("g2", { withPredecessorLink: true });
     const out = await call(f, at(11, 10, 0));
@@ -453,7 +453,7 @@ describe("0171 Google — G2: the exact successor operation", () => {
   });
 });
 
-describe("0171 Google — G3: no predecessor link", () => {
+describe("0171 Google, G3: no predecessor link", () => {
   it("follows the normal create path with no phantom rebind and no delete", async () => {
     const f = await seedGoogle("g3", { withPredecessorLink: false });
     const out = await call(f, at(11, 10, 0));
@@ -477,11 +477,11 @@ describe("0171 Google — G3: no predecessor link", () => {
   });
 });
 
-describe("0171 Google — G4: rollback AFTER the rebind has happened", () => {
+describe("0171 Google, G4: rollback AFTER the rebind has happened", () => {
   it("restores the predecessor link and the outbox when a later mandatory step fails", async () => {
     const f = await seedGoogle("g4", { withPredecessorLink: true });
 
-    // Fail the SECOND audit — which runs after the successor INSERT has already
+    // Fail the SECOND audit: which runs after the successor INSERT has already
     // driven the link rebind and the outbox insert.
     await inject(
       "t_fail_after_rebind",
@@ -511,7 +511,7 @@ describe("0171 Google — G4: rollback AFTER the rebind has happened", () => {
   });
 });
 
-describe("0171 Google — G5: outbound intent OFF", () => {
+describe("0171 Google, G5: outbound intent OFF", () => {
   it("creates no outbox row and no link", async () => {
     const f = await seed("g5"); // flag stays false, no connection
     const out = await call(f, at(11, 10, 0));

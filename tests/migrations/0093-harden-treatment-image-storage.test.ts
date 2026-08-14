@@ -42,7 +42,7 @@ describe("0093 binds metadata path/bucket to the row", () => {
   });
   it("does NOT (re)add an immediate block-requires-session CHECK (cascade-incompatible)", () => {
     // The constraint is dropped (idempotent) but never re-added as an immediate
-    // CHECK — that would reject the legal ON DELETE SET NULL cascade. "A block
+    // CHECK, that would reject the legal ON DELETE SET NULL cascade. "A block
     // requires its session" is enforced in the trigger on INSERT instead.
     expect(SQL).toMatch(/drop constraint if exists treatment_images_block_requires_session_chk/);
     expect(SQL).not.toMatch(/add constraint treatment_images_block_requires_session_chk/);

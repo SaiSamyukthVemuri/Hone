@@ -105,14 +105,14 @@ describe("summarizeConsent (pre-treatment)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Source pins for the card wiring (vitest env is "node" — no jsdom/RTL, so the
+// Source pins for the card wiring (vitest env is "node", no jsdom/RTL, so the
 // rendered card cannot be DOM-tested; these pin the wiring, NOT rendered UI).
 // ---------------------------------------------------------------------------
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
 
-describe("consent card wiring (source pins — NOT a DOM behavior test)", () => {
+describe("consent card wiring (source pins, NOT a DOM behavior test)", () => {
   const CARD = read("components/consent-signatures-card.tsx");
   const PAGE = read("app/(app)/clients/[id]/page.tsx");
 

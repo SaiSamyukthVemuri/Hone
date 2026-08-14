@@ -22,7 +22,7 @@ describe("0096 adds discard_due_date (additive, idempotent)", () => {
 });
 
 describe("0096 changes nothing else (no cron/notification/RLS/payment)", () => {
-  // Negatives run against executable SQL only — the header comment legitimately
+  // Negatives run against executable SQL only, the header comment legitimately
   // mentions "notification" / "cron" to document what is deliberately deferred.
   const CODE = SQL.split("\n")
     .filter((l) => !l.trim().startsWith("--"))

@@ -15,7 +15,7 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// Migration 0159 — signed/finalized clinical records are PERMANENTLY RETIRED.
+// Migration 0159, signed/finalized clinical records are PERMANENTLY RETIRED.
 //
 // This replaces tests/db/clinical-finalization.db.test.ts,
 // tests/db/clinical-corrections.db.test.ts and
@@ -24,18 +24,18 @@ import {
 // correctly is no longer meaningful; testing that it CANNOT HAPPEN is.
 //
 // Three things are proven here, against the real migrated database:
-//   A. the capability is unreachable — the flags cannot be turned on, the RPCs
+//   A. the capability is unreachable, the flags cannot be turned on, the RPCs
 //      cannot be executed, no session can enter the finalized/void lifecycle, and
 //      no row can be added to any of the three signed-record ledgers;
 //   B. the ONE legacy artifact production still holds stays readable and
-//      completely immutable — the 0119/0120 freeze is deliberately KEPT for it;
+//      completely immutable, the 0119/0120 freeze is deliberately KEPT for it;
 //   C. ordinary treatment charting is fully editable, which is the whole point of
 //      the product decision.
 //
 // Note on fixtures: because 0159 blocks the transition for every role, the legacy
 // state can only be built by disabling the guard as the table OWNER
 // (seedLegacyRecordStatus / insertLegacySnapshot below). That is the proof there is
-// no bypass in the shipped schema — not a loophole in it.
+// no bypass in the shipped schema, not a loophole in it.
 // ===========================================================================
 
 let a: SeededStudio;
@@ -58,7 +58,7 @@ const RETIRED_RPCS = [
   "public.amend_finalized_session_with_image(uuid,uuid,text,text,text,text,bigint,text,uuid,text)",
   "public.build_session_snapshot(uuid)",
   // The five correction APPLIERS. 0120 revoked them from anon/authenticated/public
-  // but never from service_role, so Supabase's default grant left them live — and
+  // but never from service_role, so Supabase's default grant left them live, and
   // they are the only leftover of the retired system that still held WRITE
   // authority. Each is tenant-unaware by design (no is_studio_member check),
   // because correct_finalized_session validated authority before calling it.
@@ -110,9 +110,9 @@ async function insertLegacySnapshot(
 // ===========================================================================
 // A. The capability is unreachable.
 // ===========================================================================
-describe("A. retirement — the capability cannot be turned on", () => {
+describe("A. retirement: the capability cannot be turned on", () => {
   it("neither clinical flag can be set true, by ANY role including the owner", async () => {
-    // A CHECK constraint, so it binds the owner too — the flag is not something an
+    // A CHECK constraint, so it binds the owner too, the flag is not something an
     // operator can be trusted to leave alone.
     for (const col of [
       "clinical_finalization_enabled",
@@ -167,7 +167,7 @@ describe("A. retirement — the capability cannot be turned on", () => {
   });
 });
 
-describe("A. retirement — no session can enter the retired lifecycle", () => {
+describe("A. retirement: no session can enter the retired lifecycle", () => {
   it("draft -> finalized is refused for every role, owner included", async () => {
     const { sessionId } = await seedSession(a);
     for (const attempt of [
@@ -176,7 +176,7 @@ describe("A. retirement — no session can enter the retired lifecycle", () => {
     ]) {
       await expect(attempt()).rejects.toThrow(RETIRED_MSG);
     }
-    // The browser role is refused EARLIER after 0169 — it holds no UPDATE on
+    // The browser role is refused EARLIER after 0169, it holds no UPDATE on
     // sessions at all, so it cannot even reach the retirement guard. Both
     // refusals are asserted so neither can silently disappear.
     let browserCode: string | undefined;
@@ -272,7 +272,7 @@ describe("B. the legacy finalized artifact is preserved, not deleted", () => {
   it("the 0120 correction GUC no longer unlocks it (permit removed by 0159)", async () => {
     // REPRODUCED before the fix: set_config on a custom placeholder is available to
     // ANY role, so once the correction RPCs were EXECUTE-revoked the 0120 permit
-    // stopped being a guarded escape and became an open one — plain `authenticated`
+    // stopped being a guarded escape and became an open one, plain `authenticated`
     // could rewrite the frozen record. 0159 removes the permit branches.
     const c = new Client({ connectionString: resolveLocalDbUrl() });
     await c.connect();
@@ -283,7 +283,7 @@ describe("B. the legacy finalized artifact is preserved, not deleted", () => {
         JSON.stringify({ sub: a.userId, role: "authenticated" }),
       ]);
       await c.query("select set_config('hone.correction_session_id', $1, true)", [sessionId]);
-      // After 0169 `authenticated` cannot even reach the guard — the privilege
+      // After 0169 `authenticated` cannot even reach the guard, the privilege
       // layer refuses first (42501), which closes the original escape earlier
       // than the trigger did.
       // A failed statement aborts the transaction, so each probe runs inside its
@@ -294,7 +294,7 @@ describe("B. the legacy finalized artifact is preserved, not deleted", () => {
       ).rejects.toMatchObject({ code: "42501" });
       await c.query("rollback to savepoint probe_authenticated");
 
-      // The GUARD itself must still refuse the GUC, independently of the grant —
+      // The GUARD itself must still refuse the GUC, independently of the grant,
       // otherwise re-granting the privilege would silently reopen the escape.
       // Proven as service_role, which retains DML.
       await c.query("reset role");
@@ -402,7 +402,7 @@ describe("B. the legacy finalized artifact is preserved, not deleted", () => {
 });
 
 // ===========================================================================
-// C. Ordinary charting is fully editable — the point of the decision.
+// C. Ordinary charting is fully editable, the point of the decision.
 // ===========================================================================
 describe("C. ordinary treatment charting stays editable", () => {
   const AREAS = (arr: Array<{ area: string; laterality: string }>) => JSON.stringify(arr);
@@ -450,13 +450,13 @@ describe("C. ordinary treatment charting stays editable", () => {
     );
     expect(blk.rows[0]).toMatchObject({ mode: "thermo", numbing_notes: "1 sachet" });
 
-    // add a pass, then edit it, then remove the area entirely — all ordinary work
+    // add a pass, then edit it, then remove the area entirely, all ordinary work
     const entryId = randomUUID();
     await adminQuery(
       "insert into public.electrolysis_entries (id, session_id, block_id, area, hairs_treated) values ($1,$2,$3,'Chin',10)",
       [entryId, sessionId, blockId],
     );
-    // The column is unfrozen — which is this case's point. After 0169 the
+    // The column is unfrozen: which is this case's point. After 0169 the
     // practitioner reaches it through the 0166 commands, so the direct write is
     // performed as the owner here purely to prove the column is not read-only.
     await adminQuery(
@@ -486,7 +486,7 @@ describe("C. ordinary treatment charting stays editable", () => {
   it("nothing about an ordinary session is read-only: notes, next-visit and aftercare all edit", async () => {
     const { sessionId } = await seedSession(a);
     // Every one of these is reachable by the practitioner AFTER the revocation,
-    // through the 0167 commands — which is the strongest form of this case:
+    // through the 0167 commands, which is the strongest form of this case:
     // nothing is read-only even with direct DML gone.
     await userQuery(a.userId, "select public.set_next_session_note($1,$2,$3)", [
       sessionId, a.clientId, "next",

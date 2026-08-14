@@ -13,7 +13,7 @@ const DRAWER = readFileSync(
 );
 
 describe("override resets OFF for each booking attempt (not sticky)", () => {
-  it("resets on drawer close (fresh draft) — override + confirm both off", () => {
+  it("resets on drawer close (fresh draft), override + confirm both off", () => {
     const closeBlock = DRAWER.slice(DRAWER.indexOf("if (!open) {"), DRAWER.indexOf("}, [open, firstServiceId]"));
     expect(closeBlock).toMatch(/setOverrideEnabled\(false\)/);
     expect(closeBlock).toMatch(/setOverrideConfirmed\(false\)/);
@@ -43,7 +43,7 @@ describe("practitioner clicked time is preserved (never snapped to a different s
     expect(DRAWER).toMatch(/utcInstantFromLocal\(\s*draft!\.localDate,\s*overrideLocalTime,\s*studioTimezone,?\s*\)/);
   });
   it("smart scheduling only preselects an EXACT-match slot, never a different suggestion", () => {
-    // exact match on the clicked time, else null — no nearest-slot substitution
+    // exact match on the clicked time, else null, no nearest-slot substitution
     expect(DRAWER).toMatch(/futureSlots\.find\(\(s\) => s\.startLabel === targetHint\)/);
     expect(DRAWER).toMatch(/setPickedSlot\(exact \?\? null\)/);
   });

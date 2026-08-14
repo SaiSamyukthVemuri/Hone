@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Phase A amendment — source contracts for the SimplifiedEntryForm parity, the
+// Phase A amendment: source contracts for the SimplifiedEntryForm parity, the
 // PicoBlend precision steps, and the historical galvanic-intensity display
 // policy. These would have FAILED at head 324070b (before the amendment). Real
 // value round-trip is covered by the browser test (picoblend-precision.spec.ts).
@@ -57,7 +57,7 @@ describe("SimplifiedEntryForm parity with BlockSetupForm (Chloe)", () => {
   });
 });
 
-describe("PicoBlend precision — native input constraints accept the exact values", () => {
+describe("PicoBlend precision: native input constraints accept the exact values", () => {
   it("(6) galvanic mA uses step='0.01' in BOTH forms (accepts 0.74)", () => {
     expect(FORM).toMatch(/Galvanic mA[\s\S]{0,200}?step="0\.01"/);
     expect(SIMPLE).toMatch(/Galvanic mA[\s\S]{0,200}?step="0\.01"/);
@@ -81,7 +81,7 @@ describe("PicoBlend precision — native input constraints accept the exact valu
 describe("(9) historical galvanic intensity is not shown as a current galvanic %", () => {
   it("entry-row no longer pushes galvanic_intensity_percent into the Galvanic line", () => {
     expect(ENTRY_ROW).not.toMatch(/galvanicParts\.push\(`\$\{entry\.galvanic_intensity_percent\}%`\)/);
-    // (It remains preserved in storage + the raw data export — see rollout runbook.)
+    // (It remains preserved in storage + the raw data export, see rollout runbook.)
   });
   it("neither active form re-introduces a galvanic intensity input", () => {
     expect(FORM).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
@@ -89,7 +89,7 @@ describe("(9) historical galvanic intensity is not shown as a current galvanic %
   });
 });
 
-// Final amendment: galvanic_intensity_percent is a fully RETIRED reading —
+// Final amendment: galvanic_intensity_percent is a fully RETIRED reading,
 // no current UI captures/edits it, the copy path never resurrects it, and the
 // server is authoritative (new rows NULL, historical rows preserved by omission).
 // The thermolysis duration displays at exact 3-decimal precision. These would
@@ -102,7 +102,7 @@ describe("(P1-1) galvanic intensity is retired from every current write surface"
   it("(6) no current UI renders, hydrates, or sends the deprecated field", () => {
     // Neither active form references the galvanicIntensityPercent draft identifier
     // at all (no draft field, no hydrate, no payload). (Explanatory comments may
-    // still name the retired snake_case column — we assert the CODE plumbing is
+    // still name the retired snake_case column, we assert the CODE plumbing is
     // gone, not that documentation can't mention it.)
     expect(FORM).not.toMatch(/galvanicIntensityPercent/);
     expect(SIMPLE).not.toMatch(/galvanicIntensityPercent/);
@@ -123,13 +123,13 @@ describe("(P1-1) galvanic intensity is retired from every current write surface"
     // `write_electrolysis_entry` (migration 0166) has NO parameter for
     // galvanic_intensity_percent: its INSERT hard-codes NULL and its UPDATE
     // omits the column entirely, so a new row cannot carry a value and a
-    // historical one cannot be overwritten — server-authoritative in the
+    // historical one cannot be overwritten, server-authoritative in the
     // strongest sense, since there is no longer an application literal to edit.
     const MIGRATION = read("supabase/migrations/0166_session_block_electrolysis_commands.sql");
     expect(MIGRATION).not.toMatch(/p_galvanic_intensity_percent/);
     expect(MIGRATION).toMatch(/galvanic_intensity_percent/); // named in the INSERT column list
     // Strip comments first: both modules still DOCUMENT the retirement in prose,
-    // which is the point — what must be absent is any code that writes it.
+    // which is the point, what must be absent is any code that writes it.
     const blockCode = BLOCK_ACTIONS.split("\n")
       .map((l) => l.replace(/\/\/.*$/, ""))
       .join("\n");

@@ -8,7 +8,7 @@ import {
   userQuery,
 } from "./helpers/harness";
 
-// Migration 0141 — existing-user invitation reconciliation, proven on the real
+// Migration 0141: existing-user invitation reconciliation, proven on the real
 // migrated DB. Covers the required cases A–N: evidence rules (copy vs. require
 // explicit acceptance, never fabricate), idempotency, conflict, concurrency,
 // authorization, forged-args impossibility, and transactional atomicity.
@@ -118,7 +118,7 @@ async function seedValidEvidence(userId: string, email: string): Promise<void> {
   });
 }
 
-describe("0141 reconcile — evidence rules", () => {
+describe("0141 reconcile: evidence rules", () => {
   it("A: existing user, zero memberships, no evidence -> acceptance_required", async () => {
     const u = await newAuthUser(`a-${randomUUID().slice(0, 8)}@harness.local`);
     const t = await seedStudio("recon-a");
@@ -217,7 +217,7 @@ describe("0141 reconcile — evidence rules", () => {
   });
 });
 
-describe("0141 reconcile — existing membership + conflict", () => {
+describe("0141 reconcile: existing membership + conflict", () => {
   it("G: existing same-user active membership -> idempotent (already_linked, no dup)", async () => {
     const u = await newAuthUser(`g-${randomUUID().slice(0, 8)}@harness.local`);
     const t = await seedStudio("recon-g");
@@ -261,7 +261,7 @@ describe("0141 reconcile — existing membership + conflict", () => {
   });
 });
 
-describe("0141 — concurrency + atomicity", () => {
+describe("0141: concurrency + atomicity", () => {
   it("I: two concurrent reconcile calls -> exactly one membership + one accepted invite", async () => {
     const u = await newAuthUser(`i-${randomUUID().slice(0, 8)}@harness.local`);
     await seedValidEvidence(u.id, u.email);
@@ -288,7 +288,7 @@ describe("0141 — concurrency + atomicity", () => {
     expect(await inviteStatus(t.studioId, u.email)).toBe("accepted");
   });
 
-  it("N: link is atomic — membership + invite-accept happen together, never partially", async () => {
+  it("N: link is atomic, membership + invite-accept happen together, never partially", async () => {
     // Atomicity is guaranteed structurally: link_invited_membership is a single
     // plpgsql function (one transaction), and the uid-first resolution makes a
     // second INSERT under unique(studio_id,user_id) unreachable. The observable
@@ -315,7 +315,7 @@ describe("0141 — concurrency + atomicity", () => {
   });
 });
 
-describe("0141 — authorization + no forged input", () => {
+describe("0141: authorization + no forged input", () => {
   it("K: anon cannot execute the reconcile RPC", async () => {
     await expect(
       asRole("anon", (q) =>
@@ -347,7 +347,7 @@ describe("0141 — authorization + no forged input", () => {
   });
 });
 
-describe("0141 — Defect 1: acceptance command cannot be called by the browser", () => {
+describe("0141, Defect 1: acceptance command cannot be called by the browser", () => {
   it("anon cannot execute admin_accept_pending_invitation", async () => {
     await expect(
       asRole("anon", (q) =>
@@ -384,7 +384,7 @@ describe("0141 — Defect 1: acceptance command cannot be called by the browser"
   });
 });
 
-describe("0141 — Defect 2: no fabricated consent for new Auth users", () => {
+describe("0141, Defect 2: no fabricated consent for new Auth users", () => {
   it("creating an Auth user with a pending invite provisions NOTHING (trigger no-op)", async () => {
     const t = await seedStudio("recon-d2");
     const email = `d2-${randomUUID().slice(0, 8)}@harness.local`;
@@ -401,7 +401,7 @@ describe("0141 — Defect 2: no fabricated consent for new Auth users", () => {
   });
 });
 
-describe("0141 — Defect 3: inactive target membership reactivation", () => {
+describe("0141, Defect 3: inactive target membership reactivation", () => {
   it("reconcile routes a same-user INACTIVE target row to explicit acceptance", async () => {
     const u = await newAuthUser(`d3a-${randomUUID().slice(0, 8)}@harness.local`);
     const t = await seedStudio("recon-d3a");

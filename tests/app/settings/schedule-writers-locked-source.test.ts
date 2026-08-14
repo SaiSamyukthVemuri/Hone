@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR B Part 4 Item 2 — the single-row schedule writers route through the locked
+// PR B Part 4 Item 2, the single-row schedule writers route through the locked
 // admin RPCs (migration 0150). This guard prevents a regression back to a direct
 // browser-role upsert/delete on the protected availability tables (which would
 // bypass the studios-row + capacity advisory lock).
@@ -16,7 +16,7 @@ const TEAM = readFileSync(
   "utf8",
 );
 
-describe("schedule writers — locked-command wiring", () => {
+describe("schedule writers: locked-command wiring", () => {
   it("availability actions never write the protected tables directly", () => {
     for (const table of ["studio_availability_default", "studio_availability_overrides"]) {
       // The table name may still appear in a SELECT, but never followed by an

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-// Static proof of migration 0130 — revoke the residual anon EXECUTE grant on the
+// Static proof of migration 0130, revoke the residual anon EXECUTE grant on the
 // two multi-area charting RPCs created by 0129 (least-privilege hardening).
 // Behavioural proof (anon denied, authenticated allowed, cross-studio denied,
 // bodies/search_path unchanged) is in tests/db/session-block-areas.db.test.ts.
@@ -13,17 +13,17 @@ const MIG_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILES = readdirSync(MIG_DIR);
 const FILE = FILES.find((f) => f.startsWith("0130_"));
 const SQL = FILE ? readFileSync(path.join(MIG_DIR, FILE), "utf8") : "";
-// Executable SQL only (strip `--` comment lines) — the header comment legitimately
+// Executable SQL only (strip `--` comment lines), the header comment legitimately
 // mentions words like "search_path"/"GRANT" while explaining the fix.
 const STATEMENTS = SQL.split("\n")
   .filter((line) => !line.trim().startsWith("--"))
   .join("\n");
 
-// The reviewed, byte-for-byte SHA of migration 0129 — 0130 must not touch it.
+// The reviewed, byte-for-byte SHA of migration 0129, 0130 must not touch it.
 const EXPECTED_0129_SHA =
   "5ae4a4ea6037f49ed8f6bedb0291e950f1f94f9f99e9482b5077687b3f0c2334";
 
-describe("0130 — file + repo-max tripwire", () => {
+describe("0130: file + repo-max tripwire", () => {
   it("is the single 0130 migration (revoke anon EXECUTE on the charting RPCs)", () => {
     expect(FILE).toMatch(/^0130_revoke_anon_calendar_charting_rpc_execute\.sql$/);
   });
@@ -47,7 +47,7 @@ describe("0130 — file + repo-max tripwire", () => {
   });
 });
 
-describe("0130 — narrowly scoped: revoke anon EXECUTE only", () => {
+describe("0130, narrowly scoped: revoke anon EXECUTE only", () => {
   it("revokes EXECUTE from anon on BOTH exact function signatures", () => {
     expect(SQL).toMatch(
       /revoke execute\s*\n?\s*on function public\.create_session_block_with_areas\(uuid, uuid, jsonb, jsonb\)\s*\n?\s*from anon;/,
@@ -60,7 +60,7 @@ describe("0130 — narrowly scoped: revoke anon EXECUTE only", () => {
     expect((SQL.match(/from anon;/g) ?? []).length).toBe(2);
   });
 
-  it("does NOT broaden any grant — no GRANT, no PUBLIC/anon grant (executable SQL)", () => {
+  it("does NOT broaden any grant, no GRANT, no PUBLIC/anon grant (executable SQL)", () => {
     expect(STATEMENTS).not.toMatch(/\bgrant\b/i);
     expect(STATEMENTS).not.toMatch(/to anon/i);
     expect(STATEMENTS).not.toMatch(/to public/i);

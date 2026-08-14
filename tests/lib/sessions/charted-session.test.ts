@@ -9,8 +9,8 @@ import {
 } from "@/lib/sessions/charted-session";
 
 // THE defect this module exists to prevent: previous-context surfaces selected
-// the newest session ROW (`order started_at desc limit 1`), so an empty session
-// — which start_session creates the instant a practitioner taps a modality —
+// the newest session ROW (`order started_at desc limit 1`), so an empty session,
+// which start_session creates the instant a practitioner taps a modality,
 // permanently hid the real previous treatment.
 //
 // Every test here is behavioural. Restoring "newest row wins" (dropping the
@@ -87,7 +87,7 @@ describe("the newest CHARTED session beats a newer empty one", () => {
     expect(picked?.id).toBe("s-new");
   });
 
-  it("does not depend on the input order — it sorts newest-first itself", () => {
+  it("does not depend on the input order, it sorts newest-first itself", () => {
     const a = session("s-a", "2026-01-01T10:00:00Z");
     const b = session("s-b", "2026-03-01T10:00:00Z");
     const map = blocks({ "s-a": [LIVE_BLOCK], "s-b": [LIVE_BLOCK] });
@@ -131,7 +131,7 @@ describe("what counts as charted", () => {
     expect(hasChartedContent(s, blocks({}))).toBe(true);
   });
 
-  it("a live laser entry qualifies — a laser visit is still the last treatment", () => {
+  it("a live laser entry qualifies, a laser visit is still the last treatment", () => {
     const s = session("s1", "2026-01-01T10:00:00Z", {
       modality: "laser",
       laser_entries: [{ deleted_at: null }],
@@ -243,7 +243,7 @@ describe("the filters a LIMIT 1 cannot express", () => {
     expect(picked?.id).toBe("s-earlier");
   });
 
-  it("the bound is strict — a session at exactly the bound is excluded", () => {
+  it("the bound is strict: a session at exactly the bound is excluded", () => {
     const at = session("s1", "2026-06-01T10:00:00Z");
     expect(
       pickNewestChartedSession([at], blocks({ s1: [LIVE_BLOCK] }), {

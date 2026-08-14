@@ -20,7 +20,7 @@ import { PROBE_OPTIONS } from "@/lib/probes";
 // THE DEFECT THIS PINS. Auto-fill considered ACTIVE INVENTORY ONLY. A studio
 // with no probe inventory got `choose` on every probe pick, the lot field was
 // CLEARED, and the picker rendered "No active inventory lot for this probe.
-// Type the lot/batch manually…" — even for a probe whose lot had been charted
+// Type the lot/batch manually…", even for a probe whose lot had been charted
 // many times. `resolveProbeLotSuggestion` resolved exactly that history, was
 // exported and unit-tested, and was never called by any application code.
 //
@@ -53,7 +53,7 @@ function byKey(key: string, over: Partial<ProbeLotSuggestion> = {}): ProbeLotSug
   return { byKey: { [key]: suggestion(over) }, byLabel: {} };
 }
 
-// A fixed "today" keeps expiry classification deterministic — the suite must
+// A fixed "today" keeps expiry classification deterministic, the suite must
 // not start failing on a calendar boundary.
 const TODAY = "2026-07-31";
 const FUTURE = "2099-01-01";
@@ -73,7 +73,7 @@ function inv(rows: Array<{ id: string; lot: string; probeKey: string; expiry?: s
   );
 }
 
-describe("precedence 1-2 — inventory wins and carries a link", () => {
+describe("precedence 1-2: inventory wins and carries a link", () => {
   it("exactly one active matching lot auto-fills AND links it", () => {
     const r = resolveProbeLotAutofill({
       probeKey: probe.key,
@@ -111,7 +111,7 @@ describe("precedence 1-2 — inventory wins and carries a link", () => {
   });
 });
 
-describe("precedence 3 — ambiguous inventory is never guessed", () => {
+describe("precedence 3: ambiguous inventory is never guessed", () => {
   it("more than one active lot returns choose and fills NOTHING", () => {
     const r = resolveProbeLotAutofill({
       probeKey: probe.key,
@@ -142,7 +142,7 @@ describe("precedence 3 — ambiguous inventory is never guessed", () => {
   });
 });
 
-describe("precedence 4 — THE FIX: recent charting fills when inventory has nothing", () => {
+describe("precedence 4, THE FIX: recent charting fills when inventory has nothing", () => {
   it("zero inventory + a recorded exact-key lot fills the NUMBER, with no link", () => {
     const r = resolveProbeLotAutofill({
       probeKey: probe.key,
@@ -230,7 +230,7 @@ describe("precedence 4 — THE FIX: recent charting fills when inventory has not
   });
 });
 
-describe("precedence 5 — nothing known", () => {
+describe("precedence 5: nothing known", () => {
   it("no inventory and no history leaves the field blank", () => {
     const r = resolveProbeLotAutofill({ probeKey: probe.key, inventory: [], suggestions: NO_SUGGESTIONS });
     expect(r.kind).toBe("none");
@@ -274,7 +274,7 @@ describe("matching never widens", () => {
 
 // Review finding (P1): `lot` is the confirmed-first DISPLAY winner. Auto-fill
 // never confirms, so using it would let ONE old confirmed row pin the field
-// forever while every newer charted lot stayed unconfirmed — she would keep
+// forever while every newer charted lot stayed unconfirmed, she would keep
 // retyping, which is the complaint this PR exists to fix.
 describe("history uses RECENCY (lastCharted), not the confirmed-first display winner", () => {
   it("fills the most recently charted lot even when an older lot was the confirmed one", () => {
@@ -309,7 +309,7 @@ describe("provenance copy is truthful", () => {
     expect(probeLotSourceMessage("last-confirmed")).toBe(
       "Auto-filled from your last confirmed inventory lot. Confirm the package.",
     );
-    // Only the history string is new — and it must never imply inventory.
+    // Only the history string is new, and it must never imply inventory.
     expect(probeLotSourceMessage("from-history")).toMatch(/last charted lot for this probe/);
     expect(probeLotSourceMessage("from-history")).toMatch(/not linked to inventory/);
     expect(probeLotSourceMessage("from-history")).not.toMatch(/^Auto-filled from your last confirmed inventory/);
@@ -318,7 +318,7 @@ describe("provenance copy is truthful", () => {
   });
 });
 
-describe("form wiring — provenance is PER PROBE, not a global latch", () => {
+describe("form wiring: provenance is PER PROBE, not a global latch", () => {
   const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
   const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
 
@@ -326,7 +326,7 @@ describe("form wiring — provenance is PER PROBE, not a global latch", () => {
     expect(FORM).toMatch(/if \(draft\.probeKey === lotOwnerProbeKey\) return;/);
   });
 
-  it("a probe CHANGE always re-resolves — there is no manual latch that can survive it", () => {
+  it("a probe CHANGE always re-resolves, there is no manual latch that can survive it", () => {
     // The old global `lotEditedManually` boolean latched true on the first
     // keystroke and never cleared, so one probe's lot stayed attached to the
     // next probe she selected. It is gone entirely.
@@ -345,7 +345,7 @@ describe("form wiring — provenance is PER PROBE, not a global latch", () => {
     // Typed, and explicitly picked from inventory.
     const binds = FORM.match(/setLotOwnerProbeKey\(draft\.probeKey\);/g) ?? [];
     expect(binds.length).toBeGreaterThanOrEqual(2);
-    // Copied — bound to the COPIED probe, not the one previously selected.
+    // Copied: bound to the COPIED probe, not the one previously selected.
     expect(FORM).toMatch(/setLotOwnerProbeKey\(patch\.probeKey\);/);
   });
 
@@ -361,7 +361,7 @@ describe("copy workflows carry the EXACT lot with the probe", () => {
 
   it("the reusable setup snapshot now carries the lot + link, never a confirmation", () => {
     // Copying the probe WITHOUT its lot left the destination with a probe whose
-    // lot then auto-resolved from unrelated history — silently swapping a
+    // lot then auto-resolved from unrelated history, silently swapping a
     // traceability value the practitioner believed she had copied.
     expect(SNAP).toMatch(/"probe_lot_number",/);
     expect(SNAP).toMatch(/"probe_inventory_item_id",/);

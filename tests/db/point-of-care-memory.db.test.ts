@@ -20,7 +20,7 @@ import {
 import { buildAreaMinutesBreakdown } from "@/lib/treatment-time/area-bucket";
 
 // Point-of-care treatment memory, proven against the REAL migrated local
-// database as the `authenticated` role — so RLS, the 0128 structured-area
+// database as the `authenticated` role, so RLS, the 0128 structured-area
 // child rows, the soft-delete columns and the actual stored types are all
 // exercised, not mocked.
 //
@@ -31,7 +31,7 @@ import { buildAreaMinutesBreakdown } from "@/lib/treatment-time/area-bucket";
 
 let s: SeededStudio;
 let other: SeededStudio;
-// Same studio, different client — the isolation control that studio scoping
+// Same studio, different client: the isolation control that studio scoping
 // alone would not catch.
 let otherClientId: string;
 
@@ -43,7 +43,7 @@ let chartedSessionId: string;
 let emptySessionId: string;
 let currentSessionId: string;
 // A fully-charted session belonging to a DIFFERENT studio, newer than the real
-// treatment — the cross-tenant control.
+// treatment, the cross-tenant control.
 let foreignSessionId = "";
 let multiAreaBlockId: string;
 let singleAreaBlockId: string;
@@ -95,7 +95,7 @@ type Counted = {
 
 // Wraps a harness query fn so a test can prove the read is bounded.
 //
-// `count` alone would be vacuous — loadMemory contains three literal calls, so
+// `count` alone would be vacuous, loadMemory contains three literal calls, so
 // it can only ever return 3 no matter how the data grows. `blockReads` is the
 // assertion that means something: it counts executions of the BATCHED block
 // statement, which is where an N+1 (one read per session, per block or per
@@ -214,7 +214,7 @@ beforeAll(async () => {
     [deletedEntryId, chartedSessionId, multiAreaBlockId],
   );
 
-  // 2. A NEWER session with nothing charted on it — the exact row that used to
+  // 2. A NEWER session with nothing charted on it, the exact row that used to
   //    win `order started_at desc limit 1` and hide the treatment above.
   emptySessionId = await insertSession(s, s.clientId, EMPTY_AT);
 
@@ -385,7 +385,7 @@ describe("3-4. a multi-area block's duration is credited exactly once", () => {
     expect(r.breakdown.find((b) => b.area === "Sideburn")).toBeUndefined();
   });
 
-  it("does not display those minutes twice — the breakdown sums to the stored total", async () => {
+  it("does not display those minutes twice, the breakdown sums to the stored total", async () => {
     const r = await loadMemory({
       userId: s.userId,
       studioId: s.studioId,
@@ -583,7 +583,7 @@ describe("8. soft-deleted blocks and entries are excluded", () => {
   });
 });
 
-describe("9. the read is bounded — no N+1 per session, per block or per area", () => {
+describe("9. the read is bounded, no N+1 per session, per block or per area", () => {
   it("uses a fixed number of statements regardless of how many blocks or areas exist", async () => {
     const r = await loadMemory({
       userId: s.userId,
@@ -628,7 +628,7 @@ describe("9. the read is bounded — no N+1 per session, per block or per area",
       studioId: isolated.studioId,
       clientId: isolated.clientId,
     });
-    // 8 sessions, 8 blocks, 16 structured areas — still ONE block read.
+    // 8 sessions, 8 blocks, 16 structured areas, still ONE block read.
     expect(r.blockReads).toBe(1);
     expect(r.queries).toBe(3);
   });

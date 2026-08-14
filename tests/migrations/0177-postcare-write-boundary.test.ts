@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
-// 0177 — B8 postcare write boundary. STATIC contract.
+// 0177: B8 postcare write boundary. STATIC contract.
 //
 // Behaviour is proved against a real database in
 // tests/db/postcare-write-boundary.db.test.ts. This file pins what a
@@ -13,7 +13,7 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 const FILE = "supabase/migrations/0177_postcare_write_boundary.sql";
 const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 
-// EXECUTABLE SQL ONLY — line comments stripped. The header deliberately NAMES
+// EXECUTABLE SQL ONLY: line comments stripped. The header deliberately NAMES
 // what it does not touch (snapshot_appointment_buffer, B6/B7 objects, payments)
 // so a reader knows those omissions are decisions; a scope assertion over raw
 // text would fail on the very prose documenting the discipline.
@@ -36,15 +36,15 @@ const BLOCKING =
     /create or replace function public\.appointment_has_blocking_dependents[\s\S]*?\n\$\$;/,
   )?.[0] ?? "";
 
-describe("0177 — migration state", () => {
+describe("0177: migration state", () => {
   // THE HAND-OFF HAPPENED. This block used to assert isRepoMax("0177"),
   // versionsAbove([]) and countVersion("0178") === 0. 0178 was authored, and
   // this file's own comment predicted every one of those going red and named
   // the fix: convert to a floor and let the CURRENT maximum's test carry the
-  // tripwire (CLAUDE.md §2). That is what happened here — the successor
+  // tripwire (CLAUDE.md §2). That is what happened here, the successor
   // assertions are now in 0178's own test, and 0174 stayed untouched exactly as
   // #554 intended.
-  it("is no longer the repository maximum — 0178 was authored above it", () => {
+  it("is no longer the repository maximum, 0178 was authored above it", () => {
     expect(isRepoMax("0177")).toBe(false);
     expect(versionsAbove("0177")).toContain("0178");
   });
@@ -55,7 +55,7 @@ describe("0177 — migration state", () => {
   });
 });
 
-describe("0177 — transaction envelope", () => {
+describe("0177: transaction envelope", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     // `supabase db push` does not wrap a migration file in a transaction, so a
     // bare SET LOCAL emits 25P01 and never arms.
@@ -71,7 +71,7 @@ describe("0177 — transaction envelope", () => {
   });
 });
 
-describe("0177 — STANDING PROHIBITION: snapshot_appointment_buffer untouched", () => {
+describe("0177, STANDING PROHIBITION: snapshot_appointment_buffer untouched", () => {
   it("never references it in executable SQL", () => {
     // Production carries out-of-band GUC behaviour there which this
     // repository's migration source does not represent, so re-emitting it from
@@ -80,7 +80,7 @@ describe("0177 — STANDING PROHIBITION: snapshot_appointment_buffer untouched",
   });
 });
 
-describe("0177 — claim_postcare_send", () => {
+describe("0177: claim_postcare_send", () => {
   it("has the exact signature and posture", () => {
     expect(CLAIM).not.toBe("");
     expect(CLAIM).toMatch(/p_appointment_id\s+uuid/);
@@ -99,7 +99,7 @@ describe("0177 — claim_postcare_send", () => {
     // call site authenticates the human and resolves the practitioner, and the
     // command validates that supplied id, rejecting inactive and cross-studio
     // actors. A service_role caller could still name a different active
-    // same-studio practitioner — the residual trust lives in the call site, and
+    // same-studio practitioner, the residual trust lives in the call site, and
     // the title used to claim otherwise.
     expect(CLAIM).toMatch(/from public\.practitioners p/);
     expect(CLAIM).toMatch(/p\.studio_id = p_studio_id/);
@@ -124,14 +124,14 @@ describe("0177 — claim_postcare_send", () => {
     expect(CLAIM).toMatch(/'never_sent'/);
   });
 
-  it("owns the five-minute stale window itself — never a caller parameter", () => {
+  it("owns the five-minute stale window itself, never a caller parameter", () => {
     expect(CLAIM).toMatch(/interval '5 minutes'/);
     expect(CLAIM).toMatch(/'already_claimed'/);
     // No caller-supplied window, and no caller-supplied timestamp at all.
     expect(CLAIM).not.toMatch(/p_stale|p_now|p_claimed_at|p_timestamp/);
   });
 
-  it("MILLISECOND-truncates the claim token — load-bearing, not cosmetic", () => {
+  it("MILLISECOND-truncates the claim token: load-bearing, not cosmetic", () => {
     // The token leaves as JSON and returns through a JavaScript Date, which
     // carries milliseconds. A microsecond value would be rounded in transit and
     // no settlement would ever match its own claim, so nothing would be
@@ -147,7 +147,7 @@ describe("0177 — claim_postcare_send", () => {
   });
 });
 
-describe("0177 — settle_postcare_send", () => {
+describe("0177: settle_postcare_send", () => {
   it("has the exact signature and posture", () => {
     expect(SETTLE).not.toBe("");
     expect(SETTLE).toMatch(/p_claimed_at\s+timestamptz/);
@@ -188,7 +188,7 @@ describe("0177 — settle_postcare_send", () => {
     expect(SETTLE).not.toMatch(/p_error|p_message|p_detail|p_payload|p_reason/);
   });
 
-  it("FAILURE never touches sent_at — a failed resend keeps the real one", () => {
+  it("FAILURE never touches sent_at: a failed resend keeps the real one", () => {
     // Erasing it would turn a delivery record into a lie in exactly the dispute
     // where it matters.
     const failure = SETTLE.slice(SETTLE.indexOf("v_err := case"));
@@ -198,12 +198,12 @@ describe("0177 — settle_postcare_send", () => {
   });
 });
 
-describe("0177 — the ONE permitted B4 helper replacement", () => {
+describe("0177: the ONE permitted B4 helper replacement", () => {
   // Independent-review P1-2. A claim that has not settled is an unresolved
   // EXTERNAL side effect, and 0173's blocking-dependents helper could not see
   // it: it checked postcare_email_sent_at only. An owner could therefore reopen
   // a completed appointment in the window between claim and settlement, and the
-  // aftercare email would still land — for a visit that is no longer completed.
+  // aftercare email would still land, for a visit that is no longer completed.
   //
   // 0173 is applied production history and stays frozen, so the narrow fix
   // ships here. This suite pins BOTH halves: that the replacement happens, and
@@ -230,7 +230,7 @@ describe("0177 — the ONE permitted B4 helper replacement", () => {
       "postcare_sent",
       // ...and the new class is appended LAST, which is load-bearing: during a
       // resend both postcare classes match, and the practitioner must still be
-      // told the stronger fact — aftercare has ALREADY been emailed.
+      // told the stronger fact, aftercare has ALREADY been emailed.
       "postcare_in_flight",
     ]);
   });
@@ -252,7 +252,7 @@ describe("0177 — the ONE permitted B4 helper replacement", () => {
   it("adds the new class on an UNCONDITIONAL claim, not a fresh-claim window", () => {
     // The five-minute window governs who may RECLAIM a send. It says nothing
     // about whether the external side effect resolved, and a claim that went
-    // stale is the state whose outcome Hone never learned — the most dangerous
+    // stale is the state whose outcome Hone never learned, the most dangerous
     // one to reopen an appointment underneath, not the least.
     expect(BLOCKING).toMatch(/a\.postcare_email_claimed_at is not null/);
     expect(BLOCKING).not.toMatch(/5 minutes|interval/);
@@ -279,7 +279,7 @@ describe("0177 — the ONE permitted B4 helper replacement", () => {
     expect(c).toContain("postcare_sent");
   });
 
-  it("REDEFINES nothing else from 0173 — the two commands keep their bodies", () => {
+  it("REDEFINES nothing else from 0173, the two commands keep their bodies", () => {
     // They call the helper BY NAME, so they pick the new class up without being
     // re-emitted. Re-emitting them would drag 0173's whole body into an
     // unapplied migration for no reason and widen the blast radius.
@@ -305,7 +305,7 @@ describe("0177 — the ONE permitted B4 helper replacement", () => {
     // The single intentional exception. 0173 is frozen, but its catalog
     // description now says "five ... blocking-dependent classes", which pg's
     // own \df+ / pg_description would keep reporting. A comment is DDL, so the
-    // truthful fix is a comment — not a redefinition.
+    // truthful fix is a comment, not a redefinition.
     const mentions = [...EXEC.matchAll(/public\.revert_appointment_outcome/g)];
     expect(mentions).toHaveLength(1);
     expect(EXEC).toMatch(
@@ -348,7 +348,7 @@ describe("0177 — the ONE permitted B4 helper replacement", () => {
   });
 });
 
-describe("0177 — privilege closure", () => {
+describe("0177: privilege closure", () => {
   it("revokes UPDATE on exactly the six postcare columns from service_role", () => {
     const revoke = SQL.match(/revoke update \([\s\S]*?\) on table public\.appointments from service_role;/)?.[0] ?? "";
     expect(revoke).not.toBe("");
@@ -380,7 +380,7 @@ describe("0177 — privilege closure", () => {
   });
 });
 
-describe("0177 — scope discipline", () => {
+describe("0177: scope discipline", () => {
   it("adds no appointment_audit event", () => {
     // The seven writers it replaces produce none, and B8 is boundary hardening
     // rather than a new event taxonomy.
@@ -437,7 +437,7 @@ describe("0177 — scope discipline", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PRODUCTION TRUTH — 0177 was APPLIED on 2026-08-10.
+// PRODUCTION TRUTH, 0177 was APPLIED on 2026-08-10.
 //
 // Per CLAUDE.md §2 the CURRENT maximum migration's own test is the one that
 // carries the repo/hosted tripwire, and hosted state is DECLARED (never derived
@@ -447,11 +447,11 @@ describe("0177 — scope discipline", () => {
 //
 // WHEN 0178 IS AUTHORED, THE FIRST TEST BELOW GOES RED. That is the hand-off,
 // not a defect: repo max moves to 0178 while hosted stays 0177 until it is
-// applied. The amendment is the same one 0174 received — convert the equality
+// applied. The amendment is the same one 0174 received, convert the equality
 // to a FLOOR (`>= 177`) and let 0178's own test carry the tripwire. Do NOT
 // instead weaken it here and leave two owners.
 // ---------------------------------------------------------------------------
-describe("0177 — production truth: APPLIED 2026-08-10", () => {
+describe("0177, production truth: APPLIED 2026-08-10", () => {
   const rec = JSON.parse(
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
@@ -464,7 +464,7 @@ describe("0177 — production truth: APPLIED 2026-08-10", () => {
     // `hosted_migration_max` is a statement about PRODUCTION, not about this
     // repository: it moves when an APPLY happens, never when a file lands.
     // Authoring 0178 legitimately breaks repo/hosted equality, so this asserts a
-    // FLOOR — a hosted max BELOW 177 would mean the 0177 apply record had been
+    // FLOOR, a hosted max BELOW 177 would mean the 0177 apply record had been
     // falsified, and anything at or above it is somebody else's business.
     expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(177);
   });
@@ -486,7 +486,7 @@ describe("0177 — production truth: APPLIED 2026-08-10", () => {
 
   it("B8's privilege closure stays recorded in 0177's FROZEN ledger entry", () => {
     // This used to read `rec.hosted_note`, which is the MOVING current-state
-    // record — it now describes 0178, so the claim moved with it. B8's outcome
+    // record, it now describes 0178, so the claim moved with it. B8's outcome
     // is permanent evidence and belongs in 0177's own frozen ledger section,
     // which is where it is asserted from now on.
     const entry = LEDGER.slice(LEDGER.indexOf("## 0177 — APPOINTMENT BOUNDARY B8"));
@@ -497,7 +497,7 @@ describe("0177 — production truth: APPLIED 2026-08-10", () => {
 
   it("0177's apply stays RECORDED in the ledger after 0178 took the current-state block", () => {
     // THE SECOND HALF OF THE HAND-OFF. This used to assert that the ledger's
-    // CURRENT STATE block named 0177 — true only while 0177 was the hosted max.
+    // CURRENT STATE block named 0177, true only while 0177 was the hosted max.
     // 0178 has since been applied and legitimately owns that moving block, so
     // asserting it here would make every future apply edit this file, which is
     // exactly the churn the 0174/#554 amendment removed.

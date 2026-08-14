@@ -17,7 +17,7 @@ import {
   DISCOVERY_SCOPE,
 } from "./helpers/fake-google-e2e";
 
-// Synthetic-Google browser E2E — EXISTING-OWNED destination (Flow B). Real
+// Synthetic-Google browser E2E: EXISTING-OWNED destination (Flow B). Real
 // browser, guarded fake Google (no real request). Proves only calendar.events.owned
 // is requested, the picker shows ONLY owner-role calendars, the server revalidates
 // ownership, and no event/outbox/link is created.
@@ -26,7 +26,7 @@ const BROAD_EVENTS = "https://www.googleapis.com/auth/calendar.events";
 
 test.beforeEach(() => resetFakeGoogle());
 
-test("Flow B — existing owned: only events.owned requested, owner-only picker, ready, dormant", async ({ page }) => {
+test("Flow B, existing owned: only events.owned requested, owner-only picker, ready, dormant", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]); // connected, no destination
@@ -54,7 +54,7 @@ test("Flow B — existing owned: only events.owned requested, owner-only picker,
     expect(s).not.toContain(APP_CREATED_SCOPE);
   }
 
-  // The picker shows ONLY owner-role calendars (scope to the card's select — the
+  // The picker shows ONLY owner-role calendars (scope to the card's select, the
   // page has other unrelated <select>s).
   await page.getByRole("button", { name: /Choose a calendar you own/i }).click();
   const picker = page.getByTestId("gcal-existing-setup").locator("select");

@@ -4,7 +4,7 @@ import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 (Item 4) — booking vs. reassignment into the SAME target slot.
+// PR B Part 4 (Item 4), booking vs. reassignment into the SAME target slot.
 // The canonical lock order (studios row -> advisory -> source rows) serializes
 // the two, and the per-resource GiST exclusion is the final authority: exactly
 // one winner when they overlap, both commit when disjoint, never a deadlock.
@@ -64,7 +64,7 @@ const countAt = (practitionerId: string, start: string) =>
     [practitionerId, start],
   ).then((r) => r.rows[0].n as number);
 
-describe("Item 4 — booking vs. reassignment into the same target slot", () => {
+describe("Item 4: booking vs. reassignment into the same target slot", () => {
   it("overlap: reassign A->P2@10:00 wins, a concurrent P2@10:00 booking loses with 23P01 (no deadlock)", async () => {
     // A is P1's 10:00 appointment; a fresh client B books P2 also at 10:00.
     const a = await seedAppt(P(1), T("10:00"));
@@ -80,7 +80,7 @@ describe("Item 4 — booking vs. reassignment into the same target slot", () => 
         `select public.move_or_reassign_appointment($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7::timestamptz)`,
         [a.id, B.studioId, owner(), P(2), a.exp, a.expEnd, a.exp],
       );
-      // c2 tries to BOOK P2 at 10:00 — must block on c1's locks, then collide.
+      // c2 tries to BOOK P2 at 10:00, must block on c1's locks, then collide.
       await c2.query("begin");
       const c2Done = c2
         .query(
@@ -95,7 +95,7 @@ describe("Item 4 — booking vs. reassignment into the same target slot", () => 
       // c2's transaction aborted on the 23P01; roll it back cleanly.
       await c2.query("rollback").catch(() => {});
       expect(collision).toBe("23P01");
-      expect(await countAt(P(2), T("10:00"))).toBe(1); // exactly one — the reassignment
+      expect(await countAt(P(2), T("10:00"))).toBe(1); // exactly one, the reassignment
       expect(await countAt(P(1), T("10:00"))).toBe(0); // A moved off P1
     } finally {
       await c1.end();

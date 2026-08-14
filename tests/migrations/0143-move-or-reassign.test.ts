@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR B Part 4 — migration 0143 (atomic move + reassignment). Structural contract;
+// PR B Part 4: migration 0143 (atomic move + reassignment). Structural contract;
 // behaviour is proven in tests/db/move-reassign-appointment.db.test.ts.
 
 const SQL = readFileSync(
@@ -13,7 +13,7 @@ const CODE = SQL.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n"
 const idx = (n: string) => SQL.indexOf(n);
 const SIG = "public.move_or_reassign_appointment(uuid, uuid, uuid, uuid, timestamptz, timestamptz, timestamptz)";
 
-describe("0143 — atomic + service_role-only", () => {
+describe("0143: atomic + service_role-only", () => {
   it("wraps in one begin;/commit;", () => {
     expect(CODE.split("\n").map((l) => l.trim()).find((l) => l.length > 0)).toBe("begin;");
     expect(CODE.trimEnd().endsWith("commit;")).toBe(true);
@@ -29,7 +29,7 @@ describe("0143 — atomic + service_role-only", () => {
   });
 });
 
-describe("0143 — the transaction contract", () => {
+describe("0143: the transaction contract", () => {
   it("locks the studios ROW before the advisory lock (0138 order), then locks the appointment", () => {
     const studioFor = idx("from public.studios s");
     const advisory = idx("acquire_studio_capacity_lock");
@@ -53,7 +53,7 @@ describe("0143 — the transaction contract", () => {
     expect(SQL).toMatch(/make_interval\(mins => v_appt\.duration_minutes\)/); // duration preserved
     expect(SQL).not.toMatch(/raise exception/i);
   });
-  it("optimistic concurrency on both endpoints (stale_appointment) — no time from the caller for the end", () => {
+  it("optimistic concurrency on both endpoints (stale_appointment), no time from the caller for the end", () => {
     expect(SQL).toMatch(/v_appt\.starts_at is distinct from p_expected_starts_at/);
     expect(SQL).toMatch(/v_appt\.ends_at is distinct from p_expected_ends_at/);
     expect(SQL).toMatch(/stale_appointment/);

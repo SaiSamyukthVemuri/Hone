@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 
-// Behavioural tests for the two Move server actions — the CLOSED mode contract,
+// Behavioural tests for the two Move server actions, the CLOSED mode contract,
 // owner authorization for custom-time, and the server-side available-slot
 // membership check. Every dependency that would touch auth/DB/RPC is mocked so we
 // assert the action's DECISIONS (accept/reject, RPC called or short-circuited),
 // never a real database.
 
 const TZ = "America/Toronto";
-// Derive a FUTURE date from the real clock — NOT a hardcoded year. A fixed future date
+// Derive a FUTURE date from the real clock, NOT a hardcoded year. A fixed future date
 // silently becomes PAST once it passes, and moveAppointmentAction rejects past targets
 // before the mocked RPC, which would turn this suite into a time bomb.
 const DAY = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
@@ -83,7 +83,7 @@ function baseMove(over: Record<string, unknown> = {}) {
     expectedStartsAt: EXPECT_START,
     expectedEndsAt: EXPECT_END,
     localDate: DAY,
-    localTime: "03:00", // 3 AM — outside typical hours; the action never checks hours
+    localTime: "03:00", // 3 AM, outside typical hours; the action never checks hours
     mode: "custom_time" as const,
     outsideAvailabilityConfirmed: true,
     ...over,
@@ -105,7 +105,7 @@ beforeEach(() => {
 });
 
 // ---- §22 custom-time authorization + mode contract ----
-describe("custom_time — owner authorization", () => {
+describe("custom_time: owner authorization", () => {
   it("owner can move to a future outside-hours custom time (RPC called, ID preserved)", async () => {
     const res = await moveAppointmentAction(baseMove());
     expect(res.ok).toBe(true);
@@ -125,7 +125,7 @@ describe("custom_time — owner authorization", () => {
     expect(state.rpcCalls).toHaveLength(0);
   });
 
-  it("ignores a browser-forged isOwner/role/studioId — server role is authoritative", async () => {
+  it("ignores a browser-forged isOwner/role/studioId: server role is authoritative", async () => {
     state.practitioner = { id: "prac-2", role: "practitioner" };
     const res = await moveAppointmentAction(
       baseMove({ isOwner: true, role: "owner", canUseCustomTime: true, studioId: "other", practitionerId: "x" } as never),
@@ -174,7 +174,7 @@ describe("custom_time — owner authorization", () => {
 });
 
 // ---- §23 available-slot server verification ----
-describe("available_slot — server-side membership verification", () => {
+describe("available_slot: server-side membership verification", () => {
   const avail = (over: Record<string, unknown> = {}) =>
     baseMove({ mode: "available_slot", outsideAvailabilityConfirmed: false, localTime: "10:00", ...over });
 
@@ -205,7 +205,7 @@ describe("available_slot — server-side membership verification", () => {
 });
 
 // ---- §6 loadMoveSlotsAction ----
-describe("loadMoveSlotsAction — canUseCustomTime is server-derived", () => {
+describe("loadMoveSlotsAction: canUseCustomTime is server-derived", () => {
   it("owner → canUseCustomTime true; PHI-free slot list", async () => {
     state.practitioner = { id: "prac-1", role: "owner" };
     const res = await loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY });

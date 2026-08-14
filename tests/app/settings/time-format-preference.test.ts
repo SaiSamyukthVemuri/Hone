@@ -50,7 +50,7 @@ describe("practitioner-facing surfaces use the preference", () => {
   });
   it("DayColumn formats DISPLAY via the helper but keeps 24h for positioning", () => {
     expect(DAYCOL).toMatch(/formatTimeForStudio\(start, tz, timeFormat\)/);
-    // positioning still parses a 24h HH:MM string — must NOT be the display value
+    // positioning still parses a 24h HH:MM string, must NOT be the display value
     expect(DAYCOL).toMatch(/const localTime = localTimeString\(start, tz\); \/\/ 24h/);
     expect(DAYCOL).toMatch(/localTime\.split\(":"\)\.map\(Number\)/);
   });

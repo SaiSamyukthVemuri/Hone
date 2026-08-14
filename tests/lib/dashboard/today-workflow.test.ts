@@ -31,7 +31,7 @@ function input(over: Partial<TodayWorkflowInput> = {}): TodayWorkflowInput {
   };
 }
 
-describe("1. chronological order is the input order — never re-sorted", () => {
+describe("1. chronological order is the input order, never re-sorted", () => {
   it("preserves input order even when priorities would reorder it", () => {
     // Priority 6 (nothing notable) first, priority 1 (a recorded note) last.
     // The old brief sorted by priority; the day must not be reordered, because
@@ -51,7 +51,7 @@ describe("1. chronological order is the input order — never re-sorted", () => 
       "10:00 AM",
       "11:00 AM",
     ]);
-    // Priority is still computed — as an in-card signal only.
+    // Priority is still computed: as an in-card signal only.
     expect(items[1].priority).toBe(1);
     expect(items[0].priority).toBe(6);
   });
@@ -326,7 +326,7 @@ describe("13. purity", () => {
     expect(reminders).toEqual(["Probe lot not recorded"]);
   });
 
-  it("is deterministic — same input, identical output", () => {
+  it("is deterministic: same input, identical output", () => {
     const inputs = [input({ appointmentId: "a" }), input({ appointmentId: "b" })];
     expect(JSON.stringify(buildTodayWorkflow(inputs))).toBe(
       JSON.stringify(buildTodayWorkflow(inputs)),
@@ -365,7 +365,7 @@ describe("dashboard wiring", () => {
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
   });
 
-  it("renders exactly ONE appointment list — the separate brief card is gone", () => {
+  it("renders exactly ONE appointment list, the separate brief card is gone", () => {
     expect(PAGE).not.toMatch(/DailyPrepBriefCard/);
     expect(PAGE).not.toMatch(/daily-prep-brief/);
     expect(PAGE).not.toMatch(/buildDailyPrepBrief/);

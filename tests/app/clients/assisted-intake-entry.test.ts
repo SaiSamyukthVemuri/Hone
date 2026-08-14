@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Practitioner-assisted intake entry — behavioural proof.
+// Practitioner-assisted intake entry: behavioural proof.
 //
 // These are NOT source greps. The real server actions run against an in-memory
 // fake implementing PostgREST filter semantics (.eq / .is / .maybeSingle /
@@ -352,7 +352,7 @@ describe("2. the client-owned boundary", () => {
         responses: { legal_name: "Dana", [key]: true },
       });
       expect(res.ok).toBe(false);
-      // Nothing was written at all — not even the legitimate answer.
+      // Nothing was written at all, not even the legitimate answer.
       expect(state.updates).toHaveLength(0);
       expect(storedResponses()).toEqual({});
     });
@@ -371,7 +371,7 @@ describe("2. the client-owned boundary", () => {
       } as Record<string, unknown>,
     });
     // The record key is not a question key, so the whitelist would drop it
-    // regardless — but it is also named client-owned, so an attempt to author
+    // regardless, but it is also named client-owned, so an attempt to author
     // it is REFUSED rather than silently stripped. Nothing is written.
     expect(res.ok).toBe(false);
     expect(state.updates).toHaveLength(0);
@@ -384,7 +384,7 @@ describe("2. the client-owned boundary", () => {
     // THE REGRESSION adversarial review found. The editor seeds its state from
     // the stored responses and posts the whole map, so an intake where the
     // client had already touched a step-5 checkbox through their own link made
-    // EVERY assisted save fail — with copy blaming the practitioner and naming
+    // EVERY assisted save fail, with copy blaming the practitioner and naming
     // a button that could never mount. Refusing on key presence rather than on
     // change was the bug.
     const clientRecord = {
@@ -523,7 +523,7 @@ describe("3. authorization", () => {
     });
   }
 
-  it("every refusal reads the same — no existence oracle", async () => {
+  it("every refusal reads the same, no existence oracle", async () => {
     // Six distinguishable underlying causes must produce ONE message, so a
     // caller cannot use the response to learn whether an intake exists, who
     // it belongs to, or what state it is in.

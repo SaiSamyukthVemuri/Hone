@@ -14,7 +14,7 @@ import {
 // lib/ to the allowlist, and requires each to declare a purpose, an RLS-bypass
 // justification, and a scopeGuard symbol that ACTUALLY appears in the file. A
 // new usage (or a dropped guard) fails CI. This complements the browser
-// boundary test (admin-server-boundary.test.ts) — it inventories the SERVER
+// boundary test (admin-server-boundary.test.ts), it inventories the SERVER
 // side. It is an inventory/drift gate, NOT a proof every query is scoped.
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -42,7 +42,7 @@ const ALLOWLIST_PATHS = SERVICE_ROLE_ALLOWLIST.map((e) => e.path).sort();
 
 const HINT =
   "\n\nservice-role drift: createAdminClient() bypasses RLS. Update " +
-  "tests/security/service-role-allowlist.ts — add/remove the entry with a " +
+  "tests/security/service-role-allowlist.ts, add/remove the entry with a " +
   "{ path, purpose, why, scopeGuard } where scopeGuard is a real token/" +
   "signature/studio/client/appointment guard string present in the file.";
 

@@ -9,13 +9,13 @@ const FILE = readdirSync(DIR).find((f) => f.startsWith("0136_"));
 const SQL = FILE ? readFileSync(join(DIR, FILE), "utf8") : "";
 const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
 
-describe("0136 — file", () => {
+describe("0136: file", () => {
   it("exists with a purpose-encoding name", () => {
     expect(FILE).toBe("0136_practitioner_capacity_booking_flag.sql");
   });
 });
 
-describe("0136 — booking flag + state validity", () => {
+describe("0136: booking flag + state validity", () => {
   it("adds the operator-controlled booking flag, default false", () => {
     expect(CODE).toMatch(
       /add column if not exists practitioner_capacity_booking_enabled boolean not null default false/i,
@@ -35,7 +35,7 @@ describe("0136 — booking flag + state validity", () => {
   });
 });
 
-describe("0136 — structural retirement RPC", () => {
+describe("0136: structural retirement RPC", () => {
   it("is SECURITY DEFINER with a hardened search_path, preflights, and fails closed", () => {
     const fn = CODE.match(
       /create or replace function public\.retire_practitioner_capacity[\s\S]*?\$\$;/i,
@@ -63,13 +63,13 @@ describe("0136 — structural retirement RPC", () => {
     expect(CODE).toMatch(/grant execute on function %s to service_role/i);
   });
 
-  it("exposes no client/clinical data — reason codes are counts only", () => {
+  it("exposes no client/clinical data: reason codes are counts only", () => {
     // The RPC bodies never select name/email/notes.
     expect(CODE).not.toMatch(/\b(email|phone|display_name|notes|client_id)\b/i);
   });
 });
 
-describe("0136 — 3B-1 three-state model", () => {
+describe("0136: 3B-1 three-state model", () => {
   it("documents THREE technical states, not four", () => {
     expect(SQL).toMatch(/CAPACITY_READY_BOOKING_PAUSED/);
     expect(SQL).toMatch(/THREE\b/i);
@@ -77,7 +77,7 @@ describe("0136 — 3B-1 three-state model", () => {
   });
 });
 
-describe("0136 — 3B-2 capacity-participation predicate (used consistently)", () => {
+describe("0136: 3B-2 capacity-participation predicate (used consistently)", () => {
   it("defines one named predicate: confirmed OR completed-not-expired", () => {
     expect(CODE).toMatch(
       /function public\.appointment_participates_in_capacity\(\s*p_status text,\s*p_blocked_ends_at timestamptz/i,
@@ -95,7 +95,7 @@ describe("0136 — 3B-2 capacity-participation predicate (used consistently)", (
   });
 });
 
-describe("0136 — 3B-3 nonexistent-studio + 3B-4 advisory lock", () => {
+describe("0136: 3B-3 nonexistent-studio + 3B-4 advisory lock", () => {
   it("blockers reports studio_exists first", () => {
     expect(CODE).toMatch(
       /returns table \(studio_exists boolean, booking_still_enabled boolean, overlapping_appointments int\)/i,

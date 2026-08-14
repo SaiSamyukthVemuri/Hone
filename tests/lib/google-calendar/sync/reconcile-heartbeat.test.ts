@@ -13,7 +13,7 @@ import {
 } from "@/lib/google-calendar/sync/reconcile-heartbeat";
 import type { ReconcileRunResult } from "@/lib/google-calendar/sync/reconcile";
 
-// Phase B2.3-b — heartbeat outcome model + alert deciders + dead-row alert. Pure
+// Phase B2.3-b: heartbeat outcome model + alert deciders + dead-row alert. Pure
 // cores are deterministic (nowMs injected). Observability is fail-open.
 
 const NOW = Date.UTC(2026, 6, 14, 12, 0, 0);
@@ -55,7 +55,7 @@ const status = (over: Partial<ReconcileSchedulerStatus>): ReconcileSchedulerStat
   ...over,
 });
 
-describe("computeReconcileStatus — recency AND outcome", () => {
+describe("computeReconcileStatus: recency AND outcome", () => {
   it("no heartbeat -> missing", () => {
     expect(computeReconcileStatus(null, NOW).status).toBe("missing");
   });
@@ -109,7 +109,7 @@ describe("PHI-free payloads", () => {
   });
 });
 
-describe("finalHeartbeatOutcome — §11 tiers", () => {
+describe("finalHeartbeatOutcome: §11 tiers", () => {
   it("reconciliation error stays error regardless of the dead-row outcome", () => {
     for (const d of ["completed", "deferred", "unavailable", "error", "skipped_held"] as const) {
       expect(finalHeartbeatOutcome("error", d)).toBe("error");

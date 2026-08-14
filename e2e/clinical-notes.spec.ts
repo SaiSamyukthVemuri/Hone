@@ -13,14 +13,14 @@ import {
 import { loginAsOwner } from "./helpers/flows";
 
 // ===========================================================================
-// Willow PR A — dedicated consultation + skin/hair analysis clinical notes
+// Willow PR A, dedicated consultation + skin/hair analysis clinical notes
 // (migration 0126). Real browser, real stack, iPhone-class viewport (the
 // practitioner works on an iPad/phone). One serial logged-in flow that drives
 // the actual UI -> server action -> RLS-scoped write -> read-back-verify path,
 // with DB ground-truth assertions after each write.
 //
 // Covers: add a consultation note; add a skin/hair note with area tags; revise
-// the consultation note (append-only — a new dated revision, original kept in
+// the consultation note (append-only, a new dated revision, original kept in
 // history); the print/export view; and the read-only overview summary. No auth
 // bypass; disposable local DB; unique per-run seed.
 // ===========================================================================
@@ -31,7 +31,7 @@ test.use({
   isMobile: true,
 });
 
-test("consultation + skin/hair notes: add, revise (append-only), export — on mobile", async ({
+test("consultation + skin/hair notes: add, revise (append-only), export, on mobile", async ({
   page,
 }) => {
   const seed = await seedE2eStudio();
@@ -92,7 +92,7 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
 
   await test.step("the original consultation text is preserved in history, not overwritten", async () => {
     // On the full profile view history is expanded by default; the original body
-    // stays present alongside the revision (append-only — nothing overwritten).
+    // stays present alongside the revision (append-only, nothing overwritten).
     await expect(page.getByText(consultBody)).toBeVisible();
     await expect(page.getByText(revisedBody)).toBeVisible();
   });
@@ -177,7 +177,7 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
     await expect(page).toHaveURL(new RegExp(`/clients/${clientId}\\?tab=consultation`));
     // ...and that tab now says what it holds. This journey runs at MOBILE
     // width, where the profile tabs are a <select> rather than the desktop
-    // <button> row — so assert the option, not a button. Scoped to the profile
+    // <button> row, so assert the option, not a button. Scoped to the profile
     // nav by its accessible name (the same handle mobile-ux.spec.ts uses) so
     // this cannot silently start matching some other select on the page.
     await expect(
@@ -189,14 +189,14 @@ test("consultation + skin/hair notes: add, revise (append-only), export — on m
 });
 
 // ===========================================================================
-// Chloe Session 1A — legacy `clients.skin_notes` is RETIRED as an editor, and
+// Chloe Session 1A, legacy `clients.skin_notes` is RETIRED as an editor, and
 // the append-only skin/hair record is the canonical path.
 // ===========================================================================
 //
 // Drives the real UI: historical legacy text must still be visible (labelled as
 // legacy, read-only), the ordinary client edit form must offer no editable
 // legacy field, and the canonical "Add skin & hair analysis" action must lead to
-// the append-only record — which then outranks the legacy text.
+// the append-only record, which then outranks the legacy text.
 test("legacy skin notes are read-only and the canonical record outranks them", async ({
   page,
 }) => {
@@ -212,11 +212,11 @@ test("legacy skin notes are read-only and the canonical record outranks them", a
   await page.goto(`/clients/${clientId}`);
   await expect(page.getByText("Legacy skin notes")).toBeVisible();
   await expect(page.getByText(legacyText)).toBeVisible();
-  // It is prose, not a form control — nothing on this page can edit it.
+  // It is prose, not a form control, nothing on this page can edit it.
   await expect(page.locator(`textarea:has-text("${legacyText}")`)).toHaveCount(0);
 
   // 2b. The helper copy must describe where the canonical form ACTUALLY is.
-  //     It used to say the append-only section was "below" — it is not on this
+  //     It used to say the append-only section was "below", it is not on this
   //     tab at all; it lives behind Consultation. A practitioner reading that
   //     scrolls, finds nothing, and edits the legacy text instead, which is the
   //     precise behaviour this retirement exists to stop. Pinned in the browser
@@ -268,7 +268,7 @@ test("legacy skin notes are read-only and the canonical record outranks them", a
     canonicalBody,
   );
 
-  // The legacy text survived the whole flow — nothing overwrote or copied it.
+  // The legacy text survived the whole flow, nothing overwrote or copied it.
   await page.goto(`/clients/${clientId}`);
   await expect(page.getByText(legacyText)).toBeVisible();
 });

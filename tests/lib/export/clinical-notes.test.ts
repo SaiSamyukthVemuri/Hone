@@ -8,7 +8,7 @@ import { rowsToCsv } from "@/lib/csv";
 
 // `client_clinical_notes` (0126/0127) is the authoritative append-only store
 // for the consultation and skin/hair-analysis narrative. It was visible and
-// printable in the product but absent from the studio export — a records
+// printable in the product but absent from the studio export, a records
 // portability defect.
 //
 // These tests drive the REAL builder and the REAL rowsToCsv chokepoint, then
@@ -111,7 +111,7 @@ function roundTrip(
   );
 }
 
-describe("clinical notes export — both kinds are present and distinct", () => {
+describe("clinical notes export: both kinds are present and distinct", () => {
   it("(1) a consultation note is exported", () => {
     const [row] = roundTrip([note({ kind: "consultation" })]);
     expect(row.kind).toBe("consultation");
@@ -126,7 +126,7 @@ describe("clinical notes export — both kinds are present and distinct", () => 
     expect(row.body).toBe("Fitzpatrick III.");
   });
 
-  it("(3) the two kinds stay distinct rows — neither absorbs the other", () => {
+  it("(3) the two kinds stay distinct rows, neither absorbs the other", () => {
     const rows = roundTrip([
       note({ id: "a", kind: "consultation", body: "consult body" }),
       note({ id: "b", kind: "skin_hair_analysis", body: "analysis body" }),
@@ -141,7 +141,7 @@ describe("clinical notes export — both kinds are present and distinct", () => 
   });
 });
 
-describe("clinical notes export — history, not a snapshot", () => {
+describe("clinical notes export: history, not a snapshot", () => {
   it("(4) every revision is retained, not just the newest", () => {
     // Three generations of the same consultation. An export that kept only the
     // current one would silently discard clinical history the append-only
@@ -175,7 +175,7 @@ describe("clinical notes export — history, not a snapshot", () => {
     expect(chain).toEqual(["v3", "v2", "v1"]);
   });
 
-  it("occurred_at and created_at are BOTH exported — backdating stays visible", () => {
+  it("occurred_at and created_at are BOTH exported, backdating stays visible", () => {
     const [row] = roundTrip([
       note({
         occurred_at: "2026-07-01T09:00:00.000Z",
@@ -188,7 +188,7 @@ describe("clinical notes export — history, not a snapshot", () => {
   });
 });
 
-describe("clinical notes export — safe serialization of free text", () => {
+describe("clinical notes export: safe serialization of free text", () => {
   it("(6) commas, quotes and newlines round-trip byte-exactly", () => {
     const nasty =
       'Client said "it stings, a lot".\nPlan: reduce intensity, re-assess.\r\nNotes: 3,000 hairs; "sensitive" zones.';
@@ -199,14 +199,14 @@ describe("clinical notes export — safe serialization of free text", () => {
   it("a formula-triggering note body is neutralized but still readable", () => {
     // OWASP CSV injection: the value must not execute in a spreadsheet, and
     // lib/csv.ts guards it with a leading apostrophe. The content itself is
-    // preserved — nothing is dropped.
+    // preserved, nothing is dropped.
     const evil = '=HYPERLINK("http://evil","click")';
     const csv = rowsToCsv(
       CLINICAL_NOTES_CSV_HEADERS,
       buildClinicalNoteExportRows([note({ body: evil })], MAPS),
     );
     // Asserted on the PARSED cell, not the raw text: the cell also contains
-    // commas and quotes, so RFC-4180 wraps it and doubles the inner quotes —
+    // commas and quotes, so RFC-4180 wraps it and doubles the inner quotes,
     // a raw substring match would be testing the quoting, not the guard.
     const [, first] = parseCsv(csv);
     const bodyIdx = CLINICAL_NOTES_CSV_HEADERS.indexOf("body");
@@ -234,7 +234,7 @@ describe("clinical notes export — safe serialization of free text", () => {
   });
 });
 
-describe("clinical notes export — attribution and honesty", () => {
+describe("clinical notes export: attribution and honesty", () => {
   it("author and client are resolved to readable names beside their IDs", () => {
     const [row] = roundTrip([
       note({ client_id: "client-2", practitioner_id: "prac-2" }),
@@ -245,20 +245,20 @@ describe("clinical notes export — attribution and honesty", () => {
     expect(row.practitioner_display_name).toBe("Sam Ellis");
   });
 
-  it("an unresolvable author keeps the ID and blanks the name — never drops the row", () => {
+  it("an unresolvable author keeps the ID and blanks the name, never drops the row", () => {
     const rows = roundTrip([note({ practitioner_id: "prac-gone" })]);
     expect(rows).toHaveLength(1);
     expect(rows[0].practitioner_id).toBe("prac-gone");
     expect(rows[0].practitioner_display_name).toBe("");
   });
 
-  it("(9) no rows in means a header-only file — never a fake empty row", () => {
+  it("(9) no rows in means a header-only file, never a fake empty row", () => {
     const csv = rowsToCsv(CLINICAL_NOTES_CSV_HEADERS, buildClinicalNoteExportRows([], MAPS));
     expect(csv).toBe(`${CLINICAL_NOTES_CSV_HEADERS.join(",")}\n`);
     expect(parseCsv(csv)).toHaveLength(1);
   });
 
-  it("(8) the builder filters NOTHING — the table has no soft-delete to honour", () => {
+  it("(8) the builder filters NOTHING, the table has no soft-delete to honour", () => {
     // sessions.csv filters `deleted_at is null`; client_clinical_notes has no
     // such column (0126 is append-only), so exporting every row IS the existing
     // policy applied honestly rather than a widening of it.

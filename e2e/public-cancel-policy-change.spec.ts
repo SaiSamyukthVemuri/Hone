@@ -8,7 +8,7 @@ import {
 } from "./helpers/seed";
 import { bookAppointment } from "./helpers/flows";
 
-// B7 / 0176 — the cancel flow on the real stack.
+// B7 / 0176: the cancel flow on the real stack.
 //
 // The property is the one a unit test cannot reach: a studio that edits its
 // policy WHILE a client is on the cancel page must not be able to collect
@@ -16,7 +16,7 @@ import { bookAppointment } from "./helpers/flows";
 // read the new text and consent again.
 //
 // No test-only UI backdoor: the policy is changed the way a studio would change
-// it — a direct row update — and everything else is real browser interaction.
+// it, a direct row update, and everything else is real browser interaction.
 
 async function setPolicy(studioId: string, cancelText: string | null) {
   await sql(
@@ -48,7 +48,7 @@ async function counts(appointmentId: string) {
 const POLICY_A = "E2E policy A: cancel at least 24 hours ahead.";
 const POLICY_B = "E2E policy B: cancel at least 48 hours ahead.";
 
-test.describe("public cancellation — a policy edited mid-flight fails closed", () => {
+test.describe("public cancellation: a policy edited mid-flight fails closed", () => {
   test("changed policy is refused, re-presented, and requires a second consent", async ({
     page,
   }) => {
@@ -164,7 +164,7 @@ test.describe("public cancellation — a policy edited mid-flight fails closed",
     expect(midCounts.acks).toBe(0);
 
     // 8-11. the surface refreshes: the new policy appears, and so does the
-    // checkbox — unchecked, because consent to text never shown cannot exist.
+    // checkbox, unchecked, because consent to text never shown cannot exist.
     await expect(page.getByText(POLICY_B)).toBeVisible({ timeout: 15_000 });
     await expect(ack).toBeVisible();
     await expect(ack).not.toBeChecked();

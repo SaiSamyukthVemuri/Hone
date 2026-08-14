@@ -59,7 +59,7 @@ beforeEach(() => {
   mockSelectedStudioId = null;
 });
 
-describe("one active membership — unchanged behavior (cookie irrelevant)", () => {
+describe("one active membership: unchanged behavior (cookie irrelevant)", () => {
   it("getCurrent returns the practitioner + studio", async () => {
     mockRows = [row("owner", "s1")];
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -80,7 +80,7 @@ describe("one active membership — unchanged behavior (cookie irrelevant)", () 
   });
 });
 
-describe("zero active memberships — no 500, invite gate", () => {
+describe("zero active memberships: no 500, invite gate", () => {
   it("getCurrent throws a CLEAR message (not a raw DB error)", async () => {
     mockRows = [];
     await expect(getCurrentPractitionerWithStudio()).rejects.toThrow(
@@ -95,7 +95,7 @@ describe("zero active memberships — no 500, invite gate", () => {
   });
 });
 
-describe("2+ memberships, NO selection — chooser (never auto-pick)", () => {
+describe("2+ memberships, NO selection: chooser (never auto-pick)", () => {
   it("getCurrent throws a CONTROLLED choose error (not the raw 'multiple rows' DB error)", async () => {
     mockRows = [row("owner", "s1"), row("practitioner", "s2")];
     await expect(getCurrentPractitionerWithStudio()).rejects.toThrow(
@@ -113,7 +113,7 @@ describe("2+ memberships, NO selection — chooser (never auto-pick)", () => {
   });
 });
 
-describe("2+ memberships, VALID selection — resolves the selected studio", () => {
+describe("2+ memberships, VALID selection: resolves the selected studio", () => {
   it("getCurrent returns the SELECTED studio (not the first row)", async () => {
     mockRows = [row("owner", "s1"), row("practitioner", "s2")];
     mockSelectedStudioId = "s2";
@@ -132,7 +132,7 @@ describe("2+ memberships, VALID selection — resolves the selected studio", () 
   });
 });
 
-describe("2+ memberships, INVALID/stale selection — ignored, chooser", () => {
+describe("2+ memberships, INVALID/stale selection: ignored, chooser", () => {
   it("a cookie that matches no active membership is NOT trusted (getCurrent -> choose)", async () => {
     mockRows = [row("owner", "s1"), row("practitioner", "s2")];
     mockSelectedStudioId = "s-other"; // a studio the user is NOT a member of

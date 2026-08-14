@@ -10,14 +10,14 @@ import {
 
 // Migration 0118: once an intake is submitted/reviewed, an authenticated member
 // cannot directly rewrite its answers / submitted_at / status / review
-// attribution — while draft editing, legitimate review, and reissue-based
+// attribution, while draft editing, legitimate review, and reissue-based
 // corrections still work. Proven on the REAL migrated local DB. Uses only
 // non-clinical placeholder responses.
 
 let A: SeededStudio;
 let B: SeededStudio;
 
-// Seed an intake row in a given lifecycle state (INSERT — the BEFORE UPDATE
+// Seed an intake row in a given lifecycle state (INSERT, the BEFORE UPDATE
 // trigger does not fire on insert), returns its id.
 async function seedIntake(
   studio: SeededStudio,
@@ -191,7 +191,7 @@ describe("0118: cross-tenant + delete posture", () => {
     );
     expect(r.rowCount).toBe(0); // RLS: not a member of B's studio
     // (8. Client-level isolation for the CLIENT-facing edit path is enforced by
-    // the tokenized server action, not member RLS — members are studio-scoped.)
+    // the tokenized server action, not member RLS, members are studio-scoped.)
   });
 
   it("12/13. DELETE stays blocked (no policy); historical rows remain readable", async () => {

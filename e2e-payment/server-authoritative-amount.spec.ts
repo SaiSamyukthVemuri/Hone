@@ -329,7 +329,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       // submission replaces the form with the ready panel, so the SECOND
       // Playwright locator action waits on a control that no longer exists and
       // burns the whole test timeout. That is a broken test, not a broken
-      // product — it went flaky in CI (timeout, then pass on retry).
+      // product, it went flaky in CI (timeout, then pass on retry).
       //
       // Instead: dispatch BOTH activations synchronously inside one browser
       // task, against the same still-mounted button, and count the server
@@ -353,7 +353,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         n += 1;
         return n;
       });
-      // Both activations were genuinely dispatched — this is not one ordinary
+      // Both activations were genuinely dispatched, this is not one ordinary
       // click wearing a different name.
       expect(dispatched).toBe(2);
 
@@ -456,7 +456,7 @@ function workflowSuite(
   viewport: { width: number; height: number },
   isMobile: boolean,
 ) {
-  test.describe(`PR #494 workflow — ${label}`, () => {
+  test.describe(`PR #494 workflow: ${label}`, () => {
     test.use({ viewport, isMobile, hasTouch: isMobile });
 
     test("complete the appointment, then prepare payment below Finish", async ({
@@ -479,7 +479,7 @@ function workflowSuite(
         await expect(page.getByRole("button", { name: /no-show/i })).toHaveCount(0);
       });
 
-      // NOTE: this fixture's appointment is ALREADY completed — that is what
+      // NOTE: this fixture's appointment is ALREADY completed, that is what
       // makes it payment-eligible. Driving completion and the aftercare stamp
       // from scratch is proven by the merged PR #494 spec
       // (e2e/finish-appointment-mobile.spec.ts, 24 tests). What is NEW here,

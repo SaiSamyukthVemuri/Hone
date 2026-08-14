@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Google Calendar — Phase B2.3-c2: the worker heartbeat (§16). Fail-open,
+// Google Calendar: Phase B2.3-c2: the worker heartbeat (§16). Fail-open,
 // PHI-free, its own key/type (distinct from the reconciliation heartbeat).
 
 const h = vi.hoisted(() => ({

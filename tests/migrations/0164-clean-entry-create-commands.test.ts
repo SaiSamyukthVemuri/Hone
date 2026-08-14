@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-// Migration 0164 — L18 Phase 1A. A narrow SECURITY DEFINER create command for
+// Migration 0164: L18 Phase 1A. A narrow SECURITY DEFINER create command for
 // the ONE genuinely entry-only writer (addLaserEntryAction). Purely additive:
 // no grant is revoked and no policy is dropped, so direct DML keeps working
 // through this whole phase.
 //
 // electrolysis_entries is NOT touched by this migration. All three of its
-// writers are block-coupled — including addElectrolysisEntryAction, which via
+// writers are block-coupled, including addElectrolysisEntryAction, which via
 // ensureBlockForSession can INSERT a session_blocks row before the entry when
-// the submitted form omits block_id — so they move together in the combined
+// the submitted form omits block_id, so they move together in the combined
 // session_blocks/electrolysis_entries phase.
 //
 // This file carries the REPO migration-max pin (it moved off the 0163 test when
 // 0164 landed). 0164 is NOT applied, so unlike 0159-0163 it is deliberately NOT
-// checksum-frozen — it may still be revised until it is applied.
+// checksum-frozen, it may still be revised until it is applied.
 //
 // Behavioural proof: tests/db/entry-create-commands.db.test.ts.
 
@@ -27,7 +27,7 @@ const CODE = SQL.split("\n")
   .join("\n");
 const FLAT_CODE = CODE.replace(/\s+/g, " ");
 
-describe("0164 — clean laser entry create command (repo migration-max tripwire)", () => {
+describe("0164: clean laser entry create command (repo migration-max tripwire)", () => {
   it("is present, 0163 precedes it, exactly one 0164, and it is the repo max", () => {
     expect(FILE).toMatch(/^0164_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -47,7 +47,7 @@ describe("0164 — clean laser entry create command (repo migration-max tripwire
   });
 });
 
-describe("0164 — transactional with an armed lock_timeout", () => {
+describe("0164: transactional with an armed lock_timeout", () => {
   it("opens its own transaction and commits exactly once", () => {
     expect(CODE.match(/^\s*begin\s*;/gim) ?? []).toHaveLength(1);
     expect(CODE.match(/^\s*commit\s*;/gim) ?? []).toHaveLength(1);
@@ -68,7 +68,7 @@ describe("0164 — transactional with an armed lock_timeout", () => {
   });
 });
 
-describe("0164 — the command meets the command contract", () => {
+describe("0164: the command meets the command contract", () => {
   it("is SECURITY DEFINER with search_path = ''", () => {
     expect(FLAT_CODE).toMatch(/security definer/i);
     expect(FLAT_CODE).toMatch(/set search_path = ''/i);
@@ -127,7 +127,7 @@ describe("0164 — the command meets the command contract", () => {
   });
 });
 
-describe("0164 — least-privilege EXECUTE", () => {
+describe("0164: least-privilege EXECUTE", () => {
   it("revoked from PUBLIC and anon, granted to authenticated only", () => {
     expect(FLAT_CODE).toMatch(
       /revoke execute on function public\.create_laser_entry[^;]*from public/i,
@@ -152,11 +152,11 @@ describe("0164 — least-privilege EXECUTE", () => {
   });
 });
 
-describe("0164 — laser-only, additive, and honest about scope", () => {
+describe("0164: laser-only, additive, and honest about scope", () => {
   it("creates NO electrolysis command", () => {
     expect(
       FLAT_CODE,
-      "0164 is laser-only — electrolysis moves with the block phase",
+      "0164 is laser-only, electrolysis moves with the block phase",
     ).not.toMatch(/create or replace function public\.create_electrolysis_entry/i);
   });
 

@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 
 // PR #254: internal New Studio Wizard, proven at the DB layer on the real
 // migrated DB. The wizard's privilege is NOT available to a normal
-// authenticated user (RLS blocks studio/invitation creation) — only the
+// authenticated user (RLS blocks studio/invitation creation), only the
 // service-role path the operator-gated action uses can do it, and the existing
 // handle_new_user trigger still does the owner account-linking. The app-layer
 // operator gate (isAdmin) is invisible to the DB and is pinned by
@@ -91,7 +91,7 @@ describe("the operator service-role path creates a studio + owner invite, and th
     expect(studio.rows[0].no_show_fee_cents).toBeNull();
     expect(studio.rows[0].timezone).toBe("America/Toronto");
 
-    // No practitioner exists yet — the wizard does NOT create one directly.
+    // No practitioner exists yet: the wizard does NOT create one directly.
     const before = await adminQuery(
       `select count(*)::int as n from public.practitioners where studio_id = $1`,
       [studioId],
@@ -99,7 +99,7 @@ describe("the operator service-role path creates a studio + owner invite, and th
     expect(before.rows[0].n).toBe(0);
 
     // The owner signs in (an auth.users row is inserted). handle_new_user is a
-    // NO-OP now (migration 0141) — it must NOT fabricate a membership or
+    // NO-OP now (migration 0141), it must NOT fabricate a membership or
     // acceptance. Provisioning + consent happen at sign-in via reconciliation /
     // explicit acceptance instead.
     const ownerUserId = randomUUID();

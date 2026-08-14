@@ -3,7 +3,7 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 (Item 5) — availability parity: the internal creation command
+// PR B Part 4 (Item 5), availability parity: the internal creation command
 // ACCEPTS exactly the intervals the slot reader (lib/booking/slots.ts) would
 // offer, and REJECTS exactly those it hides. The reader + the DB validator read
 // the SAME tables with the SAME rule ordering (date override > weekly default;
@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 // offered-slot behaviour is unit-proven in tests/lib/booking/slots-per-practitioner
 // + slots-smart-scheduling; this suite proves the WRITER side across every
 // dimension with representative should-offer / should-hide points (the db lane
-// cannot execute the TS reader — no local REST client). 12h/24h is display-only:
+// cannot execute the TS reader, no local REST client). 12h/24h is display-only:
 // the command/validator are timezone-based and format-independent.
 
 let B: SynthStudio;
@@ -65,7 +65,7 @@ const overrideRow = (target: string | null, date: string, open: string | null, c
     [B.studioId, target, date, isOpen, open, close],
   );
 
-describe("Item 5 — availability parity (writer accepts offered, rejects hidden)", () => {
+describe("Item 5: availability parity (writer accepts offered, rejects hidden)", () => {
   it("studio weekly fallback: in-window offered → created; out-of-window hidden → outside_availability", async () => {
     expect((await book(T("10:00"))).result).toBe("created");
     expect((await book(T("08:00"))).result).toBe("outside_availability");

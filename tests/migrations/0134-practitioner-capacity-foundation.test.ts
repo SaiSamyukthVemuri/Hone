@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 // Source/structural contract for migration 0134 (practitioner-capacity
 // foundation). Complements the behavioural DB/RLS suite
 // (tests/db/practitioner-capacity.db.test.ts) by pinning the access-control and
-// hardening properties that must hold in the SQL itself — the final-gate
+// hardening properties that must hold in the SQL itself, the final-gate
 // review contract before merge.
 
 const MIGRATIONS_DIR = join(process.cwd(), "supabase/migrations");
@@ -35,14 +35,14 @@ const REVOKED_FUNCTIONS = [
   "guard_service_practitioner_active",
 ];
 
-describe("0134 — file present", () => {
+describe("0134: file present", () => {
   it("exists with a purpose-encoding filename", () => {
     expect(FILE).toBe("0134_practitioner_capacity_foundation.sql");
     expect(SQL.length).toBeGreaterThan(1000);
   });
 });
 
-describe("0134 — Gate 1: capacity flag is operator-controlled", () => {
+describe("0134, Gate 1: capacity flag is operator-controlled", () => {
   it("adds the flag as additive, default false", () => {
     expect(CODE).toMatch(
       /add column if not exists practitioner_capacity_enabled boolean not null default false/i,
@@ -70,7 +70,7 @@ describe("0134 — Gate 1: capacity flag is operator-controlled", () => {
   });
 });
 
-describe("0134 — Gate 2: SECURITY DEFINER helpers are locked down", () => {
+describe("0134, Gate 2: SECURITY DEFINER helpers are locked down", () => {
   it("revokes execute from public + anon + authenticated in a single loop", () => {
     // The loop body must issue all three revokes.
     expect(CODE).toMatch(/revoke execute on function %s from public/i);
@@ -100,7 +100,7 @@ describe("0134 — Gate 2: SECURITY DEFINER helpers are locked down", () => {
   });
 });
 
-describe("0134 — Gate 3: service_practitioners authorization", () => {
+describe("0134, Gate 3: service_practitioners authorization", () => {
   it("enables RLS and grants NO browser write policy (service-role-only writes)", () => {
     expect(CODE).toMatch(/alter table public\.service_practitioners enable row level security/i);
     // Read-only for members; the old owner-write ("for all") policy is dropped.
@@ -131,7 +131,7 @@ describe("0134 — Gate 3: service_practitioners authorization", () => {
   });
 });
 
-describe("0134 — collision-model invariants", () => {
+describe("0134: collision-model invariants", () => {
   it("resource_key is NOT NULL and the shadow exclusion keys on it", () => {
     expect(CODE).toMatch(/alter column resource_key set not null/i);
     expect(CODE).toMatch(

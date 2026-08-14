@@ -27,7 +27,7 @@ const saved = {
 beforeEach(() => setEnv(KEY_A, "1"));
 afterEach(() => setEnv(saved.key, saved.ver));
 
-describe("google token-crypto — configuration", () => {
+describe("google token-crypto: configuration", () => {
   it("is configured with a valid 32-byte key + positive version", () => {
     expect(isGoogleTokenCryptoConfigured()).toBe(true);
     expect(currentKeyVersion()).toBe(1);
@@ -53,7 +53,7 @@ describe("google token-crypto — configuration", () => {
   });
 });
 
-describe("google token-crypto — round-trip + versioned format", () => {
+describe("google token-crypto: round-trip + versioned format", () => {
   it("encrypts to a self-describing v1:<version>:iv:tag:ct blob and round-trips", () => {
     const r = encryptGoogleSecret("1//super-secret-refresh-token");
     expect(r.ok).toBe(true);
@@ -77,7 +77,7 @@ describe("google token-crypto — round-trip + versioned format", () => {
   });
 });
 
-describe("google token-crypto — fail-closed", () => {
+describe("google token-crypto: fail-closed", () => {
   it("fails to encrypt with no key/version (never throws)", () => {
     setEnv(undefined, undefined);
     const r = encryptGoogleSecret("x");

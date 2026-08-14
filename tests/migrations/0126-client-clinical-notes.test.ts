@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-// Static (SQL-text) proof of migration 0126 — Willow PR A: dedicated dated
+// Static (SQL-text) proof of migration 0126, Willow PR A: dedicated dated
 // CONSULTATION notes + SKIN/HAIR ANALYSIS clinical records (client_clinical_notes).
 // The behavioural proof (RLS, append-only, studio-derive, revision/concurrency,
 // cross-studio denial) is in tests/db/client-clinical-notes.db.test.ts; this pins
@@ -13,7 +13,7 @@ const FILES = readdirSync(MIG_DIR);
 const FILE = FILES.find((f) => f.startsWith("0126_"));
 const SQL = FILE ? readFileSync(path.join(MIG_DIR, FILE), "utf8") : "";
 
-describe("0126 — file + repo-max tripwire", () => {
+describe("0126: file + repo-max tripwire", () => {
   it("is the single 0126 migration with a purpose-encoding filename", () => {
     expect(FILE).toBeTruthy();
     expect(FILE).toMatch(/^0126_client_clinical_notes\.sql$/);
@@ -32,7 +32,7 @@ describe("0126 — file + repo-max tripwire", () => {
   });
 });
 
-describe("0126 — table shape + constraints", () => {
+describe("0126: table shape + constraints", () => {
   it("creates public.client_clinical_notes with the exact 10 columns", () => {
     expect(SQL).toMatch(/create table if not exists public\.client_clinical_notes/);
     for (const col of [
@@ -73,7 +73,7 @@ describe("0126 — table shape + constraints", () => {
   });
 });
 
-describe("0126 — same-studio composite FKs + supersedes contract", () => {
+describe("0126: same-studio composite FKs + supersedes contract", () => {
   it("client + practitioner FKs are same-studio composite and CASCADE", () => {
     expect(SQL).toMatch(
       /foreign key \(client_id, studio_id\)\s*\n?\s*references public\.clients \(id, studio_id\) on delete cascade/,
@@ -102,7 +102,7 @@ describe("0126 — same-studio composite FKs + supersedes contract", () => {
   });
 });
 
-describe("0126 — triggers: studio-derive + append-only", () => {
+describe("0126, triggers: studio-derive + append-only", () => {
   it("BEFORE INSERT derives studio_id from the parent client and validates a revision's parentage", () => {
     expect(SQL).toMatch(/function public\.client_clinical_notes_before_insert\(\)/);
     expect(SQL).toMatch(/select studio_id into v_studio from public\.clients where id = new\.client_id/);
@@ -122,7 +122,7 @@ describe("0126 — triggers: studio-derive + append-only", () => {
   });
 });
 
-describe("0126 — RLS + grants (practitioner-only, no portal/public)", () => {
+describe("0126: RLS + grants (practitioner-only, no portal/public)", () => {
   it("enables RLS and defines member-SELECT + author-INSERT policies", () => {
     expect(SQL).toMatch(/alter table public\.client_clinical_notes enable row level security/);
     expect(SQL).toMatch(/for select to authenticated\s*\n?\s*using \(public\.is_studio_member\(studio_id\)\)/);
@@ -144,7 +144,7 @@ describe("0126 — RLS + grants (practitioner-only, no portal/public)", () => {
   });
 });
 
-describe("0126 — non-destructive: additive only, no backfill", () => {
+describe("0126, non-destructive: additive only, no backfill", () => {
   it("does not migrate/copy/reinterpret existing note sources (no backfill)", () => {
     expect(SQL).not.toMatch(/insert into public\.client_clinical_notes[\s\S]{0,200}select/i);
     for (const src of [

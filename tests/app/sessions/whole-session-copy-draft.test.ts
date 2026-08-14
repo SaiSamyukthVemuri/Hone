@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Whole-session copy draft model (0157) — source guards for the amended safety
+// Whole-session copy draft model (0157), source guards for the amended safety
 // boundary: the preview is ephemeral (zero clinical writes); the SOURCE is
 // server-derived; the commit validates canonically, writes ONLY via the
 // service-role copy_session_setup RPC, passes a SERVER-derived practitioner id,
@@ -17,11 +17,11 @@ const ACTIONS = read(`${BASE}/whole-session-copy-actions.ts`);
 const PAGE = read(`${BASE}/page.tsx`);
 const CARD = read("components/copy-draft-card.tsx");
 
-describe("preview is EPHEMERAL — building/refreshing/removing/cancelling writes nothing", () => {
+describe("preview is EPHEMERAL: building/refreshing/removing/cancelling writes nothing", () => {
   it("build uses the READ-ONLY source action + the pure builder; source is not browser-chosen", () => {
     expect(PANEL).toMatch(/getWholeSessionCopySourceAction\(\{ clientId, sessionId \}\)/);
     expect(PANEL).toMatch(/buildCopyDrafts\(res\.source\)/);
-    // The panel takes ONLY clientId + sessionId — no browser-supplied source id.
+    // The panel takes ONLY clientId + sessionId, no browser-supplied source id.
     expect(PANEL).not.toMatch(/previousSessionId/);
     expect(PANEL).toMatch(/data-testid="copy-previous-preview"/);
     expect(PANEL).toMatch(/data-testid="copy-previous-refresh"/);
@@ -42,7 +42,7 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(PANEL).toMatch(/setIdempotencyKey\(crypto\.randomUUID\(\)\)/);
   });
 
-  it("there is exactly ONE commit call site — submitCommit() — sending the narrow input + server fingerprint", () => {
+  it("there is exactly ONE commit call site, submitCommit(), sending the narrow input + server fingerprint", () => {
     // Repeat-client fast charting added a SECOND route to the copy, not a second
     // copy implementation: both routes funnel through the single submitCommit()
     // helper, so this count staying at 1 is what proves they cannot drift.
@@ -54,11 +54,11 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(PANEL).toMatch(/sourceSessionId: env\.sourceSessionId,/);
     expect(PANEL).toMatch(/sourceFingerprint: env\.sourceFingerprint,/);
     // Both routes submit through it, each passing the SERVER-derived source
-    // identity — neither can commit without it.
+    // identity, neither can commit without it.
     expect((PANEL.match(/await submitCommit\(/g) ?? []).length).toBe(2);
   });
 
-  it("there is exactly ONE source-read call site — loadSource() — shared by both routes", () => {
+  it("there is exactly ONE source-read call site, loadSource(), shared by both routes", () => {
     expect((PANEL.match(/getWholeSessionCopySourceAction\(/g) ?? []).length).toBe(1);
     expect(PANEL).toMatch(/async function loadSource\(\)/);
     expect((PANEL.match(/await loadSource\(\)/g) ?? []).length).toBe(2);
@@ -70,7 +70,7 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(fn).not.toMatch(/commitWholeSessionCopyAction|submitCommit/);
   });
 
-  it("renders EDITABLE cards (CopyDraftCard) with an in-state update handler — no writes", () => {
+  it("renders EDITABLE cards (CopyDraftCard) with an in-state update handler, no writes", () => {
     expect(PANEL).toMatch(/<CopyDraftCard/);
     expect(PANEL).toMatch(/function updateDraft\(next: CopyAreaDraft\)[\s\S]{0,120}setDrafts\(\(d\) => d\.map/);
     // updateDraft is pure state; it never calls a server action.
@@ -89,7 +89,7 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(CARD).not.toMatch(/\.minutes\b/);
     expect(CARD).not.toMatch(/data-testid=[^>]*minute/i);
     expect(CARD).not.toMatch(/minutes_performed/);
-    // All edits go through onChange (component state) — the card imports no server action.
+    // All edits go through onChange (component state), the card imports no server action.
     expect(CARD).not.toMatch(/whole-session-copy-actions|use server|\.rpc\(/);
   });
 
@@ -103,7 +103,7 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
   });
 });
 
-describe("server actions — read-only descriptor source; service-role RPC is the only writer; safe errors", () => {
+describe("server actions: read-only descriptor source; service-role RPC is the only writer; safe errors", () => {
   it("getWholeSessionCopySourceAction performs NO writes and derives the source server-side", () => {
     const fn = ACTIONS.slice(
       ACTIONS.indexOf("export async function getWholeSessionCopySourceAction"),
@@ -141,7 +141,7 @@ describe("server actions — read-only descriptor source; service-role RPC is th
     expect(fn).toMatch(/assertSessionForClient\(studio\.id, input\.clientId, input\.sessionId\)/);
   });
 
-  it("NEVER returns raw DB/driver text — errors are mapped to fixed safe messages (P2)", () => {
+  it("NEVER returns raw DB/driver text, errors are mapped to fixed safe messages (P2)", () => {
     // No raw error message interpolation anywhere in the actions.
     expect(ACTIONS).not.toMatch(/error\.message/);
     expect(ACTIONS).not.toMatch(/Copy failed: \$\{/);
@@ -166,7 +166,7 @@ describe("wiring", () => {
     );
     expect(PAGE).toMatch(/import \{ CopyPreviousAreasPanel \}/);
     expect(PAGE).not.toMatch(/<CopyPreviousAreasButton/);
-    // The date comes from the SAME descriptor that gates the panel — not a
+    // The date comes from the SAME descriptor that gates the panel, not a
     // second "latest previous session" query that could name a different visit.
     expect(PAGE).toMatch(
       /copySourceStartedAt =\s*\n?\s*\(copyDescriptor as \{ source_started_at\?: string \} \| null\)\?\.source_started_at/,
@@ -175,7 +175,7 @@ describe("wiring", () => {
     expect(PAGE).not.toMatch(/previousSessionId=/);
   });
 
-  it("the page gates the panel on the CANONICAL descriptor — not a separate previous-session query", () => {
+  it("the page gates the panel on the CANONICAL descriptor, not a separate previous-session query", () => {
     expect(PAGE).toMatch(/whole_session_copy_source_descriptor/);
     expect(PAGE).toMatch(/canCopyFromPrevious/);
     // The old independent "latest previous session" gate is gone.

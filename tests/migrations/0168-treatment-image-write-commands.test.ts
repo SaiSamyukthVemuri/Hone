@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 // ===========================================================================
-// L18 Phase 4 — migration 0168 source contract.
+// L18 Phase 4, migration 0168 source contract.
 // ===========================================================================
 
 const SQL = readFileSync(
@@ -33,7 +33,7 @@ const ALL = [...COMMANDS, ...HELPERS];
 // The "nothing above me" tripwire moved to 0169's own test when that migration
 // landed: only the CURRENT repository maximum may assert it.
 
-describe("0168 — three fixed-purpose commands", () => {
+describe("0168: three fixed-purpose commands", () => {
   it("declares exactly the three commands and one helper", () => {
     const declared = [...SQL.matchAll(/create or replace function public\.(\w+)\(/g)].map(
       (m) => m[1],
@@ -71,7 +71,7 @@ describe("0168 — three fixed-purpose commands", () => {
     expect(FLAT).not.toMatch(/quote_ident/i);
     expect(FLAT).not.toMatch(/jsonb_populate_record/i);
     expect(FLAT).not.toMatch(/p_fields|p_patch|p_column/);
-    // No jsonb bag at all on this surface — every parameter is typed.
+    // No jsonb bag at all on this surface, every parameter is typed.
     for (const c of COMMANDS) {
       const seg = SQL.slice(SQL.indexOf(`create or replace function public.${c.name}(`));
       expect(seg.slice(0, seg.indexOf(")"))).not.toMatch(/jsonb/);
@@ -114,7 +114,7 @@ describe("0168 — three fixed-purpose commands", () => {
   });
 });
 
-describe("0168 — privileges", () => {
+describe("0168: privileges", () => {
   const sig = (f: { name: string; args: string }) =>
     `public.${f.name}(${f.args})`;
 
@@ -143,7 +143,7 @@ describe("0168 — privileges", () => {
   });
 });
 
-describe("0168 — additive and honest about scope", () => {
+describe("0168: additive and honest about scope", () => {
   it("revokes no TABLE privilege and drops no policy", () => {
     expect(FLAT).not.toMatch(/revoke[^;]*on public\.treatment_images/i);
     expect(FLAT).not.toMatch(/revoke[^;]*on table/i);

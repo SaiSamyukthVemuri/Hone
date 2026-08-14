@@ -30,7 +30,7 @@ afterAll(async () => {
 });
 
 describe("electrolysis_entries.observation_chips (migration 0108)", () => {
-  it("defaults to [] when not provided — legacy/additive rows stay valid", async () => {
+  it("defaults to [] when not provided, legacy/additive rows stay valid", async () => {
     const id = randomUUID();
     await adminQuery(
       `insert into public.electrolysis_entries (id, session_id, block_id, area)

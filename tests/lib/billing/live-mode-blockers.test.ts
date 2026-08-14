@@ -237,7 +237,7 @@ describe("payment UI test-mode copy: mode-gated retained, misleading removed", (
   // PR #168 held "Test mode only" copy in place until the removal PR. The copy
   // fast-follow (post-#323) is that PR. Two buckets now:
   //   * MODE-GATED locations still carry "test mode" copy, but only shown while
-  //     live is off (gated on livemode / status.livemode) — the preserved
+  //     live is off (gated on livemode / status.livemode), the preserved
   //     test-mode warning. #323 made the portal ones mode-aware.
   //   * NEUTRALIZED locations (the internal practitioner/fee cards) must NOT
   //     carry the misleading "Test mode only. No live card will be charged."
@@ -257,7 +257,7 @@ describe("payment UI test-mode copy: mode-gated retained, misleading removed", (
   }
 
   it("ManualFeeChargeCard.tsx no longer carries the misleading test-mode claim", () => {
-    // Strip // comments — target user-facing copy, not stale historical comments.
+    // Strip // comments: target user-facing copy, not stale historical comments.
     const src = readRepoFile("app/(app)/calendar/[id]/ManualFeeChargeCard.tsx")
       .split("\n")
       .filter((l) => !/^\s*\/\//.test(l))

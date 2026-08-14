@@ -7,7 +7,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Conditional numbing notes (0156) — real browser, real stack, 390px iPhone.
+// Conditional numbing notes (0156): real browser, real stack, 390px iPhone.
 // Proves: the notes field is hidden by default, revealed only for "Numbing
 // used", the unsaved draft survives status toggles, the note round-trips exactly
 // when saved as used, switching away clears it to NULL, blank saves NULL, and

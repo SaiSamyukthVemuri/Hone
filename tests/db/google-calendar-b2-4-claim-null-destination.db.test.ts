@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// Google Calendar — Phase B2.4 DIRECT claim-RPC coverage (not composition/"inherits"
+// Google Calendar: Phase B2.4 DIRECT claim-RPC coverage (not composition/"inherits"
 // reasoning). Proves the REAL production claim RPC (public.claim_calendar_sync_op)
 // fails closed for a connection whose destination_mode is NULL even when every other
 // eligibility fact is satisfied (connected, owner, write calendar, usable secret,
@@ -46,7 +46,7 @@ beforeEach(async () => {
     `update public.studios set google_calendar_outbound_sync_enabled = true where id=$1`,
     [studio.studioId],
   );
-  // Global worker ON — the HEALTH gate is what must reject a NULL destination.
+  // Global worker ON: the HEALTH gate is what must reject a NULL destination.
   await adminQuery(
     `insert into public.calendar_sync_control (id, worker_enabled) values (true,true)
        on conflict (id) do update set worker_enabled = true`,
@@ -79,7 +79,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("B2.4 direct claim RPC — NULL destination fails closed", () => {
+describe("B2.4 direct claim RPC: NULL destination fails closed", () => {
   it("NEGATIVE: NULL destination_mode -> the real claim_calendar_sync_op returns zero rows and mutates nothing", async () => {
     const r = await claim(25);
     expect(r.rowCount).toBe(0); // zero rows claimed

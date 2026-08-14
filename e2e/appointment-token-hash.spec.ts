@@ -10,7 +10,7 @@ import { bookAppointment } from "./helpers/flows";
 // PR #260: appointment cancel/reschedule/manage tokens are hashed at rest.
 // A real public booking stores ONLY the hash; the surfaces that rebuild a
 // link after creation (portal, reminders) mint the stateless HMAC token,
-// and — new in PR #260 — /reschedule accepts that HMAC fallback alongside
+// and, new in PR #260, /reschedule accepts that HMAC fallback alongside
 // /cancel and /manage. This proves, on the real Next.js stack, that such a
 // token RESOLVES to the booked appointment on all three surfaces (not the
 // generic "can't be used" collapse a broken lookup would show).

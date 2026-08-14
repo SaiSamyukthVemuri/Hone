@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Review 3779063526 — the obsolete plan-follow-up read path is GONE from the
+// Review 3779063526: the obsolete plan-follow-up read path is GONE from the
 // To-do loader.
 //
 // The `follow_up` To-do kind was retired (a plan for the next visit is clinical
@@ -54,7 +54,7 @@ import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assi
 
 beforeEach(() => {
   queries.length = 0;
-  // One recent charted session that HAS a plan for the next visit — the exact
+  // One recent charted session that HAS a plan for the next visit, the exact
   // condition that used to trigger the follow-up client-id derivation and the
   // extra future-appointments query.
   rows.sessions = [

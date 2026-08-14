@@ -4,7 +4,7 @@ import path from "node:path";
 
 // PR #311. Postcare send-state correctness. The P1: sendPostcareEmailAction
 // used postcare_email_sent_at as BOTH the first-send claim AND the "sent"
-// marker, stamping it BEFORE the Resend call — so a provider failure left a
+// marker, stamping it BEFORE the Resend call, so a provider failure left a
 // false "Postcare sent". This pins the corrected flow: claim via
 // postcare_email_claimed_at, stamp sent_at ONLY after provider success, record
 // failed_at + a SAFE last_error on failure, and a 4/5-state UI that never
@@ -36,7 +36,7 @@ const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 // Action: claim / success / failure
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// B8 / 0177 — the action's postcare contract, restated for the ACTUAL
+// B8 / 0177, the action's postcare contract, restated for the ACTUAL
 // architecture.
 //
 // These previously asserted three direct `.update()` payloads on `appointments`
@@ -45,12 +45,12 @@ const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 // Asserting them here would have pinned an architecture the code no longer has,
 // so the claims are restated against the boundary that actually exists.
 //
-// SCOPE: this is a SOURCE-CONTRACT suite — it reads the action's text. The
+// SCOPE: this is a SOURCE-CONTRACT suite, it reads the action's text. The
 // behavioural coverage lives in the DB matrix (42/42) and the auto RPC suite.
 // ---------------------------------------------------------------------------
 
 describe("sendPostcareEmailAction: claims through the command, never directly", () => {
-  it("writes NO appointment column itself — the six live only in SQL now", () => {
+  it("writes NO appointment column itself, the six live only in SQL now", () => {
     for (const col of [
       "postcare_email_claimed_at",
       "postcare_email_last_attempt_at",

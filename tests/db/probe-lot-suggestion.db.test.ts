@@ -156,7 +156,7 @@ type SuggRow = {
   created_at: string;
 };
 // 0155: the suggestion carries the DISPLAY winner's linked id (may be null) AND,
-// independently, the newest CONFIRMED-LINKED id — the only value auto-fill uses.
+// independently, the newest CONFIRMED-LINKED id, the only value auto-fill uses.
 // This reduction mirrors lib/record-keeping/queries.ts getProbeLotSuggestions.
 type Sugg = {
   lot: string;
@@ -330,7 +330,7 @@ describe("getProbeLotSuggestions semantics (byKey + byLabel, confirmed-aware)", 
 // -----------------------------------------------------------------------------
 // last-confirmed LINKED selection (0155, issue #2). lastConfirmedInventoryItemId
 // tracks the newest row that is BOTH confirmed AND inventory-linked, INDEPENDENT
-// of the display winner — so a newer confirmed MANUAL row can't mask an older
+// of the display winner, so a newer confirmed MANUAL row can't mask an older
 // confirmed LINKED one, and unconfirmed / deleted / cross-studio rows never
 // contribute. Proven on the real migrated DB with the production reduction.
 // -----------------------------------------------------------------------------
@@ -403,7 +403,7 @@ describe("last-confirmed LINKED selection (0155 issue #2)", () => {
   // Chloe probe-lot auto-fill: the charting history fallback must offer the lot
   // she LAST CHARTED, not the last one she happened to confirm. Because
   // auto-fill never confirms, one old confirmed row would otherwise pin the
-  // field forever and she would keep retyping — the original complaint.
+  // field forever and she would keep retyping, the original complaint.
   it("lastCharted is recency-ONLY: a newer UNCONFIRMED lot beats an older CONFIRMED one", async () => {
     const { rows } = await adminQuery(SUGG_QUERY, [s.studioId]);
     const { byKey } = reduceSuggestions(rows as SuggRow[]);

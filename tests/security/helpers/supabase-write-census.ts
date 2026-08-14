@@ -14,7 +14,7 @@ import ts from "typescript";
 // green. A census is only worth its name if it walks the tree.
 //
 // It is also the same failure mode this repository has already been bitten by
-// twice — a static guard that matched only the shapes it happened to think of,
+// twice, a static guard that matched only the shapes it happened to think of,
 // reported zero, and was believed. So this analyzer:
 //
 //   * walks the real runtime tree (app, lib, components, scripts, middleware);
@@ -22,9 +22,9 @@ import ts from "typescript";
 //   * resolves the table expression AND the DML payload through same-scope
 //     bindings, so `const patch = { skin_notes }` is caught as readily as an
 //     inline object literal;
-//   * FAILS CLOSED. Anything it cannot resolve — a computed table, a spread it
+//   * FAILS CLOSED. Anything it cannot resolve, a computed table, a spread it
 //     cannot follow, a chained factory receiver, a conditional or template
-//     target, an opaque helper-returned patch — is reported as UNRESOLVED
+//     target, an opaque helper-returned patch, is reported as UNRESOLVED
 //     rather than skipped. Silence is never treated as absence.
 //
 // Reads are untouched: `.select(...)`, display, exports and type declarations
@@ -62,7 +62,7 @@ export function runtimeSourceFiles(): string[] {
         continue;
       }
       if (!EXTENSIONS.some((e) => name.endsWith(e))) continue;
-      // Never census the tests themselves — a fixture string in a guard is not
+      // Never census the tests themselves, a fixture string in a guard is not
       // a runtime writer.
       const rel = relative(REPO_ROOT, full).split("\\").join("/");
       if (rel.startsWith("tests/") || rel.includes(".test.") || rel.includes(".spec.")) {
@@ -211,7 +211,7 @@ function resolvePayloadColumns(
     return resolvePayloadColumns(sf, init, depth + 1);
   }
 
-  // `xs.map(cb)` — the inserted rows are whatever the callback returns.
+  // `xs.map(cb)`: the inserted rows are whatever the callback returns.
   if (
     ts.isCallExpression(arg) &&
     ts.isPropertyAccessExpression(arg.expression) &&
@@ -245,7 +245,7 @@ function resolvePayloadColumns(
   }
 
   // A call to a SAME-REPO helper that builds the patch. One import hop, and
-  // only when the helper returns a plain object literal — anything else stays
+  // only when the helper returns a plain object literal, anything else stays
   // unresolved. This is what makes "helper-returned patch object" provable
   // instead of merely refused.
   if (ts.isCallExpression(arg) && ts.isIdentifier(arg.expression)) {
@@ -287,14 +287,14 @@ function resolvePayloadColumns(
       if (ts.isIdentifier(nameNode) || ts.isStringLiteral(nameNode)) {
         cols.push(nameNode.text);
       } else {
-        // Computed key — cannot know what column this writes.
+        // Computed key: cannot know what column this writes.
         ok = false;
       }
     }
     return { columns: cols, resolved: ok };
   }
 
-  // Call result, conditional, await, template — not followable.
+  // Call result, conditional, await, template, not followable.
   return { columns: [], resolved: false };
 }
 
@@ -450,8 +450,8 @@ export function writesToColumn(
   // Could this site be targeting the table in question? A RESOLVED name answers
   // it exactly; an UNRESOLVED table could be anything, including this one.
   //
-  // This used to ask whether the raw expression text "looked like" a table name
-  // — and a one-letter parameter (`.from(t)`) passes that shape test, so a
+  // This used to ask whether the raw expression text "looked like" a table name,
+  // and a one-letter parameter (`.from(t)`) passes that shape test, so a
   // variable table target writing skin_notes slipped straight through. The
   // negative control caught it. Resolution is now tracked explicitly.
   const mayTargetTable = (s: WriteSite) => !s.tableResolved || s.table === table;
@@ -465,7 +465,7 @@ export function writesToColumn(
   // absent from it.
   //
   // A site whose PAYLOAD is fully resolved and does NOT name the column is safe
-  // even when its table is unknown — a statement cannot write a column it never
+  // even when its table is unknown, a statement cannot write a column it never
   // mentions. That is what lets the reviewed `softDeleteEntry` writer
   // (`.from(table).update({ deleted_at, deleted_by, delete_reason })`, table a
   // closed two-member union) pass without weakening anything: its columns are
@@ -485,7 +485,7 @@ export function describeSites(sites: WriteSite[]): string {
   return sites
     .map(
       (s) =>
-        `  ${s.file}:${s.line} in ${s.fn}() — .from(${s.table}).${s.op}(` +
+        `  ${s.file}:${s.line} in ${s.fn}(), .from(${s.table}).${s.op}(` +
         `${s.columns.length ? s.columns.join(", ") : "…"})` +
         (s.unresolved ? `  [UNRESOLVED: ${s.unresolved}]` : ""),
     )

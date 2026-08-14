@@ -38,7 +38,7 @@ describe("disinfectants print: replace-by date + read-time status (PR #295)", ()
     // Same deterministic studio-local "today" the Records screen uses.
     expect(PRINT).toMatch(/todayInTz\(timezone\)/);
     expect(PRINT).toMatch(/timezone=\{studio\.timezone\}/);
-    // The disinfectant section still reads via the existing query only — no
+    // The disinfectant section still reads via the existing query only, no
     // insert/update/upsert/delete was introduced anywhere in the print page.
     expect(PRINT).toMatch(/getDisinfectantRecords/);
     expect(PRINT).not.toMatch(/\.insert\(|\.update\(|\.upsert\(|\.delete\(/);
@@ -46,7 +46,7 @@ describe("disinfectants print: replace-by date + read-time status (PR #295)", ()
 
   it("introduces no schema / RLS change (display-only over existing columns)", () => {
     // discard_due_date already exists (migration 0096). The print page is a
-    // render component — it contains no schema/RLS DDL of any kind.
+    // render component, it contains no schema/RLS DDL of any kind.
     expect(PRINT).not.toMatch(/alter table|create policy|drop policy|create table /i);
   });
 });

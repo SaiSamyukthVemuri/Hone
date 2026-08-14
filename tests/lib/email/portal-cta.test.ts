@@ -57,7 +57,7 @@ function assertPortalCta(email: { html: string; text: string }) {
   expect(email.html).toContain("https://hone.care/reschedule/APPTTOK");
 }
 
-describe("confirmation email — portal CTA (token-free), existing links kept", () => {
+describe("confirmation email: portal CTA (token-free), existing links kept", () => {
   it("includes the portal CTA when a portalLoginUrl is provided", () => {
     assertPortalCta(buildClientConfirmationEmail({ ...baseConf, portalLoginUrl: PORTAL }));
   });
@@ -70,7 +70,7 @@ describe("confirmation email — portal CTA (token-free), existing links kept", 
   });
 });
 
-describe("reminder emails (24h + 2h) — portal CTA (token-free)", () => {
+describe("reminder emails (24h + 2h), portal CTA (token-free)", () => {
   it("24h reminder includes the portal CTA", () => {
     assertPortalCta(build24hReminderEmail({ ...baseRem, portalLoginUrl: PORTAL }));
   });

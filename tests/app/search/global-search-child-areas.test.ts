@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Global Search — behavioural proof that a treatment is findable by ANY of its
+// Global Search: behavioural proof that a treatment is findable by ANY of its
 // structured treatment areas, not only by the legacy `primary_area`.
 //
 // These are NOT source greps. The real server action runs against an in-memory
@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // (.eq / .is / .or / .ilike / .in / .order / .limit, terminated by .then), over
 // real rows. So a test that says "Studio B is absent" is asserting that the
 // query genuinely filtered it, and a test that says "one result" is asserting
-// the merge genuinely deduplicated — not that some string appears in a file.
+// the merge genuinely deduplicated, not that some string appears in a file.
 //
 // The defect being pinned: a block charted as "Left Cheek · Right Sideburn"
 // stores primary_area = "Cheek". Searching "Sideburn" matched nothing, even
@@ -67,15 +67,15 @@ function matchesIlike(value: unknown, pattern: string): boolean {
   return typeof value === "string" && likeToRegExp(pattern).test(value);
 }
 
-// PostgREST filters an EMBEDDED resource with a dotted key — `session.deleted_at`
-// — where `session` is the embed ALIAS. Resolving that path is not optional
+// PostgREST filters an EMBEDDED resource with a dotted key, `session.deleted_at`,
+// where `session` is the embed ALIAS. Resolving that path is not optional
 // nicety: a fake that looked up the literal key `"session.deleted_at"` would find
 // `undefined`, treat it as NULL, and pass EVERY row. The inactive-session tests
 // would then be green against code that filters nothing at all.
 //
 // `{ found: false }` is distinct from `{ value: undefined }` so the caller can
 // apply `!inner` semantics: a row whose embed is missing is DROPPED, exactly as
-// an inner join drops it — never silently kept.
+// an inner join drops it, never silently kept.
 function resolvePath(row: Row, path: string): { found: boolean; value: unknown } {
   const segments = path.split(".");
   let current: unknown = row;
@@ -140,7 +140,7 @@ function builder(table: string, select: string) {
     },
     or(expr: string) {
       record.or.push(expr);
-      // "col.ilike.%x%,other.ilike.%x%" — the only .or shape the action builds.
+      // "col.ilike.%x%,other.ilike.%x%": the only .or shape the action builds.
       const clauses = expr.split(",").map((c) => {
         const [col, op, ...rest] = c.split(".");
         if (op !== "ilike") {
@@ -397,7 +397,7 @@ describe("tenant isolation and parent integrity", () => {
       id: "block-foreign",
       studio_id: STUDIO_B,
       primary_area: "Sideburn",
-      // A COMPLETE, ACTIVE session — otherwise the parent-liveness filter would
+      // A COMPLETE, ACTIVE session: otherwise the parent-liveness filter would
       // drop this row and the tenant-isolation assertion would pass for the
       // wrong reason, hiding a studio-scoping regression.
       session: {
@@ -424,7 +424,7 @@ describe("tenant isolation and parent integrity", () => {
   });
 
   it("a soft-deleted parent is excluded even when its child area matches", async () => {
-    // session_block_areas has no soft-delete column of its own — the child row
+    // session_block_areas has no soft-delete column of its own, the child row
     // survives, so the parent filter is the ONLY thing standing between a
     // deleted treatment and a search result.
     tables.session_blocks!.push({
@@ -481,7 +481,7 @@ function activeSession(over: Record<string, unknown> = {}) {
 
 // A block that matches "Sideburn" DIRECTLY (legacy primary_area), with a parent
 // session shaped by the caller. `created_at` is NEWER than the baseline block so
-// an unfiltered implementation would rank it FIRST — making its absence
+// an unfiltered implementation would rank it FIRST, making its absence
 // meaningful rather than incidental.
 function blockWithSession(
   id: string,
@@ -567,7 +567,7 @@ describe("only ACTIVE parent sessions are searchable", () => {
     expect(mem.map((m) => m.id)).not.toContain("memory:block:blk-void-child");
   });
 
-  it("a 'finalized' session is still LIVE — only 'void' is withdrawn", async () => {
+  it("a 'finalized' session is still LIVE, only 'void' is withdrawn", async () => {
     // record_status is draft | finalized | void. Excluding anything other than
     // void would hide ordinary treatment history.
     tables.session_blocks!.push(
@@ -727,7 +727,7 @@ describe("caps stay enforced", () => {
 });
 
 describe("query shape", () => {
-  it("issues exactly ONE child-area query and ONE parent fetch — no N+1", async () => {
+  it("issues exactly ONE child-area query and ONE parent fetch, no N+1", async () => {
     for (let i = 0; i < 6; i++) {
       tables.session_blocks!.push({
         ...MULTI_AREA_BLOCK,
@@ -764,7 +764,7 @@ describe("query shape", () => {
     expect(blockQueries[0].select).toBe(blockQueries[1].select);
   });
 
-  it("uses the user-scoped client only — no admin client anywhere", async () => {
+  it("uses the user-scoped client only, no admin client anywhere", async () => {
     await search("Sideburn");
     expect(createClientSpy).toHaveBeenCalled();
     // createAdminClient is mocked to throw; reaching it would have failed above.
@@ -778,7 +778,7 @@ describe("sanitized result shape", () => {
     tables.session_blocks = [
       {
         ...MULTI_AREA_BLOCK,
-        caution_note: "PATIENT REPORTED A BURN — do not repeat",
+        caution_note: "PATIENT REPORTED A BURN, do not repeat",
         reaction_notes: "significant erythema noted",
       },
     ];

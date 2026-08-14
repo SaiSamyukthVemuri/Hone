@@ -66,7 +66,7 @@ describe("mobile timeline: labels, now-line, timezone + 12h/24h", () => {
   it("shows the now-line only for today (existing pattern)", () => {
     expect(TIMELINE).toMatch(/isToday && <NowLine tz=\{tz\}/);
   });
-  it("positions in 24h localTimeString(tz) and DISPLAYS via studio-tz formatTimeForStudio — never device-local", () => {
+  it("positions in 24h localTimeString(tz) and DISPLAYS via studio-tz formatTimeForStudio, never device-local", () => {
     expect(TIMELINE).toMatch(/localTimeString\(start, tz\)/);
     expect(TIMELINE).toMatch(/formatTimeForStudio\(start, tz, timeFormat\)/);
     expect(TIMELINE).not.toMatch(/toLocaleTimeString|toLocaleString/);
@@ -137,7 +137,7 @@ describe("mobile + chooser (Book / Block) and block-time reuse", () => {
     expect(MOBILE).toMatch(/onBlock=\{/);
     expect(MOBILE).toMatch(/<QuickBlockDrawer/);
     expect(MOBILE).toMatch(/import \{ QuickBlockDrawer/);
-    // Block create reuses the desktop drawer/action — no server action in this file.
+    // Block create reuses the desktop drawer/action, no server action in this file.
     expect(MOBILE).not.toMatch(/"use server"|createCalendarTimedBlockAction|updateTimedBlockAction/);
   });
   it("block-time create prefills the selected day + a start/end range", () => {

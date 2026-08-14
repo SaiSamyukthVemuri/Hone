@@ -4,7 +4,7 @@ import {
   getStudioWideDaySafe,
 } from "@/lib/booking/studio-wide-availability";
 
-// PR B Part 3A — the migration-order-safe studio-wide loader: query
+// PR B Part 3A: the migration-order-safe studio-wide loader: query
 // practitioner_id IS NULL; fall back to the legacy unscoped query ONLY on the
 // undefined-column error; FAIL CLOSED on any other error.
 
@@ -46,7 +46,7 @@ describe("getStudioWideDefaultsSafe", () => {
     expect(q.calls()).toBe(2); // scoped + legacy
   });
 
-  it("FAILS CLOSED on a non-undefined-column error (e.g. auth) — no fallback, no data leak", async () => {
+  it("FAILS CLOSED on a non-undefined-column error (e.g. auth), no fallback, no data leak", async () => {
     const q = mockQueue([{ data: null, error: { code: "42501" } }]);
     await expect(getStudioWideDefaultsSafe(q.mock, "s1")).rejects.toThrow(
       /availability_read_failed:defaults:42501/,

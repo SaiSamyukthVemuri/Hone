@@ -8,7 +8,7 @@ import path from "node:path";
 // cryptographically finalized clinical records. Practitioner-signed snapshots,
 // immutable finalized records, "snapshot v2", cryptographic clinical-record hashes
 // as a product feature, and any correction/amendment workflow built around signed
-// snapshots are PERMANENTLY REJECTED — not paused, not deferred, not awaiting a UI.
+// snapshots are PERMANENTLY REJECTED, not paused, not deferred, not awaiting a UI.
 // Treatment sessions stay ORDINARY EDITABLE operational records; practitioners fix
 // ordinary charting mistakes by editing them.
 //
@@ -16,7 +16,7 @@ import path from "node:path";
 // tests/db/clinical-finalization-retired.db.test.ts proves that against a real
 // database. Neither stops the capability from being RE-PLANNED. Before this PR the
 // documentation set carried ~27 forward-looking statements that read as standing
-// instructions to finish the rejected thing — "PARKED", "DORMANT", "Next gate", "a
+// instructions to finish the rejected thing, "PARKED", "DORMANT", "Next gate", "a
 // later phase", "enablement needs separate authorization", roadmap SEC-09's "close
 // any remaining gaps in immutable snapshots, amendment attribution…", and a
 // machine-readable capability manifest that parked the entry mid-ladder with no
@@ -27,7 +27,7 @@ import path from "node:path";
 // A green suite was not evidence. This guard closes that blind spot.
 //
 // HOW IT AVOIDS OVERCORRECTING. "correction", "amendment", "immutable", "finalized"
-// and "snapshot" all have legitimate, unrelated uses in this repo — append-only
+// and "snapshot" all have legitimate, unrelated uses in this repo, append-only
 // clinical NOTES (where a correction IS a new row), append-only consent signatures,
 // `buffer_minutes_snapshot` / `policy_snapshot_hash` columns, database backups, and
 // Stripe webhook idempotency. A blunt keyword ban would break all of them, so:
@@ -35,7 +35,7 @@ import path from "node:path";
 //     signed clinical finalization (§"blockFramingViolations"), never globally;
 //   * a banned word that is explicitly NEGATED ("not parked"), explicitly HISTORICAL
 //     ("previously", "~~struck~~") or inside a block that repudiates the framing
-//     ("It is none of those") is allowed — a document must be free to say what it
+//     ("It is none of those") is allowed, a document must be free to say what it
 //     supersedes;
 //   * HISTORICAL, APPEND-ONLY logs are deliberately OUT of scope. docs/13's decision
 //     log and docs/14's per-PR entries are point-in-time records; rewriting them
@@ -44,7 +44,7 @@ import path from "node:path";
 //
 // IF YOU TRIPPED THIS GUARD: the fix is almost never to delete the assertion. Either
 // your wording re-opened a retired capability (change the wording), or you are
-// reintroducing the capability on purpose — which needs a NEW product decision
+// reintroducing the capability on purpose, which needs a NEW product decision
 // record superseding docs/decisions/clinical-finalization-retired.md §7, an
 // architecture review, a legal/privacy review, a migration plan and fresh operator
 // acceptance. A flag flip, a roadmap ID or "just re-enable it for one tenant" is not
@@ -65,7 +65,7 @@ function exists(rel: string): boolean {
 }
 
 /**
- * The maintained slice of a file whose remainder is append-only history — from the
+ * The maintained slice of a file whose remainder is append-only history, from the
  * line matching `startRe` up to (not including) the next line matching `endRe`.
  * Line-based on purpose: a character-offset search makes `^## ` match the tail of
  * `### SEC-09`.
@@ -76,7 +76,7 @@ function slice(doc: string, startRe: RegExp, endRe: RegExp, label: string): stri
   expect(
     start,
     `${label}: could not find the maintained block (${startRe}). If the heading was ` +
-      `renamed, point this guard at the new one — do NOT widen it to the whole file, ` +
+      `renamed, point this guard at the new one, do NOT widen it to the whole file, ` +
       `because the rest is append-only history that must not be rewritten.`,
   ).toBeGreaterThanOrEqual(0);
   const rel = lines.slice(start + 1).findIndex((l) => endRe.test(l));
@@ -113,7 +113,7 @@ const DOMAIN_MODEL = read("docs/02_DOMAIN_MODEL.md");
 /**
  * Every CURRENT-AUTHORITATIVE prose document, i.e. every document a reader is
  * entitled to treat as a statement about what Hone is and will be. Historical logs
- * are excluded by design (see the header) — docs/13 and docs/14 contribute only
+ * are excluded by design (see the header), docs/13 and docs/14 contribute only
  * their maintained current blocks.
  */
 const CURRENT_AUTHORITATIVE: ReadonlyArray<readonly [string, string]> = [
@@ -133,7 +133,7 @@ const CURRENT_AUTHORITATIVE: ReadonlyArray<readonly [string, string]> = [
 /**
  * Split a markdown document into the smallest units that carry one claim: one
  * bullet (with its wrapped continuation lines), one table row, one heading, one
- * paragraph. Proximity has to be measured inside a claim — a whole-file or
+ * paragraph. Proximity has to be measured inside a claim, a whole-file or
  * fixed-character window would drag an unrelated neighbouring bullet in.
  */
 function blocks(doc: string): string[] {
@@ -164,14 +164,14 @@ function blocks(doc: string): string[] {
 /**
  * Does this block talk about the RETIRED signed-record system? Deliberately does
  * NOT match "clinical notes", "consent signature", "policy snapshot" or a database
- * backup — those are unrelated capabilities that must keep their wording.
+ * backup, those are unrelated capabilities that must keep their wording.
  */
 const SIGNED_RECORD_MENTION =
   /(clinical[ -]record|clinical finaliz\w*|finaliz\w*[ -]clinical|signed[ -](?:clinical|snapshot|structured)|signed[ -]record(?:s)?[ -](?:correction|amendment|workflow|ledger|system|snapshot|lineage|capability|finaliz\w*)|finalized (?:record|session|clinical|artifact)|finalization (?:boundary|flag|controls?)|finalize_session|correct_finalized_session|amend_finalized_session|build_session_snapshot|clinical_record_snapshots|clinical_record_amendments|clinical_audit_events|clinical_finalization_enabled|clinical_corrections_enabled|snapshot v2|SEC-09)/i;
 
 /**
  * Framings that would turn the retirement back into a plan. The optional third
- * member is a false-positive escape tested against the match plus what follows it —
+ * member is a false-positive escape tested against the match plus what follows it,
  * English reuses these words ("`authenticated` **held** EXECUTE" is a privilege
  * fact, not a project status), and a guard that cried wolf would get deleted.
  */
@@ -189,7 +189,7 @@ const FORWARD_FRAMINGS: ReadonlyArray<readonly [string, RegExp, RegExp?]> = [
   [
     "held",
     /\bheld\b/gi,
-    // "held EXECUTE / held SELECT / held the grant" — the transitive verb, not a status.
+    // "held EXECUTE / held SELECT / held the grant", the transitive verb, not a status.
     /^held\s+[`'"*]{0,2}(?:execute|select|insert|update|delete|truncate|references|trigger|the|a|an|it|them|no|nothing|only|by|on)\b/i,
   ],
   ["will be enabled", /\benable\w*\b[^.;|\n]{0,40}\bfinaliz/gi],
@@ -197,30 +197,30 @@ const FORWARD_FRAMINGS: ReadonlyArray<readonly [string, RegExp, RegExp?]> = [
 ];
 
 /**
- * A negation or supersession marker glued to the match — no sentence boundary in
- * between — makes the mention a statement ABOUT the retired framing rather than an
+ * A negation or supersession marker glued to the match, no sentence boundary in
+ * between, makes the mention a statement ABOUT the retired framing rather than an
  * instance of it. "not parked", "no longer dormant", "~~held~~" are all fine.
  */
 const ATTACHED_NEGATOR =
   /(?:\bnot\b|\bno\b|\bnone\b|\bnever\b|\bneither\b|\bnor\b|\bcannot\b|\bcan't\b|\bimpossible\b|\bno longer\b|\bpreviously\b|\bformerly\b|\bsupersede[ds]?\b|\bsuperseding\b|\bstale\b|\brather than\b|\binstead of\b|~~)[^.;!?]{0,28}$/i;
 
 /** …and the same idea for a table-row LABEL, where the answer follows the label. */
-// The negator must ATTACH to the framing word ("parked: no", "dormant — n/a",
+// The negator must ATTACH to the framing word ("parked: no", "dormant, n/a",
 // "deferred? Never"), not merely appear somewhere in the next 44 characters. The
-// looser form excused ordinary re-parking prose — "parked, not abandoned", "dormant
-// — no studio has the flag on today" — which is exactly the drift this guard exists
+// looser form excused ordinary re-parking prose, "parked, not abandoned", "dormant,
+// no studio has the flag on today", which is exactly the drift this guard exists
 // to stop. `\bno\b` is dropped entirely: it matches far too much English.
 // The negator must ATTACH to the framing word, and it must be a negator that can
 // only be negating THAT word. Deliberately excluded: a bare `not`/`never`/`no`
-// following the framing, because "parked, not abandoned" and "dormant — no studio
-// has the flag on today" negate a DIFFERENT word while leaving the framing intact —
+// following the framing, because "parked, not abandoned" and "dormant, no studio
+// has the flag on today" negate a DIFFERENT word while leaving the framing intact,
 // which is exactly the drift this guard exists to stop. `RETIRED`, `no longer`,
 // `none` and `n/a` cannot be read any other way. A leading negator ("not parked") is
 // handled separately by ATTACHED_NEGATOR, and a whole-block repudiation
 // ("rewritten from parked to RETIRED") by BLOCK_REPUDIATION.
 const TRAILING_NEGATOR =
   // `|` is allowed because a markdown table cell boundary sits between the row
-  // label and its answer: `| **Next gate** | None — RETIRED |`.
+  // label and its answer: `| **Next gate** | None, RETIRED |`.
   /^[\s*_~|]*(?:[-—:,(]|->|→|to)?[\s*_~|]*(?:is|are|was|were|it is|they are)?[\s*_~|]*(?:no longer|none\b|n\/a\b|RETIRED)/i;
 
 /** A block may also repudiate the framing wholesale, and then quote it freely. */
@@ -232,7 +232,7 @@ type Violation = { file: string; framing: string; match: string; block: string }
 /**
  * A list item's exculpating context usually sits in the list lead-in above it ("The
  * following are **permanently rejected**, not deferred:"), so walk back over the
- * sibling items to that lead-in. Context counts for NEGATION only — never for the
+ * sibling items to that lead-in. Context counts for NEGATION only, never for the
  * mention itself, which must be inside the block, or an unrelated neighbouring
  * bullet could drag a claim in.
  */
@@ -284,7 +284,7 @@ const WHY_RETIRED =
   "Signed / finalized clinical records are RETIRED by product decision (2026-07-29), " +
   "not paused. Describing them as parked, dormant, deferred, planned, a next gate, a " +
   "later phase, held or a launch requirement tells the next author to build a capability " +
-  "the product owner permanently rejected — which is exactly the drift this guard exists " +
+  "the product owner permanently rejected, which is exactly the drift this guard exists " +
   "to stop. State the retirement, or say what it supersedes ('not parked', 'previously " +
   "described as parked'). See " +
   DECISION_RECORD_PATH +
@@ -303,7 +303,7 @@ describe("the decision record", () => {
         `session-detail page points at it too. Deleting or moving it breaks the only ` +
         `written record of WHY the capability is gone.`,
     ).toBe(true);
-    // The pointers really do point here — a renamed file must be renamed everywhere.
+    // The pointers really do point here, a renamed file must be renamed everywhere.
     expect(MIGRATION).toContain(DECISION_RECORD_PATH);
     expect(read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx")).toContain(
       DECISION_RECORD_PATH,
@@ -331,7 +331,7 @@ describe("the decision record", () => {
     }
   });
 
-  it("says treatment records stay ordinary and editable — the point of the decision", () => {
+  it("says treatment records stay ordinary and editable, the point of the decision", () => {
     expect(DECISION).toMatch(/Treatment sessions remain ordinary, editable operational records/i);
     expect(DECISION).toMatch(/fixes it by \*\*editing the record through the normal charting commands\*\*/i);
     // The freeze state is what made finalization harmful; say that it is gone.
@@ -363,7 +363,7 @@ describe("the decision record", () => {
     expect(DECISION).toMatch(/browser users bypassing application commands/i);
     expect(DECISION).toMatch(/`TRUNCATE` by `authenticated`/);
     expect(DECISION).toMatch(/removing, rewriting or pruning audit data/i);
-    // clinical_audit_events is NOT the operational trail — the name misleads.
+    // clinical_audit_events is NOT the operational trail, the name misleads.
     expect(DECISION).toMatch(/clinical_audit_events[\s\S]{0,400}not\b[\s\S]{0,200}operational audit trail/i);
   });
 
@@ -468,7 +468,7 @@ describe("migration 0159 backs the documented posture", () => {
       expect(
         claims,
         `${name} appears to claim row-DML on sessions/session_blocks/electrolysis_entries/` +
-          `laser_entries/treatment_images is revoked from authenticated. It is NOT — the ` +
+          `laser_entries/treatment_images is revoked from authenticated. It is NOT, the ` +
           `deployed app still writes all five directly, so 0159 deliberately leaves them. ` +
           `That is PR B, after the callers move onto narrow reviewed commands.`,
       ).toEqual([]);
@@ -482,7 +482,7 @@ describe("migration 0159 backs the documented posture", () => {
 // ===========================================================================
 
 describe("no current-authoritative doc describes the retired capability as coming", () => {
-  it("the scanned set is the real one — every file is present and non-trivial", () => {
+  it("the scanned set is the real one, every file is present and non-trivial", () => {
     for (const [name, doc] of CURRENT_AUTHORITATIVE) {
       expect(doc.length, `${name} is empty or missing from the truth-guard scan set`).toBeGreaterThan(
         200,
@@ -631,7 +631,7 @@ describe("the capability manifest carries a terminal rejection state", () => {
     const found = caps.clinical_finalization_amendments;
     expect(
       found,
-      `CAPABILITY_MANIFEST.json must keep the clinical_finalization_amendments entry — it is ` +
+      `CAPABILITY_MANIFEST.json must keep the clinical_finalization_amendments entry, it is ` +
         `the only MACHINE-READABLE status artifact, and a deleted entry reads as "never ` +
         `existed" rather than "retired".`,
     ).toBeTruthy();
@@ -649,7 +649,7 @@ describe("the capability manifest carries a terminal rejection state", () => {
     expect(e.retired_on).toBe("2026-07-29");
     expect(e.retired_decision_record).toBe(DECISION_RECORD_PATH);
     expect(e.retired_enforced_by_migration).toBe("0159");
-    // Enablement is not merely off — it is impossible.
+    // Enablement is not merely off, it is impossible.
     expect(e.enabled).toBe(false);
     expect(e.enabled_possible).toBe(false);
   });
@@ -697,7 +697,7 @@ describe("the decision record is reachable from the docs it governs", () => {
       expect(
         doc,
         `${name} states the retirement but does not link ${DECISION_RECORD_PATH}. A reader who ` +
-          `cannot reach the reasoning will re-litigate it — and the reasoning is the part that ` +
+          `cannot reach the reasoning will re-litigate it, and the reasoning is the part that ` +
           `stops the capability coming back.`,
       ).toMatch(LINK);
     });
@@ -753,7 +753,7 @@ describe("no application surface invokes the retired capability", () => {
 //    "snapshot" have legitimate unrelated uses. They must all survive.
 // ===========================================================================
 
-describe("no overcorrection — unrelated capabilities keep their wording", () => {
+describe("no overcorrection: unrelated capabilities keep their wording", () => {
   it("append-only clinical NOTES are untouched and NOT retired (a correction is a new row)", () => {
     expect(NOTES_CONTRACT).toMatch(/# Clinical notes — append-only \+ access contract/);
     expect(NOTES_CONTRACT).toMatch(/A correction\/revision is a\s*\n?\s*\*\*new row\*\*/);
@@ -818,7 +818,7 @@ describe("no overcorrection — unrelated capabilities keep their wording", () =
 // "not yet applied", and must keep the two distinctions that are easy to blur:
 //   * the DB retirement is live NOW, but the practitioner-facing dead code is
 //     only removed when PR #482 deploys; and
-//   * 0160 is a SEPARATE, UNAPPLIED migration — it must never be described as
+//   * 0160 is a SEPARATE, UNAPPLIED migration, it must never be described as
 //     already applied, and its lock-timeout defect must stay recorded.
 // ---------------------------------------------------------------------------
 
@@ -827,7 +827,7 @@ const MIGRATION_LEDGER = read("docs/production/migration-ledger.md");
 /**
  * Markdown prose is hard-wrapped and often nested in a blockquote, so a sentence
  * spans lines as `… did not\n> arm …`. Flatten blockquote markers and runs of
- * whitespace so an assertion pins the SENTENCE rather than the line breaks —
+ * whitespace so an assertion pins the SENTENCE rather than the line breaks,
  * without weakening it into a bare substring test.
  */
 function flat(doc: string): string {
@@ -847,7 +847,7 @@ const LEDGER_WITHOUT_CORRECTIONS = MIGRATION_LEDGER.split(
   /^## Correcting prior stale statements$/m,
 )[0];
 
-describe("post-apply truth — migration 0159 is applied in production", () => {
+describe("post-apply truth: migration 0159 is applied in production", () => {
   const APPLIED_DOCS = [
     ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
     ["docs/production/current-state.md", CURRENT_STATE],
@@ -1003,13 +1003,13 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
   });
 
   it("the UI/source cleanup is described as SHIPPED, now that #482 has merged and deployed", () => {
-    // Superseded 2026-07-30. This guard previously asserted the opposite — that the
-    // cleanup was still *pending* — which was correct while #482 was unmerged. #482
+    // Superseded 2026-07-30. This guard previously asserted the opposite, that the
+    // cleanup was still *pending*, which was correct while #482 was unmerged. #482
     // merged at d77d4434 and deployed successfully, so the pending wording became the
     // false claim and this guard now pins the reverse.
     expect(
       CURRENT_STATE,
-      "current-state must now say the Finalize/Correction surfaces are REMOVED — #482 merged " +
+      "current-state must now say the Finalize/Correction surfaces are REMOVED, #482 merged " +
         "and deployed, so 'pending deployment' is no longer true",
     ).toMatch(/Correction controls \| \*\*REMOVED — both from the database and from the deployed source\.\*\*/);
     expect(
@@ -1026,7 +1026,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     expect(CURRENT_STATE).toMatch(/clinical_finalization_enabled/);
     expect(
       CURRENT_STATE,
-      "the DB half must still be stated — flags pinned false by validated CHECK and EXECUTE revoked",
+      "the DB half must still be stated, flags pinned false by validated CHECK and EXECUTE revoked",
     ).toMatch(/validated CHECK constraint and revoked `EXECUTE` from every runtime role/);
     expect(
       CURRENT_STATE,
@@ -1061,14 +1061,14 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     ).toMatch(/independently verified/i);
   });
 
-  it("forbids rewriting EITHER applied migration — 0159 and 0160 are both immutable now", () => {
+  it("forbids rewriting EITHER applied migration, 0159 and 0160 are both immutable now", () => {
     const L = flat(MIGRATION_LEDGER);
     expect(L).toMatch(
       /Do not "fix" the lock-timeout line in `0159` — it is already applied\./,
     );
     expect(
       L,
-      "the ledger must record that 0160's identical lock-timeout line HAS BEEN corrected — it was, " +
+      "the ledger must record that 0160's identical lock-timeout line HAS BEEN corrected, it was, " +
         "in PR #483, so demanding the correction as future work is now the false claim",
     ).toMatch(/same `set local lock_timeout` line in `0160` HAS BEEN CORRECTED/);
     expect(
@@ -1085,7 +1085,7 @@ describe("post-apply truth — migration 0159 is applied in production", () => {
     // the recorded checksum silently stops describing the file on disk.
     expect(
       MIGRATION,
-      "0159 is APPLIED. Its text must not be edited — amend a NEW migration instead.",
+      "0159 is APPLIED. Its text must not be edited, amend a NEW migration instead.",
     ).toMatch(/set local lock_timeout = '5s';/);
   });
 });

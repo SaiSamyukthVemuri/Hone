@@ -4,7 +4,7 @@ import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./help
 import { dropSynthStudio, seedSynthStudioA, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 — move_or_reassign_appointment (migration 0143): atomic time-move
+// PR B Part 4: move_or_reassign_appointment (migration 0143): atomic time-move
 // + practitioner-reassignment. Studio B (owner P0 + members P1, P2), capacity ON,
 // booking ON, UTC, buffer 0. Never Willow.
 
@@ -209,7 +209,7 @@ describe("0143 concurrency + privilege", () => {
     }
   });
 
-  it("is service_role only — anon and authenticated denied (42501)", async () => {
+  it("is service_role only: anon and authenticated denied (42501)", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     const call = (q: (t: string, p?: unknown[]) => Promise<unknown>) =>
       q(`select public.move_or_reassign_appointment($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7::timestamptz)`, [

@@ -32,7 +32,7 @@ beforeAll(async () => {
   imageId = randomUUID();
 
   // Owner inserts a treatment image metadata row for the studio's client.
-  // Fixture only — after 0169 `authenticated` holds no direct INSERT, and this
+  // Fixture only, after 0169 `authenticated` holds no direct INSERT, and this
   // seed is not the property under test.
   await adminQuery(
     `insert into public.treatment_images
@@ -93,8 +93,8 @@ describe("write access", () => {
   it("a member can create image metadata for their own studio (via the 0168 command)", async () => {
     // After 0169 the direct INSERT is revoked; the member reaches this through
     // create_treatment_image_metadata, which derives studio and uploader from
-    // auth.uid(). The capability under test — a member CAN record an image for
-    // their own studio — is unchanged.
+    // auth.uid(). The capability under test, a member CAN record an image for
+    // their own studio, is unchanged.
     const id = randomUUID();
     const res = await userQuery(
       member.userId,

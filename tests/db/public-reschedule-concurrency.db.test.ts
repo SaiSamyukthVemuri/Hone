@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 // 1. DUPLICATE SUBMIT. The legacy RPC took only the original appointment's own
 //    row lock. Two submissions carrying the same token could both pass their
 //    checks and both create a successor, because the second one's `for update`
-//    on the original was satisfied the moment the first committed — and nothing
+//    on the original was satisfied the moment the first committed, and nothing
 //    re-read the status afterwards inside the same statement.
 //
 // 2. THE CANDIDATE-SOURCE RACE. A conflict-derived candidate exists only
@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 //    no GiST overlap and no HB001 gap left to reject the write.
 //
 // The command locks the studio row, then the capacity advisory lock, then every
-// relevant appointment row in id order — INCLUDING the original, by an explicit
+// relevant appointment row in id order, INCLUDING the original, by an explicit
 // `a.id = p_original_appointment_id` disjunct, so an original whose current
 // start lies outside the replacement window is still locked.
 //
@@ -107,7 +107,7 @@ async function seed(label: string): Promise<Fixture> {
     [studioId],
   );
 
-  // The original deliberately sits 40 days out — WELL OUTSIDE the replacement
+  // The original deliberately sits 40 days out, WELL OUTSIDE the replacement
   // date window a naive window-only lock predicate would cover.
   const originalStart = at(40, 14, 0);
   await adminQuery(
@@ -130,7 +130,7 @@ afterAll(async () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 concurrency — duplicate submit with the same token", () => {
+describe("0171 concurrency: duplicate submit with the same token", () => {
   it("serialises two concurrent reschedules: exactly one successor, one refusal", async () => {
     const f = await seed("dup");
     const a = await conn();
@@ -210,7 +210,7 @@ describe("0171 concurrency — duplicate submit with the same token", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 concurrency — lifecycle transitions versus reschedule", () => {
+describe("0171 concurrency: lifecycle transitions versus reschedule", () => {
   it.each([
     ["practitioner cancellation", "cancelled"],
     ["completion", "completed"],
@@ -282,7 +282,7 @@ describe("0171 concurrency — lifecycle transitions versus reschedule", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 concurrency — the target slot is taken first", () => {
+describe("0171 concurrency: the target slot is taken first", () => {
   it("another booking that commits first forces a refusal, and the original survives", async () => {
     const f = await seed("taken");
     const target = at(11, 10, 0);
@@ -315,7 +315,7 @@ describe("0171 concurrency — the target slot is taken first", () => {
       const bRes = await bPromise;
       await b.query("commit");
 
-      // The interval is gone, so the command refuses with a closed code — it
+      // The interval is gone, so the command refuses with a closed code, it
       // never raises a raw 23P01 to the caller.
       expect(["time_unavailable", "not_a_public_slot"]).toContain(bRes.rows[0].result);
 
@@ -343,7 +343,7 @@ describe("0171 concurrency — the target slot is taken first", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 concurrency — structural schedule writers", () => {
+describe("0171 concurrency: structural schedule writers", () => {
   it("an availability writer holding the advisory lock blocks the command", async () => {
     const f = await seed("avail");
     const a = await conn();
@@ -374,7 +374,7 @@ describe("0171 concurrency — structural schedule writers", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 concurrency — rollback completeness", () => {
+describe("0171 concurrency: rollback completeness", () => {
   it("an explicit rollback after a successful command leaves NOTHING behind", async () => {
     const f = await seed("rollback");
     const a = await conn();

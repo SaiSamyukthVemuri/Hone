@@ -134,13 +134,13 @@ describe("PR #319: setup_intent.succeeded live-mode dormancy guard", () => {
     const guardIdx = block.indexOf(
       'shouldIgnoreLiveModeEvent(event, ctx, "setup_intent.succeeded")',
     );
-    // Anchor on the actual DB operations (.from("...")), not bare mentions —
+    // Anchor on the actual DB operations (.from("...")), not bare mentions,
     // a comment naming the tables must not fool the ordering check.
     const pmIdx = block.indexOf('.from("client_payment_methods")');
     const lineageIdx = block.indexOf('.from("client_stripe_customers")');
     expect(guardIdx).toBeGreaterThan(-1);
     expect(pmIdx).toBeGreaterThan(-1); // the handler does write cards in test mode
-    // Guard runs first — before the card write AND before the lineage read.
+    // Guard runs first: before the card write AND before the lineage read.
     expect(guardIdx).toBeLessThan(pmIdx);
     expect(guardIdx).toBeLessThan(lineageIdx);
   });
@@ -151,11 +151,11 @@ describe("PR #319: setup_intent.succeeded live-mode dormancy guard", () => {
     );
     const block = ROUTE.slice(startIdx, startIdx + 1200);
     // Ignored path returns a sanitized summary (marked processed by the route),
-    // never throws — so Stripe is not retried into a storm.
+    // never throws, so Stripe is not retried into a storm.
     expect(block).toMatch(
       /shouldIgnoreLiveModeEvent\(event, ctx, "setup_intent\.succeeded"\)\s*\)\s*\{\s*return \{[\s\S]{0,160}livemodeEventIgnored: true/,
     );
-    // The ignored return carries no card/PII — only ids + the flag.
+    // The ignored return carries no card/PII, only ids + the flag.
     const returnBlock = block.slice(
       block.indexOf("livemodeEventIgnored: true") - 200,
       block.indexOf("livemodeEventIgnored: true") + 40,
@@ -208,7 +208,7 @@ describe("payment-webhook-reconciliation: metadata mismatch handling", () => {
   });
 });
 
-describe("resolved-row livemode guard — symmetric across ALL mutating handlers", () => {
+describe("resolved-row livemode guard: symmetric across ALL mutating handlers", () => {
   // Extract each mutating handler's body so the guard is checked per-handler.
   function handlerBody(name: string): string {
     const start = HELPER.indexOf(`export async function ${name}(`);

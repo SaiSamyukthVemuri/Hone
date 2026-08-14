@@ -99,7 +99,7 @@ describe("callers return needs_manual_review when persistence fails, not succeed
 
   it("the persistence-failed branch returns needs_manual_review (ok:false), never succeeded", () => {
     // Each !persisted branch returns outcome: needs_manual_review with
-    // the safe message — never ok:true / outcome:"succeeded".
+    // the safe message, never ok:true / outcome:"succeeded".
     const branches = CHARGE.match(
       /if \(!persistence\.persisted\)\s*\{([\s\S]*?)\}\n/g,
     );

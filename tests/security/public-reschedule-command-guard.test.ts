@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// SOURCE GUARDS — the public reschedule route's authority boundary (0171).
+// SOURCE GUARDS, the public reschedule route's authority boundary (0171).
 // ===========================================================================
 //
 // These are textual guards over the route source. They exist because every rule
@@ -41,13 +41,13 @@ function code(src: string): string {
 const ACTIONS_CODE = code(ACTIONS);
 const MIGRATION_CODE = code(MIGRATION);
 
-describe("public reschedule route — calls v2 and only v2", () => {
+describe("public reschedule route: calls v2 and only v2", () => {
   it("calls reschedule_appointment_v2", () => {
     expect(ACTIONS_CODE).toContain('"reschedule_appointment_v2"');
   });
 
   it("no longer calls the LEGACY reschedule_appointment RPC", () => {
-    // `.rpc("reschedule_appointment", ...)` — the exact legacy call shape.
+    // `.rpc("reschedule_appointment", ...)`: the exact legacy call shape.
     expect(ACTIONS_CODE).not.toMatch(/rpc\(\s*["']reschedule_appointment["']/);
   });
 
@@ -62,7 +62,7 @@ describe("public reschedule route — calls v2 and only v2", () => {
   });
 });
 
-describe("public reschedule route — the command owns persistence", () => {
+describe("public reschedule route: the command owns persistence", () => {
   it("does not INSERT an appointment_policy_acknowledgements row itself", () => {
     expect(ACTIONS_CODE).not.toContain("appointment_policy_acknowledgements");
   });
@@ -88,9 +88,9 @@ describe("public reschedule route — the command owns persistence", () => {
 
   // 0171 amendment. `row.new_appointment_id as string` would silently thread a
   // null into a management URL, an email payload and a notification href.
-  // The casts are legitimate in exactly ONE place — inside
+  // The casts are legitimate in exactly ONE place, inside
   // parseRescheduleSuccessRow, AFTER missingSuccessFields() has validated the
-  // row — so the guard is scoped to the ACTION body, which is where an
+  // row, so the guard is scoped to the ACTION body, which is where an
   // unvalidated cast would actually be dangerous.
   it("the action body never casts a raw command-row field straight to a type", () => {
     const actionBody = ACTIONS_CODE.slice(
@@ -121,7 +121,7 @@ describe("public reschedule route — the command owns persistence", () => {
 });
 
 // ===========================================================================
-// 0171 AMENDMENT — the raw successor token must never be lost.
+// 0171 AMENDMENT, the raw successor token must never be lost.
 // ===========================================================================
 //
 // The successor's raw management token is a one-time in-memory secret: only its
@@ -130,10 +130,10 @@ describe("public reschedule route — the command owns persistence", () => {
 // credential the client needs to manage the successor.
 //
 // The command independently re-verifies the client, so a failed application-side
-// client lookup does NOT stop the mutation — which is exactly the hazard these
+// client lookup does NOT stop the mutation, which is exactly the hazard these
 // guards close: commit, skip the email (gated on the client's address), drop the
 // token on return.
-describe("public reschedule route — token-delivery gate", () => {
+describe("public reschedule route: token-delivery gate", () => {
   const SUBMIT = ACTIONS_CODE.slice(
     ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
   );
@@ -170,7 +170,7 @@ describe("public reschedule route — token-delivery gate", () => {
   it("logs no client PII on the refusal path", () => {
     const idx = SUBMIT.indexOf("public_reschedule_client_metadata_unavailable");
     expect(idx).toBeGreaterThan(-1);
-    // Exactly the logged object literal — not a fixed character window, which
+    // Exactly the logged object literal, not a fixed character window, which
     // previously swept up the following `const newToken = ...` declaration and
     // failed on a token that is merely DECLARED nearby, not logged.
     const call = SUBMIT.slice(idx, SUBMIT.indexOf("});", idx));
@@ -195,12 +195,12 @@ describe("public reschedule route — token-delivery gate", () => {
 
 // SUPERSEDED STRUCTURE, KEPT AS A CONTRACT. The previous amendment wrapped the
 // whole post-commit region in ONE try. That contained exceptions correctly but
-// CHAINED the effects: a rejected practitioner lookup — an optional enrichment
-// used only for a display name — jumped straight to the catch and the client's
+// CHAINED the effects: a rejected practitioner lookup, an optional enrichment
+// used only for a display name, jumped straight to the catch and the client's
 // confirmation email was never attempted. The email carries the successor's
 // management credential, so the region is now a sequence of INDEPENDENTLY
 // isolated effects. These guards assert that shape.
-describe("public reschedule route — post-commit exception containment", () => {
+describe("public reschedule route: post-commit exception containment", () => {
   const SUBMIT = ACTIONS_CODE.slice(
     ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
   );
@@ -244,10 +244,10 @@ describe("public reschedule route — post-commit exception containment", () => 
   it("no post-commit SIDE EFFECT can return ok:false", () => {
     // Measured from after the malformed-success-row handling. That ONE branch
     // may return ok:false, and only when the command's return carries no
-    // salvageable appointment id — there is then nothing truthful to report.
+    // salvageable appointment id, there is then nothing truthful to report.
     // Every other case returns the committed success WITH the management URL.
     const effects = POST_COMMIT.slice(POST_COMMIT.indexOf("const newAppointmentId ="));
-    // Match an actual RETURN of a failure, not the string "ok: false" — the
+    // Match an actual RETURN of a failure, not the string "ok: false", the
     // confirmation sender's fallback result object legitimately carries
     // `{ ok: false }` because that is the PROVIDER's shape, not the action's.
     expect(effects).not.toMatch(/return\s*\{[^}]*ok:\s*false/);
@@ -282,7 +282,7 @@ describe("public reschedule route — post-commit exception containment", () => 
   });
 });
 
-describe("public reschedule route — practitioner attribution", () => {
+describe("public reschedule route: practitioner attribution", () => {
   it("resolves the practitioner from the command return", () => {
     expect(ACTIONS_CODE).toContain("row.practitioner_id");
   });
@@ -301,7 +301,7 @@ describe("public reschedule route — practitioner attribution", () => {
   });
 });
 
-describe("public reschedule route — no second authority beside the command", () => {
+describe("public reschedule route: no second authority beside the command", () => {
   it("the SUBMIT path does not re-derive an end time in TypeScript", () => {
     // `new Date(start.getTime() + existing.duration_minutes * 60_000)`
     expect(ACTIONS_CODE).not.toMatch(/duration_minutes\s*\*\s*60_?000/);
@@ -321,7 +321,7 @@ describe("public reschedule route — no second authority beside the command", (
   });
 });
 
-describe("public reschedule route — slot surfaces carry the booked contract", () => {
+describe("public reschedule route: slot surfaces carry the booked contract", () => {
   it("never uses the service default as the slot duration", () => {
     expect(ACTIONS_CODE).not.toContain("default_duration_minutes ??");
     expect(ACTIONS_CODE).not.toContain("svc?.default_duration_minutes");
@@ -345,7 +345,7 @@ describe("public reschedule route — slot surfaces carry the booked contract", 
   });
 });
 
-describe("public reschedule — policy hash is server-generated", () => {
+describe("public reschedule: policy hash is server-generated", () => {
   it("the summary carries a server-built presentedPolicyHash", () => {
     expect(ACTIONS_CODE).toContain("presentedPolicyHash");
     expect(ACTIONS_CODE).toContain("buildPolicySnapshot");
@@ -364,7 +364,7 @@ describe("public reschedule — policy hash is server-generated", () => {
   });
 });
 
-describe("public reschedule — raw token handling", () => {
+describe("public reschedule: raw token handling", () => {
   it("mints the raw successor token in the action and passes only its hash", () => {
     expect(ACTIONS_CODE).toContain("generateAppointmentToken()");
     expect(ACTIONS_CODE).toContain("hashAppointmentToken(newToken)");
@@ -377,7 +377,7 @@ describe("public reschedule — raw token handling", () => {
   });
 });
 
-describe("migration 0171 — structural contract", () => {
+describe("migration 0171: structural contract", () => {
   it("opens its own transaction and arms lock_timeout inside it", () => {
     expect(MIGRATION_CODE).toMatch(/^begin;/m);
     expect(MIGRATION_CODE).toMatch(/^commit;/m);
@@ -445,7 +445,7 @@ describe("migration 0171 — structural contract", () => {
     );
   });
 
-  it("revokes NO table DML — this migration is additive only", () => {
+  it("revokes NO table DML: this migration is additive only", () => {
     expect(MIGRATION_CODE).not.toMatch(/revoke\s+(insert|update|delete|all)/i);
     expect(MIGRATION_CODE).not.toMatch(/revoke[^;]*on table/i);
   });
@@ -500,7 +500,7 @@ describe("migration 0171 — structural contract", () => {
 
   it("uses a JS-trim-compatible whitespace predicate, never bare btrim()", () => {
     // btrim(x) with no second argument strips ONLY spaces, so it disagrees with
-    // String.prototype.trim() on tabs/newlines — and hasAnyPolicy() decides on
+    // String.prototype.trim() on tabs/newlines, and hasAnyPolicy() decides on
     // the page whether the checkbox even renders.
     expect(MIGRATION_CODE).not.toMatch(/btrim\(\s*v_(cancel|noshow)_text\s*\)/);
     expect(MIGRATION_CODE).toContain("[^[:space:]");
@@ -535,11 +535,11 @@ describe("migration 0171 — structural contract", () => {
 });
 
 // ===========================================================================
-// 0171 AMENDMENT — the successful result must carry a usable management path,
+// 0171 AMENDMENT, the successful result must carry a usable management path,
 // and the UI must describe the email truthfully.
 // ===========================================================================
 
-describe("public reschedule — the success result carries a management path", () => {
+describe("public reschedule: the success result carries a management path", () => {
   const SUBMIT = ACTIONS_CODE.slice(
     ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
   );
@@ -574,14 +574,14 @@ describe("public reschedule — the success result carries a management path", (
   });
 });
 
-describe("public reschedule — post-commit effects are ISOLATED, not chained", () => {
+describe("public reschedule: post-commit effects are ISOLATED, not chained", () => {
   const SUBMIT = ACTIONS_CODE.slice(
     ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
   );
 
   it("each optional dependency runs through the per-effect isolator", () => {
     // One shared try would let an optional practitioner lookup jump past the
-    // client's confirmation email — the carrier of the management credential.
+    // client's confirmation email, the carrier of the management credential.
     for (const event of [
       "public_reschedule_practitioner_lookup_failed",
       "public_reschedule_service_lookup_failed",
@@ -624,7 +624,7 @@ describe("public reschedule — post-commit effects are ISOLATED, not chained", 
   });
 });
 
-describe("public reschedule — post-commit logging is classification only", () => {
+describe("public reschedule: post-commit logging is classification only", () => {
   const SUBMIT = ACTIONS_CODE.slice(
     ACTIONS_CODE.indexOf("rescheduleAppointmentViaTokenAction"),
   );
@@ -651,7 +651,7 @@ describe("public reschedule — post-commit logging is classification only", () 
   });
 });
 
-describe("public reschedule — the success UI is truthful", () => {
+describe("public reschedule: the success UI is truthful", () => {
   const FORM_CODE = code(FORM);
 
   it("never claims a confirmation email is on its way", () => {

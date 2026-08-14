@@ -10,7 +10,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// APPOINTMENT PREPARATION MEMORY — real browser, real stack.
+// APPOINTMENT PREPARATION MEMORY: real browser, real stack.
 //
 // The journey being proved is Chloe's actual complaint: opening today's
 // appointment before the client arrives and NOT being able to see what happened
@@ -32,7 +32,7 @@ const NEWER_EMPTY_AT = "2026-05-01T10:00:00Z";
 const SESSION_NOTES =
   "Client arrived early and was very comfortable throughout.\n\nWe discussed spacing the next two visits further apart.\nShe wants to keep the same probe.";
 const NEXT_VISIT_NOTE = "Start lower on the sideburn and check sensitivity";
-const CAUTION_NOTE = "Sideburn reacted more than the cheek — go slowly";
+const CAUTION_NOTE = "Sideburn reacted more than the cheek, go slowly";
 const LONG_RESPONSE_NOTE = `${"Erythema persisted noticeably longer than usual across the whole area. ".repeat(4)}Fully resolved by the evening.`;
 const PASS_ONE_NOTE = "First pass was slow going near the jawline.";
 const PASS_TWO_NOTE = "Second pass:\nmuch faster once the area had warmed up.";
@@ -69,7 +69,7 @@ async function appointmentFor(seed: E2eSeed, clientId: string): Promise<string> 
 
 // A returning electrolysis client: one multi-area block (Left Cheek + Right
 // Sideburn) with the full setup, two live passes with their own Additional
-// notes, a second single-area block, the full narrative — and then a NEWER
+// notes, a second single-area block, the full narrative, and then a NEWER
 // EMPTY session that used to win the lookup.
 async function seedReturningClient(seed: E2eSeed): Promise<Fixture> {
   const prac = await getOwnerPractitionerId(seed.studioId);
@@ -179,7 +179,7 @@ function occurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
-test.describe("appointment prep memory — returning electrolysis client", () => {
+test.describe("appointment prep memory: returning electrolysis client", () => {
   test("the appointment page shows the real prior treatment, complete, with full notes", async ({
     page,
   }) => {
@@ -211,7 +211,7 @@ test.describe("appointment prep memory — returning electrolysis client", () =>
       // Not just the first area of the first block.
       expect(text).toContain("Right Sideburn");
       expect(text).toContain("Midline Chin");
-      // One outcome row and one setup row per block — never a duplicate block.
+      // One outcome row and one setup row per block, never a duplicate block.
       await expect(card.getByTestId("prep-outcome-area")).toHaveCount(2);
       await expect(card.getByTestId("prep-setup-area")).toHaveCount(2);
     });
@@ -225,7 +225,7 @@ test.describe("appointment prep memory — returning electrolysis client", () =>
       await expect(cheek).toContainText("EL 14");
       await expect(cheek).toContainText("30 UL");
       await expect(cheek).toContainText("1.2 mA");
-      // 3dp exact — never 0.73 and never 0.
+      // 3dp exact: never 0.73 and never 0.
       await expect(cheek).toContainText("0.733 seconds");
       await expect(cheek).toContainText("40%");
       // The second block keeps its OWN settings.
@@ -277,7 +277,7 @@ test.describe("appointment prep memory — returning electrolysis client", () =>
       expect(text).not.toContain("…");
     });
 
-    await test.step("line breaks survive — the notes are not flattened", async () => {
+    await test.step("line breaks survive: the notes are not flattened", async () => {
       const text = await cardText(page);
       // The blank line between the first two paragraphs of the session notes.
       expect(text).toContain(
@@ -328,7 +328,7 @@ test.describe("appointment prep memory — returning electrolysis client", () =>
     await loginAsOwner(page, seed);
 
     // Link a charted session to THIS appointment, starting a few minutes before
-    // the booked time — the reachable case where only appointment_id can
+    // the booked time, the reachable case where only appointment_id can
     // exclude it.
     const linkedId = randomUUID();
     const startsAt = (
@@ -521,7 +521,7 @@ test.describe("appointment prep memory — returning electrolysis client", () =>
     const card = prepCard(page);
     await expect(card).toBeVisible({ timeout: T });
 
-    // Present, and explicit — never suppressed, which would read as "the query
+    // Present, and explicit: never suppressed, which would read as "the query
     // failed" rather than "there was nothing to record".
     await expect(card.getByTestId("prep-notes")).toBeVisible();
     await expect(card.getByTestId("prep-notes-empty")).toHaveText(
@@ -535,7 +535,7 @@ test.describe("appointment prep memory — returning electrolysis client", () =>
   // (tests/db/appointment-prep-memory.db.test.ts). This is a rendered-output
   // leak check: studio B's clinical text must not appear anywhere in the
   // markup studio A's practitioner receives. It asserts on innerHTML, not
-  // innerText, because a session id only ever appears in an href ATTRIBUTE —
+  // innerText, because a session id only ever appears in an href ATTRIBUTE,
   // innerText can never contain one, which would make the assertion
   // unfalsifiable.
   test("no foreign-studio treatment text appears in the rendered markup", async ({ page }) => {
@@ -581,7 +581,7 @@ test.describe("appointment prep memory — returning electrolysis client", () =>
   });
 });
 
-test.describe("appointment prep memory — 390px phone", () => {
+test.describe("appointment prep memory: 390px phone", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test("everything is readable at phone width with no sideways scroll", async ({
@@ -603,7 +603,7 @@ test.describe("appointment prep memory — 390px phone", () => {
     const text = await cardText(page);
     expect(text).toContain(NEXT_VISIT_NOTE);
     expect(text).toContain(CAUTION_NOTE);
-    // Setup is expanded by default at phone width too — nothing hidden behind a
+    // Setup is expanded by default at phone width too, nothing hidden behind a
     // tap that Chloe has to discover.
     await expect(card.getByTestId("prep-setup-area").first()).toBeVisible();
     await expect(card.getByTestId("prep-setup-area").first()).toContainText(
@@ -626,7 +626,7 @@ test.describe("appointment prep memory — 390px phone", () => {
   });
 });
 
-test.describe("appointment prep memory — iPad 820px, Chloe's device", () => {
+test.describe("appointment prep memory: iPad 820px, Chloe's device", () => {
   test.use({ viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true });
 
   test("the complete memory reads without navigation on the iPad", async ({

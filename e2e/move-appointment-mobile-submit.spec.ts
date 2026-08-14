@@ -30,7 +30,7 @@ type MoveControl = { delayMs: number; abort: boolean; count: number };
 async function installMoveInterceptor(page: Page): Promise<MoveControl> {
   const ctrl: MoveControl = { delayMs: 0, abort: false, count: 0 };
   await page.route("**/calendar/**", async (route, request) => {
-    // Server actions POST to the current route. We only act while a flag is set —
+    // Server actions POST to the current route. We only act while a flag is set,
     // set only around the Move tap, when the sole action POST is the move itself.
     if (request.method() === "POST" && (ctrl.delayMs > 0 || ctrl.abort)) {
       ctrl.count += 1;

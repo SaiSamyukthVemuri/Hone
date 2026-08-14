@@ -8,7 +8,7 @@ import {
 } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 3B-0 — the two-flag capacity state model:
+// PR B Part 3B-0: the two-flag capacity state model:
 //   Legacy (cap=F,book=F) / Configuring (cap=T,book=F) / Live (cap=T,book=T) /
 //   Draining (cap=T,book=F). Invalid: cap=F,book=T. Emergency pause = flip
 //   booking OFF (instant, keeps parallel appts). Structural deactivation =
@@ -125,7 +125,7 @@ describe("Part 3B-0: emergency pause vs structural retirement", () => {
     // Parallel appointments for two practitioners.
     await insertAppt(B.practitioners[0].practitionerId, T10, T11);
     await insertAppt(B.practitioners[1].practitionerId, T1030, T1130);
-    // Flip booking OFF — instant, no rematerialization, appts stay valid.
+    // Flip booking OFF: instant, no rematerialization, appts stay valid.
     await expect(setBook(false)).resolves.toBeTruthy();
     const s = await adminQuery(
       `select practitioner_capacity_enabled c, practitioner_capacity_booking_enabled b from public.studios where id = $1`,
@@ -194,7 +194,7 @@ describe("Part 3B-2: capacity-participation predicate (preflight == rematerializ
   it("retirement is NOT blocked by expired (historical) completed parallel appointments", async () => {
     await setCap(true); // Configuring/Draining (booking stays false)
     // Two overlapping COMPLETED appointments in the PAST for different
-    // practitioners — historical parallel work that must not participate.
+    // practitioners, historical parallel work that must not participate.
     await insertAppt(B.practitioners[0].practitionerId, "2020-01-01T10:00:00Z", "2020-01-01T11:00:00Z", "completed");
     await insertAppt(B.practitioners[1].practitionerId, "2020-01-01T10:30:00Z", "2020-01-01T11:30:00Z", "completed");
 
@@ -204,7 +204,7 @@ describe("Part 3B-2: capacity-participation predicate (preflight == rematerializ
       [B.studioId],
     );
     expect(bl.rows[0].o).toBe(0);
-    // Retirement succeeds — preflight and rematerialization agree (neither counts
+    // Retirement succeeds: preflight and rematerialization agree (neither counts
     // nor re-keys the expired rows), so no studio-wide 23P01.
     await expect(
       adminQuery(`select public.retire_practitioner_capacity($1)`, [B.studioId]),

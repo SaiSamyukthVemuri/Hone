@@ -12,7 +12,7 @@ const SQL = readFileSync(
   "utf8",
 );
 
-describe("0123 — soft_delete_session_area RPC", () => {
+describe("0123: soft_delete_session_area RPC", () => {
   it("is a SECURITY DEFINER function with a pinned search_path", () => {
     expect(SQL).toMatch(/create or replace function public\.soft_delete_session_area/);
     expect(SQL).toMatch(/security definer/);

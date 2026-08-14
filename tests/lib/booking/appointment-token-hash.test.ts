@@ -34,7 +34,7 @@ describe("hashAppointmentToken", () => {
     expect(a).not.toBe(b);
   });
 
-  it("does NOT trim — whitespace changes the hash (URL path is canonical)", () => {
+  it("does NOT trim: whitespace changes the hash (URL path is canonical)", () => {
     expect(hashAppointmentToken("tok")).not.toBe(hashAppointmentToken(" tok "));
   });
 });

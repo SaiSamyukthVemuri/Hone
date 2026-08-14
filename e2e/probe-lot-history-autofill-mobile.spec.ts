@@ -9,12 +9,12 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Chloe: "the probe lot/batch doesn't come back on its own — I retype it every
+// Chloe: "the probe lot/batch doesn't come back on its own, I retype it every
 // appointment." Real browser, real stack, 390px iPhone width.
 //
 // ROOT CAUSE this proves fixed: the charting form only ever consulted INVENTORY.
 // A studio with no probe inventory (which is the live shape) resolved `choose`
-// on every probe selection, and the form CLEARED the field — so the recorded
+// on every probe selection, and the form CLEARED the field, so the recorded
 // history the practitioner had already charted many times was never offered.
 //
 // The inventory-backed journey (auto-fill, confirm, link, freeze) is proven in
@@ -55,7 +55,7 @@ test("zero inventory: the last CHARTED lot for the probe auto-fills, is never in
 }) => {
   const seed = await seedE2eStudio();
   // A PREVIOUS appointment (different client, same studio) where the lot was
-  // typed by hand — no inventory anywhere in this studio.
+  // typed by hand, no inventory anywhere in this studio.
   const prior = await seedE2eDraftElectrolysisSession(seed);
   await seedE2eChartedProbeLot(seed, prior.sessionId, {
     lotNumber: "HIST-F3",
@@ -147,7 +147,7 @@ test("legacy free-text history (no probe_key) still auto-fills via the normalize
 // inventory-LINKED path. If auto-fill put an expired lot in as free text, the
 // record would carry an expired lot number with the link dropped and no expiry
 // shown anywhere on screen.
-test("an EXPIRED inventory lot is never auto-filled from history — the picker is shown instead", async ({
+test("an EXPIRED inventory lot is never auto-filled from history, the picker is shown instead", async ({
   page,
 }) => {
   const seed = await seedE2eStudio();
@@ -157,7 +157,7 @@ test("an EXPIRED inventory lot is never auto-filled from history — the picker 
     probeKey: F3_KEY,
     confirmed: true,
   });
-  // The studio DOES stock this probe, but the only lot has expired — and it is
+  // The studio DOES stock this probe, but the only lot has expired, and it is
   // the same lot she last charted.
   await seedE2eProbeInventoryItem(seed, {
     lotNumber: "EXP-F3",
@@ -219,7 +219,7 @@ test("active INVENTORY outranks charted history, and a manual override is never 
   const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
   await loginAsOwner(page, seed);
 
-  await test.step("inventory wins: the traceable, linked lot is filled — not the history one", async () => {
+  await test.step("inventory wins: the traceable, linked lot is filled, not the history one", async () => {
     await openAddForm(page, clientId, sessionId);
     await page.getByRole("button", { name: "Chin", exact: true }).click();
     await selectF3Probe(page);

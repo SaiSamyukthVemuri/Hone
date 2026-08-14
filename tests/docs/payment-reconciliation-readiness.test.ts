@@ -4,7 +4,7 @@ import path from "node:path";
 
 // PR #282. Docs-level guardrails for the payment reconciliation +
 // controlled live-payment readiness runbook (docs/16 §17). This PR is
-// READINESS + RECONCILIATION ONLY — it does not enable live payments,
+// READINESS + RECONCILIATION ONLY, it does not enable live payments,
 // change any Stripe key/env, or alter charge/refund/webhook behavior.
 //
 // These pins prove the runbook documents the safe procedure (forbidden
@@ -12,7 +12,7 @@ import path from "node:path";
 // reconciliation SQL snippets are genuinely SELECT-only. The runtime
 // dormancy guards are pinned elsewhere (tests/lib/billing/live-mode-
 // blockers.test.ts); the prior readiness pins live in
-// tests/docs/live-payments-readiness.test.ts (still green — PR #282 is
+// tests/docs/live-payments-readiness.test.ts (still green, PR #282 is
 // additive).
 
 function readDoc(rel: string): string {
@@ -225,7 +225,7 @@ describe("supporting docs frame PR #282 as readiness, not enablement", () => {
   it("docs/14 current-status is at PR #282 or later and keeps live payments disabled", () => {
     // The handoff status header rolls forward with each docs PR; assert it is
     // at #282 or higher (so PR #282's contract holds without locking later
-    // PRs to back-edit this file — matching live-payments-readiness.test.ts).
+    // PRs to back-edit this file, matching live-payments-readiness.test.ts).
     const m = HANDOFF.match(/Current production status \(as of PR #(\d+)\)/);
     expect(m).not.toBeNull();
     if (m) expect(Number(m[1])).toBeGreaterThanOrEqual(282);

@@ -108,7 +108,7 @@ describe("PR #181: SucceededPanel promotes refund_status='succeeded' to the top 
     const block = blockFor("SucceededPanel");
     expect(block).toMatch(/attempt\.refundedAt/);
     expect(block).toMatch(/formatCadFromCents\(attempt\.refundAmountCents\)/);
-    // The raw refund id is NOT inline — it lives in the owner-only disclosure.
+    // The raw refund id is NOT inline, it lives in the owner-only disclosure.
     expect(block).not.toMatch(/Refund:\s*\{?\s*attempt\.stripeRefundId/);
   });
 

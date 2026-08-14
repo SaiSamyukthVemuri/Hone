@@ -6,7 +6,7 @@ import {
   treatmentPhotoAreaLabel,
 } from "@/app/(app)/clients/[id]/images/photo-context";
 
-// PR #274. Treatment photo context tags — display-only, derived from EXISTING
+// PR #274. Treatment photo context tags, display-only, derived from EXISTING
 // metadata (treatment_images.session_id/session_block_id) + the attached
 // session block's structured area fields. No migration, no schema change, no
 // raw IDs/paths in the UI.
@@ -128,7 +128,7 @@ describe("UI wiring: context tags rendered, no raw IDs/paths/URLs", () => {
     expect(MANAGER).not.toMatch(/storage_path|storage_bucket/);
     // no bucket string / signed-url handling rendered as context. (The
     // validator import path "@/lib/images/treatment-images" is a module path,
-    // not the "treatment-images" bucket literal — so match the quoted bucket.)
+    // not the "treatment-images" bucket literal, so match the quoted bucket.)
     expect(MANAGER).not.toMatch(/"treatment-images"|signedUrl/);
   });
 });

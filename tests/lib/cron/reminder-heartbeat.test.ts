@@ -18,10 +18,10 @@ import { CRON_INTERVAL_MINUTES } from "@/lib/cron/reminder-schedule";
 // PR #265 / #283, hardened by PR OPS-01. Pure, time-independent classifier for
 // the external reminder scheduler's "last successful run" heartbeat.
 //
-//   healthy  <= 2x cadence (30 min)  — cadence contract met
-//   degraded <= 3x cadence (45 min)  — cadence margin lost (2h window is 30 min wide)
-//   stale     > 3x cadence           — three missed cycles; CRITICAL
-//   missing   no valid heartbeat     — CRITICAL
+//   healthy  <= 2x cadence (30 min):  cadence contract met
+//   degraded <= 3x cadence (45 min):  cadence margin lost (2h window is 30 min wide)
+//   stale     > 3x cadence:           three missed cycles; CRITICAL
+//   missing   no valid heartbeat:     CRITICAL
 
 const NOW = Date.parse("2026-06-26T12:00:00.000Z");
 const atMinutesAgo = (m: number): ReminderHeartbeat => ({
@@ -71,7 +71,7 @@ describe("computeReminderSchedulerStatus", () => {
 
   // THE REGRESSION THIS PR EXISTS TO CATCH. Before OPS-01 every age from 0 to
   // 45 minutes reported "healthy", so a scheduler silently running at a 31-45
-  // minute cadence was indistinguishable from a correct 15-minute one — while
+  // minute cadence was indistinguishable from a correct 15-minute one, while
   // the 30-minute-wide 2h window was already missing appointment offsets.
   it("is DEGRADED one minute past the degraded boundary (not healthy)", () => {
     const s = computeReminderSchedulerStatus(
@@ -248,17 +248,17 @@ describe("decideReminderSchedulerAlert", () => {
   });
 
   // ---------------------------------------------------------------------
-  // OPS-01.1 / review 3774540599 — SEVERITY-AWARE DEDUPE.
+  // OPS-01.1 / review 3774540599, SEVERITY-AWARE DEDUPE.
   // ---------------------------------------------------------------------
 
-  // D1 — same severity already open: dedupe.
+  // D1: same severity already open: dedupe.
   it("D1 degraded warning + open degraded warning -> dedupe", () => {
     const plan = decideReminderSchedulerAlert(statusOf("degraded"), openWarning);
     expect(plan.shouldAlert).toBe(false);
     if (!plan.shouldAlert) expect(plan.reason).toBe("deduped");
   });
 
-  // D3 / D5 — equal-severity critical already open: dedupe.
+  // D3 / D5: equal-severity critical already open: dedupe.
   it.each(["stale", "missing"] as const)(
     "D3/D5 %s critical + open critical -> dedupe",
     (state) => {
@@ -268,7 +268,7 @@ describe("decideReminderSchedulerAlert", () => {
     },
   );
 
-  // D4 — THE FINDING. Before OPS-01, reminder_scheduler_stale was recorded at
+  // D4: THE FINDING. Before OPS-01, reminder_scheduler_stale was recorded at
   // severity WARNING. An unresolved row from that era must NOT swallow the new
   // critical escalation, because only critical reaches OPS_ALERT_EMAILS.
   it("D4 stale critical + open LEGACY stale WARNING -> records the critical escalation", () => {
@@ -374,11 +374,11 @@ describe("reminderSchedulerAlertSafeDetails is non-sensitive", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 / review 3774540589 — CADENCE IS MEASURED, NOT INFERRED.
+// OPS-01.1 / review 3774540589, CADENCE IS MEASURED, NOT INFERRED.
 //
 // The finding: a recent heartbeat is not evidence of cadence. A scheduler
-// firing at 07:50 / 08:30 / 09:10 / 09:50 runs a 40-MINUTE cadence — wide
-// enough to miss appointment offsets in the 30-minute 2h window — yet health
+// firing at 07:50 / 08:30 / 09:10 / 09:50 runs a 40-MINUTE cadence, wide
+// enough to miss appointment offsets in the 30-minute 2h window, yet health
 // checks at 08:00 / 09:00 / 09:30 observe ages of only 10 / 30 / 20 minutes.
 // Recency sampling can never see the gap BETWEEN runs.
 // ---------------------------------------------------------------------------
@@ -443,7 +443,7 @@ describe("P1-A regression matrix: worst of (recency, observed interval)", () => 
     expect(s.status).toBe("degraded");
   });
 
-  // C3 — the headline: recency looks perfect, cadence does not.
+  // C3: the headline: recency looks perfect, cadence does not.
   it("C3 age 10 + interval 40 => degraded (NOT healthy)", () => {
     const s = computeReminderSchedulerStatus(beat("09:00", "08:20"), msAt("09:10"));
     expect(s.ageMinutes).toBe(10);
@@ -494,7 +494,7 @@ describe("P1-A regression matrix: worst of (recency, observed interval)", () => 
 });
 
 describe("P1-A backward compatibility and corrupt evidence", () => {
-  // C7 — every heartbeat written before this hotfix has no previousInvokedAt.
+  // C7: every heartbeat written before this hotfix has no previousInvokedAt.
   it("C7 old heartbeat shape still classifies on recency, and says so", () => {
     const healthy = computeReminderSchedulerStatus(beat("09:00"), msAt("09:10"));
     expect(healthy.status).toBe("healthy");
@@ -516,7 +516,7 @@ describe("P1-A backward compatibility and corrupt evidence", () => {
     expect(s.cadenceEvidence).toBe("unavailable");
   });
 
-  // C8 — never crash, never fabricate.
+  // C8: never crash, never fabricate.
   it.each([
     ["unparseable", "not-a-timestamp"],
     ["empty", ""],
@@ -622,15 +622,15 @@ describe("failing axis is attributed, so operator copy cannot contradict itself"
 // OPS-01.1 follow-up, Codex review 3775029882 (P2):
 // classify the RAW elapsed interval, not a rounded minute count. Math.round
 // pulled 30:01-30:29 back to 30 (healthy) and 45:01-45:29 back to 45
-// (degraded), letting a genuinely over-threshold gap dodge its classification
-// — and, at the stale boundary, dodge the operator email.
+// (degraded), letting a genuinely over-threshold gap dodge its classification,
+// and, at the stale boundary, dodge the operator email.
 // ---------------------------------------------------------------------------
 describe("sub-minute precision at the threshold boundaries", () => {
   const at = (msFromEpoch: number) => new Date(msFromEpoch).toISOString();
   const T0 = Date.parse("2026-08-13T09:00:00.000Z");
   const MIN = 60_000;
 
-  // CADENCE axis — the reported case.
+  // CADENCE axis: the reported case.
   it.each([
     ["exactly 30:00", 30 * MIN, "healthy"],
     ["30:01", 30 * MIN + 1_000, "degraded"],
@@ -646,7 +646,7 @@ describe("sub-minute precision at the threshold boundaries", () => {
     expect(s.status).toBe(expected);
   });
 
-  // RECENCY axis — the same rounding bug existed here since #569.
+  // RECENCY axis: the same rounding bug existed here since #569.
   it.each([
     ["exactly 30:00", 30 * MIN, "healthy"],
     ["30:29 (would round DOWN to 30)", 30 * MIN + 29_000, "degraded"],
@@ -701,7 +701,7 @@ describe("sub-minute precision at the threshold boundaries", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 — Codex review 3775042692 (P2):
+// OPS-01.1, Codex review 3775042692 (P2):
 // scheduler cadence is INVOCATION-to-INVOCATION, never completion-to-completion.
 // ---------------------------------------------------------------------------
 describe("P2-A: cadence comes from invocation times, not completion times", () => {
@@ -749,7 +749,7 @@ describe("P2-A: cadence comes from invocation times, not completion times", () =
 
   it("a slow run cannot fabricate a slow scheduler", () => {
     // A invoked 10:00 and took 14 minutes; B invoked 10:15 and took 10s.
-    // Completion-to-completion would be ~1 minute — also wrong, in the other
+    // Completion-to-completion would be ~1 minute, also wrong, in the other
     // direction. Invocation spacing is the only honest number.
     const s = computeReminderSchedulerStatus(
       { at: T("10:15:10"), invokedAt: T("10:15:00"), previousInvokedAt: T("10:00:00") },
@@ -778,7 +778,7 @@ describe("P2-A: cadence comes from invocation times, not completion times", () =
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 — Codex review 3775070631 (P2):
+// OPS-01.1, Codex review 3775070631 (P2):
 // the heartbeat update must be monotonic under overlapping runs. Redis
 // completion order is NOT invocation order.
 // ---------------------------------------------------------------------------
@@ -789,7 +789,7 @@ describe("P2-B: monotonic heartbeat merge", () => {
     invokedAt: T(invoked),
   });
 
-  // RACE 1 — B's Redis update lands first, A's arrives afterwards.
+  // RACE 1: B's Redis update lands first, A's arrives afterwards.
   it("RACE 1: a late-arriving OLDER invocation does not regress the cadence point", () => {
     const A = run("10:00:00", "10:02:00");
     const B = run("10:15:00", "10:16:00");
@@ -807,7 +807,7 @@ describe("P2-B: monotonic heartbeat merge", () => {
     expect(inOrder.previousInvokedAt).toBe(T("10:00:00"));
   });
 
-  // RACE 2 — completion order differs from invocation order.
+  // RACE 2: completion order differs from invocation order.
   it("RACE 2: cadence is 15 min regardless of which run finished first", () => {
     // A invoked 10:00 but finished at 10:20; B invoked 10:15 and finished 10:16.
     const A = run("10:00:00", "10:20:00");
@@ -830,7 +830,7 @@ describe("P2-B: monotonic heartbeat merge", () => {
     expect(merged.at).toBe(T("10:16:00"));
   });
 
-  // RACE 3 — idempotency.
+  // RACE 3: idempotency.
   it("RACE 3: replaying the same update is non-regressive", () => {
     const A = run("10:00:00", "10:02:00");
     const B = run("10:15:00", "10:16:00");
@@ -842,7 +842,7 @@ describe("P2-B: monotonic heartbeat merge", () => {
     expect(thrice.previousInvokedAt).toBe(once.previousInvokedAt);
   });
 
-  // RACE 4 — no readable prior state must not suppress this run's recency.
+  // RACE 4: no readable prior state must not suppress this run's recency.
   it("RACE 4: an absent or corrupt current value still records the new success", () => {
     const B = run("10:15:00", "10:16:00");
     const fromNothing = mergeReminderHeartbeat(null, B);
@@ -867,7 +867,7 @@ describe("P2-B: monotonic heartbeat merge", () => {
   });
 
   it("an out-of-order arrival improves the predecessor when it is closer", () => {
-    // stored: latest 10:30, previous 10:00. A 10:15 invocation arrives late —
+    // stored: latest 10:30, previous 10:00. A 10:15 invocation arrives late,
     // it is the true immediate predecessor of 10:30.
     const stored: ReminderHeartbeat = {
       at: T("10:31:00"),
@@ -891,10 +891,10 @@ describe("P2-B: monotonic heartbeat merge", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 — Codex review 3775193411 (P2):
+// OPS-01.1, Codex review 3775193411 (P2):
 // timestamps must be shape-validated before any ordering comparison. Canonical
 // ISO strings sort chronologically, but a corrupt-yet-valid-JSON value like
-// "not-a-date" sorts AFTER every real "2026-..." timestamp — so a naive
+// "not-a-date" sorts AFTER every real "2026-..." timestamp, so a naive
 // comparison would keep the corrupt value forever and the heartbeat could never
 // self-heal.
 // ---------------------------------------------------------------------------
@@ -952,7 +952,7 @@ describe("P2: a corrupt stored heartbeat is replaced, not preserved", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 — Codex review 3775413510 (P2): a digit-shaped IMPOSSIBLE date must
+// OPS-01.1, Codex review 3775413510 (P2): a digit-shaped IMPOSSIBLE date must
 // not be treated as orderable. "9999-99-99T99:99:99.000Z" matches a naive
 // prefix pattern and sorts after every real timestamp, so it would wedge the
 // heartbeat exactly like "not-a-date" did.
@@ -1000,9 +1000,9 @@ describe("P2: impossible dates are rejected, not merely ill-shaped ones", () => 
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 — Codex review 3775518504 (P2): hour 24 is only valid to Date.parse
+// OPS-01.1, Codex review 3775518504 (P2): hour 24 is only valid to Date.parse
 // when minute/second/ms are all zero, so a range check of h <= 24 still accepts
-// values JS rejects ("T24:59:59.000Z") — the same wedge again.
+// values JS rejects ("T24:59:59.000Z"), the same wedge again.
 // toISOString() never emits hour 24, so it is rejected outright.
 // ---------------------------------------------------------------------------
 describe("P2: hour-24 timestamps are not orderable", () => {
@@ -1047,7 +1047,7 @@ describe("P2: hour-24 timestamps are not orderable", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OPS-01.1 — Codex review 3775648194 (P2). THE STRUCTURAL FIX.
+// OPS-01.1, Codex review 3775648194 (P2). THE STRUCTURAL FIX.
 //
 // Four rounds of this review found the same shape of defect: a stored value
 // that is well-formed enough to be treated as orderable, sorts AFTER every real
@@ -1078,7 +1078,7 @@ describe("P2: implausibly future heartbeats cannot mask an outage", () => {
     expect(merged.invokedAt).toBe(T("10:15:00"));
   });
 
-  it("a far-future heartbeat does NOT report healthy — it reports missing", () => {
+  it("a far-future heartbeat does NOT report healthy, it reports missing", () => {
     const s = computeReminderSchedulerStatus({ at: "2099-01-01T00:00:00.000Z" }, NOW);
     expect(s.status).toBe("missing");
     expect(s.status).not.toBe("healthy");

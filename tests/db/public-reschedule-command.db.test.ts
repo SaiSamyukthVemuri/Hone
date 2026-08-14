@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
 
 // ===========================================================================
-// 0171 — public.reschedule_appointment_v2, proven on the real migrated DB.
+// 0171, public.reschedule_appointment_v2, proven on the real migrated DB.
 // ===========================================================================
 //
 // The legacy reschedule_appointment accepted a caller-supplied end time AND
@@ -180,7 +180,7 @@ afterAll(async () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 reschedule_appointment_v2 — the successful reschedule", () => {
+describe("0171 reschedule_appointment_v2: the successful reschedule", () => {
   it("cancels the original, creates exactly one successor, and writes complete lineage", async () => {
     const f = await seed("happy");
     const target = at(11, 10, 0);
@@ -239,7 +239,7 @@ describe("0171 reschedule_appointment_v2 — the successful reschedule", () => {
       new Date(succ.ends_at).getTime() + 15 * 60_000,
     );
 
-    // Send state is FRESH — nothing inherited, so the successor can send its
+    // Send state is FRESH: nothing inherited, so the successor can send its
     // own confirmation.
     expect(succ.confirmation_sent_at).toBeNull();
     expect(succ.confirmation_send_attempts).toBe(0);
@@ -354,7 +354,7 @@ describe("0171 reschedule_appointment_v2 — the successful reschedule", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 — duration authority (the drift defect)", () => {
+describe("0171: duration authority (the drift defect)", () => {
   it("preserves the ORIGINAL 45-minute duration after the service default changes to 60", async () => {
     const f = await seed("drift", { durationMinutes: 45, serviceDefaultMinutes: 45 });
     // The studio lengthens the service AFTER the client booked.
@@ -394,7 +394,7 @@ describe("0171 — duration authority (the drift defect)", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 — exact replacement-slot membership", () => {
+describe("0171: exact replacement-slot membership", () => {
   it("rejects an off-grid start the page would never offer", async () => {
     const f = await seed("offgrid");
     const out = await reschedule(f, at(11, 10, 17));
@@ -439,7 +439,7 @@ describe("0171 — exact replacement-slot membership", () => {
     await expectUnchanged(f);
   });
 
-  it("EXCLUDES the original's own reservation — and the negative control proves it matters", async () => {
+  it("EXCLUDES the original's own reservation, and the negative control proves it matters", async () => {
     const f = await seed("exclusion");
     const day = f.originalStart.slice(0, 10);
 
@@ -481,7 +481,7 @@ describe("0171 — exact replacement-slot membership", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 — policy freshness", () => {
+describe("0171: policy freshness", () => {
   it("requires no acknowledgement and writes no row when the studio has no policy", async () => {
     const f = await seed("nopolicy");
     const out = await reschedule(f, at(11, 10, 0), { ack: false, presentedHash: null });
@@ -499,7 +499,7 @@ describe("0171 — policy freshness", () => {
   // String.prototype.trim(), not Postgres btrim(). btrim() with no second
   // argument strips ONLY spaces, so a policy of "   \n\t  " survived it
   // non-empty while hasAnyPolicy() trimmed it to "". The page would then render
-  // NO checkbox while the command demanded one — public rescheduling
+  // NO checkbox while the command demanded one, public rescheduling
   // permanently broken for that studio, unsatisfiable by the visitor.
   it.each([
     ["spaces only", "     "],
@@ -587,7 +587,7 @@ describe("0171 — policy freshness", () => {
     expect(acks).toHaveLength(1);
     expect(acks[0].id).toBe(out.policy_acknowledgement_id);
     expect(acks[0].action).toBe("reschedule");
-    // Linked to the ORIGINAL — "the client accepted before rescheduling X".
+    // Linked to the ORIGINAL: "the client accepted before rescheduling X".
     expect(acks[0].appointment_id).toBe(f.originalId);
     expect(acks[0].client_id).toBe(f.clientId);
     expect(acks[0].cancellation_policy_text_snapshot).toBe("Cancel 24h ahead.");
@@ -599,7 +599,7 @@ describe("0171 — policy freshness", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 — SQL/TypeScript policy hash parity", () => {
+describe("0171: SQL/TypeScript policy hash parity", () => {
   const CASES: Array<[string, string | null, string | null]> = [
     ["both null", null, null],
     ["both empty", "", ""],
@@ -642,7 +642,7 @@ describe("0171 — SQL/TypeScript policy hash parity", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 — token and lifecycle refusals", () => {
+describe("0171: token and lifecycle refusals", () => {
   it("collapses an unknown appointment id", async () => {
     const f = await seed("unknownid");
     const out = await reschedule(f, at(11, 10, 0), { appointmentId: randomUUID() });
@@ -747,7 +747,7 @@ describe("0171 — token and lifecycle refusals", () => {
 // ---------------------------------------------------------------------------
 
 // ===========================================================================
-// FINANCIAL SAFETY — the gate must FAIL CLOSED, and these tests must be able
+// FINANCIAL SAFETY, the gate must FAIL CLOSED, and these tests must be able
 // to fail.
 // ===========================================================================
 //
@@ -755,7 +755,7 @@ describe("0171 — token and lifecycle refusals", () => {
 // `.catch()` that fell back to asserting an ORDINARY successful reschedule, and
 // then returned early when the payment row was absent. That test could pass
 // without the `exists (select 1 from appointment_payments ...)` arm ever being
-// evaluated — a vacuous pass dressed as coverage. A fixture failure must FAIL
+// evaluated, a vacuous pass dressed as coverage. A fixture failure must FAIL
 // the test, never convert it into a passing alternate path.
 //
 // So `seedAppointmentPayment` seeds the real FK lineage, with no catch:
@@ -840,7 +840,7 @@ async function seedAppointmentPayment(
   );
 }
 
-describe("0171 — financial safety fails closed (appointment_payments)", () => {
+describe("0171: financial safety fails closed (appointment_payments)", () => {
   it.each([
     "method_saved",
     "charged",
@@ -852,7 +852,7 @@ describe("0171 — financial safety fails closed (appointment_payments)", () => 
     // No .catch(): a fixture failure fails the test.
     await seedAppointmentPayment(f, status);
 
-    // The gate cannot be vacuous — the row is proven present first.
+    // The gate cannot be vacuous, the row is proven present first.
     const exists = await adminQuery(
       `select count(*)::int n from public.appointment_payments where appointment_id = $1`,
       [f.originalId],
@@ -883,7 +883,7 @@ describe("0171 — financial safety fails closed (appointment_payments)", () => 
   });
 });
 
-describe("0171 — financial safety fails closed (payment_charge_attempts)", () => {
+describe("0171: financial safety fails closed (payment_charge_attempts)", () => {
   async function seedChargeAttempt(f: Fixture, status: string, reason = "no_show_fee") {
     await adminQuery(
       `insert into public.payment_charge_attempts
@@ -921,7 +921,7 @@ describe("0171 — financial safety fails closed (payment_charge_attempts)", () 
   );
 });
 
-describe("0171 — financial safety fails closed (manual_fee_charge_attempts)", () => {
+describe("0171: financial safety fails closed (manual_fee_charge_attempts)", () => {
   // The full lineage this table demands, seeded for real:
   //   studio_payment_settings + client_stripe_customers (via seedStripeLineage)
   //     <- client_consent_signatures      (card authorization)
@@ -1004,7 +1004,7 @@ describe("0171 — financial safety fails closed (manual_fee_charge_attempts)", 
   );
 });
 
-describe("0171 — the financial census is complete", () => {
+describe("0171: the financial census is complete", () => {
   it("no OTHER table carrying live appointment-bound money is missing from the gate", async () => {
     // Every table with an appointment_id FK, minus the ones the gate covers and
     // the ones that are provably not payment state. If this list grows, the
@@ -1037,7 +1037,7 @@ describe("0171 — the financial census is complete", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 — practitioner continuity", () => {
+describe("0171: practitioner continuity", () => {
   it("preserves a NULL practitioner under capacity OFF", async () => {
     const f = await seed("nullpract");
     await adminQuery(`update public.appointments set practitioner_id = null where id = $1`, [
@@ -1054,7 +1054,7 @@ describe("0171 — practitioner continuity", () => {
     expect(succ.practitioner_id).toBeNull();
   });
 
-  it("never reassigns to a newly-added owner — the ORIGINAL practitioner is kept", async () => {
+  it("never reassigns to a newly-added owner, the ORIGINAL practitioner is kept", async () => {
     const f = await seed("noreassign");
     // A second, newer active owner appears. A "current active owner" lookup
     // could pick either; the command must pick neither.
@@ -1077,7 +1077,7 @@ describe("0171 — practitioner continuity", () => {
   });
 
   // ==========================================================================
-  // CAPACITY-OFF HISTORICAL ASSIGNMENT — the parity contract.
+  // CAPACITY-OFF HISTORICAL ASSIGNMENT, the parity contract.
   // ==========================================================================
   //
   // The capacity-OFF slot loader generates from STUDIO-WIDE availability and
@@ -1085,8 +1085,8 @@ describe("0171 — practitioner continuity", () => {
   // service_practitioners. An earlier revision of validate_public_reschedule_slot
   // gated membership/eligibility on `p_practitioner_id is not null` (0170's form,
   // correct for booking), which meant a capacity-OFF studio whose original
-  // practitioner had since been deactivated — or dropped from the service's
-  // eligibility list — had the page offer slots the validator refused EVERY one
+  // practitioner had since been deactivated, or dropped from the service's
+  // eligibility list, had the page offer slots the validator refused EVERY one
   // of. Public rescheduling was permanently unsatisfiable for that client.
   it("capacity OFF: preserves an INACTIVE historical practitioner and still reschedules", async () => {
     const f = await seed("offinactive");
@@ -1186,7 +1186,7 @@ describe("0171 — practitioner continuity", () => {
     // The service now has an eligibility list that EXCLUDES the original owner.
     // The service already HAS an eligibility list (rows are fanned out when a
     // practitioner/service is created), so make it exclude the original owner
-    // by removing their row — leaving the list non-empty, which is the
+    // by removing their row, leaving the list non-empty, which is the
     // precondition the eligibility gate keys on.
     await adminQuery(
       `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
@@ -1212,7 +1212,7 @@ describe("0171 — practitioner continuity", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("0171 — Google Calendar invariants", () => {
+describe("0171: Google Calendar invariants", () => {
   it("enqueues NOTHING while outbound intent is OFF", async () => {
     const f = await seed("gcaloff");
     const before = await adminQuery(
@@ -1284,7 +1284,7 @@ describe("0171 — Google Calendar invariants", () => {
 // but the FAILURE CONTRACT still has to be explicit rather than accidental:
 // there is deliberately NO automatic retry (a retry would have to prove the
 // original was not already mutated, which is a design this PR does not add).
-describe("0171 — successor token hash collision", () => {
+describe("0171: successor token hash collision", () => {
   it("rolls the whole command back and leaves the original untouched", async () => {
     const f = await seed("collision");
     // Park the hash on another appointment so the successor INSERT collides.
@@ -1313,8 +1313,8 @@ describe("0171 — successor token hash collision", () => {
     );
     expect(audits.rows[0].n).toBe(0);
 
-    // The colliding hash still belongs to exactly ONE appointment — the other
-    // one — so nothing was overwritten.
+    // The colliding hash still belongs to exactly ONE appointment, the other
+    // one, so nothing was overwritten.
     const owners = await adminQuery(
       `select count(*)::int n from public.appointments where cancellation_token_hash = $1`,
       [takenHash],
@@ -1330,9 +1330,9 @@ describe("0171 — successor token hash collision", () => {
 });
 
 // ===========================================================================
-// SUCCESS-ROW INTEGRITY — the contract the application's parser relies on.
+// SUCCESS-ROW INTEGRITY, the contract the application's parser relies on.
 // ===========================================================================
-describe("0171 — a success row is structurally non-null", () => {
+describe("0171: a success row is structurally non-null", () => {
   it("populates every field the application requires", async () => {
     const f = await seed("successshape");
     const out = await reschedule(f, at(11, 10, 0));
@@ -1377,7 +1377,7 @@ describe("0171 — a success row is structurally non-null", () => {
   });
 });
 
-describe("0171 — privilege boundary", () => {
+describe("0171: privilege boundary", () => {
   it.each(["anon", "authenticated"] as const)("denies EXECUTE to %s", async (role) => {
     await expect(
       asRole(role, async (q) => {
@@ -1419,7 +1419,7 @@ describe("0171 — privilege boundary", () => {
 
   // RETIRED (B6 / 0175). This asserted the legacy v1 `reschedule_appointment`
   // remained INSTALLED for deployment skew. B6 dropped it by exact signature
-  // after a zero-caller census, so the claim is not merely false — the object
+  // after a zero-caller census, so the claim is not merely false, the object
   // it referred to is gone. The exact DROP is pinned in
   // tests/migrations/0175-appointment-transition-integrity.test.ts and its
   // absence is proven in tests/db/appointment-transition-integrity.db.test.ts,
@@ -1427,7 +1427,7 @@ describe("0171 — privilege boundary", () => {
 
   it("after 0172 the appointments table leaves both browser roles with SELECT only", async () => {
     // Was "revokes NOTHING from the appointments table". 0171 itself still
-    // revokes nothing — that remains pinned byte-level in
+    // revokes nothing, that remains pinned byte-level in
     // tests/migrations/0171-public-reschedule-command.test.ts. What changed is
     // the CHAIN this suite runs against: migration 0172 (appointment boundary
     // B3) now applies after 0171, so the observed posture inverts.

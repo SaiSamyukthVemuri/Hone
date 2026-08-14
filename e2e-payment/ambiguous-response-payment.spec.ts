@@ -24,7 +24,7 @@ import {
 import { openCheckout, prepareInModal, closeModal, armReady } from "./helpers/checkout-flow";
 
 // ===========================================================================
-// Ambiguous-response recovery browser case (PR — Issue #420).
+// Ambiguous-response recovery browser case (PR, Issue #420).
 // ===========================================================================
 //
 // Proves the exact "committed payment, lost response" scenario: the browser
@@ -52,7 +52,7 @@ test.beforeAll(async () => {
   // F-PAY-001: this is a SUCCESSFUL payment journey, so it must start from
   // resolvable authoritative pricing. It previously had no booked service at
   // all and leaned on sessions.price_paid_cents to populate an editable amount
-  // field — the historical fallback this PR retires. Without a priced service
+  // field, the historical fallback this PR retires. Without a priced service
   // the card now (correctly) renders its blocked state and withdraws the
   // prepare form, which is why this spec failed before ever reaching Prepare.
   seed = await seedEligiblePaymentWithLogin({
@@ -188,7 +188,7 @@ test("committed charge with a lost response recovers to Paid on reload (no dupli
   await expect(page.getByTestId("appointment-payment-paid")).toBeVisible();
   await expect(page.getByTestId("checkout-button")).toHaveCount(0);
 
-  // Full "Paid · $225.00" (trusted amount) via the session-detail surface — a
+  // Full "Paid · $225.00" (trusted amount) via the session-detail surface, a
   // paid appointment shows only a "Paid" badge on the roster, so the amount is
   // re-read here from the persisted succeeded row.
   await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);

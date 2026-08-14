@@ -5,7 +5,7 @@ import { WALKTHROUGH } from "@/lib/marketing/content";
 
 // Demo + analytics guards (stage 7): "Request" not "Book", concise form, no
 // phone field, a success state that explains the real manual follow-up, and
-// analytics that send event NAMES ONLY — never name/email/studio/free text/
+// analytics that send event NAMES ONLY, never name/email/studio/free text/
 // tokens/client data.
 
 function read(rel: string): string {

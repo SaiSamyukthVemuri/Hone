@@ -63,7 +63,7 @@ describe("owner-only editing is preserved; non-owner sees read-only note", () =>
   });
 });
 
-describe("UI/copy only — no send/payment/logic change", () => {
+describe("UI/copy only: no send/payment/logic change", () => {
   it("touches no postcare send logic, Stripe, email, or SMS in the changed surfaces", () => {
     for (const src of [LAYOUT, INTAKE, FORM]) {
       expect(src).not.toMatch(/sendPostcare|autoSendPostcare|recordOpsAlert|stripe|twilio|sendSms/i);

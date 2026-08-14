@@ -6,8 +6,8 @@ import { join } from "node:path";
 //
 // REPRODUCED DEFECT. `MultiAreaEditor` passed its `addArea` (an APPEND) as the
 // `AreaPicker` `onChange`, and `AreaPicker.setCustom` called `onChange` on every
-// keystroke. Typing "Glabella" therefore appended eight selected rows — "G",
-// "Gl", "Gla", "Glab", "Glabe", "Glabel", "Glabell", "Glabella" — and the write
+// keystroke. Typing "Glabella" therefore appended eight selected rows, "G",
+// "Gl", "Gla", "Glab", "Glabe", "Glabel", "Glabell", "Glabella", and the write
 // action persisted all eight as
 // canonical `session_block_areas` rows (`normalizeAreaSet` dedupes only on
 // (area, laterality), and every prefix is a distinct area).
@@ -27,7 +27,7 @@ const ACTIONS = read("app/(app)/clients/[id]/sessions/[sessionId]/block-actions.
 
 describe("AreaPicker custom text is draft-only in explicit-commit mode", () => {
   it("typing NEVER notifies the parent when customCommit is explicit", () => {
-    // setCustom stores the draft and returns early — the `onChange` that the
+    // setCustom stores the draft and returns early, the `onChange` that the
     // multi-area editor treats as an APPEND is unreachable from a keystroke.
     expect(PICKER).toMatch(/function setCustom\(next: string\) \{[\s\S]*?setCustomValue\(next\);[\s\S]*?if \(explicit\) return;[\s\S]*?onChange\(next\);/);
   });
@@ -44,7 +44,7 @@ describe("AreaPicker custom text is draft-only in explicit-commit mode", () => {
     expect(PICKER).toMatch(/disabled=\{!canCommit\}/);
   });
 
-  it("offers BOTH commit affordances — an Add area button and Enter", () => {
+  it("offers BOTH commit affordances: an Add area button and Enter", () => {
     expect(PICKER).toMatch(/onClick=\{commitCustom\}/);
     expect(PICKER).toMatch(/if \(e\.key === "Enter"\) \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?commitCustom\(\);/);
   });
@@ -106,7 +106,7 @@ describe("no other surface can append a partial keystroke value", () => {
     expect(MULTI_PICKER).toMatch(/function addCustom\(\)/);
     expect(MULTI_PICKER).toMatch(/onClick=\{addCustom\}/);
     expect(MULTI_PICKER).toMatch(/onChange=\{\(e\) => setCustomDraft\(e\.target\.value\)\}/);
-    // Typing only touches local draft state — there is no onChange(...) call in
+    // Typing only touches local draft state, there is no onChange(...) call in
     // the input's own change handler.
     expect(MULTI_PICKER).not.toMatch(/setCustomDraft\(e\.target\.value\);\s*onChange\(/);
   });
@@ -140,7 +140,7 @@ describe("no other surface can append a partial keystroke value", () => {
   });
 
   it("the server still drops blank areas and rejects duplicate (area, side) pairs", () => {
-    // Unchanged server contract — the fix is client-side only, and this pins
+    // Unchanged server contract: the fix is client-side only, and this pins
     // that the existing server guard is still the backstop.
     expect(ACTIONS).toMatch(/if \(area\.length === 0\) continue;/);
     expect(ACTIONS).toMatch(/const key = area\.toLowerCase\(\) \+ ":" \+ lat;/);

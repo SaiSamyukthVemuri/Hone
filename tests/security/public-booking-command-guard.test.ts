@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 //
 // Before 0170 this route inserted the appointment itself and wrote its
 // appointment_audit row in a SEPARATE statement whose error was discarded, so a
-// confirmed public booking could exist with no audit trail — production carries
+// confirmed public booking could exist with no audit trail, production carries
 // exactly one such row.
 //
 // SCOPE HONESTY: this guard covers the PUBLIC BOOKING ROUTE only. Other narrow
@@ -24,7 +24,7 @@ const CODE = SRC.split("\n")
   .filter((l) => !l.trim().startsWith("//"))
   .join("\n");
 
-describe("public booking route — no direct appointment creation", () => {
+describe("public booking route: no direct appointment creation", () => {
   it("performs NO direct DML against appointments", () => {
     // Both literal and variable table forms, matching the L18 lesson that a
     // `.from(variable)` writer hides from a literal-only scan.
@@ -38,7 +38,7 @@ describe("public booking route — no direct appointment creation", () => {
     }
   });
 
-  it("performs NO direct DML against appointment_audit — the command owns it", () => {
+  it("performs NO direct DML against appointment_audit, the command owns it", () => {
     expect(CODE).not.toMatch(/\.from\(\s*["']appointment_audit["']\s*\)/);
   });
 
@@ -87,7 +87,7 @@ describe("public booking route — no direct appointment creation", () => {
   });
 });
 
-describe("authoritative practitioner — no stale pre-command owner", () => {
+describe("authoritative practitioner: no stale pre-command owner", () => {
   it("does NOT fetch a practitioner before the command", () => {
     // The pre-RPC "current active owner" lookup is gone. If it returns, an
     // ownership or activity change between the pre-fetch and the command's own
@@ -143,7 +143,7 @@ describe("authoritative practitioner — no stale pre-command owner", () => {
   });
 });
 
-describe("policy split — what the command does NOT enforce", () => {
+describe("policy split: what the command does NOT enforce", () => {
   it("the new-client consultation restriction stays in the action, BEFORE the command", () => {
     // The command never receives client_type, and the consultation rule is a
     // public-flow product policy rather than an appointment-table lineage fact.

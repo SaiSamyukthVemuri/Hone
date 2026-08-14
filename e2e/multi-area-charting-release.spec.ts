@@ -11,7 +11,7 @@ import {
 import { loginAsOwner } from "./helpers/flows";
 
 // Full multi-area charting RELEASE flow (migration 0128 areas + 0129 atomic
-// write) — real browser, real stack, iPad width. Proves the whole practitioner
+// write), real browser, real stack, iPad width. Proves the whole practitioner
 // journey end to end: multiple areas + per-area laterality + an ACTIVE probe lot
 // from inventory, saved atomically; every display surface shows BOTH areas + the
 // probe; editing to one area removes the other everywhere with no stale rows; a
@@ -150,7 +150,7 @@ test("multi-area + probe lot: save, display everywhere, edit-down, conflict, leg
     await page.getByTestId("laterality-Cheeks-right").click();
     await page.getByTestId("save-treatment-area").click();
     await expect(page.getByText(/changed elsewhere/i)).toBeVisible({ timeout: T });
-    // The prior committed set is intact — nothing was half-written.
+    // The prior committed set is intact, nothing was half-written.
     await expect
       .poll(async () => (await getSessionBlockAreas(sessionId)).join(","), { timeout: T })
       .toBe("Cheeks|left");

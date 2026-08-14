@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 // PR #278 (migration 0094): tenant-consistency composite FKs on clinical/import
 // child tables, proven on the REAL migrated local database. A child row may never
 // carry studio_id=A while pointing at a parent (client/session/import batch) from
-// studio B — and an electrolysis entry's block must belong to its own session.
+// studio B, and an electrolysis entry's block must belong to its own session.
 // adminQuery (service role) is used for the FK-violation cases to prove the
 // constraint holds even for the service role (the strongest guarantee); a
 // userQuery pair shows the authenticated path; an RLS read check is the regression.
@@ -67,7 +67,7 @@ describe("sessions: client + studio must match", () => {
     ).rejects.toThrow();
   });
   it("accepts a same-studio session (command path + service role)", async () => {
-    // After 0169 `authenticated` holds no direct INSERT on sessions — the
+    // After 0169 `authenticated` holds no direct INSERT on sessions, the
     // practitioner path is start_session (0167). The tenant-consistency
     // property under test is unchanged: a same-studio session is accepted.
     const a = await userQuery(
@@ -225,7 +225,7 @@ describe("electrolysis_entries: attached block must belong to the same session",
 
 describe("exactly one FK relationship per pair (PostgREST embed ambiguity guard)", () => {
   // PR #278 fix: the composite FK REPLACES the single FK, so each table pair has
-  // exactly one relationship — otherwise PostgREST embedded selects (e.g.
+  // exactly one relationship, otherwise PostgREST embedded selects (e.g.
   // sessions.select("... session_blocks(...)")) fail with "more than one
   // relationship was found".
   async function fkCount(child: string, parent: string): Promise<number> {

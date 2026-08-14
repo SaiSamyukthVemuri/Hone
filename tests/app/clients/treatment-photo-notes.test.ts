@@ -41,7 +41,7 @@ describe("updateTreatmentImageNoteAction", () => {
     expect(ACTION).toMatch(/Note is too long/);
   });
 
-  it("uses the RLS client (createClient) — never the service-role admin", () => {
+  it("uses the RLS client (createClient), never the service-role admin", () => {
     expect(ACTION).toMatch(/const supabase = await createClient\(\)/);
     expect(ACTION).not.toMatch(/createAdminClient/);
   });
@@ -124,7 +124,7 @@ describe("note UI on card + modal", () => {
 
 describe("scope guard: no upload/sanitizer/storage/signed-url/archive/attach change", () => {
   it("does not touch the sanitizer, storage path build, signing, archive, or attach", () => {
-    // The note action file adds only the note action — it must not alter these.
+    // The note action file adds only the note action, it must not alter these.
     for (const src of [MANAGER_CODE, PAGE]) {
       expect(src).not.toMatch(/sanitizeFilename|createSignedUrl\([^)]*ttl|storage_path\s*=/);
     }

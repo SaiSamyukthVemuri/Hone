@@ -3,7 +3,7 @@ import { auditOutcomeFor } from "@/app/admin/studios/[id]/audit-outcome";
 import { ADMIN_ACTION_OUTCOMES } from "@/lib/audit/admin-actions";
 import type { WelcomeEmailResult } from "@/lib/email/send-welcome";
 
-// Finding 3 — the resend audit outcome must be truthful, not a blanket
+// Finding 3: the resend audit outcome must be truthful, not a blanket
 // "succeeded" for everything that isn't a hard failure.
 describe("welcome-email resend audit outcome mapping", () => {
   it("maps each send result to the correct closed-set outcome", () => {

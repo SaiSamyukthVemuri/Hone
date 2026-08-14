@@ -18,7 +18,7 @@ import {
   DISCOVERY_SCOPE,
 } from "./helpers/fake-google-e2e";
 
-// Synthetic-Google browser E2E — SECURITY cases + credential-boundary PENDING
+// Synthetic-Google browser E2E: SECURITY cases + credential-boundary PENDING
 // states. Guarded fake Google (no real request).
 
 test.beforeEach(() => resetFakeGoogle());
@@ -46,7 +46,7 @@ test("an inactive practitioner is denied server-side (destination not recorded)"
   await page.goto("/settings/integrations");
   // Deactivate AFTER navigation; the destination action re-reads on click and is
   // denied server-side (getCurrentPractitionerWithStudio's active-membership
-  // backstop rejects an inactive practitioner) — so nothing is recorded.
+  // backstop rejects an inactive practitioner), so nothing is recorded.
   await setE2eOwnerActive(seed.studioId, false);
   await page.getByRole("button", { name: /Create a Hone Appointments calendar/i }).click();
   await page.waitForTimeout(2000); // allow the denied action to attempt + fail
@@ -55,7 +55,7 @@ test("an inactive practitioner is denied server-side (destination not recorded)"
   await setE2eOwnerActive(seed.studioId, true); // restore
 });
 
-test("account switch is rejected — a different Google identity never replaces credentials", async ({ page }) => {
+test("account switch is rejected: a different Google identity never replaces credentials", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]); // account 'e2e-sub'
@@ -72,11 +72,11 @@ test("account switch is rejected — a different Google identity never replaces 
   expect(st?.granted_scopes).not.toContain(APP_CREATED_SCOPE);
 });
 
-test("partial grant is rejected pre-replacement — previous grant preserved, still pending", async ({ page }) => {
+test("partial grant is rejected pre-replacement, previous grant preserved, still pending", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]);
-  // The user declines the destination scope — the fake grants only discovery.
+  // The user declines the destination scope, the fake grants only discovery.
   configureFakeGoogle({ grantedScopes: [DISCOVERY_SCOPE] });
   await loginAsOwner(page, seed);
 
@@ -102,7 +102,7 @@ test("a tampered/unknown OAuth state is rejected at the callback", async ({ page
   await expect(page).toHaveURL(/gcal=error/);
 });
 
-test("dedicated PROVISIONING-PENDING — grant kept, provisioning fails, retryable, no destination stored", async ({ page }) => {
+test("dedicated PROVISIONING-PENDING: grant kept, provisioning fails, retryable, no destination stored", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]);
@@ -113,7 +113,7 @@ test("dedicated PROVISIONING-PENDING — grant kept, provisioning fails, retryab
   await page.getByRole("button", { name: /Create a Hone Appointments calendar/i }).click();
   await page.getByRole("button", { name: /Grant permission to create a calendar/i }).click();
   await page.waitForURL(/gcal=/);
-  // Grant succeeded (credentials replaced) — provisioning now fails.
+  // Grant succeeded (credentials replaced): provisioning now fails.
   await page.getByRole("button", { name: /Create the Hone Appointments calendar/i }).click();
   await expect(page.locator('p[role="alert"]')).toBeVisible();
   // The new grant is RETAINED; the destination is NOT completed; retry stays dedicated.
@@ -124,7 +124,7 @@ test("dedicated PROVISIONING-PENDING — grant kept, provisioning fails, retryab
   expect(st?.app_created_calendar_id).toBeNull(); // provisioning pending
 });
 
-test("existing-owned SELECTION-PENDING — grant kept, awaiting calendar selection", async ({ page }) => {
+test("existing-owned SELECTION-PENDING: grant kept, awaiting calendar selection", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]);

@@ -10,7 +10,7 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// Migration 0157 — copy_session_setup + descriptor, proven on the REAL migrated
+// Migration 0157: copy_session_setup + descriptor, proven on the REAL migrated
 // local DB. The RPC is the ONLY writer and is service_role-only. It is atomic,
 // idempotent, SETUP-ONLY (outcomes + minutes dropped), source-authoritative
 // (derives the canonical previous session itself; rejects a stale source), and
@@ -212,7 +212,7 @@ async function seedPair() {
   return seedScenario();
 }
 
-describe("copy_session_setup — atomic batch create (setup-only, no minutes)", () => {
+describe("copy_session_setup: atomic batch create (setup-only, no minutes)", () => {
   it("creates the block + areas + first entry; injected outcomes AND minutes are dropped", async () => {
     const { source, target, fp } = await seedPair();
     const res = await callCopy({ target, specs: validSpec(true), key: "k-create", fp, sourceId: source });
@@ -288,7 +288,7 @@ describe("copy_session_setup — atomic batch create (setup-only, no minutes)", 
 
 // Phase B reconciliation: galvanic_intensity_percent is a RETIRED reading (Phase
 // A). Proven on the REAL migrated DB against the copy fingerprint + RPC.
-describe("copy_session_setup — galvanic intensity retired + exact PicoBlend round-trip", () => {
+describe("copy_session_setup: galvanic intensity retired + exact PicoBlend round-trip", () => {
   it("(8/9) the source fingerprint IGNORES galvanic_intensity_percent but reflects a valid reusable change", async () => {
     const clientId = await freshClient();
     const source = await seedSession(a, { startedAt: "2026-02-01T10:00:00Z", clientId });
@@ -344,7 +344,7 @@ describe("copy_session_setup — galvanic intensity retired + exact PicoBlend ro
     expect(dest.galvanic_intensity_percent).toBeNull();
     expect(dest.minutes_performed).toBeNull();
 
-    // The SOURCE is never touched by a copy — its rows are unchanged.
+    // The SOURCE is never touched by a copy, its rows are unchanged.
     const src = (
       await adminQuery(
         "select thermolysis_intensity_percent, galvanic_intensity_percent from public.electrolysis_entries where session_id=$1",
@@ -355,7 +355,7 @@ describe("copy_session_setup — galvanic intensity retired + exact PicoBlend ro
   });
 });
 
-describe("copy_session_setup — idempotency & session-wide serialization", () => {
+describe("copy_session_setup: idempotency & session-wide serialization", () => {
   it("same key + same request → replay (no new rows); ledger stays at 1", async () => {
     const { source, target, fp } = await seedPair();
     const first = await callCopy({ target, specs: validSpec(), key: "k-idem", fp, sourceId: source });
@@ -386,7 +386,7 @@ describe("copy_session_setup — idempotency & session-wide serialization", () =
   });
 });
 
-describe("copy_session_setup — source authority & stale detection", () => {
+describe("copy_session_setup: source authority & stale detection", () => {
   it("rejects a wrong fingerprint (HN005), creating nothing", async () => {
     const { source, target } = await seedPair();
     await expect(callCopy({ target, specs: validSpec(), key: "k-badfp", fp: "deadbeef", sourceId: source })).rejects.toMatchObject({ code: "HN005" });
@@ -436,13 +436,13 @@ describe("copy_session_setup — source authority & stale detection", () => {
   it("does NOT pick a source from a DIFFERENT client, a LATER session, or a LASER session", async () => {
     const cMain = await freshClient();
     const cOther = await freshClient();
-    // prior for a DIFFERENT client — must be ignored.
+    // prior for a DIFFERENT client, must be ignored.
     const otherPrior = await seedSession(a, { startedAt: "2026-01-01T10:00:00Z", clientId: cOther });
     await seedSourceWithBlock(a, otherPrior);
-    // a LASER prior for our client — must be ignored.
+    // a LASER prior for our client, must be ignored.
     const laserPrior = await seedSession(a, { startedAt: "2026-02-01T10:00:00Z", modality: "laser", clientId: cMain });
     await seedSourceWithBlock(a, laserPrior);
-    // a LATER electrolysis session (after target) — must be ignored.
+    // a LATER electrolysis session (after target), must be ignored.
     const later = await seedSession(a, { startedAt: "2026-09-01T10:00:00Z", clientId: cMain });
     await seedSourceWithBlock(a, later);
     const target = await seedSession(a, { startedAt: "2026-06-01T10:00:00Z", clientId: cMain });
@@ -450,7 +450,7 @@ describe("copy_session_setup — source authority & stale detection", () => {
   });
 });
 
-describe("copy_session_setup — target eligibility", () => {
+describe("copy_session_setup: target eligibility", () => {
   it("rejects a LASER target (HN002)", async () => {
     const { source, target, fp } = await seedScenario({ modality: "laser" });
     await expect(callCopy({ target, specs: validSpec(), key: "k-laser", fp, sourceId: source })).rejects.toMatchObject({ code: "HN002" });
@@ -482,7 +482,7 @@ describe("copy_session_setup — target eligibility", () => {
   });
 });
 
-describe("copy_session_setup — authorization & atomicity", () => {
+describe("copy_session_setup: authorization & atomicity", () => {
   it("rejects a non-member practitioner (HN001)", async () => {
     const b = await seedStudio("wsc-other");
     const { source, target, fp } = await seedPair();
@@ -537,7 +537,7 @@ describe("copy_session_setup — authorization & atomicity", () => {
   });
 });
 
-describe("whole_session_copy_source_descriptor — member-gated preview", () => {
+describe("whole_session_copy_source_descriptor: member-gated preview", () => {
   it("returns the SERVER-derived source id + fingerprint for an eligible empty target", async () => {
     const { source, target, fp } = await seedPair();
     const r = await asUser(a.userId, (q) =>
@@ -567,7 +567,7 @@ describe("whole_session_copy_source_descriptor — member-gated preview", () => 
   });
 });
 
-describe("source resolver — void exclusion", () => {
+describe("source resolver: void exclusion", () => {
   it("skips a VOID newer session and selects the older valid source", async () => {
     const clientId = await freshClient();
     const older = await seedSession(a, { startedAt: "2026-01-01T10:00:00Z", clientId });
@@ -598,7 +598,7 @@ describe("source resolver — void exclusion", () => {
   });
 });
 
-describe("source resolver — legacy-only sessions + copyability", () => {
+describe("source resolver: legacy-only sessions + copyability", () => {
   it("selects a legacy-only source (primary_area, no structured areas) with a valid mode", async () => {
     const clientId = await freshClient();
     const legacy = await seedSession(a, { startedAt: "2026-01-01T10:00:00Z", clientId });
@@ -643,9 +643,9 @@ describe("canonical-source parity", () => {
 
 // P1 privilege hardening: the session_copy_operations provenance ledger must have
 // an EXPLICIT least-privilege posture on a FRESH DB. RLS does NOT protect TRUNCATE,
-// so table-privilege verification (has_table_privilege) is required — source-string
+// so table-privilege verification (has_table_privilege) is required, source-string
 // tests are not sufficient. Written only by the service-role security-definer RPC.
-describe("session_copy_operations ledger — least-privilege table grants", () => {
+describe("session_copy_operations ledger: least-privilege table grants", () => {
   const PRIVS = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"] as const;
   const TABLE = "public.session_copy_operations";
 
@@ -682,7 +682,7 @@ describe("session_copy_operations ledger — least-privilege table grants", () =
     ).rows[0].n;
     expect(before).toBe(1);
 
-    // Attempt TRUNCATE as the authenticated role — must be denied.
+    // Attempt TRUNCATE as the authenticated role, must be denied.
     await expect(
       asRole("authenticated", (q) => q("truncate table public.session_copy_operations")),
     ).rejects.toThrow(/permission denied|must be owner/i);

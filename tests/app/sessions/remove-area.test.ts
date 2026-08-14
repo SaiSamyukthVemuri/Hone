@@ -22,7 +22,7 @@ const PAGE = readFileSync(
   "utf8",
 );
 
-describe("removeSessionAreaAction — calls the atomic RPC", () => {
+describe("removeSessionAreaAction: calls the atomic RPC", () => {
   it("invokes soft_delete_session_area with the named args", () => {
     expect(ACTIONS).toMatch(/export async function removeSessionAreaAction/);
     expect(ACTIONS).toMatch(
@@ -50,7 +50,7 @@ describe("chart editor wires the Remove area control", () => {
   });
 });
 
-describe("RemoveAreaButton — warning + required reason + soft-delete framing", () => {
+describe("RemoveAreaButton: warning + required reason + soft-delete framing", () => {
   it("summarizes attached passes/photos before removal and requires a reason", () => {
     expect(BUTTON).toMatch(/recorded pass/i);
     expect(BUTTON).toMatch(/photos attached to this area/i);

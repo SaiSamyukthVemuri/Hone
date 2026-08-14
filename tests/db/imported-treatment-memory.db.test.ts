@@ -222,7 +222,7 @@ describe("correction: owner soft-voids (UPDATE), nobody hard-deletes", () => {
 
   it("neither member nor owner can hard-DELETE imported memory; the row survives", async () => {
     // DELETE is revoked from authenticated (privilege layer), so the
-    // attempt errors before RLS — there is no silent no-op delete path.
+    // attempt errors before RLS, there is no silent no-op delete path.
     await expect(
       userQuery(
         member.userId,

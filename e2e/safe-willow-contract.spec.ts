@@ -11,7 +11,7 @@ import {
 } from "./helpers/seed";
 import { bookAppointment, loginAsOwner } from "./helpers/flows";
 
-// SAFE-WILLOW behavioural contract — slice 1: the treatment-memory activation
+// SAFE-WILLOW behavioural contract: slice 1: the treatment-memory activation
 // loop. This is the executable form of the roadmap's activation metric
 // (first visit charted -> returning visit surfaces prior memory), asserted at
 // BOTH layers: database rows (tenant scoping, linkage, record state) AND
@@ -29,7 +29,7 @@ import { bookAppointment, loginAsOwner } from "./helpers/flows";
 // dispatch capture, calendar Move-appointment, portal access, treatment-photo
 // metadata, approved payment/refund via fake Stripe, records/export contract,
 // and finalized-record immutability (the clinical_finalization flag is OFF in
-// the pilot, so no finalized state exists to mutate here — this slice asserts
+// the pilot, so no finalized state exists to mutate here, this slice asserts
 // the current non-finalized record state + persistence across reload).
 
 test.describe.configure({ mode: "serial" });
@@ -49,7 +49,7 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
     expect(seed.clientEmail).toMatch(/@harness\.local$/); // synthetic only
   });
 
-  await test.step("book first visit — browser + DB (tenant scoping, linkage)", async () => {
+  await test.step("book first visit: browser + DB (tenant scoping, linkage)", async () => {
     await bookAppointment(page, seed);
     clientId = (await getClientIdByEmail(seed.studioId, seed.clientEmail))!;
     expect(clientId).toBeTruthy();
@@ -61,7 +61,7 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
     expect(appts.every((a) => a.id)).toBe(true);
   });
 
-  await test.step("complete intake + consent via token — browser", async () => {
+  await test.step("complete intake + consent via token, browser", async () => {
     const token = await getIntakeTokenForClient(seed.studioId, seed.clientEmail);
     expect(token).toBeTruthy();
     await page.goto(`/intake/${token}`);
@@ -101,13 +101,13 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
     await loginAsOwner(page, seed);
   });
 
-  await test.step("record a session: chips + narrative — browser then DB", async () => {
+  await test.step("record a session: chips + narrative, browser then DB", async () => {
     await page.goto(
       `/clients/${clientId}/sessions/new?appointment_id=${firstAppointmentId}`,
     );
     await page.getByRole("button", { name: /electrolysis/i }).click();
     // Wait for the REAL session detail URL (/sessions/<uuid>), NOT the starting
-    // /sessions/new URL — which also contains "/sessions/" and would satisfy a
+    // /sessions/new URL, which also contains "/sessions/" and would satisfy a
     // looser matcher immediately, leaving page.url() on /new.
     await page.waitForURL(/\/sessions\/[0-9a-f-]{36}(\?|#|$|\/)/, {
       timeout: 20_000,
@@ -157,7 +157,7 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
     expect(state.current_snapshot_id).toBeNull();
   });
 
-  await test.step("reload — persistence holds at DB + browser", async () => {
+  await test.step("reload: persistence holds at DB + browser", async () => {
     // DB: re-read after a fresh query round-trip.
     expect(await getSessionBlockProbeLots(sessionId)).toContain(`SW-LOT-${seed.runId}`);
     // Browser: reload the session page; the recorded probe lot still renders
@@ -169,7 +169,7 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
     });
   });
 
-  await test.step("book a second visit — DB confirms returning client", async () => {
+  await test.step("book a second visit: DB confirms returning client", async () => {
     const p2 = await browser.newPage();
     await bookAppointment(p2, seed);
     await p2.close();
@@ -177,7 +177,7 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
     expect(appts.length).toBeGreaterThanOrEqual(2);
   });
 
-  await test.step("activation: Before Today surfaces the prior memory — browser", async () => {
+  await test.step("activation: Before Today surfaces the prior memory, browser", async () => {
     await page.goto(`/clients/${clientId}`);
     await expect(page.getByText("Remember today").first()).toBeVisible({
       timeout: 20_000,

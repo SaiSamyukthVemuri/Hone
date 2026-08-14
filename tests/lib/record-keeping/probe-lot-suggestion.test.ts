@@ -71,14 +71,14 @@ describe("resolveProbeLotSuggestion", () => {
 
 // ---------------------------------------------------------------------------
 // Source pins for the pieces that CANNOT be DOM-tested in this repo (vitest
-// environment is "node" — no jsdom/RTL). Reported explicitly as a limitation:
+// environment is "node", no jsdom/RTL). Reported explicitly as a limitation:
 // these pin the wiring, NOT the rendered React behavior.
 // ---------------------------------------------------------------------------
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
 
-describe("form wiring (source pins — NOT a DOM behavior test)", () => {
+describe("form wiring (source pins: NOT a DOM behavior test)", () => {
   const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
 
   it("auto-fill goes through the ONE composed resolver, scoped PER PROBE, never auto-confirms", () => {
@@ -94,7 +94,7 @@ describe("form wiring (source pins — NOT a DOM behavior test)", () => {
     // selected (so a typed/copied value survives re-renders) and re-resolves
     // unconditionally when the probe changes.
     expect(FORM).toMatch(/if \(draft\.probeKey === lotOwnerProbeKey\) return;/);
-    // The global latch is GONE — it kept one probe's lot attached to the next.
+    // The global latch is GONE, it kept one probe's lot attached to the next.
     expect(FORM).not.toMatch(/lotEditedManually/);
     // The patch (and therefore "never auto-confirm") is owned by the resolver.
     expect(FORM).toMatch(/const patch = probeLotDraftPatch\(result\);/);
@@ -134,7 +134,7 @@ describe("confirm control persists probe_lot_confirmed (source pins)", () => {
   });
   it("copyPreviousSessionAreasAction is contained: it copies no probe_key or lot (zero writes)", () => {
     // The whole-session copy is temporarily paused, so it can never carry a
-    // stale probe or lot forward — it writes nothing at all.
+    // stale probe or lot forward, it writes nothing at all.
     const copyBlock = ACTIONS.slice(
       ACTIONS.indexOf("copyPreviousSessionAreasAction"),
       ACTIONS.indexOf("softDeleteSessionBlockAction"),
@@ -153,7 +153,7 @@ describe("0155 hardening: no bypass of the validated resolver; frozen snapshot",
   const ACTIONS = read("app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts");
   const FORM = read("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx");
 
-  it("updateSessionBlockAction allowlists its patch columns — the inventory link / snapshot / confirmation can NOT be mass-assigned", () => {
+  it("updateSessionBlockAction allowlists its patch columns, the inventory link / snapshot / confirmation can NOT be mass-assigned", () => {
     // The allowlist Set literal, isolated.
     const setStart = ACTIONS.indexOf("PATCHABLE_BLOCK_COLUMNS = new Set");
     expect(setStart).toBeGreaterThan(-1);

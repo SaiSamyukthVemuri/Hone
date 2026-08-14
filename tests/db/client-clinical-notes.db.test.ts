@@ -9,7 +9,7 @@ import {
 } from "./helpers/harness";
 import { randomUUID } from "node:crypto";
 
-// Behavioural proof of migration 0126 (Willow PR A) — dedicated dated
+// Behavioural proof of migration 0126 (Willow PR A), dedicated dated
 // CONSULTATION notes + SKIN/HAIR ANALYSIS clinical records
 // (public.client_clinical_notes) against the REAL migrated local database.
 //
@@ -47,7 +47,7 @@ describe("create + read (author, same studio)", () => {
         a.studioId,
         a.practitionerId,
         "consultation",
-        "Initial consult — goals discussed.",
+        "Initial consult, goals discussed.",
         null,
         null,
         null,
@@ -315,7 +315,7 @@ describe("dated history", () => {
 // WITH CHECK is evaluated BEFORE the FK's AFTER-trigger, so a rejection with a
 // "row-level security" message proves the POLICY (not merely the FK) enforces
 // the boundary.
-describe("0127 — author-INSERT policy enforces same-studio at the RLS layer", () => {
+describe("0127: author-INSERT policy enforces same-studio at the RLS layer", () => {
   it("positive control: a same-studio ACTIVE practitioner (the caller) can insert", async () => {
     await asUser(a.userId, async (q) => {
       const r = await q(INS, [
@@ -356,7 +356,7 @@ describe("0127 — author-INSERT policy enforces same-studio at the RLS layer", 
     ).rejects.toThrow();
   });
 
-  it("a multi-studio caller cannot attribute a note to their OTHER studio's practitioner — rejected by RLS, before the FK", async () => {
+  it("a multi-studio caller cannot attribute a note to their OTHER studio's practitioner, rejected by RLS, before the FK", async () => {
     // One auth user, an ACTIVE practitioner in BOTH studio A and studio B
     // (unique key is (studio_id, user_id), so this is reachable).
     const userId = randomUUID();
@@ -379,7 +379,7 @@ describe("0127 — author-INSERT policy enforces same-studio at the RLS layer", 
     // Note for A's client (studio derived to A), attributed to the caller's
     // studio-B practitioner. is_studio_member(A) passes (caller is in A), but the
     // practitioner clause p.studio_id = client_clinical_notes.studio_id now fails
-    // at the RLS layer — no cross-studio attribution.
+    // at the RLS layer, no cross-studio attribution.
     await expect(
       asUser(userId, (q) =>
         q(INS, [a.clientId, a.studioId, pracB, "consultation", "cross-studio practitioner", null, null, null]),

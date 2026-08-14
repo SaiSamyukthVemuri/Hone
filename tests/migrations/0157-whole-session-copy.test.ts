@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-// Migration 0157 — whole-session "Copy areas and settings": a provenance ledger
+// Migration 0157: whole-session "Copy areas and settings": a provenance ledger
 // + a service_role-only, source-authoritative, atomic, idempotent copy RPC, plus
 // a member-gated preview descriptor and a private source-fingerprint helper.
 // Additive; carries the repo migration-max tripwire.
@@ -13,7 +13,7 @@ const CODE = SQL.split("\n")
   .filter((l) => !/^\s*--/.test(l))
   .join("\n");
 
-describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
+describe("0157: whole-session copy (repo migration-max tripwire)", () => {
   it("is present, 0156 precedes it, exactly one 0157, nothing 0160+ (repo max pin now lives in the 0159 test)", () => {
     expect(FILE).toMatch(/^0157_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -53,7 +53,7 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     expect(SQL).not.toMatch(/for delete/i);
     // COMPLETE least-privilege posture (P1 privilege hardening): revoke ALL table
     // privileges from the browser roles (covers TRUNCATE/REFERENCES/TRIGGER, which
-    // RLS does NOT protect — not just DML), then grant back ONLY SELECT to
+    // RLS does NOT protect, not just DML), then grant back ONLY SELECT to
     // authenticated. A partial `revoke insert, update, delete` is insufficient.
     expect(CODE).toMatch(
       /revoke all on table public\.session_copy_operations\s+from public, anon, authenticated/,
@@ -147,8 +147,8 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     expect(CODE).not.toMatch(/\bminutes_performed\b/);
   });
 
-  it("Phase B: galvanic_intensity_percent is RETIRED — excluded from the fingerprint and forced NULL on insert", () => {
-    // The retired reading is NEVER derived from the source entry `e` — neither in
+  it("Phase B: galvanic_intensity_percent is RETIRED, excluded from the fingerprint and forced NULL on insert", () => {
+    // The retired reading is NEVER derived from the source entry `e`, neither in
     // the source fingerprint nor in the destination INSERT. (A historical change
     // to only that field therefore can't invalidate a preview, and a copied entry
     // can't inherit the value.)
@@ -156,7 +156,7 @@ describe("0157 — whole-session copy (repo migration-max tripwire)", () => {
     // The destination INSERT forces a LITERAL NULL in the galvanic-intensity slot
     // (right after galvanic_duration_seconds), so even a forged spec stores NULL.
     expect(CODE).toMatch(/e\.galvanic_duration_seconds,\s*NULL,/);
-    // The column itself is still referenced (kept in the INSERT column list — the
+    // The column itself is still referenced (kept in the INSERT column list, the
     // schema column is preserved, only the copied VALUE is retired).
     expect(CODE).toMatch(/\bgalvanic_intensity_percent\b/);
   });

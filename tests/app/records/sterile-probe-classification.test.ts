@@ -45,7 +45,7 @@ describe("server persistence (#1 store, #2 reject invalid, #3 null when unclassi
     expect(ACTIONS).not.toMatch(/probe_key: str\(formData\.get\("probe_key"\)/);
   });
 
-  it("(#2) the invalid-key guard GATES the write — the reject precedes every DB write in each action", () => {
+  it("(#2) the invalid-key guard GATES the write, the reject precedes every DB write in each action", () => {
     // For each action, `if (!probeKey.ok) return` must appear before its
     // insert/update, so an invalid key can never reach the database.
     for (const marker of [
@@ -70,7 +70,7 @@ describe("server persistence (#1 store, #2 reject invalid, #3 null when unclassi
     const body = helper.slice(0, helper.indexOf("\n}\n") + 2);
     // Empty stays unclassified (null), never an error.
     expect(body).toMatch(/if \(!raw\) return \{ ok: true, value: null \}/);
-    // Unknown value is rejected — NOT silently coerced.
+    // Unknown value is rejected: NOT silently coerced.
     expect(body).toMatch(/if \(!isValidProbeOptionKey\(raw\)\)/);
     expect(body).toMatch(/not recognized/);
     // A validated catalog key is stored verbatim.
@@ -79,7 +79,7 @@ describe("server persistence (#1 store, #2 reject invalid, #3 null when unclassi
 
   it("classification is NEVER inferred from item_description free text (no probe ILIKE heuristic)", () => {
     // probe_key is only ever read from the explicit form field, never derived
-    // from item text — so no ILIKE '%probe%' identity heuristic anywhere.
+    // from item text, so no ILIKE '%probe%' identity heuristic anywhere.
     expect(ACTIONS).not.toMatch(/ilike/i);
     // The dormant tables are never touched from Records.
     expect(ACTIONS).not.toMatch(/probe_lots/);

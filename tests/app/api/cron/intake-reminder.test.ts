@@ -94,7 +94,7 @@ describe("sendIntakeReminderPass shape", () => {
     expect(INTAKE_PASS).toMatch(/if \(result\.ok\) \{[\s\S]*?stampIntakeLinkIssued\(admin, intake\.id, \{ emailed: true \}\)/);
   });
 
-  it("logs only ids/kinds — no raw token, no client PII", () => {
+  it("logs only ids/kinds: no raw token, no client PII", () => {
     // The pass never logs the token, the client email/name, or intake responses.
     expect(INTAKE_PASS).not.toMatch(/intakeUrl[\s\S]{0,40}console|console[\s\S]{0,60}intakeUrl/);
     expect(INTAKE_PASS).not.toMatch(/console\.[a-z]+\([^)]*(client\.email|client\.name|token|responses)/);

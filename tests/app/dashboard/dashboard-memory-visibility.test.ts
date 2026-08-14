@@ -6,22 +6,22 @@ import { join } from "node:path";
 //
 // REPRODUCED DEFECT. The Today appointment card clipped the two lines Chloe
 // actually reads before a client sits down, in TWO independent ways:
-//   1. a JS character cap — `Remember: {truncate(workflow.remember, 70)}`;
+//   1. a JS character cap, `Remember: {truncate(workflow.remember, 70)}`;
 //   2. Tailwind's `truncate` (= overflow:hidden; text-overflow:ellipsis;
 //      white-space:nowrap) on BOTH the Remember span and the Latest-setup span.
 // At 390px the usable text column is ~246px, so the CSS clamp bit at roughly
-// 30-35 characters — long before the 70-char cap. The full text was already in
+// 30-35 characters, long before the 70-char cap. The full text was already in
 // the payload (lib/dashboard/before-today-previews.ts truncates nothing); only
 // the render threw it away.
 //
 // SCOPE GUARD. Only those two fields change. The page-local `truncate` helper
 // stays (the Pinned-note line still uses it) and the Daily Prep Brief keeps its
-// own 90-char caps — a deliberately compact, separate surface.
+// own 90-char caps, a deliberately compact, separate surface.
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 const RAW_PAGE = read("app/(app)/dashboard/page.tsx");
 // COMMENTS OUT, BEFORE SLICING. The block below is located by searching for the
-// phrase "Before today", and this page explains itself at length — a design
+// phrase "Before today", and this page explains itself at length, a design
 // note that merely NAMES the block would otherwise move the start marker above
 // the real eyebrow and drag unrelated JSX (the client-name `truncate` class,
 // the pinned-note `truncate(...)` call) into the slice, turning the CSS-clamp
@@ -51,7 +51,7 @@ describe("Today appointment card shows the memory lines in full", () => {
     expect(PREVIEW_BLOCK).toMatch(/Latest setup:/);
   });
 
-  it("the Remember note is rendered whole — no character cap", () => {
+  it("the Remember note is rendered whole, no character cap", () => {
     expect(PREVIEW_BLOCK).toMatch(/Remember: \{workflow\.remember\}/);
     expect(PREVIEW_BLOCK).not.toMatch(/truncate\(workflow\.remember/);
   });
@@ -62,7 +62,7 @@ describe("Today appointment card shows the memory lines in full", () => {
   });
 
   it("NEITHER line carries a CSS clamp any more", () => {
-    // \b...\b so the Tailwind CLASS is caught, not just a truncate(...) call —
+    // \b...\b so the Tailwind CLASS is caught, not just a truncate(...) call,
     // the class is the mechanism that actually clipped the text on the phone.
     expect(PREVIEW_BLOCK).not.toMatch(/\btruncate\b/);
     expect(PREVIEW_BLOCK).not.toMatch(/line-clamp/);

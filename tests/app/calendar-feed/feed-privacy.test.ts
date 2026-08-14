@@ -5,7 +5,7 @@ import path from "node:path";
 // PR #289. The calendar feed URL is a BEARER secret stored by third-party
 // calendar providers (Google / Apple / Outlook) along with the event
 // contents. The default ICS must therefore expose NO client PII and NO
-// treatment context — only the practitioner's busy/free times. This proves
+// treatment context, only the practitioner's busy/free times. This proves
 // the rendered feed leaks none of the planted sensitive fields and keeps the
 // generic, importable shape.
 

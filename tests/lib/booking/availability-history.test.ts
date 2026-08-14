@@ -6,7 +6,7 @@ import {
   popAvailabilityHistory,
 } from "@/lib/booking/availability-history";
 
-// PR A: public-booking prev/next availability navigation. Client-side only —
+// PR A: public-booking prev/next availability navigation. Client-side only,
 // the stack logic is unit-tested here; the component wiring + no-migration /
 // no-validation-change guarantees are source-pinned below.
 
@@ -34,7 +34,7 @@ describe("availability history stack (pure)", () => {
     expect(popAvailabilityHistory([])).toEqual({ previous: null, rest: [] });
   });
 
-  it("is immutable — never mutates the input array", () => {
+  it("is immutable: never mutates the input array", () => {
     const h = ["2026-07-10"];
     pushAvailabilityHistory(h, "2026-07-14");
     popAvailabilityHistory(h);

@@ -6,7 +6,7 @@ import { join } from "node:path";
 // setup_intent.succeeded arm ONLY on the paths where a card was actually
 // persisted, and NEVER on the live-mode dormancy guard or any lineage
 // rejection (so a cross-studio / forged / live-mode event produces no
-// notification — Tests 6 & 7). Behavioral content + dedupe are proven by the
+// notification, Tests 6 & 7). Behavioral content + dedupe are proven by the
 // content unit test + the .db.test.ts.
 
 const ROUTE = readFileSync(
@@ -45,8 +45,8 @@ describe("card-change notification webhook wiring", () => {
   });
 
   it("the live-mode dormancy guard + cross-studio/forged rejections return BEFORE ANY notification (Tests 6 & 7)", () => {
-    // Every security-critical guard — the live-mode dormancy guard and the
-    // studio/account/customer/signature lineage rejections — returns before the
+    // Every security-critical guard: the live-mode dormancy guard and the
+    // studio/account/customer/signature lineage rejections, returns before the
     // FIRST notify. So an ignored live event or a forged/cross-studio event
     // never reaches any notification call.
     for (const guard of [
@@ -55,7 +55,7 @@ describe("card-change notification webhook wiring", () => {
       // 0180: these route through terminalCardRejection so the rejection is
       // operator-visible instead of a silent 200, and the helper now receives
       // the SetupIntent itself so it can record the ownership anchor the portal
-      // binds against. The ordering property is unchanged — every one still
+      // binds against. The ordering property is unchanged, every one still
       // returns before any notification.
       'terminalCardRejection(event, ctx, si, "missing_metadata")',
       'terminalCardRejection(event, ctx, si, "missing_account_context")',
@@ -78,14 +78,14 @@ describe("card-change notification webhook wiring", () => {
     ]) {
       expect(BEFORE_LAST_NOTIFY).toContain(rejection);
     }
-    // Nothing rejects AFTER the fresh-path notify — it is the last step before
+    // Nothing rejects AFTER the fresh-path notify, it is the last step before
     // the success return.
     expect(AFTER_LAST_NOTIFY).not.toContain("terminalCardRejection(");
   });
 
   it("persists the card atomically and keeps the analytics ordering", () => {
     // 0180: the mode-scoped retire + insert are no longer two PostgREST writes
-    // in this file — they are one transaction inside save_client_card_on_file.
+    // in this file, they are one transaction inside save_client_card_on_file.
     // Neither raw write may come back.
     expect(HANDLER).not.toMatch(/\.update\(\{ status: "removed"/);
     expect(HANDLER).not.toMatch(/\.from\("client_payment_methods"\)\s*\n\s*\.insert\(\{/);

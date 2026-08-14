@@ -6,7 +6,7 @@ import { PRACTITIONER_ASSISTED_ENTRY } from "@/lib/intake/entry-provenance";
 
 // Source guards for practitioner-assisted intake.
 //
-// These complement — never replace — the behavioural proofs in
+// These complement, never replace, the behavioural proofs in
 // tests/app/clients/assisted-intake-entry.test.ts. Each one exists because the
 // property it pins is invisible to a behavioural test: an author reaching for
 // the service role, a carve-out being added to the public sanitizer, or the
@@ -46,8 +46,8 @@ function functionBody(src: string, name: string): string {
 describe("the client cannot author practitioner provenance", () => {
   it("the shared sanitizer never mentions the provenance key", () => {
     // The whole client-forgery argument rests on this key being invisible to
-    // every sanitizer. If it ever gains a carve-out — the way the electrolysis
-    // acknowledgement claim legitimately has one — whoever holds the intake
+    // every sanitizer. If it ever gains a carve-out, the way the electrolysis
+    // acknowledgement claim legitimately has one, whoever holds the intake
     // token could author, replace or erase practitioner attribution.
     expect(codeOnly(read(SHARED_SANITIZER))).not.toContain(KEY);
     expect(codeOnly(read(SHARED_SANITIZER))).not.toMatch(
@@ -212,7 +212,7 @@ describe("the questionnaire is not re-implemented", () => {
   // Moving the control renderer into a shared component created a surface the
   // existing acknowledgement guards cannot see: they enumerate hard-coded file
   // paths, so a NEW consumer of the renderer is invisible to them. A new
-  // consumer is exactly the dangerous case — the renderer emits a real
+  // consumer is exactly the dangerous case, the renderer emits a real
   // <input type="checkbox">, and the step-5 acknowledgements are client-owned
   // first-person attestations that a practitioner must never be able to tick.
   //
@@ -234,13 +234,13 @@ describe("the questionnaire is not re-implemented", () => {
     };
     for (const r of roots) walk(r);
 
-    // Importers only — the renderer does not reference its own path.
+    // Importers only: the renderer does not reference its own path.
     expect(hits.sort()).toEqual(
       [
-        // The client's own tokenized wizard — renders every step, including
+        // The client's own tokenized wizard, renders every step, including
         // the client's acknowledgements. That is correct: they are the client.
         "app/intake/[token]/IntakeWizard.tsx",
-        // The practitioner-assisted editor — renders PRACTITIONER_ENTERABLE_STEPS
+        // The practitioner-assisted editor: renders PRACTITIONER_ENTERABLE_STEPS
         // only, so it can never draw a client-owned control.
         EDITOR,
       ].sort(),
@@ -253,7 +253,7 @@ describe("the questionnaire is not re-implemented", () => {
   // importer set, so the guard above stays green.
   //
   // This repo has been bitten by exactly this shape twice in the appointment
-  // DML census guard work — alias evasion (a factory classified by callee name
+  // DML census guard work, alias evasion (a factory classified by callee name
   // defeated by `createClient as createAdminClient`) and the detached chain
   // (`const q = admin.from(...)` invisible to a call-site walker). Both were
   // real, and both were found by review rather than by the guard's author.
@@ -359,7 +359,7 @@ describe("the assisted UI never claims to be the client", () => {
   it("the review surface renders the STORED snapshot, not a current lookup", () => {
     // getPractitionersForStudio filters `.eq("active", true)`, so resolving
     // the name at read time makes attribution vanish the moment a
-    // practitioner is deactivated — exactly what already happens to
+    // practitioner is deactivated, exactly what already happens to
     // reviewed_by on this page. A historical fact must not depend on a
     // current lookup.
     const src = read(REVIEW);
@@ -398,7 +398,7 @@ describe("no schema change", () => {
   it("this feature did not author migration 0172", () => {
     // 0172 was RESERVED for Appointment DML B3, and B3 has now claimed it
     // (0172_revoke_authenticated_appointment_dml.sql). The guard's subject was
-    // never "0172 must not exist" — it is "this feature did not author it".
+    // never "0172 must not exist", it is "this feature did not author it".
     // Asserting absence would now fail for the very reason the reservation
     // existed, so the check is re-pointed at authorship: whatever occupies
     // 0172, it must be B3's privilege migration and must contain nothing of

@@ -5,13 +5,13 @@ import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memory";
 
 // ===========================================================================
-// Dashboard V2 Part 2A — previous treatment on the Today row.
+// Dashboard V2 Part 2A, previous treatment on the Today row.
 // ===========================================================================
 //
 // Two kinds of assertion, and the split is deliberate:
 //
 //   * `compactSummary` is pure and exported, so the "missing historical values
-//     render truthfully" requirement is tested BEHAVIOURALLY — that is the one
+//     render truthfully" requirement is tested BEHAVIOURALLY, that is the one
 //     that matters clinically and it must not be a source grep.
 //   * The wiring (which component mounts where, with which props) is asserted
 //     on SOURCE, because this repo runs vitest with `environment: "node"` and
@@ -25,7 +25,7 @@ const MEMORY_UI = read("app/(app)/dashboard/today-treatment-memory.tsx");
 /**
  * Source with `//` lines and `{/* jsx *\/}` blocks removed. Prose that
  * legitimately NAMES a thing must not satisfy a guard looking for that thing
- * being rendered — the comment explaining why "For next visit" is not repeated
+ * being rendered, the comment explaining why "For next visit" is not repeated
  * would otherwise fail the test asserting it is not repeated.
  */
 const codeOnly = (src: string) =>
@@ -64,7 +64,7 @@ function memory(over: Partial<AppointmentPrepMemory> = {}): AppointmentPrepMemor
 
 // ---------------------------------------------------------------------------
 
-describe("compact summary — missing history is absent, never a fake zero", () => {
+describe("compact summary: missing history is absent, never a fake zero", () => {
   it("names the visit: date, modality, areas, minutes", () => {
     const s = compactSummary(memory());
     expect(s).toMatch(/2026/);
@@ -120,7 +120,7 @@ describe("the disclosure is accessible and calm by default", () => {
 
   it("starts CLOSED, so Today is calm by default", () => {
     expect(MEMORY_UI).toMatch(/useState\(false\)/);
-    // The heavy card is mounted only when open — a calm Today does not pay to
+    // The heavy card is mounted only when open, a calm Today does not pay to
     // render every client's full chart.
     expect(MEMORY_UI).toMatch(/\{open && \(/);
   });
@@ -137,7 +137,7 @@ describe("the disclosure is accessible and calm by default", () => {
   });
 });
 
-describe("expanding reuses the #517 card — it does not reimplement it", () => {
+describe("expanding reuses the #517 card, it does not reimplement it", () => {
   it("mounts AppointmentPrepMemoryCard, embedded", () => {
     expect(MEMORY_UI).toMatch(
       /import \{ AppointmentPrepMemoryCard \} from "@\/components\/appointment-prep-memory-card"/,
@@ -198,12 +198,12 @@ describe("every #517 field family is reachable from Today", () => {
 });
 
 // ===========================================================================
-// CHLOE D1 — expanding the disclosure must not navigate. Ever.
+// CHLOE D1, expanding the disclosure must not navigate. Ever.
 // ===========================================================================
 // REPORTED DEFECT: "View full last treatment" expands briefly and then takes
 // her to the full-session page.
 //
-// ROOT CAUSE, two overlapping faults with one shape — the disclosure was
+// ROOT CAUSE, two overlapping faults with one shape, the disclosure was
 // rendered INSIDE the Today row's body <Link href="/calendar/{id}">:
 //
 //   1. the toggle <button>'s click bubbled to that ancestor link, so one press
@@ -217,7 +217,7 @@ describe("every #517 field family is reachable from Today", () => {
 //     capability, while the standalone appointment-prep card keeps it.
 //
 // These are SOURCE assertions (this repo runs vitest in `environment: "node"`
-// with no React harness — see the header note). The behavioural proof that the
+// with no React harness, see the header note). The behavioural proof that the
 // URL does not change lives in e2e/dashboard-treatment-memory-inline.spec.ts,
 // which clicks the real control in a real browser and waits.
 describe("D1: the disclosure never navigates away from the Dashboard", () => {
@@ -231,7 +231,7 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
   }
 
   /**
-   * The link's CHILDREN only — everything after its own opening tag closes.
+   * The link's CHILDREN only, everything after its own opening tag closes.
    * The nested-interactive guards must read this, not the whole span: the span
    * starts with `<Link`, which trivially satisfies a "contains a link" grep and
    * would make the guard vacuous.
@@ -243,7 +243,7 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
     return span.slice(endOfOpenTag + 1);
   }
 
-  it("the row body still opens the appointment — nothing was removed", () => {
+  it("the row body still opens the appointment, nothing was removed", () => {
     // The fix must not cost the row its navigation; only the disclosure leaves.
     expect(rowBodyLink()).toMatch(/href=\{`\/calendar\/\$\{appt\.id\}`\}/);
   });
@@ -278,8 +278,8 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
     );
 
     // ...AND no component that ENCAPSULATES a control. A negative control
-    // caught this gap: re-nesting <TodayTreatmentMemory> inside the link — the
-    // exact defect — left every raw-tag guard above green, because the button
+    // caught this gap: re-nesting <TodayTreatmentMemory> inside the link, the
+    // exact defect, left every raw-tag guard above green, because the button
     // lives one file away. Raw-tag greps cannot see through a component
     // boundary, so the known-interactive children of this row are named.
     for (const component of [
@@ -297,14 +297,14 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
 
   it("the toggle does not fake a fix with stopPropagation", () => {
     // A stopPropagation() patch would silence the React synthetic bubble and
-    // leave the invalid nesting — and native anchor activation — in place. The
+    // leave the invalid nesting, and native anchor activation, in place. The
     // structural fix is the real one, so the workaround must be absent.
     expect(MEMORY_UI_CODE).not.toMatch(/stopPropagation|preventDefault/);
   });
 
   it("the EMBEDDED card carries no full-chart navigation CTA", () => {
     expect(MEMORY_UI).toMatch(/showFullChartLink=\{false\}/);
-    // Both of the card's "Open full chart →" affordances obey the capability —
+    // Both of the card's "Open full chart →" affordances obey the capability,
     // the header one and the one in the blockless branch. Neither may be
     // unconditional, or the Dashboard disclosure gets a link out anyway.
     const cta = [...CARD.matchAll(/Open full chart →/g)];
@@ -349,7 +349,7 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
 describe("the Today row wires it correctly", () => {
   it("renders the memory only for a client who HAS history", () => {
     // A first visit stays one calm relationship line. (The gate moved out of
-    // the row-body link with the component — see the D1 block above — so it now
+    // the row-body link with the component, see the D1 block above, so it now
     // reads `workflow?.hasHistory`, which is the same condition: hasHistory can
     // only be true when workflow exists.)
     expect(DASH).toMatch(/\{workflow\?\.hasHistory && \(/);
@@ -367,7 +367,7 @@ describe("the Today row wires it correctly", () => {
     expect(DASH).toMatch(/excludeAppointmentId: a\.id/);
     // The APPOINTMENT is the request identity. Without it, two bookings for one
     // client collide in the loader's result map and both rows show the same
-    // memory — a real bug this shape prevents.
+    // memory, a real bug this shape prevents.
     expect(DASH).toMatch(/requestKey: a\.id/);
   });
 
@@ -381,7 +381,7 @@ describe("the Today row wires it correctly", () => {
     );
   });
 
-  it("loads the whole day in ONE batched call — no loop, no per-row await", () => {
+  it("loads the whole day in ONE batched call, no loop, no per-row await", () => {
     expect(
       (DASH.match(/loadLastChartedTreatmentsForClients\(/g) ?? []).length,
       "exactly one batched call",

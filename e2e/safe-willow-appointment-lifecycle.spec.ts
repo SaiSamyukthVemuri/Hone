@@ -10,7 +10,7 @@ import {
 import { bookAppointment, loginAsOwner, loginByMagicLink } from "./helpers/flows";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
-// SAFE-WILLOW behavioural contract — slice 2: appointment lifecycle. Proves the
+// SAFE-WILLOW behavioural contract: slice 2: appointment lifecycle. Proves the
 // approved Move-appointment workflow's same-record semantics + owner
 // authorization, that the public cancel/reschedule/manage tokens RESOLVE to the
 // booked appointment, and that one synthetic tenant's tokens are appointment-
@@ -37,7 +37,7 @@ import { E2E_APP_ORIGIN } from "./helpers/local-env";
 //   * exercising cancellation/reschedule SUBMIT (driving the confirm + slot
 //     picker) and immutable policy/evidence snapshots;
 //   * the client PORTAL (separate auth realm: magic-link login, own-data-only,
-//     rebooking context) — its own focused slice via the portal magic-link flow.
+//     rebooking context), its own focused slice via the portal magic-link flow.
 
 test.describe.configure({ mode: "serial" });
 
@@ -78,7 +78,7 @@ test("SAFE-WILLOW: appointment move + token resolution + cross-tenant isolation"
     await loginAsOwner(page, seedA);
   });
 
-  await test.step("owner moves the appointment (custom time) — same record, no duplicate, scheduling only", async () => {
+  await test.step("owner moves the appointment (custom time), same record, no duplicate, scheduling only", async () => {
     const before = await getAppointmentsForClient(seedA.studioId, clientA);
     const prev = before.find((a) => a.id === apptA)!;
 
@@ -103,7 +103,7 @@ test("SAFE-WILLOW: appointment move + token resolution + cross-tenant isolation"
     expect(after, "no duplicate appointment (row count unchanged)").toHaveLength(before.length);
     const moved = after.find((a) => a.id === apptA)!;
     expect(moved, "same appointment id preserved").toBeTruthy();
-    expect(moved.status, "only scheduling changed — still confirmed").toBe("confirmed");
+    expect(moved.status, "only scheduling changed, still confirmed").toBe("confirmed");
     expect(instant(moved.starts_at), "scheduling actually moved").not.toBe(instant(prev.starts_at));
     // tenant scoping: the moved row is still owned by the synthetic studio+client.
     expect(moved.id).toBe(apptA);

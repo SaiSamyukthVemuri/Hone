@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 const CI = readFileSync(".github/workflows/ci.yml", "utf8");
 const NIGHTLY = readFileSync(".github/workflows/nightly.yml", "utf8");
 
-/** Minimal structural check — job keys are two-space indented under `jobs:`. */
+/** Minimal structural check: job keys are two-space indented under `jobs:`. */
 function jobNames(yaml: string): string[] {
   const lines = yaml.split("\n");
   const start = lines.findIndex((l) => l === "jobs:");
@@ -40,7 +40,7 @@ function shardTimeoutBudgets(): { extended: number; targeted: number } {
   return { extended: Number(m[1]), targeted: Number(m[2]) };
 }
 
-describe("PR CI — path-aware lane selection", () => {
+describe("PR CI: path-aware lane selection", () => {
   const jobs = jobNames(CI);
 
   it("has a changed-path detection job that runs first", () => {
@@ -151,7 +151,7 @@ describe("PR CI — path-aware lane selection", () => {
 
   it("the shard hard timeouts EXCEED their performance targets", () => {
     // A hard timeout is a FAILURE CEILING, not a target. A job whose ceiling
-    // equals its target gets cancelled for being merely slow — how run
+    // equals its target gets cancelled for being merely slow, how run
     // 30767725631 (extended) and later run 30814919019 (targeted) were both
     // misreported as test failures.
     const b = shardTimeoutBudgets();
@@ -243,7 +243,7 @@ describe("PR CI — path-aware lane selection", () => {
     expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("google-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
-    // Targeted hard timeout 15, extended shard hard timeout 12 — both above
+    // Targeted hard timeout 15, extended shard hard timeout 12, both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
     // workflow cannot silently break this guard.
     const b = shardTimeoutBudgets();
@@ -286,7 +286,7 @@ describe("nightly / manual full matrix", () => {
     }
   });
 
-  it("does not fail fast — one broken lane must not hide the others", () => {
+  it("does not fail fast: one broken lane must not hide the others", () => {
     expect(NIGHTLY).toMatch(/fail-fast: false/);
   });
 
@@ -356,7 +356,7 @@ describe("canonical migration state", () => {
       "bash",
       [
         "-lc",
-        // Exclude this guard file itself — it necessarily contains the pattern
+        // Exclude this guard file itself, it necessarily contains the pattern
         // it forbids, and a self-match would make the check permanently red.
         String.raw`grep -rlE '\^01\(6\[[0-9]-9\]' tests/ 2>/dev/null | grep -v 'tests/ci/ci-config.test.ts' || true`,
       ],

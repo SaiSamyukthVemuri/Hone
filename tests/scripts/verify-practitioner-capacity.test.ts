@@ -37,7 +37,7 @@ describe("verify-practitioner-capacity: read-only DB access", () => {
 describe("verify-practitioner-capacity: no PII", () => {
   it("never selects client/practitioner PII columns", () => {
     // No `select *`, and no reference to any client/practitioner PII column.
-    // ("name" alone is intentionally NOT forbidden — it is a reporting-helper
+    // ("name" alone is intentionally NOT forbidden, it is a reporting-helper
     // parameter here, not a selected column; the column tokens below are the
     // real PII surface and never appear in this read-only aggregate script.)
     expect(CODE).not.toMatch(/select\s+\*/i);

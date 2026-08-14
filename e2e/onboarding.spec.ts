@@ -16,7 +16,7 @@ import { loginAsOwner } from "./helpers/flows";
 
 const WIZARD = '[data-testid="onboarding-wizard"]';
 
-test.describe("onboarding v2 — flag OFF (default) is unchanged", () => {
+test.describe("onboarding v2: flag OFF (default) is unchanged", () => {
   test("no wizard, and the legacy getting-started link is shown", async ({
     page,
   }) => {
@@ -37,7 +37,7 @@ test.describe("onboarding v2 — flag OFF (default) is unchanged", () => {
   });
 });
 
-test.describe("onboarding v2 — flag ON", () => {
+test.describe("onboarding v2: flag ON", () => {
   test("auto-opens, walks the steps, skips payments, celebrates, completes", async ({
     page,
   }) => {
@@ -105,7 +105,7 @@ test.describe("onboarding v2 — flag ON", () => {
 
     // Close the overlay -> wizard gone, pinned card remains (progress preserved;
     // the persisted dismissed/resume state is covered by the model unit tests +
-    // the studio_onboarding DB test — asserted here is the re-openability).
+    // the studio_onboarding DB test, asserted here is the re-openability).
     await wizard.getByRole("button", { name: "Close setup" }).click();
     await expect(page.locator(WIZARD)).toHaveCount(0);
     const card = page.getByRole("heading", {

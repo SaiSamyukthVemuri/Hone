@@ -5,7 +5,7 @@ const MIG_DIR = join(process.cwd(), "supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0154_")) as string;
 const SQL = readFileSync(join(MIG_DIR, FILE), "utf8");
 
-describe("0154 — practitioner_notifications.dedupe_key (additive, partial-unique, no backfill)", () => {
+describe("0154: practitioner_notifications.dedupe_key (additive, partial-unique, no backfill)", () => {
   it("is present and 0153 precedes it; nothing 0155+ yet", () => {
     expect(FILE).toMatch(/^0154_.*\.sql$/);
     const files = readdirSync(MIG_DIR);

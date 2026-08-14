@@ -3,7 +3,7 @@ import { seedE2eStudio, seedE2eDashboardMemoryClient } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
 // ===========================================================================
-// Chloe Dashboard cleanup — the browser proof.
+// Chloe Dashboard cleanup, the browser proof.
 // ===========================================================================
 //
 // D1 REPORTED DEFECT (the reason this file exists). On Dashboard → Today,
@@ -12,13 +12,13 @@ import { loginAsOwner } from "./helpers/flows";
 //
 // REPRODUCED CAUSE. The disclosure was rendered INSIDE the Today row's body
 // <Link href="/calendar/{id}">, so the toggle's click bubbled straight into a
-// route push — and, once open, the embedded card rendered an <a> ("Open full
+// route push, and, once open, the embedded card rendered an <a> ("Open full
 // chart →") nested inside that <a>, which is invalid HTML whose activation
 // behaviour is undefined.
 //
 // WHY A BROWSER TEST AND NOT A SOURCE GREP. The unit lane
 // (tests/app/dashboard/today-treatment-memory.test.ts) pins the JSX shape, but
-// the defect is a NAVIGATION — a thing that only exists once a real click meets
+// the defect is a NAVIGATION, a thing that only exists once a real click meets
 // a real router. A source assertion cannot observe a URL change, and the
 // "expands briefly, then leaves" symptom is precisely a timing behaviour, so
 // the wait below is deliberate and not a smell: a delayed push is exactly what
@@ -26,7 +26,7 @@ import { loginAsOwner } from "./helpers/flows";
 //
 // The other three cleanups (D2 booking-setup, D3 getting-started, D4 pilot
 // learning) are all "this must NOT be on the page", and an absence is worth
-// asserting in the browser too — a card can be absent from the source and
+// asserting in the browser too, a card can be absent from the source and
 // present from a layout, or vice versa.
 
 const T = 20_000;
@@ -37,7 +37,7 @@ function dashboardPath(page: Page): string {
   return new URL(page.url()).pathname;
 }
 
-test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", () => {
+test.describe("D1: the Treatment Memory disclosure stays on the Dashboard", () => {
   test("expanding, waiting and collapsing never leaves /dashboard", async ({
     page,
   }) => {
@@ -71,7 +71,7 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
     // 3. Click the control Chloe clicks.
     await toggle.click();
 
-    // 4. The FULL previous treatment is really rendered — not an empty shell.
+    // 4. The FULL previous treatment is really rendered, not an empty shell.
     const full = page.getByTestId("today-memory-full").first();
     await expect(full).toBeVisible({ timeout: T });
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -129,8 +129,8 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
     page,
   }) => {
     // The other half of the capability: this is a per-surface presentation
-    // decision, not a deletion. On the appointment page — where she is already
-    // preparing for THIS visit — the link to the prior chart is the point.
+    // decision, not a deletion. On the appointment page, where she is already
+    // preparing for THIS visit, the link to the prior chart is the point.
     const seed = await seedE2eStudio();
     const { appointmentId } = await seedE2eDashboardMemoryClient(seed, {
       cautionNote: null,
@@ -153,7 +153,7 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
   });
 });
 
-test.describe("D2/D3/D4 — finished setup and pilot tooling are off the Dashboard", () => {
+test.describe("D2/D3/D4: finished setup and pilot tooling are off the Dashboard", () => {
   test("no completed-setup cards and no Pilot learning card render", async ({
     page,
   }) => {
@@ -170,7 +170,7 @@ test.describe("D2/D3/D4 — finished setup and pilot tooling are off the Dashboa
       // seedE2eStudio satisfies every REQUIRED readiness item: studio name,
       // slug, one active service, seven open availability days, and the booking
       // settings numbers (timezone / duration / buffer / horizon). So
-      // computeBookingReadiness returns "ready" — which is exactly the state
+      // computeBookingReadiness returns "ready", which is exactly the state
       // that used to render "Booking page ready / Your public booking page is
       // live" plus a column of ticks, permanently.
       //
@@ -189,7 +189,7 @@ test.describe("D2/D3/D4 — finished setup and pilot tooling are off the Dashboa
     await test.step("D2 control: the booking link still lives on its settings page", async () => {
       // Hiding the ready card removed a banner, never the capability.
       // BookingLinkCard's "card" variant puts the URL in a readonly <input>,
-      // so this reads the VALUE — getByText would never see it.
+      // so this reads the VALUE, getByText would never see it.
       await page.goto("/settings/booking");
       const linkInput = page.locator(`input[readonly][value$="/book/${seed.slug}"]`);
       await expect(linkInput).toBeVisible({ timeout: T });
@@ -243,7 +243,7 @@ test.describe("D2/D3/D4 — finished setup and pilot tooling are off the Dashboa
       // DASH-TRUTH-04. The earlier cleanup removed the large "Pilot learning"
       // card but left two quiet <PilotFeedbackPrompt> footers under Today and
       // To do. Chloe does not want the daily product sending feedback directly
-      // to Sam, so ALL Dashboard pilot-feedback UI is now absent — the card and
+      // to Sam, so ALL Dashboard pilot-feedback UI is now absent, the card and
       // the footers.
       //
       // Narrow, stable assertions: the prompt's own copy, and the mailto link
@@ -265,7 +265,7 @@ test.describe("D2/D3/D4 — finished setup and pilot tooling are off the Dashboa
     });
 
     await test.step("regression: the operational hierarchy is unchanged", async () => {
-      // Today first, To do second, Birthdays after — and nothing new inserted.
+      // Today first, To do second, Birthdays after, and nothing new inserted.
       const headings = await page
         .locator("main h2, h2")
         .allTextContents();

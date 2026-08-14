@@ -6,7 +6,7 @@ import {
   assertFakeResendNotRequestedInDeployment,
 } from "@/lib/email/e2e-fake-resend";
 
-// Defect 4 — per-recipient fake-Resend mode control. A single E2E server run
+// Defect 4: per-recipient fake-Resend mode control. A single E2E server run
 // exercises every send outcome by seeding studios whose owner_email local-part
 // is mode-prefixed. These unit tests pin the parsing + the fail-closed guards
 // (the deployment refusal + the enable gate are the same posture as fake-Stripe).
@@ -15,7 +15,7 @@ import {
 const env = (o: Record<string, string>): NodeJS.ProcessEnv =>
   o as unknown as NodeJS.ProcessEnv;
 
-describe("fakeResendModeForRecipient — prefix parsing", () => {
+describe("fakeResendModeForRecipient: prefix parsing", () => {
   const NO_ENV = env({});
 
   it("defaults to success for an ordinary address", () => {

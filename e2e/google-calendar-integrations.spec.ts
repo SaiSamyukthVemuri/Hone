@@ -6,7 +6,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 
-// Google Calendar — owner Integrations surface (Phase B1). Exercises the owner-only
+// Google Calendar: owner Integrations surface (Phase B1). Exercises the owner-only
 // Settings → Integrations page WITHOUT any Google account: the owner sees the
 // dormant "synchronization is off" banner + the connection card, the connect path
 // fails closed when unprovisioned (no GOOGLE_* env in the e2e stack), and a
@@ -22,7 +22,7 @@ test("owner Integrations page: sync-off banner + connect fails closed when uncon
   await page.goto("/settings/integrations");
   await expect(page.getByRole("heading", { name: /^Integrations$/ })).toBeVisible();
 
-  // Dormancy is stated plainly — synchronization is off.
+  // Dormancy is stated plainly: synchronization is off.
   await expect(page.getByTestId("integrations-sync-off")).toBeVisible();
   await expect(page.getByText(/synchronization is currently off/i)).toBeVisible();
 
@@ -32,7 +32,7 @@ test("owner Integrations page: sync-off banner + connect fails closed when uncon
     page.getByRole("button", { name: /connect google calendar/i }),
   ).toBeVisible();
 
-  // Connect fails closed (no GOOGLE_* env) — no navigation to Google, an error
+  // Connect fails closed (no GOOGLE_* env), no navigation to Google, an error
   // shows, and we remain on the Integrations page.
   await page.getByRole("button", { name: /connect google calendar/i }).click();
   await expect(page.getByText(/not configured yet/i)).toBeVisible({ timeout: 20_000 });

@@ -17,7 +17,7 @@ const DRAWER = read("app/(app)/calendar/QuickBookDrawer.tsx");
 const DAYCOL = read("app/(app)/calendar/DayColumn.tsx");
 const BLOCK = read("app/(app)/calendar/QuickBlockDrawer.tsx");
 
-describe("formatClockLabel — 12h vs 24h from an HH:MM machine value", () => {
+describe("formatClockLabel, 12h vs 24h from an HH:MM machine value", () => {
   it("12h mode renders 1:00 PM / 3:00 PM (not 13:00 / 15:00)", () => {
     expect(formatClockLabel("13:00", "12h")).toBe("1:00 PM");
     expect(formatClockLabel("15:00", "12h")).toBe("3:00 PM");
@@ -43,7 +43,7 @@ describe("formatClockLabel — 12h vs 24h from an HH:MM machine value", () => {
   });
 });
 
-describe("formatLocalDateLabel — human date, no timezone shift", () => {
+describe("formatLocalDateLabel: human date, no timezone shift", () => {
   it("'2026-07-09' → 'Jul 9, 2026' (date unchanged, no off-by-one)", () => {
     expect(formatLocalDateLabel("2026-07-09")).toBe("Jul 9, 2026");
     expect(formatLocalDateLabel("2026-01-01")).toBe("Jan 1, 2026");
@@ -51,7 +51,7 @@ describe("formatLocalDateLabel — human date, no timezone shift", () => {
   });
 });
 
-describe("DragActionChooser — the reported modal now uses the preference", () => {
+describe("DragActionChooser: the reported modal now uses the preference", () => {
   it("formats the range via the shared helpers, not raw HH:MM", () => {
     expect(CHOOSER).toMatch(/formatClockLabel\(draft\.startLocal, timeFormat\)/);
     expect(CHOOSER).toMatch(/formatClockLabel\(draft\.endLocal, timeFormat\)/);
@@ -65,7 +65,7 @@ describe("DragActionChooser — the reported modal now uses the preference", () 
   });
 });
 
-describe("QuickBookDrawer — header time honors the preference", () => {
+describe("QuickBookDrawer: header time honors the preference", () => {
   it("uses formatClockLabel (not the old locale-default toLocaleTimeString)", () => {
     expect(DRAWER).toMatch(/formatClockLabel\(draft\.localTime, timeFormat\)/);
     expect(DRAWER).not.toMatch(/toLocaleTimeString/);

@@ -3,7 +3,7 @@ import { buildChargeDescription } from "@/lib/billing/charge-description";
 
 // PR #320. The Stripe PaymentIntent description must be accurate per
 // charge_reason and must NEVER say "session null" for a fee row (fees have
-// session_id = null). It must also never leak client/intake/health PII — only
+// session_id = null). It must also never leak client/intake/health PII, only
 // the reason + an internal UUID.
 
 const SID = "11111111-1111-1111-1111-111111111111";
@@ -74,7 +74,7 @@ describe("buildChargeDescription", () => {
     }
   });
 
-  it("descriptions contain only the reason + a UUID — no PII fields", () => {
+  it("descriptions contain only the reason + a UUID, no PII fields", () => {
     // Simulate a row that also carried PII-ish fields; the function only reads
     // the three whitelisted keys, so nothing else can leak into the string.
     const d = buildChargeDescription({

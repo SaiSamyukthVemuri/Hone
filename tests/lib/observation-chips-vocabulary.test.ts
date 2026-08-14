@@ -21,7 +21,7 @@ describe("preferred observation labels", () => {
     // The old jargon-only labels are no longer separate picker options.
     expect(COMMON_COMMENTS).not.toContain("Erythema");
     expect(COMMON_COMMENTS).not.toContain("Slight edema");
-    // One option per concept — no duplicate redness/swelling entries.
+    // One option per concept: no duplicate redness/swelling entries.
     const redness = COMMON_COMMENTS.filter((c) => /redness|erythema/i.test(c));
     const swelling = COMMON_COMMENTS.filter((c) => /swelling|edema/i.test(c));
     expect(redness).toHaveLength(1);

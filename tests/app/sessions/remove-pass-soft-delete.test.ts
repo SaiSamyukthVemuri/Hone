@@ -6,7 +6,7 @@ import { join } from "node:path";
 // treatment pass (an electrolysis_entries / laser_entries row), replacing the
 // old bare-✕ HARD delete. The clinical record is preserved (deleted_at /
 // deleted_by / delete_reason), hidden from every active view, and only the
-// selected pass is voided — never the block/area, session, appointment, client,
+// selected pass is voided, never the block/area, session, appointment, client,
 // other passes, or photos.
 //
 // Source-level guarantees (matching the clinical-lineage / last-treatment-cleanup
@@ -53,7 +53,7 @@ describe("0114 migration: additive soft-delete columns on both pass tables", () 
   it("adds active partial indexes and is non-destructive (no backfill / no RLS change)", () => {
     expect(MIGRATION).toMatch(/electrolysis_entries_active_idx[\s\S]*where deleted_at is null/);
     expect(MIGRATION).toMatch(/laser_entries_active_idx[\s\S]*where deleted_at is null/);
-    // Additive only — no update of existing rows, no RLS/policy change here.
+    // Additive only: no update of existing rows, no RLS/policy change here.
     expect(MIGRATION).not.toMatch(/^\s*update\s/im);
     expect(MIGRATION).not.toMatch(/drop\s+policy/i);
     expect(MIGRATION).not.toMatch(/create\s+policy/i);
@@ -81,7 +81,7 @@ describe("server actions: audited soft-delete, no hard delete", () => {
     expect(SESSION_ACTIONS_CODE).toMatch(/assertSessionVisible\(studio\.id, clientId, sessionId\)/);
     expect(SESSION_ACTIONS_CODE).toMatch(/has already been removed/);
     // Scoped to the exact row + its session. Since migration 0169 the mutation
-    // runs as service_role, which BYPASSES RLS — so these two predicates plus
+    // runs as service_role, which BYPASSES RLS, so these two predicates plus
     // assertSessionVisible ARE the tenant boundary, not a backstop to it.
     // Behaviourally proven in tests/db/remove-pass-soft-delete.db.test.ts.
     expect(SESSION_ACTIONS_CODE).toMatch(/\.eq\("id", id\)/);
@@ -109,7 +109,7 @@ describe("server actions: audited soft-delete, no hard delete", () => {
       SESSION_ACTIONS_CODE.indexOf("async function softDeleteEntry("),
     );
     const body = fn.slice(0, fn.indexOf("\nexport async function"));
-    // The only formData reads are id / session_id / client_id / reason — no
+    // The only formData reads are id / session_id / client_id / reason, no
     // practitioner or studio id can be supplied by the browser.
     const reads = [...body.matchAll(/formData\.get\("([a-z_]+)"\)/g)].map((m) => m[1]);
     expect(new Set(reads)).toEqual(new Set(["id", "session_id", "client_id", "reason"]));

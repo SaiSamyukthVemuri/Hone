@@ -134,7 +134,7 @@ describe("archive source shape (PR #287)", () => {
     expect(ARCHIVE).toMatch(/p_image_id: input\.imageId/);
     expect(ARCHIVE).toMatch(/p_client_id: input\.clientId/);
     expect(ARCHIVE).not.toMatch(/p_studio_id|p_deleted_by/);
-    // The scoping moved into the command — assert it there, in the bytes.
+    // The scoping moved into the command, assert it there, in the bytes.
     const MIGRATION = readFileSync(
       join(process.cwd(), "supabase/migrations/0168_treatment_image_write_commands.sql"),
       "utf8",

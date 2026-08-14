@@ -6,7 +6,7 @@ import { handleCalendarSyncJob } from "@/lib/google-calendar/sync/handler";
 import type { ClaimedJob, JobResult } from "@/lib/google-calendar/sync/job-result";
 import type { ConnectionAuthRow, ConnectionStore, TokenManager } from "@/lib/google-calendar/sync/token-manager";
 
-// Google Calendar — Phase B2.1 adapter DB integration (LOCAL disposable Supabase
+// Google Calendar: Phase B2.1 adapter DB integration (LOCAL disposable Supabase
 // only). Proves the transport adapter's claim -> handle -> record loop against
 // the deployed 0124 RPCs with a synthetic outbox row. NO hosted production is
 // reachable (the harness enforces localhost); NO real Google call is made (the op
@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 
 // claim_calendar_sync_op is a GLOBAL drain; isolate each test's view of the queue.
-// 0125 added the global worker control (default OFF) at the claim boundary — enable
+// 0125 added the global worker control (default OFF) at the claim boundary, enable
 // it so the transport loop can claim.
 beforeEach(async () => {
   await adminQuery("delete from public.calendar_sync_outbox");
@@ -166,7 +166,7 @@ describe("cron adapter claim -> handle -> record", () => {
 
   it("an ineligible connection (outbound flag off) is HELD at claim time, not claimed", async () => {
     // Under migration 0125 eligibility moved into claim_calendar_sync_op (Option A):
-    // an ineligible connection's job is never handed out, so it does not decay —
+    // an ineligible connection's job is never handed out, so it does not decay,
     // it stays pending with attempts untouched, ready to drain when health returns.
     const studio = await seedStudio("gcalAdapterOff");
     const connId = await seedEligibleConnection(studio, /* enableFlag */ false);

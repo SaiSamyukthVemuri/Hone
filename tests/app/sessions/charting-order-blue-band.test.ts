@@ -42,7 +42,7 @@ describe("charting field order (Chloe's exact flow)", () => {
   it("Thermolysis pulse count renders within Treatment readings, after intensity and before Hairs treated", () => {
     // Charting correction: the pulse control moved INTO the thermolysis section
     // (the `thermoSection` const, defined above the return), labeled "Thermolysis
-    // pulse count", and is placed via {thermoSection} inside Treatment readings —
+    // pulse count", and is placed via {thermoSection} inside Treatment readings,
     // so at RENDER it sits after the readings heading and before Hairs treated.
     const readingsIdx = FORM.indexOf(">Treatment readings</span>");
     const hairsIdx = FORM.indexOf(">Hairs treated</span>");
@@ -73,7 +73,7 @@ describe("charting field order (Chloe's exact flow)", () => {
   it("save payload and copy-settings are unchanged (layout-only move)", () => {
     expect(FORM).toMatch(/machineFrequency: \(draft\.machineFrequency \|\| null\) as/);
     expect(FORM).toMatch(/minutesPerformed:/);
-    // copy-settings still carries the full setup — now via the shared contract.
+    // copy-settings still carries the full setup, now via the shared contract.
     expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/);
     // No field was removed.
     expect(FORM).toMatch(/<ProbePicker/);

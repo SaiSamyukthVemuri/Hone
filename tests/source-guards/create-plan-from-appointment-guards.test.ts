@@ -8,7 +8,7 @@ const BRIEFING = "app/(app)/calendar/[id]/page.tsx";
 const PROFILE = "app/(app)/clients/[id]/page.tsx";
 const CARD = "components/treatment-plans-card.tsx";
 
-describe("create-plan-from-appointment — briefing CTA", () => {
+describe("create-plan-from-appointment: briefing CTA", () => {
   const b = read(BRIEFING);
   it("shows a primary 'Create treatment plan' CTA + a secondary 'View treatment plans'", () => {
     expect(b).toMatch(/Create treatment plan/);
@@ -21,7 +21,7 @@ describe("create-plan-from-appointment — briefing CTA", () => {
   });
 });
 
-describe("create-plan-from-appointment — profile page wiring", () => {
+describe("create-plan-from-appointment: profile page wiring", () => {
   const p = read(PROFILE);
   it("auto-open gated on create_plan=1 AND the treatment tab; returnTo sanitized server-side", () => {
     expect(p).toMatch(/const autoOpenCreatePlan = sp\.create_plan === "1" && activeTab === "treatment"/);
@@ -31,7 +31,7 @@ describe("create-plan-from-appointment — profile page wiring", () => {
   });
 });
 
-describe("create-plan-from-appointment — card opens but never auto-creates", () => {
+describe("create-plan-from-appointment: card opens but never auto-creates", () => {
   const c = read(CARD);
   it("opens the EXISTING form on autoOpenCreate + focuses the first field + shows the Back link", () => {
     expect(c).toMatch(/useState\(autoOpenCreate\)/);
@@ -46,7 +46,7 @@ describe("create-plan-from-appointment — card opens but never auto-creates", (
     expect((c.match(/createAction\(/g) ?? []).length).toBe(1); // no NEW create call added
   });
 
-  it("closing the form (Cancel or Save) strips the deep-link params via Next replace — refresh won't reopen", () => {
+  it("closing the form (Cancel or Save) strips the deep-link params via Next replace, refresh won't reopen", () => {
     expect(c).toMatch(/import \{ useRouter \} from "next\/navigation"/);
     expect(c).toMatch(/router\.replace\(`\/clients\/\$\{clientId\}\?tab=treatment`, \{ scroll: false \}\)/);
     // invoked from BOTH close paths: Cancel + Save success.

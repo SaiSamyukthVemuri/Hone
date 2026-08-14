@@ -12,7 +12,7 @@ import {
   CALENDAR_APP_CREATED_SCOPE,
 } from "@/lib/google-calendar/destination-scopes";
 
-// Phase B2.4 — connection readiness is DERIVED (never stored). The event scope
+// Phase B2.4: connection readiness is DERIVED (never stored). The event scope
 // requirement is DESTINATION-AWARE (exact set membership), and the derivation
 // expresses the per-mode setup progression (permission required -> provisioning/
 // selection pending -> ready) plus a fail-closed needs-attention state.
@@ -34,7 +34,7 @@ function input(overrides: Partial<ReadinessInput> = {}): ReadinessInput {
   };
 }
 
-describe("deriveConnectionReadiness — connection health", () => {
+describe("deriveConnectionReadiness: connection health", () => {
   it("disconnected / error", () => {
     expect(deriveConnectionReadiness(input({ connectionStatus: "disconnected" }))).toBe("disconnected");
     expect(deriveConnectionReadiness(input({ connectionStatus: "error" }))).toBe("error");
@@ -47,7 +47,7 @@ describe("deriveConnectionReadiness — connection health", () => {
   });
 });
 
-describe("deriveConnectionReadiness — destination progression", () => {
+describe("deriveConnectionReadiness: destination progression", () => {
   it("connected_no_destination when no mode is chosen (NULL never defaults to a mode)", () => {
     expect(deriveConnectionReadiness(input({ destinationMode: null }))).toBe("connected_no_destination");
     // Even with an event scope granted, a null destination is not ready.
@@ -113,7 +113,7 @@ describe("deriveConnectionReadiness — destination progression", () => {
   });
 });
 
-describe("deriveConnectionReadiness — exact-scope prefix protection", () => {
+describe("deriveConnectionReadiness: exact-scope prefix protection", () => {
   it("broad calendar.events does NOT satisfy existing_owned -> permission still required", () => {
     expect(
       deriveConnectionReadiness(

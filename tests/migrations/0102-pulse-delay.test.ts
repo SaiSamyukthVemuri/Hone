@@ -38,7 +38,7 @@ describe("0102: additive nullable column + range CHECK", () => {
     expect(CODE).toMatch(
       /add column if not exists\s+pulse_delay_seconds\s+numeric\(4,\s*2\)/i,
     );
-    // Additive only — no NOT NULL, no default, no backfill.
+    // Additive only: no NOT NULL, no default, no backfill.
     expect(CODE).not.toMatch(/pulse_delay_seconds[^;]*not null/i);
     expect(CODE).not.toMatch(/update public\.electrolysis_entries/i);
   });

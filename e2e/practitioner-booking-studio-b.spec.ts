@@ -14,7 +14,7 @@ import {
 } from "./helpers/seed";
 import { loginByMagicLink } from "./helpers/flows";
 
-// PR B Part 4 Item 6 — practitioner-aware internal booking, driven through the
+// PR B Part 4 Item 6, practitioner-aware internal booking, driven through the
 // REAL client-profile UI against a synthetic capacity-ON studio and verified
 // against the DB. Owner O; active A + B (both eligible); inactive C (absent); one
 // service. Never Willow / production data.
@@ -59,7 +59,7 @@ async function openBooking(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: /\+ Book appointment/i }).click();
 }
 
-test("owner books A, then B — distinct practitioner assignments", async ({ page }) => {
+test("owner books A, then B, distinct practitioner assignments", async ({ page }) => {
   await loginByMagicLink(page, seed.ownerEmail);
   await openBooking(page);
 

@@ -47,7 +47,7 @@ describe("isPaymentManualReviewEvent", () => {
       "cron_route_failed",
       "email_send_gave_up",
       "sms_send_failed",
-      "card_on_file_setup_failed", // card setup, not a charge — stays on ops-alerts
+      "card_on_file_setup_failed", // card setup, not a charge, stays on ops-alerts
       "",
     ]) {
       expect(isPaymentManualReviewEvent(ev), ev).toBe(false);
@@ -197,11 +197,11 @@ describe("selectPaymentReviewAlerts: critical + unresolved + payment-event only"
   const rows: ReviewAlertRow[] = [
     { id: "1", severity: "critical", event: "session_payment_succeeded_write_failed", resolved_at: null, ...base },
     { id: "2", severity: "critical", event: "payment_refund_succeeded_write_failed", resolved_at: null, ...base },
-    // warning payment alert — excluded
+    // warning payment alert: excluded
     { id: "3", severity: "warning", event: "payment_intent_succeeded_no_match", resolved_at: null, ...base },
-    // resolved critical payment alert — excluded
+    // resolved critical payment alert: excluded
     { id: "4", severity: "critical", event: "session_payment_needs_manual_review", resolved_at: "2026-06-30T11:00:00.000Z", ...base },
-    // non-payment critical — excluded
+    // non-payment critical: excluded
     { id: "5", severity: "critical", event: "reminder_scheduler_missing", resolved_at: null, ...base },
   ];
 
@@ -222,7 +222,7 @@ describe("selectPaymentReviewAlerts: critical + unresolved + payment-event only"
     expect(selectPaymentReviewAlerts(rows).some((a) => a.alertId === "5")).toBe(false);
   });
 
-  it("the view carries only safe fields (redacted message, PI id, ids) — no raw payload", () => {
+  it("the view carries only safe fields (redacted message, PI id, ids), no raw payload", () => {
     const v = selectPaymentReviewAlerts(rows)[0];
     expect(Object.keys(v).sort()).toEqual(
       [
@@ -290,7 +290,7 @@ describe("manual-review page: READ-ONLY (no payment mutation, no Stripe write)",
       expect(src).not.toMatch(/from "stripe"|getStripe\(|@\/lib\/stripe/);
     }
   });
-  it("does not render client names (ids only — studios/[id] privacy convention)", () => {
+  it("does not render client names (ids only, studios/[id] privacy convention)", () => {
     expect(PAGE).not.toMatch(/client:\s*clients\(|clients\(name\)|client\.name/);
   });
 });
@@ -314,7 +314,7 @@ describe("manual-review page: queue selection mirrors docs/16 §17.7", () => {
   });
 
   it("surfaces a read failure loudly (never a false 'all clear' empty queue) without leaking the provider error", () => {
-    // Both reads capture .error and throw a GENERIC message — a failed query
+    // Both reads capture .error and throw a GENERIC message, a failed query
     // must not render as an empty queue, and the raw provider message is not leaked.
     expect(PAGE).toMatch(/error: stuckErr/);
     expect(PAGE).toMatch(/error: alertErr/);

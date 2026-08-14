@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// POINT-OF-CARE TREATMENT MEMORY — real browser, real stack.
+// POINT-OF-CARE TREATMENT MEMORY: real browser, real stack.
 //
 // The journey being proved is Chloe's actual complaint: standing over a client
 // mid-treatment, she could not see what was done last time without navigating
@@ -30,7 +30,7 @@ type Fixture = {
 
 // One charted prior session with two structured areas and mixed laterality,
 // frequency, probe + lot, mode/modality/readings, hairs, minutes, response,
-// tolerance, numbing, caution and plan — plus a consultation note and a
+// tolerance, numbing, caution and plan, plus a consultation note and a
 // skin/hair analysis note. Then a NEWER, completely empty session, then the
 // session being charted now.
 async function seedMemoryFixture(seed: E2eSeed): Promise<Fixture> {
@@ -393,7 +393,7 @@ test.describe("point-of-care treatment memory", () => {
       timeout: T,
     });
     // The panel's date link points at the CHARTED session, not the newer empty
-    // one — the exact regression this PR fixes.
+    // one, the exact regression this PR fixes.
     await expect(
       page.locator(
         `a[href="/clients/${fx.clientId}/sessions/${fx.previousSessionId}"]`,
@@ -414,7 +414,7 @@ test.describe("point-of-care treatment memory", () => {
   //
   // The selector correctly accepts laser-only and legacy entry-only treatments.
   // But /sessions/new renders a BLOCK-shaped summary, and buildLastSessionSummary
-  // returns a TRUTHY object with `areas: []` for them — so the panel used to
+  // returns a TRUTHY object with `areas: []` for them, so the panel used to
   // render its heading and date over nothing at all. Both journeys prove the
   // truthful fallback instead.
 
@@ -442,7 +442,7 @@ test.describe("point-of-care treatment memory", () => {
       `insert into public.laser_entries (id, session_id, zone) values ($1,$2,'Chin')`,
       [randomUUID(), laserId],
     );
-    // fx already seeded a NEWER empty session (2026-05-01) — but the laser
+    // fx already seeded a NEWER empty session (2026-05-01), but the laser
     // visit is newer still, so add one above it to keep the empty-session
     // control in play.
     await sql(
@@ -574,7 +574,7 @@ test.describe("point-of-care treatment memory", () => {
     await expect(tracker.getByTitle("Cheek", { exact: true })).toHaveCount(0);
     await expect(tracker.getByTitle("Sideburn", { exact: true })).toHaveCount(0);
 
-    // 100%, not 200% — the duration is not counted once per area.
+    // 100%, not 200%: the duration is not counted once per area.
     await expect(tracker.getByText("100%", { exact: true })).toHaveCount(1);
     await expect(tracker.getByText("200%")).toHaveCount(0);
 
@@ -589,7 +589,7 @@ test.describe("point-of-care treatment memory", () => {
   });
 });
 
-test.describe("narrow mobile — 390px", () => {
+test.describe("narrow mobile: 390px", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test("the headline is readable, nothing scrolls sideways, and Save stays usable", async ({
@@ -641,7 +641,7 @@ test.describe("narrow mobile — 390px", () => {
   });
 });
 
-test.describe("iPad — 820px, Chloe's device", () => {
+test.describe("iPad: 820px, Chloe's device", () => {
   test.use({ viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true });
 
   test("the card is default-expanded and does not crowd the charting form", async ({
@@ -679,26 +679,26 @@ test.describe("iPad — 820px, Chloe's device", () => {
 //
 // <ClinicalDate> is a Client Component, so it renders TWICE: once by Node on
 // the server, once by the browser during hydration. `toLocaleDateString` with
-// no locale means "this runtime's default", and those two runtimes disagree —
+// no locale means "this runtime's default", and those two runtimes disagree,
 // Node emits "Jul 21, 2026" while an fr-CA browser emits "21 juill. 2026".
 // Same day, mismatched markup, React hydration error on a clinical screen.
 //
 // timeZone: "UTC" pins the DAY but not the locale-dependent TEXT. This spec
-// drives a REAL browser whose locale is fr-CA — the strongest cross-runtime
-// evidence available — and proves the date is stable, correct, and warning-free.
+// drives a REAL browser whose locale is fr-CA, the strongest cross-runtime
+// evidence available, and proves the date is stable, correct, and warning-free.
 // ---------------------------------------------------------------------------
 test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => {
   test.use({ locale: "fr-CA", timezoneId: "America/Toronto" });
 
   // A hydration mismatch in a Next PRODUCTION build (which this lane runs)
-  // surfaces as a console ERROR — "Hydration failed…", "Text content does not
+  // surfaces as a console ERROR, "Hydration failed…", "Text content does not
   // match server-rendered HTML". So errors are the signal.
   //
   // Chromium WARNINGS are environment chatter that varies by browser build and
   // by runner (the CI runner, for instance, warns that the app's own
   // Permissions-Policy header names a feature it does not recognise). Asserting
   // an empty warning list would make this spec fail for reasons that have
-  // nothing to do with the contract under test — so warnings are only inspected
+  // nothing to do with the contract under test, so warnings are only inspected
   // for hydration content, never required to be empty.
   const HYDRATION_RE =
     /hydrat|did not match|Text content does not match|server-rendered/i;
@@ -715,7 +715,7 @@ test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => 
     /\[PostHog\.js\] PostHog was initialized without a token/i,
     // Vercel Analytics / Speed Insights are served by the Vercel edge in
     // production; locally the path 404s to HTML and the browser refuses the
-    // script. Named explicitly — not a broad "MIME type" filter.
+    // script. Named explicitly, not a broad "MIME type" filter.
     /_vercel\/(insights|speed-insights)/i,
     // Chromium build-specific header parsing chatter.
     /Permissions-Policy header/i,
@@ -724,7 +724,7 @@ test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => 
 
   // Arms console capture on a page BEFORE navigation. Returns both buckets:
   // `errors` (strictly asserted, minus the named artifacts) and
-  // `hydration` (asserted across errors AND warnings — a hydration complaint
+  // `hydration` (asserted across errors AND warnings, a hydration complaint
   // fails this spec whichever level it arrives at).
   function captureConsole(page: import("@playwright/test").Page) {
     const errors: string[] = [];
@@ -755,7 +755,7 @@ test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => 
         [seed.studioId],
       )
     )[0];
-    // A note dated JULY 21 — stored as a calendar date, i.e. midnight UTC.
+    // A note dated JULY 21, stored as a calendar date, i.e. midnight UTC.
     // Toronto is UTC-4 in July, so a naive instant conversion shows July 20.
     await sql(
       `insert into public.client_clinical_notes
@@ -840,7 +840,7 @@ test.describe("clinical dates hydrate deterministically (fr-CA browser)", () => 
 
     // (b) SESSION START is a real INSTANT → still FormattedDateTime, which
     //     deliberately follows the viewer. Under fr-CA it reads "1 janv. 2026",
-    //     and that is CORRECT — instants are not civil dates.
+    //     and that is CORRECT, instants are not civil dates.
     await expect(card.getByText(/janv\./).first()).toBeVisible();
 
     // Neither changes after hydration.

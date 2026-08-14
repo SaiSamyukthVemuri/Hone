@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // the public route, existing assisted metadata must survive unchanged. Prove
 // this behaviorally."
 //
-// So this runs the REAL public saveIntakeStepAction / submitIntakeAction —
-// the same functions the tokenized wizard calls — against an in-memory row
+// So this runs the REAL public saveIntakeStepAction / submitIntakeAction,
+// the same functions the tokenized wizard calls, against an in-memory row
 // that already carries practitioner-assisted provenance, and asserts:
 //
 //   * the client cannot CREATE the provenance key;
@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //   * it survives a submit byte-identically;
 //   * none of this weakens the client's own answers or their acknowledgement.
 //
-// Nothing here is mocked at the sanitizer level — the real sanitizeResponses
+// Nothing here is mocked at the sanitizer level, the real sanitizeResponses
 // and the real merge are what is under test.
 
 type Row = Record<string, unknown>;
@@ -25,7 +25,7 @@ type Row = Record<string, unknown>;
 // `templates` backs consent_form_templates. submitIntakeAction now re-resolves
 // the studio's live consent forms on every submit; an EMPTY set is the "studio
 // has no live consent forms" case, in which submission must behave exactly as
-// it did before that feature — which is what this file goes on proving.
+// it did before that feature, which is what this file goes on proving.
 type DbState = {
   rows: Row[];
   templates: Row[];
@@ -227,7 +227,7 @@ describe("the client's own save cannot disturb assisted provenance", () => {
     expect(stored()[KEY]).toEqual(REAL_PROVENANCE);
   });
 
-  it("the client cannot ERASE it — not with null, undefined or a scalar", async () => {
+  it("the client cannot ERASE it, not with null, undefined or a scalar", async () => {
     for (const attack of [null, undefined, "", 0, false, {}, []]) {
       state.rows = [row()];
       await saveIntakeStepAction({
@@ -272,7 +272,7 @@ describe("the client's own save cannot disturb assisted provenance", () => {
       const responses = u.patch.responses as Record<string, unknown> | undefined;
       if (!responses) continue;
       // The key may be PRESENT (carried through from the existing row) but it
-      // must be exactly what was already stored — never client bytes.
+      // must be exactly what was already stored, never client bytes.
       if (KEY in responses) expect(responses[KEY]).toEqual(REAL_PROVENANCE);
     }
   });

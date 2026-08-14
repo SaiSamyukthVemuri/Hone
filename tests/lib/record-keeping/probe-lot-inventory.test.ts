@@ -158,7 +158,7 @@ describe("filterProbeLotOptions + label", () => {
   // show the description beside the lot number it already renders. When the
   // em-dash cleanup changed the delimiter, changing only one side would have
   // left the prefix visible with nothing failing. Both now import one exported
-  // constant, so they cannot disagree — and these pins prove the stripping
+  // constant, so they cannot disagree, and these pins prove the stripping
   // behaviour rather than the punctuation.
   it("the lot label prefix is stripped by the delimiter the producer actually uses", () => {
     const [o] = buildProbeLotOptions(

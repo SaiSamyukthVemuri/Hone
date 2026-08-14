@@ -3,7 +3,7 @@ import { BULLET, insertBullet, bulletEnter, bulletBackspace } from "@/lib/notes/
 
 const MAX = 20000;
 
-describe("personal-notes bullets — plain text keyboard contract", () => {
+describe("personal-notes bullets: plain text keyboard contract", () => {
   it("2) Add bullet inserts '• ' at the start of the current line; caret moves with it", () => {
     expect(insertBullet("", 0, MAX)).toEqual({ value: BULLET, cursor: 2 });
     expect(insertBullet("hello", 3, MAX)).toEqual({ value: "• hello", cursor: 5 });

@@ -89,7 +89,7 @@ describe("0089: imported_treatment_memories identity + text-heavy columns", () =
   });
 });
 
-describe("0089: RLS — member read, owner-only write, NO delete", () => {
+describe("0089: RLS, member read, owner-only write, NO delete", () => {
   it("enables RLS on all three tables", () => {
     for (const t of [
       "import_batches",
@@ -180,7 +180,7 @@ describe("0089: audit trigger + updated_at trigger, no raw-blob storage", () => 
     expect(exec).toMatch(/public\.record_keeping_audit_actor\(new\.studio_id\)/);
   });
   it("stores NO raw CSV/TSV/file/image/OCR content", () => {
-    // Executable SQL only — the header comment legitimately states that
+    // Executable SQL only: the header comment legitimately states that
     // paper scans / images / OCR are NOT stored.
     const exec = MIGRATION.split("\n")
       .filter((l) => !l.trim().startsWith("--"))

@@ -16,7 +16,7 @@ import {
   DISCOVERY_SCOPE,
 } from "./helpers/fake-google-e2e";
 
-// Synthetic-Google browser E2E — DEDICATED destination (Flow A + idempotency +
+// Synthetic-Google browser E2E: DEDICATED destination (Flow A + idempotency +
 // ambiguous provisioning). Real browser, guarded fake Google (no real request).
 
 const BROAD_EVENTS = "https://www.googleapis.com/auth/calendar.events";
@@ -32,7 +32,7 @@ async function chooseDedicatedAndGrant(page: import("@playwright/test").Page) {
   await page.waitForURL(/gcal=/);
 }
 
-test("Flow A — dedicated: only app.created requested, exactly one calendar, ready, dormant", async ({ page }) => {
+test("Flow A, dedicated: only app.created requested, exactly one calendar, ready, dormant", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]); // connected, no destination
@@ -67,7 +67,7 @@ test("Flow A — dedicated: only app.created requested, exactly one calendar, re
   expect(html).not.toMatch(/refresh_token|encrypted_refresh_token/);
 });
 
-test("idempotency — re-provision (page reload + repeated submit) creates no second calendar", async ({ page }) => {
+test("idempotency: re-provision (page reload + repeated submit) creates no second calendar", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]);
@@ -79,14 +79,14 @@ test("idempotency — re-provision (page reload + repeated submit) creates no se
   await expect(page.getByTestId("gcal-ready")).toBeVisible();
   expect(fakeCreatedCalendarCount()).toBe(1);
 
-  // Reload the ready page — already-provisioned → no chooser, no second create.
+  // Reload the ready page: already-provisioned → no chooser, no second create.
   await page.reload();
   await expect(page.getByTestId("gcal-ready")).toBeVisible();
   await expect(page.getByRole("button", { name: /Create the Hone Appointments calendar/i })).toHaveCount(0);
   expect(fakeCreatedCalendarCount()).toBe(1);
 });
 
-test("ambiguous multi-match — provisioning fails closed (needs attention), no adoption", async ({ page }) => {
+test("ambiguous multi-match: provisioning fails closed (needs attention), no adoption", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]);
@@ -109,7 +109,7 @@ test("ambiguous multi-match — provisioning fails closed (needs attention), no 
   expect(await getE2eCalendarSyncCounts()).toEqual({ outbox: 0, links: 0 });
 });
 
-test("ambiguous one-match — an orphan from a failed insert is adopted on retry, no duplicate", async ({ page }) => {
+test("ambiguous one-match: an orphan from a failed insert is adopted on retry, no duplicate", async ({ page }) => {
   const seed = await seedE2eStudio();
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await seedE2eGoogleConnection(seed.studioId, [DISCOVERY_SCOPE]);
@@ -124,7 +124,7 @@ test("ambiguous one-match — an orphan from a failed insert is adopted on retry
   expect(fakeCreatedCalendarCount()).toBe(1); // the orphan exists
 
   // Attempt 2 (retry): reconcile by the persisted token finds the ONE orphan and
-  // adopts it — no second calendar is created.
+  // adopts it, no second calendar is created.
   await page.getByRole("button", { name: /Create the Hone Appointments calendar/i }).click();
   await expect(page.getByTestId("gcal-ready")).toBeVisible();
   expect(fakeCreatedCalendarCount()).toBe(1);

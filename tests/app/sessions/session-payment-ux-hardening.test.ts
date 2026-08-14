@@ -137,8 +137,8 @@ describe("PR #174 patch: activeAttempt vs latestHistoricalAttempt", () => {
   });
 
   it("AttemptStatusPanel is only rendered for activeAttempt (not for terminal-non-success rows)", () => {
-    // PR #174's invariant — the panel keys off `activeAttempt`, never
-    // `latestAttempt`, so a terminal-non-success row cannot resurrect it — is
+    // PR #174's invariant: the panel keys off `activeAttempt`, never
+    // `latestAttempt`, so a terminal-non-success row cannot resurrect it, is
     // unchanged. FREE-01 (review 3777045531) added ONE further suppression in
     // the same direction: an attempt prepared at a positive price whose service
     // has since become $0 must not keep offering Run charge. That narrows the
@@ -347,7 +347,7 @@ describe("PR #174: FailedPanel (terminal in this PR)", () => {
     expect(block).toMatch(/<PaymentSummaryCard/);
     expect(block).toMatch(/humanChargeFailure\(attempt\.failureCode\)/);
     expect(block).toMatch(/attempt\.failedAt/);
-    // Raw code + processor message are NOT inline — they're owner-only.
+    // Raw code + processor message are NOT inline, they're owner-only.
     expect(block).not.toMatch(/Code:\s*\{?\s*attempt\.failureCode/);
     expect(block).not.toMatch(/Failure:\s*\{?\s*attempt\.failureMessageSafe/);
   });
@@ -412,8 +412,8 @@ describe("PR #174: forbidden copy not present anywhere in actionable JSX", () =>
 
   // Compact-card update: "Receipt sent" is now the DESIRED practitioner copy
   // (Chloe's feedback). The privacy guard is that the FULL email is never
-  // rendered inline — the card masks it via maskReceiptEmail.
-  it("masks the receipt email — never renders the full address inline", () => {
+  // rendered inline, the card masks it via maskReceiptEmail.
+  it("masks the receipt email: never renders the full address inline", () => {
     expect(CARD).toMatch(/maskReceiptEmail\(/);
     // No inline `<code>{...receiptEmailTo...}</code>` full-email render remains.
     expect(CARD_CODE).not.toMatch(/<code>\{[^}]*receiptEmailTo[^}]*\}<\/code>/);

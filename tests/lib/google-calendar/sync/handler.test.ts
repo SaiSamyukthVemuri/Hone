@@ -5,7 +5,7 @@ import type { ConnectionAuthRow, TokenManager, TokenResult } from "@/lib/google-
 
 type EnsureFn = (connectionId: string, studioId: string) => Promise<TokenResult>;
 
-// Phase B2.1 — the transport-neutral handler's eligibility gate + token
+// Phase B2.1: the transport-neutral handler's eligibility gate + token
 // acquisition + injected-operation dispatch, across the full JobResult matrix.
 // No Google event is ever created here (operations are mocked).
 

@@ -41,7 +41,7 @@ describe("verify-production: read-only DB access", () => {
   it("performs no writes (no INSERT/UPDATE/DELETE/UPSERT/DDL in any query)", () => {
     expect(CODE).not.toMatch(/\b(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|drop\s+|alter\s+|create\s+(table|policy|index))\b/i);
   });
-  it("selects scalars only — never `select *` or client PII columns", () => {
+  it("selects scalars only: never `select *` or client PII columns", () => {
     expect(CODE).not.toMatch(/select\s+\*/i);
     // No PII columns pulled from any table.
     expect(CODE).not.toMatch(/select[^;]*\b(name|email|phone|first_name|last_name|responses|practitioner_note|token)\b/i);
@@ -90,13 +90,13 @@ describe("verify-production: covers every required check", () => {
   });
 
   it("the derived expected max tracks the repo's current migration max", () => {
-    // REPO-max invariant (drift tripwire) — pins the newest migration FILE in the
+    // REPO-max invariant (drift tripwire): pins the newest migration FILE in the
     // repo. Migrations 0119 (2026-07-10) and 0120 (2026-07-11, Phase 2 corrections
     // & amendments) were both applied to the hosted project migration-first, so repo
     // and hosted reconcile at 0120 (the verifier's "Remote migration max" PASSES).
     // This assertion still fails on the next new migration, forcing a conscious
     // review of the pre-live verifier.
-    // The verifier no longer scans supabase/migrations itself — it delegates to
+    // The verifier no longer scans supabase/migrations itself, it delegates to
     // scripts/migration-state.mjs, so there is exactly ONE derivation of the repo
     // max in the repository. This asserts the delegation and agreement, and needs
     // no edit when a migration lands.
@@ -143,7 +143,7 @@ describe("verify-production: covers every required check", () => {
     expect(CODE).toMatch(/from ops_alerts/);
     expect(CODE).toMatch(/severity = 'critical'/);
     expect(CODE).toMatch(/resolved_at is null/);
-    // count(*) only — never selects the message/detail columns.
+    // count(*) only: never selects the message/detail columns.
     expect(CODE).not.toMatch(/select[^;]*ops_alerts[^;]*\b(message|detail|safe_details|payload)\b/i);
   });
   it("Stripe gates 1/1/0/0 via the existing gate", () => {
@@ -195,7 +195,7 @@ describe("verify-production: post-live report section (not gates)", () => {
     expect(body).not.toMatch(/results\.push|record\(/);
   });
 
-  it("reports runtime Stripe mode by SHAPE only — never prints the secret value", () => {
+  it("reports runtime Stripe mode by SHAPE only, never prints the secret value", () => {
     expect(CODE).toMatch(/function reportRuntimeMode/);
     expect(CODE).toMatch(/startsWith\("sk_live_"\)/);
     expect(CODE).toMatch(/STRIPE_ALLOW_LIVE_MODE === "true"/);
@@ -219,8 +219,8 @@ describe("verify-production: post-live report section (not gates)", () => {
   });
 
   it("redaction: never selects or prints a full Stripe/card identifier", () => {
-    // Reads only presence (is not null) / counts / booleans of id columns —
-    // never the id VALUE — and never prints a full acct_/pi_/cus_/sk_ token.
+    // Reads only presence (is not null) / counts / booleans of id columns,
+    // never the id VALUE, and never prints a full acct_/pi_/cus_/sk_ token.
     expect(CODE).not.toMatch(/select[^;]*\b(stripe_account_id|stripe_customer_id|stripe_payment_method_id|stripe_payment_intent_id|stripe_setup_intent_id)\b(?!\s+is\s+(not\s+)?null)/i);
     expect(CODE).not.toMatch(/console\.[a-z]+\([^)]*(acct_|pi_|cus_|sk_live_|sk_test_|whsec_)/);
   });
@@ -250,7 +250,7 @@ describe("verify-production: runbook + cross-reference", () => {
     // Scope the stale-claim check to the sections this PR owns (the §17.13
     // verification section + its current-state callout). Historical/rollback
     // sections elsewhere legitimately reference the flag being unset/false as
-    // mechanics — they are clearly dated/labeled historical.
+    // mechanics, they are clearly dated/labeled historical.
     const section = DOC16.slice(
       DOC16.indexOf("### 17.13"),
       DOC16.indexOf("### 17.14"),

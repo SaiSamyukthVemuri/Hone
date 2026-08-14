@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// B6 / 0175 — markAppointmentCompleteAction's RPC error map.
+// B6 / 0175: markAppointmentCompleteAction's RPC error map.
 //
 // BEHAVIOURAL, not a source grep: the real action runs, with the admin client
 // stubbed so a chosen RPC error comes back. 0175 changed the refusal the
 // database raises from 'appointment has not yet ended' to 'appointment has not
 // started yet'; an action still matching only the old text would have fallen
-// through to the generic message and told the practitioner nothing useful —
+// through to the generic message and told the practitioner nothing useful,
 // while the UI elsewhere claimed the button unlocks at the start time.
 //
 // The error path returns before the postcare/revalidate imports, so only the
@@ -47,7 +47,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
-describe("B6 — the completion error map matches what 0175 actually raises", () => {
+describe("B6: the completion error map matches what 0175 actually raises", () => {
   it("maps 0175's refusal to start-time copy, never end-time copy", async () => {
     const err = await errorFor("appointment has not started yet");
     expect(err).toBe("This appointment hasn't started yet.");
@@ -59,7 +59,7 @@ describe("B6 — the completion error map matches what 0175 actually raises", ()
   it("still recognises the PRE-0175 refusal, for deployment/rollback skew", async () => {
     // B6-aware application code can briefly run against a 0174 database. There
     // the end-time rule is the one actually being enforced, so saying so stays
-    // truthful — this branch is never used to explain the 0175 refusal.
+    // truthful, this branch is never used to explain the 0175 refusal.
     const err = await errorFor("appointment has not yet ended");
     expect(err).toBe("This appointment hasn't ended yet.");
   });

@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asUser, closePool, seedStudio, seedMember, type SeededStudio } from "./helpers/harness";
 
-// Migration 0161 — reorder_studio_service / show_studio_service, against the
+// Migration 0161: reorder_studio_service / show_studio_service, against the
 // REAL migrated database.
 //
 // THE DEFECT THIS PROVES FIXED. `services.sort_order` is `not null default 100`
 // with no uniqueness and a per-modality allocator, so tied values are the normal
-// state. The old action ordered by `sort_order` alone — a partial order Postgres
-// resolves in HEAP order — then swapped two values with two untransacted
+// state. The old action ordered by `sort_order` alone, a partial order Postgres
+// resolves in HEAP order, then swapped two values with two untransacted
 // UPDATEs. The row it moved was routinely not the row on screen, and when it
 // resolved the clicked row to index 0 it silently did nothing, permanently.
 //
@@ -86,7 +86,7 @@ describe("the legacy shape: every service tied at sort_order = 100", () => {
     ids = await seedTiedServices();
   });
 
-  it("starts genuinely tied — this is the production state, not a contrivance", async () => {
+  it("starts genuinely tied: this is the production state, not a contrivance", async () => {
     expect(await sortOrders()).toEqual([100, 100, 100, 100]);
   });
 
@@ -166,7 +166,7 @@ describe("hidden services never participate", () => {
     expect(hidden.rows[0].active).toBe(false);
   });
 
-  it("re-showing it re-slots at the END and renormalizes — no collision", async () => {
+  it("re-showing it re-slots at the END and renormalizes, no collision", async () => {
     await asUser(studio.userId, (q) =>
       q(`select public.show_studio_service($1,$2) as ids`, [studio.studioId, ids[2]]),
     );
@@ -270,7 +270,7 @@ describe("concurrency + staleness", () => {
         [studio.studioId],
       )
     ).rows as Array<{ id: string }>;
-    // Claim the LAST service sits at position 0 — the interleaved-tap scenario.
+    // Claim the LAST service sits at position 0, the interleaved-tap scenario.
     await expect(move(rows[3].id, "up", 0)).rejects.toThrow(/changed elsewhere/i);
   });
 
@@ -326,7 +326,7 @@ describe("the widened calendar_color CHECK", () => {
     }
   });
 
-  it("still REJECTS red, rose and pink — the reserved clinical signal", async () => {
+  it("still REJECTS red, rose and pink, the reserved clinical signal", async () => {
     for (const banned of ["red", "rose", "pink", "blue", "cyan", "bg-red-500"]) {
       await expect(
         adminQuery(

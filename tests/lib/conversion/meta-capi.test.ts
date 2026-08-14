@@ -48,7 +48,7 @@ describe("safeServiceCategory (body-area leak guard)", () => {
   });
 });
 
-describe("buildScheduleEvent — gating", () => {
+describe("buildScheduleEvent: gating", () => {
   it("skips when tracking disabled", () => {
     const r = buildScheduleEvent({ pixelId: "1", enabled: false }, base());
     expect(r).toEqual({ ok: false, skippedReason: "tracking_disabled" });
@@ -63,7 +63,7 @@ describe("buildScheduleEvent — gating", () => {
   });
 });
 
-describe("buildScheduleEvent — event shape + safety", () => {
+describe("buildScheduleEvent: event shape + safety", () => {
   const r = buildScheduleEvent(
     enabled,
     base({

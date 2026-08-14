@@ -9,13 +9,13 @@ import {
 } from "@/lib/search/navigation-registry";
 import { SETTINGS_CONTROLS } from "./fixtures/settings-controls.census";
 
-// IMPORT-01 — Global Search must not sell a capability the server refuses.
+// IMPORT-01: Global Search must not sell a capability the server refuses.
 //
 // Search V2-A.1 promises settings discoverability, and it delivered a "Quick
 // import" row whose title read as "go here and import your clients". Execution
-// is now operator-assisted, so that row had to change or go. It stays — an
+// is now operator-assisted, so that row had to change or go. It stays, an
 // owner searching "import" needs to find the one page that explains how to get
-// their records moved — but the promise it makes had to become true.
+// their records moved, but the promise it makes had to become true.
 //
 // This file exists next to, not instead of, the general coverage tests. Those
 // still prove every route carries a decision and every visible control
@@ -76,7 +76,7 @@ describe("the import destination is still discoverable", () => {
     );
   });
 
-  it("stays owner-only — the mitigation did not widen who is told it exists", () => {
+  it("stays owner-only: the mitigation did not widen who is told it exists", () => {
     expect(IMPORT_ENTRY.visibility).toBe("owner");
     for (const query of ["import", "csv", "quick import", "operator assisted"]) {
       expect(

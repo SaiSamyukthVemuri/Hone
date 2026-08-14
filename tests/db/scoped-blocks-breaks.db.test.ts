@@ -9,7 +9,7 @@ import {
 } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B 3C-3E (DB engine) — practitioner-scoped timed blocks + recurring breaks,
+// PR B 3C-3E (DB engine), practitioner-scoped timed blocks + recurring breaks,
 // the canonical scope-aware reservation synchronizer, scope transitions,
 // retirement/reactivation dormancy, integrity guards, and concurrency. On
 // synthetic Studio B (owner P0 + members P1, P2). Never Willow.
@@ -99,7 +99,7 @@ describe("3C: timed-block scope transitions (atomic)", () => {
     expect(new Date(r.rows[0].starts_at).toISOString()).toBe("2031-05-10T15:00:00.000Z");
   });
 
-  it("a scope change that CONFLICTS rolls back — prior source + reservations intact", async () => {
+  it("a scope change that CONFLICTS rolls back, prior source + reservations intact", async () => {
     // A already has an appointment 10-11 (blocks A). A studio-wide block at 10-11
     // fans to everyone incl A -> would collide with A's appointment.
     const clientId = randomUUID();
@@ -168,7 +168,7 @@ describe("3C: integrity (guard / RLS / FK)", () => {
     );
     expect(ok.rowCount).toBe(1);
     // A non-owner MEMBER cannot write a SCOPED block (member INSERT is now
-    // limited to studio-wide rows) — denied by RLS (throws or 0 rows).
+    // limited to studio-wide rows), denied by RLS (throws or 0 rows).
     const scoped = await asUser(member().userId, (q) =>
       q(
         `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id)
@@ -277,7 +277,7 @@ describe("3D: scoped recurring breaks", () => {
   });
 });
 
-describe("3B-4/3E: concurrency — a block mutation cannot interleave with retirement", () => {
+describe("3B-4/3E: concurrency, a block mutation cannot interleave with retirement", () => {
   it("a timed-block insert blocks on the studio capacity lock held by a retiring txn", async () => {
     const a = new Client({ connectionString: resolveLocalDbUrl() });
     const b = new Client({ connectionString: resolveLocalDbUrl() });

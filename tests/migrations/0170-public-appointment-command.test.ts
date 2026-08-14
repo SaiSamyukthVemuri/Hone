@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 // ===========================================================================
-// 0170 — public appointment command, migration source contract.
+// 0170, public appointment command, migration source contract.
 //
 // Byte-level properties of the migration file. Behaviour lives in
 // tests/db/public-appointment-command.db.test.ts, which exercises the real
@@ -39,13 +39,13 @@ const CREATE_SIG = "(uuid, uuid, uuid, timestamptz, text, text, text)";
 const VALIDATE_SIG = "(uuid, uuid, uuid, timestamptz, timestamptz)";
 
 // 0171 superseded 0170 as the repository maximum. Per CLAUDE.md §2, ONLY the
-// current maximum migration's own test may assert isRepoMax — an older
+// current maximum migration's own test may assert isRepoMax, an older
 // per-migration test that keeps the pin turns every subsequent migration into a
 // mechanical sweep, which is exactly how 0163/0164/0165 each went red after
 // push. The "nothing above me" tripwire is served centrally by the current
 // maximum's test (tests/migrations/0171-public-reschedule-command.test.ts).
 
-describe("0170 — declares exactly the two intended functions", () => {
+describe("0170: declares exactly the two intended functions", () => {
   it("creates only validate_public_booking_slot and create_public_appointment", () => {
     const declared = [...SQL.matchAll(/create or replace function public\.(\w+)\(/g)].map(
       (m) => m[1],
@@ -61,7 +61,7 @@ describe("0170 — declares exactly the two intended functions", () => {
   });
 });
 
-describe("0170 — security posture of each function body", () => {
+describe("0170: security posture of each function body", () => {
   it("both are SECURITY DEFINER with an empty pinned search_path", () => {
     for (const fn of FUNCTIONS) {
       const body = SQL.slice(SQL.indexOf(`create or replace function public.${fn}(`));
@@ -107,7 +107,7 @@ describe("0170 — security posture of each function body", () => {
   });
 });
 
-describe("0170 — the caller cannot request privileged behaviour", () => {
+describe("0170: the caller cannot request privileged behaviour", () => {
   it("create_public_appointment takes no duration, end time, status or override parameter", () => {
     const sig = SQL.slice(
       SQL.indexOf("create or replace function public.create_public_appointment("),
@@ -147,8 +147,8 @@ describe("0170 — the caller cannot request privileged behaviour", () => {
   });
 });
 
-describe("0170 — result-code family, not exceptions", () => {
-  it("has no 'no_practitioner' refusal — a null practitioner must still book", () => {
+describe("0170: result-code family, not exceptions", () => {
+  it("has no 'no_practitioner' refusal: a null practitioner must still book", () => {
     // The pre-0170 route inserted `practitioner_id: owner?.id ?? null` and
     // succeeded. Refusing would silently take public booking down for a studio
     // with no active owner while the page kept offering slots.
@@ -181,14 +181,14 @@ describe("0170 — result-code family, not exceptions", () => {
     }
   });
 
-  it("does NOT catch 23P01 or the HB001 buffer trigger — they must roll back", () => {
+  it("does NOT catch 23P01 or the HB001 buffer trigger, they must roll back", () => {
     expect(CODE).not.toContain("23P01");
     expect(CODE).not.toContain("HB001");
     expect(CODE).not.toMatch(/exception\s+when/i);
   });
 });
 
-describe("0170 — exact public-slot membership", () => {
+describe("0170: exact public-slot membership", () => {
   it("the validator requires membership in the generated candidate set", () => {
     expect(FLAT).toContain("public.public_booking_slot_candidates(");
     expect(FLAT).toContain("return 'not_a_public_slot'");
@@ -247,7 +247,7 @@ describe("0170 — exact public-slot membership", () => {
   });
 });
 
-describe("0170 — serialization, owner rule and precision domain", () => {
+describe("0170: serialization, owner rule and precision domain", () => {
   it("locks the window's appointment SOURCE rows before deriving candidates", () => {
     // Cancellation/completion/no-show/reschedule lock only their own appointment
     // row and never take the advisory lock, so the candidate set could change
@@ -271,7 +271,7 @@ describe("0170 — serialization, owner rule and precision domain", () => {
     expect(studios).toBeGreaterThan(-1);
     expect(advisory).toBeGreaterThan(studios);
     expect(services).toBeGreaterThan(advisory);
-    expect(appts, "appointments last — matching move_or_reassign_appointment").toBeGreaterThan(services);
+    expect(appts, "appointments last, matching move_or_reassign_appointment").toBeGreaterThan(services);
   });
 
   it("does NOT lock the whole appointments table", () => {
@@ -289,7 +289,7 @@ describe("0170 — serialization, owner rule and precision domain", () => {
   });
 
   it("normalises every timestamp comparison to the millisecond domain", () => {
-    // Not just the final equality — the conflict boundaries too, or the filter
+    // Not just the final equality, the conflict boundaries too, or the filter
     // runs in a different domain than the candidates.
     // Membership is now an exact equality because sub-millisecond INPUT is
     // rejected up front; the truncating comparison was the thing that let a
@@ -308,7 +308,7 @@ describe("0170 — serialization, owner rule and precision domain", () => {
   });
 });
 
-describe("0170 — precision and owner-resolution contracts", () => {
+describe("0170: precision and owner-resolution contracts", () => {
   it("REJECTS sub-millisecond input rather than truncating it", () => {
     // Truncating for the comparison while persisting the raw value split
     // validation and persistence into two precision domains.
@@ -362,7 +362,7 @@ describe("0170 — precision and owner-resolution contracts", () => {
   });
 });
 
-describe("0170 — privileges", () => {
+describe("0170: privileges", () => {
   it("revokes EXECUTE from public, anon, authenticated AND service_role by name", () => {
     for (const fn of FUNCTIONS) {
       for (const role of ["public", "anon", "authenticated", "service_role"]) {
@@ -390,7 +390,7 @@ describe("0170 — privileges", () => {
     expect(SQL).not.toMatch(/to (anon|authenticated|public)\s*;/);
   });
 
-  it("has exactly twenty revokes — four roles times five functions", () => {
+  it("has exactly twenty revokes: four roles times five functions", () => {
     const revokes = SQL.match(/^revoke execute on function/gm) ?? [];
     expect(revokes).toHaveLength(20);
   });
@@ -400,7 +400,7 @@ describe("0170 — privileges", () => {
   });
 });
 
-describe("0170 — additive scope only", () => {
+describe("0170: additive scope only", () => {
   it("revokes no table grant and touches no policy, table, trigger or index", () => {
     expect(CODE).not.toMatch(/revoke .* on table/i);
     expect(CODE).not.toMatch(/drop policy/i);
@@ -435,7 +435,7 @@ describe("0170 — additive scope only", () => {
   });
 });
 
-describe("0170 — transaction wrapper", () => {
+describe("0170: transaction wrapper", () => {
   it("opens its own transaction with a bounded lock timeout and commits", () => {
     expect(SQL).toMatch(/^begin;/m);
     expect(SQL).toMatch(/^set local lock_timeout = '5s';/m);
@@ -443,7 +443,7 @@ describe("0170 — transaction wrapper", () => {
   });
 });
 
-describe("0170 — prose records the decisions a reviewer must be able to check", () => {
+describe("0170: prose records the decisions a reviewer must be able to check", () => {
   it("explains why a dedicated public validator exists rather than extending the shared one", () => {
     expect(PROSE).toMatch(/validate_appointment_availability/);
     expect(PROSE).toMatch(/if v_cap then/);

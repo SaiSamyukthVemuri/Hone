@@ -20,7 +20,7 @@ import {
 //
 //   * The TS lookup hash (hashAppointmentToken) and the SQL digest produce
 //     the SAME value, so a URL token looked up by the app matches a row.
-//   * New rows are hash-only — there is no raw column at rest (the raw
+//   * New rows are hash-only, there is no raw column at rest (the raw
 //     column no longer exists: an INSERT referencing it errors 42703).
 //   * The cancel + reschedule RPCs match by HASH ONLY; a raw token no longer
 //     resolves (the deploy-window tolerance is gone).
@@ -73,7 +73,7 @@ function insertHashOnly(token: string) {
 
 // B6 / 0175: two tests exercising the LEGACY `reschedule_appointment` v1 were
 // retired here when that RPC was dropped after a zero-caller census. Their
-// property — hash-only matching, raw tokens refused — is not lost: it is
+// property, hash-only matching, raw tokens refused, is not lost: it is
 // covered more strongly against the successor in
 // tests/db/public-reschedule-command.db.test.ts, which proves a wrong token
 // hash collapses to the same code as an unknown id, refuses a token belonging

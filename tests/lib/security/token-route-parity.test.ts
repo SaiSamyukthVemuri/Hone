@@ -48,7 +48,7 @@ describe("the registry is the single source for both consumers", () => {
     }
   });
 
-  it("the six expected families are present — a removal must be deliberate", () => {
+  it("the six expected families are present, a removal must be deliberate", () => {
     // Pinned explicitly so silently DELETING a family from the registry (which
     // would drop both protections at once) fails loudly.
     expect([...TOKEN_ROUTE_PREFIXES].sort()).toEqual([
@@ -78,7 +78,7 @@ describe("every registered family is actually canonicalized", () => {
         request: { url: `https://hone.care${prefix}/${secret}?a=1#f` },
       } as ErrorEvent);
       expect(JSON.stringify(out)).not.toContain(secret);
-      // The family itself survives — safe diagnostics, not no diagnostics.
+      // The family itself survives: safe diagnostics, not no diagnostics.
       expect(String(out.transaction)).toContain(prefix);
     });
   }

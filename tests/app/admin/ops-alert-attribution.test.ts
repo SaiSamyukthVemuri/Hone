@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// 0178 — OPS-ALERT PRACTITIONER ATTRIBUTION, DRIVEN.
+// 0178: OPS-ALERT PRACTITIONER ATTRIBUTION, DRIVEN.
 //
 // Resolving an ops alert is a PLATFORM-GLOBAL operation: there is no target
 // studio, so there is no studio to disambiguate a multi-studio admin with. Two
 // separate defects lived in that gap and are fixed independently:
 //
-//   PLURALITY   `.maybeSingle()` did not remove the ambiguity — for an admin
+//   PLURALITY   `.maybeSingle()` did not remove the ambiguity, for an admin
 //               with two active memberships it ERRORED, and the discarded error
 //               left the id null by accident rather than by rule.
 //   FAILURE     a genuine query failure and "no membership" both produced NULL,
 //               so the record could not distinguish them.
 //
 // This drives the REAL action through mocked dependencies for all four cases
-// rather than recomputing the rule in the test — recomputation would pass even
+// rather than recomputing the rule in the test, recomputation would pass even
 // if the action ignored its own resolver.
 
 const state: {
@@ -73,7 +73,7 @@ const fd = () => {
   return f;
 };
 
-describe("0178 — ops-alert attribution is plurality-safe AND failure-explicit", () => {
+describe("0178: ops-alert attribution is plurality-safe AND failure-explicit", () => {
   beforeEach(() => {
     state.rows = [];
     state.lookupError = null;
@@ -88,14 +88,14 @@ describe("0178 — ops-alert attribution is plurality-safe AND failure-explicit"
     expect(state.update?.resolved_by_practitioner_id).toBe("practitioner-1");
   });
 
-  it("ZERO memberships attributes NOBODY — and still resolves the alert", async () => {
+  it("ZERO memberships attributes NOBODY: and still resolves the alert", async () => {
     state.rows = [];
     await resolveOpsAlertAction(fd());
     expect(state.update?.resolved_by_practitioner_id).toBeNull();
     expect(state.updated, "attribution is not availability-critical").toBe(true);
   });
 
-  it("TWO memberships attributes NOBODY — ambiguity is not resolved by picking", async () => {
+  it("TWO memberships attributes NOBODY: ambiguity is not resolved by picking", async () => {
     // The old `.maybeSingle()` threw here; the throw then decided attribution.
     state.rows = [{ id: "practitioner-1" }, { id: "practitioner-2" }];
     await resolveOpsAlertAction(fd());
@@ -117,7 +117,7 @@ describe("0178 — ops-alert attribution is plurality-safe AND failure-explicit"
       .join("\n");
     expect(logged).toContain("ops_alert_resolver_practitioner_lookup_failed");
     expect(logged).toContain("57014");
-    // BOUNDED: a stable event name and an error code only — no raw database
+    // BOUNDED: a stable event name and an error code only, no raw database
     // text, no SQL, no email, no row data.
     expect(logged).not.toMatch(/admin@hone\.care|select |from public\./i);
   });

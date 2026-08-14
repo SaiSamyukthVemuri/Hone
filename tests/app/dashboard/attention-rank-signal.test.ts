@@ -6,7 +6,7 @@ import {
 } from "@/lib/dashboard/clients-needing-attention";
 import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 
-// Review 3779063515 — A To-do row is ranked by the timestamp of the SIGNAL
+// Review 3779063515: A To-do row is ranked by the timestamp of the SIGNAL
 // that put it on the list.
 //
 // Plans had already been removed from inclusion and from the explicit sort
@@ -179,7 +179,7 @@ describe("attention rank comes from the signal, never from a plan", () => {
 
   it("ordering is a TOTAL ORDER: identical for every input permutation", () => {
     // Review 3780005405. The comparator returned -1 in both directions for
-    // equal attention dates, so Array#sort fell back to input order — which is
+    // equal attention dates, so Array#sort fell back to input order, which is
     // byClient insertion order, set by each client's newest scanned session. A
     // plan-only session could therefore still decide which equal-dated client
     // survived the limit. Order must depend only on the rows' own fields.

@@ -6,13 +6,13 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0112_public_booking_horizon_expand.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0112 — number", () => {
+describe("0112: number", () => {
   it("is migration 0112 (repo-max tripwire now lives in the newest migration test, 0113)", () => {
     expect(FILE).toMatch(/^0112_/);
   });
 });
 
-describe("0112 — widen public_booking_horizon_months CHECK to 1..12", () => {
+describe("0112: widen public_booking_horizon_months CHECK to 1..12", () => {
   it("replaces the CHECK with the full 1..12 allowlist", () => {
     expect(SQL).toMatch(/drop constraint if exists studios_public_booking_horizon_months_check/);
     expect(SQL).toMatch(
@@ -31,7 +31,7 @@ describe("0112 — widen public_booking_horizon_months CHECK to 1..12", () => {
     expect(nums).not.toContain(0);
     expect(nums).not.toContain(13);
   });
-  it("is additive only — no column add/drop, no default change, no data backfill, no RLS/policy", () => {
+  it("is additive only: no column add/drop, no default change, no data backfill, no RLS/policy", () => {
     expect(SQL).not.toMatch(/add column|drop column|drop table/i);
     expect(SQL).not.toMatch(/set default|alter column/i); // default (3) untouched
     expect(SQL).not.toMatch(/update public\.studios set/i);

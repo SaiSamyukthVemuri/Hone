@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Live consent forms inside the intake — behavioural proof.
+// Live consent forms inside the intake, behavioural proof.
 //
 // The real resolution/validation module runs against an in-memory fake of
 // consent_form_templates. A test that says "blocked" is asserting the gate
@@ -189,8 +189,8 @@ describe("1. which forms appear", () => {
     expect(forms[0].body).toBe("The studio's own treatment consent text.");
   });
 
-  // Chloe, 2026-08-09: photo consent left the intake. It is NOT retired — the
-  // portal still collects it — but the intake must be structurally incapable
+  // Chloe, 2026-08-09: photo consent left the intake. It is NOT retired, the
+  // portal still collects it, but the intake must be structurally incapable
   // of asking, and must not even ship the photo text to the browser.
   it("NEVER surfaces a live photo form, and leaks none of its text", async () => {
     state.templates = [template(), photoTemplate()];
@@ -287,13 +287,13 @@ describe("2. treatment consent", () => {
 
 // ---------------------------------------------------------------------------
 describe("3. photo consent is NOT collected by the intake", () => {
-  // Chloe, 2026-08-09: "please remove photo consent from the intake form" —
+  // Chloe, 2026-08-09: "please remove photo consent from the intake form",
   // no photographs are taken at the consultation, and asking there made
   // clients fear they would be.
   //
   // Photo consent is NOT retired. Its Accept/Deny ceremony, and the rule that
   // a DENIAL is a completed answer, live on in the client portal and are
-  // proven there — tests/lib/consent/signature-status.test.ts (denied is
+  // proven there, tests/lib/consent/signature-status.test.ts (denied is
   // complete, needs no attention), tests/lib/consent/signed-record.test.ts
   // (a denied record is valid, not malformed) and
   // e2e/portal-consent-signing-integrity.spec.ts (a real browser Deny writing
@@ -318,7 +318,7 @@ describe("3. photo consent is NOT collected by the intake", () => {
   });
 
   it("a CRAFTED photo claim is ignored, never stored", async () => {
-    // The wizard cannot produce this — the form is not rendered — so reaching
+    // The wizard cannot produce this, the form is not rendered, so reaching
     // it means a hand-built payload. The server resolves live intake forms
     // itself and simply has no photo row to match, so the claim dies there
     // rather than writing a consent answer nobody was asked for.
@@ -376,8 +376,8 @@ describe("4. stale templates fail closed", () => {
   it("a form_type flipped between render and submit is stale", async () => {
     // The comparand is unchanged by photo consent leaving the intake: the
     // browser's claimed form_type must still match the row the server
-    // resolved. Asserted from the other direction now — a claim asserting
-    // photo_consent against the studio's live TREATMENT row — because only one
+    // resolved. Asserted from the other direction now, a claim asserting
+    // photo_consent against the studio's live TREATMENT row, because only one
     // type is collected, so a collected-to-collected flip is unconstructible.
     state.templates = [template()];
     const res = await gate({
@@ -695,7 +695,7 @@ describe("10. no typed-name / signature fiction", () => {
     expect(GATE_CODE).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
   });
 
-  it("the consent UI hard-codes no consent wording — it renders form.body", () => {
+  it("the consent UI hard-codes no consent wording, it renders form.body", () => {
     expect(FORMS_UI_CODE).toMatch(/\{form\.body\}/);
     // The only client-facing sentence is the agreement line itself.
     expect(FORMS_UI).toContain("I have read and agree to this form.");
@@ -755,14 +755,14 @@ describe("11. #518 and the DB step contract are untouched", () => {
 //
 // A client who already completed the EXACT CURRENT form through the portal must
 // not be asked for the identical answer again inside intake. The matching rule
-// is the stored template_hash, which covers title + body + version — strictly
+// is the stored template_hash, which covers title + body + version, strictly
 // tighter than a version comparison, so an edit at the same version also
 // invalidates the old completion.
 //
 // READ-ONLY throughout: the intake never writes, alters or copies a signature.
 // ---------------------------------------------------------------------------
 describe("12. a current portal completion satisfies the intake form", () => {
-  it("current portal TREATMENT acceptance satisfies it — no intake answer needed", async () => {
+  it("current portal TREATMENT acceptance satisfies it, no intake answer needed", async () => {
     state.templates = [template()];
     state.signatures = [signature(template())];
     const res = await gate({});
@@ -778,7 +778,7 @@ describe("12. a current portal completion satisfies the intake form", () => {
     expect(res.ok).toBe(true);
   });
 
-  it("current portal photo DENY satisfies it — and never blocks the intake", async () => {
+  it("current portal photo DENY satisfies it, and never blocks the intake", async () => {
     state.templates = [photoTemplate()];
     state.signatures = [signature(photoTemplate(), { response: "denied" })];
     const res = await gate({});
@@ -789,7 +789,7 @@ describe("12. a current portal completion satisfies the intake form", () => {
   it("a portal completion is surfaced with its stored response, verbatim", async () => {
     // Was asserted with a photo DENY. Photo forms no longer render in the
     // intake at all, so the intake render can no longer prove anything about
-    // them — that property moved to the practitioner review (which shows
+    // them, that property moved to the practitioner review (which shows
     // "Consent denied" from the portal signature) and to the portal's own
     // tests. What remains provable HERE is the general rule the photo case was
     // an instance of: a portal completion is passed through as-is.
@@ -808,7 +808,7 @@ describe("12. a current portal completion satisfies the intake form", () => {
     const res = await gate(claims([{ row: second, response: "accepted" }]));
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    // Exactly ONE stored form — the intake one. The portal signature stays the
+    // Exactly ONE stored form: the intake one. The portal signature stays the
     // portal's evidence and is not converted into an intake response.
     expect(res.record!.forms).toHaveLength(1);
     expect(res.record!.forms[0].template_id).toBe("t2");
@@ -846,7 +846,7 @@ describe("13. only the CURRENT version counts", () => {
   });
 
   // (The photo-form variant of the rule above is gone: a photo form is no
-  // longer an intake form, so no photo signature — current or stale — can make
+  // longer an intake form, so no photo signature, current or stale, can make
   // an intake submit incomplete. The current-version rule itself is unchanged
   // and proven by the treatment case directly above; the portal enforces its
   // own version rule in tests/lib/consent/signature-status.test.ts.)
@@ -965,7 +965,7 @@ describe("16. an empty consent record is not 'unreadable'", () => {
   // empty claim set when every live form is already completed in the portal,
   // so `{version:1, forms:[]}` can legitimately reach the row. Reporting that
   // as "unreadable" told the practitioner it "could not be read" and to treat
-  // the forms as not completed — both false.
+  // the forms as not completed, both false.
   const empty = { [INTAKE_CONSENT_RESPONSES.id]: { version: 1, forms: [] } };
 
   it("reads as none_recorded on a submitted intake", () => {

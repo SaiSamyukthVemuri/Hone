@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 // active LIVE card simultaneously (required by the mode-scoped webhook
 // pre-flip); a same-mode duplicate active card is still refused.
 
-// FIXTURE ISOLATION (repeat-run safety) — same defect and same remedy as
+// FIXTURE ISOLATION (repeat-run safety): same defect and same remedy as
 // tests/db/mode-scoped-connect-provisioning.db.test.ts.
 // `studio_payment_settings_stripe_account_id_key` is UNIQUE GLOBALLY on
 // stripe_account_id, so hard-coded `acct_cpm_*` ids bound this suite to

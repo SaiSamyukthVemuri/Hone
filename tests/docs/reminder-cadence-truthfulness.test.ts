@@ -11,8 +11,8 @@ import {
 // ---------------------------------------------------------------------------
 // PR OPS-01. Documentation truthfulness guard for the reminder cadence.
 //
-// The OPS-01 recon found CRON_SETUP.md — deprecated since PR #148 but still
-// sitting at the repository root — instructing an operator to configure the
+// The OPS-01 recon found CRON_SETUP.md, deprecated since PR #148 but still
+// sitting at the repository root, instructing an operator to configure the
 // cron-job.org reminder job "every hour (minute 0)". That is not a stylistic
 // drift: an hourly cadence against the 30-minute-wide 2h reminder window
 // silently misses 29 of 60 appointment minute offsets. It also claimed the
@@ -45,7 +45,7 @@ describe("the deleted CRON_SETUP.md footgun cannot come back", () => {
       "PRE_STRIPE_HARDENING_NOTES.md",
       path.join("docs", "audits"),
     ];
-    // Scoped to the DOCUMENTATION surface — repo-root *.md plus docs/** — not
+    // Scoped to the DOCUMENTATION surface, repo-root *.md plus docs/**, not
     // the whole tree. Several other suites already walk the entire repository
     // synchronously; adding one more full-tree scan measurably slowed them and
     // tipped the slowest census tests over their timeouts under a parallel
@@ -125,7 +125,7 @@ describe("canonical cron docs state the real cadence, never hourly", () => {
 });
 
 // The reason hourly is forbidden, asserted from the shipped source rather than
-// restated as prose — if the window or cadence ever changes, this moves.
+// restated as prose, if the window or cadence ever changes, this moves.
 describe("the arithmetic behind the forbidden hourly cadence", () => {
   it("the shipped schedule is */15", () => {
     expect(APPOINTMENT_REMINDER_CRON_SCHEDULE).toBe("*/15 * * * *");

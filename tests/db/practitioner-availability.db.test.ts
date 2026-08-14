@@ -7,7 +7,7 @@ import {
   type SynthStudio,
 } from "./helpers/synth-fleet";
 
-// PR B — migration 0135 per-practitioner availability model, against the real
+// PR B: migration 0135 per-practitioner availability model, against the real
 // migrated schema (db-integration lane) on synthetic Studio B (owner + 2
 // practitioners). Proves: a studio-wide fallback row and a per-practitioner row
 // coexist for the same day; the partial uniques forbid duplicates within each
@@ -93,7 +93,7 @@ describe("0135: availability upsert compatibility (the ON CONFLICT regression)",
   it("REPRODUCTION: the OLD column-only ON CONFLICT (studio_id, day_of_week) fails 42P10", async () => {
     // 0135 replaced the plain unique(studio_id, day_of_week) with a
     // NULLS-NOT-DISTINCT constraint over three columns, so a 2-column arbiter no
-    // longer matches any constraint — the exact break the old action would hit.
+    // longer matches any constraint, the exact break the old action would hit.
     await expect(
       adminQuery(
         `insert into public.studio_availability_default
@@ -126,7 +126,7 @@ describe("0135: availability upsert compatibility (the ON CONFLICT regression)",
          where studio_id = $1 and day_of_week = 2 and practitioner_id is null`,
       [B.studioId],
     );
-    expect(rows.rows).toHaveLength(1); // upsert UPDATED — did NOT duplicate
+    expect(rows.rows).toHaveLength(1); // upsert UPDATED, did NOT duplicate
     expect(String(rows.rows[0].open_time)).toMatch(/^10:00/);
     expect(String(rows.rows[0].close_time)).toMatch(/^18:00/);
   });
@@ -288,7 +288,7 @@ describe("Part 2: availability authorization (owner-only RLS + scope guard)", ()
     expect(retained.rows[0].c).toBe(3); // studio-wide + A + B all kept
 
     // The studio-wide-only read (what the safe OFF loader runs) returns exactly
-    // ONE Monday row — no duplicate weekday reaches the UI / slot maybeSingle.
+    // ONE Monday row, no duplicate weekday reaches the UI / slot maybeSingle.
     const studioWide = await adminQuery(
       `select count(*)::int as c from public.studio_availability_default
          where studio_id = $1 and day_of_week = 1 and practitioner_id is null`,
@@ -324,7 +324,7 @@ describe("Part 2: availability authorization (owner-only RLS + scope guard)", ()
     expect(restored.rows.map((r) => r.practitioner_id).sort()).toEqual([p1, p2].sort());
   });
 
-  it("reset deletes ONLY the practitioner's row — studio-wide + other practitioners intact", async () => {
+  it("reset deletes ONLY the practitioner's row, studio-wide + other practitioners intact", async () => {
     const p1 = B.practitioners[1].practitionerId;
     const p2 = B.practitioners[2].practitionerId;
     await insDefault(B.studioId, 4, null); // studio-wide

@@ -9,15 +9,15 @@ import {
   type PilotSurface,
 } from "@/lib/pilot/feedback-mailto";
 
-// Pilot Love Loop V1 (PR #250). Manual mailto only — no automated send,
+// Pilot Love Loop V1 (PR #250). Manual mailto only, no automated send,
 // no contacts, no referral automation, no AI. The builder takes ENUM
 // inputs only, so by construction no client-sensitive data can reach the
 // subject/body. These tests pin that, plus the component/dashboard wiring.
 //
 // CHLOE D4 (this PR). The Dashboard "Pilot learning" card is REMOVED: it was
 // pilot tooling ("…Send it to Sam", "Know another electrologist?") occupying a
-// practitioner's daily workspace. The shared builder SURVIVES — the two quiet
-// "Was this useful?" footers still use it — so every safety property below is
+// practitioner's daily workspace. The shared builder SURVIVES, the two quiet
+// "Was this useful?" footers still use it, so every safety property below is
 // still asserted, over the enum members that remain reachable. The
 // `dashboard_pilot_learning` surface and the `another_electrologist` intent
 // were reachable only from that card and are removed with it; the tests that
@@ -136,7 +136,7 @@ describe("Pilot Love Loop: source pins (helper + components)", () => {
     // A caller census ran before deleting it: the component was imported by
     // exactly one file (the dashboard page) and referenced nowhere else, so it
     // is genuinely dead rather than merely unrendered. The shared
-    // feedback-mailto helper is NOT deleted — PilotFeedbackPrompt still uses
+    // feedback-mailto helper is NOT deleted, PilotFeedbackPrompt still uses
     // it, which is the whole reason this file still exists.
     expect(
       existsSync(join(process.cwd(), "app/(app)/dashboard/pilot-learning.tsx")),
@@ -176,7 +176,7 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
   });
 
   // DASH-TRUTH-04: the Dashboard no longer carries ANY feedback prompt. The
-  // daily workspace should not ask a practitioner to email the founder — that
+  // daily workspace should not ask a practitioner to email the founder, that
   // was pilot tooling, not product. The shared helper and the component are
   // deliberately retained (this requirement is Dashboard-specific), so their
   // own contracts above still apply; only the Dashboard rendering is gone.

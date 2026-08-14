@@ -60,8 +60,8 @@ describe("block actions: response validation and persistence", () => {
 
   it("CREATE validates the response before the write and carries the columns", () => {
     // L18 Phase 2: the write is `create_block_with_entry` (migration 0166), not
-    // a direct insert. The ordering property is unchanged — validation still
-    // precedes the write — so it is asserted against the RPC call site.
+    // a direct insert. The ordering property is unchanged, validation still
+    // precedes the write, so it is asserted against the RPC call site.
     const createBody = ACTIONS_CODE.slice(
       ACTIONS_CODE.indexOf("export async function createTreatmentAreaWithEntryAction"),
       ACTIONS_CODE.indexOf("export type UpdateAreaWithEntryInput"),
@@ -156,7 +156,7 @@ describe("blocks view: old null records render without clutter", () => {
     // Charting unification: tolerance is its OWN concept, gated on a recorded
     // value (Client tolerance line), and the LEGACY-labeled line (un-migrated
     // reaction_type not already a chip, and/or legacy reaction_notes) returns null
-    // when neither is present — old all-null records still render nothing.
+    // when neither is present, old all-null records still render nothing.
     expect(VIEW).toMatch(/\{block\.tolerance_rating != null && \(/);
     expect(VIEW).toMatch(/Client tolerance: /);
     expect(VIEW).toMatch(

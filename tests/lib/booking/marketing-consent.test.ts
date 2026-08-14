@@ -54,7 +54,7 @@ describe("buildBookingMarketingConsentRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Source pins (vitest env is "node" — no jsdom/RTL, so the rendered form + the
+// Source pins (vitest env is "node", no jsdom/RTL, so the rendered form + the
 // full server action cannot be behaviorally executed here). These pin the
 // wiring, NOT rendered UI.
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ function read(rel: string): string {
 const FORM = read("app/book/[slug]/PublicBookForm.tsx");
 const ACTION = read("app/book/[slug]/actions.ts");
 
-describe("booking form — optional consent checkbox (source)", () => {
+describe("booking form: optional consent checkbox (source)", () => {
   it("has a marketing consent checkbox bound to marketingConsent state", () => {
     expect(FORM).toMatch(/checked=\{marketingConsent\}/);
     expect(FORM).toMatch(/onChange=\{\(e\) => setMarketingConsent\(e\.target\.checked\)\}/);
@@ -91,10 +91,10 @@ describe("booking form — optional consent checkbox (source)", () => {
   });
 });
 
-describe("booking action — non-blocking consent capture (source)", () => {
+describe("booking action: non-blocking consent capture (source)", () => {
   it("parses consent + inserts one booking_tracking_consents row AFTER the appointment is created", () => {
     expect(ACTION).toMatch(/const marketingConsent = parseMarketingConsent\(/);
-    // Migration 0170: the appointment is no longer INSERTed here — it is created
+    // Migration 0170: the appointment is no longer INSERTed here, it is created
     // by the create_public_appointment command, so that call is the anchor. The
     // invariant is unchanged: consent capture happens only after the booking has
     // committed.

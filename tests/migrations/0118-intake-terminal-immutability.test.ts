@@ -13,7 +13,7 @@ const FILE = "0118_intake_terminal_immutability.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0118 — intake terminal-state immutability trigger", () => {
+describe("0118: intake terminal-state immutability trigger", () => {
   it("creates a BEFORE UPDATE trigger on client_intake_forms", () => {
     expect(SQL_CODE).toMatch(
       /create trigger client_intake_forms_terminal_immutability\s+before update on public\.client_intake_forms/,
@@ -23,7 +23,7 @@ describe("0118 — intake terminal-state immutability trigger", () => {
     );
   });
 
-  it("exempts service-role (auth.uid() is null) — targets authenticated end-users", () => {
+  it("exempts service-role (auth.uid() is null), targets authenticated end-users", () => {
     expect(SQL_CODE).toMatch(/if auth\.uid\(\) is null then\s+return new;/);
   });
 
@@ -43,7 +43,7 @@ describe("0118 — intake terminal-state immutability trigger", () => {
     );
   });
 
-  it("is a trigger-only migration — no schema/policy/grant/data change", () => {
+  it("is a trigger-only migration: no schema/policy/grant/data change", () => {
     expect(SQL_CODE).not.toMatch(/alter table/i);
     expect(SQL_CODE).not.toMatch(/add column|drop column/i);
     expect(SQL_CODE).not.toMatch(/create policy|drop policy/i);

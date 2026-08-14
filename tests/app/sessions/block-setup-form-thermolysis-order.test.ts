@@ -114,7 +114,7 @@ describe("pulse count renders AFTER the thermolysis readings (Duration -> Intens
     expect(thermoOpenIdx).toBeGreaterThan(-1);
     expect(galvOpenIdx).toBeGreaterThan(thermoOpenIdx);
     const thermoBlock = SOURCE.slice(thermoOpenIdx, galvOpenIdx);
-    // The section is gated on thermo/blend — either via the literal condition or
+    // The section is gated on thermo/blend, either via the literal condition or
     // the shared resolveModeSections helper (modeSections.showThermo). After the
     // Phase B refresh the charting form and the whole-session copy card share the
     // SAME mode-gating helper, so both forms can never drift.

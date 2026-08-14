@@ -3,7 +3,7 @@ import { Client } from "pg";
 import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 
-// PR B Part 4 (migration 0149, Item 2) — the full-week availability save is now
+// PR B Part 4 (migration 0149, Item 2), the full-week availability save is now
 // ONE atomic transaction under the studios-row + capacity advisory lock: no
 // half-applied week, and it serializes with booking / retirement. Studio B.
 
@@ -40,7 +40,7 @@ const rowsFor = (scope: string | null) =>
     [B.studioId, scope],
   ).then((r) => r.rows as { d: number; o: string; c: string }[]);
 
-describe("0149 — atomic full-week availability save", () => {
+describe("0149: atomic full-week availability save", () => {
   it("writes all seven studio-wide days in one call", async () => {
     expect(await save(null, week("09:00", "17:00"))).toBe("ok");
     const rows = await rowsFor(null);
@@ -56,7 +56,7 @@ describe("0149 — atomic full-week availability save", () => {
     );
     await expect(save(null, bad)).rejects.toMatchObject({ code: "23514" }); // CHECK violation
     const rows = await rowsFor(null);
-    // Untouched — still the first week, NOT a half-applied 10:00–16:00.
+    // Untouched: still the first week, NOT a half-applied 10:00–16:00.
     expect(rows.every((r) => r.o === "09:00:00" && r.c === "17:00:00")).toBe(true);
   });
 

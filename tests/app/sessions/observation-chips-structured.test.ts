@@ -15,7 +15,7 @@ const ACTIONS = read("app/(app)/clients/[id]/sessions/[sessionId]/block-actions.
 const ROW = read("components/entry-row.tsx");
 const EXPORT = read("app/(app)/settings/data/actions.ts");
 
-describe("block-setup-form — chips are STRUCTURAL state, not derived from text", () => {
+describe("block-setup-form: chips are STRUCTURAL state, not derived from text", () => {
   it("chip buttons read/write observationChips via the structured helpers", () => {
     expect(FORM).toMatch(/isChipSelected\(draft\.observationChips, c\)/);
     expect(FORM).toMatch(/toggleFindingChip\(draft\.observationChips, c\)/);
@@ -33,13 +33,13 @@ describe("block-setup-form — chips are STRUCTURAL state, not derived from text
     expect(FORM).toMatch(/resolveDisplayChips\(firstEntry\?\.observation_chips, firstEntry\?\.comments\)/);
     expect(FORM).toMatch(/comments: hydrated\.freeText/);
     // Charting unification: observationChips is seeded from the hydrated chips AND a
-    // legacy reaction_type folded in (shown as a selected chip) — still never
+    // legacy reaction_type folded in (shown as a selected chip), still never
     // destructive to the stored row.
     expect(FORM).toMatch(/observationChips: mergeReactionIntoChips\(hydrated\.chips, block\.reaction_type\)/);
   });
 });
 
-describe("block-actions — persists chips structurally + preserves comments", () => {
+describe("block-actions: persists chips structurally + preserves comments", () => {
   it("EntryReadingsInput carries observationChips and normalizedChips writes them", () => {
     expect(ACTIONS).toMatch(/observationChips\?: string\[\] \| null/);
     expect(ACTIONS).toMatch(/function normalizedChips\(r: EntryReadingsInput\): string\[\]/);
@@ -47,7 +47,7 @@ describe("block-actions — persists chips structurally + preserves comments", (
   });
   it("every electrolysis_entries write sets observation_chips ALONGSIDE comments", () => {
     // L18 Phase 2: the three direct writes (2 inserts + 1 update) collapsed into
-    // TWO command calls — create_block_with_entry and update_block_with_entry —
+    // TWO command calls, create_block_with_entry and update_block_with_entry,
     // because the command itself chooses insert vs update. The property is
     // unchanged and still exactly asserted: every write site sends chips
     // ALONGSIDE comments, so neither can be forgotten at one of them.
@@ -62,7 +62,7 @@ describe("block-actions — persists chips structurally + preserves comments", (
   });
 });
 
-describe("entry-row — chips render as their own pills; legacy rows unaffected", () => {
+describe("entry-row: chips render as their own pills; legacy rows unaffected", () => {
   it("renders an ObservationChips block driven by resolveDisplayChips (structured OR legacy comments)", () => {
     expect(ROW).toMatch(/function ObservationChips/);
     // Chip-loading fix: chips + note are resolved once (structured column, else
@@ -75,11 +75,11 @@ describe("entry-row — chips render as their own pills; legacy rows unaffected"
   });
 });
 
-describe("data export — record-keeping includes structured chips", () => {
+describe("data export: record-keeping includes structured chips", () => {
   it("selects, flattens (unified with a folded reaction), and columns observation_chips (comments still exported separately)", () => {
     expect(EXPORT).toMatch(/comments, observation_chips, created_at/); // in the SELECT
-    // Charting unification: the export flattens the UNIFIED findings — the entry's
-    // observation_chips PLUS a folded legacy reaction_type from its block — joined
+    // Charting unification: the export flattens the UNIFIED findings, the entry's
+    // observation_chips PLUS a folded legacy reaction_type from its block, joined
     // for CSV (semicolons, since CSV's delimiter is a comma). Still structured, not
     // free-text.
     expect(EXPORT).toMatch(

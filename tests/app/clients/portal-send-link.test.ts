@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR: practitioner Send/Copy portal link + resend rate-limiting. vitest env is
-// "node" (no DOM), and the issuance touches the DB/email transport — so the
+// "node" (no DOM), and the issuance touches the DB/email transport, so the
 // wiring + security invariants are verified by source pins + the email unit
 // test (tests/lib/portal/magic-link.test.ts). No real email is sent.
 function read(rel: string): string {
@@ -18,7 +18,7 @@ const MESSAGES = read("app/(app)/clients/[id]/portal-messages-actions.ts");
 const PUBLIC_LOGIN = read("app/portal/login/actions.ts");
 
 describe("issuance reuses the secure primitives (hashed, studio-scoped, no raw token log)", () => {
-  it("token is HASHED at rest — only token_hash is inserted", () => {
+  it("token is HASHED at rest, only token_hash is inserted", () => {
     expect(ISSUE).toMatch(/const tokenHash = hashToken\(rawToken\)/);
     expect(ISSUE).toMatch(/token_hash: tokenHash/);
   });
@@ -30,7 +30,7 @@ describe("issuance reuses the secure primitives (hashed, studio-scoped, no raw t
   it("reuses the existing SAFE portal email (no new template)", () => {
     expect(ISSUE).toMatch(/buildPortalMagicLinkEmail\(\{ studioName, magicLink \}\)/);
   });
-  it("the RAW token is only in the emailed URL — never logged", () => {
+  it("the RAW token is only in the emailed URL, never logged", () => {
     // rawToken appears in the magicLink URL construction, but no log statement
     // includes rawToken / magicLink.
     expect(ISSUE).toMatch(/portal\/verify\/\$\{rawToken\}/);

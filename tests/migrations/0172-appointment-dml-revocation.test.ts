@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// 0172 — APPOINTMENT BOUNDARY B3 source contract.
+// 0172, APPOINTMENT BOUNDARY B3 source contract.
 //
 // This is a privilege/policy CUTOVER with zero application-runtime change, so
 // the contract is mostly about what the file must NOT contain. Everything
@@ -20,7 +20,7 @@ const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 /**
  * The migration with `--` comment lines stripped. Prose that DESCRIBES a
  * forbidden pattern ("REVOKE ALL is forbidden", "no create or replace
- * function") must never satisfy a guard looking for that pattern — the header
+ * function") must never satisfy a guard looking for that pattern, the header
  * of this migration discusses every one of them at length.
  */
 const CODE = SQL.split("\n")
@@ -34,7 +34,7 @@ const PROSE = SQL.split("\n")
 /**
  * Every executable REVOKE statement, whole.
  *
- * NOT `^revoke` — that anchors at column 0, so a statement indented by a single
+ * NOT `^revoke`, that anchors at column 0, so a statement indented by a single
  * space becomes INVISIBLE to this list and to every guard built on it. An
  * adversarial pass demonstrated four mutants that passed the entire suite that
  * way, including `  revoke select on table public.appointments from
@@ -59,8 +59,8 @@ const ROW_DML = ["insert", "update", "delete"] as const;
 // 0173 superseded 0172 as the repository maximum when B4 landed. B4 ships ONE
 // migration: 0173 carries both the repair commands and, in its GROUP 5, the L23
 // parent-delete closure. (That closure was briefly drafted as a companion 0174
-// and withdrawn — 0174 is reserved for B5.) Per CLAUDE.md §2, ONLY the current
-// maximum migration's own test may assert isRepoMax — an older per-migration
+// and withdrawn, 0174 is reserved for B5.) Per CLAUDE.md §2, ONLY the current
+// maximum migration's own test may assert isRepoMax, an older per-migration
 // test that keeps the pin turns every subsequent migration into a mechanical
 // sweep, which is exactly how 0163/0164/0165 each went red after push. The
 // "nothing above me" tripwire is served centrally by the current maximum's test
@@ -69,7 +69,7 @@ const ROW_DML = ["insert", "update", "delete"] as const;
 // This file's own contract is unchanged: 0172 is applied-frozen in B3 and B4
 // does not edit a single byte of it.
 
-describe("0172 — GROUP 1/2: row DML revoked from both browser roles on both tables", () => {
+describe("0172, GROUP 1/2: row DML revoked from both browser roles on both tables", () => {
   for (const table of TABLES) {
     for (const role of ["authenticated", "anon"] as const) {
       it(`${table}: INSERT, UPDATE, DELETE revoked from ${role}`, () => {
@@ -95,7 +95,7 @@ describe("0172 — GROUP 1/2: row DML revoked from both browser roles on both ta
   });
 });
 
-describe("0172 — GROUP 4: TRUNCATE, REFERENCES and TRIGGER revoked", () => {
+describe("0172, GROUP 4: TRUNCATE, REFERENCES and TRIGGER revoked", () => {
   for (const table of TABLES) {
     it(`${table}: truncate, references, trigger revoked from anon and authenticated`, () => {
       const re = new RegExp(
@@ -107,7 +107,7 @@ describe("0172 — GROUP 4: TRUNCATE, REFERENCES and TRIGGER revoked", () => {
   }
 });
 
-describe("0172 — GROUP 5: the production-measured MAINTAIN privilege is named explicitly", () => {
+describe("0172, GROUP 5: the production-measured MAINTAIN privilege is named explicitly", () => {
   // Production measured `arwdDxtm` for anon and authenticated on BOTH tables.
   // The trailing `m` IS MAINTAIN (PostgreSQL 17+). If it is not named here it
   // survives the cutover silently, because REVOKE ALL is forbidden and nothing
@@ -140,13 +140,13 @@ describe("0172 — GROUP 5: the production-measured MAINTAIN privilege is named 
   });
 });
 
-describe("0172 — the exact revocation surface, and nothing beyond it", () => {
+describe("0172: the exact revocation surface, and nothing beyond it", () => {
   it("contains exactly EIGHT revoke statements", () => {
     // 4 row-DML (2 tables x 2 roles) + 2 group-4 + 2 group-5.
     expect(REVOKES).toHaveLength(8);
   });
 
-  it("the REVOKE extraction is complete — no statement can hide from it", () => {
+  it("the REVOKE extraction is complete, no statement can hide from it", () => {
     // The guard on the guard. Counts every `revoke` token in the executable SQL
     // independently of the extraction regex, so an indented, line-wrapped or
     // otherwise unusually-formatted revoke cannot be silently skipped by the
@@ -159,7 +159,7 @@ describe("0172 — the exact revocation surface, and nothing beyond it", () => {
 
   it("the whole file contains exactly FIFTEEN executable statements", () => {
     // begin, set local lock_timeout, 8 revokes, 3 drop policy, 1 create policy,
-    // commit. Anything smuggled in — at any indentation — changes this number.
+    // commit. Anything smuggled in, at any indentation, changes this number.
     expect(STATEMENTS).toHaveLength(15);
   });
 
@@ -198,7 +198,7 @@ describe("0172 — the exact revocation surface, and nothing beyond it", () => {
 
   it("exactly two tables appear anywhere in the executable SQL", () => {
     // Catches a stray `public.appointment_payments` or
-    // `public.studio_calendar_reservations` creeping in — all three are
+    // `public.studio_calendar_reservations` creeping in, all three are
     // deliberately out of scope and get their own hygiene migration.
     const referenced = [...CODE.matchAll(/public\.(\w+)/g)]
       .map((m) => m[1])
@@ -216,7 +216,7 @@ describe("0172 — the exact revocation surface, and nothing beyond it", () => {
   });
 });
 
-describe("0172 — service_role, postgres and PUBLIC are untouched", () => {
+describe("0172: service_role, postgres and PUBLIC are untouched", () => {
   it("NEVER revokes anything from service_role", () => {
     // The governed command layer executes as service_role. Revoking here would
     // be an outage, and this is the single most important negative in the file.
@@ -237,10 +237,10 @@ describe("0172 — service_role, postgres and PUBLIC are untouched", () => {
   });
 });
 
-describe("0172 — SELECT is retained and REVOKE ALL is forbidden", () => {
+describe("0172: SELECT is retained and REVOKE ALL is forbidden", () => {
   it("never uses REVOKE ALL", () => {
-    // REVOKE ALL would take SELECT with it — breaking ~22 authenticated read
-    // sites — and would silently absorb any future privilege type instead of
+    // REVOKE ALL would take SELECT with it, breaking ~22 authenticated read
+    // sites, and would silently absorb any future privilege type instead of
     // naming exactly the verbs this cutover is about.
     expect(CODE_FLAT).not.toMatch(/revoke\s+all/i);
   });
@@ -256,7 +256,7 @@ describe("0172 — SELECT is retained and REVOKE ALL is forbidden", () => {
   });
 });
 
-describe("0172 — GROUP 3: the policy replacement", () => {
+describe("0172, GROUP 3: the policy replacement", () => {
   it("drops appointments_member_all", () => {
     expect(CODE).toMatch(
       /^drop policy if exists "appointments_member_all" on public\.appointments;$/m,
@@ -319,7 +319,7 @@ describe("0172 — GROUP 3: the policy replacement", () => {
     );
   });
 
-  it("does NOT touch appointment_audit_member_read — its studio_id redesign is B5/0174", () => {
+  it("does NOT touch appointment_audit_member_read: its studio_id redesign is B5/0174", () => {
     expect(CODE_FLAT).not.toMatch(/appointment_audit_member_read/);
   });
 
@@ -335,7 +335,7 @@ describe("0172 — GROUP 3: the policy replacement", () => {
   });
 });
 
-describe("0172 — replaces no function, and no trigger function above all", () => {
+describe("0172: replaces no function, and no trigger function above all", () => {
   it("contains NO function statement of any kind", () => {
     // STANDING PROHIBITION. Production's snapshot_appointment_buffer() carries
     // an out-of-band GUC behaviour that exists in NO migration in this repo, so
@@ -356,7 +356,7 @@ describe("0172 — replaces no function, and no trigger function above all", () 
   });
 });
 
-describe("0172 — changes no schema and no data", () => {
+describe("0172: changes no schema and no data", () => {
   it("makes no table, column, index, trigger, constraint or ownership change", () => {
     for (const forbidden of [
       /create table/i,
@@ -391,7 +391,7 @@ describe("0172 — changes no schema and no data", () => {
   });
 });
 
-describe("0172 — transaction and lock discipline", () => {
+describe("0172: transaction and lock discipline", () => {
   it("opens its OWN transaction and commits it", () => {
     // `supabase db push` does not wrap a migration file in a transaction.
     expect(SQL).toMatch(/^begin;$/m);
@@ -399,7 +399,7 @@ describe("0172 — transaction and lock discipline", () => {
   });
 
   it("arms lock_timeout INSIDE the transaction, not before it", () => {
-    // A bare SET LOCAL outside a transaction emits 25P01 and never arms — the
+    // A bare SET LOCAL outside a transaction emits 25P01 and never arms, the
     // 0159 lesson, recorded verbatim at 0169:70-76.
     const lines = CODE.split("\n").map((l) => l.trim()).filter(Boolean);
     const begin = lines.findIndex((l) => l === "begin;");
@@ -419,7 +419,7 @@ describe("0172 — transaction and lock discipline", () => {
   });
 });
 
-describe("0172 — the doctrine the file must carry for the next reader", () => {
+describe("0172: the doctrine the file must carry for the next reader", () => {
   it("records that service_role must remain unchanged", () => {
     expect(PROSE).toMatch(/service_role/);
     expect(PROSE).toMatch(/MUST REMAIN UNCHANGED/i);
@@ -481,7 +481,7 @@ describe("0172 — the doctrine the file must carry for the next reader", () => 
   });
 });
 
-describe("0172 — the two applied migrations it supersedes are left byte-identical", () => {
+describe("0172: the two applied migrations it supersedes are left byte-identical", () => {
   // An applied migration is not edited. If either of these hashes changes, a
   // recorded production apply fact has been falsified.
   it("0171 still hashes to the sha256 recorded in migration-state.json as applied", async () => {
@@ -501,11 +501,11 @@ describe("0172 — the two applied migrations it supersedes are left byte-identi
   });
 });
 
-describe("0172 — its production apply remains a frozen historical fact", () => {
+describe("0172: its production apply remains a frozen historical fact", () => {
   // HISTORY OF THIS BLOCK. It first asserted hosted_migration_max === "0171"
   // ("truth is NOT advanced by this PR"). After the authorized 0172 apply it was
   // inverted to "0172". 0173 has since been applied too, so the CURRENT hosted
-  // state is no longer this migration's to pin — that moved to
+  // state is no longer this migration's to pin, that moved to
   // tests/migrations/0173-appointment-repair-commands.test.ts, matching the
   // CLAUDE.md §2 rule that only the current maximum carries current-state pins.
   //
@@ -526,7 +526,7 @@ describe("0172 — its production apply remains a frozen historical fact", () =>
   });
 
   it("0172 is applied, and is no longer claimed as the hosted maximum", () => {
-    // Applied — so the record must never regress below it...
+    // Applied: so the record must never regress below it...
     expect(Number(rec.hosted_migration_max)).toBeGreaterThanOrEqual(172);
     // ...but 0173 superseded it, so this file must not pin the current max.
     expect(rec.hosted_migration_max).not.toBe("0171");

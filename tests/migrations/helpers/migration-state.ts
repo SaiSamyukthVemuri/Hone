@@ -4,7 +4,7 @@
 // hand-maintained "nothing above me exists yet" filename regex that has to be
 // bumped by hand whenever a migration lands. Those pins previously lived in 18 files
 // across tests/migrations, tests/docs and tests/scripts, so adding a migration
-// meant editing all of them — and a local run scoped to one directory silently
+// meant editing all of them, and a local run scoped to one directory silently
 // missed the rest, which is how 0163, 0164 and 0165 each went red after push.
 // Import from here instead.
 

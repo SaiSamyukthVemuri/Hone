@@ -18,7 +18,7 @@ const COMMANDS = [
   "set_practitioner_active_locked",
 ];
 
-describe("0150 — single-row schedule writers locked", () => {
+describe("0150: single-row schedule writers locked", () => {
   it("defines every command as SECURITY DEFINER with a pinned search_path", () => {
     for (const fn of COMMANDS) {
       expect(SQL).toMatch(new RegExp(`create or replace function public\\.${fn}\\(`));

@@ -4,7 +4,7 @@ import path from "node:path";
 
 // Migration 0104: rescope client_payment_methods_one_active_per_pair to
 // (studio_id, client_id, stripe_livemode) WHERE status='active', so a client
-// can hold one active TEST card and one active LIVE card simultaneously —
+// can hold one active TEST card and one active LIVE card simultaneously,
 // required by the mode-scoped webhook pre-flip (saving a live card no longer
 // retires the test card row, so the live INSERT must not collide with the old
 // per-pair unique). Behavioral proof: tests/db/active-card-per-mode.db.test.ts.
@@ -27,7 +27,7 @@ describe("0104: migration number + scope", () => {
     expect(FILE).toMatch(/^0104_/);
   });
 
-  it("touches ONLY the one index — no tables, RPCs, policies, or env", () => {
+  it("touches ONLY the one index, no tables, RPCs, policies, or env", () => {
     expect(CODE).not.toMatch(/alter table|create table|create policy|drop policy|create or replace function|drop function/i);
     expect(CODE).not.toMatch(/STRIPE_ALLOW_LIVE_MODE/);
     expect(CODE).not.toMatch(/insert into|update |delete from|truncate/i);

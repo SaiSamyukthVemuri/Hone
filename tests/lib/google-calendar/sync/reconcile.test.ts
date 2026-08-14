@@ -15,7 +15,7 @@ import {
   type ReconcileStore,
 } from "@/lib/google-calendar/sync/reconcile";
 
-// Phase B2.3-b — reconciliation sweep core (round-3 corrections).
+// Phase B2.3-b: reconciliation sweep core (round-3 corrections).
 
 const pending = (op: string, v: number | null): OpenJob => ({ opType: op, syncVersion: v, status: "pending" });
 const dead = (op: string, v: number | null): OpenJob => ({ opType: op, syncVersion: v, status: "dead" });
@@ -252,7 +252,7 @@ function deps(store: FakeStore, over: Partial<Parameters<typeof runReconciliatio
 }
 
 // ---------------------------------------------------------------------------
-// §2 — cross-studio anti-starvation (global cursor + coordinator).
+// §2, cross-studio anti-starvation (global cursor + coordinator).
 // ---------------------------------------------------------------------------
 describe("§2 cross-studio anti-starvation", () => {
   it("every eligible studio eventually gets a turn without restarting from the first", async () => {
@@ -270,7 +270,7 @@ describe("§2 cross-studio anti-starvation", () => {
       expect(r.studiosDeferred).toBe(2);
       expect(r.outcome).toBe("degraded"); // deferred work is reported truthfully
     }
-    expect(attempted).toEqual(["s1", "s2", "s3"]); // in order, each once — never restarted at s1
+    expect(attempted).toEqual(["s1", "s2", "s3"]); // in order, each once, never restarted at s1
     for (const id of ["s1", "s2", "s3"]) expect(s.jobs.some((j) => j.honeEntityId === `a-${id}` && j.opType === "event.create")).toBe(true);
   });
 
@@ -311,7 +311,7 @@ describe("§2 stale open jobs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// §4 — forced ownership check immediately before the actuator.
+// §4, forced ownership check immediately before the actuator.
 // ---------------------------------------------------------------------------
 describe("§4 pre-actuator ownership", () => {
   it("ownership lost at the forced pre-actuator check -> no bump, cursor before the item, degraded", async () => {
@@ -319,7 +319,7 @@ describe("§4 pre-actuator ownership", () => {
     s.seedStudio("st");
     s.seedAppt({ id: "a1", studioId: "st" });
     // A huge renew interval means the page/per-item ensureOwned() never renew (return
-    // true); only the FORCED ensureOwnedNow() before the RPC renews — and it fails.
+    // true); only the FORCED ensureOwnedNow() before the RPC renews, and it fails.
     const lock: ReconcileLock = { acquire: async () => ({ ok: true, token: "t" }), release: async () => {}, renew: async () => false };
     const cont = new FakeContinuation();
     const res = await reconcileStudio(
@@ -335,7 +335,7 @@ describe("§4 pre-actuator ownership", () => {
 });
 
 // ---------------------------------------------------------------------------
-// §6 — post-bump intent verification + pre-mutation intent recheck.
+// §6, post-bump intent verification + pre-mutation intent recheck.
 // ---------------------------------------------------------------------------
 describe("§6 intent verification", () => {
   it("bump returns but no matching op appears -> intentVerifyFailed, not enqueued, degraded", async () => {

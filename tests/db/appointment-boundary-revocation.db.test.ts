@@ -11,24 +11,24 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// APPOINTMENT BOUNDARY B3 — migration 0172 behavioural proof, fresh chain.
+// APPOINTMENT BOUNDARY B3, migration 0172 behavioural proof, fresh chain.
 // ===========================================================================
 //
 // The cutover: `anon` and `authenticated` keep SELECT on `public.appointments`
 // and `public.appointment_audit` and lose every write and maintenance verb.
 // Every appointment write must now go through a service_role command.
 //
-// THREE TRAPS THIS SUITE IS BUILT AROUND — none of them optional.
+// THREE TRAPS THIS SUITE IS BUILT AROUND, none of them optional.
 //
 // 1. A ZERO-ROW WRITE LOOKS LIKE SUCCESS. If a privilege were still granted, an
 //    UPDATE/DELETE whose predicate matches nothing returns rowCount 0 and NO
-//    error — indistinguishable from a policy refusal, and a silent pass. Every
+//    error, indistinguishable from a policy refusal, and a silent pass. Every
 //    probe below therefore uses a predicate matching NO rows: with the privilege
 //    retained the statement SUCCEEDS and the test fails. This exact vacuous pass
 //    has bitten this codebase four times.
 //
 // 2. `42501` DOES NOT MEAN "PRIVILEGE". An RLS WITH CHECK violation raises
-//    SQLSTATE 42501 too — measured on this stack:
+//    SQLSTATE 42501 too, measured on this stack:
 //        privilege denial -> `permission denied for table appointments`
 //        RLS denial       -> `new row violates row-level security policy for ...`
 //    The SQLSTATE alone cannot tell them apart, so every INSERT refusal below
@@ -68,7 +68,7 @@ async function attempt(
 ): Promise<Failure | null> {
   try {
     await asRole(role, (q) => q(sql, params));
-    return null; // the statement SUCCEEDED — for a zero-row predicate that is the failure mode
+    return null; // the statement SUCCEEDED, for a zero-row predicate that is the failure mode
   } catch (e) {
     const err = e as { code?: string; message?: string };
     return { code: err.code ?? null, message: err.message ?? "" };
@@ -95,7 +95,7 @@ async function attemptAsUser(
  * refusal that happens to share the SQLSTATE.
  */
 function expectPrivilegeDenial(f: Failure | null, what: string): void {
-  expect(f, `${what}: the statement SUCCEEDED — the privilege is still granted`).not.toBeNull();
+  expect(f, `${what}: the statement SUCCEEDED, the privilege is still granted`).not.toBeNull();
   expect(f!.code, `${what} SQLSTATE`).toBe(INSUFFICIENT_PRIVILEGE);
   expect(f!.message, `${what} must be a PRIVILEGE denial`).toMatch(/permission denied/i);
   expect(
@@ -149,7 +149,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // MANDATORY, not hygiene. `attemptAsUser` goes through asUser, which COMMITS
-  // on success (harness.ts) — unlike asRole, which always rolls back. Every
+  // on success (harness.ts), unlike asRole, which always rolls back. Every
   // attemptAsUser probe below EXPECTS to fail, so nothing normally commits; but
   // on a database where 0172 was NOT applied those probes SUCCEED and commit,
   // leaving forged appointments and forged audit rows permanently in the shared
@@ -165,10 +165,10 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// T1.1 — the ACL itself
+// T1.1, the ACL itself
 // ---------------------------------------------------------------------------
 
-describe("0172 — the privilege matrix: every revoked verb is gone from both browser roles", () => {
+describe("0172, the privilege matrix: every revoked verb is gone from both browser roles", () => {
   for (const table of TABLES) {
     for (const role of CLIENT_ROLES) {
       it(`${table}: ${role} holds none of INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN`, async () => {
@@ -187,9 +187,9 @@ describe("0172 — the privilege matrix: every revoked verb is gone from both br
   }
 });
 
-describe("0172 — MAINTAIN is genuinely supported here, so its absence means something", () => {
+describe("0172: MAINTAIN is genuinely supported here, so its absence means something", () => {
   // If this server were pre-PostgreSQL 17, has_table_privilege(...,'MAINTAIN')
-  // would ERROR rather than return false — and a suite that only asserted
+  // would ERROR rather than return false, and a suite that only asserted
   // `false` could never tell "revoked" from "unsupported". Production measured
   // MAINTAIN PRESENT, so it must be measurable here for the revoke to be proven.
   it("the server is PostgreSQL 17+ and MAINTAIN is a recognised table privilege", async () => {
@@ -200,8 +200,8 @@ describe("0172 — MAINTAIN is genuinely supported here, so its absence means so
     // false readings above are a revocation and not a probe that always says no.
     //
     // B5/0174 moved this control off service_role, which no longer holds
-    // MAINTAIN on either appointment table (0174 GROUP 10.1 / 10.3). `postgres`
-    // — the table owner and migration channel — still does, and is deliberately
+    // MAINTAIN on either appointment table (0174 GROUP 10.1 / 10.3). `postgres`,
+    // the table owner and migration channel, still does, and is deliberately
     // out of scope for the whole B-series, so it is the stable control.
     const control = await adminQuery(
       `select has_table_privilege('postgres','public.appointments','MAINTAIN') p`,
@@ -211,10 +211,10 @@ describe("0172 — MAINTAIN is genuinely supported here, so its absence means so
 });
 
 // ---------------------------------------------------------------------------
-// T1.2 — SELECT is retained
+// T1.2, SELECT is retained
 // ---------------------------------------------------------------------------
 
-describe("0172 — SELECT is RETAINED on both tables for both browser roles", () => {
+describe("0172: SELECT is RETAINED on both tables for both browser roles", () => {
   for (const table of TABLES) {
     for (const role of CLIENT_ROLES) {
       it(`${table}: ${role} still holds the SELECT privilege`, async () => {
@@ -255,10 +255,10 @@ describe("0172 — SELECT is RETAINED on both tables for both browser roles", ()
 });
 
 // ---------------------------------------------------------------------------
-// T1.3 / T1.4 — zero-row UPDATE and DELETE probes
+// T1.3 / T1.4, zero-row UPDATE and DELETE probes
 // ---------------------------------------------------------------------------
 
-describe("0172 — UPDATE and DELETE are refused by PRIVILEGE, not by a zero-row result", () => {
+describe("0172: UPDATE and DELETE are refused by PRIVILEGE, not by a zero-row result", () => {
   for (const table of TABLES) {
     for (const role of CLIENT_ROLES) {
       it(`${table}: a no-row UPDATE as ${role} raises 42501, not a silent rowCount 0`, async () => {
@@ -284,10 +284,10 @@ describe("0172 — UPDATE and DELETE are refused by PRIVILEGE, not by a zero-row
 });
 
 // ---------------------------------------------------------------------------
-// T1.5 — the INSERT refusal, with the mandatory message discriminator
+// T1.5, the INSERT refusal, with the mandatory message discriminator
 // ---------------------------------------------------------------------------
 
-describe("0172 — INSERT is refused by PRIVILEGE, provably not merely by RLS", () => {
+describe("0172: INSERT is refused by PRIVILEGE, provably not merely by RLS", () => {
   for (const table of TABLES) {
     for (const role of CLIENT_ROLES) {
       it(`${table}: an INSERT as ${role} is a privilege denial, not an RLS denial`, async () => {
@@ -299,7 +299,7 @@ describe("0172 — INSERT is refused by PRIVILEGE, provably not merely by RLS", 
     }
   }
 
-  it("T4.5 — a REAL studio member inserting into their OWN studio is refused at the privilege layer", async () => {
+  it("T4.5: a REAL studio member inserting into their OWN studio is refused at the privilege layer", async () => {
     // This is the case the old posture allowed. RLS WITH CHECK
     // is_studio_member(A) would have PASSED here: same studio, active owner.
     // Under 0172 the statement never reaches RLS at all.
@@ -364,7 +364,7 @@ describe("0172 — INSERT is refused by PRIVILEGE, provably not merely by RLS", 
     expect(surviving.rows[0].action).toBe("created");
   });
 
-  it("the message discriminator is not vacuous — an RLS refusal really does read differently", async () => {
+  it("the message discriminator is not vacuous, an RLS refusal really does read differently", async () => {
     // Negative control for trap 2. `clients` still carries a member FOR ALL
     // policy and an authenticated INSERT grant, so an out-of-studio insert is
     // refused by RLS with the SAME SQLSTATE and a DIFFERENT message. If this
@@ -384,10 +384,10 @@ describe("0172 — INSERT is refused by PRIVILEGE, provably not merely by RLS", 
 });
 
 // ---------------------------------------------------------------------------
-// T1.6 — TRUNCATE, REFERENCES, TRIGGER, MAINTAIN behaviourally
+// T1.6, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN behaviourally
 // ---------------------------------------------------------------------------
 
-describe("0172 — the maintenance and definition verbs are behaviourally gone", () => {
+describe("0172: the maintenance and definition verbs are behaviourally gone", () => {
   for (const table of TABLES) {
     for (const role of CLIENT_ROLES) {
       it(`${table}: ${role} cannot TRUNCATE`, async () => {
@@ -416,21 +416,21 @@ describe("0172 — the maintenance and definition verbs are behaviourally gone",
 });
 
 // ---------------------------------------------------------------------------
-// T1.7 — service_role is untouched
+// T1.7, service_role is untouched
 // ---------------------------------------------------------------------------
 
 // B5/0174 REPLACED THIS BLOCK'S PREMISE, DELIBERATELY.
 //
 // 0172 left service_role holding `arwdDxtm` on both tables and this suite
-// asserted that as a FEATURE — "the command layer runs as it". That was true of
+// asserted that as a FEATURE, "the command layer runs as it". That was true of
 // B3 and it is no longer true of the program: 0174 GROUP 10 narrows
 // service_role to SELECT on both tables, plus one temporary column-level UPDATE
 // grant that B8/0177 removes.
 //
-// The old assertion is not merely relaxed here — it is INVERTED, because
+// The old assertion is not merely relaxed here, it is INVERTED, because
 // leaving it as "retains every verb" and marking it skipped would have left the
 // suite claiming a posture the schema no longer has.
-describe("B5/0174 — service_role is NARROWED to SELECT (+ the temporary B8 postcare exception)", () => {
+describe("B5/0174: service_role is NARROWED to SELECT (+ the temporary B8 postcare exception)", () => {
   for (const table of TABLES) {
     it(`${table}: service_role RETAINS SELECT`, async () => {
       const r = await adminQuery(
@@ -477,7 +477,7 @@ describe("B5/0174 — service_role is NARROWED to SELECT (+ the temporary B8 pos
     expect(failure!.code).toBe(INSUFFICIENT_PRIVILEGE);
   });
 
-  it("the governed command layer still works — it runs as its postgres OWNER, not as service_role", async () => {
+  it("the governed command layer still works, it runs as its postgres OWNER, not as service_role", async () => {
     // The end-to-end point of the whole programme, restated for B5: removing
     // service_role's table DML does NOT disable the commands, because a
     // SECURITY DEFINER function executes with its owner's privileges. Without
@@ -518,10 +518,10 @@ describe("B5/0174 — service_role is NARROWED to SELECT (+ the temporary B8 pos
 });
 
 // ---------------------------------------------------------------------------
-// T1.8 — PUBLIC holds nothing, and the ACL shape is exactly as intended
+// T1.8, PUBLIC holds nothing, and the ACL shape is exactly as intended
 // ---------------------------------------------------------------------------
 
-describe("0172 — PUBLIC holds no grant, and the resulting ACL is exactly SELECT-only", () => {
+describe("0172: PUBLIC holds no grant, and the resulting ACL is exactly SELECT-only", () => {
   for (const table of TABLES) {
     it(`${table}: PUBLIC holds no grant of any kind`, async () => {
       // aclexplode(grantee = 0) is PUBLIC. Note it reads 0 rows both when PUBLIC
@@ -540,7 +540,7 @@ describe("0172 — PUBLIC holds no grant, and the resulting ACL is exactly SELEC
 
     it(`${table}: the browser roles' ACL entries are exactly the SELECT bit`, async () => {
       // Reads the ACL directly rather than asking has_table_privilege seven
-      // times, so an UNEXPECTED privilege — one nobody thought to name — also
+      // times, so an UNEXPECTED privilege, one nobody thought to name, also
       // fails this test.
       const r = await adminQuery(
         `select a.grantee::regrole::text role, string_agg(a.privilege_type, ',' order by a.privilege_type) privs
@@ -561,10 +561,10 @@ describe("0172 — PUBLIC holds no grant, and the resulting ACL is exactly SELEC
 });
 
 // ---------------------------------------------------------------------------
-// T1.9 — the policy set has exactly the intended shape
+// T1.9, the policy set has exactly the intended shape
 // ---------------------------------------------------------------------------
 
-describe("0172 — the policy set is exactly the intended shape", () => {
+describe("0172: the policy set is exactly the intended shape", () => {
   it("appointments carries exactly one policy: appointments_member_select, SELECT-only", async () => {
     const r = await adminQuery(
       `select p.polname, p.polcmd,
@@ -610,8 +610,8 @@ describe("0172 — the policy set is exactly the intended shape", () => {
     expect(r.rows[0].polcmd).toBe("r");
     // B5/0174 REWROTE this predicate onto the row's own studio_id. The old
     // form reached the tenant THROUGH the appointment, which silently drops
-    // every orphaned row once appointment_id may be NULL — NULL is not IN
-    // anything — so the parent-delete durability 0174 buys would have been
+    // every orphaned row once appointment_id may be NULL, NULL is not IN
+    // anything, so the parent-delete durability 0174 buys would have been
     // invisible to the only role that should see it.
     //
     // Still pinned to the EXACT normalised text: /is_studio_member/ alone would
@@ -631,7 +631,7 @@ describe("0172 — the policy set is exactly the intended shape", () => {
 
   it("appointments carries NO policy granted to PUBLIC or to anon", async () => {
     // `anon` KEEPS the SELECT table grant (0172 never names SELECT) but after
-    // GROUP 3 there is no policy it can satisfy, so it reads zero rows — the
+    // GROUP 3 there is no policy it can satisfy, so it reads zero rows, the
     // same zero it read before, when appointments_member_all evaluated
     // is_studio_member() to false for a null auth.uid().
     //
@@ -668,10 +668,10 @@ describe("0172 — the policy set is exactly the intended shape", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T1.11 — THE RESIDUE 0172 DOES NOT CLOSE, measured rather than assumed
+// T1.11, THE RESIDUE 0172 DOES NOT CLOSE, measured rather than assumed
 // ---------------------------------------------------------------------------
 
-describe("0172 — the boundary's known edge: FK referential actions still reach appointments", () => {
+describe("0172, the boundary's known edge: FK referential actions still reach appointments", () => {
   // A referential action runs as the CONSTRAINT's owner, not as the caller, and
   // consults neither the table ACL nor RLS (appointments is not FORCE RLS). So a
   // member who may DELETE a PARENT row can still cause a write to appointments
@@ -681,7 +681,7 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
   // means changing grants or FK actions on OTHER tables (`services`,
   // `practitioners`), and 0172's whole value is being exactly two tables wide.
   // It is pinned HERE, measured, so the boundary's real shape is recorded and a
-  // silent widening — a new CASCADE, or a delete policy appearing on `clients` —
+  // silent widening, a new CASCADE, or a delete policy appearing on `clients`,
   // fails a test instead of going unnoticed.
 
   it("the delete actions on appointments' FKs are exactly as measured", async () => {
@@ -737,11 +737,11 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
   // SUPERSEDED BY B4 / MIGRATION 0173 (GROUP 5).
   //
   // When B3 shipped, this assertion read "a member CAN still null
-  // appointments.service_id by deleting the service — recorded, not fixed", and
+  // appointments.service_id by deleting the service, recorded, not fixed", and
   // that was the truth at 0172: L23 was documented, deliberately left open, and
   // pinned here so it could not be forgotten.
   //
-  // 0173's GROUP 5 closed it — `revoke delete on public.services from anon, authenticated`
+  // 0173's GROUP 5 closed it, `revoke delete on public.services from anon, authenticated`
   // plus the 0087-style policy split. The reproduction below therefore now
   // stops at the member's DELETE, and this test asserts the CLOSURE instead of
   // the hazard. It is deliberately kept in this file rather than deleted: the
@@ -749,7 +749,7 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
   // a future migration that re-granted parent DELETE would light this up right
   // next to the revocations it belongs with.
   //
-  // 0172 itself is untouched by B4 — not one byte. The full L23 treatment,
+  // 0172 itself is untouched by B4, not one byte. The full L23 treatment,
   // including the two-way self-test that proves the hazard was real before
   // GROUP 5, lives in tests/db/appointment-parent-delete-boundary.db.test.ts.
   it("a member can NO LONGER null appointments.service_id by deleting the service (0173 GROUP 5)", async () => {
@@ -826,10 +826,10 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
 });
 
 // ---------------------------------------------------------------------------
-// T1.10 — nothing else drifted
+// T1.10, nothing else drifted
 // ---------------------------------------------------------------------------
 
-describe("0172 — no trigger or function drift", () => {
+describe("0172: no trigger or function drift", () => {
   it("snapshot_appointment_buffer still EXISTS (that it was not replaced is proven by the source test)", async () => {
     // The standing prohibition: production's copy carries out-of-band behaviour
     // that exists in no migration here. 0172 contains no function statement at
@@ -844,7 +844,7 @@ describe("0172 — no trigger or function drift", () => {
   it("both tables keep EXACTLY the non-internal triggers they had", async () => {
     // Pinned to the exact count, not `> 0`. A `toBeGreaterThan(0)` here would
     // still pass after six of the seven were dropped, while reporting "no
-    // trigger drift" — and appointment_audit would not be covered at all,
+    // trigger drift", and appointment_audit would not be covered at all,
     // because it has none and its key would simply be undefined.
     const r = await adminQuery(
       `select c.relname t, count(*)::int n
@@ -861,7 +861,7 @@ describe("0172 — no trigger or function drift", () => {
     // bumping 7 -> 9 would have kept the weakest possible form of the guard: a
     // count cannot tell an intended addition from a swap, and cannot say which
     // trigger vanished. Since the property being protected is "no trigger drift
-    // on the security-relevant tables", the identities are named — exactly as
+    // on the security-relevant tables", the identities are named, exactly as
     // this same test already does for appointment_audit below.
     const apptTriggers = await adminQuery(
       `select g.tgname from pg_trigger g
@@ -884,7 +884,7 @@ describe("0172 — no trigger or function drift", () => {
     expect(byTable.appointments, "appointments non-internal triggers").toBe(9);
     // B5/0174 added EXACTLY TWO triggers to appointment_audit, and they are
     // named here rather than counted loosely so a third one cannot arrive
-    // unnoticed. Neither writes an audit EVENT — one derives trusted FIELDS at
+    // unnoticed. Neither writes an audit EVENT, one derives trusted FIELDS at
     // INSERT, the other refuses mutation. `appointments` is deliberately
     // unchanged at 7: 0174 adds no trigger to it at all.
     expect(byTable.appointment_audit ?? 0, "appointment_audit non-internal triggers").toBe(2);

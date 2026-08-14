@@ -7,7 +7,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Custom-area keystroke duplication hotfix (Chloe production feedback) — real
+// Custom-area keystroke duplication hotfix (Chloe production feedback), real
 // browser, real local stack, DB rows as ground truth.
 //
 // REPRODUCED DEFECT (production head c64366c9): the multi-area settings-block
@@ -15,7 +15,7 @@ import { loginAsOwner } from "./helpers/flows";
 // free-text "Other" input fired onChange on every keystroke. Typing an 8-letter
 // custom area appended EIGHT selected rows (one per prefix), the write action
 // persisted all eight as session_block_areas rows, and session_blocks.
-// primary_area was projected from the FIRST fragment — a single letter.
+// primary_area was projected from the FIRST fragment, a single letter.
 //
 // These specs type CHARACTER BY CHARACTER with pressSequentially. fill() emits a
 // single input event and would pass even against the broken build, so it must
@@ -53,7 +53,7 @@ async function noOverflow(page: Page, label: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Desktop/iPad profile — the full commit contract.
+// Desktop/iPad profile, the full commit contract.
 // ---------------------------------------------------------------------------
 test.describe("custom area commits once, not once per keystroke", () => {
   test.use({ viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true });
@@ -196,7 +196,7 @@ test.describe("custom area commits once, not once per keystroke", () => {
 });
 
 // ---------------------------------------------------------------------------
-// iPhone profile (390px, hasTouch) — Chloe's actual device dimensions.
+// iPhone profile (390px, hasTouch), Chloe's actual device dimensions.
 // ENGINE NOTE: the repo E2E engine is Chromium; this is an iPhone-dimension
 // Chromium run, not real iOS Safari/WebKit (see playwright.mobile.config.ts).
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ describe("formatSeconds returns practitioner-facing duration labels", () => {
 
   it("shows the EXACT stored 3-decimal thermolysis duration (Chloe's PicoBlend 0.733s)", () => {
     // The load-bearing clinical guarantee: a stored 0.733 must display as
-    // "0.733 seconds" — never a lossily rounded "0.73 seconds".
+    // "0.733 seconds", never a lossily rounded "0.73 seconds".
     expect(formatSeconds(0.733)).toBe("0.733 seconds");
     expect(formatSeconds(0.15)).toBe("0.15 seconds");
     expect(formatSeconds(0.2)).toBe("0.2 seconds");

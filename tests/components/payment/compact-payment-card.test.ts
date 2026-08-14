@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Compact payment card — component-level security/privacy + wiring guards for the
+// Compact payment card: component-level security/privacy + wiring guards for the
 // three presentational pieces. Behaviour of the pure derivation is covered by
 // tests/lib/payments/payment-summary-presenter.test.ts; here we lock that the
 // owner-only disclosure is a real render gate (not CSS) and the practitioner
@@ -14,7 +14,7 @@ const RECEIPT = read("components/payment/receipt-status.tsx");
 const SUMMARY = read("components/payment/payment-summary-card.tsx");
 const CARD = read("components/session-payment-prepare-card.tsx");
 
-describe("TechnicalPaymentDetails — owner-only, collapsed, real render gate", () => {
+describe("TechnicalPaymentDetails: owner-only, collapsed, real render gate", () => {
   it("returns null for a non-owner (not CSS-hidden)", () => {
     expect(TECH).toMatch(/if\s*\(!isOwner\)\s*return null;/);
   });
@@ -38,7 +38,7 @@ describe("TechnicalPaymentDetails — owner-only, collapsed, real render gate", 
   });
 });
 
-describe("ReceiptStatus — success separate from delivery; never the full email", () => {
+describe("ReceiptStatus: success separate from delivery; never the full email", () => {
   it("renders 'Receipt not sent' for a failed delivery (charge stays paid elsewhere)", () => {
     expect(RECEIPT).toMatch(/Receipt not sent/);
     expect(RECEIPT).toMatch(/Receipt sent/);
@@ -46,13 +46,13 @@ describe("ReceiptStatus — success separate from delivery; never the full email
   it("conveys failure with text, not colour alone", () => {
     expect(RECEIPT).toMatch(/⚠/);
   });
-  it("takes an already-masked line — no email formatting here", () => {
+  it("takes an already-masked line: no email formatting here", () => {
     // It renders line.masked verbatim; it never touches the raw email field.
     expect(RECEIPT).not.toMatch(/receiptEmailTo/);
   });
 });
 
-describe("PaymentSummaryCard — compact, status not by colour alone", () => {
+describe("PaymentSummaryCard: compact, status not by colour alone", () => {
   it("shows the headline text + amount (not just a colour dot)", () => {
     expect(SUMMARY).toMatch(/summary\.headline/);
     expect(SUMMARY).toMatch(/formatCadFromCents\(summary\.amountCents\)/);
@@ -60,7 +60,7 @@ describe("PaymentSummaryCard — compact, status not by colour alone", () => {
   });
 });
 
-describe("session card integration — owner threading + no default leak", () => {
+describe("session card integration: owner threading + no default leak", () => {
   it("threads a server-derived isOwner into the panels", () => {
     expect(CARD).toMatch(/isOwner/);
     // Every attempt panel receives it.

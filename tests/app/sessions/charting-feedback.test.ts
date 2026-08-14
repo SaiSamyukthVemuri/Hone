@@ -78,7 +78,7 @@ describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () =>
   it("auto-fills inventory FIRST, then recorded charting, always unconfirmed", () => {
     // The reactive effect now delegates the whole precedence to one composed
     // resolver. Inventory still wins; the recorded-charting fallback is what
-    // makes auto-fill work at all for a studio with no probe inventory — the
+    // makes auto-fill work at all for a studio with no probe inventory, the
     // shape that made this fail on every appointment.
     expect(FORM).toMatch(/resolveProbeLotAutofill\(\{/);
     expect(FORM).not.toMatch(/resolveInventoryAutofill\(/);
@@ -99,7 +99,7 @@ describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () =>
     expect(FORM).toMatch(/probeLotConfirmed: false/);
     // A typed lot belongs to the probe selected when it was typed: it survives
     // re-renders for that probe, and a probe switch drops it (a lot is
-    // probe-specific — it must never follow the practitioner to another probe).
+    // probe-specific, it must never follow the practitioner to another probe).
     expect(FORM).toMatch(/setLotOwnerProbeKey\(draft\.probeKey\);/);
     expect(FORM).not.toMatch(/lotEditedManually/);
     expect(FORM).toMatch(/update\("probeLotConfirmed", !draft\.probeLotConfirmed\)/);
@@ -134,7 +134,7 @@ describe("item 4: energy level lives under Treatment readings (no duplicate)", (
 describe("item 5: OmniBlend reading layout", () => {
   it("galvanic precedes thermolysis for EVERY mode, not only OmniBlend", () => {
     // Machine order (Chloe): she reads the Apilus top-to-bottom, and the
-    // galvanic group is above thermolysis on every blend modality — PicoBlend,
+    // galvanic group is above thermolysis on every blend modality, PicoBlend,
     // OmniBlend, MultiBlend, EvoluBlend, SynchroBlend. The old code branched the
     // ORDER on OmniBlend alone; that conditional is gone.
     expect(FORM).toMatch(/const isOmniblend = draft\.apilusModality === "Omniblend"/);
@@ -143,14 +143,14 @@ describe("item 5: OmniBlend reading layout", () => {
     expect(FORM).not.toMatch(/\{thermoSection\}\s*\n\s*\{galvSection\}/);
   });
   it("hides thermolysis duration for OmniBlend; galvanic intensity is no longer a visible input at all", () => {
-    // OmniBlend has no thermolysis duration — still gated behind !isOmniblend.
+    // OmniBlend has no thermolysis duration, still gated behind !isOmniblend.
     expect(FORM).toMatch(/\{!isOmniblend && \(/);
     expect(FORM).toMatch(/!isOmniblend && \([\s\S]{0,400}Thermolysis duration/);
     // Charting correction: the galvanic intensity % INPUT was removed for EVERY
     // mode (not merely hidden for OmniBlend), so there is no rendered
     // "Galvanic intensity %" field/label.
     expect(FORM).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
-    // Final amendment: galvanic intensity is a RETIRED reading — the form no longer
+    // Final amendment: galvanic intensity is a RETIRED reading, the form no longer
     // hydrates it or sends it in the save payload (no browser round-trip of a
     // clinical value). Historical values are preserved SERVER-SIDE (the update
     // omits the column). So neither the hydrate nor the payload key exists here.
@@ -183,7 +183,7 @@ describe("item 6: tolerance is label-based, storage unchanged", () => {
 describe("item 7: observation chips toggle (structural, migration 0108)", () => {
   it("chips are structured toggles on observationChips (superseding the text/token approach)", () => {
     // Migration 0108: chips are explicit structured state, not re-derived from
-    // the free-text `comments` string — so a selected chip can never silently
+    // the free-text `comments` string, so a selected chip can never silently
     // drop. See tests/app/sessions/observation-chips-structured.test.ts.
     expect(FORM).toMatch(/toggleFindingChip\(draft\.observationChips, c\)/);
     expect(FORM).toMatch(/isChipSelected\(draft\.observationChips, c\)/);

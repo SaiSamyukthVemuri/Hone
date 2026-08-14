@@ -8,7 +8,7 @@ import { join } from "node:path";
 // time." This is a PRESENTATION/consolidation surface: a scannable,
 // retrospective recap of the SINGLE last completed session, placed high
 // on the Overview tab. It reuses the already-loaded last-treatment data
-// and the shared buildLastSessionSummary render helpers — no new query,
+// and the shared buildLastSessionSummary render helpers, no new query,
 // no new clinical model, no AI, no second/parallel summary function.
 //
 // These are source-level assertions (matching the sibling
@@ -38,7 +38,7 @@ const OVERVIEW = PAGE.slice(
   PAGE.indexOf('{activeTab === "messages"'),
 );
 
-describe("Overview Last visit card — placement + wiring", () => {
+describe("Overview Last visit card: placement + wiring", () => {
   it("renders <LastVisitCard> on the Overview tab", () => {
     expect(OVERVIEW).toMatch(/<LastVisitCard/);
     expect(PAGE).toMatch(
@@ -78,7 +78,7 @@ describe("Overview Last visit card — placement + wiring", () => {
   });
 });
 
-describe("Overview Last visit card — reuses existing summary, no parallel logic", () => {
+describe("Overview Last visit card: reuses existing summary, no parallel logic", () => {
   it("is fed the shared buildLastSessionSummary output, not a new summary", () => {
     // The card renders the SAME helpers the charting/Sessions surfaces use.
     expect(CARD).toMatch(
@@ -86,7 +86,7 @@ describe("Overview Last visit card — reuses existing summary, no parallel logi
     );
     expect(CARD).toMatch(/<AreaSummaries summary=\{summary\}/);
     expect(CARD).toMatch(/<FromLastVisitForToday summary=\{summary\} attached/);
-    // The component defines/calls NO summary builder of its own — it
+    // The component defines/calls NO summary builder of its own, it
     // receives the already-built summary as a prop.
     expect(CARD_CODE).not.toMatch(/buildLastSessionSummary\(/);
     expect(CARD_CODE).not.toMatch(/function build[A-Z]/);
@@ -94,7 +94,7 @@ describe("Overview Last visit card — reuses existing summary, no parallel logi
 
   it("page passes the SINGLE-last-session summary (accuracy), not a cross-history rollup", () => {
     // The wired `summary` prop is lastTreatmentSummary (built from the
-    // last treatment's own blocks + next-session note) — NOT
+    // last treatment's own blocks + next-session note), NOT
     // preClientWatchPlan (newest session that has a watch/plan) and NOT
     // any Treatment Intelligence latest-across-history field.
     expect(OVERVIEW).toMatch(/summary=\{lastTreatmentSummary\}/);
@@ -108,7 +108,7 @@ describe("Overview Last visit card — reuses existing summary, no parallel logi
   });
 });
 
-describe("Overview Last visit card — content", () => {
+describe("Overview Last visit card: content", () => {
   it("shows date, modality, performer, duration, and aftercare status", () => {
     expect(CARD).toMatch(/<FormattedDateTime iso=\{startedAt\}/);
     expect(CARD).toMatch(/\{modality\}/);
@@ -140,7 +140,7 @@ describe("Overview Last visit card — content", () => {
   });
 });
 
-describe("Overview Last visit card — empty + legacy safety", () => {
+describe("Overview Last visit card: empty + legacy safety", () => {
   it("shows a clean empty state when there is no recorded session", () => {
     expect(CARD).toMatch(/No recorded visits yet\./);
     // Empty state is gated on sessionId/startedAt being present.

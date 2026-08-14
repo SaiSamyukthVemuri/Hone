@@ -9,7 +9,7 @@ import { CLINICAL_NOTES_CSV_HEADERS } from "@/lib/export/clinical-notes";
 //
 // What a pure builder test CANNOT see is the wiring: whether the query is
 // studio-scoped, whether it silently collapses history with a limit, and
-// whether the file actually reaches the ZIP. That is what this file pins —
+// whether the file actually reaches the ZIP. That is what this file pins,
 // deliberately narrow, and never a substitute for the behavioural suite.
 
 const ACTIONS = readFileSync(
@@ -34,7 +34,7 @@ function clinicalNotesQuery(): string {
 
 describe("export wiring: client_clinical_notes reaches the ZIP", () => {
   it("(7) the read is scoped to the acting studio", () => {
-    // Tenancy is enforced twice — this explicit filter and the 0126
+    // Tenancy is enforced twice: this explicit filter and the 0126
     // `client_clinical_notes_member_select` RLS policy. The filter is pinned
     // because it is the half a reader can see here.
     expect(clinicalNotesQuery()).toMatch(/\.eq\("studio_id", studio\.id\)/);
@@ -47,14 +47,14 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
     expect(CODE).toMatch(/const supabase = await createClient\(\);/);
   });
 
-  it("(4) history is never collapsed — no limit, no latest-only, no distinct", () => {
+  it("(4) history is never collapsed, no limit, no latest-only, no distinct", () => {
     const q = clinicalNotesQuery();
     expect(q).not.toMatch(/\.limit\(/);
     expect(q).not.toMatch(/\.single\(|\.maybeSingle\(/);
     expect(q).not.toMatch(/distinct/i);
   });
 
-  it("(8) it filters no deleted/withdrawn column — the table has none", () => {
+  it("(8) it filters no deleted/withdrawn column, the table has none", () => {
     expect(clinicalNotesQuery()).not.toMatch(/\.is\("deleted_at"/);
   });
 

@@ -18,12 +18,12 @@ import {
 // THE DEFECT THESE PIN. `services.sort_order` is `not null default 100` with no
 // uniqueness and a PER-MODALITY allocator, so ties are the NORMAL state. The
 // settings page ordered by (active, sort_order, name) while the reorder action
-// ordered by sort_order ALONE — a partial order, resolved by Postgres in heap
+// ordered by sort_order ALONE, a partial order, resolved by Postgres in heap
 // order, which changes after every UPDATE. The row at screen position N was
 // routinely not the row the action found at index N, and when the action found
 // the clicked row at index 0 it silently did nothing, forever.
 //
-// The fix is a TOTAL order — (sort_order, name, id) — shared by the settings
+// The fix is a TOTAL order, (sort_order, name, id), shared by the settings
 // list, the reorder action, the public booking page and migration 0161's RPC.
 
 const svc = (
@@ -42,7 +42,7 @@ describe("compareServicePosition is a TOTAL order", () => {
     expect(compareServicePosition(svc("b", "Alpha", 100), svc("a", "Zed", 100))).toBeLessThan(0);
   });
 
-  it("breaks a name tie by id — the term that removes the LAST tie", () => {
+  it("breaks a name tie by id, the term that removes the LAST tie", () => {
     // Two services can legitimately share a name across modalities. Without this
     // term the database resolved the tie in heap order.
     expect(compareServicePosition(svc("a", "Same", 100), svc("b", "Same", 100))).toBeLessThan(0);
@@ -53,7 +53,7 @@ describe("compareServicePosition is a TOTAL order", () => {
     expect(compareServicePosition(svc("a", "X", 10), svc("a", "X", 10))).toBe(0);
   });
 
-  it("is deterministic regardless of input order — the whole point", () => {
+  it("is deterministic regardless of input order, the whole point", () => {
     // Every row at the legacy default 100: the exact production shape.
     const rows = [
       svc("id-3", "Electrolysis 30", 100),
@@ -92,7 +92,7 @@ describe("sortServicesForSettings", () => {
   });
 });
 
-describe("sortVisibleServices — the order the booking surfaces must agree on", () => {
+describe("sortVisibleServices: the order the booking surfaces must agree on", () => {
   it("drops hidden services entirely", () => {
     const rows = [svc("a", "A", 10), svc("h", "H", 20, false), svc("b", "B", 30)];
     expect(sortVisibleServices(rows).map((s) => s.id)).toEqual(["a", "b"]);
@@ -247,7 +247,7 @@ describe("every ordering surface uses the same canonical key", () => {
   });
 
   it("the action returns the RPC's resulting order, not a bare ok", () => {
-    // The RPC does not always perform the requested move — a stale caller gets
+    // The RPC does not always perform the requested move, a stale caller gets
     // a normalize instead. Reporting a bare ok would let the client keep an
     // optimistic order the database never agreed to.
     const actions = read("app/(app)/settings/services/actions.ts");
@@ -291,7 +291,7 @@ describe("every ordering surface uses the same canonical key", () => {
     expect(actions).toMatch(/Failed to place the new service in the menu/);
   });
 
-  it("the reorder controls are buttons with MEANINGFUL labels — no drag-only affordance", () => {
+  it("the reorder controls are buttons with MEANINGFUL labels, no drag-only affordance", () => {
     const list = read("app/(app)/settings/services/ServiceOrderList.tsx");
     expect(list).toMatch(/type="button"/);
     // The accessible name must carry the service NAME, never its UUID.
@@ -329,7 +329,7 @@ describe("every ordering surface uses the same canonical key", () => {
 
   it("the server-order ref only advances when the sync is actually applied", () => {
     // Advancing it while a move was in flight marked that server order as
-    // "already seen", so it could never be adopted — the list would show a
+    // "already seen", so it could never be adopted, the list would show a
     // stale order until a full page load.
     const list = read("app/(app)/settings/services/ServiceOrderList.tsx");
     expect(list).toMatch(

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR C: panels / portal / billing-adjacent payment strings are runtime-mode
-// aware. STRING-ONLY changes inside billing execution files — this suite
+// aware. STRING-ONLY changes inside billing execution files, this suite
 // pins the strings AND (belt) that the old false claims are gone.
 
 function read(rel: string): string {

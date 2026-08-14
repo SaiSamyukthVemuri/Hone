@@ -9,12 +9,12 @@ import path from "node:path";
 // !activeAttempt`: it lives only between the action resolving and
 // router.refresh() landing the persisted row, and disappears the moment that
 // row arrives. Two payment specs waited on it. They passed by timing luck for
-// months; when page timing changed they failed consistently — while the payment
+// months; when page timing changed they failed consistently, while the payment
 // was perfectly prepared (one `ready` attempt, correct amount, NULL note, the
 // Run charge button on screen). The test was asking to observe a FRAME, not a
 // STATE.
 //
-// The banner stays in the product — it is good immediate feedback. What is
+// The banner stays in the product, it is good immediate feedback. What is
 // banned is depending on its render window as a test's completion oracle.
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -86,7 +86,7 @@ describe("payment E2E synchronizes on durable state, not transient copy", () => 
       "utf8",
     );
     expect(helper).toMatch(/getByRole\("region", \{ name: "Session payment" \}\)/);
-    // That label is a real, pre-existing product attribute — not one added for
+    // That label is a real, pre-existing product attribute, not one added for
     // the test.
     const card = readFileSync(
       path.join(ROOT, "components/session-payment-prepare-card.tsx"),
@@ -95,7 +95,7 @@ describe("payment E2E synchronizes on durable state, not transient copy", () => 
     expect(card).toMatch(/aria-label="Session payment"/);
   });
 
-  it("the product keeps the transient banner — only the test dependency is banned", () => {
+  it("the product keeps the transient banner, only the test dependency is banned", () => {
     const card = readFileSync(
       path.join(ROOT, "components/session-payment-prepare-card.tsx"),
       "utf8",

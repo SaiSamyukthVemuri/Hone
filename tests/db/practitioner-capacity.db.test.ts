@@ -9,7 +9,7 @@ import {
 import { randomUUID } from "node:crypto";
 
 // ===========================================================================
-// PR A — practitioner-capacity foundation (migration 0134).
+// PR A, practitioner-capacity foundation (migration 0134).
 // ===========================================================================
 //
 // Proves the resource_key + fan-out collision model against the REAL migrated
@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 //
 // The two load-bearing guarantees:
 //   * OFF studios behave byte-for-byte like today (studio-wide collision +
-//     studio_id-keyed shadow) — Willow safety.
+//     studio_id-keyed shadow), Willow safety.
 //   * ON studios get per-practitioner parallelism while same-practitioner and
 //     studio-wide blocks still collide (fan-out).
 
@@ -85,7 +85,7 @@ const disable = (studioId: string) =>
     [studioId],
   );
 
-// Fresh 3-practitioner studio per test — no cross-test state.
+// Fresh 3-practitioner studio per test, no cross-test state.
 beforeEach(async () => {
   B = await seedSynthStudioB();
   await adminQuery(`update public.studios set buffer_minutes = 0 where id = $1`, [
@@ -428,7 +428,7 @@ describe("PR A: integrity + activation lifecycle", () => {
 });
 
 // ===========================================================================
-// Final pre-merge gates — access control (Gates 1/2/3).
+// Final pre-merge gates, access control (Gates 1/2/3).
 // ===========================================================================
 
 const ownerUser = (s: SynthStudio) =>
@@ -465,7 +465,7 @@ describe("Gate 1: capacity flag is operator-controlled (not tenant-writable)", (
     expect(r.rowCount).toBe(1); // rolled back by asRole; proves the write is permitted
   });
 
-  it("no browser attempt leaked through — the flag is still false", async () => {
+  it("no browser attempt leaked through, the flag is still false", async () => {
     // Run the three browser attempts, then confirm the persisted value.
     await asUser(ownerUser(B), (q) => setFlag(q)).catch(() => undefined);
     await asUser(memberUser(B), (q) => setFlag(q)).catch(() => undefined);
@@ -553,7 +553,7 @@ describe("Gate 3: service_practitioners authorization", () => {
       ]),
     );
     expect(ownerRows.rows[0].c).toBeGreaterThan(0);
-    // anon: RLS filters to zero rows (or, if anon lacks the grant, a denial) —
+    // anon: RLS filters to zero rows (or, if anon lacks the grant, a denial),
     // either way anon cannot read the studio's eligibility.
     const anonCount = await asRole("anon", (q) =>
       q(`select count(*)::int as c from public.service_practitioners where studio_id = $1`, [

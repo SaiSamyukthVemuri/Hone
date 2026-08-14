@@ -5,7 +5,7 @@ import {
 } from "@/lib/booking/confirmation-presentation";
 
 // ===========================================================================
-// BOOK-01 Tranche 1 — the public booking confirmation copy contract.
+// BOOK-01 Tranche 1, the public booking confirmation copy contract.
 // ===========================================================================
 //
 // These are NOT source greps. The real copy builder runs, and the assertions
@@ -20,13 +20,13 @@ import {
 //
 // Half 2 is what the pre-Tranche-1 card got wrong: it rendered "We sent a
 // confirmation to <email>" and "The email includes links to cancel or
-// reschedule" unconditionally — including when the provider had just failed and
+// reschedule" unconditionally, including when the provider had just failed and
 // when the studio had confirmation emails switched off entirely.
 
 const EMAIL = "booker@example.test";
 const ALL: ConfirmationEmailStatus[] = ["sent", "failed", "disabled"];
 
-describe("buildBookingConfirmationCopy — invariants across every status", () => {
+describe("buildBookingConfirmationCopy: invariants across every status", () => {
   it("always offers a management action, whatever the provider did", () => {
     for (const emailStatus of ALL) {
       const copy = buildBookingConfirmationCopy({ emailStatus, email: EMAIL });
@@ -45,7 +45,7 @@ describe("buildBookingConfirmationCopy — invariants across every status", () =
     }
   });
 
-  it("claims delivery in EXACTLY ONE state — the one where the provider succeeded", () => {
+  it("claims delivery in EXACTLY ONE state, the one where the provider succeeded", () => {
     const claiming = ALL.filter(
       (emailStatus) =>
         buildBookingConfirmationCopy({ emailStatus, email: EMAIL }).claimsEmailDelivered,
@@ -84,7 +84,7 @@ describe("buildBookingConfirmationCopy — invariants across every status", () =
   });
 });
 
-describe("buildBookingConfirmationCopy — sent", () => {
+describe("buildBookingConfirmationCopy: sent", () => {
   const copy = buildBookingConfirmationCopy({ emailStatus: "sent", email: EMAIL });
 
   it("names the address it actually delivered to", () => {
@@ -97,12 +97,12 @@ describe("buildBookingConfirmationCopy — sent", () => {
     expect(copy.steps.join(" ").toLowerCase()).toMatch(/cancel or reschedule/);
   });
 
-  it("does not nag the client to save the link — they have a durable copy", () => {
+  it("does not nag the client to save the link, they have a durable copy", () => {
     expect(copy.urgesSavingLink).toBe(false);
   });
 });
 
-describe("buildBookingConfirmationCopy — failed", () => {
+describe("buildBookingConfirmationCopy: failed", () => {
   const copy = buildBookingConfirmationCopy({ emailStatus: "failed", email: EMAIL });
 
   it("does NOT claim the confirmation was sent", () => {
@@ -134,10 +134,10 @@ describe("buildBookingConfirmationCopy — failed", () => {
   });
 });
 
-describe("buildBookingConfirmationCopy — disabled", () => {
+describe("buildBookingConfirmationCopy: disabled", () => {
   const copy = buildBookingConfirmationCopy({ emailStatus: "disabled", email: EMAIL });
 
-  it("does not mention a confirmation email at all — nothing was attempted", () => {
+  it("does not mention a confirmation email at all, nothing was attempted", () => {
     expect(copy.claimsEmailDelivered).toBe(false);
     expect(copy.claimsEmailCarriesManagementLinks).toBe(false);
     const joined = copy.steps.join(" ").toLowerCase();

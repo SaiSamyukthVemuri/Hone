@@ -6,7 +6,7 @@ import {
 } from "@/lib/google-calendar/sync/reconcile-store";
 import type { StudioReconcileResult } from "@/lib/google-calendar/sync/reconcile";
 
-// Phase B2.3-b — the PostgREST-specific glue the raw-pg DB suite doesn't exercise:
+// Phase B2.3-b: the PostgREST-specific glue the raw-pg DB suite doesn't exercise:
 // the eligible-studio intersection, bounded metric prune, and PHI-free observability.
 
 type SelectResponses = Record<string, { data?: unknown[]; error?: unknown }>;
@@ -48,7 +48,7 @@ function makeAdmin(select: SelectResponses = {}) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asAdmin = (a: unknown) => a as any;
 
-describe("listEligibleStudioIds — flag ∩ (owner + write target)", () => {
+describe("listEligibleStudioIds: flag ∩ (owner + write target)", () => {
   it("returns only studios that are BOTH flagged AND have an owner connection with a write calendar", async () => {
     const { admin } = makeAdmin({
       studios: { data: [{ id: "s1" }, { id: "s2" }] },
@@ -65,7 +65,7 @@ describe("listEligibleStudioIds — flag ∩ (owner + write target)", () => {
   });
 });
 
-describe("getOpenJobsForEntities — op class + payload sync_version + status", () => {
+describe("getOpenJobsForEntities: op class + payload sync_version + status", () => {
   it("groups jobs per entity with the version read from payload", async () => {
     const { admin } = makeAdmin({
       calendar_sync_outbox: {
@@ -86,7 +86,7 @@ describe("getOpenJobsForEntities — op class + payload sync_version + status", 
   });
 });
 
-describe("isStudioIntentEligible — flag ∩ owner+write, one studio", () => {
+describe("isStudioIntentEligible: flag ∩ owner+write, one studio", () => {
   it("true only when the flag row AND an owner+write connection both exist", async () => {
     const eligible = createSupabaseReconcileStore(
       asAdmin(makeAdmin({ studios: { data: [{ id: "s1" }] }, calendar_connections: { data: [{ id: "c1" }] } }).admin),
@@ -99,7 +99,7 @@ describe("isStudioIntentEligible — flag ∩ owner+write, one studio", () => {
   });
 });
 
-describe("pageStudiosWithDeadOutbox — bounded queue-health page", () => {
+describe("pageStudiosWithDeadOutbox: bounded queue-health page", () => {
   it("reads the pre-aggregated view (dead>0) and maps studio_id + dead", async () => {
     const { admin } = makeAdmin({ calendar_sync_queue_health: { data: [{ studio_id: "s1", dead: 2 }, { studio_id: "s2", dead: 5 }] } });
     const store = createSupabaseReconcileStore(asAdmin(admin));
@@ -110,7 +110,7 @@ describe("pageStudiosWithDeadOutbox — bounded queue-health page", () => {
   });
 });
 
-describe("pruneMetricEvents — bounded select-then-delete", () => {
+describe("pruneMetricEvents: bounded select-then-delete", () => {
   it("deletes the selected id page and returns its count", async () => {
     const { admin, deletes } = makeAdmin({ calendar_sync_metric_events: { data: [{ id: "m1" }, { id: "m2" }] } });
     expect(await pruneMetricEvents(asAdmin(admin), "2026-01-01T00:00:00Z", 1000)).toBe(2);
@@ -123,7 +123,7 @@ describe("pruneMetricEvents — bounded select-then-delete", () => {
   });
 });
 
-describe("observability sink — records only notable studios, PHI-free", () => {
+describe("observability sink: records only notable studios, PHI-free", () => {
   function result(over: Partial<StudioReconcileResult>): StudioReconcileResult {
     return {
       studioId: "s1",

@@ -3,27 +3,27 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
-// 0181 — multi-studio command authority. STATIC contract.
+// 0181: multi-studio command authority. STATIC contract.
 //
 // Behaviour is proved against a real database in
 // tests/db/multi-studio-session-authority.db.test.ts. This file pins what a
 // behavioural test cannot see: what the migration must contain, what it must
-// never contain, and — the reason this migration exists — that NO SECURITY
-// DEFINER command anywhere in the chain still resolves an acting studio from
-// auth.uid() with an unconstrained LIMIT 1.
+// never contain, and that NO SECURITY DEFINER command anywhere in the chain
+// still resolves an acting studio from auth.uid() with an unconstrained
+// LIMIT 1. That last point is the reason this migration exists.
 
 const ROOT = join(__dirname, "..", "..");
 const FILE = "supabase/migrations/0181_multi_studio_command_authority.sql";
 const SQL = readFileSync(join(ROOT, FILE), "utf8");
 
-// EXECUTABLE SQL ONLY — line comments stripped. The header deliberately QUOTES
+// EXECUTABLE SQL ONLY: line comments stripped. The header deliberately QUOTES
 // the removed unsafe query, so a raw-text assertion would fail on the very
 // prose documenting the defect.
 const EXEC = SQL.split("\n")
   .map((l) => l.replace(/--.*$/, ""))
   .join("\n");
 
-describe("0181 — migration state", () => {
+describe("0181: migration state", () => {
   it("is the current repository maximum and consumes exactly one number", () => {
     expect(isRepoMax("0181")).toBe(true);
     expect(versionsAbove("0181")).toEqual([]);
@@ -39,7 +39,7 @@ describe("0181 — migration state", () => {
   });
 });
 
-describe("0181 — production truth: APPLIED (CURRENT STATE — moves on the next apply)", () => {
+describe("0181, production truth: APPLIED (CURRENT STATE, moves on the next apply)", () => {
   const rec = JSON.parse(
     readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
   );
@@ -51,7 +51,7 @@ describe("0181 — production truth: APPLIED (CURRENT STATE — moves on the nex
   // rollout completed on 2026-08-13: 0181 was pushed to the linked production
   // project BEFORE #573 was merged, and the old application was verified
   // healthy against the new database in between.
-  it("is applied — hosted max is 0181", () => {
+  it("is applied: hosted max is 0181", () => {
     expect(rec.hosted_migration_max).toBe("0181");
   });
 
@@ -62,7 +62,7 @@ describe("0181 — production truth: APPLIED (CURRENT STATE — moves on the nex
   });
 });
 
-describe("0181 — transaction envelope", () => {
+describe("0181: transaction envelope", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     const lines = SQL.split("\n").map((l) => l.trim()).filter(Boolean);
     const begin = lines.findIndex((l) => l === "begin;");
@@ -74,11 +74,11 @@ describe("0181 — transaction envelope", () => {
   });
 });
 
-describe("0181 — the defect is removed, not reordered", () => {
+describe("0181: the defect is removed, not reordered", () => {
   it("contains NO unconstrained active-membership LIMIT 1", () => {
     // The exact 0167 shape: practitioners by auth.uid() + active, then LIMIT 1,
     // with no studio predicate in between. Adding `order by` would NOT satisfy
-    // this — there is no correct ordering rule, which is the whole point.
+    // this, there is no correct ordering rule, which is the whole point.
     const unconstrained =
       /from\s+public\.practitioners[\s\S]{0,200}?limit\s+1/gi;
     for (const m of EXEC.matchAll(unconstrained)) {
@@ -91,7 +91,7 @@ describe("0181 — the defect is removed, not reordered", () => {
   });
 });
 
-describe("0181 — explicit studio command", () => {
+describe("0181: explicit studio command", () => {
   it("declares the five-argument signature with p_studio_id", () => {
     expect(EXEC).toMatch(
       /create\s+or\s+replace\s+function\s+public\.start_session\([^)]*p_studio_id\s+uuid[^)]*\)/i,
@@ -138,7 +138,7 @@ describe("0181 — explicit studio command", () => {
   });
 });
 
-describe("0181 — legacy compatibility wrapper", () => {
+describe("0181: legacy compatibility wrapper", () => {
   it("retains the four-argument signature for the migration→deploy window", () => {
     expect(EXEC).toMatch(
       /create\s+or\s+replace\s+function\s+public\.start_session\(\s*p_client_id\s+uuid,\s*p_modality\s+text,\s*p_appointment_id\s+uuid,\s*p_coalesce_minutes\s+integer\s*\)/i,
@@ -159,7 +159,7 @@ describe("0181 — legacy compatibility wrapper", () => {
   });
 });
 
-describe("0181 — privileges", () => {
+describe("0181: privileges", () => {
   const SIGS = [
     "public.start_session(uuid, text, uuid, integer, uuid)",
     "public.start_session(uuid, text, uuid, integer)",
@@ -183,7 +183,7 @@ describe("0181 — privileges", () => {
   });
 });
 
-describe("0181 — no data migration", () => {
+describe("0181: no data migration", () => {
   it("performs no table DDL, no backfill and no row mutation", () => {
     expect(EXEC).not.toMatch(/\balter\s+table\b/i);
     expect(EXEC).not.toMatch(/\bcreate\s+table\b/i);
@@ -207,18 +207,18 @@ describe("0181 — no data migration", () => {
 // The reason this class of bug survived from 0167 to a production P1 is that
 // nothing asserted its absence. This walks EVERY migration and fails if any
 // actor resolution keyed on auth.uid() reaches a LIMIT 1 without a studio
-// predicate first — with an explicit allow-list of the historical files whose
+// predicate first, with an explicit allow-list of the historical files whose
 // later migrations already superseded them.
 // ---------------------------------------------------------------------------
-describe("chain census — no unconstrained actor LIMIT 1 survives", () => {
+describe("chain census: no unconstrained actor LIMIT 1 survives", () => {
   // Files whose unsafe text is SUPERSEDED by a later migration. Applied
   // migrations are frozen, so the historical bytes stay; the LIVE function is
   // what matters and is proved in tests/db/.
   const SUPERSEDED: Record<string, string> = {
-    // treatment_image_actor() — replaced by the studio-scoped
+    // treatment_image_actor(): replaced by the studio-scoped
     // treatment_image_actor(p_studio_id uuid) in 0178.
     "0168_treatment_image_write_commands.sql": "0178",
-    // start_session 4-arg — replaced by this migration.
+    // start_session 4-arg: replaced by this migration.
     "0167_session_write_commands.sql": "0181",
   };
 
@@ -257,9 +257,9 @@ describe("chain census — no unconstrained actor LIMIT 1 survives", () => {
   });
 });
 
-describe("0181 — coalesce atomicity is actually closed", () => {
+describe("0181: coalesce atomicity is actually closed", () => {
   // 0167 claimed `for update` closed the read-then-insert race. It does not
-  // when the coalesce window is EMPTY — `for update` locks rows, and an empty
+  // when the coalesce window is EMPTY, `for update` locks rows, and an empty
   // result set locks nothing, so two overlapping FIRST taps both inserted.
   // Raised by Codex on PR #573; proved with two real connections in
   // tests/db/multi-studio-session-start-concurrency.db.test.ts, where removing

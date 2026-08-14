@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR B Part 4 Item 7 — owner-only practitioner reassignment on the SHARED Move
+// PR B Part 4 Item 7, owner-only practitioner reassignment on the SHARED Move
 // workflow. The DB authority (same-row reassignment, shadow re-key, audit,
 // rollback, inactive/ineligible/cross-studio/member/pause) is proven by the
 // move_or_reassign_appointment DB suite; these pin the app + UI + notification
@@ -18,7 +18,7 @@ const NOTIFY = read("lib/email/notify-appointment-moved.ts");
 const DETAIL = read("app/(app)/calendar/[id]/page.tsx");
 const DRAWER = read("app/(app)/calendar/AppointmentPreviewDrawer.tsx");
 
-describe("Item 7 server — reassignment context + target-aware slots + submit", () => {
+describe("Item 7 server: reassignment context + target-aware slots + submit", () => {
   it("loadMoveSlotsAction returns owner-only reassignment context + accepts a target", () => {
     expect(ACTIONS).toMatch(/targetPractitionerId\?: string \| null/);
     expect(ACTIONS).toMatch(/reassignEnabled:/);
@@ -52,7 +52,7 @@ describe("Item 7 server — reassignment context + target-aware slots + submit",
   });
 });
 
-describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
+describe("Item 7 UI: shared MoveAppointmentDialog reassignment", () => {
   it("shows the selector only when reassignEnabled and blocks confirmation without a valid target", () => {
     expect(DIALOG).toMatch(/\{reassignEnabled && \(/);
     expect(DIALOG).toMatch(/aria-label="Practitioner"/);
@@ -81,7 +81,7 @@ describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
   });
 });
 
-describe("Item 7 notification — truthful per-kind copy", () => {
+describe("Item 7 notification: truthful per-kind copy", () => {
   it("distinguishes moved / reassigned / moved_and_reassigned and never claims a time change for a reassignment", () => {
     expect(NOTIFY).toMatch(/resultKind\?: MoveNotificationKind/);
     expect(NOTIFY).toMatch(/Your appointment has a new practitioner\./);
@@ -102,7 +102,7 @@ describe("Item 7 notification — truthful per-kind copy", () => {
   });
 });
 
-describe("Item 7 — single shared workflow (no parallel implementation)", () => {
+describe("Item 7: single shared workflow (no parallel implementation)", () => {
   it("the button surfaces the per-kind success message", () => {
     expect(BUTTON).toMatch(/setNotice\(r\.message\)/);
   });

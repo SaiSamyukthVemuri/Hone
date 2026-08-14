@@ -6,7 +6,7 @@ import {
 } from "@/lib/google-calendar/destination-scopes";
 import { buildAuthorizationUrl, fetchTokenInfoScopes } from "@/lib/google-calendar/oauth";
 
-// Phase B2.4 — the DESTINATION scope-upgrade authorization URL + the granted-scope
+// Phase B2.4: the DESTINATION scope-upgrade authorization URL + the granted-scope
 // tokeninfo fallback. Broad calendar.events is fully retired: only the exact
 // destination scopes (calendar.app.created / calendar.events.owned) are ever
 // requested.

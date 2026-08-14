@@ -3,7 +3,7 @@ import type { ClaimedJob } from "@/lib/google-calendar/sync/job-result";
 import type { AppointmentState, LinkRow } from "@/lib/google-calendar/sync/link-transition-store";
 import { evaluateStaleFence } from "@/lib/google-calendar/sync/stale-fence";
 
-// Phase B2.3-c1 — the pre-bind execution-time stale fence (Decision G / §6).
+// Phase B2.3-c1: the pre-bind execution-time stale fence (Decision G / §6).
 
 function job(over: Partial<ClaimedJob> = {}): ClaimedJob {
   return {

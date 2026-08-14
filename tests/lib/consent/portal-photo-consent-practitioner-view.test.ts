@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// getPortalPhotoConsentsForPractitionerView — BEHAVIOUR, against an in-memory
+// getPortalPhotoConsentsForPractitionerView: BEHAVIOUR, against an in-memory
 // fake of the two tables it reads.
 //
 // The sibling source-grep file pins that the query carries is_live and no
@@ -203,7 +203,7 @@ describe("every live photo form survives independently", () => {
     ]);
   });
 
-  it("each form resolves its OWN response — denied and granted side by side", async () => {
+  it("each form resolves its OWN response, denied and granted side by side", async () => {
     state.templates = [A, B];
     state.signatures = [
       signature({ template_id: "photo-a", response: "denied" }),
@@ -299,7 +299,7 @@ describe("Treatment Images photo status uses the same boundary", () => {
     expect(await imagesState()).toBe("denied");
   });
 
-  it("an ACTIVE but NOT LIVE form yields null — no banner, no false chase", async () => {
+  it("an ACTIVE but NOT LIVE form yields null, no banner, no false chase", async () => {
     // Previously this returned "not_answered", so Treatment Images told the
     // practitioner photo consent was not completed for a form the client
     // could not open.

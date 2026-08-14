@@ -10,7 +10,7 @@ import {
 
 // THE defect: minutes_performed is stored on the settings BLOCK, but a block
 // may treat several structured areas (migration 0128). The old resolver read
-// only the legacy `primary_area` — which 0128 defines as the FIRST area — so a
+// only the legacy `primary_area`, which 0128 defines as the FIRST area, so a
 // block treating Left cheek + Right sideburn credited its whole duration to
 // Cheek and the sideburn disappeared from the client's breakdown entirely.
 //
@@ -21,8 +21,8 @@ import {
 //
 // `lib/treatment-time/*` had zero behavioural coverage before this file.
 
-// buildAreaMinutesBreakdown IS the production attribution — getTreatmentTimeByArea
-// does nothing but load rows and call it — so every assertion below runs against
+// buildAreaMinutesBreakdown IS the production attribution, getTreatmentTimeByArea
+// does nothing but load rows and call it, so every assertion below runs against
 // the shipped code, not a replica of it.
 function bucketMinutes(blocks: ReadonlyArray<MinutesBucketBlock>): {
   byArea: Map<string, number>;
@@ -47,7 +47,7 @@ function sum(map: ReadonlyMap<string, number>): number {
 describe("multi-area blocks: the duration lands in ONE combined bucket", () => {
   const multiArea: AreaBucketBlock & { minutes_performed: number } = {
     block_name: "Main",
-    // The legacy projection — the FIRST area only. This is exactly what the
+    // The legacy projection: the FIRST area only. This is exactly what the
     // old resolver bucketed on, and why the sideburn vanished.
     primary_area: "Cheek",
     minutes_performed: 30,
@@ -65,7 +65,7 @@ describe("multi-area blocks: the duration lands in ONE combined bucket", () => {
     expect(resolveAreaBucketLabel(multiArea)).not.toBe("Cheek");
   });
 
-  it("credits the duration EXACTLY ONCE — one bucket, one entry", () => {
+  it("credits the duration EXACTLY ONCE, one bucket, one entry", () => {
     const { byArea, total } = bucketMinutes([multiArea]);
     expect(byArea.size).toBe(1);
     expect(byArea.get("Cheek · Sideburn")).toBe(30);
@@ -81,7 +81,7 @@ describe("multi-area blocks: the duration lands in ONE combined bucket", () => {
     expect(total).toBe(30);
   });
 
-  it("does NOT fabricate an even split — the database stores no allocation", () => {
+  it("does NOT fabricate an even split, the database stores no allocation", () => {
     const { byArea } = bucketMinutes([multiArea]);
     expect([...byArea.values()]).toEqual([30]);
     expect([...byArea.values()]).not.toEqual([15, 15]);
@@ -191,7 +191,7 @@ describe("single structured area: behaviour is unchanged", () => {
     ).toBe("Chin");
   });
 
-  it("does NOT fragment by side — a left and a right block share one bucket", () => {
+  it("does NOT fragment by side, a left and a right block share one bucket", () => {
     const left: AreaBucketBlock & { minutes_performed: number } = {
       minutes_performed: 20,
       structured_areas: [
@@ -254,7 +254,7 @@ describe("legacy fallback: unchanged", () => {
   });
 });
 
-describe("TOTAL INVARIANCE — the attribution label moves, the total never does", () => {
+describe("TOTAL INVARIANCE: the attribution label moves, the total never does", () => {
   // A realistic mixed history: legacy blocks, single-area blocks, and
   // multi-area blocks with two and three areas.
   const history: Array<AreaBucketBlock & { minutes_performed: number | null }> = [

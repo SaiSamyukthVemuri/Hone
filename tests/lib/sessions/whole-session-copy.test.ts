@@ -5,10 +5,10 @@ import {
   type CopySourceBlock,
 } from "@/lib/sessions/whole-session-copy";
 
-// Whole-session copy (0157) — pure preview + narrow-input logic. Proves the
+// Whole-session copy (0157): pure preview + narrow-input logic. Proves the
 // preview build is a pure transform (no I/O), that it is mode-gated, and that
 // the client only ever hands the server a NARROW draft input (editable areas +
-// setup strings) — never decomposed probe columns, never minutes, never an
+// setup strings), never decomposed probe columns, never minutes, never an
 // outcome. All authority/validation lives server-side (see the normalize test).
 
 function sourceBlock(over: Partial<CopySourceBlock> = {}): CopySourceBlock {
@@ -101,7 +101,7 @@ describe("buildCopyDrafts", () => {
   });
 });
 
-describe("draftToCopyInput — NARROW client→server payload", () => {
+describe("draftToCopyInput: NARROW client→server payload", () => {
   it("carries editable areas + setup strings only (no probe decomposition, no minutes, no outcome)", () => {
     const input = draftToCopyInput(buildCopyDrafts([sourceBlock()])[0]);
     // Areas preserved.
@@ -109,7 +109,7 @@ describe("draftToCopyInput — NARROW client→server payload", () => {
       { area: "Chin", laterality: "left" },
       { area: "Upper lip", laterality: "bilateral" },
     ]);
-    // Setup keys are exactly the editable machine/probe-key fields — NO minutes,
+    // Setup keys are exactly the editable machine/probe-key fields, NO minutes,
     // NO decomposed probe columns, NO outcome.
     expect(Object.keys(input.setup).sort()).toEqual(
       [

@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, asRole, closePool, seedStudio } from "./helpers/harness";
 
-// Migration 0141 — truthful welcome-email attempt state machine. Proves the
+// Migration 0141: truthful welcome-email attempt state machine. Proves the
 // atomic single-flight claim (concurrent resends / rapid double-clicks collapse
 // to one live attempt), the compare-and-set result stamp (a stale attempt can
 // never overwrite a newer one, and only a real send stamps last_sent_at), and
@@ -44,7 +44,7 @@ async function readState(studioId: string) {
   return r.rows[0];
 }
 
-describe("claim_welcome_email_attempt — single attempt", () => {
+describe("claim_welcome_email_attempt: single attempt", () => {
   it("first claim mints an attempt_id and flips to 'sending'", async () => {
     const s = await seedStudio("claim-1");
     const id = await claim(s.studioId);
@@ -74,7 +74,7 @@ describe("claim_welcome_email_attempt — single attempt", () => {
     const s = await seedStudio("claim-3");
     const first = await claim(s.studioId);
     expect(first).not.toBeNull();
-    // Resolve the first attempt (send failed) — status leaves 'sending'.
+    // Resolve the first attempt (send failed), status leaves 'sending'.
     expect(await record(s.studioId, first as string, "failed")).toBe(true);
     // A retry may now claim a fresh attempt_id distinct from the first.
     const second = await claim(s.studioId);
@@ -83,10 +83,10 @@ describe("claim_welcome_email_attempt — single attempt", () => {
   });
 });
 
-// Finding 2 — conservative (15-minute) stale threshold. A SLOW provider send
+// Finding 2: conservative (15-minute) stale threshold. A SLOW provider send
 // still in flight must never be duplicated merely because time elapsed; the
 // window recovers only a genuinely crashed attempt.
-describe("claim_welcome_email_attempt — delayed-provider / stale recovery", () => {
+describe("claim_welcome_email_attempt: delayed-provider / stale recovery", () => {
   // Age the live 'sending' attempt to simulate a provider send that is still in
   // flight after `interval` (result not yet recorded).
   async function ageSendingAttempt(studioId: string, interval: string): Promise<void> {
@@ -103,7 +103,7 @@ describe("claim_welcome_email_attempt — delayed-provider / stale recovery", ()
     const live = await claim(s.studioId); // attempt A wins; provider send starts
     expect(live).not.toBeNull();
     // A's send is taking 3 minutes (well past the old 30s fence) but is still in
-    // flight — a concurrent resend B must claim nothing (one provider delivery).
+    // flight, a concurrent resend B must claim nothing (one provider delivery).
     await ageSendingAttempt(s.studioId, "3 minutes");
     expect(await claim(s.studioId)).toBeNull();
     // A still solely owns the attempt.
@@ -131,7 +131,7 @@ describe("claim_welcome_email_attempt — delayed-provider / stale recovery", ()
   });
 });
 
-describe("record_welcome_email_result — compare-and-set on attempt_id", () => {
+describe("record_welcome_email_result: compare-and-set on attempt_id", () => {
   it("the current attempt stamps 'sent' and sets last_sent_at", async () => {
     const s = await seedStudio("record-1");
     const id = (await claim(s.studioId)) as string;
@@ -150,7 +150,7 @@ describe("record_welcome_email_result — compare-and-set on attempt_id", () => 
     expect(fresh).not.toBe(stale);
     // The fresh attempt sends successfully.
     expect(await record(s.studioId, fresh, "sent")).toBe(true);
-    // The stale attempt now reports late — it must NOT clobber 'sent'.
+    // The stale attempt now reports late, it must NOT clobber 'sent'.
     expect(await record(s.studioId, stale, "failed")).toBe(false);
     const st = await readState(s.studioId);
     expect(st.welcome_email_status).toBe("sent");
@@ -173,7 +173,7 @@ describe("record_welcome_email_result — compare-and-set on attempt_id", () => 
   });
 });
 
-describe("welcome-email state machine — authorization", () => {
+describe("welcome-email state machine: authorization", () => {
   it("anon cannot execute the claim", async () => {
     await expect(
       asRole("anon", (q) =>

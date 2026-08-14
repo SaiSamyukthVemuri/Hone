@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 // replaced by payment_charge_attempts_live_requires_account_check
 // (stripe_livemode = false OR stripe_account_id is not null), and
 // claim_session_payment_charge_attempt no longer refuses stripe_livemode=true
-// rows. This proves the DB can now REPRESENT + CLAIM live rows — while runtime +
+// rows. This proves the DB can now REPRESENT + CLAIM live rows, while runtime +
 // env still block live charging (proven separately by the runtime safety-lock).
 // Exercised against the REAL migrated local database (db-integration lane).
 

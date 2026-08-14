@@ -5,7 +5,7 @@ const MIG_DIR = join(process.cwd(), "supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0153_")) as string;
 const SQL = readFileSync(join(MIG_DIR, FILE), "utf8");
 
-describe("0153 — services.calendar_color (additive, CHECK-constrained, no rose)", () => {
+describe("0153: services.calendar_color (additive, CHECK-constrained, no rose)", () => {
   it("is present and 0152 precedes it; nothing 0155+ yet", () => {
     expect(FILE).toMatch(/^0153_.*\.sql$/);
     const files = readdirSync(MIG_DIR);

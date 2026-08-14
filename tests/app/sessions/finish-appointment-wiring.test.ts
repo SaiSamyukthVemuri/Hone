@@ -35,7 +35,7 @@ describe("page order: charting → Finish appointment → session payment", () =
     expect(payment).toBeGreaterThan(finish);
   });
 
-  it("the payment block was MOVED, not rewritten — same wrapper, anchor, props", () => {
+  it("the payment block was MOVED, not rewritten, same wrapper, anchor, props", () => {
     const pay = PAGE.slice(
       PAGE.indexOf('id="session-payment"'),
       PAGE.indexOf("</div>", PAGE.indexOf("<SessionPaymentPrepareCard")),
@@ -124,7 +124,7 @@ describe("shared completion authority", () => {
     expect(code(PAGE)).not.toMatch(/markAppointmentNoShowAction/);
   });
 
-  it("completion never navigates away — she must see the updated statuses", () => {
+  it("completion never navigates away: she must see the updated statuses", () => {
     const confirm =
       CONTROL.match(/function handleConfirm\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
     expect(confirm).toMatch(/router\.refresh\(\)/);
@@ -184,7 +184,7 @@ describe("durable postcare success", () => {
     // a `return;` before `router.refresh()`. That pinned a two-outcome model
     // which was itself the defect: a provider that ACCEPTED the email while the
     // database settlement failed was rendered as an ordinary failure, and the
-    // practitioner was invited to retry — duplicating a real email once the
+    // practitioner was invited to retry, duplicating a real email once the
     // five-minute claim went stale.
     //
     // The rule is now three-way and lives in the presenter, so it is asserted
@@ -235,7 +235,7 @@ describe("scope containment", () => {
   });
 
   it("the appointment is joined by sessions.appointment_id, never by client id", () => {
-    // Taken straight off the session row — never from the billing eligibility.
+    // Taken straight off the session row, never from the billing eligibility.
     expect(PAGE).toMatch(/const linkedAppointmentId = session\.appointment_id \?\? null;/);
     expect(code(PAGE)).not.toMatch(/sessionPaymentEligibility\.appointment/);
     // The widened read is scoped by that id, the studio AND the client.
@@ -374,7 +374,7 @@ describe("BLOCKER 3: charting is modality-aware", () => {
 });
 
 describe("the aftercare toggle regression stays fixed", () => {
-  it("is NOT gated on the unmarked state — both states survive", () => {
+  it("is NOT gated on the unmarked state, both states survive", () => {
     const finish = PAGE.slice(
       PAGE.indexOf('data-testid="finish-appointment"'),
       PAGE.indexOf('id="session-payment"'),

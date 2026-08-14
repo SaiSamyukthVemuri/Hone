@@ -69,7 +69,7 @@ describe("2. copy settings: full, area-aware, never the response", () => {
   it("copies every treatment setting a practitioner expects (via the shared snapshot contract)", () => {
     // copySettings now delegates to the canonical treatment-setup contract,
     // which carries the block machine settings AND the primary entry's
-    // mode-gated machine readings — a superset of the old block-only copy.
+    // mode-gated machine readings, a superset of the old block-only copy.
     expect(copyFn).toMatch(/firstLiveEntry\(source\.electrolysis_entries\)/);
     expect(copyFn).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/);
     for (const field of [
@@ -89,13 +89,13 @@ describe("2. copy settings: full, area-aware, never the response", () => {
     ]) {
       expect(SNAPSHOT).toContain(`${field}:`);
     }
-    // Final amendment: galvanic intensity is a RETIRED reading — it is NOT a
+    // Final amendment: galvanic intensity is a RETIRED reading, it is NOT a
     // copyable setup key, so the snapshot must not emit it as a patch field.
     expect(SNAPSHOT).not.toMatch(/galvanicIntensityPercent:/);
     // Session 1C: minutes performed is an OUTCOME. The contract must emit no
     // minutes patch key AND must not read the source column. A partial removal
     // (type key deleted, builder assignment left behind, or vice versa) fails
-    // here — the `toContain` loop above would have passed on either half alone.
+    // here, the `toContain` loop above would have passed on either half alone.
     // Comments are stripped first: the header deliberately NAMES the rejected
     // `minutes: ""` shape as documentation, and documenting a mistake must not
     // read as committing it.
@@ -162,7 +162,7 @@ describe("5 + 6. per-area summary and ONE combined warning box", () => {
     expect((NEW_SESSION_PAGE.match(/<FromLastVisitForToday /g) ?? []).length).toBe(1);
 
     // The appointment page now renders the full prep card instead of the
-    // compact combined box — so it must render NEITHER the old box nor a
+    // compact combined box, so it must render NEITHER the old box nor a
     // second warning surface of its own.
     expect(APPOINTMENT_PAGE).not.toMatch(/<FromLastVisitForToday /);
     expect(APPOINTMENT_PAGE).not.toMatch(/<AreaSummaries /);

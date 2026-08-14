@@ -20,11 +20,11 @@ import { randomUUID } from "node:crypto";
 // same rows.
 //
 // The three anchor families come from lib/booking/slots.ts:300-319 and the
-// fallback step is FALLBACK_GRANULARITY_MINUTES = 60 (slots.ts:115) — NOT 15.
+// fallback step is FALLBACK_GRANULARITY_MINUTES = 60 (slots.ts:115), NOT 15.
 
 // A PostgREST client, NOT a full supabase-js client. `createClient` from
 // @supabase/supabase-js constructs a RealtimeClient in its constructor, which
-// needs a native WebSocket — absent on Node 20, which CI runs. That made this
+// needs a native WebSocket, absent on Node 20, which CI runs. That made this
 // whole file die at import time in CI ("0 test") while passing locally on a
 // newer Node. getAvailableSlots only ever calls `.from(...)`, so the PostgREST
 // client alone satisfies it, adds no dependency, and starts no socket.
@@ -212,7 +212,7 @@ describe("SQL candidate set == TypeScript offered set", () => {
   });
 });
 
-describe("DST parity — America/Toronto", () => {
+describe("DST parity: America/Toronto", () => {
   it("agrees on the spring-forward day", async () => {
     const f = await seed("spring");
     const d = "2026-03-08";
@@ -347,7 +347,7 @@ describe("regressions from adversarial review", () => {
     // The candidate walk truncates the window to HH:MM (matching trimTime in
     // lib/booking/slots.ts). Deriving the minute bounds from hour+minute while
     // deriving the UTC bounds from the full `time` let a close_time of 17:00:45
-    // accept a start whose service end was 17:00:30 — a slot the page never
+    // accept a start whose service end was 17:00:30, a slot the page never
     // offers. Reachable only by a direct DB write, but the port must not depend
     // on the app's HH:MM validation.
     const f = await seed("close-seconds", { buffer: 0 });
@@ -361,7 +361,7 @@ describe("regressions from adversarial review", () => {
     day.setUTCDate(day.getUTCDate() + 10);
     const d = day.toISOString().slice(0, 10);
     // A conflict ending at 16:00:30 LOCAL. With buffer 0 its after-conflict
-    // anchor is 16:00:30, whose service end is 17:00:30 — past the real 17:00
+    // anchor is 16:00:30, whose service end is 17:00:30, past the real 17:00
     // close but inside a naive 17:00:45 bound. The hourly walk alone can never
     // land in that 45-second gap, so the conflict is what makes this reproduce.
     await adminQuery(
@@ -422,10 +422,10 @@ describe("regressions from adversarial review", () => {
   });
 });
 
-describe("precision domain — JavaScript milliseconds, by truncation", () => {
+describe("precision domain: JavaScript milliseconds, by truncation", () => {
   // Postgres timestamptz keeps MICROseconds; a JS Date keeps milliseconds and
   // truncates on parse. A reservation boundary carrying microseconds would make
-  // the SQL anchor .123456 while the page offers .123 — the page would offer a
+  // the SQL anchor .123456 while the page offers .123, the page would offer a
   // slot the command refused. Both engines are normalised to milliseconds.
   //
   // NOTE these tests deliberately inspect the RAW textual timestamp too. An

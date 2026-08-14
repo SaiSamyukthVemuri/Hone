@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR B Part 4 Item 6 — practitioner-aware internal booking UI wiring (client
+// PR B Part 4 Item 6, practitioner-aware internal booking UI wiring (client
 // profile surface). The DB authorization (owner books another, member cannot
 // forge, inactive/ineligible/cross-studio rejected) is proven in the v2 command
 // DB suite; these pin the UI + slot-loader contract.
@@ -51,7 +51,7 @@ describe("target-aware slot loader + eligible-practitioners action", () => {
   });
 });
 
-describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6 1B/1C)", () => {
+describe("BookAppointment: fail-closed selector + latest-request-wins (Item 6 1B/1C)", () => {
   it("1B: an eligible-lookup error clears target/slots and never falls back to self slots", () => {
     expect(BOOK).toMatch(/setEligibleError\(r\.error\)/);
     expect(BOOK).toMatch(/setTarget\(""\)/);
@@ -69,7 +69,7 @@ describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6
   });
 });
 
-describe("BookAppointment — owner selector, member self-only, confirmation", () => {
+describe("BookAppointment: owner selector, member self-only, confirmation", () => {
   it("shows the selector ONLY for a capacity-ON owner", () => {
     expect(BOOK).toMatch(/const showSelector = practitionerCapacityEnabled && isOwner/);
     expect(BOOK).toMatch(/\{showSelector && \(/);

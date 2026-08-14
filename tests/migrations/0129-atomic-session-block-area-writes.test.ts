@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-// Static proof of migration 0129 — atomic create/update of a settings block + its
+// Static proof of migration 0129, atomic create/update of a settings block + its
 // structured area set (fixes the delete-then-insert data-loss risk). Behavioural
 // proof (atomic replacement, rollback-on-conflict, cross-studio denial) is in
 // tests/db/session-block-areas.db.test.ts. Carries the repo migration-max tripwire.
@@ -12,7 +12,7 @@ const FILES = readdirSync(MIG_DIR);
 const FILE = FILES.find((f) => f.startsWith("0129_"));
 const SQL = FILE ? readFileSync(path.join(MIG_DIR, FILE), "utf8") : "";
 
-describe("0129 — file + repo-max tripwire", () => {
+describe("0129: file + repo-max tripwire", () => {
   it("is the single 0129 migration (atomic session-block-area writes)", () => {
     expect(FILE).toMatch(/^0129_atomic_session_block_area_writes\.sql$/);
   });
@@ -30,7 +30,7 @@ describe("0129 — file + repo-max tripwire", () => {
   });
 });
 
-describe("0129 — atomic create + update functions", () => {
+describe("0129: atomic create + update functions", () => {
   it("defines both a create and an update function", () => {
     expect(SQL).toMatch(/create or replace function public\.create_session_block_with_areas\(/);
     expect(SQL).toMatch(/create or replace function public\.update_session_block_with_areas\(/);
@@ -58,7 +58,7 @@ describe("0129 — atomic create + update functions", () => {
   });
 });
 
-describe("0129 — authorization + hardening", () => {
+describe("0129: authorization + hardening", () => {
   it("both functions are SECURITY DEFINER with a pinned search_path", () => {
     expect((SQL.match(/security definer/g) ?? []).length).toBe(2);
     expect((SQL.match(/set search_path = pg_catalog, pg_temp/g) ?? []).length).toBe(2);
@@ -78,7 +78,7 @@ describe("0129 — authorization + hardening", () => {
     expect(upd).toMatch(/stale_block_version/);
   });
 
-  it("only allow-listed columns are written — studio/session/id are never read from p_block", () => {
+  it("only allow-listed columns are written, studio/session/id are never read from p_block", () => {
     const upd = SQL.slice(SQL.indexOf("function public.update_session_block_with_areas"));
     // The update set-list assigns from r.<col> for the allow-listed fields only;
     // it must NOT assign studio_id/session_id/id/sort_order/deleted_at from r.
@@ -89,7 +89,7 @@ describe("0129 — authorization + hardening", () => {
     expect(upd).not.toMatch(/deleted_at = r\./);
   });
   it("grants EXECUTE to authenticated + service_role; revokes from public (0130 revokes the residual anon default-privilege grant)", () => {
-    // NOTE: 0129 revokes only from PUBLIC and never grants "to anon" — but Supabase
+    // NOTE: 0129 revokes only from PUBLIC and never grants "to anon", but Supabase
     // default privileges grant anon EXECUTE at create-time, so the deployed anon
     // grant survived. Migration 0130 revokes it explicitly; see that test.
     expect((SQL.match(/revoke all on function public\.(create|update)_session_block_with_areas[\s\S]{0,120} from public/g) ?? []).length).toBe(2);

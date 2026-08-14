@@ -4,7 +4,7 @@ import { isMissingColumnError } from "@/lib/db/missing-column";
 // Migration-order safety: the missing-column detector is column-scoped so the
 // calendar read + settings write fall back ONLY when calendar_color is genuinely
 // absent (app deployed before 0153), and NEVER swallow unrelated DB errors.
-describe("isMissingColumnError — column-scoped, migration-order safe", () => {
+describe("isMissingColumnError: column-scoped, migration-order safe", () => {
   it("detects a missing SELECT column (42703) that names the column", () => {
     expect(isMissingColumnError({ code: "42703", message: 'column services.calendar_color does not exist' }, "calendar_color")).toBe(true);
   });

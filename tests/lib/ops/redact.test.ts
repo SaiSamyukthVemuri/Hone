@@ -19,7 +19,7 @@ const has = (s: string, sub: string) => s.includes(sub);
 const redacted = (s: string) => s.includes(REDACTED);
 
 // ---------------------------------------------------------------------------
-// Pure message redaction — each sensitive pattern is removed.
+// Pure message redaction, each sensitive pattern is removed.
 // ---------------------------------------------------------------------------
 describe("redactOpsAlertMessage scrubs sensitive patterns", () => {
   it("email address", () => {
@@ -133,7 +133,7 @@ describe("redactOpsAlertMessage scrubs sensitive patterns", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Preservation — operator context survives.
+// Preservation, operator context survives.
 // ---------------------------------------------------------------------------
 describe("redactOpsAlertMessage preserves safe operator context", () => {
   it("preserves a non-secret Stripe PaymentIntent id (for reconciliation)", () => {
@@ -206,7 +206,7 @@ describe("safeDetails value redaction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Central wiring — recordOpsAlert redacts the message before every sink.
+// Central wiring, recordOpsAlert redacts the message before every sink.
 // ---------------------------------------------------------------------------
 describe("recordOpsAlert wires central message redaction (PR #285)", () => {
   const ALERTS = readFileSync(
@@ -221,7 +221,7 @@ describe("recordOpsAlert wires central message redaction (PR #285)", () => {
 
   it("the redaction wraps the message BEFORE it reaches the log / DB / email", () => {
     // The single `message` local feeds the structured log, the ops_alerts
-    // insert, and the critical email — so redacting it once covers all sinks.
+    // insert, and the critical email, so redacting it once covers all sinks.
     const redactIdx = ALERTS.indexOf("redactOpsAlertMessage(input.message)");
     const logIdx = ALERTS.indexOf("structuredConsoleLog({");
     const insertIdx = ALERTS.indexOf('from("ops_alerts").insert(');
@@ -241,7 +241,7 @@ describe("recordOpsAlert wires central message redaction (PR #285)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Targeted call-site cleanup — the riskiest storage-error alerts no longer
+// Targeted call-site cleanup, the riskiest storage-error alerts no longer
 // pass a raw provider error.message (the central redactor covers the rest).
 // ---------------------------------------------------------------------------
 describe("treatment-images alert call sites use generic messages (PR #285)", () => {

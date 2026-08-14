@@ -8,10 +8,10 @@ import { csvCell, rowsToCsv } from "@/lib/csv";
 //
 // Neutralization = prefix a single quote ('). RFC-4180 quoting (wrapping in
 // double quotes) is applied AFTER, and ONLY when the value contains a comma,
-// double-quote, CR, or LF — so a formula without those chars gets the ' prefix
+// double-quote, CR, or LF, so a formula without those chars gets the ' prefix
 // but no surrounding quotes.
 
-describe("csvCell — formula-injection neutralization", () => {
+describe("csvCell: formula-injection neutralization", () => {
   it("neutralizes =HYPERLINK(...) and RFC-quotes it (has quotes + comma)", () => {
     const out = csvCell('=HYPERLINK("x","y")');
     // '  prefix, wrapped in quotes, embedded quotes doubled.
@@ -39,7 +39,7 @@ describe("csvCell — formula-injection neutralization", () => {
   });
 });
 
-describe("csvCell — ordinary values are preserved", () => {
+describe("csvCell: ordinary values are preserved", () => {
   it("leaves ordinary text unchanged", () => {
     expect(csvCell("Chin")).toBe("Chin");
     expect(csvCell("John Doe")).toBe("John Doe");
@@ -72,7 +72,7 @@ describe("csvCell — ordinary values are preserved", () => {
   });
 });
 
-describe("csvCell — RFC-4180 quoting still correct", () => {
+describe("csvCell: RFC-4180 quoting still correct", () => {
   it("quotes commas", () => {
     expect(csvCell("Chin, Jawline")).toBe(`"Chin, Jawline"`);
   });
@@ -85,12 +85,12 @@ describe("csvCell — RFC-4180 quoting still correct", () => {
     expect(csvCell("line1\nline2")).toBe(`"line1\nline2"`);
   });
 
-  it("JSON-encodes arrays/objects (start with [ or { — not a trigger)", () => {
+  it("JSON-encodes arrays/objects (start with [ or {, not a trigger)", () => {
     expect(csvCell(["Chin", "Jaw"])).toBe(`"[""Chin"",""Jaw""]"`);
   });
 });
 
-describe("rowsToCsv — end to end", () => {
+describe("rowsToCsv: end to end", () => {
   it("builds header + rows, neutralizing a malicious cell without breaking columns", () => {
     const csv = rowsToCsv(
       ["name", "note", "minutes"],

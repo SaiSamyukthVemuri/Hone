@@ -6,7 +6,7 @@ import {
   type ScopePractitioner,
 } from "@/lib/booking/practitioner-availability";
 
-// PR B Part 2 — the server-side effective-schedule model (inheritance +
+// PR B Part 2: the server-side effective-schedule model (inheritance +
 // precedence + scope resolution). Pure functions, no DB.
 
 const day = (

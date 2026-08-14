@@ -3,14 +3,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// Chloe Session 1A — clinical-note actions must never leak database detail.
+// Chloe Session 1A, clinical-note actions must never leak database detail.
 // ===========================================================================
 //
 // THE DEFECT. `insertClinicalNote` RETURNED `error.message` inside its result
 // object. Because the value is RETURNED rather than THROWN, Next.js server-
 // action error redaction never applies to it, and ClinicalNotesSection renders
 // `state.message` verbatim. An RLS denial or a constraint violation would print
-// table names, policy names, constraint names and — in a constraint detail —
+// table names, policy names, constraint names and, in a constraint detail
 // row values, straight onto the practitioner's screen.
 //
 // Three call sites leaked: the client lookup, the INSERT, and the read-back
@@ -26,7 +26,7 @@ const SECTION = readFileSync(
   "utf8",
 );
 
-/** Executable source only — a comment describing a banned pattern is not it. */
+/** Executable source only: a comment describing a banned pattern is not it. */
 function code(src: string): string {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -125,7 +125,7 @@ describe("operator logging is a safe classification, never PHI", () => {
     // Bound the slice to the function itself: from its declaration to the next
     // top-level `function` keyword. (An earlier version sliced to a COMMENT
     // marker that `code()` had already stripped, so indexOf returned -1 and the
-    // slice silently captured the whole rest of the file — a guard that would
+    // slice silently captured the whole rest of the file, a guard that would
     // have failed for the wrong reason.)
     const start = CODE.indexOf("function logNoteFailure");
     expect(start).toBeGreaterThan(-1);
@@ -143,7 +143,7 @@ describe("operator logging is a safe classification, never PHI", () => {
 
   it("the call sites pass no note content either", () => {
     // Only the CALL sites (`logNoteFailure("event", { ... })`), not the
-    // declaration — a non-greedy match from the declaration would run past it.
+    // declaration, a non-greedy match from the declaration would run past it.
     const calls = [...CODE.matchAll(/logNoteFailure\(\s*"[a-z_]+",[\s\S]*?\}\);/g)];
     expect(calls.length).toBe(3);
     for (const m of calls) {
@@ -156,7 +156,7 @@ describe("operator logging is a safe classification, never PHI", () => {
 
 describe("the renderer is the reason this matters", () => {
   it("ClinicalNotesSection still renders the message verbatim", () => {
-    // Not a defect in itself — it is WHY the action must be the fixed-copy
+    // Not a defect in itself, it is WHY the action must be the fixed-copy
     // boundary. If this ever stopped being true the guard above still holds,
     // but this documents the coupling.
     expect(SECTION).toMatch(/\{state\.message\}/);

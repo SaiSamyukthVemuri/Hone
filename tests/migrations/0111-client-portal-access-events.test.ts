@@ -6,13 +6,13 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0111_client_portal_access_events.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0111 — number", () => {
+describe("0111: number", () => {
   it("is migration 0111 (repo-max tripwire now lives in the newest migration test, 0112)", () => {
     expect(FILE).toMatch(/^0111_/);
   });
 });
 
-describe("0111 — client_portal_access_events table", () => {
+describe("0111: client_portal_access_events table", () => {
   it("creates the table with the safe id/scope/event columns", () => {
     expect(SQL).toMatch(/create table if not exists public\.client_portal_access_events/);
     expect(SQL).toMatch(/studio_id uuid not null/);
@@ -46,7 +46,7 @@ describe("0111 — client_portal_access_events table", () => {
     // append-only: write grants stripped from normal roles
     expect(SQL).toMatch(/revoke insert, update, delete, truncate/);
   });
-  it("is additive only — no drop column, no data backfill", () => {
+  it("is additive only: no drop column, no data backfill", () => {
     expect(SQL).not.toMatch(/drop column|drop table/i);
     expect(SQL).not.toMatch(/update public\.\w+ set/i);
   });

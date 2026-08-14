@@ -13,7 +13,7 @@ const MIG_DIR = join(process.cwd(), "supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0152_")) as string;
 const SQL = readFileSync(join(MIG_DIR, FILE), "utf8");
 
-describe("0152 — file present + precedes nothing unexpected", () => {
+describe("0152: file present + precedes nothing unexpected", () => {
   it("0152 exists and 0151 (RC hardening) immediately precedes it", () => {
     expect(FILE).toMatch(/^0152_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -24,7 +24,7 @@ describe("0152 — file present + precedes nothing unexpected", () => {
   });
 });
 
-describe("0152 — transactional + additive (non-destructive)", () => {
+describe("0152: transactional + additive (non-destructive)", () => {
   it("is wrapped in a single begin/commit", () => {
     expect(SQL).toMatch(/^\s*begin;/m);
     expect(SQL).toMatch(/\ncommit;/);
@@ -52,7 +52,7 @@ describe("0152 — transactional + additive (non-destructive)", () => {
   });
 });
 
-describe("0152 — preflight refuses pre-existing actual overlaps", () => {
+describe("0152: preflight refuses pre-existing actual overlaps", () => {
   it("counts confirmed/completed actual-interval overlaps and raises if any exist", () => {
     expect(SQL).toMatch(/0152 preflight failed/);
     // The preflight compares ACTUAL intervals (not blocked_ends_at).
@@ -62,7 +62,7 @@ describe("0152 — preflight refuses pre-existing actual overlaps", () => {
   });
 });
 
-describe("0152 — HARD actual-overlap exclusions (both resource modes)", () => {
+describe("0152: HARD actual-overlap exclusions (both resource modes)", () => {
   it("studio-wide exclusion uses the ACTUAL interval, gated on capacity_enabled = false", () => {
     expect(SQL).toMatch(/add constraint no_overlapping_appointments_studio_wide/);
     expect(SQL).toMatch(
@@ -79,7 +79,7 @@ describe("0152 — HARD actual-overlap exclusions (both resource modes)", () => 
 
   it("no exclusion is built on blocked_ends_at (the buffer-expanded basis is retired as HARD)", () => {
     // blocked_ends_at is RETAINED as a column (slot-gen/reporting) but must not
-    // appear in any EXECUTABLE statement of 0152 — only in comments. Strip line
+    // appear in any EXECUTABLE statement of 0152, only in comments. Strip line
     // comments, then assert it is absent from the executable SQL.
     const executable = SQL.split("\n")
       .map((l) => l.replace(/--.*$/, ""))
@@ -88,7 +88,7 @@ describe("0152 — HARD actual-overlap exclusions (both resource modes)", () => 
   });
 });
 
-describe("0152 — shadow reservation mirrors the ACTUAL interval", () => {
+describe("0152: shadow reservation mirrors the ACTUAL interval", () => {
   it("sync trigger inserts new.ends_at (not blocked_ends_at) and rematerializes existing rows", () => {
     expect(SQL).toMatch(/create or replace function public\.sync_appointment_to_calendar_reservation/);
     expect(SQL).toMatch(/new\.starts_at, new\.ends_at\)\s*(--[^\n]*)?\s*\n/);
@@ -98,7 +98,7 @@ describe("0152 — shadow reservation mirrors the ACTUAL interval", () => {
   });
 });
 
-describe("0152 — SOFT buffer helper is buffer-proximity minus true overlap", () => {
+describe("0152: SOFT buffer helper is buffer-proximity minus true overlap", () => {
   it("appointment_buffer_conflict is buffer windows overlap AND NOT actual overlap", () => {
     expect(SQL).toMatch(/create or replace function public\.appointment_buffer_conflict/);
     // buffer-expanded windows overlap ...
@@ -110,7 +110,7 @@ describe("0152 — SOFT buffer helper is buffer-proximity minus true overlap", (
   });
 });
 
-describe("0152 — uniform SOFT-buffer trigger over EVERY writer", () => {
+describe("0152: uniform SOFT-buffer trigger over EVERY writer", () => {
   it("raises HB001, skips rows flagged booked_outside_availability, and fires before insert/update", () => {
     expect(SQL).toMatch(/create or replace function public\.enforce_appointment_buffer/);
     expect(SQL).toMatch(/raise exception 'appointment_buffer_conflict' using errcode = 'HB001'/);
@@ -119,7 +119,7 @@ describe("0152 — uniform SOFT-buffer trigger over EVERY writer", () => {
   });
 });
 
-describe("0152 — validator + commands are override-gated", () => {
+describe("0152: validator + commands are override-gated", () => {
   it("validate_appointment_availability returns buffer_conflict only when NOT allowing outside", () => {
     expect(SQL).toMatch(
       /if not p_allow_outside_availability then[\s\S]*?appointment_buffer_conflict[\s\S]*?return 'buffer_conflict'/,
@@ -139,7 +139,7 @@ describe("0152 — validator + commands are override-gated", () => {
   });
 });
 
-describe("0152 — least privilege (service_role only)", () => {
+describe("0152: least privilege (service_role only)", () => {
   it("revokes from public/anon/authenticated and grants only service_role for each callable", () => {
     for (const fn of [
       "appointment_buffer_conflict",

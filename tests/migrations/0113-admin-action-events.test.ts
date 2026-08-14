@@ -6,7 +6,7 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0113_admin_action_events.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0113 — number", () => {
+describe("0113: number", () => {
   it("0113 exists; the repo-max tripwire now lives in the 0114 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
@@ -20,7 +20,7 @@ describe("0113 — number", () => {
   });
 });
 
-describe("0113 — admin_action_events table", () => {
+describe("0113: admin_action_events table", () => {
   it("creates the table with the who/what/where/when/outcome columns", () => {
     expect(SQL).toMatch(/create table if not exists public\.admin_action_events/);
     expect(SQL).toMatch(/actor_user_id uuid/);
@@ -48,7 +48,7 @@ describe("0113 — admin_action_events table", () => {
     expect(SQL).not.toMatch(/\n\s*\w*(token|secret|password|api_key|card|cvc|cvv|cookie|jwt|magic|url|authorization)\w*\s+(uuid|text|jsonb|inet|bytea|boolean)/i);
     expect(SQL).not.toMatch(/\n\s*\w*(intake|clinical|diagnosis|treatment_note)\w*\s+\w+/i);
   });
-  it("is additive only — no drop, no data backfill", () => {
+  it("is additive only: no drop, no data backfill", () => {
     expect(SQL).not.toMatch(/drop table|drop column/i);
     expect(SQL).not.toMatch(/update public\.\w+ set|insert into public\.admin_action_events/i);
   });

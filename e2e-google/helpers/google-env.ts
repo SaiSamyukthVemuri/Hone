@@ -37,11 +37,11 @@ export const GOOGLE_WEB_SERVER_ENV: Record<string, string> = {
   ...E2E_WEB_SERVER_ENV,
   HONE_E2E_FAKE_GOOGLE: "1",
   HONE_E2E_RUN_ID: GOOGLE_E2E_RUN_ID,
-  // Present so getGoogleOAuthClient() returns a client (fake values — the fake
+  // Present so getGoogleOAuthClient() returns a client (fake values, the fake
   // token exchange never validates the secret; no real Google endpoint is called).
   GOOGLE_OAUTH_CLIENT_ID: "fake-client.apps.googleusercontent.com",
   GOOGLE_OAUTH_CLIENT_SECRET: "fake-client-secret-e2e",
-  // A well-formed 32-byte (64-hex) key so encryptGoogleSecret works — test-only.
+  // A well-formed 32-byte (64-hex) key so encryptGoogleSecret works, test-only.
   GOOGLE_TOKEN_ENCRYPTION_KEY: "a".repeat(64),
   GOOGLE_TOKEN_ENCRYPTION_KEY_VERSION: "1",
 };

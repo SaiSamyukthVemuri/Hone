@@ -108,7 +108,7 @@ describe("E: overlapping confirmed appointments are structurally impossible", ()
     // SOFT proximity rule enforced for normal writers by the enforce_appointment_buffer
     // trigger. A back-to-back 11:00 booking does NOT actually overlap [10:00,11:00)
     // but sits inside the 15-min buffer, so this direct (non-override) insert is
-    // rejected by the trigger with HB001 — not the hard 23P01 exclusion.
+    // rejected by the trigger with HB001, not the hard 23P01 exclusion.
     await expect(
       insertAppointment({
         studioId: buffered.studioId,

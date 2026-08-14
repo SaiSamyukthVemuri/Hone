@@ -240,7 +240,7 @@ describe("calendar touch safety", () => {
   it("the desktop week grid is desktop-only with ONE clean vertical scroll; phones use the day view", () => {
     // PR #380 moved phones to the single-day timeline; the week grid is now
     // hidden md:block (desktop-only). Desktop PR B made that body a single
-    // vertical scroll — no horizontal-scroll / min-width machinery.
+    // vertical scroll, no horizontal-scroll / min-width machinery.
     expect(CALENDAR_PAGE).toMatch(
       /hidden max-h-\[calc\(100dvh-13rem\)\] overflow-y-auto rounded-xl[^"]*md:block/,
     );

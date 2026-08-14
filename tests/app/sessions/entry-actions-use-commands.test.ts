@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 // L18 Phase 1A migrated ONE server action (addLaserEntryAction) onto the narrow
 // 0164 command. L18 Phase 2 migrates the rest: addElectrolysisEntryAction now
 // calls `add_electrolysis_pass` (migration 0166), which finds-or-creates the
-// primary block and writes the entry in ONE transaction — so the block-coupling
+// primary block and writes the entry in ONE transaction, so the block-coupling
 // that kept it behind in Phase 1A is resolved rather than merely tolerated.
 // Source-contract style, matching the other action tests in this suite: these
 // actions reach Supabase, `revalidatePath` and `getCurrentPractitionerWithStudio`,
@@ -23,7 +23,7 @@ function bodyOf(fn: string): string {
   return SRC.slice(start, next === -1 ? SRC.length : next);
 }
 
-describe("addLaserEntryAction — calls create_laser_entry", () => {
+describe("addLaserEntryAction: calls create_laser_entry", () => {
   const body = bodyOf("addLaserEntryAction");
 
   it("calls the 0164 command and no longer inserts directly", () => {
@@ -53,7 +53,7 @@ describe("addLaserEntryAction — calls create_laser_entry", () => {
   });
 });
 
-describe("addElectrolysisEntryAction — calls add_electrolysis_pass", () => {
+describe("addElectrolysisEntryAction: calls add_electrolysis_pass", () => {
   const BLOCK_SRC = readFileSync(
     "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
     "utf8",
@@ -73,7 +73,7 @@ describe("addElectrolysisEntryAction — calls add_electrolysis_pass", () => {
   it("hands block resolution to the command instead of creating one itself", () => {
     // The legacy block-less caller shape is still supported; what changed is
     // WHERE the first block is created. `ensureBlockForSession` no longer
-    // exists as a writer — the command finds-or-creates under a row lock, in
+    // exists as a writer, the command finds-or-creates under a row lock, in
     // the same transaction as the entry.
     expect(body).toMatch(/p_block_id:\s*explicitBlockId/);
     expect(body).toMatch(/p_block_defaults:\s*blockDefaults/);
@@ -83,7 +83,7 @@ describe("addElectrolysisEntryAction — calls add_electrolysis_pass", () => {
   });
 
   it("keeps its server-authoritative retirement of galvanic_intensity_percent", () => {
-    // The command takes no parameter for it, so a new row always stores NULL —
+    // The command takes no parameter for it, so a new row always stores NULL,
     // now enforced by the database rather than by an application literal.
     expect(body).not.toMatch(/p_galvanic_intensity_percent/);
     expect(body).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);

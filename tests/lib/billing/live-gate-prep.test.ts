@@ -94,7 +94,7 @@ describe("receipt template: live branch (copy readiness only; unreachable at run
       "Hone is the software platform used by the studio and is not the treatment provider or merchant of record.",
     );
     expect(live.html).toContain("not the treatment provider or merchant of record");
-    // Sign-off complete — the PENDING marker is gone.
+    // Sign-off complete: the PENDING marker is gone.
     const TEMPLATE = read("lib/email/templates/payment-receipt.ts");
     expect(TEMPLATE).not.toMatch(/PENDING legal\/accounting review/);
   });

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-// Static proof of migration 0128 — session_block_areas (multi-area + per-area
+// Static proof of migration 0128, session_block_areas (multi-area + per-area
 // laterality). Behavioural proof (studio-derive, RLS, duplicate prevention,
 // cascade, legacy fallback) is in tests/db/session-block-areas.db.test.ts.
 // Carries the repo migration-max tripwire.
@@ -12,7 +12,7 @@ const FILES = readdirSync(MIG_DIR);
 const FILE = FILES.find((f) => f.startsWith("0128_"));
 const SQL = FILE ? readFileSync(path.join(MIG_DIR, FILE), "utf8") : "";
 
-describe("0128 — file + repo-max tripwire", () => {
+describe("0128: file + repo-max tripwire", () => {
   it("is the single 0128 migration with a purpose-encoding filename", () => {
     expect(FILE).toMatch(/^0128_session_block_areas\.sql$/);
   });
@@ -29,7 +29,7 @@ describe("0128 — file + repo-max tripwire", () => {
   });
 });
 
-describe("0128 — table shape + constraints", () => {
+describe("0128: table shape + constraints", () => {
   it("creates public.session_block_areas with the reviewed columns", () => {
     expect(SQL).toMatch(/create table if not exists public\.session_block_areas/);
     for (const col of ["id", "session_block_id", "studio_id", "area", "laterality", "display_order", "created_at"]) {
@@ -54,7 +54,7 @@ describe("0128 — table shape + constraints", () => {
   });
 });
 
-describe("0128 — studio-derive trigger + RLS + grants", () => {
+describe("0128: studio-derive trigger + RLS + grants", () => {
   it("derives studio_id from the parent block (anti-spoof), pinned search_path", () => {
     expect(SQL).toMatch(/function public\.session_block_areas_derive_studio\(\)/);
     expect(SQL).toMatch(/select studio_id into v_studio\s*\n?\s*from public\.session_blocks where id = new\.session_block_id/);

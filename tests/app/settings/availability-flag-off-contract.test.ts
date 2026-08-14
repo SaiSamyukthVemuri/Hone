@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR B — the flag-OFF Willow compatibility + rollback contract for the
+// PR B: the flag-OFF Willow compatibility + rollback contract for the
 // Availability page. When practitioner_capacity_enabled !== true the page must
 // render the existing studio-wide experience, load ONLY studio-wide rows (so a
 // rolled-back studio's retained practitioner rows never leak into the studio

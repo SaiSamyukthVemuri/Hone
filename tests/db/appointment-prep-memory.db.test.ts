@@ -25,7 +25,7 @@ import {
 import type { PointOfCareBlock } from "@/lib/sessions/point-of-care-memory";
 
 // APPOINTMENT PREPARATION MEMORY, proven against the REAL migrated local
-// database as the `authenticated` role — so RLS, the 0128 structured-area child
+// database as the `authenticated` role, so RLS, the 0128 structured-area child
 // rows, the soft-delete columns, `record_status`, the 0068 appointment FK and
 // the actual stored types are all exercised rather than mocked.
 //
@@ -50,7 +50,7 @@ const CHARTED_AT = "2026-01-01T10:00:00Z";
 const EMPTY_AT = "2026-06-01T10:00:00Z";
 const DELETED_AT = "2026-06-05T10:00:00Z";
 const VOID_AT = "2026-06-10T10:00:00Z";
-// Strictly before the appointment start — the reachable case where a
+// Strictly before the appointment start, the reachable case where a
 // practitioner starts charting a few minutes early.
 const LINKED_AT = "2026-08-06T13:55:00Z";
 const FUTURE_AT = "2026-09-01T10:00:00Z";
@@ -141,7 +141,7 @@ type Counted = {
 
 // Wraps a harness query fn so a test can prove the read is bounded.
 //
-// A bare statement count is VACUOUS here — loadLastChartedTreatmentForClient
+// A bare statement count is VACUOUS here, loadLastChartedTreatmentForClient
 // contains two literal calls, so it can only ever return 2 no matter how the
 // data grows. `sessionReads` and `blockReads` are the assertions that mean
 // something: they count executions of the two batched statements, which is
@@ -251,7 +251,7 @@ beforeAll(async () => {
              'Ballet F3', 'LOT-A12', true,
              'used', 'Emla 30 min before',
              3, 'mild_redness', $4,
-             true, 'Watch the sideburn — it reacted last time')`,
+             true, 'Watch the sideburn, it reacted last time')`,
     [multiAreaBlockId, s.studioId, chartedSessionId, LONG_REACTION_NOTE],
   );
   await adminQuery(
@@ -297,7 +297,7 @@ beforeAll(async () => {
     [randomUUID(), chartedSessionId, multiAreaBlockId],
   );
 
-  // 2. A NEWER session with nothing charted on it — the exact row that used to
+  // 2. A NEWER session with nothing charted on it, the exact row that used to
   //    win `order started_at desc limit 1` and hide the treatment above.
   emptySessionId = await insertSession(s, s.clientId, EMPTY_AT);
 
@@ -313,7 +313,7 @@ beforeAll(async () => {
   ]);
 
   // 4. A NEWER, fully-charted, VOID session. Constructing this state requires
-  //    the sanctioned harness escape hatch — 0159 permanently blocks the
+  //    the sanctioned harness escape hatch, 0159 permanently blocks the
   //    transition for every role, which is itself the proof there is no bypass.
   voidSessionId = await insertSession(s, s.clientId, VOID_AT);
   await adminQuery(
@@ -323,7 +323,7 @@ beforeAll(async () => {
   );
   await seedLegacyRecordStatus(voidSessionId, "void");
 
-  // 5. THIS appointment's own linked session — charted, and started BEFORE the
+  // 5. THIS appointment's own linked session, charted, and started BEFORE the
   //    appointment's clock time, so only the appointment_id excludes it.
   linkedSessionId = await insertSession(s, s.clientId, LINKED_AT, {
     appointmentId,
@@ -478,7 +478,7 @@ const forStudioA = () =>
 
 describe("0. the SQL mirrors the shipped selects, column for column", () => {
   // Without this, adding a column to the TypeScript constant leaves this suite
-  // testing the OLD shape — green, and blind to the change.
+  // testing the OLD shape, green, and blind to the change.
   const identifiers = (select: string) =>
     select
       .replace(/[\w]+:/g, "")
@@ -507,7 +507,7 @@ describe("0. the SQL mirrors the shipped selects, column for column", () => {
   });
 });
 
-describe("1. positive controls — every excluded fixture genuinely EXISTS", () => {
+describe("1. positive controls: every excluded fixture genuinely EXISTS", () => {
   it("the empty, deleted, void, linked and future rows are all really there", async () => {
     const r = await adminQuery(
       `select id, record_status, deleted_at, appointment_id, started_at
@@ -558,7 +558,7 @@ describe("1. positive controls — every excluded fixture genuinely EXISTS", () 
   });
 });
 
-describe("2. selection — the newest CHARTED treatment before this appointment", () => {
+describe("2. selection: the newest CHARTED treatment before this appointment", () => {
   it("selects the older charted treatment over every newer decoy", async () => {
     const r = await forStudioA();
     expect(r.selected?.id).toBe(chartedSessionId);
@@ -590,7 +590,7 @@ describe("2. selection — the newest CHARTED treatment before this appointment"
     ]) {
       expect(ids).not.toContain(excluded);
     }
-    // The empty row IS a candidate — it is rejected on CONTENT, one layer
+    // The empty row IS a candidate, it is rejected on CONTENT, one layer
     // later. That distinction is the whole point of the two-half selector, so
     // it is asserted rather than glossed over.
     expect(ids).toContain(emptySessionId);
@@ -598,7 +598,7 @@ describe("2. selection — the newest CHARTED treatment before this appointment"
   });
 
   it("a soft-deleted pass crosses the wire but never reaches the model", async () => {
-    // Soft-deleted entries are filtered in JS, not in SQL — the same contract
+    // Soft-deleted entries are filtered in JS, not in SQL, the same contract
     // every other read path in the product uses. Proving BOTH halves means the
     // 'not rendered' assertion above cannot pass merely because the row was
     // never fetched.
@@ -619,7 +619,7 @@ describe("2. selection — the newest CHARTED treatment before this appointment"
     expect(r.memory?.supersededByEmptySession).toBe(true);
   });
 
-  it("WITHOUT the appointment exclusion, the current linked session would win — the control", async () => {
+  it("WITHOUT the appointment exclusion, the current linked session would win, the control", async () => {
     const r = await loadPrep({
       userId: s.userId,
       studioId: s.studioId,
@@ -733,7 +733,7 @@ describe("2. selection — the newest CHARTED treatment before this appointment"
       /Area not recorded|Setup not recorded/i,
     );
     // REGRESSION (adversarial review, P1): this fixture seeded a comment from
-    // the start, and the test asserted only the blockless copy — so it passed
+    // the start, and the test asserted only the blockless copy, so it passed
     // green while the note was unreachable. A blockless pass's narrative has NO
     // other channel to the card.
     expect(r.memory?.notes.hasAny).toBe(true);
@@ -894,7 +894,7 @@ describe("4. the full narrative comes back whole", () => {
     expect(m.notes.cautions).toHaveLength(1);
     expect(m.notes.cautions[0].areaLabel).toBe("Left Cheek · Right Sideburn");
     expect(m.notes.cautions[0].text).toBe(
-      "Watch the sideburn — it reacted last time",
+      "Watch the sideburn, it reacted last time",
     );
   });
 
@@ -989,7 +989,7 @@ describe("5. tenant isolation is enforced by RLS, not by the query", () => {
   });
 });
 
-describe("6. the read is bounded — no N+1 per session, per block, per area or per pass", () => {
+describe("6. the read is bounded, no N+1 per session, per block, per area or per pass", () => {
   it("exactly one candidate read and one batched block read", async () => {
     const r = await forStudioA();
     expect(r.sessionReads).toBe(1);
@@ -1032,7 +1032,7 @@ describe("6. the read is bounded — no N+1 per session, per block, per area or 
       clientId: iso.clientId,
       excludeAppointmentId: appt,
     });
-    // 8 sessions, 8 blocks, 16 structured areas, 8 passes — still 1 + 1.
+    // 8 sessions, 8 blocks, 16 structured areas, 8 passes, still 1 + 1.
     expect(r.sessionReads).toBe(1);
     expect(r.blockReads).toBe(1);
     expect(r.queries).toBe(2);

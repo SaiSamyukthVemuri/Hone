@@ -4,7 +4,7 @@ import path from "node:path";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
 
-// EDGE PACKING — the closing-edge right-pack anchor and its dominance rule.
+// EDGE PACKING: the closing-edge right-pack anchor and its dominance rule.
 //
 // THE DEFECT (reproduced first, in "Phase 3 reproduction" below): every candidate
 // family was derived from the OPENING edge or from a RESERVATION, and none from
@@ -14,7 +14,7 @@ import { localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
 //
 // SCOPE: opt-in via { packAgainstClosingEdge: true }, passed by INTERNAL
 // practitioner surfaces only. The public surfaces omit it because migrations
-// 0170/0171 re-derive this candidate set in SQL and demand exact membership —
+// 0170/0171 re-derive this candidate set in SQL and demand exact membership,
 // see the "public surfaces are byte-for-byte unchanged" block at the bottom.
 
 const TZ = "America/Toronto";
@@ -113,7 +113,7 @@ function packed(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 reproduction — kept as the regression pin for the original defect.
+// Phase 3 reproduction, kept as the regression pin for the original defect.
 // ---------------------------------------------------------------------------
 
 describe("Phase 3 reproduction: the closing edge had no anchor", () => {
@@ -133,11 +133,11 @@ describe("Phase 3 reproduction: the closing edge had no anchor", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A. Chloe's closing-edge case — the primary acceptance case.
+// A. Chloe's closing-edge case, the primary acceptance case.
 // ---------------------------------------------------------------------------
 
 describe("A. Chloe: 09:00-17:00, 45-minute service", () => {
-  it("offers 16:15 — the start whose service ends exactly at close", async () => {
+  it("offers 16:15, the start whose service ends exactly at close", async () => {
     const s = starts(await packed({ duration: 45 }));
     expect(s).toContain(localISO("16:15"));
   });
@@ -158,7 +158,7 @@ describe("A. Chloe: 09:00-17:00, 45-minute service", () => {
     expect(s).toContain(localISO("16:15"));
   });
 
-  it("suppression is slot-count NEUTRAL — one dominated time traded for one packed time", async () => {
+  it("suppression is slot-count NEUTRAL: one dominated time traded for one packed time", async () => {
     const before = await getAvailableSlots(
       mockSupabase({ defaultRow: OPEN_09_17, reservations: [] }),
       studio(0),
@@ -183,7 +183,7 @@ describe("A. Chloe: 09:00-17:00, 45-minute service", () => {
     ]);
   });
 
-  it("only the dominated tail time is removed — every earlier choice survives", async () => {
+  it("only the dominated tail time is removed, every earlier choice survives", async () => {
     const s = starts(await packed({ duration: 45 }));
     for (const t of ["09:00", "10:00", "13:00", "15:00"]) {
       expect(s).toContain(localISO(t));
@@ -192,7 +192,7 @@ describe("A. Chloe: 09:00-17:00, 45-minute service", () => {
 });
 
 // ---------------------------------------------------------------------------
-// B. 60-minute exact close — the anchor coincides with an existing time.
+// B. 60-minute exact close, the anchor coincides with an existing time.
 // ---------------------------------------------------------------------------
 
 describe("B. 60-minute service, 17:00 close", () => {
@@ -231,7 +231,7 @@ describe("B. 60-minute service, 17:00 close", () => {
 });
 
 // ---------------------------------------------------------------------------
-// C. 30-minute service — closing edge added, coarse time RETAINED.
+// C. 30-minute service, closing edge added, coarse time RETAINED.
 // ---------------------------------------------------------------------------
 
 describe("C. 30-minute service, 17:00 close", () => {
@@ -244,7 +244,7 @@ describe("C. 30-minute service, 17:00 close", () => {
     ).toBe(localISO("17:00"));
   });
 
-  it("KEEPS 16:00 — it is not terminal, a further 30-minute booking still fits", async () => {
+  it("KEEPS 16:00, it is not terminal, a further 30-minute booking still fits", async () => {
     // 16:00 -> ends 16:30; another 30-minute service fits 16:30-17:00. The
     // candidate is real choice, not a stranded fragment, so the dominance rule
     // must not touch it. This is the case that proves the rule is not "always
@@ -267,10 +267,10 @@ describe("C. 30-minute service, 17:00 close", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D. Non-round duration — exact arithmetic, no 15-minute rounding.
+// D. Non-round duration, exact arithmetic, no 15-minute rounding.
 // ---------------------------------------------------------------------------
 
-describe("D. 37-minute service — no rounding", () => {
+describe("D. 37-minute service: no rounding", () => {
   it("closing anchor is exactly close - 37m = 16:23", async () => {
     const s = starts(await packed({ duration: 37 }));
     expect(s).toContain(localISO("16:23"));
@@ -297,7 +297,7 @@ describe("D. 37-minute service — no rounding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// E. Backward packing before the next appointment — PRESERVED.
+// E. Backward packing before the next appointment, PRESERVED.
 // ---------------------------------------------------------------------------
 
 describe("E. immediately BEFORE an existing appointment", () => {
@@ -328,7 +328,7 @@ describe("E. immediately BEFORE an existing appointment", () => {
   });
 
   it("a backward anchor is PRECISE and is never suppressed by the dominance rule", async () => {
-    // Day 09:00-17:00, duration 60, buffer 0, appointment 17:00 is impossible —
+    // Day 09:00-17:00, duration 60, buffer 0, appointment 17:00 is impossible,
     // instead put a block at the very end so the backward anchor is terminal.
     const s = starts(
       await packed({
@@ -344,7 +344,7 @@ describe("E. immediately BEFORE an existing appointment", () => {
 });
 
 // ---------------------------------------------------------------------------
-// F. Forward packing after the previous appointment — PRESERVED.
+// F. Forward packing after the previous appointment, PRESERVED.
 // ---------------------------------------------------------------------------
 
 describe("F. immediately AFTER an existing appointment", () => {
@@ -374,7 +374,7 @@ describe("F. immediately AFTER an existing appointment", () => {
   it("a forward anchor is PRECISE and survives even when terminal", async () => {
     // Appointment 15:00-16:00, buffer 0, duration 45, close 17:00.
     // Forward anchor 16:00 is terminal (16:45 + 45 > 17:00) and the closing
-    // anchor 16:15 exists — but 16:00 is a real packing decision (it lets the
+    // anchor 16:15 exists, but 16:00 is a real packing decision (it lets the
     // practitioner finish at 16:45 and leave), so BOTH are offered.
     const s = starts(
       await packed({
@@ -389,7 +389,7 @@ describe("F. immediately AFTER an existing appointment", () => {
 });
 
 // ---------------------------------------------------------------------------
-// G. Timed blocks / recurring breaks — no appointment buffer.
+// G. Timed blocks / recurring breaks, no appointment buffer.
 // ---------------------------------------------------------------------------
 
 describe("G. timed blocks carry NO appointment buffer", () => {
@@ -433,7 +433,7 @@ describe("G. timed blocks carry NO appointment buffer", () => {
 });
 
 // ---------------------------------------------------------------------------
-// H. The trailing buffer MAY extend past close — Hone's authoritative rule.
+// H. The trailing buffer MAY extend past close, Hone's authoritative rule.
 // ---------------------------------------------------------------------------
 
 describe("H. trailing buffer past closing time", () => {
@@ -445,7 +445,7 @@ describe("H. trailing buffer past closing time", () => {
     expect(s).not.toContain(localISO("15:45")); // 17:00 - 45 - 30 (wrong rule)
   });
 
-  it("holds for every buffer value — the anchor never moves", async () => {
+  it("holds for every buffer value, the anchor never moves", async () => {
     for (const buffer of [0, 5, 15, 30, 60]) {
       const s = starts(await packed({ duration: 45, buffer }));
       expect(s).toContain(localISO("16:15"));
@@ -463,7 +463,7 @@ describe("H. trailing buffer past closing time", () => {
 });
 
 // ---------------------------------------------------------------------------
-// I. Overlap — no new candidate may overlap a protected interval.
+// I. Overlap, no new candidate may overlap a protected interval.
 // ---------------------------------------------------------------------------
 
 describe("I. the closing anchor obeys the overlap contract", () => {
@@ -476,7 +476,7 @@ describe("I. the closing anchor obeys the overlap contract", () => {
       }),
     );
     expect(s).not.toContain(localISO("16:15"));
-    // 15:15 IS legal — it is the backward anchor (16:00 - 45 - 0) and its
+    // 15:15 IS legal, it is the backward anchor (16:00 - 45 - 0) and its
     // service end touches the appointment start exactly.
     expect(s).toContain(localISO("15:15"));
     expect(s[s.length - 1]).toBe(localISO("15:15"));
@@ -758,8 +758,8 @@ describe("global invariants", () => {
 
   // The two exhaustive sweeps below are legitimately multi-second, and Vitest's
   // DEFAULT per-test budget is 5000ms. Each sweep walks 286 durations (15..300
-  // inclusive) x 3 (or 2) buffers, and every step generates slots TWICE — the
-  // unpacked baseline and the packed list — so the offered-count sweep alone
+  // inclusive) x 3 (or 2) buffers, and every step generates slots TWICE, the
+  // unpacked baseline and the packed list, so the offered-count sweep alone
   // makes 1716 getAvailableSlots calls. That is the point: the range is
   // exhaustive because a finite sample of `durations` above already missed a
   // real defect (the 91-minute case in the comment further down), so it must not
@@ -769,7 +769,7 @@ describe("global invariants", () => {
   // sweep when this file runs ALONE, but ~4x that under the full 506-file suite
   // on a CI runner, where the fork pool is competing for far fewer cores. Run
   // 31192253014 timed the offered-count sweep out at the 5000ms default with the
-  // ASSERTION never failing — a budget problem misreported as a test failure.
+  // ASSERTION never failing, a budget problem misreported as a test failure.
   //
   // Per CLAUDE.md ("a hard timeout must always EXCEED its performance target"),
   // this is a hard ceiling well above the ~6s CI observation, not a new target.
@@ -814,7 +814,7 @@ describe("global invariants", () => {
   // service dropped both 14:00 and 15:00 for a single 15:29 anchor (7 slots -> 6).
   // Sweeping every minute is what makes the one-for-one trade provable rather
   // than assumed.
-  it("edge packing NEVER reduces the offered count — every duration 15..300", async () => {
+  it("edge packing NEVER reduces the offered count, every duration 15..300", async () => {
     for (let duration = 15; duration <= 300; duration += 1) {
       for (const buffer of [0, 15, 30]) {
         const before = await getAvailableSlots(
@@ -832,7 +832,7 @@ describe("global invariants", () => {
     }
   }, EXHAUSTIVE_SWEEP_TIMEOUT_MS);
 
-  it("AT MOST ONE candidate is ever suppressed — every duration 15..300", async () => {
+  it("AT MOST ONE candidate is ever suppressed, every duration 15..300", async () => {
     for (let duration = 15; duration <= 300; duration += 1) {
       for (const buffer of [0, 30]) {
         const reservations = [appt("11:00", "12:00")];
@@ -899,7 +899,7 @@ describe("global invariants", () => {
 //
 // Migrations 0170/0171 re-derive this candidate set in SQL and require exact
 // millisecond membership (returning 'not_a_public_slot' otherwise). Until that
-// port gains the closing anchor, no public route may pass the option — or the
+// port gains the closing anchor, no public route may pass the option, or the
 // page would offer a time the database refuses.
 // ---------------------------------------------------------------------------
 
@@ -918,7 +918,7 @@ describe("display-vs-acceptance parity: public routes must NOT edge-pack", () =>
     expect(PUBLIC_RESCHEDULE).not.toMatch(/packAgainstClosingEdge/);
   });
 
-  it("the option is opt-in — it defaults to OFF when omitted", async () => {
+  it("the option is opt-in: it defaults to OFF when omitted", async () => {
     const s = starts(
       await getAvailableSlots(
         mockSupabase({ defaultRow: OPEN_09_17, reservations: [] }),
@@ -967,7 +967,7 @@ describe("display-vs-acceptance parity: public routes must NOT edge-pack", () =>
 });
 
 // ---------------------------------------------------------------------------
-// Every INTERNAL surface packs — including both halves of the move flow.
+// Every INTERNAL surface packs, including both halves of the move flow.
 // ---------------------------------------------------------------------------
 
 describe("internal surfaces all opt in", () => {
@@ -985,7 +985,7 @@ describe("internal surfaces all opt in", () => {
     expect(CLIENT_BOOKING).toMatch(/INTERNAL_SLOT_PACKING/);
   });
 
-  it("BOTH move call sites pack — display AND server re-verification", () => {
+  it("BOTH move call sites pack, display AND server re-verification", () => {
     // The move flow generates the list twice. If only the display packed, the
     // practitioner would see the packed slot and the re-check would refuse it.
     const calls = (MOVE.match(/getAvailableSlots\(/g) ?? []).length;

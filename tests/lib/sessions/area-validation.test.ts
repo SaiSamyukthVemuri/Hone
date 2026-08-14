@@ -11,7 +11,7 @@ import { AREAS } from "@/lib/constants";
 // area validation against the FLAT AREAS list (incl. "Full face" + "Other"),
 // never AREA_REGIONS alone. Legacy rows are never validated on read.
 
-describe("validateTreatmentArea — canonical / Full face / Other / custom", () => {
+describe("validateTreatmentArea: canonical / Full face / Other / custom", () => {
   it("accepts a canonical area", () => {
     const r = validateTreatmentArea("Chin", false);
     expect(r).toEqual({ ok: true, value: "Chin", custom: false });
@@ -77,7 +77,7 @@ describe("write paths use the shared validator (source pins)", () => {
   });
   it("copyPreviousSessionAreasAction is contained: it validates/copies no area (zero writes)", () => {
     // The whole-session copy is temporarily paused; it no longer maps or
-    // validates any source area — it returns a fixed unavailable result.
+    // validates any source area, it returns a fixed unavailable result.
     const copyBlock = BLOCK.slice(
       BLOCK.indexOf("copyPreviousSessionAreasAction"),
       BLOCK.indexOf("softDeleteSessionBlockAction"),

@@ -14,7 +14,7 @@ import {
   type ClinicalSummaryBlock,
 } from "@/lib/sessions/clinical-summary";
 
-// Charting UNIFICATION — patient-safety regression coverage. Reactions come from
+// Charting UNIFICATION: patient-safety regression coverage. Reactions come from
 // the union of legacy session_blocks.reaction_type AND canonical reaction chips
 // in electrolysis_entries.observation_chips. These prove every reaction-driven
 // surface reads the unified representation, with severity + "no visible reaction"
@@ -23,14 +23,14 @@ import {
 describe("unified reaction helpers", () => {
   // SUPERSEDED BY Chloe Session 1A. This test previously asserted that
   // "Redness (erythema)" and "Sensitive skin" are ordinary observation chips and
-  // yield NO response signal — which was the defect: they sit in the same merged
+  // yield NO response signal, which was the defect: they sit in the same merged
   // findings box, describe a real skin response, and were invisible to every
   // safety surface. They are now safety-relevant response labels.
   //
   // The half of the guarantee that MUST survive is the other half: a chip that
   // describes hair or follicle morphology is never a clinical response, and
   // nothing is string-guessed.
-  it("classifies responses by the EXPLICIT contract — coded labels plus the safety-relevant labels", () => {
+  it("classifies responses by the EXPLICIT contract, coded labels plus the safety-relevant labels", () => {
     expect(
       reactionLabelsFromChips(["Coarse hair", "Redness (erythema)", "Sensitive skin"]),
     ).toEqual(["Redness (erythema)", "Sensitive skin"]);
@@ -58,7 +58,7 @@ describe("unified reaction helpers", () => {
   it("never substring-matches a clinically distinct label into a response", () => {
     // The laser vocabulary's "Follicular erythema" / "Follicular edema" are
     // DIFFERENT findings. They are not canonical electrolysis chips at all, so
-    // normalizeChips drops them — and they must never be folded into
+    // normalizeChips drops them, and they must never be folded into
     // "Redness (erythema)" / "Slight swelling (edema)" by a substring test.
     expect(reactionLabelsFromChips(["Follicular erythema"])).toEqual([]);
     expect(reactionLabelsFromChips(["Follicular edema"])).toEqual([]);
@@ -116,7 +116,7 @@ describe("unified reaction helpers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Chloe Session 1A — SAFETY-RELEVANT RESPONSE LABELS
+  // Chloe Session 1A, SAFETY-RELEVANT RESPONSE LABELS
   // -------------------------------------------------------------------------
   // These three sit in the same merged findings box as the coded reactions and
   // describe a real skin response. Before this contract they were classified as
@@ -151,7 +151,7 @@ describe("unified reaction helpers", () => {
     ).toBe("Irritation");
   });
 
-  it("A3 Redness (erythema) is a response but NOT notable — it maps to mild_redness", () => {
+  it("A3 Redness (erythema) is a response but NOT notable, it maps to mild_redness", () => {
     // Visible on the response surfaces...
     expect(hasAnyReaction(null, [["Redness (erythema)"]])).toBe(true);
     expect(unifiedReactionLabels(null, [["Redness (erythema)"]])).toEqual([
@@ -214,7 +214,7 @@ describe("unified reaction helpers", () => {
 
   it("A8 prose is never guessed into a response; an exact legacy token is not prose", () => {
     // Legacy hydration splits on commas and matches EXACT whole tokens. Prose is
-    // never promoted — "client mentioned some redness after" stays free text —
+    // never promoted, "client mentioned some redness after" stays free text,
     // and no substring match ever fires.
     const { chips, freeText } = hydrateLegacyChips(
       "Redness (erythema), Coarse hair, client mentioned some redness after",
@@ -226,14 +226,14 @@ describe("unified reaction helpers", () => {
     expect(freeText).toBe("client mentioned some redness after");
 
     // The seven CODED labels had their own column, so a matching comment token
-    // is NOT promoted — that would fabricate a coded reaction from prose.
+    // is NOT promoted, that would fabricate a coded reaction from prose.
     const coded = hydrateLegacyChips("Swelling, Coarse hair");
     expect(coded.chips).toEqual(["Coarse hair"]);
     expect(coded.freeText).toBe("Swelling");
   });
 });
 
-describe("toggleFindingChip — prevents contradictory reaction combinations", () => {
+describe("toggleFindingChip: prevents contradictory reaction combinations", () => {
   it("selecting 'No visible reaction' removes any real reaction chips", () => {
     expect(toggleFindingChip(["Swelling", "Coarse hair"], "No visible reaction")).toEqual([
       "Coarse hair",
@@ -283,7 +283,7 @@ const SESSION = {
   next_session_note: null,
 };
 
-describe("Clients needing attention — unified", () => {
+describe("Clients needing attention: unified", () => {
   function block(over: Partial<Parameters<typeof buildClientsNeedingAttention>[1][number]> = {}) {
     return {
       session_id: "s1",
@@ -304,7 +304,7 @@ describe("Clients needing attention — unified", () => {
     expect(r.clients[0]?.notableReactionLabel).toBe("Irritation");
   });
 
-  // Chloe Session 1A — the whole point of the widened contract: these chips
+  // Chloe Session 1A: the whole point of the widened contract: these chips
   // were being recorded and reaching NO safety surface.
   it("D1 a safety-relevant NOTABLE response flags the client", () => {
     for (const label of ["Slight swelling (edema)", "Sensitive skin"]) {
@@ -345,7 +345,7 @@ describe("Clients needing attention — unified", () => {
   });
 });
 
-describe("Treatment intelligence — unified", () => {
+describe("Treatment intelligence: unified", () => {
   function block(over = {}) {
     return {
       session_id: "s1",
@@ -398,7 +398,7 @@ describe("Treatment intelligence — unified", () => {
   });
 });
 
-describe("Clinical summary — unified reaction line", () => {
+describe("Clinical summary: unified reaction line", () => {
   function block(over: Partial<ClinicalSummaryBlock> = {}): ClinicalSummaryBlock {
     return {
       sort_order: 1,
@@ -436,7 +436,7 @@ describe("Clinical summary — unified reaction line", () => {
   });
 
   // Session B owns lib/sessions/clinical-summary.ts. This PR changes NOTHING in
-  // that file — it changes the shared helper the file already calls, so the
+  // that file, it changes the shared helper the file already calls, so the
   // prior-visit response line picks the three labels up automatically. This test
   // proves that flow-through rather than the file's internals.
   it("D5 the prior-visit response line picks up safety-relevant responses", () => {

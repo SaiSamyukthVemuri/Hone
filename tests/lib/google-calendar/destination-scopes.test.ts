@@ -13,15 +13,15 @@ import {
   CALENDAR_DESTINATION_MODES,
 } from "@/lib/google-calendar/destination-scopes";
 
-// Phase B2.4 — the destination-aware event-scope contract. The ONE trap this
+// Phase B2.4: the destination-aware event-scope contract. The ONE trap this
 // whole module exists to avoid: broad `calendar.events` is a literal PREFIX of
-// `calendar.events.owned`, so membership MUST be exact, normalized Set equality —
+// `calendar.events.owned`, so membership MUST be exact, normalized Set equality,
 // never substring / prefix / startsWith / one-string includes. Unknown/unset
 // modes fail closed (required scopes are NULL, never an empty array).
 const EVENTS_BROAD = "https://www.googleapis.com/auth/calendar.events";
 const DISCOVERY = "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 
-describe("isCalendarDestinationMode — narrows to the two modes only", () => {
+describe("isCalendarDestinationMode: narrows to the two modes only", () => {
   it("accepts exactly the two destination modes", () => {
     expect(isCalendarDestinationMode("dedicated_app_created")).toBe(true);
     expect(isCalendarDestinationMode("existing_owned")).toBe(true);
@@ -47,7 +47,7 @@ describe("isCalendarDestinationMode — narrows to the two modes only", () => {
   });
 });
 
-describe("requiredEventScopesForDestination — exact mapping + fail-closed NULL", () => {
+describe("requiredEventScopesForDestination: exact mapping + fail-closed NULL", () => {
   it("dedicated -> [app.created] only", () => {
     expect(requiredEventScopesForDestination("dedicated_app_created")).toEqual([
       CALENDAR_APP_CREATED_SCOPE,
@@ -58,7 +58,7 @@ describe("requiredEventScopesForDestination — exact mapping + fail-closed NULL
       CALENDAR_EVENTS_OWNED_SCOPE,
     ]);
   });
-  it("null/undefined/empty/unknown/case-variant -> null (NEVER [] — mirrors the DB)", () => {
+  it("null/undefined/empty/unknown/case-variant -> null (NEVER [], mirrors the DB)", () => {
     for (const bad of [null, undefined, "", "  ", "unknown", "existing", "dedicated", "EXISTING_OWNED"]) {
       const r = requiredEventScopesForDestination(bad as unknown as string);
       expect(r).toBeNull();
@@ -73,7 +73,7 @@ describe("requiredEventScopesForDestination — exact mapping + fail-closed NULL
   });
 });
 
-describe("requiredEventScopeFor — the SINGLE bound scope string, else null", () => {
+describe("requiredEventScopeFor: the SINGLE bound scope string, else null", () => {
   it("returns the one exact scope for each mode", () => {
     expect(requiredEventScopeFor("dedicated_app_created")).toBe(CALENDAR_APP_CREATED_SCOPE);
     expect(requiredEventScopeFor("existing_owned")).toBe(CALENDAR_EVENTS_OWNED_SCOPE);
@@ -85,7 +85,7 @@ describe("requiredEventScopeFor — the SINGLE bound scope string, else null", (
   });
 });
 
-describe("normalizeGrantedScopes — split/trim/dedupe/drop-empty, no prefix transforms", () => {
+describe("normalizeGrantedScopes: split/trim/dedupe/drop-empty, no prefix transforms", () => {
   it("splits a whitespace-delimited provider string", () => {
     expect(normalizeGrantedScopes(`openid ${CALENDAR_EVENTS_OWNED_SCOPE}`)).toEqual([
       "openid",
@@ -117,7 +117,7 @@ describe("normalizeGrantedScopes — split/trim/dedupe/drop-empty, no prefix tra
   });
 });
 
-describe("hasRequiredEventScopes — EXACT set membership + prefix rejection + fail-closed", () => {
+describe("hasRequiredEventScopes: EXACT set membership + prefix rejection + fail-closed", () => {
   it("exact app.created satisfies dedicated", () => {
     expect(hasRequiredEventScopes("dedicated_app_created", [CALENDAR_APP_CREATED_SCOPE])).toBe(true);
   });
@@ -184,7 +184,7 @@ describe("missingRequiredEventScopes", () => {
   });
 });
 
-describe("app<->DB parity (generated contract — a one-sided change fails CI)", () => {
+describe("app<->DB parity (generated contract: a one-sided change fails CI)", () => {
   const MIG = readFileSync(
     join(process.cwd(), "supabase/migrations/0131_google_calendar_dual_destination.sql"),
     "utf8",

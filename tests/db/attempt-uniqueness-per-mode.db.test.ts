@@ -9,7 +9,7 @@ import {
 import { randomUUID } from "node:crypto";
 
 // Migration 0105: the active-attempt partial uniques on payment_charge_attempts
-// are now mode-scoped — (session_id, stripe_livemode) for session_payment and
+// are now mode-scoped, (session_id, stripe_livemode) for session_payment and
 // (appointment_id, charge_reason, stripe_livemode) for fees. A test attempt no
 // longer blocks a live attempt for the same session/appointment/reason (and
 // vice versa); same-mode duplicate protection is preserved.
@@ -24,7 +24,7 @@ afterAll(async () => {
   await closePool();
 });
 
-// Each appointment gets its own non-overlapping slot — the studio-wide
+// Each appointment gets its own non-overlapping slot, the studio-wide
 // no_overlapping_active_appointments_per_studio exclusion constraint refuses
 // two appointments at the same time.
 let apptSlot = 0;

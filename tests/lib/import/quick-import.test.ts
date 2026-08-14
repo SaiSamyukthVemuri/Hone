@@ -21,7 +21,7 @@ import {
   type ExistingClient,
 } from "@/lib/import/quick-import";
 
-// PR #257: Quick Import V1 — pure pipeline tests. Heavy here because this is
+// PR #257: Quick Import V1, pure pipeline tests. Heavy here because this is
 // where parsing/normalization/grouping/dedup/mapping safety lives; the action
 // + e2e prove the owner gate and the real writes.
 
@@ -188,7 +188,7 @@ describe("existing-client duplicate detection (create-only, never overwrite)", (
 
   it("skips a confident phone duplicate by default", () => {
     const plan = planFor("client_name,phone\nJordan L,(555) 010-0\n");
-    // phone normalizes to 5550100 — matches c-phone 555-0100
+    // phone normalizes to 5550100: matches c-phone 555-0100
     expect(plan.groups[0].action).toBe("skip_duplicate");
     expect(plan.groups[0].duplicateOf?.reason).toMatch(/phone/i);
   });

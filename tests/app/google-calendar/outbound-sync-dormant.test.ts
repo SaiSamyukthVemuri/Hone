@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// Google Calendar — Phase B outbound-sync dormancy proof.
+// Google Calendar: Phase B outbound-sync dormancy proof.
 //
 // PR B1 added the outbound-sync SCHEMA + queue foundation (migration 0124).
 // PR B2.1 added the transport-neutral WORKER CORE + token lifecycle under
-// lib/google-calendar/sync — which necessarily references the tables/RPCs — but
+// lib/google-calendar/sync, which necessarily references the tables/RPCs, but
 // it is DORMANT: nothing activates it (no app route/action imports it, no cron
 // schedule, no enqueue path). The "not activated" guarantee is proven by
 // tests/app/google-calendar/b2-1-worker-core-dormant.test.ts. This test keeps the
@@ -52,7 +52,7 @@ function walk(dir: string): string[] {
   return out;
 }
 
-describe("PR B1 — outbound sync is dormant (no runtime behavior)", () => {
+describe("PR B1: outbound sync is dormant (no runtime behavior)", () => {
   it("no runtime module OUTSIDE the dormant worker core references the tables or RPCs", () => {
     const offenders: string[] = [];
     for (const dir of SCAN_DIRS) {
@@ -70,7 +70,7 @@ describe("PR B1 — outbound sync is dormant (no runtime behavior)", () => {
   it("no application (app/) route references the raw outbound-sync surface (reconcile + worker routes import the seam only)", () => {
     // Exactly TWO app routes may import the (server-only) google-calendar/sync
     // modules: B2.3-b's reconcile SWEEP route and B2.3-c2's worker-DRAIN route.
-    // NEITHER may reference the raw tables/RPCs directly — those stay behind the
+    // NEITHER may reference the raw tables/RPCs directly, those stay behind the
     // store / worker-runtime seam.
     const SEAM_ROUTES = [
       join("app", "api", "cron", "calendar-reconcile", "route.ts"),

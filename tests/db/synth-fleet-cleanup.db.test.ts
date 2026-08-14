@@ -8,7 +8,7 @@ import {
 
 // Proves the SAFE-SYNTH cleanup contract instead of asserting it:
 //  (1) dropSynthStudio leaves ZERO residual rows across every table the fleet
-//      touches — studios, practitioners, clients, and auth.users;
+//      touches, studios, practitioners, clients, and auth.users;
 //  (2) dropping Studio A cannot delete any Studio B row.
 // db-integration lane, real migrated schema.
 

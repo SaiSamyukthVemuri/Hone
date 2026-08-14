@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // PR #271 (migration 0092): static SQL-text pin of the secure treatment image
-// storage migration — PRIVATE bucket, metadata table, studio-scoped RLS,
+// storage migration, PRIVATE bucket, metadata table, studio-scoped RLS,
 // no-delete + privilege hardening, storage.objects defense-in-depth policies.
 
 const SQL = readFileSync(

@@ -10,7 +10,7 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// Migration 0155 — inventory-backed probe-lot linkage, proven on the REAL
+// Migration 0155: inventory-backed probe-lot linkage, proven on the REAL
 // migrated local database. Covers test points #3, #8, #16, #17, #18, #22:
 //   #22 same-studio inventory link accepted (composite FK)
 //   #8  cross-studio / forged link rejected at the DB (backstop below the app)
@@ -266,7 +266,7 @@ describe("studio-scoped cascade still removes both the block and its inventory",
 // window between applying 0155 and deploying the new app code.
 // -----------------------------------------------------------------------------
 describe("mixed-version: new 0155 RPCs accept OLD app payloads (no probe_inventory_item_id key)", () => {
-  it("create_session_block_with_areas succeeds when p_block lacks the new key — link NULL, manual lot preserved", async () => {
+  it("create_session_block_with_areas succeeds when p_block lacks the new key, link NULL, manual lot preserved", async () => {
     const { sessionId } = await seedSession(a);
     // OLD app payload: NO probe_inventory_item_id key at all.
     const oldPayload = {
@@ -291,7 +291,7 @@ describe("mixed-version: new 0155 RPCs accept OLD app payloads (no probe_invento
     expect(row.rows[0].probe_lot_confirmed).toBe(true); // confirmation unchanged
   });
 
-  it("update_session_block_with_areas succeeds when p_block lacks the new key — no link fabricated, manual semantics intact", async () => {
+  it("update_session_block_with_areas succeeds when p_block lacks the new key, no link fabricated, manual semantics intact", async () => {
     const { sessionId, blockId } = await seedSession(a);
     const oldPayload = {
       primary_area: "Lip",

@@ -14,7 +14,7 @@ import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 //
 // WHY THIS SPEC EXISTS. Chloe reported "I can see the general intake questions
 // but I can't see the answers to the consent forms". PR #529 had shipped a
-// practitioner "Consent forms" section and tested it — but only through the
+// practitioner "Consent forms" section and tested it, but only through the
 // projection helper and a source assertion. Neither could see the actual gap,
 // which was not in the projection at all:
 //
@@ -22,8 +22,8 @@ import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 //     is mounted ONLY under the client profile's `overview` tab, and
 //   * the intake review page never reads `client_consent_signatures`,
 //
-// so a client who completed consent in the PORTAL — which is now the only way
-// photo consent is collected — showed up on her route as "No consent forms
+// so a client who completed consent in the PORTAL, which is now the only way
+// photo consent is collected, showed up on her route as "No consent forms
 // were recorded with this intake." A helper test cannot catch a component that
 // is mounted on the wrong page. This one navigates the real UI.
 //
@@ -57,7 +57,7 @@ async function seedPhotoTemplate(
 
 const seedLivePhotoTemplate = (studioId: string) => seedPhotoTemplate(studioId);
 
-// A real portal signature — the same shape recordConsentSignature writes,
+// A real portal signature: the same shape recordConsentSignature writes,
 // including the typed name only the portal ceremony collects.
 async function seedPortalSignature(
   seed: E2eSeed,
@@ -126,7 +126,7 @@ test.describe("practitioner View intake shows recorded consent", () => {
     await seedE2eIntake(seed.studioId, clientId, "submitted", submittedResponses());
 
     // The studio runs photo consent in the PORTAL, and this client GRANTED it
-    // there — after having denied it in the intake. Both facts must survive.
+    // there, after having denied it in the intake. Both facts must survive.
     const photoTemplateId = await seedLivePhotoTemplate(seed.studioId);
     await seedPortalSignature(seed, clientId, photoTemplateId, "accepted");
 
@@ -135,7 +135,7 @@ test.describe("practitioner View intake shows recorded consent", () => {
     // --- the real journey, not a deep link
     await page.goto(`/clients/${clientId}`);
     // The desktop profile tabs are <button>s driving a ?tab= query param, not
-    // links — the mobile control is a <select>. Both are the same nav.
+    // links, the mobile control is a <select>. Both are the same nav.
     await page.getByRole("button", { name: "Health & Forms" }).click();
     await expect(page).toHaveURL(/tab=health/);
     await page.getByRole("link", { name: /View intake/ }).click();
@@ -152,7 +152,7 @@ test.describe("practitioner View intake shows recorded consent", () => {
     // portal, and the clarity fix is what actually enforces that).
     const recorded = page.getByTestId("intake-review-consent-form");
     await expect(recorded).toHaveCount(1);
-    // Treatment reads "Acknowledged" — never "Signed".
+    // Treatment reads "Acknowledged": never "Signed".
     await expect(recorded.filter({ hasText: "Treatment Consent" })).toContainText(
       "Acknowledged",
     );
@@ -168,7 +168,7 @@ test.describe("practitioner View intake shows recorded consent", () => {
     await expect(portal).not.toContainText("Recorded with this intake");
 
     // --- SECTION 4: the historical intake DENIAL still exists, as history.
-    // Preserved verbatim — same answer, same provenance, same stored text.
+    // Preserved verbatim, same answer, same provenance, same stored text.
     const history = page.getByTestId("consent-history-block");
     // Collapsed by default, so expand it the way a practitioner would.
     await history.locator("> summary").click();
@@ -219,7 +219,7 @@ test.describe("practitioner View intake shows recorded consent", () => {
     await expect(portal).not.toContainText("Not signed");
   });
 
-  test("no portal answer reads as Not completed — never as denied", async ({
+  test("no portal answer reads as Not completed, never as denied", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP);
@@ -236,7 +236,7 @@ test.describe("practitioner View intake shows recorded consent", () => {
     await expect(page.getByTestId("review-portal-photo-status")).toHaveText(
       "Not completed",
     );
-    // Absence is not denial — the distinction this whole feature turns on.
+    // Absence is not denial: the distinction this whole feature turns on.
     await expect(
       page.getByTestId("review-portal-photo-consent"),
     ).not.toContainText("Consent denied");
@@ -246,7 +246,7 @@ test.describe("practitioner View intake shows recorded consent", () => {
 // ---------------------------------------------------------------------------
 // The portal-eligibility boundary, in a real browser against the real database.
 //
-// `status = 'active'` is NOT portal visibility — migration 0072's CHECK still
+// `status = 'active'` is NOT portal visibility, migration 0072's CHECK still
 // permits active + is_live=false, a form the owner activated and deliberately
 // hid. The unit tests pin the resolver; this proves the practitioner's SCREEN
 // obeys it, which is where the wrong claim would actually be read.
@@ -265,7 +265,7 @@ test.describe("View intake reports only forms the client can reach", () => {
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${clientId}/intake`);
 
-    // The intake answers still render — the page is fine, the CLAIM is absent.
+    // The intake answers still render, the page is fine, the CLAIM is absent.
     await expect(page.getByText("Consent forms").first()).toBeVisible();
     // No status row, and above all no "Not completed" against a form the
     // client cannot open.
@@ -414,7 +414,7 @@ async function openReview(page: import("@playwright/test").Page, seed: E2eSeed, 
 }
 
 test.describe("one unmistakable CURRENT consent answer", () => {
-  test("CASE 1 — historical ACCEPT + current DENY: the screen says DENIED, once", async ({
+  test("CASE 1, historical ACCEPT + current DENY: the screen says DENIED, once", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP);
@@ -457,7 +457,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
     await expect(entry).toContainText("Superseded by a newer portal response");
   });
 
-  test("CASE 2 — historical DENY + current ACCEPT: the screen says GRANTED", async ({
+  test("CASE 2, historical DENY + current ACCEPT: the screen says GRANTED", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP);
@@ -485,7 +485,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
     );
   });
 
-  test("CASE 3 — same answer twice still yields exactly ONE current answer", async ({
+  test("CASE 3: same answer twice still yields exactly ONE current answer", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP);
@@ -509,7 +509,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
     await expect(page.getByTestId("consent-history-entry")).toHaveCount(1);
   });
 
-  test("CASE 4 — a live portal form with NO answer is Not completed, not inherited consent", async ({
+  test("CASE 4: a live portal form with NO answer is Not completed, not inherited consent", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP);
@@ -532,7 +532,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
     await expect(current).not.toContainText("Consent granted");
     await expect(current).not.toContainText("Accepted");
 
-    // The prior acceptance survives, and is NOT called superseded — nothing
+    // The prior acceptance survives, and is NOT called superseded, nothing
     // superseded it, because nobody answered the portal form.
     await page.getByTestId("consent-history-block").locator("> summary").click();
     const entry = page.getByTestId("consent-history-entry");
@@ -541,7 +541,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
     await expect(entry).not.toContainText("Superseded");
   });
 
-  test("CASE 5 — no live photo form at all invents no portal requirement", async ({
+  test("CASE 5: no live photo form at all invents no portal requirement", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP);
@@ -565,7 +565,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
     );
   });
 
-  test("CASE 6 — two live photo templates keep two independent current answers", async ({
+  test("CASE 6: two live photo templates keep two independent current answers", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP);
@@ -610,15 +610,15 @@ test.describe("one unmistakable CURRENT consent answer", () => {
     );
   });
 
-  test("CASE 7 — long legal text never dominates the scan view", async ({
+  test("CASE 7: long legal text never dominates the scan view", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP);
     const seed = await seedE2eStudio();
     const { clientId } = await seedE2eClient(seed);
     const templateId = await seedLivePhotoTemplate(seed.studioId);
-    // BOTH a long-bodied TREATMENT form — which is CURRENT and therefore sits
-    // in the top block, not inside the collapsed history — and the historical
+    // BOTH a long-bodied TREATMENT form, which is CURRENT and therefore sits
+    // in the top block, not inside the collapsed history, and the historical
     // photo answer. Seeding only the photo record made an earlier version of
     // this test vacuous: the sole record body lived inside the collapsed
     // history <details>, so it was invisible whatever its own disclosure did,
@@ -667,7 +667,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
       "Acknowledged",
     );
 
-    // No stored legal body is rendered expanded anywhere on arrival — INCLUDING
+    // No stored legal body is rendered expanded anywhere on arrival, INCLUDING
     // the current-block treatment record, which is not hidden behind the
     // history collapse and is therefore the one that discriminates.
     const bodies = page.getByTestId("intake-consent-record-body");
@@ -676,7 +676,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
     for (let i = 0; i < count; i += 1) {
       await expect(bodies.nth(i)).not.toBeVisible();
     }
-    // Present in the DOM — it is preserved history and must never be dropped —
+    // Present in the DOM: it is preserved history and must never be dropped,
     // but NOT rendered to the practitioner until asked for. Absence would be
     // the wrong contract here; invisibility is the right one.
     await expect(
@@ -708,7 +708,7 @@ test.describe("one unmistakable CURRENT consent answer", () => {
 //
 // NOTE ON FIDELITY: the harness engine is mobile-Chromium at 390px, not real
 // iOS Safari. It proves layout order and reachability, not Safari rendering.
-test.describe("mobile — the current answer is reachable without hunting", () => {
+test.describe("mobile: the current answer is reachable without hunting", () => {
   test("current photo status renders above any historical consent text at 390px", async ({
     page,
   }) => {
@@ -745,7 +745,7 @@ test.describe("mobile — the current answer is reachable without hunting", () =
     );
     expect(overflows).toBe(false);
 
-    // The answer is in the FIRST viewport of the consent section — not buried
+    // The answer is in the FIRST viewport of the consent section, not buried
     // under paragraphs of legal copy.
     const section = await page.getByTestId("consent-current-block").boundingBox();
     expect(section).not.toBeNull();

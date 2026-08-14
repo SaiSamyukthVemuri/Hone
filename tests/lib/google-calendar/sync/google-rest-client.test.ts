@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createGoogleRestClient } from "@/lib/google-calendar/sync/google-rest-client";
 
-// Phase B2.1 — the fetch-only Google REST client, unit-tested against MOCKED
+// Phase B2.1: the fetch-only Google REST client, unit-tested against MOCKED
 // HTTP only. Never a live Google call; never wired to appointments/outbox.
 
 function mockResponse(status: number, bodyText: string, headers: Record<string, string> = {}): Response {

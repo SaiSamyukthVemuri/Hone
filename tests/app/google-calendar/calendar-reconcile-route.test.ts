@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReconcileRunResult } from "@/lib/google-calendar/sync/reconcile";
 import type { DeadRowSweepResult } from "@/lib/google-calendar/sync/reconcile-heartbeat";
 
-// Phase B2.3-b — the reconcile route flow (§5/§6/§11/§12). Dependencies are mocked so
+// Phase B2.3-b: the reconcile route flow (§5/§6/§11/§12). Dependencies are mocked so
 // the Case A/B/C control flow + heartbeat tiers are proven directly. finalHeartbeatOutcome
 // and reconcileHeartbeatFromRun stay REAL (via importActual).
 
@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
   pruneMetricEvents: vi.fn(async () => 3),
   recordOpsAlert: vi.fn(async (_i?: unknown) => {}),
   // PR OPS-01: this route now also evaluates reminder-scheduler health in a
-  // `finally`. Mocked here so these cases stay about RECONCILE behaviour —
+  // `finally`. Mocked here so these cases stay about RECONCILE behaviour,
   // unmocked it reads an unconfigured Upstash, classifies "missing", and adds
   // a second recordOpsAlert call to every case. The wiring itself is proven in
   // tests/app/cron/reminder-heartbeat-wiring.test.ts.
@@ -97,7 +97,7 @@ beforeEach(() => {
   h.sweepCalendarDeadRowAlerts.mockResolvedValue(deadResult());
 });
 
-describe("Case A — main coordinator HELD", () => {
+describe("Case A: main coordinator HELD", () => {
   it("returns 202 skipped_held; writes NO heartbeat, runs NO sweep, prunes NOTHING; emits a signal", async () => {
     h.runReconciliation.mockResolvedValue(runResult({ coordinatorSkipped: "held", outcome: "ok" }));
     const res = await GET(req());
@@ -111,7 +111,7 @@ describe("Case A — main coordinator HELD", () => {
   });
 });
 
-describe("Case B — main coordinator UNAVAILABLE", () => {
+describe("Case B: main coordinator UNAVAILABLE", () => {
   it("returns degraded; no maintenance, no successful heartbeat", async () => {
     h.runReconciliation.mockResolvedValue(runResult({ coordinatorSkipped: "unavailable", outcome: "degraded" }));
     const res = await GET(req());
@@ -123,7 +123,7 @@ describe("Case B — main coordinator UNAVAILABLE", () => {
   });
 });
 
-describe("Case C — the main reconciliation ran", () => {
+describe("Case C: the main reconciliation ran", () => {
   it("run ok + dead-row completed -> heartbeat ok; prune + sweep both run", async () => {
     h.runReconciliation.mockResolvedValue(runResult({ outcome: "ok" }));
     h.sweepCalendarDeadRowAlerts.mockResolvedValue(deadResult({ outcome: "completed" }));
@@ -184,8 +184,8 @@ describe("reconciliation-run failure", () => {
 // ---------------------------------------------------------------------------
 // PR OPS-01. This cron is one of three independent detectors for a dead
 // external reminder scheduler. The detection value comes entirely from it
-// running on EVERY exit path — including the early returns that bypass the
-// reconciliation work — so it is asserted here behaviourally, not just by
+// running on EVERY exit path, including the early returns that bypass the
+// reconciliation work, so it is asserted here behaviourally, not just by
 // source grep.
 // ---------------------------------------------------------------------------
 describe("reminder-scheduler health is evaluated on every exit path (PR OPS-01)", () => {

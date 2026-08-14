@@ -85,7 +85,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("completeOnboardingAction — server-authoritative gate", () => {
+describe("completeOnboardingAction: server-authoritative gate", () => {
   it("non-owner is refused; nothing written, no event", async () => {
     setCaller("practitioner", true);
     const res = await completeOnboardingAction();
@@ -150,7 +150,7 @@ describe("completeOnboardingAction — server-authoritative gate", () => {
   });
 });
 
-describe("markCelebrationShownAction — live-completion guard + idempotent", () => {
+describe("markCelebrationShownAction: live-completion guard + idempotent", () => {
   it("does NOT consume the one-time stamp while setup is incomplete", async () => {
     setCaller("owner", true);
     setSignals(false);

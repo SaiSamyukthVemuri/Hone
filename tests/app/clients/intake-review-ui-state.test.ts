@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// F-CLIN-004 — UI state model pins for the intake review surface.
+// F-CLIN-004: UI state model pins for the intake review surface.
 //
 // CONVENTION NOTE. The unit lane runs `environment: "node"` and the repo ships
 // no jsdom / React Testing Library (see tests/lib/consent/signature-status.ts:108
 // for the same statement). So structure is pinned here by source assertion, and
-// the REAL rendered behaviour — Cancel issuing zero requests, one transition per
+// the REAL rendered behaviour, Cancel issuing zero requests, one transition per
 // confirm, 44px targets measured in a live layout, no horizontal overflow at
-// 390px, reload-durable Reviewed state — is proven in the browser E2E lane by
+// 390px, reload-durable Reviewed state, is proven in the browser E2E lane by
 // e2e/intake-review-integrity.spec.ts, using database state as the oracle.
 //
 // These pins exist so a future edit cannot silently reintroduce the defect:
@@ -60,7 +60,7 @@ const NOTES_FN = slice(
 );
 const CHANGED_ACTIONS = `${REVIEW_FN}\n${NOTES_FN}`;
 
-describe("F-CLIN-004 UI — the boolean is gone, the real status is passed", () => {
+describe("F-CLIN-004 UI: the boolean is gone, the real status is passed", () => {
   it("the component takes an IntakeStatus, not an alreadyReviewed boolean", () => {
     expect(FORM_CODE).toMatch(/status:\s*IntakeStatus/);
     expect(FORM_CODE).not.toMatch(/alreadyReviewed/);
@@ -77,7 +77,7 @@ describe("F-CLIN-004 UI — the boolean is gone, the real status is passed", () 
   });
 });
 
-describe("F-CLIN-004 UI — the review CTA is gated on submitted ONLY", () => {
+describe("F-CLIN-004 UI: the review CTA is gated on submitted ONLY", () => {
   it("Mark reviewed renders only when status === 'submitted'", () => {
     expect(FORM_CODE).toMatch(
       /\{status === "submitted" &&[\s\S]{0,600}?data-testid="intake-mark-reviewed"/,
@@ -127,7 +127,7 @@ describe("F-CLIN-004 UI — the review CTA is gated on submitted ONLY", () => {
   });
 });
 
-describe("F-CLIN-004 UI — notes stay available in every status", () => {
+describe("F-CLIN-004 UI: notes stay available in every status", () => {
   it("the textarea is rendered unconditionally, outside any status branch", () => {
     expect(FORM_CODE).toMatch(/data-testid="intake-save-notes"/);
     expect(FORM_CODE).toMatch(/<textarea/);
@@ -146,7 +146,7 @@ describe("F-CLIN-004 UI — notes stay available in every status", () => {
   });
 });
 
-describe("F-CLIN-004 UI — confirmation is required and safe", () => {
+describe("F-CLIN-004 UI: confirmation is required and safe", () => {
   it("uses the house accessible in-DOM ConfirmDialog, never window.confirm", () => {
     expect(FORM_CODE).toMatch(
       /import \{ ConfirmDialog \} from "@\/components\/confirm-dialog"/,
@@ -160,14 +160,14 @@ describe("F-CLIN-004 UI — confirmation is required and safe", () => {
   // lets a mutation like `open={false && confirmOpen}` disable the whole
   // confirmation while the pin stays green. Pin the openness expression
   // exactly, and require the confirm handler to be the review call.
-  it("the dialog's open state is exactly the confirmOpen flag — nothing falsified", () => {
+  it("the dialog's open state is exactly the confirmOpen flag, nothing falsified", () => {
     expect(FORM_CODE).toMatch(/<ConfirmDialog\s+open=\{confirmOpen\}/);
     expect(FORM_CODE).not.toMatch(/open=\{false/);
     expect(FORM_CODE).not.toMatch(/open=\{[^}]*&&[^}]*\}/);
     expect(FORM_CODE).toMatch(/onConfirm=\{confirmReview\}/);
   });
 
-  it("the CTA only OPENS the dialog — it never calls a server action", () => {
+  it("the CTA only OPENS the dialog, it never calls a server action", () => {
     // The button's onClick sets dialog state; the action name must not appear
     // anywhere in the button's handler.
     const btn = FORM_CODE.slice(
@@ -178,7 +178,7 @@ describe("F-CLIN-004 UI — confirmation is required and safe", () => {
     expect(btn).not.toMatch(/markIntakeReviewedAction/);
   });
 
-  it("Cancel only closes — it performs zero server action calls", () => {
+  it("Cancel only closes: it performs zero server action calls", () => {
     const cancel = FORM_CODE.slice(FORM_CODE.indexOf("onCancel={"));
     expect(cancel).toMatch(/setConfirmOpen\(false\)/);
     expect(cancel).not.toMatch(/markIntakeReviewedAction/);
@@ -214,7 +214,7 @@ describe("F-CLIN-004 UI — confirmation is required and safe", () => {
   });
 });
 
-describe("F-CLIN-004 UI — single-flight, no optimism, durable refresh", () => {
+describe("F-CLIN-004 UI: single-flight, no optimism, durable refresh", () => {
   it("confirm is single-flight via a synchronous in-flight latch plus isPending", () => {
     expect(FORM_CODE).toMatch(/const inFlight = useRef\(false\)/);
     expect(FORM_CODE).toMatch(/if \(inFlight\.current\) return;/);
@@ -223,7 +223,7 @@ describe("F-CLIN-004 UI — single-flight, no optimism, durable refresh", () => 
     expect(FORM_CODE).toMatch(/pending=\{isPending\}/);
   });
 
-  it("no optimistic reviewed state — the component never sets status locally", () => {
+  it("no optimistic reviewed state: the component never sets status locally", () => {
     expect(FORM_CODE).not.toMatch(/setStatus\(/);
     expect(FORM_CODE).not.toMatch(/useState.*status/);
   });
@@ -231,7 +231,7 @@ describe("F-CLIN-004 UI — single-flight, no optimism, durable refresh", () => 
   it("BOTH the success and the safe-failure paths call router.refresh()", () => {
     // Slice confirmReview() precisely. An earlier version of this test ended
     // the slice at a marker that a later edit deleted, so indexOf returned -1
-    // and slice(start, -1) silently widened to almost the whole file — the
+    // and slice(start, -1) silently widened to almost the whole file, the
     // assertion still passed, but it was no longer scoped to this function.
     // Both markers are now asserted to exist before the slice is taken.
     const start = FORM_CODE.indexOf("function confirmReview()");
@@ -287,7 +287,7 @@ describe("F-CLIN-004 UI — single-flight, no optimism, durable refresh", () => 
   });
 });
 
-describe("F-CLIN-004 actions — the conditional update is the single authority", () => {
+describe("F-CLIN-004 actions: the conditional update is the single authority", () => {
   it("the review update carries all six predicates", () => {
     const upd = REVIEW_FN;
     expect(upd).toMatch(/\.eq\("id", intakeId\)/);
@@ -347,7 +347,7 @@ describe("F-CLIN-004 actions — the conditional update is the single authority"
   });
 });
 
-describe("F-CLIN-004 — the open database boundary is recorded in source", () => {
+describe("F-CLIN-004: the open database boundary is recorded in source", () => {
   it("actions.ts states plainly that the DB boundary is still open", () => {
     expect(ACTIONS).toMatch(/F-CLIN-004 REMAINS OPEN at the database boundary/);
     expect(ACTIONS).toMatch(/0162/);

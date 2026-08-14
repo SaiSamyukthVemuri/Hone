@@ -44,7 +44,7 @@ describe("the authoritative amount is displayed, not edited", () => {
     expect(amountRegion).toMatch(/amount\.customPricingNote/);
   });
 
-  it("blocked pricing replaces the form with a calm reason — never a blank box", () => {
+  it("blocked pricing replaces the form with a calm reason, never a blank box", () => {
     expect(CARD).toMatch(/data-testid="pricing-blocked"/);
     // Review 3780456783 moved this call into the shared presentation decision
     // (lib/billing/ready-control-permission), so the card renders the returned
@@ -87,7 +87,7 @@ describe("the authoritative amount is displayed, not edited", () => {
     ]) {
       expect(CARD).toContain(prop);
     }
-    // Execution still receives only the attempt id — no amount argument.
+    // Execution still receives only the attempt id, no amount argument.
     expect(CARD).not.toMatch(/executeAction[\s\S]{0,200}amount/);
   });
 });

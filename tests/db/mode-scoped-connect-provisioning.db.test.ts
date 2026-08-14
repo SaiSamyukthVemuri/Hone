@@ -29,18 +29,18 @@ import { randomUUID } from "node:crypto";
 // FIXTURE ISOLATION (repeat-run safety).
 //
 // `studio_payment_settings_stripe_account_id_key` is UNIQUE (stripe_account_id)
-// GLOBALLY — not per studio. This suite used to hard-code `acct_harness_test_1`
+// GLOBALLY, not per studio. This suite used to hard-code `acct_harness_test_1`
 // and friends, so the first run persisted those ids against that run's studio
 // and every later run against the SAME database seeded a NEW studio and then
 // collided: the claim could not be completed, and the downstream
 // client_stripe_customers FK had no (studio, account, mode) tuple to point at.
 // It passed on a freshly reset DB and failed on the second run, which is the
-// worst shape for a test — green in CI, red for whoever runs it locally twice.
+// worst shape for a test, green in CI, red for whoever runs it locally twice.
 //
 // Every synthetic Stripe account id is therefore derived from ONE run-unique
 // namespace. Nothing here deletes rows: isolation comes from identity, so two
 // namespaces (and two concurrent runs) can coexist in one database. The product
-// constraint is untouched — this suite still proves it, using a collision it
+// constraint is untouched, this suite still proves it, using a collision it
 // creates deliberately INSIDE its own namespace rather than inheriting one from
 // a previous run.
 const NS = randomUUID().slice(0, 8);
@@ -242,7 +242,7 @@ describe("get_studio_payment_settings_display: mode-scoped, owner-gated", () => 
       `select * from public.get_studio_payment_settings_display($1, $2)`,
       [fresh.studioId, true],
     );
-    expect(live.rows).toHaveLength(0); // not connected in live — NOT the test row
+    expect(live.rows).toHaveLength(0); // not connected in live, NOT the test row
   });
 
   it("is owner-gated (a stranger cannot read another studio's settings)", async () => {

@@ -100,8 +100,8 @@ export type UserQuery = (
 ) => Promise<QueryResult>;
 
 // Run several admin statements inside ONE transaction on ONE connection, so
-// they share a single `now()`. `adminQuery` is autocommit — each call is its
-// own transaction with its own transaction timestamp — which is fine for
+// they share a single `now()`. `adminQuery` is autocommit, each call is its
+// own transaction with its own transaction timestamp, which is fine for
 // seeding but wrong whenever a test's meaning depends on two statements
 // observing the SAME clock (B4's repair window measures "exactly 72 hours"
 // between an audit row's created_at and the command's now()).
@@ -154,7 +154,7 @@ export async function asUser<T>(
 }
 
 // Run `fn` under an explicit Postgres role (anon / authenticated / service_role)
-// in a rolled-back transaction — for function-level EXECUTE privilege probes.
+// in a rolled-back transaction, for function-level EXECUTE privilege probes.
 // `role` is an allow-listed test literal, never user input.
 const ROLE_ALLOWLIST = new Set(["anon", "authenticated", "service_role"]);
 export async function asRole<T>(
@@ -256,7 +256,7 @@ export async function seedMember(
 // way to construct the state is to disable the retirement trigger as the table
 // OWNER, write, and re-enable. That is deliberate and deliberately noisy: it is
 // proof that the shipped schema carries no bypass at all. `anon`, `authenticated`
-// and `service_role` cannot do this — only the migration channel can, which is
+// and `service_role` cannot do this, only the migration channel can, which is
 // exactly the posture the product decision asks for. Any suite calling this is
 // asserting something about the ONE preserved legacy artifact, never about a
 // capability a practitioner has.
@@ -280,7 +280,7 @@ export async function seedLegacyRecordStatus(
 }
 
 // ===========================================================================
-// B5 / 0174 — appointment_audit TEST-ONLY fixtures
+// B5 / 0174, appointment_audit TEST-ONLY fixtures
 // ===========================================================================
 //
 // 0174 made `public.appointment_audit` structurally append-only and made its
@@ -292,14 +292,14 @@ export async function seedLegacyRecordStatus(
 //     mutation except the ON DELETE SET NULL detach.
 //
 // Both are exactly the point of B5, so neither may be softened to suit tests.
-// But some suites legitimately need HISTORICAL audit rows — B4's 72-hour repair
+// But some suites legitimately need HISTORICAL audit rows, B4's 72-hour repair
 // window is measured from `appointment_audit.created_at DESC`, so proving the
 // boundary requires a row that really is 72 hours old.
 //
 // The three helpers below are the sanctioned way to build that state, and they
 // follow `seedLegacyRecordStatus` above verbatim: disable the trigger as the
 // table OWNER, write, re-enable in a `finally`. That capability belongs to the
-// migration channel alone — `anon`, `authenticated` and `service_role` cannot
+// migration channel alone, `anon`, `authenticated` and `service_role` cannot
 // reach it, and after 0174 service_role holds no INSERT/UPDATE/DELETE on the
 // table at all.
 //
@@ -346,7 +346,7 @@ export async function seedHistoricalAppointmentAudit(opts: {
 }): Promise<void> {
   await withAuditTriggerDisabled(AUDIT_DERIVE_TRG, async () => {
     // studio_id is NOT NULL and the derive trigger is off, so it is resolved
-    // here from the parent appointment — the same value the trigger would have
+    // here from the parent appointment, the same value the trigger would have
     // derived, never a caller-chosen tenant.
     await adminQuery(
       `insert into public.appointment_audit
@@ -389,7 +389,7 @@ export async function backdateAppointmentAudit(
 }
 
 // Remove appointment_audit rows for a studio, bypassing the append-only
-// trigger. Fixture teardown ONLY — 0174 deliberately leaves no runtime path
+// trigger. Fixture teardown ONLY, 0174 deliberately leaves no runtime path
 // that can delete an audit row, including for service_role.
 export async function purgeAppointmentAudit(studioId: string): Promise<void> {
   await withAuditTriggerDisabled(AUDIT_APPEND_ONLY_TRG, async () => {

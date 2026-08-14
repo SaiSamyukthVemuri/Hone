@@ -8,7 +8,7 @@ import {
 import { loginAsOwner } from "./helpers/flows";
 
 // Personal Notes bullet workflow, run in MOBILE CHROMIUM at iPhone (390px)
-// dimensions + hasTouch (the repo E2E engine is Chromium — this is NOT real iOS
+// dimensions + hasTouch (the repo E2E engine is Chromium, this is NOT real iOS
 // Safari/WebKit). Proves: existing text loads unchanged, Add bullet + Enter
 // continuation work, save persists the exact PLAIN text, reload restores it, and
 // there is no horizontal overflow.
@@ -46,11 +46,11 @@ test("owner adds bullets to Personal Notes on iPhone; plain text persists", asyn
     await expect(ta).toHaveValue("Loves gardening.\n• Ask about vacation\n• Prefers afternoons");
     await noOverflow(page, "personal tab @390 (bulleting)");
 
-    // Save, then reload — plain text preserved exactly.
+    // Save, then reload: plain text preserved exactly.
     await page.getByRole("button", { name: /^Save$/ }).click();
     await expect(page.getByText("Saved.")).toBeVisible({ timeout: 15_000 });
     // The browser normalizes <textarea> newlines to CRLF when the form's
-    // FormData is built on submit (WHATWG form-submission spec) — so the stored
+    // FormData is built on submit (WHATWG form-submission spec), so the stored
     // value uses "\r\n". This is pre-existing for every multi-line note and the
     // existing save action is unchanged; the browser converts CRLF back to "\n"
     // when the value is loaded into a textarea, so the practitioner always sees

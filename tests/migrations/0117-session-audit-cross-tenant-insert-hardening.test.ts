@@ -13,7 +13,7 @@ const FILE = "0117_session_audit_cross_tenant_insert_hardening.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0117 — number", () => {
+describe("0117: number", () => {
   it("0117 exists; the repo-max tripwire now lives in the 0118 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
@@ -27,7 +27,7 @@ describe("0117 — number", () => {
   });
 });
 
-describe("0117 — session_audit cross-tenant INSERT hardening", () => {
+describe("0117: session_audit cross-tenant INSERT hardening", () => {
   it("replaces the session_audit INSERT policy (drop + create)", () => {
     expect(SQL_CODE).toMatch(
       /drop policy if exists "session_audit_studio_member_insert" on public\.session_audit;/,
@@ -48,7 +48,7 @@ describe("0117 — session_audit cross-tenant INSERT hardening", () => {
     expect(SQL_CODE).toMatch(/where c\.studio_id in \(/);
   });
 
-  it("changes ONLY the INSERT policy — no SELECT/UPDATE/DELETE policy, no grant, no schema/data change", () => {
+  it("changes ONLY the INSERT policy, no SELECT/UPDATE/DELETE policy, no grant, no schema/data change", () => {
     // Only the INSERT policy is dropped/created.
     expect(SQL_CODE).not.toMatch(/for (select|update|delete)/i);
     expect(SQL_CODE).not.toMatch(/studio_member_read/);

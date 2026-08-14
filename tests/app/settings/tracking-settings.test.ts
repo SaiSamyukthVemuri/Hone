@@ -10,7 +10,7 @@ const ACTIONS = read("app/(app)/settings/tracking/actions.ts");
 const PAGE = read("app/(app)/settings/tracking/page.tsx");
 const FORM = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
 
-describe("tracking settings — owner-gated + encrypted-at-rest", () => {
+describe("tracking settings: owner-gated + encrypted-at-rest", () => {
   it("every action rejects non-owners", () => {
     expect(ACTIONS).toMatch(/practitioner\.role !== "owner"/);
     expect(ACTIONS).toMatch(/requireOwner/);
@@ -42,7 +42,7 @@ describe("tracking settings — owner-gated + encrypted-at-rest", () => {
   });
 });
 
-describe("tracking settings — the encrypted token never reaches the client", () => {
+describe("tracking settings: the encrypted token never reaches the client", () => {
   it("the server page selects only redacted status, NOT encrypted_server_token", () => {
     expect(PAGE).toMatch(/server_token_last4/);
     expect(PAGE).not.toMatch(/select\([^)]*encrypted_server_token/);

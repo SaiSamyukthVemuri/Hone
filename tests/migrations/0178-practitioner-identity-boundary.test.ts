@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
-// 0178 — practitioner identity + mutation boundary. STATIC contract.
+// 0178: practitioner identity + mutation boundary. STATIC contract.
 //
 // Behaviour is proved against a real database in
 // tests/db/practitioner-identity-boundary.db.test.ts and
@@ -14,22 +14,22 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 const FILE = "supabase/migrations/0178_practitioner_identity_boundary.sql";
 const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 
-// EXECUTABLE SQL ONLY — line comments stripped. The header deliberately NAMES
+// EXECUTABLE SQL ONLY: line comments stripped. The header deliberately NAMES
 // what it does not touch, so a scope assertion over raw text would fail on the
 // very prose documenting the discipline.
 const EXEC = SQL.split("\n")
   .map((l) => l.replace(/--.*$/, ""))
   .join("\n");
 
-describe("0178 — migration state", () => {
+describe("0178: migration state", () => {
   // THE HAND-OFF HAPPENED. This block used to assert isRepoMax("0178"),
   // versionsAbove([]) and countVersion("0179") === 0. 0179 (actor FK integrity)
   // was authored above it, and the header of this file predicted every one of
   // those going red and named the fix: convert to a floor and let the CURRENT
   // maximum's test carry the tripwire (CLAUDE.md §2). That is what happened
-  // here — the successor assertions now live in
+  // here, the successor assertions now live in
   // tests/migrations/0179-actor-fk-integrity.test.ts.
-  it("is no longer the repository maximum — 0179 was authored above it", () => {
+  it("is no longer the repository maximum, 0179 was authored above it", () => {
     expect(isRepoMax("0178")).toBe(false);
     expect(versionsAbove("0178")).toContain("0179");
   });
@@ -40,7 +40,7 @@ describe("0178 — migration state", () => {
   });
 });
 
-describe("0178 — transaction envelope", () => {
+describe("0178: transaction envelope", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     const lines = SQL.split("\n").map((l) => l.trim()).filter(Boolean);
     const b = lines.findIndex((l) => l === "begin;");
@@ -50,7 +50,7 @@ describe("0178 — transaction envelope", () => {
   });
 });
 
-describe("0178 — own-preference commands", () => {
+describe("0178: own-preference commands", () => {
   const CMDS = [
     "update_own_practitioner_profile",
     "set_own_calendar_feed_token_hash",
@@ -129,7 +129,7 @@ describe("0178 — own-preference commands", () => {
   });
 });
 
-describe("0178 — treatment-image actor", () => {
+describe("0178: treatment-image actor", () => {
   it("drops the global no-argument helper and replaces it with a studio-scoped one", () => {
     expect(EXEC).toMatch(/drop function if exists public\.treatment_image_actor\(\);/);
     const helper =
@@ -200,8 +200,8 @@ describe("0178 — treatment-image actor", () => {
   });
 });
 
-describe("0178 — privilege closure on public.practitioners", () => {
-  it("STATES the policy — revoke ALL, then grant back only SELECT", () => {
+describe("0178: privilege closure on public.practitioners", () => {
+  it("STATES the policy: revoke ALL, then grant back only SELECT", () => {
     // An enumerated "everything except SELECT" list is a maintenance burden that
     // already failed once: PostgreSQL 17 added MAINTAIN, the list did not know
     // about it, and it survived. Revoking ALL cannot be outrun by a future
@@ -247,7 +247,7 @@ describe("0178 — privilege closure on public.practitioners", () => {
   });
 });
 
-describe("0178 — scope discipline", () => {
+describe("0178: scope discipline", () => {
   it("touches NO appointment object and does not re-emit the protected buffer", () => {
     for (const obj of [
       "snapshot_appointment_buffer",
@@ -287,7 +287,7 @@ describe("0178 — scope discipline", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PRODUCTION TRUTH — 0178 was APPLIED on 2026-08-11.
+// PRODUCTION TRUTH, 0178 was APPLIED on 2026-08-11.
 //
 // Per CLAUDE.md §2 the CURRENT maximum migration's own test carries the
 // repo/hosted tripwire, and hosted state is DECLARED (never derived from
@@ -295,7 +295,7 @@ describe("0178 — scope discipline", () => {
 // lives for 0178, and it is deliberately the only current-state owner.
 //
 // THE HAND-OFF, STATED BEFORE IT IS NEEDED. When 0179 is AUTHORED, the
-// repo-max/equality assertions below go red — that is the hand-off, not a
+// repo-max/equality assertions below go red, that is the hand-off, not a
 // defect: repo max becomes 0179 while hosted stays 0178 until it is applied.
 // The amendment is the one 0174 and 0177 each received in turn:
 //
@@ -307,7 +307,7 @@ describe("0178 — scope discipline", () => {
 //
 // Do NOT instead weaken this block and leave two owners of current state.
 // ---------------------------------------------------------------------------
-describe("0178 — production truth: APPLIED 2026-08-11", () => {
+describe("0178, production truth: APPLIED 2026-08-11", () => {
   const rec = JSON.parse(
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
@@ -319,7 +319,7 @@ describe("0178 — production truth: APPLIED 2026-08-11", () => {
   it("0178 is APPLIED in production and remains a floor under the hosted max", () => {
     // CONVERTED TO A FLOOR, exactly as this file's header instructed when a
     // successor was authored. 0178's permanent claim is that production reached
-    // it — NOT that production has stopped there. 0179 is authored but NOT yet
+    // it, NOT that production has stopped there. 0179 is authored but NOT yet
     // applied, so repo max (0179) and hosted max (0178) legitimately differ and
     // an equality assertion here would be false-red on a correct tree.
     expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeGreaterThanOrEqual(178);
@@ -340,7 +340,7 @@ describe("0178 — production truth: APPLIED 2026-08-11", () => {
   });
 
   // 0178's apply evidence MOVED when 0179 landed. `migration-state.json`'s
-  // hosted_note is a CURRENT-STATE field — it now describes 0179 — so asserting
+  // hosted_note is a CURRENT-STATE field, it now describes 0179, so asserting
   // 0178's facts against it would either go red or, worse, pass by coincidence
   // on a successor's wording. 0178's permanent record is the frozen ledger
   // entry, and that is what these assertions read.
@@ -378,7 +378,7 @@ describe("0178 — production truth: APPLIED 2026-08-11", () => {
   it("0178's state block was DEMOTED to Previous, byte-preserved, when 0179 landed", () => {
     // THE HAND-OFF HAPPENED. This used to slice the ledger's CURRENT state
     // block and assert it described 0178. Recording the 0179 apply moved that
-    // block to Previous — heading-only reclassification, body preserved — and
+    // block to Previous, heading-only reclassification, body preserved, and
     // current-state ownership now belongs to 0179's own test. Asserting on the
     // Current block here would be false-red on a correct tree.
     const PREV_HEAD = "## Previous state (verified 2026-08-11, post-0178 apply)";

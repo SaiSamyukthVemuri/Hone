@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// Migration 0160 — a treatment record belongs to ONE client and ONE encounter.
+// Migration 0160: a treatment record belongs to ONE client and ONE encounter.
 //
 // Closes same-studio wrong-client / wrong-record re-parenting: RLS correctly refuses
 // a cross-STUDIO move, but within a studio the member policies are
@@ -28,7 +28,7 @@ function fn(name: string): string {
   return CODE.slice(start, CODE.indexOf("$$", open + 2) + 2);
 }
 
-describe("0160 — immutable clinical lineage", () => {
+describe("0160: immutable clinical lineage", () => {
   // The repo-max pin now lives in the 0163 test; 0162 is the current PRODUCTION max.
   it("is present, 0159 precedes it, exactly one 0160, and nothing 0164+ yet", () => {
     expect(FILE).toMatch(/^0160_.*\.sql$/);
@@ -60,7 +60,7 @@ describe("0160 — immutable clinical lineage", () => {
       expect(flat, `${f} names 0160`).toMatch(/0160/);
       expect(
         flat,
-        `${f} must not still describe 0160 as unapplied/pending — it was applied 2026-07-30`,
+        `${f} must not still describe 0160 as unapplied/pending, it was applied 2026-07-30`,
       ).not.toMatch(
         // Scoped to the MIGRATION's status. "…source merge is pending" is a different
         // claim about the PR, not about whether the migration ran.
@@ -73,7 +73,7 @@ describe("0160 — immutable clinical lineage", () => {
     }
     const dbRls = read("docs/09_DATABASE_AND_RLS.md").replace(/\s+/g, " ");
     // 0162 was applied 2026-08-02, so the production max advanced past 0161.
-    // 0160 itself remains applied and immutable — that is asserted above.
+    // 0160 itself remains applied and immutable, that is asserted above.
     expect(
       dbRls,
       "docs/09 must state the production migration max is 0165",
@@ -110,7 +110,7 @@ describe("0160 — immutable clinical lineage", () => {
     const APPLIED_SHA = "e56a1ee7efc95e561cd17a0c33750ee4aaaf2a956f425576af39ce4a0e6094d4";
     expect(
       createHash("sha256").update(SQL).digest("hex"),
-      "0160 is APPLIED in production with this checksum. Never edit an applied migration — " +
+      "0160 is APPLIED in production with this checksum. Never edit an applied migration, " +
         "write a new one (0161).",
     ).toBe(APPLIED_SHA);
     const ledger = readFileSync(join(process.cwd(), "docs/production/migration-ledger.md"), "utf8");
@@ -157,7 +157,7 @@ describe("0160 — immutable clinical lineage", () => {
       "## L20 — `service_role` retains `TRIGGER` on the clinical tables",
       "## L21 — hard-deleting a session in the SAME transaction",
     ]) {
-      expect(kl, `${heading} must still exist — 0160 closed none of these`).toContain(heading);
+      expect(kl, `${heading} must still exist, 0160 closed none of these`).toContain(heading);
     }
     const flat = kl.replace(/\s+/g, " ");
     expect(flat, "L20 must be marked as remaining open").toMatch(
@@ -180,7 +180,7 @@ describe("0160 — immutable clinical lineage", () => {
   });
 });
 
-describe("0160 — the guards", () => {
+describe("0160: the guards", () => {
   it("the strict guard compares OLD vs NEW only, and needs no elevated rights", () => {
     const body = fn("guard_immutable_clinical_lineage");
     expect(body).toMatch(/security invoker/);
@@ -188,14 +188,14 @@ describe("0160 — the guards", () => {
     expect(body).toMatch(/v_old is distinct from v_new/);
     // Driven by TG_ARGV so each table names its own immutable columns.
     expect(body).toMatch(/foreach v_col in array tg_argv/);
-    // It reads no table — the less authority a guard holds, the less to abuse.
+    // It reads no table: the less authority a guard holds, the less to abuse.
     expect(body).not.toMatch(/\bfrom public\./);
   });
 
   it("the CLEARABLE guard exists and tolerates a transition to NULL", () => {
     // electrolysis_entries(session_id, block_id) -> session_blocks is ON DELETE SET
     // NULL (block_id). A blunt guard would reject that cascade and make block
-    // deletion impossible — the trap 0093 already navigated for treatment_images.
+    // deletion impossible, the trap 0093 already navigated for treatment_images.
     const body = fn("guard_clearable_clinical_lineage");
     expect(body).toMatch(/v_old is distinct from v_new and v_new is not null/);
     expect(SQL).toMatch(/ON DELETE SET NULL/);
@@ -226,7 +226,7 @@ describe("0160 — the guards", () => {
     );
   });
 
-  it("deliberately does NOT re-guard treatment_images — 0093 already does it, better", () => {
+  it("deliberately does NOT re-guard treatment_images, 0093 already does it, better", () => {
     expect(CODE).not.toMatch(/create trigger treatment_images_immutable_lineage/);
     expect(CODE).not.toMatch(/on public\.treatment_images/);
     expect(SQL).toMatch(/treatment_images_enforce_integrity/);
@@ -234,10 +234,10 @@ describe("0160 — the guards", () => {
   });
 });
 
-describe("0160 — it does not re-freeze ordinary charting", () => {
+describe("0160: it does not re-freeze ordinary charting", () => {
   it("pins no clinical-content column anywhere", () => {
     // The whole point of the product decision is that treatment records stay
-    // editable. Only lineage is immutable — never a clinical value.
+    // editable. Only lineage is immutable, never a clinical value.
     for (const col of [
       "session_notes",
       "next_session_note",
@@ -281,7 +281,7 @@ describe("0160 — it does not re-freeze ordinary charting", () => {
   });
 });
 
-describe("0160 — ZERO data operations, nothing destructive", () => {
+describe("0160: ZERO data operations, nothing destructive", () => {
   it("runs no DML at apply time and drops nothing it must keep", () => {
     expect(TOP_LEVEL).not.toMatch(/\binsert into\b/i);
     expect(TOP_LEVEL).not.toMatch(/\bupdate public\./i);
@@ -312,7 +312,7 @@ describe("0160 — ZERO data operations, nothing destructive", () => {
 // TRANSACTION CONTRACT (added after the migration-0159 production apply).
 //
 // Applying 0159 emitted `WARNING (25P01): SET LOCAL can only be used in
-// transaction blocks` — `supabase db push` does NOT wrap a migration file in an
+// transaction blocks`, `supabase db push` does NOT wrap a migration file in an
 // explicit transaction, so `SET LOCAL lock_timeout` never armed and the file was
 // not atomic. 0160 must therefore open its own transaction.
 //
@@ -340,7 +340,7 @@ function executableStatements(sql: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-describe("0160 — transaction contract (learned from the 0159 apply)", () => {
+describe("0160: transaction contract (learned from the 0159 apply)", () => {
   const statements = executableStatements(SQL);
 
   it("opens with BEGIN as the very first executable statement", () => {
@@ -357,7 +357,7 @@ describe("0160 — transaction contract (learned from the 0159 apply)", () => {
     expect(setAt, "0160 must set a lock_timeout").toBeGreaterThan(-1);
     expect(
       setAt,
-      "SET LOCAL must come AFTER BEGIN — outside a transaction block it raises 25P01 " +
+      "SET LOCAL must come AFTER BEGIN, outside a transaction block it raises 25P01 " +
         "and silently does nothing (this is exactly what happened to 0159)",
     ).toBeGreaterThan(beginAt);
     expect(statements[setAt]).toMatch(/^set local lock_timeout = '5s'$/i);
@@ -415,7 +415,7 @@ describe("0160 — transaction contract (learned from the 0159 apply)", () => {
     expect(
       sha,
       "migration 0159 was applied to production 2026-07-30 with this exact checksum. " +
-        "If you need to change its behaviour, write a NEW migration — never edit an applied one.",
+        "If you need to change its behaviour, write a NEW migration, never edit an applied one.",
     ).toBe("ea39fc360cc75609a92a3686d677486720e9d234c4b70b81a07913c31fb889f8");
     expect(
       applied,

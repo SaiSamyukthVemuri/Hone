@@ -15,7 +15,7 @@ import {
 // The fields under test are exactly the ones Chloe could not see while
 // treating: machine frequency, the probe LOT she must match, numbing, hairs,
 // and the mode-valid machine readings. Removing any of them from the builder
-// must red a test here — the negative controls are recorded in the PR.
+// must red a test here, the negative controls are recorded in the PR.
 
 function entry(over: Partial<PointOfCareEntry> = {}): PointOfCareEntry {
   return {
@@ -110,7 +110,7 @@ describe("the memory fields that were missing", () => {
 
   it("carries mode and the CANONICAL Apilus modality label", () => {
     expect(full.areas[0].modeLabel).toBe("Blend");
-    // The shared label map, not the raw storage key — toBeTruthy() here would
+    // The shared label map, not the raw storage key, toBeTruthy() here would
     // have passed on an unmapped value falling through apilusModalityLabel.
     expect(full.areas[0].modalityLabel).toBe("PicoBlend");
   });
@@ -205,7 +205,7 @@ describe("structured areas and laterality", () => {
   });
 });
 
-describe("mode gating — the first read surface in the app to apply it", () => {
+describe("mode gating: the first read surface in the app to apply it", () => {
   it("a THERMOLYSIS block never shows stale galvanic readings", () => {
     const m = build([
       block({
@@ -312,7 +312,7 @@ describe("mode gating — the first read surface in the app to apply it", () => 
     expect(m.areas[0].readings[0].value).toBe("EL 14");
   });
 
-  it("shows no ENTRY readings when the mode is unknown — never a guess", () => {
+  it("shows no ENTRY readings when the mode is unknown, never a guess", () => {
     const m = build([
       block({ mode: null, entries: [entry({ thermolysis_intensity_percent: 40 })] }),
     ]);
@@ -354,7 +354,7 @@ describe("reading precision and the retired input", () => {
     expect(values).toContain("40%");
   });
 
-  it("NEVER surfaces galvanic_intensity_percent — the retired input", () => {
+  it("NEVER surfaces galvanic_intensity_percent: the retired input", () => {
     const m = build([
       block({
         mode: "blend",
@@ -544,7 +544,7 @@ describe("a charted visit with NO settings blocks (laser / pre-block legacy)", (
     blocks: [],
   });
 
-  it("produces no areas and no headline — the card branches on this", () => {
+  it("produces no areas and no headline, the card branches on this", () => {
     expect(laser.areas).toEqual([]);
     expect(laser.areaHeadline).toBeNull();
   });
@@ -636,7 +636,7 @@ describe("blockless charted visits get a truthful line, never an empty shell", (
     expect(
       blocklessTreatmentCopy({ modality: "laser", hasLiveElectrolysisEntries: true }),
     ).toBe(BLOCKLESS_LASER_COPY);
-    // Nothing to say — the caller renders the ordinary summary.
+    // Nothing to say: the caller renders the ordinary summary.
     expect(
       blocklessTreatmentCopy({
         modality: "electrolysis",
@@ -669,7 +669,7 @@ describe("supersededByEmptySession", () => {
 });
 
 describe("clinical note context", () => {
-  it("returns a short excerpt and reports that more exists — never the whole body", () => {
+  it("returns a short excerpt and reports that more exists, never the whole body", () => {
     const body = "word ".repeat(200).trim();
     const cut = noteExcerpt(body, 60);
     expect(cut?.truncated).toBe(true);

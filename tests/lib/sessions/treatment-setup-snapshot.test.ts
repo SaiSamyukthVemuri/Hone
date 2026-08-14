@@ -19,7 +19,7 @@ const block = (over: Partial<SetupSourceBlock> = {}): SetupSourceBlock => ({
 // A source row as it actually arrives from the database: it still CARRIES
 // minutes_performed (ordinary charting reads and writes that column). The point
 // of the contract is that the copy builder never reads it, so every "minutes are
-// not copied" test below must use a source that genuinely has minutes to copy —
+// not copied" test below must use a source that genuinely has minutes to copy,
 // otherwise it would pass vacuously.
 const blockWithMinutes = (minutes: number | null = 37) =>
   ({ ...block(), minutes_performed: minutes }) as SetupSourceBlock;
@@ -38,7 +38,7 @@ const entry = (over: Partial<SetupSourceEntry> = {}): SetupSourceEntry => ({
   ...over,
 });
 
-describe("firstLiveEntry — canonical earliest non-deleted", () => {
+describe("firstLiveEntry: canonical earliest non-deleted", () => {
   it("returns the earliest non-deleted entry by created_at", () => {
     const e = firstLiveEntry([
       entry({ created_at: "2026-01-03T00:00:00Z", thermolysis_intensity_percent: 99 }),
@@ -90,7 +90,7 @@ describe("galvanic source", () => {
     expect(p.unitsOfLye).toBe("25");
     expect(p.pulseCount).toBe("3");
   });
-  it("NEVER copies galvanic intensity — retired reading, not in the patch at all", () => {
+  it("NEVER copies galvanic intensity: retired reading, not in the patch at all", () => {
     // Even from a source whose row still carries a legacy value, the patch has no
     // galvanicIntensityPercent key, so copy-settings can never resurrect it into a
     // new draft. (A richer source row is allowed; it's simply ignored.)
@@ -139,7 +139,7 @@ describe("single-pulse setup must not carry pulse delay", () => {
 // The old contract copied it, which silently overwrote destination-specific
 // minutes a practitioner had already typed. The fix is STRUCTURAL: the patch
 // does not own the key at all. Emitting `minutes: ""` instead would have been
-// just as destructive — it would erase her entry rather than replace it.
+// just as destructive, it would erase her entry rather than replace it.
 // ---------------------------------------------------------------------------
 describe("minutes performed is never part of the reusable setup patch", () => {
   it("the patch has NO minutes property, even from a source with minutes", () => {
@@ -151,7 +151,7 @@ describe("minutes performed is never part of the reusable setup patch", () => {
 
   it("BLOCK_SETUP_FIELDS excludes minutes_performed", () => {
     expect(BLOCK_SETUP_FIELDS).not.toContain("minutes_performed");
-    // The rest of the block-level setup contract is intact — this must fail
+    // The rest of the block-level setup contract is intact, this must fail
     // because minutes left, not because the list was emptied.
     expect(BLOCK_SETUP_FIELDS).toContain("machine_frequency");
     expect(BLOCK_SETUP_FIELDS).toContain("probe_key");
@@ -175,7 +175,7 @@ describe("minutes performed is never part of the reusable setup patch", () => {
     expect(applied.machineFrequency).toBe("13.56 MHz"); // setup still copied
   });
 
-  it("a fresh blank destination stays blank — the patch never writes a value", () => {
+  it("a fresh blank destination stays blank, the patch never writes a value", () => {
     const freshDraft = { minutes: "" };
     const applied = {
       ...freshDraft,
@@ -226,7 +226,7 @@ describe("the reusable patch key set is EXACT", () => {
 });
 
 describe("outcome fields are structurally absent from the patch", () => {
-  it("the patch object contains only reusable setup keys — no outcome keys", () => {
+  it("the patch object contains only reusable setup keys, no outcome keys", () => {
     const p = buildTreatmentSetupDraftPatch(blockWithMinutes(37), entry());
     const keys = Object.keys(p);
     for (const forbidden of [
@@ -277,7 +277,7 @@ describe("copied probe lot + inventory link", () => {
   // preserved", and probe_lot_* listed among NEVER-copied fields). The lot IS
   // copied; what is never copied is the CONFIRMATION.
   // ---------------------------------------------------------------------
-  it("REPLACES a lot already present on the destination draft — it does not preserve it", () => {
+  it("REPLACES a lot already present on the destination draft, it does not preserve it", () => {
     const destination = {
       probeLotNumber: "DESTINATION-TYPED-BY-HAND",
       probeInventoryItemId: "destination-item",
@@ -349,7 +349,7 @@ describe("copied probe lot + inventory link", () => {
     expect(p.probeInventoryItemId).toBe("item-1");
   });
 
-  it("drops ONLY the link — never the lot text — when the item is no longer linkable", () => {
+  it("drops ONLY the link: never the lot text, when the item is no longer linkable", () => {
     // Expired, archived, or reclassified under a different probe: all three
     // reach here as "not in the linkable set".
     const p = buildTreatmentSetupDraftPatch(src(), entry(), new Set(["other-item"]));

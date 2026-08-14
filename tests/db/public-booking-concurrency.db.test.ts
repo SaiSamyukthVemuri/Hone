@@ -12,7 +12,7 @@ import path from "node:path";
 // THE RACE THIS CLOSES. A conflict-derived candidate exists only BECAUSE some
 // appointment generates it: an appointment ending 14:00 with a 30-minute buffer
 // is what makes 14:30 an offered start. Structural calendar writers all take the
-// studio capacity advisory lock, but the appointment LIFECYCLE writers do not —
+// studio capacity advisory lock, but the appointment LIFECYCLE writers do not,
 // public_cancel_appointment_with_token, practitioner_cancel_appointment,
 // mark_appointment_complete, mark_appointment_no_show and reschedule_appointment
 // each lock only their own appointment row.
@@ -128,7 +128,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("Test A — a cancellation of the candidate's SOURCE blocks on the create", () => {
+describe("Test A: a cancellation of the candidate's SOURCE blocks on the create", () => {
   it("B waits while A holds the source-row lock, and the final state is a valid serial order", async () => {
     const f = await seedWithConflictCandidate("race-a");
 
@@ -184,7 +184,7 @@ describe("Test A — a cancellation of the candidate's SOURCE blocks on the crea
   }, 30_000);
 });
 
-describe("Test B — when the cancellation wins first, the candidate is correctly refused", () => {
+describe("Test B: when the cancellation wins first, the candidate is correctly refused", () => {
   it("returns not_a_public_slot and creates no appointment, audit row or reservation", async () => {
     const f = await seedWithConflictCandidate("race-b");
 
@@ -224,7 +224,7 @@ describe("Test B — when the cancellation wins first, the candidate is correctl
   }, 30_000);
 });
 
-describe("Test C — structural writers stay serialized and do not deadlock", () => {
+describe("Test C: structural writers stay serialized and do not deadlock", () => {
   it("a timed-block insert blocks on the advisory lock the create holds", async () => {
     const f = await seedWithConflictCandidate("race-c");
     const A = await conn();
@@ -257,23 +257,23 @@ describe("Test C — structural writers stay serialized and do not deadlock", ()
   }, 30_000);
 });
 
-describe("Test D — a competing row lock on the source is serialized behind the create", () => {
+describe("Test D: a competing row lock on the source is serialized behind the create", () => {
   // RENAMED (appointment boundary B2). This test was previously titled
   // "mark_appointment_complete on the source waits for the create", which it
   // never did: the statement it runs is a bare `select ... for update`, and
   // mark_appointment_complete is not called anywhere in this file. The title
   // claimed an RPC invocation that did not happen.
   //
-  // The behaviour it genuinely measures is worth keeping and is UNCHANGED —
+  // The behaviour it genuinely measures is worth keeping and is UNCHANGED,
   // a competing FOR UPDATE on the source row blocks until the booking
   // transaction commits. Holding the row lock directly is in fact the
   // sharpest way to observe that ordering, because it removes every other
   // variable the real commands would introduce.
   //
-  // Command-level lifecycle behaviour — every refusal branch, the audit row,
+  // Command-level lifecycle behaviour, every refusal branch, the audit row,
   // the rollback invariant and the EXECUTE grant matrix for
   // mark_appointment_complete, mark_appointment_no_show and
-  // practitioner_cancel_appointment — is now covered behaviourally in
+  // practitioner_cancel_appointment, is now covered behaviourally in
   // tests/db/appointment-lifecycle-commands.db.test.ts.
   it("a competing FOR UPDATE on the source row waits for the booking transaction", async () => {
     // complete/no-show/cancel all lock only the appointment row and never take
@@ -327,14 +327,14 @@ describe("no deadlock in the reverse direction", () => {
     //
     // `reschedule_appointment_v2` is deliberately NOT swapped in as its
     // replacement. Measured against the live body, v2 DOES acquire
-    // acquire_studio_capacity_lock — correctly, because it is a
+    // acquire_studio_capacity_lock, correctly, because it is a
     // cancel-plus-successor CREATING command rather than an in-place lifecycle
     // writer, so it belongs to the create lock path this test's premise
     // excludes. Substituting it would have inverted the test's meaning and
     // failed for the right reason at the wrong assertion. Its own ordering is
     // covered by tests/db/public-reschedule-command.db.test.ts.
     // B7 / 0176: the census selects by NAME, and
-    // public_cancel_appointment_with_token is now OVERLOADED — the 7-argument
+    // public_cancel_appointment_with_token is now OVERLOADED, the 7-argument
     // atomic command plus the fail-closed 5-argument compatibility shim. So the
     // row count is five while the writer SET is still four.
     //
@@ -369,7 +369,7 @@ describe("owner resolution is a single snapshot", () => {
   // A previous revision counted the active owners and then re-selected the id in
   // a SECOND statement. Under READ COMMITTED each statement takes a fresh
   // snapshot, so a concurrent activation committing between them could leave the
-  // count seeing 1 while the lookup saw 2 — and a non-STRICT `select ... into`
+  // count seeing 1 while the lookup saw 2, and a non-STRICT `select ... into`
   // then assigns one unspecified row, recreating arbitrary assignment.
 
   async function seedTwoOwners(label: string) {
@@ -507,7 +507,7 @@ describe("owner resolution is a single snapshot", () => {
     }
   }, 30_000);
 
-  it("the resolution is ONE statement — no count-then-select shape survives", async () => {
+  it("the resolution is ONE statement, no count-then-select shape survives", async () => {
     const r = await adminQuery(
       `select p.prosrc from pg_proc p join pg_namespace n on n.oid=p.pronamespace
         where n.nspname='public' and p.proname='create_public_appointment'`,
@@ -524,7 +524,7 @@ describe("owner resolution is a single snapshot", () => {
 });
 
 // ===========================================================================
-// Appointment boundary B2 — title-truthfulness guard for THIS file
+// Appointment boundary B2, title-truthfulness guard for THIS file
 // ===========================================================================
 //
 // One test in this file was titled "mark_appointment_complete on the source
@@ -552,7 +552,7 @@ describe("test titles in this file do not overclaim which RPC they invoke", () =
     "move_or_reassign_appointment",
   ];
 
-  // A title may name an RPC only if the file genuinely invokes it — i.e. the
+  // A title may name an RPC only if the file genuinely invokes it, i.e. the
   // source contains a `public.<rpc>(` call, not merely the bare name (which
   // also appears inside the prosrc-scan test's `in (...)` list).
   function overclaimedRpcs(title: string, source: string): string[] {
@@ -572,14 +572,14 @@ describe("test titles in this file do not overclaim which RPC they invoke", () =
   });
 
   it("the overclaim detector detects a real overclaim (self-test, both directions)", () => {
-    // The exact title this file used to carry — must be flagged.
+    // The exact title this file used to carry, must be flagged.
     expect(
       overclaimedRpcs(
         "mark_appointment_complete on the source waits for the create",
         SELF,
       ),
     ).toEqual(["mark_appointment_complete"]);
-    // The corrected title — must be clean.
+    // The corrected title: must be clean.
     expect(
       overclaimedRpcs(
         "a competing FOR UPDATE on the source row waits for the booking transaction",

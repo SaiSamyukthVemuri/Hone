@@ -8,12 +8,12 @@ import {
 import { join } from "node:path";
 
 // ===========================================================================
-// L18 Phase 2 — static drift guard: runtime direct row DML on the charting
+// L18 Phase 2, static drift guard: runtime direct row DML on the charting
 // tables.
 // ===========================================================================
 //
 // PHASE 1A (migration 0164) closed the LASER creation path only, and carried
-// THREE named exceptions — `addElectrolysisEntryAction`,
+// THREE named exceptions, `addElectrolysisEntryAction`,
 // `createTreatmentAreaWithEntryAction`, `updateTreatmentAreaWithEntryAction`.
 // Each could write `session_blocks` AND `electrolysis_entries` for a single
 // user intent across two transactions, so a failed second write left the two
@@ -25,8 +25,8 @@ import { join } from "node:path";
 // in a single transaction, so the exception list is now EMPTY and the guard is
 // an absolute one: **no runtime code may issue row DML against these tables.**
 //
-// Direct table grants still exist at the database layer — this phase revokes
-// nothing — so nothing below the application stops a future change from
+// Direct table grants still exist at the database layer, this phase revokes
+// nothing, so nothing below the application stops a future change from
 // reintroducing a direct write. This guard is that stop, and it is deliberately
 // NOT a growable allowlist: there is no list left to append to.
 //
@@ -87,7 +87,7 @@ type Site = { file: string; fn: string; table: string; op: string };
  * Find every runtime direct write on the charting tables, attributing each to
  * its enclosing top-level function. Attribution walks the `.from("<table>")`
  * statement chain to bracket depth zero, so an operation belonging to a later,
- * different chain in the same function is never miscounted — the same method
+ * different chain in the same function is never miscounted, the same method
  * that corrected the writer census in Phase 1A. A proximity grep over the same
  * tree reported 25 matches at a 6-line window and 27 at 12 lines; neither
  * number is trustworthy, which is why this walks the chain instead.
@@ -135,7 +135,7 @@ function directWriteSites(): Site[] {
 //
 // Every census above keys off a STRING LITERAL table name. `softDeleteEntry`
 // writes `.from(table)` where `table` is a parameter, so the literal scan saw
-// nothing and reported the pass tables at zero — while a real authenticated
+// nothing and reported the pass tables at zero, while a real authenticated
 // writer survived. Migration 0169 then revoked that privilege and "Remove pass"
 // began failing in production with 42501. The census was never wrong about what
 // it measured; it measured the wrong thing.
@@ -144,7 +144,7 @@ function directWriteSites(): Site[] {
 // also resolves WHICH Supabase client each one hangs off. Every such site must
 // be declared below. A new one, or a declared one whose client changes, fails.
 //
-// This does not replace the literal censuses — both run. Renaming a literal into
+// This does not replace the literal censuses, both run. Renaming a literal into
 // a variable moves a site from one census to the other; it never hides it.
 
 type ClientKind = "service-role" | "authenticated" | "unknown";
@@ -169,10 +169,10 @@ const NON_DB_RECEIVERS = new Set(["Buffer", "Array", "Object"]);
  * which therefore escapes BOTH censuses. Adversarial review demonstrated these
  * against the real regex:
  *
- *   createAdminClient().from(table).update(...)   — receiver is a call, not an ident
- *   (await createClient()).from(table).update()   — receiver is a parenthesised expr
- *   .from(TABLES[0]) / .from(`${p}_entries`)      — table expr is not an identifier
- *   .from(a ? b : c) / .from(t as string)         — ditto
+ *   createAdminClient().from(table).update(...):   receiver is a call, not an ident
+ *   (await createClient()).from(table).update():   receiver is a parenthesised expr
+ *   .from(TABLES[0]) / .from(`${p}_entries`):      table expr is not an identifier
+ *   .from(a ? b : c) / .from(t as string):         ditto
  *
  * Rather than pretend to parse every shape, the guard REFUSES them: any DML
  * `.from()` that is neither a plain string literal nor <ident>.from(<ident>) is a
@@ -299,7 +299,7 @@ function variableTableWriteSites(): VarSite[] {
 /**
  * Every variable-table DML writer in the tree, reviewed and classified. A site
  * missing from here fails the census test; a site whose client no longer matches
- * fails too. Keep this list tiny — it exists to force review, not to grow.
+ * fails too. Keep this list tiny, it exists to force review, not to grow.
  */
 const REVIEWED_VARIABLE_TABLE_WRITERS: ReadonlyArray<
   VarSite & { why: string }
@@ -328,7 +328,7 @@ const REVIEWED_VARIABLE_TABLE_WRITERS: ReadonlyArray<
       "the 0164-0169 revocation: authenticated still holds INSERT/UPDATE there, " +
       "and RLS scopes the row to the owner's studio. `TABLE` is a file-level " +
       'const ("studio_onboarding"), so the target is fixed at compile time. ' +
-      "Legitimate — classified, not banned.",
+      "Legitimate, classified, not banned.",
   },
 ];
 
@@ -368,7 +368,7 @@ function directWriteSitesFor(table: string): Site[] {
   return sites;
 }
 
-describe("L18 Phase 4 — command-bound table direct DML guard", () => {
+describe("L18 Phase 4: command-bound table direct DML guard", () => {
   const sites = directWriteSites();
 
   // The census IS the deliverable, so print it in full rather than asserting a
@@ -383,7 +383,7 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
       );
     }).join("\n");
     // eslint-disable-next-line no-console
-    console.log(`\nL18 runtime writer census —\n${report}\n`);
+    console.log(`\nL18 runtime writer census:\n${report}\n`);
     expect(report).toContain("session_blocks: ");
   });
 
@@ -416,7 +416,7 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
     expect(
       sites,
       "a direct row-DML writer on a charting table was introduced. Route it " +
-        "through a reviewed command — this guard has no allowlist to add it to.",
+        "through a reviewed command, this guard has no allowlist to add it to.",
     ).toEqual([]);
   });
 
@@ -458,7 +458,7 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
       "utf8",
     );
     // The compensating soft delete existed only because the block could commit
-    // without its entry. That is now impossible, so the compensation is gone —
+    // without its entry. That is now impossible, so the compensation is gone,
     // not merely unused.
     expect(blockSrc).not.toMatch(/Cleanup: retire the just-created block/);
   });
@@ -479,7 +479,7 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
         // 0129's pre-existing area commands remain legitimate callees.
         !["create_session_block_with_areas", "update_session_block_with_areas"].includes(c) &&
         // APPOINTMENT BOUNDARY B4 (0173). The matcher above is a substring
-        // heuristic on "block", so it also catches "BLOCKING" — a different
+        // heuristic on "block", so it also catches "BLOCKING", a different
         // word in a different domain. `appointment_has_blocking_dependents`
         // reports whether an APPOINTMENT outcome can be safely reversed
         // (linked session, payment, manual fee, postcare, reschedule
@@ -532,7 +532,7 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
     expect(src).toMatch(/\.from\("treatment_images"\)[\s\S]{0,80}\.select\(/);
   });
 
-  it("17. EVERY L18 table is at zero — no exception list remains", () => {
+  it("17. EVERY L18 table is at zero, no exception list remains", () => {
     expect(sites).toEqual([]);
     expect(EXCEPTIONS).toHaveLength(0);
   });
@@ -567,7 +567,7 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
     // with 42501. Its soft-delete UPDATE now runs as service_role.
     //
     // So this file may construct exactly ONE admin client, and only inside
-    // softDeleteEntry — asserted narrowly here rather than banning the import,
+    // softDeleteEntry, asserted narrowly here rather than banning the import,
     // exactly as the block-actions.ts case below is handled. Ordinary charting
     // (add pass, edit block, price, notes) must still never touch it.
     const actionsSrc = readFileSync(
@@ -591,7 +591,7 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
     ).toBe("softDeleteEntry");
 
     // block-actions.ts USED to construct one admin client, for
-    // `rememberMachineFrequencyDefault` — the practitioner's own
+    // `rememberMachineFrequencyDefault`, the practitioner's own
     // `practitioners.default_machine_frequency`. That service-role write existed
     // only because the authenticated path was owner-gated by the 0001 RLS
     // policy, i.e. a bypass standing in for a missing self-service boundary.
@@ -611,14 +611,14 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
 });
 
 // ===========================================================================
-// Variable-table writers — the census that would have caught the 0169 outage.
+// Variable-table writers, the census that would have caught the 0169 outage.
 // ===========================================================================
 
-describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard", () => {
+describe("L18: dynamic `.from(variable)` writers cannot hide from the guard", () => {
   const varSites = variableTableWriteSites();
   // Adversarial review finding: keying on file::fn let a SECOND statement inside
   // an already-declared function (e.g. a hard `.delete()` added to
-  // softDeleteEntry itself) satisfy the census — the declared key was already
+  // softDeleteEntry itself) satisfy the census, the declared key was already
   // present and `.find()` only ever examined the first match. The key now
   // includes the operation and the table expression, and the counts must match
   // exactly, so a second site is a new key and fails.
@@ -630,13 +630,13 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
       .map((s) => `    ${s.op.toUpperCase()} .from(${s.tableExpr}) [${s.client}] ${key(s)}`)
       .join("\n");
     // eslint-disable-next-line no-console
-    console.log(`\nVariable-table writer census —\n${report || "    (none)"}\n`);
+    console.log(`\nVariable-table writer census:\n${report || "    (none)"}\n`);
     expect(Array.isArray(varSites)).toBe(true);
   });
 
   it("B. the analyzer actually SEES softDeleteEntry (it is not vacuously empty)", () => {
     // The original guard's failure was silence. If this census ever stops
-    // finding the one writer we know exists, the analyzer is broken — a passing
+    // finding the one writer we know exists, the analyzer is broken, a passing
     // suite would then mean nothing.
     const found = varSites.find(
       (s) => s.fn === "softDeleteEntry" && s.op === "update",
@@ -661,7 +661,7 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
   it("D. each declared writer still uses the client it was reviewed with", () => {
     for (const reviewed of REVIEWED_VARIABLE_TABLE_WRITERS) {
       const matches = varSites.filter((s) => key(s) === key(reviewed));
-      expect(matches, `${key(reviewed)} disappeared — re-review the entry`).toHaveLength(1);
+      expect(matches, `${key(reviewed)} disappeared, re-review the entry`).toHaveLength(1);
       expect(
         matches[0].client,
         `${key(reviewed)} changed Supabase client. softDeleteEntry reverting to ` +
@@ -700,7 +700,7 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
   it("E. no L18 command-bound table is written through the authenticated client", () => {
     // 0169 revoked authenticated DML on all six. Any authenticated writer whose
     // enclosing function names one of them would fail at the privilege layer in
-    // production — the defect class this hotfix repairs.
+    // production, the defect class this hotfix repairs.
     const offenders = varSites.filter((s) => {
       if (s.client !== "authenticated") return false;
       const src = readFileSync(s.file, "utf8");
@@ -741,7 +741,7 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
 });
 
 // ===========================================================================
-// APPEND-ONLY TABLE CLASS — `client_clinical_notes` (Chloe Session 1A)
+// APPEND-ONLY TABLE CLASS, `client_clinical_notes` (Chloe Session 1A)
 // ===========================================================================
 //
 // WHY THIS IS A SEPARATE CLASS AND NOT A TABLES ENTRY.
@@ -751,7 +751,7 @@ describe("L18 — dynamic `.from(variable)` writers cannot hide from the guard",
 // defect. `client_clinical_notes` is deliberately different and was never in
 // 0169's scope: authenticated retains INSERT, RLS scopes it, a BEFORE INSERT
 // trigger derives studio_id from the parent client, and there is no UPDATE or
-// DELETE policy at all — the table is append-only BY GRANT AND POLICY, and
+// DELETE policy at all, the table is append-only BY GRANT AND POLICY, and
 // correction happens by inserting a superseding row.
 //
 // So the right contract is not "zero writers". It is "EXACTLY ONE user-scoped
@@ -778,7 +778,7 @@ const APPEND_ONLY_WRITER = {
   op: "insert",
 } as const;
 
-describe("append-only clinical notes — exactly one reviewed INSERT writer", () => {
+describe("append-only clinical notes: exactly one reviewed INSERT writer", () => {
   const sites = directWriteSitesFor(APPEND_ONLY_TABLE);
   const siteKey = (s: { file: string; fn: string; op: string }) =>
     `${s.file}#${s.fn}.${s.op}`;
@@ -790,7 +790,7 @@ describe("append-only clinical notes — exactly one reviewed INSERT writer", ()
     ).toEqual([siteKey(APPEND_ONLY_WRITER)]);
   });
 
-  it("H2. that writer is an INSERT — never update, delete or upsert", () => {
+  it("H2. that writer is an INSERT, never update, delete or upsert", () => {
     for (const s of sites) {
       expect(s.op, `${siteKey(s)} must be an insert`).toBe("insert");
     }
@@ -815,7 +815,7 @@ describe("append-only clinical notes — exactly one reviewed INSERT writer", ()
     const proof = clientFactoryProof(APPEND_ONLY_WRITER.file);
     expect(proof.localName, JSON.stringify(proof, null, 2)).toBe("createClient");
     expect(proof.moduleSpecifier).toBe("@/lib/supabase/server");
-    // The imported symbol is the authenticated factory itself — not an admin
+    // The imported symbol is the authenticated factory itself, not an admin
     // factory renamed to look like one.
     expect(proof.importedName).toBe("createClient");
   });
@@ -835,7 +835,7 @@ describe("append-only clinical notes — exactly one reviewed INSERT writer", ()
       APPEND_ONLY_TABLE,
     );
     expect(flow.receiver, JSON.stringify(flow, null, 2)).toBe("supabase");
-    // Its initializer is `await createClient()` — the authenticated factory.
+    // Its initializer is `await createClient()`, the authenticated factory.
     expect(flow.initializerCallee).toBe("createClient");
     // Nothing rebinds it between creation and the INSERT.
     expect(flow.reassigned).toBe(false);
@@ -849,13 +849,13 @@ describe("append-only clinical notes — exactly one reviewed INSERT writer", ()
     expect([...writers]).toEqual([APPEND_ONLY_WRITER.file]);
   });
 
-  it("H5. the table is not silently absent — the census can actually see it", () => {
+  it("H5. the table is not silently absent, the census can actually see it", () => {
     // ANTI-VACUITY. If the scanner stopped matching (a refactor to a variable
     // table expression, a chained factory, a renamed helper), H1-H4 would all
     // pass on an empty set and prove nothing. At least one site must be found.
     expect(
       sites.length,
-      "the append-only census found ZERO sites — the scanner has gone blind, " +
+      "the append-only census found ZERO sites, the scanner has gone blind, " +
         "not the writer away. Check for a variable/computed .from() shape.",
     ).toBeGreaterThan(0);
   });

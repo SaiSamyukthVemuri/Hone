@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 
-// 0156 conditional numbing notes — source guards for the charting form, server
+// 0156 conditional numbing notes: source guards for the charting form, server
 // action, saved display, and copy-safety. Live behaviour is proven in
 // e2e/conditional-numbing-notes.spec.ts and the DB/unit suites.
 

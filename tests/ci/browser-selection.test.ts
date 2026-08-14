@@ -19,7 +19,7 @@ describe("browser group manifest integrity", () => {
     );
     const unmapped = disk.filter((f) => !mapped.includes(f));
     expect(unmapped, "every spec must belong to a group or it will never run in a targeted lane").toEqual([]);
-    // No duplicates across groups — a spec in two groups would run twice.
+    // No duplicates across groups: a spec in two groups would run twice.
     expect(new Set(mapped).size).toBe(mapped.length);
   });
 
@@ -73,7 +73,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // charting.spec.ts mapped into `sessions` too (#564, this branch).
     //
     // RECONCILED ACROSS BOTH BRANCHES. #565 and #564 were developed in parallel
-    // and BOTH added one e2e spec, so both bumped this literal from 64 to 65 —
+    // and BOTH added one e2e spec, so both bumped this literal from 64 to 65,
     // the same text, on the same line, for different reasons. Git merges an
     // identical edit on both sides WITHOUT a conflict, so a hard-coded count
     // here would have merged clean and silently claimed 65 when the disk had
@@ -88,7 +88,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     expect([...mapped].sort()).toEqual([...onDisk].sort());
     // The exact selection that was cancelled twice at the old 10-minute
     // ceiling (28), plus ONE spec from #565 and ONE from #564, both of which
-    // joined `sessions` — and now ONE more from the 0181 multi-studio
+    // joined `sessions`, and now ONE more from the 0181 multi-studio
     // session-start regression, which also joined `sessions`. Hence 31.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(31);
   });
@@ -101,7 +101,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     //
     // Measured at the time: `app/(app)/dashboard/page.tsx` alone correctly
     // selected extended, but that same file plus one calendar test selected
-    // `calendar` + `smoke` — the restructured dashboard entirely uncovered,
+    // `calendar` + `smoke`, the restructured dashboard entirely uncovered,
     // because something ELSE in the commit happened to be attributable.
     //
     // The first attempt at a fix was to add a `/dashboard/i` pattern. That was
@@ -142,7 +142,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
   });
 });
 
-describe("acceptance case 1 — docs-only", () => {
+describe("acceptance case 1: docs-only", () => {
   const p = plan("docs/production/migration-ledger.md", "README.md");
   it("runs no DB, browser, mobile, payment or Google lane", () => {
     expect(laneRuns(p, "db integration")).toBe(false);
@@ -157,7 +157,7 @@ describe("acceptance case 1 — docs-only", () => {
   });
 });
 
-describe("acceptance case 2 — migration-only", () => {
+describe("acceptance case 2: migration-only", () => {
   const p = plan("supabase/migrations/0166_x.sql", "tests/migrations/0166-x.test.ts");
   it("runs validation + DB/security only", () => {
     expect(laneRuns(p, "typecheck")).toBe(true);
@@ -169,7 +169,7 @@ describe("acceptance case 2 — migration-only", () => {
   });
 });
 
-describe("acceptance case 3 — session UI only", () => {
+describe("acceptance case 3: session UI only", () => {
   const p = plan("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts");
   it("selects the sessions group (plus smoke) and no unrelated lane", () => {
     const s = sel("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts");
@@ -188,7 +188,7 @@ describe("acceptance case 3 — session UI only", () => {
   });
 });
 
-describe("acceptance case 4 — intake UI only", () => {
+describe("acceptance case 4: intake UI only", () => {
   it("selects the intake group", () => {
     const s = sel("app/(app)/clients/[id]/intake/actions.ts");
     expect(s.groups).toContain("intake");
@@ -197,7 +197,7 @@ describe("acceptance case 4 — intake UI only", () => {
   });
 });
 
-describe("acceptance case 5 — payment only", () => {
+describe("acceptance case 5: payment only", () => {
   const p = plan("app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts");
   it("runs the payment lane", () => {
     expect(laneRuns(p, "payment browser")).toBe(true);
@@ -208,7 +208,7 @@ describe("acceptance case 5 — payment only", () => {
   });
 });
 
-describe("acceptance case 6 — Google only", () => {
+describe("acceptance case 6: Google only", () => {
   const p = plan("lib/google-calendar/sync/reconcile.ts");
   it("runs the Google lane and not payment/mobile", () => {
     expect(laneRuns(p, "google browser")).toBe(true);
@@ -217,7 +217,7 @@ describe("acceptance case 6 — Google only", () => {
   });
 });
 
-describe("acceptance case 7 — shared browser fixture", () => {
+describe("acceptance case 7: shared browser fixture", () => {
   it("forces EXTENDED coverage (sharded), never a narrow group", () => {
     for (const f of ["e2e/helpers/seed.ts", "playwright.config.ts", "lib/supabase/server.ts", "middleware.ts"]) {
       const s = sel(f);
@@ -247,7 +247,7 @@ describe("acceptance case 7 — shared browser fixture", () => {
   });
 });
 
-describe("acceptance case 8 — workflow / CI change", () => {
+describe("acceptance case 8: workflow / CI change", () => {
   it("requires the full matrix", () => {
     const p = plan(".github/workflows/ci.yml");
     expect(p.full_matrix_required).toBe(true);
@@ -257,7 +257,7 @@ describe("acceptance case 8 — workflow / CI change", () => {
   });
 });
 
-describe("acceptance case 9 — unknown shared path fails safe", () => {
+describe("acceptance case 9: unknown shared path fails safe", () => {
   it("unattributable application code falls back to extended coverage", () => {
     const s = sel("app/some-brand-new-surface/page.tsx");
     expect(s.extended).toBe(true);
@@ -270,7 +270,7 @@ describe("acceptance case 9 — unknown shared path fails safe", () => {
   });
 });
 
-describe("acceptance case 10 — superseded PR runs are cancelled", () => {
+describe("acceptance case 10: superseded PR runs are cancelled", () => {
   it("the PR workflow declares a PR-scoped cancelling concurrency group", async () => {
     const { readFileSync } = await import("node:fs");
     const ci = readFileSync(".github/workflows/ci.yml", "utf8");

@@ -6,10 +6,10 @@ import type { ClaimedJob } from "@/lib/google-calendar/sync/job-result";
 import type { AppointmentState, LinkRow, OpsLinkStore, TransitionArgs, TransitionResult } from "@/lib/google-calendar/sync/link-transition-store";
 import { createCalendarSyncOperations } from "@/lib/google-calendar/sync/operations";
 
-// Phase B2.3-c1 — ACTUAL REST transport-composition tests. The c1 operations run
+// Phase B2.3-c1: ACTUAL REST transport-composition tests. The c1 operations run
 // through the REAL createGoogleRestClient over a guarded FAKE fetch (never a real
 // Google call). This exercises URL construction, sendUpdates=none, the caller-
-// supplied id + marker in the body, If-Match, and status-code lifecycle — the
+// supplied id + marker in the body, If-Match, and status-code lifecycle, the
 // wire behaviour the mocked-method unit tests in operations.test.ts do NOT cover.
 
 const STUDIO = "s1";

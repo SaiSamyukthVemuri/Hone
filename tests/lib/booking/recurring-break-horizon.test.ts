@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 
-// PR B 3E-3 — one recurring-break materialization horizon = the max public
+// PR B 3E-3: one recurring-break materialization horizon = the max public
 // booking horizon + 14 days margin, used by EVERY writer (owner create/update/
 // toggle actions, cron, and the DB timezone rebuild). Fails if the supported
 // horizon changes without the SQL helper being updated in lockstep.

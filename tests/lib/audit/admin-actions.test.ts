@@ -10,7 +10,7 @@ function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
 
-describe("sanitizeAdminAuditMetadata — allowlist + redaction", () => {
+describe("sanitizeAdminAuditMetadata: allowlist + redaction", () => {
   it("keeps safe primitive keys/values", () => {
     const out = sanitizeAdminAuditMetadata({
       slug: "willow",
@@ -74,7 +74,7 @@ describe("sanitizeAdminAuditMetadata — allowlist + redaction", () => {
   });
 });
 
-describe("logAdminAction — fail-soft (never throws)", () => {
+describe("logAdminAction: fail-soft (never throws)", () => {
   it("resolves without throwing even when the admin client / insert is unavailable", async () => {
     // vitest loads no env, so createAdminClient (or its insert) fails; the helper
     // must swallow it and never throw (an audit-log outage must not break the
@@ -104,7 +104,7 @@ describe("admin actions are wired to the audit log (source pins)", () => {
     expect(STUDIO).toMatch(/outcome: "succeeded"/);
     expect(STUDIO).toMatch(/outcome: "failed"/);
     expect(STUDIO).toMatch(/outcome: "blocked"/);
-    // logged metadata is only the (public) slug + safe reason codes — never the
+    // logged metadata is only the (public) slug + safe reason codes, never the
     // owner email or name.
     expect(STUDIO).toMatch(/metadata: \{ slug: input\.slug \}/);
     expect(STUDIO).not.toMatch(/metadata:[^}]*owner_?email/i);

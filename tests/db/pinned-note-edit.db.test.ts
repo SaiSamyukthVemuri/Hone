@@ -7,7 +7,7 @@ import {
 } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// Editing a mutable pinned note (client_pinned_notes) — behavioral proof of the
+// Editing a mutable pinned note (client_pinned_notes), behavioral proof of the
 // server action's scoped in-place UPDATE: `set text where id + studio_id +
 // client_id`. The studio_id in the scope is the AUTHED studio (session-derived in
 // the action), so a foreign-studio/foreign-client/stale note matches zero rows.
@@ -57,7 +57,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("client_pinned_notes edit — scoped in-place update", () => {
+describe("client_pinned_notes edit: scoped in-place update", () => {
   it("edits text in place: same id, still pinned, creator/created_at/scope unchanged, no duplicate", async () => {
     A = await seedSynthStudioB();
     const prac = A.practitioners[0].practitionerId;

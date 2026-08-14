@@ -54,7 +54,7 @@ describe("combined labels", () => {
   });
 });
 
-describe("blockAreasLabel — the single display contract for every surface", () => {
+describe("blockAreasLabel: the single display contract for every surface", () => {
   it("joins multiple structured areas, preserving order and per-area laterality", () => {
     expect(
       blockAreasLabel(

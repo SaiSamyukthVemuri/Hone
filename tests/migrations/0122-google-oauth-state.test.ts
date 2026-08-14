@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Google Calendar — Phase A, migration 0122 (OAuth state + PKCE). Static SQL
+// Google Calendar: Phase A, migration 0122 (OAuth state + PKCE). Static SQL
 // pins: hash-only state + nonce, encrypted PKCE verifier + key version, 10-min
 // TTL, single-use consumption support, same-studio binding, default-deny RLS.
 
@@ -11,7 +11,7 @@ const SQL = readFileSync(
   "utf8",
 );
 
-describe("0122 — google_oauth_states", () => {
+describe("0122: google_oauth_states", () => {
   it("stores state and session nonce HASH-ONLY (sha256 hex CHECK)", () => {
     expect(SQL).toMatch(/state_hash\s+text not null[\s\S]{0,60}check \(state_hash ~ '\^\[a-f0-9\]\{64\}\$'\)/);
     expect(SQL).toMatch(

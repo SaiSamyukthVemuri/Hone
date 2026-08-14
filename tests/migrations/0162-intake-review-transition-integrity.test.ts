@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-// Migration 0162 — an intake may only become 'reviewed' from a genuinely
+// Migration 0162: an intake may only become 'reviewed' from a genuinely
 // SUBMITTED row, reviewed by the caller's own active practitioner IN THAT
 // STUDIO, at a timestamp the DATABASE stamps.
 //
@@ -31,7 +31,7 @@ const statements = CODE.split(";")
   .map((s) => s.trim())
   .filter(Boolean);
 
-describe("0162 — intake review transition integrity (APPLIED, checksum frozen)", () => {
+describe("0162: intake review transition integrity (APPLIED, checksum frozen)", () => {
   it("is present, 0161 precedes it, and there is exactly one 0162", () => {
     expect(FILE).toMatch(/^0162_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -46,7 +46,7 @@ describe("0162 — intake review transition integrity (APPLIED, checksum frozen)
     expect(
       createHash("sha256").update(SQL).digest("hex"),
       "0162 is APPLIED in production with this checksum. Never edit an applied " +
-        "migration — write a new one (next free is 0166).",
+        "migration, write a new one (next free is 0166).",
     ).toBe(APPLIED_SHA);
     const ledger = readFileSync(
       join(process.cwd(), "docs/production/migration-ledger.md"),
@@ -64,7 +64,7 @@ describe("0162 — intake review transition integrity (APPLIED, checksum frozen)
   });
 });
 
-describe("0162 — it REPLACES the 0118 function rather than adding a second trigger", () => {
+describe("0162: it REPLACES the 0118 function rather than adding a second trigger", () => {
   it("uses CREATE OR REPLACE on the existing function name", () => {
     expect(FLAT_CODE).toMatch(
       /create or replace function public\.enforce_intake_terminal_immutability\(\)/,
@@ -78,7 +78,7 @@ describe("0162 — it REPLACES the 0118 function rather than adding a second tri
     expect(FLAT_CODE).toMatch(
       /execute function public\.enforce_intake_terminal_immutability\(\)/,
     );
-    // Exactly one trigger is created — no competing second guard.
+    // Exactly one trigger is created, no competing second guard.
     expect(FLAT_CODE.match(/create trigger/gi) ?? []).toHaveLength(1);
   });
 
@@ -89,7 +89,7 @@ describe("0162 — it REPLACES the 0118 function rather than adding a second tri
   });
 });
 
-describe("0162 — the incoming review contract", () => {
+describe("0162: the incoming review contract", () => {
   it("gates on an incoming transition into reviewed", () => {
     expect(FLAT_CODE).toMatch(
       /if new\.status = 'reviewed' and old\.status is distinct from 'reviewed' then/,
@@ -137,7 +137,7 @@ describe("0162 — the incoming review contract", () => {
   });
 });
 
-describe("0162 — reviewed_at is database-authoritative", () => {
+describe("0162: reviewed_at is database-authoritative", () => {
   it("STAMPS reviewed_at with transaction_timestamp() on the valid transition", () => {
     expect(FLAT_CODE).toMatch(
       /new\.reviewed_at := transaction_timestamp\(\)/,
@@ -157,7 +157,7 @@ describe("0162 — reviewed_at is database-authoritative", () => {
   });
 });
 
-describe("0162 — the service-role decision is explicit and evidenced", () => {
+describe("0162: the service-role decision is explicit and evidenced", () => {
   it("places the review contract BEFORE the auth.uid() is null early return", () => {
     const gateIdx = FLAT_CODE.indexOf(
       "if new.status = 'reviewed' and old.status is distinct from 'reviewed'",
@@ -179,7 +179,7 @@ describe("0162 — the service-role decision is explicit and evidenced", () => {
   });
 });
 
-describe("0162 — the 0118 contract is preserved, plus three hardenings", () => {
+describe("0162: the 0118 contract is preserved, plus three hardenings", () => {
   it("keeps answers immutable on terminal rows", () => {
     expect(SQL).toMatch(
       /Submitted intake answers are immutable; create a new intake to amend\./,
@@ -200,7 +200,7 @@ describe("0162 — the 0118 contract is preserved, plus three hardenings", () =>
     expect(SQL).toMatch(/Review attribution is immutable once reviewed\./);
   });
 
-  it("HARDENING: reviewed is terminal — no regression to any earlier state", () => {
+  it("HARDENING: reviewed is terminal, no regression to any earlier state", () => {
     expect(FLAT_CODE).toMatch(
       /if old\.status = 'reviewed' and new\.status is distinct from 'reviewed' then/,
     );
@@ -209,7 +209,7 @@ describe("0162 — the 0118 contract is preserved, plus three hardenings", () =>
     expect(PROSE).toMatch(/attribution-laundering/i);
   });
 
-  it("HARDENING: only the CLIENT may submit — no authenticated in_progress -> submitted", () => {
+  it("HARDENING: only the CLIENT may submit, no authenticated in_progress -> submitted", () => {
     // Found by adversarial review: without this the section-1 contract is
     // bypassable in two statements (forge the submission, then review against
     // the evidence you just manufactured).
@@ -235,9 +235,9 @@ describe("0162 — the 0118 contract is preserved, plus three hardenings", () =>
   });
 });
 
-describe("0162 — refusals are safe", () => {
+describe("0162: refusals are safe", () => {
   it("every raise uses the fixed check_violation SQLSTATE", () => {
-    // NOTE: do not terminate the match on ';' — one message legitimately
+    // NOTE: do not terminate the match on ';', one message legitimately
     // contains a semicolon ("...are immutable; create a new intake to amend.").
     // Match through to the errcode clause instead, and require that the number
     // of raises equals the number of errcode clauses so none can slip through
@@ -252,7 +252,7 @@ describe("0162 — refusals are safe", () => {
   });
 
   it("no exception message interpolates row, actor or tenant identity", () => {
-    // Scan the WHOLE raise statement, through to its terminating semicolon —
+    // Scan the WHOLE raise statement, through to its terminating semicolon,
     // adversarial review showed that stopping at `using errcode` let a trailing
     // `, detail = 'intake ' || old.id` clause slip past unnoticed, which would
     // leak the very identifiers this check exists to keep out of the error.
@@ -283,7 +283,7 @@ describe("0162 — refusals are safe", () => {
   });
 });
 
-describe("0162 — transaction + lock safety (the 0159/0160/0161 lesson)", () => {
+describe("0162: transaction + lock safety (the 0159/0160/0161 lesson)", () => {
   it("opens and closes exactly one explicit transaction", () => {
     expect(statements.filter((s) => s.toLowerCase() === "begin")).toHaveLength(1);
     expect(statements.filter((s) => s.toLowerCase() === "commit")).toHaveLength(1);
@@ -312,7 +312,7 @@ describe("0162 — transaction + lock safety (the 0159/0160/0161 lesson)", () =>
   });
 });
 
-describe("0162 — scope safety: no schema, data or grant changes", () => {
+describe("0162, scope safety: no schema, data or grant changes", () => {
   it("creates no table, column, constraint, index, policy or grant", () => {
     expect(FLAT_CODE).not.toMatch(/create table/i);
     expect(FLAT_CODE).not.toMatch(/alter table/i);

@@ -4,7 +4,7 @@ import path from "node:path";
 import { timeRangeLabel } from "@/app/(app)/calendar/calendar-format";
 import { serviceCardClasses } from "@/lib/calendar/service-colors";
 
-// PR — calendar appointment card visual refresh (Fresha used only as a
+// PR: calendar appointment card visual refresh (Fresha used only as a
 // readability benchmark, not copied). Stronger-but-calm fills, a visible time
 // range, and a clear time → name → service hierarchy. Render-only: no booking
 // logic, no query/data/migration, no positioning-math change.
@@ -103,7 +103,7 @@ describe("scope guard: render-only", () => {
 
   it("does not copy Fresha branding/assets", () => {
     // Strip // comments (which may reference Fresha as the readability
-    // benchmark) — the rendered code must carry no Fresha asset/brand strings.
+    // benchmark), the rendered code must carry no Fresha asset/brand strings.
     expect(codeOnly(DAYCOL)).not.toMatch(/fresha/i);
     expect(codeOnly(COLORS)).not.toMatch(/fresha/i);
   });

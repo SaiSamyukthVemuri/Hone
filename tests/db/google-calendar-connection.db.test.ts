@@ -14,7 +14,7 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// Google Calendar — Phase A. Behavioral proof against the REAL migrated local DB
+// Google Calendar: Phase A. Behavioral proof against the REAL migrated local DB
 // (0121/0122): tenant isolation, the browser-inaccessible secret + state tables,
 // the one-connection / one-owner constraints, cross-studio-attachment blocks,
 // and single-use OAuth state consumption.
@@ -45,7 +45,7 @@ async function insertConnection(
   return id;
 }
 
-describe("0121 — tenant isolation on calendar_connections", () => {
+describe("0121: tenant isolation on calendar_connections", () => {
   it("a member can read only their OWN studio's connection metadata", async () => {
     const a = await seedStudio("gcalA");
     const b = await seedStudio("gcalB");
@@ -80,7 +80,7 @@ describe("0121 — tenant isolation on calendar_connections", () => {
   });
 });
 
-describe("0121 — calendar_connection_secrets is browser-inaccessible", () => {
+describe("0121: calendar_connection_secrets is browser-inaccessible", () => {
   it("the authenticated role cannot SELECT the secrets table", async () => {
     const a = await seedStudio("gcalE");
     const conn = await insertConnection(a);
@@ -114,7 +114,7 @@ describe("0121 — calendar_connection_secrets is browser-inaccessible", () => {
   });
 });
 
-describe("0121 — connection + owner constraints", () => {
+describe("0121: connection + owner constraints", () => {
   it("allows only one connection per practitioner", async () => {
     const a = await seedStudio("gcalG");
     await insertConnection(a);
@@ -155,7 +155,7 @@ describe("0121 — connection + owner constraints", () => {
   });
 });
 
-describe("0122 — google_oauth_states", () => {
+describe("0122: google_oauth_states", () => {
   async function insertState(studio: SeededStudio, expiresInMinutes = 10): Promise<string> {
     const id = randomUUID();
     await adminQuery(

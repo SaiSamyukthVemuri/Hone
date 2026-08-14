@@ -53,7 +53,7 @@ describe("copy-last never copies the lot number", () => {
     expect(body).not.toMatch(/lot_number/);
   });
   it("the Add form's copied Lot # field has no prefill defaultValue", () => {
-    // The lot field stays a plain placeholder input — never fed from prefill.
+    // The lot field stays a plain placeholder input, never fed from prefill.
     expect(FORMS).toMatch(/label="Lot #" name="lot_number" placeholder="e\.g\. 460941"/);
     expect(FORMS).not.toMatch(/name="lot_number"[^>]*defaultValue=\{prefill/);
   });
@@ -71,7 +71,7 @@ describe("Records page expiry states + banner", () => {
   it("computes state per row and styles expired red / expiring amber with a helper-driven badge", () => {
     expect(PAGE).toMatch(/supplyExpiryState\(r\.expiry_date, today\)/);
     // Badge text comes from supplyExpiryLabel (one source of truth incl. the
-    // PR #317 "Expires today" state) — not hardcoded literals in the page.
+    // PR #317 "Expires today" state), not hardcoded literals in the page.
     expect(PAGE).toMatch(/supplyExpiryLabel\(expiry\)/);
     expect(PAGE).toMatch(/\{expiryLabel\}/);
     expect(PAGE).toMatch(/bg-red-50/);

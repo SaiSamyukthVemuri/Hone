@@ -101,13 +101,13 @@ describe("3. charting: obvious finish, no new write path", () => {
   it("finish actions navigate to existing routes; no new session write/submit path", () => {
     // Scoped to the Finish section ONLY. The session-payment block now sits
     // directly below it (chart → finish → pay), and that block legitimately
-    // contains forms — they are the payment card's, not a new session write.
+    // contains forms, they are the payment card's, not a new session write.
     const finish = SESSION_PAGE.slice(
       SESSION_PAGE.indexOf('data-testid="finish-appointment"'),
       SESSION_PAGE.indexOf('id="session-payment"'),
     );
     // Charting PR 1: "Done charting" is now the non-blocking aftercare guard,
-    // which navigates to the sessions tab (doneHref) — still no session write.
+    // which navigates to the sessions tab (doneHref), still no session write.
     expect(finish).toMatch(/<DoneChartingButton/);
     expect(finish).toMatch(/doneHref=\{`\/clients\/\$\{id\}\?tab=sessions`\}/);
     expect(finish).toMatch(/label="Done, back to client"/);
@@ -173,7 +173,7 @@ describe("5. dashboard: worklist first", () => {
     // SUPERSEDED INTENTIONALLY (Chloe D3, this PR). PR #238 collapsed completed
     // setup into a quiet "Setup complete. Getting started checklist →" footer.
     // Chloe's newer report is that the Dashboard tells her setup is complete
-    // AND still offers her the checklist — the footer IS that contradiction, so
+    // AND still offers her the checklist, the footer IS that contradiction, so
     // the completed state now renders nothing at all. The derivation itself is
     // unchanged; only what a completed studio SEES changed.
     expect(DASH).toMatch(
@@ -193,7 +193,7 @@ describe("5. dashboard: worklist first", () => {
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
     expect(code).not.toMatch(/\{!onboardingV2On && setupComplete && \(/);
     expect(code).not.toMatch(/Setup complete\./);
-    // Exactly one route link survives — the incomplete card's. The route stays
+    // Exactly one route link survives, the incomplete card's. The route stays
     // reachable regardless: AccountMenu and MobileMenu both link it (pinned in
     // tests/app/dashboard/operational-hierarchy.test.ts).
     expect(code.match(/href="\/getting-started"/g)?.length).toBe(1);
@@ -219,15 +219,15 @@ describe("5. dashboard: worklist first", () => {
     // Part 1 split "Action needed" out of the snapshot; Part 2B retired that
     // component entirely and folded its data into the ONE To-do model. The
     // snapshot keeps its metrics and its livemode gate; the SAME
-    // `clientsNeedingAttention` value is still loaded once and still rendered
-    // — now as treatment_memory rows in the unified list.
+    // `clientsNeedingAttention` value is still loaded once and still rendered,
+    // now as treatment_memory rows in the unified list.
     expect(DASH).toMatch(
       /<PracticeSnapshot metrics=\{practiceMetrics\} livemode=\{inferStripeLivemode\(\)\} \/>/,
     );
     expect(DASH).not.toMatch(/<ActionNeeded/);
     expect(DASH).toMatch(/attention: clientsNeedingAttention/);
     expect(DASH).toMatch(/<DashboardTodoList todo=\{dashboardTodo\} \/>/);
-    // Loaded exactly once — the split must not have introduced a second read.
+    // Loaded exactly once: the split must not have introduced a second read.
     expect(DASH.match(/getClientsNeedingAttention\(/g) ?? []).toHaveLength(1);
   });
 });

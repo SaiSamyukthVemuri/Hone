@@ -19,7 +19,7 @@ const base: SignedConsentRecordLike = {
   response_label_snapshot: "I consent to photo use as described above.",
 };
 
-describe("photoConsentSummary — the four required outcomes", () => {
+describe("photoConsentSummary: the four required outcomes", () => {
   it("granted → Photo use consented (ok)", () => {
     expect(photoConsentSummary("granted")).toEqual({ label: "Photo use consented", tone: "ok" });
   });
@@ -37,7 +37,7 @@ describe("photoConsentSummary — the four required outcomes", () => {
   });
 });
 
-describe("reviewSignedRecord — valid vs needs-review", () => {
+describe("reviewSignedRecord: valid vs needs-review", () => {
   it("accepts a complete photo-consent record", () => {
     expect(reviewSignedRecord(base, "photo_consent")).toEqual({ ok: true });
   });

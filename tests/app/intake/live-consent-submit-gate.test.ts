@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // THE SERVER-SIDE FINAL SUBMIT GATE, driven through the real
-// submitIntakeAction — not through the gate helper in isolation.
+// submitIntakeAction, not through the gate helper in isolation.
 //
 // WHY THIS FILE EXISTS. tests/lib/intake/live-consent-forms.test.ts proves
 // validateIntakeConsentResponses refuses the right things. That is NOT the
@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //
 //     if (consent.ok && consent.record) { ...store... }
 //
-// — i.e. dropped the `if (!consent.ok) return` — left every test in that file
+// i.e. dropped the `if (!consent.ok) return`, left every test in that file
 // green while a client with no consent response could submit. This file closes
 // that gap. The oracle is the STORED ROW: "blocked" means status is still
 // in_progress and the row did not move.
@@ -216,7 +216,7 @@ beforeEach(() => {
 // Between #529 and this change the intake DID collect photo consent, so real
 // records carry real answers. Both writers rebuild the stored record from the
 // studio's currently-live intake forms, which means a form no longer resolved
-// simply stops being written — so without an explicit carry-forward the very
+// simply stops being written, so without an explicit carry-forward the very
 // next save or submit would erase a client's photo answer. Silent clinical
 // history loss is the worst outcome available here, so it is pinned through
 // the REAL action, not the helper.
@@ -253,7 +253,7 @@ describe("a stored photo answer survives the move to the portal", () => {
     ] as { forms: Array<Record<string, unknown>> };
     const photo = stored.forms.find((f) => f.form_type === "photo_consent");
     // Byte-identical: the snapshot is the text the client actually read, and
-    // responded_at is when they actually answered — not re-stamped as today.
+    // responded_at is when they actually answered, not re-stamped as today.
     expect(photo).toEqual(storedPhoto);
     expect(
       stored.forms.some((f) => f.form_type === "treatment_consent"),
@@ -311,7 +311,7 @@ describe("the server refuses a submit that skips live consent", () => {
   });
 
   // Chloe, 2026-08-09: photo consent left the intake. An unanswered photo form
-  // must now be a NON-EVENT for the intake — that is the whole point of the
+  // must now be a NON-EVENT for the intake, that is the whole point of the
   // change, and the inverse of what this test used to assert.
   it("an unanswered photo consent does NOT block (it is not an intake form)", async () => {
     db.consent_form_templates = [photoTemplate()];
@@ -336,7 +336,7 @@ describe("the server refuses a submit that skips live consent", () => {
     );
     expect(res.ok).toBe(false);
     expect(currentRow().status).toBe("in_progress");
-    // Nothing was written at all — the refusal happens above the UPDATE.
+    // Nothing was written at all, the refusal happens above the UPDATE.
     expect(currentRow().responses).toEqual({});
   });
 
@@ -514,7 +514,7 @@ describe("an existing CURRENT portal completion satisfies the submit", () => {
     const res = await submit();
     expect(res.ok).toBe(true);
     expect(currentRow().status).toBe("submitted");
-    // Nothing was completed IN the intake, so no intake consent record — the
+    // Nothing was completed IN the intake, so no intake consent record, the
     // portal signature stays the portal's evidence.
     expect(
       (currentRow().responses as Record<string, unknown>)[

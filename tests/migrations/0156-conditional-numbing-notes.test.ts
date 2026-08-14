@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-// Migration 0156 — conditional numbing notes. Additive nullable column +
+// Migration 0156: conditional numbing notes. Additive nullable column +
 // carries it through the two authoritative atomic RPCs. Carries the repo
 // migration-max tripwire.
 
@@ -13,7 +13,7 @@ const CODE = SQL.split("\n")
   .filter((l) => !/^\s*--/.test(l))
   .join("\n");
 
-describe("0156 — conditional numbing notes (repo migration-max tripwire)", () => {
+describe("0156: conditional numbing notes (repo migration-max tripwire)", () => {
   it("is present, 0155 precedes it, exactly one 0156, nothing 0158+ (repo max pin now lives in the 0157 test)", () => {
     expect(FILE).toMatch(/^0156_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -30,7 +30,7 @@ describe("0156 — conditional numbing notes (repo migration-max tripwire)", () 
     expect(SQL).not.toMatch(/numbing_notes text[^;]*not null/i);
     expect(SQL).not.toMatch(/numbing_notes[^;]*default/i);
     // No backfill / existing-row rewrite. The ONLY UPDATE in the migration is
-    // the update RPC's single-block, row-scoped SET (where b.id = p_block_id) —
+    // the update RPC's single-block, row-scoped SET (where b.id = p_block_id),
     // there is no bulk backfill UPDATE of existing rows.
     const updates = CODE.match(/update public\.session_blocks/gi) ?? [];
     expect(updates).toHaveLength(1);

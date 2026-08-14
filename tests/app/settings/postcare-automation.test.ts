@@ -14,7 +14,7 @@ const SESSION_ACTIONS = read("app/(app)/clients/[id]/sessions/new/actions.ts");
 const SETTINGS_FORM = read("app/(app)/settings/studio/PostcareSettingsForm.tsx");
 const STUDIO_ACTION = read("app/(app)/settings/studio/actions.ts");
 
-describe("auto-send helper — safe, idempotent, studio-scoped", () => {
+describe("auto-send helper: safe, idempotent, studio-scoped", () => {
   it("B8 / 0177: the claim's rules moved INTO the database", () => {
     // These previously asserted the helper's own `.eq("status","completed")`,
     // `.is("postcare_email_sent_at", null)` and `.eq("studio_id", …)` filters.
@@ -39,7 +39,7 @@ describe("auto-send helper — safe, idempotent, studio-scoped", () => {
     expect(HELPER).toMatch(/} catch \(err\) \{/);
     expect(HELPER).toMatch(/return "threw"/);
     // Reuses the existing safe email (buildPostcareEmail = studio settings only,
-    // no clinical/intake data) rather than building a new email — no health data.
+    // no clinical/intake data) rather than building a new email, no health data.
     expect(HELPER).toMatch(/sendPostcareToClient/);
   });
 });

@@ -13,7 +13,7 @@ import { join } from "node:path";
 // explicitly, by name. Granting to `authenticated` does not remove the others.
 //
 // This rule has now been learned three times:
-//   * 0129 revoked only `from public`, leaving `anon` with EXECUTE — 0130 had
+//   * 0129 revoked only `from public`, leaving `anon` with EXECUTE, 0130 had
 //     to clean it up.
 //   * 0164 revoked `from public` and `from anon`, leaving `service_role` with
 //     EXECUTE, while its own comment claimed there was "deliberately no
@@ -21,7 +21,7 @@ import { join } from "node:path";
 //
 // The check is textual and deliberately narrow. It looks only at migrations
 // that CREATE a **directly callable** function whose body requires a non-null
-// `auth.uid()` — i.e. a command intended for authenticated callers only.
+// `auth.uid()`, i.e. a command intended for authenticated callers only.
 //
 // TRIGGER FUNCTIONS ARE EXCLUDED, on principle rather than convenience: a
 // `returns trigger` function cannot be invoked directly at all (PostgreSQL
@@ -43,9 +43,9 @@ const DEFAULT_GRANTED_ROLES = ["public", "anon", "service_role"] as const;
  * ARE service-role paths; it is not a place to silence a real miss.
  */
 const SERVICE_ROLE_CALLABLE: ReadonlyArray<{ fn: string; why: string }> = [
-  { fn: "claim_calendar_sync_op", why: "0124 outbox worker — service-role only by design" },
-  { fn: "record_calendar_sync_result", why: "0124 outbox worker — service-role only by design" },
-  { fn: "copy_session_setup", why: "0157 provenance ledger — service_role-only RPC" },
+  { fn: "claim_calendar_sync_op", why: "0124 outbox worker, service-role only by design" },
+  { fn: "record_calendar_sync_result", why: "0124 outbox worker, service-role only by design" },
+  { fn: "copy_session_setup", why: "0157 provenance ledger, service_role-only RPC" },
 ];
 
 type Created = {
@@ -82,7 +82,7 @@ function createdFunctions(file: string): Created[] {
       file,
       fn: m[1],
       requiresAuthUid: /if\s+auth\.uid\(\)\s+is\s+null\s+then/i.test(body),
-      // `returns trigger` — not directly callable, so EXECUTE is inert.
+      // `returns trigger`: not directly callable, so EXECUTE is inert.
       isTrigger: /\breturns\s+trigger\b/i.test(body),
       body,
     });
@@ -90,7 +90,7 @@ function createdFunctions(file: string): Created[] {
   return out;
 }
 
-describe("clinical RPC grant guard — authenticated-only commands", () => {
+describe("clinical RPC grant guard: authenticated-only commands", () => {
   const created = migrationFiles().flatMap(createdFunctions);
 
   const authOnly = created.filter(
@@ -141,7 +141,7 @@ describe("clinical RPC grant guard — authenticated-only commands", () => {
         `Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon, authenticated ` +
           `AND service_role at create time, and PostgreSQL grants it to PUBLIC. An ` +
           `authenticated-only command must revoke from public, anon AND service_role ` +
-          `explicitly, by name — granting to authenticated does not remove them. ` +
+          `explicitly, by name, granting to authenticated does not remove them. ` +
           `This was missed in 0129 (anon) and again in 0164 (service_role).`,
       ).toEqual([]);
     });
@@ -149,7 +149,7 @@ describe("clinical RPC grant guard — authenticated-only commands", () => {
 
   /**
    * A function that is explicitly REVOKEd from `authenticated` and never
-   * granted back is an INTERNAL helper, not a command — it exists only to be
+   * granted back is an INTERNAL helper, not a command, it exists only to be
    * called from inside another SECURITY DEFINER function, which runs as the
    * owner. The "must grant to authenticated" rule does not apply to it, but
    * every revoke rule above still does. (0166 introduced the first of these:
@@ -183,8 +183,8 @@ describe("clinical RPC grant guard — authenticated-only commands", () => {
 
   it("internal helpers are revoked from authenticated and never granted back", () => {
     // 0166's three helpers. Only assert_session_writable gates on auth.uid()
-    // itself — the other two are called after their caller has already
-    // validated — so the check is on the revoke, not on the auth-gated set.
+    // itself, the other two are called after their caller has already
+    // validated, so the check is on the revoke, not on the auth-gated set.
     for (const fn of [
       "assert_session_writable",
       "assert_block_in_session",

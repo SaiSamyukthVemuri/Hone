@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// L18 Phase 4 — the upload's storage/metadata boundary.
+// L18 Phase 4, the upload's storage/metadata boundary.
 // ===========================================================================
 //
 // Storage and Postgres are two planes and CANNOT share a transaction: the

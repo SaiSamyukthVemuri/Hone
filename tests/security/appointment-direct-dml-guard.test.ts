@@ -11,15 +11,15 @@ import {
 } from "./helpers/supabase-write-census";
 
 // ===========================================================================
-// Appointment boundary PR B1 — static direct-DML census guard.
+// Appointment boundary PR B1, static direct-DML census guard.
 // ===========================================================================
 //
 // WHY THIS EXISTS. `docs/audits/APPOINTMENT_DML_BOUNDARY_2026-08.md` found that
 // `public.appointments` has never received a GRANT or REVOKE in any of the 170
 // migrations, so `authenticated` still holds INSERT/UPDATE/DELETE under the
-// 0010 `appointments_member_all` FOR ALL policy. The audit's central claim —
+// 0010 `appointments_member_all` FOR ALL policy. The audit's central claim,
 // and the reason the future revoke (PR B3, migration 0172) is a
-// ZERO-APPLICATION-CHANGE migration — is this:
+// ZERO-APPLICATION-CHANGE migration, is this:
 //
 //     Every appointment write in shipped code goes through a reviewed
 //     service_role-only SECURITY DEFINER command, EXCEPT seven direct
@@ -31,12 +31,12 @@ import {
 // last never froze the writers while the migration was being written.
 //
 // WHAT THIS GUARD DOES NOT PROVE. It is static. It cannot detect a write issued
-// by a browser holding a valid JWT straight against PostgREST — that is exactly
+// by a browser holding a valid JWT straight against PostgREST, that is exactly
 // what the revoke closes, and no test in this tree can substitute for it. This
 // guard proves only that the APPLICATION does not need the privilege.
 //
 // ANALYZER CHOICE. It uses `supabaseWriteSites()` from
-// `tests/security/helpers/supabase-write-census.ts` — the TypeScript
+// `tests/security/helpers/supabase-write-census.ts`, the TypeScript
 // compiler-API census that walks app/, lib/, components/, scripts/ and
 // middleware.ts, resolves table expressions and DML payloads through same-scope
 // bindings, and FAILS CLOSED on anything it cannot follow. It deliberately does
@@ -93,7 +93,7 @@ const SUCCESS_COLUMNS = [
 const MANUAL = "app/(app)/calendar/actions.ts";
 const AUTO = "app/(app)/calendar/postcare-auto-send.ts";
 
-// B8 / 0177 — THE EXCEPTION IS CLOSED. This list previously held the seven
+// B8 / 0177: THE EXCEPTION IS CLOSED. This list previously held the seven
 // direct postcare writers B5/0174 deliberately allowed while the boundary was
 // being built (four in sendPostcareEmailAction, three in
 // autoSendPostcareOnComplete). 0177 replaced them with claim_postcare_send and
@@ -123,7 +123,7 @@ const POSTCARE_BOOKKEEPING_COLUMNS = new Set([
 /**
  * Columns whose appearance in a direct write would mean the application had
  * started bypassing a reviewed command. Redundant with the subset assertion
- * above — deliberately, because this list is what makes the failure message
+ * above, deliberately, because this list is what makes the failure message
  * name the actual danger instead of "set mismatch".
  */
 const FORBIDDEN_COLUMNS = [
@@ -206,7 +206,7 @@ const ADMIN_MODULE = /admin|service[-_]?role/i;
 
 /**
  * Map every locally-bound factory name to the module and EXPORTED name it came
- * from — covering both static `import { a as b } from "m"` and the dynamic
+ * from, covering both static `import { a as b } from "m"` and the dynamic
  * `const { a: b } = await import("m")` form this codebase uses inside server
  * actions.
  *
@@ -273,9 +273,9 @@ function classify(expr: ts.Expression, sf: ts.SourceFile): Binding {
       : e.expression.getText(sf);
     const origin = factoryOrigins(sf).get(callee);
     // Unknown provenance is NOT admin. A factory this walk cannot trace back to
-    // an import — a locally defined wrapper, a re-export, a parameter — leaves
+    // an import, a locally defined wrapper, a re-export, a parameter, leaves
     // the privilege level unproven, and unproven fails.
-    if (!origin) return { kind: "unknown", text: `${callee}() — unresolved origin` };
+    if (!origin) return { kind: "unknown", text: `${callee}(), unresolved origin` };
     const isAdmin = ADMIN_MODULE.test(origin.from) && origin.exported === "createAdminClient";
     if (isAdmin) return { kind: "admin-factory", callee: `${origin.exported}@${origin.from}` };
     return {
@@ -283,7 +283,7 @@ function classify(expr: ts.Expression, sf: ts.SourceFile): Binding {
       callee: `${origin.exported}@${origin.from}`,
     };
   }
-  // `deps?.admin` / `deps.admin` — the test-injection seam. Acceptable ONLY
+  // `deps?.admin` / `deps.admin`: the test-injection seam. Acceptable ONLY
   // alongside a real admin factory binding in the same scope; asserted below.
   if (
     (ts.isPropertyAccessExpression(e) || ts.isPropertyAccessChain(e)) &&
@@ -332,8 +332,8 @@ function enclosingName(node: ts.Node): string {
 
 /**
  * Every DML chain in `relFile` whose `.from(...)` names one of `tables`, with
- * the receiver identifier resolved and every binding of that identifier — both
- * declarations and re-assignments — classified, within the nearest enclosing
+ * the receiver identifier resolved and every binding of that identifier, both
+ * declarations and re-assignments, classified, within the nearest enclosing
  * function (falling back to the whole file when the site is top-level).
  */
 function receiverProofs(relFile: string, tables: readonly string[]): SiteReceiver[] {
@@ -425,7 +425,7 @@ function receiverProofs(relFile: string, tables: readonly string[]): SiteReceive
 // `supabaseWriteSites()` finds a write by walking BACK from the DML call to a
 // `.from(...)` in the SAME expression. A chain split across a variable is
 // therefore invisible to it, and the evasion was demonstrated against an
-// earlier draft of this guard — the census stayed green:
+// earlier draft of this guard, the census stayed green:
 //
 //     const q = admin.from("appointments");
 //     await q.update({ status: "completed", starts_at: … });
@@ -436,7 +436,7 @@ function receiverProofs(relFile: string, tables: readonly string[]): SiteReceive
 // analysis: a `.from(<appointment table>)` call must be continued immediately
 // with `.something` in the same expression. A `.from()` whose result is bound
 // to a variable, returned, or passed as an argument is DETACHED, and its
-// eventual operation cannot be censused — so it fails.
+// eventual operation cannot be censused, so it fails.
 
 function parseAbs(absFile: string): ts.SourceFile {
   return ts.createSourceFile(
@@ -468,7 +468,7 @@ function appointmentFromCalls(): FromCall[] {
           (TABLES as readonly string[]).includes(arg.text)
         ) {
           // Attached iff the very next thing done to the result is a property
-          // access on it — i.e. the chain continues in this expression.
+          // access on it, i.e. the chain continues in this expression.
           const p = n.parent;
           const attached =
             p !== undefined && ts.isPropertyAccessExpression(p) && p.expression === n;
@@ -515,7 +515,7 @@ const asMultiset = (ds: Descriptor[]) =>
 
 // ===========================================================================
 
-describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", () => {
+describe("appointment direct-DML census: T2.5 the analyzer is not vacuous", () => {
   // The failure mode this repository has shipped before is SILENCE: an analyzer
   // that finds nothing, reports a clean tree, and is believed. Every assertion
   // below is worthless unless the census is demonstrably alive, so these run
@@ -530,7 +530,7 @@ describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", (
     ).toBeGreaterThan(100);
   });
 
-  it("it finds ZERO direct appointment writers — and that zero is REAL", () => {
+  it("it finds ZERO direct appointment writers, and that zero is REAL", () => {
     // The census used to assert SEVEN, and "zero would mean the analyzer is
     // broken" was the honest warning attached to it. B8 makes zero the correct
     // answer, which removes that safety net: a broken analyzer and a clean tree
@@ -560,13 +560,13 @@ describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", (
     ).toBeGreaterThan(20);
   });
 
-  it("T30/T31/T32 — both former writer files now contain ZERO direct writers", () => {
+  it("T30/T31/T32: both former writer files now contain ZERO direct writers", () => {
     // T30 + T31: sendPostcareEmailAction held four (first-send claim, resend
     // claim, failure settle, success settle). T32: autoSendPostcareOnComplete
     // held three (claim, failure settle, success settle). All seven are gone.
     //
-    // The files are still scanned — they remain in the analyzer's runtime tree
-    // — so a reintroduced writer in either one is caught here, not merely
+    // The files are still scanned, they remain in the analyzer's runtime tree,
+    // so a reintroduced writer in either one is caught here, not merely
     // absent from a list.
     expect(
       APPT_SITES.filter((s) => s.file === MANUAL),
@@ -579,7 +579,7 @@ describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", (
     // ANTI-VACUITY, IN THREE LAYERS. An earlier version of this control asked
     // `scanned.has(MANUAL) || scanned.has(AUTO)` over the WRITE-site set, which
     // was wrong twice: `||` proves at-least-one rather than both, and the write
-    // set is exactly what B8 emptied for these two files — so a file that
+    // set is exactly what B8 emptied for these two files, so a file that
     // correctly contains zero writes is absent from it, and the control could
     // pass while neither file was being read at all.
     //
@@ -591,7 +591,7 @@ describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", (
     expect(runtimeFiles.has(AUTO), `${AUTO} must still be enumerated`).toBe(true);
 
     // Layer 2: the appointment-specific PARSER still observes real
-    // `.from("appointments")` calls in each file — they both still READ the
+    // `.from("appointments")` calls in each file, they both still READ the
     // table. So the parser is demonstrably reaching and understanding this
     // source, not silently failing on it.
     for (const f of [MANUAL, AUTO]) {
@@ -616,7 +616,7 @@ describe("appointment direct-DML census — T2.5 the analyzer is not vacuous", (
   });
 });
 
-describe("T2.1 — the appointment writer census is frozen", () => {
+describe("T2.1: the appointment writer census is frozen", () => {
   it("no direct `appointments` writer exists outside the reviewed set (now empty)", () => {
     const allowedKeys = new Set(ALLOWED.map((d) => sortKey(d)));
     const undeclared = APPT_SITES.filter((s) => !allowedKeys.has(sortKey(descriptorOf(s))));
@@ -625,7 +625,7 @@ describe("T2.1 — the appointment writer census is frozen", () => {
       "a NEW direct `appointments` writer appeared, or an existing one changed its " +
         "function, operation or payload columns.\n\n" +
         "Direct table DML on `appointments` bypasses every reviewed SECURITY DEFINER " +
-        "command — no availability validation, no owner gate, no legal-transition " +
+        "command, no availability validation, no owner gate, no legal-transition " +
         "check and no `appointment_audit` row (no trigger writes it). Route the write " +
         "through a command, or add a reviewed entry to ALLOWED with a justification.\n\n" +
         describeSites(undeclared),
@@ -653,17 +653,17 @@ describe("T2.1 — the appointment writer census is frozen", () => {
     }
   });
 
-  it("every appointment writer is an UPDATE — the app creates and deletes nothing directly", () => {
+  it("every appointment writer is an UPDATE, the app creates and deletes nothing directly", () => {
     // Creation goes through create_internal_appointment_v2 / create_public_appointment;
     // there is no appointment DELETE anywhere in the product (audit §4, workflow 12).
-    // After B8 there is no direct appointment DML of ANY kind — not UPDATE,
+    // After B8 there is no direct appointment DML of ANY kind, not UPDATE,
     // and (as always) not INSERT or DELETE. Stated as the empty set so a
     // reintroduced writer of any operation fails here.
     expect(APPT_SITES.map((s) => s.op).sort()).toEqual([]);
   });
 });
 
-describe("T2.2 — direct writers may touch postcare bookkeeping columns and nothing else", () => {
+describe("T2.2: direct writers may touch postcare bookkeeping columns and nothing else", () => {
   // THE LOAD-BEARING ASSERTION. T2.1 freezes WHICH files write; this freezes
   // WHAT they write. A payload that grows `status` or `starts_at` inside an
   // already-allowed function would pass a file-level allowlist and fail here.
@@ -701,7 +701,7 @@ describe("T2.2 — direct writers may touch postcare bookkeeping columns and not
       "postcare_email_send_attempts",
       "postcare_email_sent_at",
     ]);
-    // The six columns still EXIST — they are the postcare bookkeeping family —
+    // The six columns still EXIST, they are the postcare bookkeeping family,
     // but after B8 no runtime writer touches them directly. Only
     // settle_postcare_send / claim_postcare_send write them, inside SQL.
     const used = new Set(APPT_SITES.flatMap((s) => s.columns));
@@ -709,7 +709,7 @@ describe("T2.2 — direct writers may touch postcare bookkeeping columns and not
   });
 });
 
-describe("T2.3 — `appointment_audit` has no direct runtime writer", () => {
+describe("T2.3: `appointment_audit` has no direct runtime writer", () => {
   // Reading it is fine and shipped: app/(app)/calendar/[id]/page.tsx renders the
   // cancellation insight. Writing it is not. The 0010 member INSERT policy plus
   // the never-revoked grant make the table forgeable today (audit P1-3); the
@@ -726,7 +726,7 @@ describe("T2.3 — `appointment_audit` has no direct runtime writer", () => {
   });
 });
 
-describe("T2.4 — unresolved table targets fail closed", () => {
+describe("T2.4: unresolved table targets fail closed", () => {
   // `.from(variable)` hides from every literal census. The analyzer reports such
   // sites as unresolved rather than skipping them; this asserts each one is
   // provably incapable of naming an appointment table.
@@ -790,7 +790,7 @@ describe("T2.4 — unresolved table targets fail closed", () => {
     // is a real, dangerous write that supabaseWriteSites() does not report.
     const detached = FROM_CALLS.filter((f) => f.detached);
     expect(
-      detached.map((f) => `${f.file}:${f.line} in ${f.fn}() — .from("${f.table}")`),
+      detached.map((f) => `${f.file}:${f.line} in ${f.fn}(), .from("${f.table}")`),
       "a `.from()` on an appointment table is not immediately continued in the same " +
         "expression. Splitting the chain across a variable hides the eventual operation " +
         "from the census entirely, so the write cannot be reviewed. Keep the chain " +
@@ -799,8 +799,8 @@ describe("T2.4 — unresolved table targets fail closed", () => {
   });
 
   it("the detached-chain detector is itself non-vacuous", () => {
-    // It must be finding the real `.from("appointments")` calls — reads
-    // included — or its empty `detached` list means nothing.
+    // It must be finding the real `.from("appointments")` calls, reads
+    // included, or its empty `detached` list means nothing.
     expect(
       FROM_CALLS.length,
       "the `.from(appointments)` scan found nothing; the detector is broken",
@@ -826,7 +826,7 @@ describe("T2.4 — unresolved table targets fail closed", () => {
   });
 });
 
-describe("T2.6 — every direct appointment writer runs as service_role", () => {
+describe("T2.6: every direct appointment writer runs as service_role", () => {
   // Deliberately the INVERSE of the clinical guard in
   // entry-direct-dml-guard.test.ts. There, an admin receiver is the failure.
   // Here it is the requirement: these seven writes must not be the reason the
@@ -852,22 +852,22 @@ describe("T2.6 — every direct appointment writer runs as service_role", () => 
     expect(proofs, "no direct appointment write chain may remain").toHaveLength(0);
 
     for (const p of proofs) {
-      expect(p.receiver, `${p.file}:${p.line} — receiver is not a plain identifier`).not
+      expect(p.receiver, `${p.file}:${p.line}, receiver is not a plain identifier`).not
         .toBeNull();
       const kinds = p.bindings.map((b) => b.kind);
       expect(
         kinds,
-        `${p.file}:${p.line} in ${p.fn}() — could not resolve any binding for receiver ` +
+        `${p.file}:${p.line} in ${p.fn}(), could not resolve any binding for receiver ` +
           `\`${p.receiver}\`. An unresolvable receiver is an unproven privilege level.`,
       ).not.toEqual([]);
       expect(
         kinds.filter((k) => k === "admin-factory").length,
-        `${p.file}:${p.line} in ${p.fn}() — receiver \`${p.receiver}\` is never assigned ` +
+        `${p.file}:${p.line} in ${p.fn}(), receiver \`${p.receiver}\` is never assigned ` +
           `from createAdminClient(). Bindings: ${JSON.stringify(p.bindings)}`,
       ).toBeGreaterThan(0);
       expect(
         p.bindings.filter((b) => b.kind === "unknown"),
-        `${p.file}:${p.line} in ${p.fn}() — receiver \`${p.receiver}\` has a binding the ` +
+        `${p.file}:${p.line} in ${p.fn}(), receiver \`${p.receiver}\` has a binding the ` +
           `analyzer cannot classify. Fail closed.`,
       ).toEqual([]);
     }
@@ -890,7 +890,7 @@ describe("T2.6 — every direct appointment writer runs as service_role", () => 
   });
 });
 
-describe("T2.7 — no authenticated-client writer for either appointment table", () => {
+describe("T2.7: no authenticated-client writer for either appointment table", () => {
   // This is the assertion the future migration 0172 depends on. If it ever goes
   // red, `revoke insert, update, delete on public.appointments from
   // authenticated` stops being a zero-application-change migration.
@@ -904,12 +904,12 @@ describe("T2.7 — no authenticated-client writer for either appointment table",
     expect(filesWithApptWrites, "T33: no runtime file writes appointments directly").toEqual([]);
 
     // FAIL CLOSED. Stating this as "no receiver is an authenticated factory"
-    // alone passes VACUOUSLY when the receiver cannot be resolved at all — a
+    // alone passes VACUOUSLY when the receiver cannot be resolved at all, a
     // receiver with zero bindings has no authenticated binding either. That was
     // observed: switching one writer to `supabase` (a name never declared in
     // that function's scope) left this assertion green while only T2.6 caught
-    // it. So the property asserted here is the POSITIVE one — every receiver is
-    // provably service-role — and anything unproven is an offender.
+    // it. So the property asserted here is the POSITIVE one, every receiver is
+    // provably service-role, and anything unproven is an offender.
     const offenders = filesWithApptWrites.flatMap((f) =>
       receiverProofs(f, TABLES)
         .filter((p) => {
@@ -923,7 +923,7 @@ describe("T2.7 — no authenticated-client writer for either appointment table",
         })
         .map(
           (p) =>
-            `${p.file}:${p.line} in ${p.fn}() — receiver \`${p.receiver}\`, bindings ` +
+            `${p.file}:${p.line} in ${p.fn}(), receiver \`${p.receiver}\`, bindings ` +
             `${JSON.stringify(p.bindings.map((b) => b.kind))}`,
         ),
     );
@@ -938,7 +938,7 @@ describe("T2.7 — no authenticated-client writer for either appointment table",
     ).toEqual([]);
   });
 
-  it("`app/(app)/calendar/actions.ts` uses BOTH factories — and only the admin one writes", () => {
+  it("`app/(app)/calendar/actions.ts` uses BOTH factories: and only the admin one writes", () => {
     // This file legitimately holds an authenticated client for reads
     // (createClient at :197, :471, …). The point of a per-RECEIVER proof rather
     // than a per-MODULE one is that this file must still pass.
@@ -958,11 +958,11 @@ describe("T2.7 — no authenticated-client writer for either appointment table",
   });
 });
 
-describe("appointment direct-DML census — the report", () => {
+describe("appointment direct-DML census: the report", () => {
   it("prints the frozen census for the reviewer", () => {
     // eslint-disable-next-line no-console
     console.log(
-      "\nAppointment direct-DML census (frozen at PR B1) —\n" +
+      "\nAppointment direct-DML census (frozen at PR B1):\n" +
         describeSites(APPT_SITES) +
         `\n\n  appointment_audit direct writers: ${AUDIT_SITES.length}` +
         `\n  variable-table writers in tree:   ${UNRESOLVED_TABLE_SITES.length}` +

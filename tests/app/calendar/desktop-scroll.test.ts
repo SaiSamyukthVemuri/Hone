@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Desktop PR B: the week body is ONE clean vertical scroll — the leftover
+// Desktop PR B: the week body is ONE clean vertical scroll, the leftover
 // horizontal-scroll / min-width machinery is removed. Layout-only (CSS); the
 // DayColumn positioning math, now-line, preview, booking, and block interactions
 // are unchanged, and the mobile #380 day view + month view are untouched.

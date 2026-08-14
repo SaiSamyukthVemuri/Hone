@@ -1,12 +1,12 @@
 // ===========================================================================
-// Integration RC — capacity-ON CALENDAR Quick Book browser proofs (Studio B)
+// Integration RC, capacity-ON CALENDAR Quick Book browser proofs (Studio B)
 // ===========================================================================
 //
 // The existing practitioner-booking-studio-b spec proves practitioner-aware
 // creation through the CLIENT-PROFILE "+ Book appointment" modal. This spec
 // proves the SAME capacity model through the real CALENDAR Quick Book entry
-// points that the combined RC ships — the desktop DayColumn empty-cell drawer
-// and the mobile CalendarMobileDayView FAB — which were previously unproven at
+// points that the combined RC ships, the desktop DayColumn empty-cell drawer
+// and the mobile CalendarMobileDayView FAB, which were previously unproven at
 // the browser layer.
 //
 // One shared QuickBookDrawer (role="dialog" name="New appointment") backs both
@@ -119,7 +119,7 @@ async function pickService(page: Page, svcId: string) {
   await DRAWER(page).getByRole("combobox").first().selectOption(svcId);
 }
 
-// Current appointment ids for a (studio, client) — used for self-contained
+// Current appointment ids for a (studio, client), used for self-contained
 // delta assertions that hold whether a test runs alone or in the serial suite.
 async function apptIds(studioId: string, cId: string): Promise<string[]> {
   return (await getClientAppointmentsWithPractitioner(studioId, cId)).map((a) => a.id);
@@ -185,13 +185,13 @@ test.describe("desktop calendar Quick Book (capacity ON)", () => {
 
     // Switch A -> B: the slot effect re-fetches for B and its cleanup cancels
     // A's in-flight response (QuickBookDrawer.tsx:455-457), so A's picked slot
-    // is discarded — submit disables and the assignment flips to B. A stale A
+    // is discarded, submit disables and the assignment flips to B. A stale A
     // slot response can therefore never be committed for B.
     await selector.selectOption(B.practitionerId);
     await expect(d.getByTestId("assigned-practitioner")).toContainText(B.displayName);
     await expect(submit).toBeDisabled();
 
-    // B's freshly scoped slots render; picking one re-enables — no A carry-over.
+    // B's freshly scoped slots render; picking one re-enables, no A carry-over.
     await expect(slot.first()).toBeVisible({ timeout: 20_000 });
     await slot.last().click();
     await expect(submit).toBeEnabled();

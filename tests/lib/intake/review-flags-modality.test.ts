@@ -8,7 +8,7 @@ import {
 
 // PR #267. Modality/category badges derived from Chloe's clinic reference
 // chart, attached to the existing PR #266 flags. Badges are surfaced for
-// review only — never a treatment decision. These tests pin the chart mapping,
+// review only, never a treatment decision. These tests pin the chart mapping,
 // that unmapped rows are NOT invented, that free text is never parsed, and that
 // only the allowed wording reaches the badges.
 
@@ -25,7 +25,7 @@ function badges(responses: Record<string, unknown>, id: string): IntakeModality[
   return flagFor(responses, id)?.badges ?? [];
 }
 
-describe("modality badges — chart-mapped conditions", () => {
+describe("modality badges: chart-mapped conditions", () => {
   it("heart problem / pacemaker → continuous/galvanic + medical authorization", () => {
     expect(badges({ medical_conditions: ["heart"] }, "medical_conditions:heart")).toEqual([
       "authorization",
@@ -74,7 +74,7 @@ describe("modality badges — chart-mapped conditions", () => {
   });
 });
 
-describe("modality badges — unmapped rows are NOT invented", () => {
+describe("modality badges: unmapped rows are NOT invented", () => {
   it("metal implants has no chart modality badges (generic review fallback only)", () => {
     // The chart's only implant row is the specific 'retinal implant'; the
     // intake field is generic 'metal implants' → no chart mapping.
@@ -103,7 +103,7 @@ describe("modality badges — unmapped rows are NOT invented", () => {
   });
 });
 
-describe("modality badges — free text is never parsed", () => {
+describe("modality badges: free text is never parsed", () => {
   it("a prescription named only in free-text notes produces no flag/badges", () => {
     expect(
       deriveIntakeReviewFlags({
@@ -120,7 +120,7 @@ describe("modality badges — free text is never parsed", () => {
   });
 });
 
-describe("modality badges — wording safety", () => {
+describe("modality badges: wording safety", () => {
   it("MODALITY_WORDING uses only the allowed chart phrases", () => {
     expect(MODALITY_WORDING.thermolysis).toBe("Review before thermolysis");
     expect(MODALITY_WORDING.galvanic).toBe("Review before continuous/galvanic current");

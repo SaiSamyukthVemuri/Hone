@@ -10,7 +10,7 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// B8 / 0177 — postcare claim + settlement boundary.
+// B8 / 0177: postcare claim + settlement boundary.
 //
 // The seven direct application UPDATEs are replaced by two commands. What has
 // to be proved is not "postcare can be sent" but the two properties the direct
@@ -118,7 +118,7 @@ const auditCount = async (id: string) =>
  *
  * That returned value is the token a superseded sender would actually be
  * holding. Comparing against the pre-ageing token instead would make the stale
- * tests pass for the wrong reason — they would be rejecting a token that never
+ * tests pass for the wrong reason, they would be rejecting a token that never
  * matched the row rather than one displaced by a genuine reclaim.
  */
 async function ageClaim(id: string, interval: string): Promise<string> {
@@ -145,8 +145,8 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T1-T4 — a winning first claim", () => {
-  it("T1/T2/T3/T4 — claims, issues a token, increments once, and stamps one instant", async () => {
+describe("T1-T4: a winning first claim", () => {
+  it("T1/T2/T3/T4: claims, issues a token, increments once, and stamps one instant", async () => {
     const f = await seedStudio("b8-t1");
     const a = await seedAppt(f);
     const before = await row(a);
@@ -155,14 +155,14 @@ describe("T1-T4 — a winning first claim", () => {
     const c = await claim(f, a);
 
     expect(c.result).toBe("claimed");
-    // T2 — the token exists and is the settlement key.
+    // T2: the token exists and is the settlement key.
     expect(c.claimed_at).not.toBeNull();
-    // T3 — exactly one increment, not two.
+    // T3: exactly one increment, not two.
     expect(Number(c.send_attempts)).toBe(1);
 
     const r = await row(a);
     expect(String(r.postcare_email_claimed_at)).toBe(String(c.claimed_at));
-    // T4 — claimed_at and last_attempt_at are the SAME DB instant, not two
+    // T4: claimed_at and last_attempt_at are the SAME DB instant, not two
     // clock readings that merely look close.
     expect(String(r.postcare_email_last_attempt_at)).toBe(
       String(r.postcare_email_claimed_at),
@@ -172,7 +172,7 @@ describe("T1-T4 — a winning first claim", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T5-T10 — everything the claim refuses", () => {
+describe("T5-T10: everything the claim refuses", () => {
   const expectNoPostcareMutation = async (id: string) => {
     const r = await row(id);
     for (const col of POSTCARE_COLUMNS) {
@@ -185,7 +185,7 @@ describe("T5-T10 — everything the claim refuses", () => {
     ["T5 confirmed", "confirmed"],
     ["T6 cancelled", "cancelled"],
     ["T7 no_show", "no_show"],
-  ])("%s — refused with zero postcare mutation", async (_label, status) => {
+  ])("%s: refused with zero postcare mutation", async (_label, status) => {
     const f = await seedStudio(`b8-${status}`);
     const a = await seedAppt(f, status);
     const c = await claim(f, a);
@@ -194,7 +194,7 @@ describe("T5-T10 — everything the claim refuses", () => {
     await expectNoPostcareMutation(a);
   });
 
-  it("T8 — an INACTIVE practitioner is refused", async () => {
+  it("T8: an INACTIVE practitioner is refused", async () => {
     const f = await seedStudio("b8-t8");
     const a = await seedAppt(f);
     await adminQuery(`update public.practitioners set active = false where id = $1`, [
@@ -205,7 +205,7 @@ describe("T5-T10 — everything the claim refuses", () => {
     await expectNoPostcareMutation(a);
   });
 
-  it("T9 — a practitioner from ANOTHER studio is refused", async () => {
+  it("T9: a practitioner from ANOTHER studio is refused", async () => {
     const f = await seedStudio("b8-t9a");
     const other = await seedStudio("b8-t9b");
     const a = await seedAppt(f);
@@ -214,7 +214,7 @@ describe("T5-T10 — everything the claim refuses", () => {
     await expectNoPostcareMutation(a);
   });
 
-  it("T10 — an appointment in another studio is refused", async () => {
+  it("T10: an appointment in another studio is refused", async () => {
     const f = await seedStudio("b8-t10a");
     const other = await seedStudio("b8-t10b");
     const a = await seedAppt(other);
@@ -224,7 +224,7 @@ describe("T5-T10 — everything the claim refuses", () => {
     await expectNoPostcareMutation(a);
   });
 
-  it("any active same-studio practitioner may send — assignment is NOT required", async () => {
+  it("any active same-studio practitioner may send, assignment is NOT required", async () => {
     // Deliberate: this matches the studio-member operational boundary the
     // product already has. Narrowing it to the assigned practitioner would be a
     // silent behaviour change, not a hardening.
@@ -247,8 +247,8 @@ describe("T5-T10 — everything the claim refuses", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T11-T13 — first send vs resend", () => {
-  it("T11 — a FIRST send is refused once sent_at exists", async () => {
+describe("T11-T13: first send vs resend", () => {
+  it("T11: a FIRST send is refused once sent_at exists", async () => {
     const f = await seedStudio("b8-t11");
     const a = await seedAppt(f);
     const c1 = await claim(f, a);
@@ -259,7 +259,7 @@ describe("T11-T13 — first send vs resend", () => {
     expect(c2.claimed_at).toBeNull();
   });
 
-  it("T12 — a RESEND requires an existing sent_at", async () => {
+  it("T12: a RESEND requires an existing sent_at", async () => {
     // A resend of something never successfully sent is not a resend.
     const f = await seedStudio("b8-t12");
     const a = await seedAppt(f);
@@ -268,7 +268,7 @@ describe("T11-T13 — first send vs resend", () => {
     expect(c.claimed_at).toBeNull();
   });
 
-  it("T13 — a valid resend wins and carries the previous sent_at", async () => {
+  it("T13: a valid resend wins and carries the previous sent_at", async () => {
     const f = await seedStudio("b8-t13");
     const a = await seedAppt(f);
     const c1 = await claim(f, a);
@@ -283,7 +283,7 @@ describe("T11-T13 — first send vs resend", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T14-T18 — concurrency and the stale window", () => {
+describe("T14-T18: concurrency and the stale window", () => {
   /** Two real connections racing the same statement. No sleeps. */
   async function race(sql: string, args: unknown[]) {
     const a = await conn();
@@ -297,7 +297,7 @@ describe("T14-T18 — concurrency and the stale window", () => {
     }
   }
 
-  it("T14 — two concurrent FIRST sends: exactly one wins, attempts +1 not +2", async () => {
+  it("T14, two concurrent FIRST sends: exactly one wins, attempts +1 not +2", async () => {
     const f = await seedStudio("b8-t14");
     const a = await seedAppt(f);
 
@@ -312,8 +312,8 @@ describe("T14-T18 — concurrency and the stale window", () => {
     expect(Number((await row(a)).postcare_email_send_attempts)).toBe(1);
   });
 
-  it("T15 — two concurrent RESENDS: exactly one wins", async () => {
-    // This is the race the old code could NOT prevent — it relied on the
+  it("T15, two concurrent RESENDS: exactly one wins", async () => {
+    // This is the race the old code could NOT prevent, it relied on the
     // client button's disabled state, so two resends could both reach the
     // provider and the client could receive two emails.
     const f = await seedStudio("b8-t15");
@@ -330,7 +330,7 @@ describe("T14-T18 — concurrency and the stale window", () => {
     expect(Number((await row(a)).postcare_email_send_attempts)).toBe(2);
   });
 
-  it("T16 — a FRESH claim cannot be stolen", async () => {
+  it("T16: a FRESH claim cannot be stolen", async () => {
     const f = await seedStudio("b8-t16");
     const a = await seedAppt(f);
     const first = await claim(f, a);
@@ -342,7 +342,7 @@ describe("T14-T18 — concurrency and the stale window", () => {
     expect(String((await row(a)).postcare_email_claimed_at)).toBe(String(first.claimed_at));
   });
 
-  it("T17/T18 — a claim older than five minutes is reclaimable, with a NEW token", async () => {
+  it("T17/T18: a claim older than five minutes is reclaimable, with a NEW token", async () => {
     const f = await seedStudio("b8-t17");
     const a = await seedAppt(f);
     const first = await claim(f, a);
@@ -353,7 +353,7 @@ describe("T14-T18 — concurrency and the stale window", () => {
 
     const second = await claim(f, a);
     expect(second.result).toBe("claimed");
-    // T18 — the reclaim issues a token DIFFERENT from the one it displaced,
+    // T18: the reclaim issues a token DIFFERENT from the one it displaced,
     // which is what makes the superseded sender's late settlement a no-op.
     // Compared as INSTANTS: String(Date) is second-precision, so two tokens
     // milliseconds apart would look identical and this would pass wrongly.
@@ -375,8 +375,8 @@ describe("T14-T18 — concurrency and the stale window", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T19-T24 — settlement", () => {
-  it("T19 — exact-token SUCCESS stamps sent_at and clears claim + failure", async () => {
+describe("T19-T24: settlement", () => {
+  it("T19: exact-token SUCCESS stamps sent_at and clears claim + failure", async () => {
     const f = await seedStudio("b8-t19");
     const a = await seedAppt(f);
     const c = await claim(f, a);
@@ -394,7 +394,7 @@ describe("T19-T24 — settlement", () => {
     expect(r.postcare_email_claimed_at).toBeNull();
   });
 
-  it("T20 — exact-token FAILURE stamps failed_at, clears the claim, invents no sent_at", async () => {
+  it("T20: exact-token FAILURE stamps failed_at, clears the claim, invents no sent_at", async () => {
     const f = await seedStudio("b8-t20");
     const a = await seedAppt(f);
     const c = await claim(f, a);
@@ -409,7 +409,7 @@ describe("T19-T24 — settlement", () => {
     expect(r.postcare_email_sent_at).toBeNull();
   });
 
-  it("T21 — a FAILED RESEND preserves the historical sent_at", async () => {
+  it("T21: a FAILED RESEND preserves the historical sent_at", async () => {
     // The property that matters in a dispute: yesterday's genuine send is not
     // erased by today's failure.
     const f = await seedStudio("b8-t21");
@@ -427,7 +427,7 @@ describe("T19-T24 — settlement", () => {
     expect(r.postcare_email_failed_at).not.toBeNull();
   });
 
-  it("T22/T23/T24 — last_error is derived from p_retryable ALONE", async () => {
+  it("T22/T23/T24: last_error is derived from p_retryable ALONE", async () => {
     const f = await seedStudio("b8-t22");
 
     const a1 = await seedAppt(f);
@@ -440,7 +440,7 @@ describe("T19-T24 — settlement", () => {
     const r2 = await settle(f, a2, c2.claimed_at, false, false);
     expect(r2.last_error).toBe("The email provider rejected the send. Try again.");
 
-    // T24 — there is no parameter through which a raw provider error could
+    // T24: there is no parameter through which a raw provider error could
     // reach the column. A provider message can carry recipient addresses and
     // vendor internals, and this field is rendered to practitioners.
     const args = (
@@ -455,7 +455,7 @@ describe("T19-T24 — settlement", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T25-T28 — a superseded sender returning late", () => {
+describe("T25-T28: a superseded sender returning late", () => {
   /** T1 claims, goes stale, T2 reclaims, then T1 finally answers. */
   async function supersede(label: string) {
     const f = await seedStudio(label);
@@ -470,13 +470,13 @@ describe("T25-T28 — a superseded sender returning late", () => {
     return { f, a, old: { claimed_at: displaced }, fresh };
   }
 
-  it("T25 — an OLD token settles as a stable no-op", async () => {
+  it("T25: an OLD token settles as a stable no-op", async () => {
     const { f, a, old } = await supersede("b8-t25");
     const s = await settle(f, a, old.claimed_at, true);
     expect(s.result).toBe("stale_claim");
   });
 
-  it("T26 — a stale SUCCESS cannot stamp sent_at", async () => {
+  it("T26: a stale SUCCESS cannot stamp sent_at", async () => {
     const { f, a, old, fresh } = await supersede("b8-t26");
     await settle(f, a, old.claimed_at, true);
     const r = await row(a);
@@ -485,13 +485,13 @@ describe("T25-T28 — a superseded sender returning late", () => {
     expect(String(r.postcare_email_claimed_at)).toBe(String(fresh.claimed_at));
   });
 
-  it("T27 — a stale FAILURE cannot clear the newer claim", async () => {
+  it("T27: a stale FAILURE cannot clear the newer claim", async () => {
     const { f, a, old, fresh } = await supersede("b8-t27");
     await settle(f, a, old.claimed_at, false, true);
     expect(String((await row(a)).postcare_email_claimed_at)).toBe(String(fresh.claimed_at));
   });
 
-  it("T28 — a stale FAILURE cannot stamp failed_at over newer state", async () => {
+  it("T28: a stale FAILURE cannot stamp failed_at over newer state", async () => {
     const { f, a, old, fresh } = await supersede("b8-t28");
     // The fresh sender succeeds first; the stale one then reports failure.
     await settle(f, a, fresh.claimed_at, true);
@@ -516,13 +516,13 @@ describe("T25-T28 — a superseded sender returning late", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("ROUND TRIP — the claim token must survive the real serialization path", () => {
+describe("ROUND TRIP: the claim token must survive the real serialization path", () => {
   it("a token serialized through JSON still settles its own claim", async () => {
     // THE DEFECT THIS EXISTS TO CATCH. In production the token does not travel
     // as a pg Date: PostgREST serializes it to JSON, the route holds a string,
     // and it is sent back as a string. A microsecond-precision timestamptz is
     // silently rounded somewhere on that path, so settlement compares a value
-    // that can never equal the stored one — every send would report
+    // that can never equal the stored one, every send would report
     // stale_claim and NOTHING would ever be recorded as sent.
     //
     // A static `date_trunc` grep cannot prove this. Only a real round trip can,
@@ -535,7 +535,7 @@ describe("ROUND TRIP — the claim token must survive the real serialization pat
 
     // Force the value through the exact shape the application receives: JSON
     // out, string in. JSON.stringify renders a Date as an ISO-8601 string with
-    // millisecond precision — the same lossy step PostgREST performs.
+    // millisecond precision, the same lossy step PostgREST performs.
     const overTheWire = JSON.parse(JSON.stringify({ t: c.claimed_at })).t as string;
     expect(typeof overTheWire).toBe("string");
 
@@ -557,7 +557,7 @@ describe("ROUND TRIP — the claim token must survive the real serialization pat
     const overTheWire = JSON.parse(JSON.stringify({ t: c.claimed_at })).t as string;
 
     // NOT String(...): that rendering is second-precision and would compare two
-    // millisecond values as equal after truncating both — the assertion would
+    // millisecond values as equal after truncating both, the assertion would
     // pass without proving anything about precision.
     const stored = (await row(a)).postcare_email_claimed_at as unknown as Date;
     expect(new Date(stored).getTime()).toBe(new Date(overTheWire).getTime());
@@ -565,8 +565,8 @@ describe("ROUND TRIP — the claim token must survive the real serialization pat
 });
 
 // ---------------------------------------------------------------------------
-describe("T29 — every new timestamp is the database's", () => {
-  it("T29 — neither command accepts a caller-supplied state timestamp", async () => {
+describe("T29: every new timestamp is the database's", () => {
+  it("T29: neither command accepts a caller-supplied state timestamp", async () => {
     const claimArgs = (
       await adminQuery(
         `select pg_get_function_arguments(p.oid) as a from pg_proc p
@@ -584,7 +584,7 @@ describe("T29 — every new timestamp is the database's", () => {
           where n.nspname='public' and p.proname='settle_postcare_send'`,
       )
     ).rows[0].a as string;
-    // Settle takes exactly ONE, and it is the claim TOKEN being matched — not
+    // Settle takes exactly ONE, and it is the claim TOKEN being matched, not
     // a value that gets written anywhere.
     expect((settleArgs.match(/timestamp with time zone/g) ?? []).length).toBe(1);
     expect(settleArgs).toMatch(/p_claimed_at timestamp with time zone/);
@@ -605,9 +605,9 @@ describe("T29 — every new timestamp is the database's", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T34-T37 — the privilege boundary after 0177", () => {
+describe("T34-T37: the privilege boundary after 0177", () => {
   it.each(POSTCARE_COLUMNS)(
-    "T34 — service_role direct UPDATE of %s is denied",
+    "T34: service_role direct UPDATE of %s is denied",
     async (col) => {
       const f = await seedStudio(`b8-p-${col.slice(-6)}`);
       const a = await seedAppt(f);
@@ -628,7 +628,7 @@ describe("T34-T37 — the privilege boundary after 0177", () => {
     },
   );
 
-  it("T35 — a COMBINED update touching any postcare column is denied", async () => {
+  it("T35: a COMBINED update touching any postcare column is denied", async () => {
     const f = await seedStudio("b8-t35");
     const a = await seedAppt(f);
     await expect(
@@ -644,7 +644,7 @@ describe("T34-T37 — the privilege boundary after 0177", () => {
     ).rejects.toThrow(/permission denied/i);
   });
 
-  it("T36 — service_role SELECT on appointments still works", async () => {
+  it("T36: service_role SELECT on appointments still works", async () => {
     const f = await seedStudio("b8-t36");
     const a = await seedAppt(f);
     const r = await asRole("service_role", (q) =>
@@ -662,7 +662,7 @@ describe("T34-T37 — the privilege boundary after 0177", () => {
     expect(Number(n.rows[0].n)).toBe(0);
   });
 
-  it("T37 — both commands are service_role EXECUTE only", async () => {
+  it("T37: both commands are service_role EXECUTE only", async () => {
     for (const sig of [
       "public.claim_postcare_send(uuid,uuid,uuid,boolean)",
       "public.settle_postcare_send(uuid,uuid,timestamptz,boolean,boolean)",
@@ -681,8 +681,8 @@ describe("T34-T37 — the privilege boundary after 0177", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("T38-T40 — what postcare must NOT disturb", () => {
-  it("T38 — claim and settle produce ZERO appointment_audit rows", async () => {
+describe("T38-T40: what postcare must NOT disturb", () => {
+  it("T38: claim and settle produce ZERO appointment_audit rows", async () => {
     // B8 is bookkeeping-boundary hardening, not a new event taxonomy: the seven
     // writers being replaced produced no audit event either.
     const f = await seedStudio("b8-t38");
@@ -697,7 +697,7 @@ describe("T38-T40 — what postcare must NOT disturb", () => {
     expect(await auditCount(a)).toBe(before);
   });
 
-  it("T39 — lifecycle, timing and attribution are untouched", async () => {
+  it("T39: lifecycle, timing and attribution are untouched", async () => {
     const f = await seedStudio("b8-t39");
     const a = await seedAppt(f);
     const before = await row(a);
@@ -718,7 +718,7 @@ describe("T38-T40 — what postcare must NOT disturb", () => {
     }
   });
 
-  it("T40 — the B6 capacity trigger does not fire from postcare bookkeeping", async () => {
+  it("T40: the B6 capacity trigger does not fire from postcare bookkeeping", async () => {
     // The capacity trigger watches studio_id and practitioner_id only. Diverge
     // the row's snapshot from the studio's live setting; a postcare-only update
     // must not re-derive it. Without the divergence this test would be vacuous.

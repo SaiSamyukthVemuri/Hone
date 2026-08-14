@@ -8,7 +8,7 @@ import {
   verifyEventMarker,
 } from "@/lib/google-calendar/sync/event-id";
 
-// Phase B2.3-c1 — deterministic provider identity + private correlation marker.
+// Phase B2.3-c1: deterministic provider identity + private correlation marker.
 
 const STUDIO = "9d37c51a-0000-0000-0000-000000000001";
 const LINK_A = "11111111-2222-3333-4444-555555555555";
@@ -36,7 +36,7 @@ describe("deriveEventId", () => {
   });
 
   it("does not depend on any mutable appointment value (only studio + link id)", () => {
-    // The function signature makes this structural — there is no version/time input.
+    // The function signature makes this structural, there is no version/time input.
     expect(deriveEventId.length).toBe(2);
   });
 });

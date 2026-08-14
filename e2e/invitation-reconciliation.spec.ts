@@ -10,7 +10,7 @@ import {
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
-// Migration 0141 — existing-user invitation reconciliation, proven end to end
+// Migration 0141: existing-user invitation reconciliation, proven end to end
 // against the real local stack (real magic-link login via Mailpit; no auth
 // bypass). The RPC evidence/atomicity logic is covered exhaustively by
 // tests/db/invitation-reconciliation.db.test.ts; these specs prove the
@@ -33,7 +33,7 @@ function email(prefix: string): string {
   return `${prefix}-${randomUUID().slice(0, 8)}@harness.local`;
 }
 
-test.describe("invitation reconciliation — existing accounts", () => {
+test.describe("invitation reconciliation: existing accounts", () => {
   test("no evidence: routed to explicit acceptance; cannot enter the app until accepting", async ({
     page,
   }) => {
@@ -83,7 +83,7 @@ test.describe("invitation reconciliation — existing accounts", () => {
 
     await signIn(page, owner);
 
-    // Straight into the app — no /accept-invitation detour.
+    // Straight into the app: no /accept-invitation detour.
     await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
     await expect(page).not.toHaveURL(/\/accept-invitation/);
   });
@@ -152,7 +152,7 @@ test.describe("invitation reconciliation — existing accounts", () => {
     // The inactive same-user row routes to explicit acceptance (not auto-link).
     await page.waitForURL(/\/accept-invitation/, { timeout: 30_000 });
     // Ticking consent and submitting must NOT reactivate into a second active
-    // membership sharing the email — it lands on the safe conflict destination.
+    // membership sharing the email, it lands on the safe conflict destination.
     await page.getByLabel(/I agree to the current/).check();
     await page.getByRole("button", { name: /Join .* as/ }).click();
     await page.waitForURL(/\/no-access\?reason=invite-conflict/, {

@@ -15,7 +15,7 @@ import { blockAreasLabel } from "@/lib/sessions/block-areas";
 // with RLS enforced.
 //
 // The action reaches a treatment down two paths. This suite replays BOTH as the
-// authenticated practitioner — the same filters, the same order, the same caps —
+// authenticated practitioner, the same filters, the same order, the same caps,
 // so "Studio B is absent" means RLS and the studio filter genuinely excluded it,
 // not that a mock was configured to.
 //
@@ -33,7 +33,7 @@ const CHILD_CANDIDATE_CAP = MEMORY_CAP * 5;
 
 // Session 1C: the SQL mirrors the action's `!inner` embed plus its two parent
 // filters. The join is what makes an inactive parent remove the BLOCK, and it
-// happens before ORDER BY and LIMIT — so a withdrawn record can never occupy one
+// happens before ORDER BY and LIMIT, so a withdrawn record can never occupy one
 // of the four slots.
 const BLOCK_SELECT = `
   select b.id, b.session_id, b.primary_area, b.side, b.created_at
@@ -140,7 +140,7 @@ async function seedBlock(
   // make the ordering mandatory: a session cannot be INSERTed as void ("a
   // session cannot be finalized or voided"), and once void it is archived and
   // READ-ONLY, so its blocks and areas can no longer be written. Constructing
-  // the state therefore means: create it live, chart it, then retire it — which
+  // the state therefore means: create it live, chart it, then retire it, which
   // is exactly how a real legacy void record came to exist.
   if (opts.recordStatus && opts.recordStatus !== "draft") {
     await seedLegacyRecordStatus(sessionId, opts.recordStatus);
@@ -236,7 +236,7 @@ async function areaLabel(studio: SeededStudio, blockId: string): Promise<string 
   });
 }
 
-describe("positive controls — the queries themselves work", () => {
+describe("positive controls: the queries themselves work", () => {
   it("practitioner A can read her own structured areas at all", async () => {
     await asUser(a.userId, async (q) => {
       const rows = await q(
@@ -263,7 +263,7 @@ describe("positive controls — the queries themselves work", () => {
     });
   });
 
-  it("the DIRECT path alone does NOT find it — this is the defect", async () => {
+  it("the DIRECT path alone does NOT find it, this is the defect", async () => {
     await asUser(a.userId, async (q) => {
       const direct = await q(DIRECT_MATCH, [a.studioId, "%Sideburn%"]);
       const ids = (direct.rows as BlockRow[]).map((r) => r.id);
@@ -322,7 +322,7 @@ describe("tenant isolation and parent integrity hold under real RLS", () => {
   });
 
   it("a soft-deleted parent never surfaces, though its child area still matches", async () => {
-    // Prove the child row survived the soft delete first — otherwise the
+    // Prove the child row survived the soft delete first, otherwise the
     // exclusion below would be proving nothing.
     await asUser(a.userId, async (q) => {
       const child = await q(
@@ -339,7 +339,7 @@ describe("tenant isolation and parent integrity hold under real RLS", () => {
 
 // ---------------------------------------------------------------------------
 // Session 1C integration: a live block on an INACTIVE parent session must not be
-// searchable — not through the direct path, not through a child area. Under real
+// searchable, not through the direct path, not through a child area. Under real
 // RLS, as the studio's own practitioner.
 // ---------------------------------------------------------------------------
 describe("inactive parent sessions are not searchable", () => {
@@ -430,7 +430,7 @@ describe("inactive parent sessions are not searchable", () => {
     expect(rows.map((r) => r.id)).not.toContain(voidSessionChild);
   });
 
-  it("the newer inactive rows do NOT consume the cap — active rows survive", async () => {
+  it("the newer inactive rows do NOT consume the cap, active rows survive", async () => {
     const rows = await searchMemory(a, "Sideburn");
     const ids = rows.map((r) => r.id);
     for (const dead of [deletedSessionDirect, deletedSessionChild, voidSessionDirect, voidSessionChild]) {

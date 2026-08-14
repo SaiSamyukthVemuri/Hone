@@ -5,7 +5,7 @@ import { ELECTROLYSIS_ACKNOWLEDGEMENT } from "@/lib/intake/acknowledgements";
 import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 import { INTAKE_STEPS } from "@/lib/intake/questions";
 
-// Versioned electrolysis acknowledgement — RETIRED at the PUBLIC BOUNDARY.
+// Versioned electrolysis acknowledgement: RETIRED at the PUBLIC BOUNDARY.
 //
 // This file used to prove the COLLECTION wiring: that the real
 // saveIntakeStepAction / submitIntakeAction built, validated and stored a
@@ -15,7 +15,7 @@ import { INTAKE_STEPS } from "@/lib/intake/questions";
 //
 // What it proves now is the retirement itself, at the same real action
 // boundary: a new intake submits with NO acknowledgement, neither key is
-// created, and a forged payload for either key is not persisted — because the
+// created, and a forged payload for either key is not persisted, because the
 // sanitizer carve-out that made the key browser-authorable is gone rather than
 // merely unused. Historical rows are proven untouched.
 //
@@ -33,7 +33,7 @@ type Row = Record<string, unknown>;
 // consent_form_templates is present but EMPTY, which is the "studio has no
 // live consent forms" case. submitIntakeAction now re-resolves that table on
 // every submit, and an empty result must leave submission behaving exactly as
-// it did before live consent forms existed — which is precisely what every
+// it did before live consent forms existed, which is precisely what every
 // assertion in this file continues to prove.
 const db: {
   client_intake_forms: Row[];
@@ -49,7 +49,7 @@ const failNextUpdateWith: { value: { code: string; message: string } | null } = 
 };
 
 // Minimal chainable PostgREST fake. Executes on await (`then`) or on
-// `maybeSingle()`, so a filtered-out row genuinely does not change — the
+// `maybeSingle()`, so a filtered-out row genuinely does not change, the
 // same "blocked means the row did not move" property the existing intake
 // review tests rely on.
 function makeBuilder(table: keyof typeof db) {
@@ -233,7 +233,7 @@ describe("16. the wording lives in exactly one source", () => {
     // RETIRED: the questionnaire no longer renders a label or help text from
     // the constant, because there is no question. What remains is the review
     // card, which reads the STORED historical snapshot through the legacy
-    // reader — the only surviving consumer.
+    // reader, the only surviving consumer.
     expect(read(QUESTIONS)).not.toMatch(/label: ELECTROLYSIS_ACKNOWLEDGEMENT\.wording/);
     expect(read(REVIEW)).toMatch(/readElectrolysisAcknowledgement/);
     // The card renders the STORED snapshot, not the current constant.
@@ -299,9 +299,9 @@ describe("17. Session 1D surfaces are not involved", () => {
 });
 
 // ---------------------------------------------------------------------------
-// RETIREMENT — proven at the REAL action boundary
+// RETIREMENT, proven at the REAL action boundary
 // ---------------------------------------------------------------------------
-describe("retirement — a new intake collects no acknowledgement", () => {
+describe("retirement: a new intake collects no acknowledgement", () => {
   it("submits with NO acknowledgement, and creates neither legacy key", async () => {
     const res = await submitIntakeAction({
       token: "good",
@@ -315,7 +315,7 @@ describe("retirement — a new intake collects no acknowledgement", () => {
 
   it("a forged acknowledgement RECORD is not persisted", async () => {
     // The sanitizer carve-out that used to admit this key is gone, so the
-    // value never reaches storage — there is no gate left to validate it.
+    // value never reaches storage, there is no gate left to validate it.
     await submitIntakeAction({
       token: "good",
       responses: {

@@ -1,4 +1,4 @@
-// APPOINTMENT BOUNDARY B4 — behavioural suite for migration 0173.
+// APPOINTMENT BOUNDARY B4: behavioural suite for migration 0173.
 //
 // 0173 adds the two governed repair commands that replace the operational
 // hatch 0172 removed: `revert_appointment_outcome` (owner-only terminal ->
@@ -108,7 +108,7 @@ async function seedAppointment(
   if (opts.status !== "confirmed" && opts.baselineAgo !== null) {
     // B5/0174: appointment_audit.created_at is now derived from the database
     // clock at INSERT, so a plain INSERT can no longer seed a HISTORICAL
-    // baseline — the value would be silently replaced by now() and every
+    // baseline, the value would be silently replaced by now() and every
     // window test would measure zero elapsed time. The owner-only harness
     // fixture is the sanctioned way to build that state; it ships in no
     // migration and no runtime role can reach it.
@@ -175,7 +175,7 @@ async function expectRefusal(
 
 // ---------------------------------------------------------------------------
 
-describe("0173 — revert_appointment_outcome: actor gates", () => {
+describe("0173, revert_appointment_outcome: actor gates", () => {
   it("a non-member is refused, and cannot use the command as an existence oracle", async () => {
     const studio = await seedStudio("b4-nonmember");
     const outsider = await seedStudio("b4-outsider");
@@ -224,7 +224,7 @@ describe("0173 — revert_appointment_outcome: actor gates", () => {
   });
 
   it("the browser cannot forge a role: the command reads it from the database", async () => {
-    // The command takes NO role parameter at all — there is nothing to forge.
+    // The command takes NO role parameter at all, there is nothing to forge.
     // Proven structurally: promoting the same user to owner flips the outcome
     // with an otherwise identical call.
     const studio = await seedStudio("b4-forge");
@@ -244,7 +244,7 @@ describe("0173 — revert_appointment_outcome: actor gates", () => {
   });
 });
 
-describe("0173 — revert_appointment_outcome: scoping and existence", () => {
+describe("0173, revert_appointment_outcome: scoping and existence", () => {
   it("a wrong studio id is refused as not-found, not as a cross-studio repair", async () => {
     const studio = await seedStudio("b4-wrongstudio");
     const other = await seedStudio("b4-wrongstudio-2");
@@ -293,7 +293,7 @@ describe("0173 — revert_appointment_outcome: scoping and existence", () => {
   });
 });
 
-describe("0173 — revert_appointment_outcome: status gates", () => {
+describe("0173, revert_appointment_outcome: status gates", () => {
   for (const status of ["completed", "no_show", "cancelled"] as const) {
     it(`restores a ${status} appointment to confirmed`, async () => {
       const studio = await seedStudio(`b4-ok-${status}`);
@@ -326,7 +326,7 @@ describe("0173 — revert_appointment_outcome: status gates", () => {
   // red. But REMOVING `and a.status = p_expected_status` from the UPDATE's own
   // predicate turns NOTHING red here.
   //
-  // That is not a hole in the command — it is a property of the lock protocol.
+  // That is not a hole in the command, it is a property of the lock protocol.
   // `lock_appointment_for_command` holds the row FOR UPDATE from GATE 4, so no
   // concurrent writer can change `status` between GATE 5's check and the
   // UPDATE; a competing transaction blocks instead. The predicate is therefore
@@ -389,7 +389,7 @@ describe("0173 — revert_appointment_outcome: status gates", () => {
   });
 });
 
-describe("0173 — revert_appointment_outcome: reason", () => {
+describe("0173, revert_appointment_outcome: reason", () => {
   it("an empty reason is refused", async () => {
     const studio = await seedStudio("b4-reason-empty");
     const appt = await seedAppointment(studio, { status: "completed" });
@@ -400,7 +400,7 @@ describe("0173 — revert_appointment_outcome: reason", () => {
     );
   });
 
-  it("a whitespace-only reason cannot satisfy the minimum — SQL owns the trim", async () => {
+  it("a whitespace-only reason cannot satisfy the minimum, SQL owns the trim", async () => {
     const studio = await seedStudio("b4-reason-ws");
     const appt = await seedAppointment(studio, { status: "completed" });
     await expectRefusal(
@@ -442,7 +442,7 @@ describe("0173 — revert_appointment_outcome: reason", () => {
   });
 });
 
-describe("0173 — revert_appointment_outcome: the repair window", () => {
+describe("0173, revert_appointment_outcome: the repair window", () => {
   it("refuses when the establishing audit event is absent", async () => {
     const studio = await seedStudio("b4-nobaseline");
     const appt = await seedAppointment(studio, {
@@ -487,7 +487,7 @@ describe("0173 — revert_appointment_outcome: the repair window", () => {
     // B5/0174: the UPDATE is the append-only trigger's business now, so the
     // backdate runs with that trigger disabled as the table OWNER (harness
     // fixture, no runtime path). `adminTx` keeps both statements on one
-    // connection in one transaction — without that the backdate and the
+    // connection in one transaction, without that the backdate and the
     // command would observe two different clocks and "exactly 72 hours" would
     // silently become "72 hours plus a few milliseconds".
     const code = await adminTx(async (q) => {
@@ -557,8 +557,8 @@ describe("0173 — revert_appointment_outcome: the repair window", () => {
       baselineAgo: "30 days",
     });
     // B5/0174: a 'practitioner' audit row must now name its actor
-    // (appointment_audit_actor_id_type_ck), and created_at is derived at INSERT
-    // — so the recent baseline is seeded through the owner-only fixture.
+    // (appointment_audit_actor_id_type_ck), and created_at is derived at INSERT,
+    // so the recent baseline is seeded through the owner-only fixture.
     await seedHistoricalAppointmentAudit({
       appointmentId: appt,
       actorType: "practitioner",
@@ -572,7 +572,7 @@ describe("0173 — revert_appointment_outcome: the repair window", () => {
   });
 });
 
-describe("0173 — revert_appointment_outcome: blocking dependents", () => {
+describe("0173, revert_appointment_outcome: blocking dependents", () => {
   it("blocks when the appointment was rescheduled to a successor", async () => {
     const studio = await seedStudio("b4-block-resched");
     const appt = await seedAppointment(studio, { status: "cancelled" });
@@ -782,7 +782,7 @@ describe("0173 — revert_appointment_outcome: blocking dependents", () => {
   });
 });
 
-describe("0173 — revert_appointment_outcome: slot collision (23P01)", () => {
+describe("0173, revert_appointment_outcome: slot collision (23P01)", () => {
   it("refuses with slot_conflict when the freed interval was re-let", async () => {
     const studio = await seedStudio("b4-collide");
     // A cancelled appointment at a fixed future instant...
@@ -833,7 +833,7 @@ describe("0173 — revert_appointment_outcome: slot collision (23P01)", () => {
   });
 });
 
-describe("0173 — set_appointment_notes", () => {
+describe("0173: set_appointment_notes", () => {
   async function setNotes(
     appointmentId: string,
     studioId: string,
@@ -1014,7 +1014,7 @@ describe("0173 — set_appointment_notes", () => {
   });
 });
 
-describe("0173 — EXECUTE grant matrix", () => {
+describe("0173: EXECUTE grant matrix", () => {
   const FUNCTIONS = [
     "public.revert_appointment_outcome(uuid, uuid, uuid, text, text)",
     "public.set_appointment_notes(uuid, uuid, uuid, text)",
@@ -1042,7 +1042,7 @@ describe("0173 — EXECUTE grant matrix", () => {
   // write_appointment_audit MOVED OUT of the list above at B5/0174, and the
   // move is the assertion. 0173 created it service_role-executable alongside
   // the two repair commands; B5 revoked that because the census proved it has
-  // ZERO application callers and exactly two callers anywhere — B4's own
+  // ZERO application callers and exactly two callers anywhere, B4's own
   // revert_appointment_outcome and set_appointment_notes, both postgres-owned
   // SECURITY DEFINER commands that reach it as their OWNER, not as
   // service_role.

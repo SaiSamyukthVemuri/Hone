@@ -2,31 +2,31 @@ import { randomUUID } from "node:crypto";
 import { adminQuery, purgeAppointmentAudit, type SeededStudio } from "./harness";
 
 // ===========================================================================
-// SAFE-SYNTH — synthetic tenant fleet (Wave 1, PR 1) — PARTIALLY DELIVERED
+// SAFE-SYNTH, synthetic tenant fleet (Wave 1, PR 1), PARTIALLY DELIVERED
 // ===========================================================================
 //
 // Studio A/B/C synthetic tenants built ON the local-only DB/RLS harness
-// (tests/db/helpers/harness.ts — localhost-pinned; never production, never
+// (tests/db/helpers/harness.ts, localhost-pinned; never production, never
 // Willow). Later tenant-boundary / provider P1 tests seed from this fleet so
 // isolation is proven against the real migrated schema, not mocked.
 //
 // Properties (accurate claims only):
-//   * Recognizable synthetic identifiers — every studio name is prefixed
+//   * Recognizable synthetic identifiers, every studio name is prefixed
 //     "SYNTH-<A|B|C>" and every email is "<slug>@synth.local"; nothing shares
 //     an identifier space with production.
-//   * RUN-UNIQUE and parallel-safe — all ids are randomUUID(). They therefore
+//   * RUN-UNIQUE and parallel-safe, all ids are randomUUID(). They therefore
 //     DIFFER on every run; this is NOT deterministic/stable-across-runs
 //     seeding. It makes the fleet safe to recreate and safe under parallel
 //     test files (no id collisions).
-//   * Cleanup by id — dropSynthStudio removes a studio and its fake auth users
+//   * Cleanup by id, dropSynthStudio removes a studio and its fake auth users
 //     by id (never by global truncation). Proven, not asserted, by
 //     tests/db/synth-fleet-cleanup.db.test.ts.
-//   * No real providers, no secrets — pure local SQL seeding.
+//   * No real providers, no secrets, pure local SQL seeding.
 //
 // Studio A: solo studio (one owner).
 // Studio B: three-practitioner studio (owner + two members).
 // Studio C: failure/recovery studio carrying an INERT failure-mode label
-//   (SynthFailureMode) — vocabulary only. There is NO executable failure
+//   (SynthFailureMode), vocabulary only. There is NO executable failure
 //   injection yet; the enum names the primitives later slices will implement.
 //
 // NOT YET DELIVERED (named remaining scope, tracked in WAVE1_DESIGN.md):
@@ -54,7 +54,7 @@ export type SynthStudio = SeededStudio & {
 };
 
 // INERT failure-mode vocabulary for Studio C. This is a TYPE-CHECKED LABEL
-// ONLY — the fleet records it and does nothing with it. There is NO failure
+// ONLY, the fleet records it and does nothing with it. There is NO failure
 // injection implemented here; a future slice must wire each mode to a real
 // forced error before any test may claim to exercise that failure path.
 export type SynthFailureMode =
@@ -140,17 +140,17 @@ async function seedStudioShell(
   };
 }
 
-/** Studio A — solo synthetic studio (one owner). */
+/** Studio A: solo synthetic studio (one owner). */
 export function seedSynthStudioA(): Promise<SynthStudio> {
   return seedStudioShell("A", 1);
 }
 
-/** Studio B — three-practitioner synthetic studio (owner + 2 members). */
+/** Studio B: three-practitioner synthetic studio (owner + 2 members). */
 export function seedSynthStudioB(): Promise<SynthStudio> {
   return seedStudioShell("B", 3);
 }
 
-/** Studio C — failure/recovery studio. `failureMode` is an INERT label recorded
+/** Studio C: failure/recovery studio. `failureMode` is an INERT label recorded
  *  on the returned object; it drives NO side effect and NO failure injection
  *  exists yet. A future slice must wire it to a real forced error. */
 export async function seedSynthStudioC(
@@ -190,7 +190,7 @@ export async function seedStudioWideOpenAllWeek(
  *  tests/db/synth-fleet-cleanup.db.test.ts. */
 export async function dropSynthStudio(studio: SynthStudio): Promise<void> {
   // B5/0174: appointment_audit.studio_id is ON DELETE RESTRICT (the convention
-  // every append-only history table in this schema uses — clinical_audit_events,
+  // every append-only history table in this schema uses, clinical_audit_events,
   // clinical_record_amendments, clinical_record_snapshots). A studio that has
   // ever had an appointment audited therefore cannot be deleted until its trail
   // is removed, and 0174 leaves NO runtime path that can remove it. The

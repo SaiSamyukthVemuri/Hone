@@ -28,7 +28,7 @@ describe("A. collapse the Add settings block by default (no auto-open, no writes
     expect(VIEW).toMatch(/\{adding \? \(\s*\n?\s*<BlockSetupForm/);
   });
 
-  it("(#2/#3) opening and cancelling are pure state toggles — neither calls a server action", () => {
+  it("(#2/#3) opening and cancelling are pure state toggles, neither calls a server action", () => {
     // Open = setAdding(true); Cancel = setAdding(false). No DB row on either.
     expect(VIEW).toMatch(/onClick=\{\(\) => setAdding\(true\)\}/);
     expect(VIEW).toMatch(/onCancel=\{\(\) => setAdding\(false\)\}/);
@@ -48,7 +48,7 @@ describe("A. collapse the Add settings block by default (no auto-open, no writes
   it("(#5) existing blocks stay summarized + editable (unchanged)", () => {
     expect(VIEW).toMatch(/blocks\.map\(\(block\) => \(/);
     // Repeat-client fast charting seeds the INITIAL editing state from
-    // `autoEdit`, whose default is false — so an ordinary saved block still
+    // `autoEdit`, whose default is false, so an ordinary saved block still
     // renders summarized and the long form is still an explicit tap. The ONLY
     // thing that can open a section at mount is the server-validated area a
     // just-completed "Start from last session" created.
@@ -104,7 +104,7 @@ describe("B. one unified observations & skin response box (charting unification)
     expect(FORM).toMatch(/observationChips: draft\.observationChips/);
     // Charting unification: reaction_type is no longer a blindly round-tripped
     // separate field (`reactionType: draft.reactionType || null`). It is preserved
-    // ONLY while its label chip stays selected, else null — never invented from chips.
+    // ONLY while its label chip stays selected, else null, never invented from chips.
     expect(FORM).not.toMatch(/reactionType: draft\.reactionType \|\| null/);
     expect(FORM).toMatch(/reactionType:\s*\n?\s*draft\.reactionType &&/);
     expect(FORM).toMatch(/isReactionType\(draft\.reactionType\) &&/);
@@ -169,7 +169,7 @@ describe("D. consistency + single-source terminology (BlockSetupForm ≡ Simplif
   });
 });
 
-describe("E. scope containment (#12) — no payment/scheduling/notifications/inventory/provider changes", () => {
+describe("E. scope containment (#12): no payment/scheduling/notifications/inventory/provider changes", () => {
   it("the charting UI files touch none of those surfaces", () => {
     for (const src of [VIEW, FORM, SIMPLE]) {
       expect(src).not.toMatch(/stripe|payment_charge|manual_fee/i);

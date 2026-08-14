@@ -12,13 +12,13 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// L18 Phase 3 — session write commands (migration 0167)
+// L18 Phase 3, session write commands (migration 0167)
 // ===========================================================================
 //
 // Ten runtime writers wrote public.sessions directly. Eight fixed-purpose
 // commands replace them. These functions are SECURITY DEFINER and therefore
 // bypass RLS, so every one of them has to re-establish the tenant boundary
-// itself — that is what most of this file exercises.
+// itself, that is what most of this file exercises.
 //
 // SCOPE: additive. No table privilege is revoked, so direct DML still works;
 // that is asserted below so this PR cannot be mistaken for having revoked
@@ -81,7 +81,7 @@ const START = `select * from public.start_session($1,$2,$3,$4)`;
 // 1. Same-studio happy paths, one per command family.
 // --------------------------------------------------------------------------
 
-describe("0167 — authorized same-studio writes succeed", () => {
+describe("0167: authorized same-studio writes succeed", () => {
   it("1. price sets and clears", async () => {
     await userQuery(A.userId, PRICE, [sessionA, A.clientId, 12345]);
     expect((await readSession(sessionA)).price_paid_cents).toBe(12345);
@@ -165,10 +165,10 @@ describe("0167 — authorized same-studio writes succeed", () => {
 });
 
 // --------------------------------------------------------------------------
-// 2. Tenant boundary — SECURITY DEFINER bypasses RLS, so this is the guard.
+// 2. Tenant boundary, SECURITY DEFINER bypasses RLS, so this is the guard.
 // --------------------------------------------------------------------------
 
-describe("0167 — cross-studio and forged relationships are refused", () => {
+describe("0167: cross-studio and forged relationships are refused", () => {
   it("9. every session command refuses another studio's session", async () => {
     await expectDenied(A.userId, PRICE, [sessionB, B.clientId, 100]);
     await expectDenied(A.userId, NOTE, [sessionB, B.clientId, "x"]);
@@ -279,7 +279,7 @@ describe("0167 — cross-studio and forged relationships are refused", () => {
 // 3. Actor identity.
 // --------------------------------------------------------------------------
 
-describe("0167 — actor identity cannot be forged or skipped", () => {
+describe("0167: actor identity cannot be forged or skipped", () => {
   it("18. an UNAUTHENTICATED caller is refused by every command", async () => {
     for (const [sql, params] of [
       [PRICE, [sessionA, A.clientId, 1]],
@@ -343,7 +343,7 @@ describe("0167 — actor identity cannot be forged or skipped", () => {
 // 4. Validation and preserved clinical protections.
 // --------------------------------------------------------------------------
 
-describe("0167 — validation and existing clinical protections are preserved", () => {
+describe("0167: validation and existing clinical protections are preserved", () => {
   it("24. a start after the session end is refused", async () => {
     const s = (await seedSession(A)).sessionId;
     await adminQuery(`update public.sessions set ended_at = $2 where id = $1`, [
@@ -377,7 +377,7 @@ describe("0167 — validation and existing clinical protections are preserved", 
 
   it("29. the retired finalization path stays unavailable through these commands", async () => {
     // No command accepts record_status, and 0159's trigger blocks the
-    // transition for every role — so there is no way to finalize from here.
+    // transition for every role, so there is no way to finalize from here.
     const src = (
       await adminQuery(
         `select string_agg(p.prosrc, ' ') s from pg_proc p join pg_namespace n on n.oid=p.pronamespace
@@ -402,7 +402,7 @@ describe("0167 — validation and existing clinical protections are preserved", 
     }
     if (!blocked) {
       // If the guard trigger permits the write, the record must at least keep
-      // its finalized status — that is the invariant 0160 protects.
+      // its finalized status, that is the invariant 0160 protects.
       expect((await readSession(s)).record_status).toBe("finalized");
     }
   });
@@ -412,7 +412,7 @@ describe("0167 — validation and existing clinical protections are preserved", 
 // 5. Privileges.
 // --------------------------------------------------------------------------
 
-describe("0167 — effective EXECUTE privileges", () => {
+describe("0167: effective EXECUTE privileges", () => {
   const PUBLIC_COMMANDS = [
     "start_session",
     "set_session_price",
@@ -428,7 +428,7 @@ describe("0167 — effective EXECUTE privileges", () => {
   // 0181 added a SECOND start_session signature (explicit-studio command +
   // retained four-argument compatibility wrapper). One command NAME can map to
   // several signatures, so these guards assert the NAME SET and then require
-  // EVERY signature to satisfy the rule — strictly stronger than the previous
+  // EVERY signature to satisfy the rule, strictly stronger than the previous
   // row count, which a new overload could only shift rather than be checked by.
   it("31. every signature of the eight commands is executable by authenticated ONLY", async () => {
     const r = await adminQuery(
@@ -485,7 +485,7 @@ describe("0167 — effective EXECUTE privileges", () => {
   });
 
   it("34. direct table DML is revoked by 0169; 0167 itself revoked nothing", async () => {
-    // This phase revoked nothing — correct for its own scope. Migration 0169 is
+    // This phase revoked nothing: correct for its own scope. Migration 0169 is
     // the cutover that removes the capability, so the assertion is INVERTED here
     // rather than deleted, and SELECT is asserted retained.
     const r = await adminQuery(

@@ -6,21 +6,21 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Emergency chip-loading fix — the REAL save cycle in a REAL browser at MOBILE
+// Emergency chip-loading fix: the REAL save cycle in a REAL browser at MOBILE
 // width (Chloe's screenshot context), exercising the REAL forms + REAL server
 // actions with a DATABASE read-back between every save. Two surfaces:
 //
-//   * Test A — block-setup-form EDIT (Chloe's reported surface, Gate 7): a legacy
+//   * Test A, block-setup-form EDIT (Chloe's reported surface, Gate 7): a legacy
 //     entry (chips only in `comments`) preloads its observations as SELECTED
 //     controls; add a 4th → save → reload → still selected; remove one → save →
 //     reload → correct final set. DB is the ground truth after each save.
-//   * Test B — SimplifiedEntryForm CREATE ("Add pass", Gate 2): select 3 chips →
+//   * Test B, SimplifiedEntryForm CREATE ("Add pass", Gate 2): select 3 chips →
 //     save → exactly those three persist (no dupes) → reload → pills render;
 //     a second pass with a select-then-deselect proves deselection + no dupes.
 //
 // Navigation is deterministic: one seeded draft session + one seeded block, direct
 // route, STABLE data-testids for the Edit / Add-pass triggers, the chip toggles,
-// and the save buttons (no ordinal/text selectors, no arbitrary sleeps — the DB
+// and the save buttons (no ordinal/text selectors, no arbitrary sleeps, the DB
 // poll + the form's own open/close transition are the synchronization signals).
 
 const A = "Coarse hair";

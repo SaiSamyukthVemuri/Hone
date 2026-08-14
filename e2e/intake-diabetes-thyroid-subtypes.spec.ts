@@ -17,7 +17,7 @@ import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 //
 // WHY THIS SPEC EXISTS. The subtype feature is covered exhaustively by unit
 // tests that drive the real server actions, but until now NOTHING exercised it
-// through the actual intake UI — `grep -rln "diabetes\|thyroid\|medical_conditions" e2e/`
+// through the actual intake UI, `grep -rln "diabetes\|thyroid\|medical_conditions" e2e/`
 // returned nothing. Unit tests cannot prove that the conditional actually
 // renders, that the required marker blocks the client, or that the value the
 // client tapped is the value the practitioner later reads.
@@ -32,8 +32,8 @@ import { INTAKE_CONSENT_RESPONSES } from "@/lib/intake/consent-forms";
 //   2. it APPEARS when the parent is selected;
 //   3. leaving it blank BLOCKS the step through the real required-field UX;
 //   4. RETRACTING the parent hides the control and stops rendering the stale
-//      value — the browser half of the non-authoritative-stale-child rule;
-//   5. the chosen values PERSIST through the current intake submission —
+//      value, the browser half of the non-authoritative-stale-child rule;
+//   5. the chosen values PERSIST through the current intake submission,
 //      which now completes on TREATMENT consent alone, because photo consent
 //      moved to the client portal. This spec deliberately does NOT exercise
 //      photo consent in either place: the subtype contract is what is under
@@ -71,13 +71,13 @@ async function seedLiveTemplate(
   );
 }
 
-// Every required, UNCONDITIONAL answer — so the only thing standing between the
+// Every required, UNCONDITIONAL answer: so the only thing standing between the
 // client and submission is the conditional pair under test. Conditional
 // questions are skipped deliberately (the repo-wide fixture convention): this
 // scenario selects their parents through the UI instead.
 //
 // Note `medical_conditions` lands on options[0] = "pregnancy", so the intake
-// starts with a condition reported but NEITHER diabetes nor thyroid — which is
+// starts with a condition reported but NEITHER diabetes nor thyroid, which is
 // precisely the state assertion (1) needs.
 function answeredQuestionnaire(): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -198,7 +198,7 @@ test.describe("diabetes / thyroid subtypes through the real intake UI", () => {
     // Every intermediate step is already answered by the seed, so each advance
     // just saves and moves on. The button relabels itself to "Saving..." while
     // the transition is in flight, so waiting for "Continue" to be clickable
-    // again is what serialises these — no explicit wait is needed.
+    // again is what serialises these, no explicit wait is needed.
     const advancesToConsent = INTAKE_STEPS.length - MEDICAL_STEP.id + 1;
     for (let i = 0; i < advancesToConsent; i++) {
       await page.getByRole("button", { name: "Continue" }).click();

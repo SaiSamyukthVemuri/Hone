@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR B Part 4 Item 6 — calendar Quick Book practitioner-aware booking wiring.
+// PR B Part 4 Item 6, calendar Quick Book practitioner-aware booking wiring.
 // The DB authorization is proven in the v2 command DB suite; these pin the
 // drawer's target-aware slots + selector + the desktop/mobile threading, while
 // preserving the intricate drag/override contract.
@@ -15,7 +15,7 @@ const DAYCOL = read("app/(app)/calendar/DayColumn.tsx");
 const MOBILE = read("app/(app)/calendar/CalendarMobileDayView.tsx");
 const PAGE = read("app/(app)/calendar/page.tsx");
 
-describe("QuickBookDrawer — owner selector, target-aware slots, member/Legacy", () => {
+describe("QuickBookDrawer: owner selector, target-aware slots, member/Legacy", () => {
   it("shows the selector ONLY for a capacity-ON owner and loads eligible practitioners", () => {
     expect(DRAWER).toMatch(/const showSelector = practitionerCapacityEnabled && isOwner/);
     expect(DRAWER).toMatch(/\{showSelector && \(/);

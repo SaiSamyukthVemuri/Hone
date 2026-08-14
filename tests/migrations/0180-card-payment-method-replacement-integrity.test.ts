@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
-// 0180 — card-on-file replacement integrity. STATIC contract.
+// 0180: card-on-file replacement integrity. STATIC contract.
 //
 // Behaviour is proved against a real database in
 // tests/db/card-replacement-atomicity.db.test.ts, including the negative
@@ -17,7 +17,7 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // maximum" plus versionsAbove(...).toContain("0181"), keep countVersion("0180")
 // === 1, and let 0181's own test become the single current-state tripwire
 // (CLAUDE.md §2). When 0180 is APPLIED, add a PERMANENT block that reads the
-// FROZEN 0180 ledger entry and the frozen migration bytes — never
+// FROZEN 0180 ledger entry and the frozen migration bytes, never
 // migration-state.json.hosted_note, which is current state and will move.
 // ---------------------------------------------------------------------------
 
@@ -25,20 +25,20 @@ const FILE = "supabase/migrations/0180_card_payment_method_replacement_integrity
 const SQL_PATH = join(__dirname, "..", "..", FILE);
 const SQL = readFileSync(SQL_PATH, "utf8");
 
-// Executable SQL only — the header deliberately DESCRIBES the removed
+// Executable SQL only: the header deliberately DESCRIBES the removed
 // two-write pattern, so a raw-text scope assertion would fail on its own prose.
 const EXEC = SQL.split("\n")
   .map((l) => l.replace(/--.*$/, ""))
   .join("\n");
 
-describe("0180 — migration state", () => {
+describe("0180: migration state", () => {
   // THE HAND-OFF HAPPENED. This block used to assert isRepoMax("0180"),
   // versionsAbove([]) and countVersion("0181") === 0. 0181 (multi-studio command
   // authority) was authored above it, so per CLAUDE.md §2 only the CURRENT
   // maximum's own test carries the "nothing above me" tripwire. The successor
   // assertions now live in
   // tests/migrations/0181-multi-studio-command-authority.test.ts.
-  it("is no longer the repository maximum — 0181 was authored above it", () => {
+  it("is no longer the repository maximum, 0181 was authored above it", () => {
     expect(isRepoMax("0180")).toBe(false);
     expect(versionsAbove("0180")).toContain("0181");
   });
@@ -52,12 +52,12 @@ describe("0180 — migration state", () => {
   });
 });
 
-describe("0180 — production truth: APPLIED (CURRENT STATE — moves on the next apply)", () => {
+describe("0180, production truth: APPLIED (CURRENT STATE, moves on the next apply)", () => {
   const rec = JSON.parse(
     readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
   );
 
-  it("is applied — hosted max is at least 0180", () => {
+  it("is applied: hosted max is at least 0180", () => {
     expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeGreaterThanOrEqual(180);
   });
 
@@ -75,13 +75,13 @@ describe("0180 — production truth: APPLIED (CURRENT STATE — moves on the nex
 //
 // These read the FROZEN 0180 ledger section and the FROZEN migration bytes.
 // They deliberately DO NOT read the moving current-state note field in
-// migration-state.json, which is rewritten by the next apply — coupling
+// migration-state.json, which is rewritten by the next apply, coupling
 // permanent facts to a moving field is the exact mistake made twice during the
 // 0179 rollout. The block above owns current state; this block owns history and
 // must stay true forever. (The field name is never spelled literally anywhere
 // in this block: the guard below scans this very region for it.)
 // ---------------------------------------------------------------------------
-describe("0180 — PERMANENT apply facts (frozen; must survive 0181+)", () => {
+describe("0180: PERMANENT apply facts (frozen; must survive 0181+)", () => {
   const LEDGER = readFileSync(
     join(__dirname, "..", "..", "docs/production/migration-ledger.md"),
     "utf8",
@@ -141,7 +141,7 @@ describe("0180 — PERMANENT apply facts (frozen; must survive 0181+)", () => {
     expect(SECTION).toContain("PRODUCTION-CLOSED");
   });
 
-  it("records the UNKNOWN client exit status honestly — never claims exit 0", () => {
+  it("records the UNKNOWN client exit status honestly, never claims exit 0", () => {
     // The db push client was killed by the harness timeout. Any record that
     // asserts a successful client exit is fabricating evidence.
     expect(SECTION).toMatch(/CLIENT PROCESS EXIT CODE WAS NOT CAPTURED/i);
@@ -161,7 +161,7 @@ describe("0180 — PERMANENT apply facts (frozen; must survive 0181+)", () => {
     // Guards this block against the 0179 mistake being repeated: permanent
     // facts must not be coupled to current state.
     //
-    // The field name is ASSEMBLED rather than written literally — spelling it
+    // The field name is ASSEMBLED rather than written literally, spelling it
     // out here would put the very token this test forbids inside the region it
     // scans, and the assertion would then always fail on itself.
     const movingField = ["hosted", "note"].join("_");
@@ -173,7 +173,7 @@ describe("0180 — PERMANENT apply facts (frozen; must survive 0181+)", () => {
   });
 });
 
-describe("0180 — transaction envelope", () => {
+describe("0180: transaction envelope", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     const lines = SQL.split("\n").map((l) => l.trim()).filter(Boolean);
     const b = lines.findIndex((l) => l === "begin;");
@@ -183,7 +183,7 @@ describe("0180 — transaction envelope", () => {
   });
 });
 
-describe("0180 — installs exactly one command, service_role only", () => {
+describe("0180: installs exactly one command, service_role only", () => {
   it("creates only save_client_card_on_file", () => {
     const fns = [...EXEC.matchAll(/create or replace function public\.(\w+)/g)].map((m) => m[1]);
     expect(fns).toEqual(["save_client_card_on_file"]);
@@ -202,7 +202,7 @@ describe("0180 — installs exactly one command, service_role only", () => {
   });
 });
 
-describe("0180 — the atomicity contract", () => {
+describe("0180: the atomicity contract", () => {
   it("does the retire and the insert in the SAME function body", () => {
     const body = EXEC.slice(
       EXEC.indexOf("create or replace function public.save_client_card_on_file"),
@@ -212,7 +212,7 @@ describe("0180 — the atomicity contract", () => {
     const insert = body.search(/insert into public\.client_payment_methods/);
     expect(retire).toBeGreaterThan(-1);
     expect(insert).toBeGreaterThan(retire);
-    // No COMMIT between them — the whole function is one transaction.
+    // No COMMIT between them: the whole function is one transaction.
     expect(body.slice(retire, insert)).not.toMatch(/commit/i);
   });
 
@@ -242,7 +242,7 @@ describe("0180 — the atomicity contract", () => {
   });
 });
 
-describe("0180 — DB-FIRST rollout contract (deployment skew)", () => {
+describe("0180: DB-FIRST rollout contract (deployment skew)", () => {
   const ROUTE = readFileSync(
     join(__dirname, "..", "..", "app/api/stripe/webhook/route.ts"),
     "utf8",
@@ -253,8 +253,8 @@ describe("0180 — DB-FIRST rollout contract (deployment skew)", () => {
   );
 
   it("THE TRIPWIRE: the app calls the new command unconditionally, so the DB must go first", () => {
-    // If this ever stops being true — i.e. someone adds a feature flag or a
-    // fallback — the rollout order below must be re-derived, not assumed.
+    // If this ever stops being true, i.e. someone adds a feature flag or a
+    // fallback, the rollout order below must be re-derived, not assumed.
     expect(ROUTE).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file"/);
     // No conditional guarding the call, and no fallback to the old two writes.
     expect(ROUTE).not.toMatch(/if\s*\([^)]*save_client_card_on_file/);
@@ -299,7 +299,7 @@ describe("0180 — DB-FIRST rollout contract (deployment skew)", () => {
   });
 });
 
-describe("0180 — scope discipline", () => {
+describe("0180: scope discipline", () => {
   it("changes no table, index, policy or grant on any table", () => {
     expect(EXEC).not.toMatch(/\balter table\b/i);
     expect(EXEC).not.toMatch(/\bcreate table\b/i);

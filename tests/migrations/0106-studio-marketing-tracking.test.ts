@@ -6,13 +6,13 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0106_studio_marketing_tracking.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0106 studio marketing tracking — number", () => {
+describe("0106 studio marketing tracking: number", () => {
   it("is migration 0106 (repo-max tripwire now lives in the newest migration test, 0107)", () => {
     expect(FILE).toMatch(/^0106_/);
   });
 });
 
-describe("0106 studio marketing tracking — tables", () => {
+describe("0106 studio marketing tracking: tables", () => {
   it("creates all three tables", () => {
     expect(SQL).toMatch(/create table if not exists public\.studio_tracking_providers/);
     expect(SQL).toMatch(/create table if not exists public\.conversion_event_deliveries/);
@@ -42,7 +42,7 @@ describe("0106 studio marketing tracking — tables", () => {
   });
 });
 
-describe("0106 — uniqueness + indexes + trigger", () => {
+describe("0106: uniqueness + indexes + trigger", () => {
   it("unique(studio_id, provider) on providers", () => {
     expect(SQL).toMatch(/unique \(studio_id, provider\)/);
   });
@@ -59,7 +59,7 @@ describe("0106 — uniqueness + indexes + trigger", () => {
   });
 });
 
-describe("0106 — RLS + studio isolation on every table", () => {
+describe("0106: RLS + studio isolation on every table", () => {
   it("enables RLS on all three tables", () => {
     const enables = SQL.match(/enable row level security/g) ?? [];
     expect(enables.length).toBe(3);
@@ -77,7 +77,7 @@ describe("0106 — RLS + studio isolation on every table", () => {
   });
 });
 
-describe("0106 — claim RPC (dedup) is service_role only", () => {
+describe("0106: claim RPC (dedup) is service_role only", () => {
   it("defines claim_conversion_delivery as security definer with fixed search_path", () => {
     expect(SQL).toMatch(/create or replace function public\.claim_conversion_delivery/);
     expect(SQL).toMatch(/security definer/);
@@ -90,7 +90,7 @@ describe("0106 — claim RPC (dedup) is service_role only", () => {
   });
 });
 
-describe("0106 — data minimization: NO clinical / PII / token-value columns", () => {
+describe("0106, data minimization: NO clinical / PII / token-value columns", () => {
   const forbidden = [
     "email", "phone", "notes", "intake", "contraindication", "allergie",
     "fitzpatrick", "skin_", "body_area", " area ", "photo", "cancellation_reason",
@@ -110,7 +110,7 @@ describe("0106 — data minimization: NO clinical / PII / token-value columns", 
   });
 });
 
-describe("0106 — sender stays gated (production inert without config)", () => {
+describe("0106: sender stays gated (production inert without config)", () => {
   function read(rel: string): string {
     return readFileSync(path.resolve(__dirname, "../../", rel), "utf8");
   }

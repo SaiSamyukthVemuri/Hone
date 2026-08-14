@@ -12,7 +12,7 @@ import {
   isClientOwnedResponseKey,
 } from "@/lib/intake/questions";
 
-// Versioned electrolysis acknowledgement — the shared contract.
+// Versioned electrolysis acknowledgement: the shared contract.
 //
 // These are real behavioural tests of a pure module, not source greps: the
 // forgery cases below call the actual validator the submit boundary calls.
@@ -57,7 +57,7 @@ describe("1. shared ID / version / wording contract", () => {
   // The wording literal is pinned so an edit cannot land without a
   // deliberate decision about the version. `wording` and `version` move
   // together; changing one without the other turns this red, which is the
-  // whole point — a silent wording edit would make an older acceptance
+  // whole point, a silent wording edit would make an older acceptance
   // look current.
   it("pins the exact wording, so any edit must consciously bump the version", () => {
     // ⚠️ THE VERSION AND THE WORDING ARE ONE UNIT. If you are editing the
@@ -89,7 +89,7 @@ describe("1. shared ID / version / wording contract", () => {
 
   it("is framed as an acknowledgement, never as a signature or a consent form", () => {
     // The text the client agrees to must contain no signature language at
-    // all — this is a checkbox, not an e-signature.
+    // all, this is a checkbox, not an e-signature.
     expect(CANON.wording.toLowerCase()).not.toMatch(/\bsign/);
     expect(CANON.wording.toLowerCase()).not.toMatch(/\bconsent\b/);
     // The help text names both boundaries explicitly, and those denials are
@@ -164,7 +164,7 @@ describe("11 + 12. practitioner review projection", () => {
 
   it("12b-ii. the no-record copy claims nothing about how far the client got", () => {
     // A client who reached the last step, read the wording and chose NOT to
-    // tick it stores no record — identical to a client who never got there.
+    // tick it stores no record, identical to a client who never got there.
     // The copy must therefore describe the record, not the client. Pinned
     // because an earlier draft said "has not got to the acknowledgement
     // step", which is false in the read-then-declined case.
@@ -175,7 +175,7 @@ describe("11 + 12. practitioner review projection", () => {
 
   it("12c. an unticked record reads as not acknowledged, with its wording", () => {
     // Written as a literal, because the builder that used to produce this is
-    // retired — but rows of exactly this shape are still in the database and
+    // retired, but rows of exactly this shape are still in the database and
     // must keep reading correctly forever.
     const view = readElectrolysisAcknowledgement(
       {
@@ -265,9 +265,9 @@ describe("normalizer hardening", () => {
 //
 // #529 shipped the studio's real live consent forms inside the intake, so this
 // temporary acknowledgement is no longer collected. These pins prove the
-// collection side is genuinely gone — not merely hidden — while the read side
+// collection side is genuinely gone, not merely hidden, while the read side
 // above keeps historical evidence intact.
-describe("retirement — nothing new is collected", () => {
+describe("retirement: nothing new is collected", () => {
   it("the acknowledgement is no longer a question on any step", () => {
     const keys = INTAKE_STEPS.flatMap((s) => s.questions.map((q) => q.key));
     expect(keys).not.toContain(CANON.questionKey);
@@ -340,7 +340,7 @@ describe("retirement — nothing new is collected", () => {
   it("no copy claims a missing acknowledgement still BLOCKS submission", () => {
     // Retirement removed the submit gate. Any copy saying an intake "cannot
     // be submitted" until the box is ticked is now false on a clinical
-    // surface — exactly the defect the 'predates' rename fixed next door.
+    // surface, exactly the defect the 'predates' rename fixed next door.
     for (const [key, value] of Object.entries(ACKNOWLEDGEMENT_REVIEW_COPY)) {
       expect(value, key).not.toMatch(/cannot be submitted/i);
       expect(value, key).not.toMatch(/until they do/i);

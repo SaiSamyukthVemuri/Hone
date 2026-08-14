@@ -8,7 +8,7 @@ import {
 
 // Security guard for the fake Google provider: FAIL-CLOSED activation. The fake
 // can activate ONLY with the explicit server-only markers AND no deployed-runtime
-// signal — a combination impossible in any hosted environment.
+// signal, a combination impossible in any hosted environment.
 
 const OK: NodeJS.ProcessEnv = {
   HONE_E2E_FAKE_GOOGLE: "1",
@@ -26,7 +26,7 @@ describe("isValidE2eRunId", () => {
   });
 });
 
-describe("assertE2eFakeGoogleAllowed / isE2eFakeGoogleEnabled — fail-closed", () => {
+describe("assertE2eFakeGoogleAllowed / isE2eFakeGoogleEnabled: fail-closed", () => {
   it("enabled ONLY with the flag + a valid run id + no deployed signal", () => {
     expect(isE2eFakeGoogleEnabled(OK)).toBe(true);
     expect(() => assertE2eFakeGoogleAllowed(OK)).not.toThrow();
@@ -72,7 +72,7 @@ describe("assertE2eFakeGoogleAllowed / isE2eFakeGoogleEnabled — fail-closed", 
   });
 });
 
-describe("assertFakeGoogleNotRequestedInDeployment — fail-loud", () => {
+describe("assertFakeGoogleNotRequestedInDeployment: fail-loud", () => {
   it("throws if the flag is set in a deployed environment", () => {
     expect(() =>
       assertFakeGoogleNotRequestedInDeployment({ HONE_E2E_FAKE_GOOGLE: "1", VERCEL: "1" } as unknown as NodeJS.ProcessEnv),

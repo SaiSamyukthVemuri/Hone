@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Phase B2.3-b §8 — the dead-row operational alert recorder: creation, dedupe,
+// Phase B2.3-b §8: the dead-row operational alert recorder: creation, dedupe,
 // resolution/reappearance, and fail-open sabotage. createAdminClient + recordOpsAlert
 // are mocked so the recorder's dedupe logic is exercised without a network call.
 
@@ -108,7 +108,7 @@ class FakeDeadCoordinator implements ReconcileCoordinator {
   }
 }
 
-describe("sweepCalendarDeadRowAlerts — coordinator + durable cursor + outcome model", () => {
+describe("sweepCalendarDeadRowAlerts: coordinator + durable cursor + outcome model", () => {
   it("drains all studios across pages -> completed; cursor cleared", async () => {
     createAdminClient.mockReturnValue(adminReturning([]));
     const store = pagingStore([{ studioId: "s1", deadCount: 1 }, { studioId: "s2", deadCount: 2 }, { studioId: "s3", deadCount: 3 }]);

@@ -64,7 +64,7 @@ async function setConn(destinationMode: string | null, granted: string[], withSe
   return r.rows[0].ready as boolean;
 }
 
-describe("0131 calendar_required_event_scopes(destination) — exact map + fail-closed", () => {
+describe("0131 calendar_required_event_scopes(destination): exact map + fail-closed", () => {
   it("dedicated_app_created -> {calendar.app.created}", async () => {
     expect(await scopes("dedicated_app_created")).toEqual([APP_CREATED]);
   });
@@ -82,7 +82,7 @@ describe("0131 calendar_required_event_scopes(destination) — exact map + fail-
   });
 });
 
-describe("0131 calendar_connection_outbound_ready — destination-aware, fail-closed", () => {
+describe("0131 calendar_connection_outbound_ready: destination-aware, fail-closed", () => {
   it("dedicated + app.created granted -> ready", async () => {
     expect(await setConn("dedicated_app_created", ["openid", APP_CREATED])).toBe(true);
   });

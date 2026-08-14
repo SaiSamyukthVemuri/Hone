@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Review 3777890267 — a DATABASE READ FAILURE IS NOT AN EMPTY RESULT.
+// Review 3777890267: a DATABASE READ FAILURE IS NOT AN EMPTY RESULT.
 //
 // The loader performs three authoritative reads and used to destructure `data`
 // only. A failed query was therefore indistinguishable from "no rows".
@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // conflicting current custom prices must resolve to `ambiguous_custom_pricing`
 // and BLOCK. If that SELECT failed, `pricingRows ?? []` became an empty pricing
 // set, the resolver fell back to the positive MENU price, and the load returned
-// a confident `resolved` — which is exactly the state that authorizes charging
+// a confident `resolved`, which is exactly the state that authorizes charging
 // an already-prepared attempt.
 //
 // The distinction belongs at the loader boundary, not in one caller: this
@@ -147,7 +147,7 @@ describe("authoritative pricing reads distinguish FAILURE from EMPTY", () => {
     expect(!load.ok && load.failure.kind).toBe("appointment_lineage_mismatch");
   });
 
-  it("A6 client_pricing ZERO ROWS is a valid empty set — the menu price applies", async () => {
+  it("A6 client_pricing ZERO ROWS is a valid empty set, the menu price applies", async () => {
     // The whole point of the distinction: this must keep working.
     responses.client_pricing = { data: [], error: null };
     const load = await getAuthoritativeSessionPaymentAmount(ARGS);

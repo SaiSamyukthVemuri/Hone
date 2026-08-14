@@ -11,7 +11,7 @@ const LAYOUT = readFileSync(
   "utf8",
 );
 
-describe("settings nav — Marketing & analytics link", () => {
+describe("settings nav: Marketing & analytics link", () => {
   it("adds a Marketing & analytics item pointing at /settings/tracking", () => {
     expect(LAYOUT).toMatch(
       /\{\s*href:\s*"\/settings\/tracking",\s*label:\s*"Marketing & analytics"\s*\}/,

@@ -16,17 +16,17 @@ import { normalizeWholeSessionCopy } from "@/lib/sessions/whole-session-copy-nor
 import { landingBlockId } from "@/lib/sessions/fast-chart-start";
 
 // ===========================================================================
-// Repeat-client fast charting — "Start from last session", proven on the REAL
+// Repeat-client fast charting, "Start from last session", proven on the REAL
 // migrated local DB.
 // ===========================================================================
 //
 // WHAT MAKES THIS DIFFERENT from tests/db/whole-session-copy.db.test.ts: that
 // suite proves the RPC against HAND-WRITTEN specs. This one drives the ACTUAL
-// payload the fast path sends — the real pure pipeline
+// payload the fast path sends, the real pure pipeline
 //
 //     buildCopyDrafts -> draftToCopyInput -> normalizeWholeSessionCopy
 //
-// over rows read back out of the database — and then commits it. So it proves
+// over rows read back out of the database, and then commits it. So it proves
 // the thing the fast path actually does, not a reconstruction of it. Nothing is
 // edited in between, because the fast path offers no edit: that is precisely
 // why its payload is a pure function of the source.
@@ -379,7 +379,7 @@ describe("(4-9) TODAY'S FACTS are never manufactured from the previous visit", (
     expect(entry.comments).toBeNull(); // (9) today's notes
     expect(entry.observation_chips ?? []).toEqual([]); // (8) observation chips
 
-    // The previous visit DID record all of them — so these nulls prove the copy
+    // The previous visit DID record all of them, so these nulls prove the copy
     // dropped them, not that the source was empty.
     const prevBlock = await adminQuery(
       `select minutes_performed, tolerance_rating, reaction_type from public.session_blocks where session_id = $1`,
@@ -430,7 +430,7 @@ describe("(12) several prior areas are all brought forward, in order", () => {
     expect(blocks.map((b) => b.primary_area)).toEqual(["Chin", "Upper lip"]);
     expect(blocks.map((b) => b.sort_order)).toEqual([1, 2]);
 
-    // DISTINCT settings per area survive — the second area is not a copy of the first.
+    // DISTINCT settings per area survive, the second area is not a copy of the first.
     expect(blocks[0].mode).toBe("blend");
     expect(Number(blocks[0].energy_level)).toBe(10);
     expect(blocks[0].machine_frequency).toBe("13.56 MHz");
@@ -469,7 +469,7 @@ describe("(12) several prior areas are all brought forward, in order", () => {
     expect(blocks[0].id).not.toBe(blocks[1].id);
   });
 
-  it("(19) the landing area is created_block_ids[0] — the FIRST area, sort_order 1", async () => {
+  it("(19) the landing area is created_block_ids[0], the FIRST area, sort_order 1", async () => {
     // This is the invariant the fast path's routing depends on: the id it sends
     // the practitioner to must be the area she expects to start with.
     const s = await seedRepeatClient([AREA_CHIN, AREA_LIP]);
@@ -491,7 +491,7 @@ describe("(12) several prior areas are all brought forward, in order", () => {
 describe("(11) a double submit cannot duplicate the copied setup", () => {
   it("the SAME source-derived key replays: identical ids, no new rows, one ledger row", async () => {
     // The fast path derives its key from (source session, source fingerprint),
-    // and its payload from the same pair — so a retry after a lost response
+    // and its payload from the same pair, so a retry after a lost response
     // re-derives a byte-identical request.
     const s = await seedRepeatClient([AREA_CHIN, AREA_LIP]);
     const key = randomUUID();
@@ -593,7 +593,7 @@ describe("(14) a cross-studio session can never become the copy source", () => {
     expect(resolved.rows[0].id).toBe(mine.previous);
     expect(resolved.rows[0].id).not.toBe(theirs.previous);
 
-    // Naming their session as the expected source is rejected — the RPC
+    // Naming their session as the expected source is rejected, the RPC
     // re-derives the canonical source and refuses the mismatch.
     await expect(
       callCopy({
@@ -622,7 +622,7 @@ describe("(14) a cross-studio session can never become the copy source", () => {
   });
 });
 
-describe("(15) the prior session is never mutated — Treatment Memory stays historical truth", () => {
+describe("(15) the prior session is never mutated, Treatment Memory stays historical truth", () => {
   it("a successful copy leaves the source's fingerprint, rows and outcomes byte-identical", async () => {
     const s = await seedRepeatClient([AREA_CHIN, AREA_LIP]);
 
@@ -668,7 +668,7 @@ describe("(15) the prior session is never mutated — Treatment Memory stays his
     expect(afterEntries.rows).toEqual(beforeEntries.rows);
     expect(await fingerprintOf(s.previous)).toBe(s.fp);
 
-    // The copy's rows are genuinely NEW — no source row was re-parented.
+    // The copy's rows are genuinely NEW, no source row was re-parented.
     const copiedIds = (await todaysBlocks(s.today)).map((b) => b.id);
     for (const id of copiedIds) expect(s.sourceBlockIds).not.toContain(id);
   });

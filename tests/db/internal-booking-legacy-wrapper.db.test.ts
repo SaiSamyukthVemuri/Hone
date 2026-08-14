@@ -3,7 +3,7 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// B6 / 0175 — REFRAMED, NOT DELETED.
+// B6 / 0175: REFRAMED, NOT DELETED.
 //
 // This suite was written for migration 0147, when the old 9-arg
 // create_internal_appointment became a deployment-compatible wrapper around v2.
@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 // and the GiST collision authority. Those are properties of the governed
 // command, so the suite now exercises v2 directly.
 //
-// The one thing deliberately dropped is the wrapper's argument FORWARDING —
+// The one thing deliberately dropped is the wrapper's argument FORWARDING,
 // there is no wrapper left to forward. tests/migrations/0175-* pins the exact
 // DROP and tests/db/appointment-transition-integrity.db.test.ts proves the
 // function is absent, so no third copy is added here. Studio B, cap ON, UTC.

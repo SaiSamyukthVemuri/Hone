@@ -6,7 +6,7 @@ import {
   INTAKE_LINK_CLOSE_TO_EXPIRY_DAYS,
 } from "@/lib/intake/link-status";
 
-// PR #303 — smart intake resend status / expiry visibility. Migration 0097
+// PR #303: smart intake resend status / expiry visibility. Migration 0097
 // adds display metadata (last_sent_at, expires_at, send_count) stamped at each
 // link mint; the UI shows an accurate expiry/days-left status. Read-only over a
 // signed-token expiry (never claims delivery); no RLS/enum/token-format change.
@@ -132,7 +132,7 @@ describe("stamping helper + every mint path stamps metadata", () => {
   });
 
   it("no raw token stored + no token/PII logging in the stamp", () => {
-    // The stamp only writes the three metadata columns — no token column.
+    // The stamp only writes the three metadata columns, no token column.
     expect(QUERIES).not.toMatch(/intake_link_token|token:/);
     // Metadata error log carries no token/PII.
     expect(QUERIES).toMatch(/Failed to stamp intake link metadata/);

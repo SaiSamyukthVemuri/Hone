@@ -9,14 +9,14 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// client_intake_forms — the INSERT boundary, closed by migration 0163
+// client_intake_forms, the INSERT boundary, closed by migration 0163
 // ===========================================================================
 //
 // 0162 closed the review TRANSITION, but its guard is a BEFORE **UPDATE**
 // trigger, so it never fires on INSERT. Until 0163 an authenticated studio
 // member could skip the transition entirely and INSERT a row that was ALREADY
 // `status = 'reviewed'`, with a NULL `submitted_at` and a forged historical
-// `reviewed_at` — a clinical "reviewed" record for a form the client never
+// `reviewed_at`, a clinical "reviewed" record for a form the client never
 // submitted, created without ever performing the guarded update.
 //
 // 0163 removes the capability outright rather than constraining it, because a
@@ -24,7 +24,7 @@ import {
 // writers (ensureIntakeForClient, createIntakeRequestForClient) use the
 // service-role admin client.
 //
-// SCOPE: this file proves ONE finding. It is not a treatment of L18 —
+// SCOPE: this file proves ONE finding. It is not a treatment of L18,
 // `authenticated` retains direct row DML on the other clinical tables.
 //
 // Everything runs against the real migrated local database. Every row is
@@ -82,7 +82,7 @@ async function countFor(studioId: string): Promise<number> {
 // 1-4. Every browser-role INSERT is denied.
 // ---------------------------------------------------------------------------
 
-describe("0163 — authenticated INSERT on client_intake_forms is denied", () => {
+describe("0163: authenticated INSERT on client_intake_forms is denied", () => {
   it("1. same-studio INSERT of a normal in_progress row is DENIED", async () => {
     const before = await countFor(A.studioId);
     await expectInsertDenied(A.userId, A.studioId, A.clientId, "", "", []);
@@ -139,7 +139,7 @@ describe("0163 — authenticated INSERT on client_intake_forms is denied", () =>
 // 5-7. The legitimate service-role paths still work.
 // ---------------------------------------------------------------------------
 
-describe("0163 — the service-role writers are preserved", () => {
+describe("0163: the service-role writers are preserved", () => {
   it("5. service-role INSERT of a normal in_progress row SUCCEEDS", async () => {
     const res = await adminQuery(
       `insert into public.client_intake_forms (studio_id, client_id)
@@ -194,7 +194,7 @@ describe("0163 — the service-role writers are preserved", () => {
 // 8-9. Nothing else regressed.
 // ---------------------------------------------------------------------------
 
-describe("0163 — SELECT, UPDATE and the 0162 guard are unchanged", () => {
+describe("0163: SELECT, UPDATE and the 0162 guard are unchanged", () => {
   it("8a. authenticated SELECT of an own-studio intake still works", async () => {
     const seeded = await adminQuery(
       `insert into public.client_intake_forms (studio_id, client_id)
@@ -276,7 +276,7 @@ describe("0163 — SELECT, UPDATE and the 0162 guard are unchanged", () => {
 // 10. The boundary itself, asserted structurally.
 // ---------------------------------------------------------------------------
 
-describe("0163 — no INSERT privilege or INSERT policy remains", () => {
+describe("0163: no INSERT privilege or INSERT policy remains", () => {
   it("10a. neither browser role holds the INSERT table privilege", async () => {
     const res = await adminQuery(
       `select grantee, privilege_type
@@ -298,7 +298,7 @@ describe("0163 — no INSERT privilege or INSERT policy remains", () => {
     );
     const cmds = res.rows.map((r) => r.cmd as string);
     expect(cmds, "no INSERT policy may remain").not.toContain("INSERT");
-    expect(cmds, "no FOR ALL policy may remain — it would re-grant INSERT").not.toContain(
+    expect(cmds, "no FOR ALL policy may remain, it would re-grant INSERT").not.toContain(
       "ALL",
     );
     expect(cmds, "member SELECT must survive").toContain("SELECT");

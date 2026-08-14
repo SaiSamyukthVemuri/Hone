@@ -88,7 +88,7 @@ function params(over: Record<string, unknown> = {}) {
   };
 }
 
-describe("dispatchBookingConversion — gates", () => {
+describe("dispatchBookingConversion: gates", () => {
   it("consent false → sends nothing, no DB query", async () => {
     const a = fakeAdapter();
     const state = mkState([enabledRow], []);

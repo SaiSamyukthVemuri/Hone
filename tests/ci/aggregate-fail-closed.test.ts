@@ -14,7 +14,7 @@ import path from "node:path";
 //
 // When that gate does not succeed, its outputs are the empty string. The
 // aggregator therefore computed REQUIRED="false", saw the shard job report
-// "skipped", and concluded "no browser coverage required for this diff —
+// "skipped", and concluded "no browser coverage required for this diff,
 // satisfied", exiting 0. The required check went GREEN having executed ZERO
 // tests.
 //
@@ -28,7 +28,7 @@ import path from "node:path";
 // WHY IT IS PINNED HERE AND NOT IN ci-config.test.ts
 // --------------------------------------------------
 // The guard is six lines of shell inside a `run:` block. Deleting it leaves the
-// workflow structurally identical — every existing source-grep assertion in
+// workflow structurally identical, every existing source-grep assertion in
 // tests/ci/ci-config.test.ts still passes, because none of them reads
 // `needs.changes.result`. A source-shape pin cannot protect a behaviour; only
 // executing the behaviour can. So this file EXECUTES the real script.
@@ -77,8 +77,8 @@ function extractAggregateScript(): string {
   }
   const script = body.join("\n");
 
-  // SELF-VERIFICATION. If the extractor ever grabs the wrong block — or an empty
-  // one — these throw instead of letting the decision table pass against
+  // SELF-VERIFICATION. If the extractor ever grabs the wrong block, or an empty
+  // one, these throw instead of letting the decision table pass against
   // nothing. This is what stops the whole file from going vacuous.
   if (script.length < 500) {
     throw new Error(`extracted aggregate script implausibly short (${script.length} chars)`);
@@ -159,18 +159,18 @@ describe("the extracted script is the real one", () => {
 
   it("the workflow declares the gate result as step env", () => {
     // Without this the script would read an unset variable and, under `set -u`,
-    // fail for the wrong reason — passing this file while breaking real CI.
+    // fail for the wrong reason, passing this file while breaking real CI.
     expect(CI).toMatch(/CHANGES_RESULT: \$\{\{ needs\.changes\.result \}\}/);
   });
 });
 
-describe("FAIL CLOSED — a gate that did not succeed can never yield a green required check", () => {
+describe("FAIL CLOSED: a gate that did not succeed can never yield a green required check", () => {
   // THE regression. Each of these passed (exit 0) before the guard existed.
   for (const gate of ["cancelled", "failure", "skipped"]) {
     it(`gate result "${gate}" fails the required check`, () => {
       const r = runAggregate({ CHANGES_RESULT: gate, SHARD_RESULT: "skipped" });
       expect(r.code).not.toBe(0);
-      // Fails for the RIGHT reason — not a shell error, not malformed JSON.
+      // Fails for the RIGHT reason, not a shell error, not malformed JSON.
       expect(r.out).toContain("changed-path detection did not succeed");
       expect(r.out).toContain(gate);
       expect(r.out).not.toContain("satisfied");
@@ -195,7 +195,7 @@ describe("FAIL CLOSED — a gate that did not succeed can never yield a green re
     expect(r.out).toContain("changed-path detection did not succeed");
   });
 
-  it("the exact PR #518 shape — dead gate, empty outputs, skipped shards — fails", () => {
+  it("the exact PR #518 shape, dead gate, empty outputs, skipped shards, fails", () => {
     // Reproduces run 31120309970 on fd6538209dfc..., which reported the required
     // check GREEN with zero tests executed.
     const r = runAggregate({
@@ -248,7 +248,7 @@ describe("gate SUCCESS behaviour is unchanged", () => {
         SHARDS: "[1]",
       });
       expect(r.code).not.toBe(0);
-      // NOT via the new guard — the pre-existing shard logic must still own this.
+      // NOT via the new guard, the pre-existing shard logic must still own this.
       expect(r.out).not.toContain("changed-path detection did not succeed");
     });
   }

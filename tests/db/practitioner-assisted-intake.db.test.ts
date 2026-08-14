@@ -8,7 +8,7 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// Practitioner-assisted intake — the DATABASE half, on the REAL migrated
+// Practitioner-assisted intake: the DATABASE half, on the REAL migrated
 // local database.
 //
 // The application design rests on four claims about what the database allows
@@ -308,7 +308,7 @@ describe("4. cross-studio isolation", () => {
 // ---------------------------------------------------------------------------
 describe("5. the documented limitation is real, and stated honestly", () => {
   it("a member CAN still write provenance naming a colleague by direct SQL", async () => {
-    // This is NOT a bug introduced by this feature — it is the pre-existing
+    // This is NOT a bug introduced by this feature, it is the pre-existing
     // shape of client_intake_forms_member_update, whose WITH CHECK is
     // `is_studio_member(studio_id)` with no column and no actor predicate.
     // The application derives provenance from the session, but the DATABASE

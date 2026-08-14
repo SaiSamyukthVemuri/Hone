@@ -3,7 +3,7 @@ import { sanitizeAppointmentReturnTo } from "@/lib/nav/appointment-return";
 
 const UUID = "123e4567-e89b-42d3-a456-426614174000";
 
-describe("sanitizeAppointmentReturnTo — only internal /calendar/<uuid>", () => {
+describe("sanitizeAppointmentReturnTo: only internal /calendar/<uuid>", () => {
   it("accepts a valid appointment route", () => {
     expect(sanitizeAppointmentReturnTo(`/calendar/${UUID}`)).toBe(`/calendar/${UUID}`);
   });

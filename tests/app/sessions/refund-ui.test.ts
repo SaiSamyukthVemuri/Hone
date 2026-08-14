@@ -185,13 +185,13 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
     expect(block).toMatch(/Amount refunded/);
     expect(block).toMatch(/Refunded:/);
     expect(block).toMatch(/attempt\.refundedAt/);
-    // The raw Stripe refund id is no longer inline — it lives in the owner-only
+    // The raw Stripe refund id is no longer inline, it lives in the owner-only
     // Technical payment details disclosure on SucceededPanel.
     expect(block).not.toMatch(/Stripe refund:/);
     expect(block).not.toMatch(/attempt\.stripeRefundId/);
   });
 
-  it("the failed state stays calm — no raw code/message inline (they are owner-only)", () => {
+  it("the failed state stays calm, no raw code/message inline (they are owner-only)", () => {
     const block = blockFor("RefundSubPanel");
     expect(block).toMatch(/Refund failed\./);
     expect(block).toMatch(/You can try again below\./);

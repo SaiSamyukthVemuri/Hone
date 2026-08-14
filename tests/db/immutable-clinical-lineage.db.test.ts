@@ -12,7 +12,7 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// Migration 0160 — a treatment record belongs to ONE client and ONE encounter.
+// Migration 0160, a treatment record belongs to ONE client and ONE encounter.
 //
 // The defect this closes was REPRODUCED as the `authenticated` browser role with a
 // real studio-member JWT: tenant isolation holds (a cross-STUDIO re-tenant is
@@ -20,7 +20,7 @@ import {
 // `using (is_studio_member(studio_id)) with check (is_studio_member(studio_id))`,
 // and that predicate is still satisfied after the parent changes. So a raw
 // PostgREST PATCH could move a whole session onto a DIFFERENT CLIENT's chart, or
-// move a settings block — with its structured treatment areas — onto another
+// move a settings block, with its structured treatment areas, onto another
 // client's encounter.
 //
 // The block case was only reachable while the block had no electrolysis entries
@@ -29,7 +29,7 @@ import {
 // happening to exist is not correctness.
 //
 // This is NOT the retired finalization capability. Nothing here freezes a record.
-// Sessions stay ordinary and editable — notes, settings, areas, passes, timings,
+// Sessions stay ordinary and editable, notes, settings, areas, passes, timings,
 // practitioner, aftercare, soft-delete all keep working. Only WHOSE record it is
 // and WHICH encounter a child belongs to becomes immutable.
 // ===========================================================================
@@ -51,11 +51,11 @@ afterAll(async () => {
 
 const REPARENT_MSG = /cannot be re-assigned/i;
 
-describe("0160 — a session cannot be moved to another client", () => {
+describe("0160: a session cannot be moved to another client", () => {
   it("refuses client_id change for the browser role, service_role AND the owner", async () => {
     const { sessionId } = await seedSession(a);
     // After 0169 the browser role is refused by the PRIVILEGE layer before the
-    // trigger is reached — a strictly earlier refusal. The TRIGGER itself is
+    // trigger is reached, a strictly earlier refusal. The TRIGGER itself is
     // still proven, through the two roles that retain DML.
     let browserCode: string | undefined;
     try {
@@ -76,19 +76,19 @@ describe("0160 — a session cannot be moved to another client", () => {
 
   it("refuses a studio_id re-tenant as well (trigger, not just the RLS predicate)", async () => {
     const { sessionId } = await seedSession(a);
-    // The owner bypasses RLS entirely, so this proves the trigger — not the policy.
+    // The owner bypasses RLS entirely, so this proves the trigger, not the policy.
     await expect(
       adminQuery("update public.sessions set studio_id=$2 where id=$1", [sessionId, randomUUID()]),
     ).rejects.toThrow(REPARENT_MSG);
   });
 
   it("a no-op write of the same client_id is still allowed", async () => {
-    // The guard fires on CHANGE, not on mention — an UPDATE that includes the
+    // The guard fires on CHANGE, not on mention, an UPDATE that includes the
     // column with its existing value must not break.
     const { sessionId } = await seedSession(a);
     // The browser role no longer holds UPDATE at all (0169), so this asserts the
     // TRIGGER's behaviour through service_role. The equivalent practitioner-facing
-    // property — an ordinary session stays editable — is proven through the 0167
+    // property, an ordinary session stays editable, is proven through the 0167
     // commands in tests/db/session-write-commands.db.test.ts.
     // NOTE: asRole() rolls back by design ("privilege probes never persist"), so
     // a write that must be OBSERVED afterwards runs as the owner instead.
@@ -100,9 +100,9 @@ describe("0160 — a session cannot be moved to another client", () => {
   });
 });
 
-describe("0160 — a settings block cannot be moved to another encounter", () => {
+describe("0160: a settings block cannot be moved to another encounter", () => {
   // Review finding (test-quality lens): session_blocks_immutable_lineage pins TWO
-  // columns — session_id AND studio_id — but only session_id was exercised, so
+  // columns, session_id AND studio_id, but only session_id was exercised, so
   // dropping 'studio_id' from the trigger's TG_ARGV survived the whole DB lane.
   it("refuses a studio_id change on a settings block", async () => {
     const { blockId } = await seedSession(a);
@@ -110,7 +110,7 @@ describe("0160 — a settings block cannot be moved to another encounter", () =>
     // any foreign key is consulted, so this proves the GUARD refuses the re-tenant
     // rather than an FK incidentally catching it.
     const elsewhere = randomUUID();
-    // The browser role is refused earlier still after 0169 — it holds no UPDATE.
+    // The browser role is refused earlier still after 0169, it holds no UPDATE.
     let browserCode: string | undefined;
     try {
       await asUser(a.userId, (q) =>
@@ -185,7 +185,7 @@ describe("0160 — a settings block cannot be moved to another encounter", () =>
   });
 });
 
-describe("0160 — recorded passes and photos stay with their encounter", () => {
+describe("0160: recorded passes and photos stay with their encounter", () => {
   it("an electrolysis entry cannot change session or block", async () => {
     const { sessionId, blockId } = await seedSession(a);
     const other = await seedSession(a);
@@ -234,7 +234,7 @@ describe("0160 — recorded passes and photos stay with their encounter", () => 
     ).rejects.toThrow(REPARENT_MSG);
   });
 
-  it("a treatment image cannot be re-attached — already guarded by 0093, verified here", async () => {
+  it("a treatment image cannot be re-attached, already guarded by 0093, verified here", async () => {
     const { sessionId, blockId } = await seedSession(a);
     const other = await seedSession(a);
     const imgId = randomUUID();
@@ -253,7 +253,7 @@ describe("0160 — recorded passes and photos stay with their encounter", () => 
         a.practitionerId,
       ],
     );
-    // 0093's treatment_images_enforce_integrity already freezes these — 0160
+    // 0093's treatment_images_enforce_integrity already freezes these, 0160
     // deliberately does NOT add a second guard, because 0093's version correctly
     // tolerates the FK ON DELETE SET NULL cascade and a blunt one would wedge it.
     for (const [col, val] of [
@@ -265,7 +265,7 @@ describe("0160 — recorded passes and photos stay with their encounter", () => 
         adminQuery(`update public.treatment_images set ${col}=$2 where id=$1`, [imgId, val]),
       ).rejects.toThrow(/identity columns are immutable|cannot be re-assigned/i);
     }
-    // …while the note and soft-delete paths the app actually uses still work —
+    // …while the note and soft-delete paths the app actually uses still work,
     // through the 0168 commands, which is the ONLY way the app reaches them
     // after 0169. This is the stronger proof: the practitioner workflow is
     // intact even though the direct grant is gone.
@@ -283,7 +283,7 @@ describe("0160 — recorded passes and photos stay with their encounter", () => 
   });
 });
 
-describe("0160 — INSERT still establishes lineage normally", () => {
+describe("0160: INSERT still establishes lineage normally", () => {
   it("a new session, block, entry and image can all be created against their parents", async () => {
     // The guard is UPDATE-only. Upload/charting paths set lineage on INSERT after
     // validating it server-side, and must be unaffected.
@@ -317,7 +317,7 @@ describe("0160 — INSERT still establishes lineage normally", () => {
     // This is the workflow the guard pushes people toward, so prove it is open.
     const { sessionId } = await seedSession(a);
     // After 0169 the practitioner reaches this through the 0167 command, not a
-    // direct UPDATE — which is exactly the workflow the guard pushes toward.
+    // direct UPDATE, which is exactly the workflow the guard pushes toward.
     // `deleted_by` is derived from auth.uid() inside the command.
     await userQuery(
       a.userId,
@@ -341,11 +341,11 @@ describe("0160 — INSERT still establishes lineage normally", () => {
   });
 });
 
-describe("0160 — the FK ON DELETE SET NULL cascades still work", () => {
+describe("0160: the FK ON DELETE SET NULL cascades still work", () => {
   it("hard-deleting a settings block clears block_id on its passes instead of wedging", async () => {
     // electrolysis_entries(session_id, block_id) -> session_blocks is ON DELETE SET
     // NULL (block_id). A blunt immutability guard on block_id would REJECT that
-    // cascade and make block deletion impossible — the trap 0093 already navigated
+    // cascade and make block deletion impossible, the trap 0093 already navigated
     // for treatment_images. This is why block_id uses the clearable guard.
     const { sessionId, blockId } = await seedSession(a);
     const entryId = randomUUID();
@@ -394,14 +394,14 @@ describe("0160 — the FK ON DELETE SET NULL cascades still work", () => {
 // Review finding (test-quality lens): the guards' SECURITY INVOKER mode and
 // pinned empty search_path were only ever source-grepped in the migrations
 // test. Flipping the LIVE function to SECURITY DEFINER with an unpinned
-// search_path therefore survived the entire DB lane — a source grep cannot see
+// search_path therefore survived the entire DB lane, a source grep cannot see
 // what is actually installed. These read pg_proc/pg_trigger instead.
 //
 // A SECURITY DEFINER guard with an unpinned search_path is the classic
 // privilege-escalation shape: it runs as the owner and resolves unqualified
 // names through the caller's search_path.
 // ---------------------------------------------------------------------------
-describe("0160 — the INSTALLED guards match their declared security posture", () => {
+describe("0160: the INSTALLED guards match their declared security posture", () => {
   it("both guard functions are SECURITY INVOKER with search_path pinned to empty", async () => {
     const res = await adminQuery(
       `select p.proname, p.prosecdef, coalesce(array_to_string(p.proconfig, ','), '') as cfg
@@ -415,7 +415,7 @@ describe("0160 — the INSTALLED guards match their declared security posture", 
     for (const row of res.rows) {
       expect(
         row.prosecdef,
-        `${row.proname} must be SECURITY INVOKER — it inspects only OLD/NEW and needs no elevated ` +
+        `${row.proname} must be SECURITY INVOKER, it inspects only OLD/NEW and needs no elevated ` +
           `rights; SECURITY DEFINER would make a pure guard an escalation surface`,
       ).toBe(false);
       expect(

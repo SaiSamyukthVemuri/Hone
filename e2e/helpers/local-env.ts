@@ -70,7 +70,7 @@ export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // Explicitly propagate the fake-Resend marker to the Next server when the
   // browser-e2e job requests it (the webServer.env replaces process.env, so it
-  // must be listed here — same pattern as the fake-Stripe lane). Only the
+  // must be listed here, same pattern as the fake-Stripe lane). Only the
   // welcome/invitation path reads getResendTransport, so other emails are
   // unaffected. Server-only marker; the module's own guard refuses it in any
   // deployed runtime.

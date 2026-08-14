@@ -40,7 +40,7 @@ describe("execute action: auth + confirm gate", () => {
     // is not the literal string "true".
     expect(ACTION).toMatch(/formData\.get\("confirm_charge"\)/);
     expect(ACTION).toMatch(/confirmCharge !== "true"/);
-    // PR C: the confirmation error is mode-aware — a live operator is
+    // PR C: the confirmation error is mode-aware, a live operator is
     // never told a real charge is a "test charge".
     expect(ACTION).toMatch(/inferStripeLivemode\(\)\s*\n?\s*\? "Confirm the charge before running it\."\s*\n?\s*: "Confirm the test charge before running it\."/);
   });

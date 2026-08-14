@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // PR #322 / PR A. Migration 0101 makes payment_charge_attempts CAPABLE of
-// storing live rows and lets the claim RPC claim them — while runtime + env keep
+// storing live rows and lets the claim RPC claim them, while runtime + env keep
 // live charges disabled (inert). Source-grep the migration's shape; the
 // behavioral proof is tests/db/livemode-ledger-readiness.db.test.ts.
 

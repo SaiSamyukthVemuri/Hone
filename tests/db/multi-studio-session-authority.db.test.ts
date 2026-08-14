@@ -1,4 +1,4 @@
-// MULTI-STUDIO SESSION-START AUTHORITY — 0181.
+// MULTI-STUDIO SESSION-START AUTHORITY: 0181.
 //
 // THIS IS THE PRODUCTION INCIDENT REGRESSION.
 //
@@ -8,7 +8,7 @@
 //   Failed to start session: Client not found in this studio.   digest 2140849265
 //
 // 0167's start_session resolved the acting studio with
-// `where user_id = auth.uid() and active = true limit 1` — no studio input, no
+// `where user_id = auth.uid() and active = true limit 1`, no studio input, no
 // predicate, NO ORDER BY. The application meanwhile rendered against the user's
 // SELECTED studio. Page and command disagreed, so the client the page had just
 // loaded was invisible to the command.
@@ -16,7 +16,7 @@
 // WHY THESE CASES WOULD HAVE BEEN FLAKY, NOT RED, AGAINST THE OLD COMMAND: the
 // old pick was planner-dependent, so a two-studio run could pass by luck. Every
 // assertion below therefore names the EXPECTED studio and the EXPECTED
-// practitioner id rather than merely checking "it worked" — the same discipline
+// practitioner id rather than merely checking "it worked", the same discipline
 // tests/db/treatment-image-multi-studio-actor.db.test.ts adopted for 0178.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -90,7 +90,7 @@ beforeAll(async () => {
   clientInA = A.clientId;
   clientInB = B.clientId;
 
-  // The shared human's SECOND active membership — this is the whole trigger.
+  // The shared human's SECOND active membership, this is the whole trigger.
   practInB = randomUUID();
   await adminQuery(
     `insert into public.practitioners
@@ -105,7 +105,7 @@ afterAll(async () => {
 });
 
 describe("0181 · start_session binds to the SELECTED studio", () => {
-  it("DB1 — explicit Studio A starts in A and attributes A's practitioner row", async () => {
+  it("DB1: explicit Studio A starts in A and attributes A's practitioner row", async () => {
     await purgeSessions(clientInA);
     const rows = await asUser(sharedUser, (q) =>
       q(START_EXPLICIT, [clientInA, "electrolysis", null, COALESCE_MINUTES, A.studioId]),
@@ -120,12 +120,12 @@ describe("0181 · start_session binds to the SELECTED studio", () => {
     const s = await sessionRow(session_id);
     expect(s.studio_id).toBe(A.studioId);
     expect(s.client_id).toBe(clientInA);
-    // The SPECIFIC membership row for the named studio — not "some" row.
+    // The SPECIFIC membership row for the named studio, not "some" row.
     expect(s.practitioner_id).toBe(practInA);
     expect(s.performed_by_practitioner_id).toBe(practInA);
   });
 
-  it("DB2 — explicit Studio B starts in B and attributes B's practitioner row (THE INCIDENT)", async () => {
+  it("DB2: explicit Studio B starts in B and attributes B's practitioner row (THE INCIDENT)", async () => {
     await purgeSessions(clientInB);
     const rows = await asUser(sharedUser, (q) =>
       q(START_EXPLICIT, [clientInB, "electrolysis", null, COALESCE_MINUTES, B.studioId]),
@@ -146,7 +146,7 @@ describe("0181 · start_session binds to the SELECTED studio", () => {
     // its unordered pick landed on A. It cannot any more: A is never consulted.
   });
 
-  it("DB3 — selected studio A + client B is REFUSED and inserts nothing", async () => {
+  it("DB3: selected studio A + client B is REFUSED and inserts nothing", async () => {
     await purgeSessions(clientInB);
     const before = await sessionCountFor(clientInB);
     await expect(
@@ -157,7 +157,7 @@ describe("0181 · start_session binds to the SELECTED studio", () => {
     expect(await sessionCountFor(clientInB)).toBe(before);
   });
 
-  it("DB4 — a studio the caller has NO active membership in is REFUSED", async () => {
+  it("DB4: a studio the caller has NO active membership in is REFUSED", async () => {
     await purgeSessions(C.clientId);
     const before = await sessionCountFor(C.clientId);
     await expect(
@@ -168,7 +168,7 @@ describe("0181 · start_session binds to the SELECTED studio", () => {
     expect(await sessionCountFor(C.clientId)).toBe(before);
 
     // And naming a non-member studio for a client the caller CAN see is
-    // likewise refused — p_studio_id is never taken on trust.
+    // likewise refused, p_studio_id is never taken on trust.
     await purgeSessions(clientInB);
     await expect(
       asUser(sharedUser, (q) =>
@@ -178,7 +178,7 @@ describe("0181 · start_session binds to the SELECTED studio", () => {
     expect(await sessionCountFor(clientInB)).toBe(0);
   });
 
-  it("DB4b — an INACTIVE membership in the named studio is REFUSED", async () => {
+  it("DB4b: an INACTIVE membership in the named studio is REFUSED", async () => {
     await purgeSessions(clientInB);
     await adminQuery(`update public.practitioners set active = false where id = $1`, [
       practInB,
@@ -223,7 +223,7 @@ describe("0181 · appointment lineage is preserved (DB5)", () => {
     return id;
   }
 
-  it("DB5a — an appointment in ANOTHER studio is refused", async () => {
+  it("DB5a: an appointment in ANOTHER studio is refused", async () => {
     await purgeSessions(clientInB);
     const apptInA = await makeAppointment({
       studioId: A.studioId,
@@ -239,7 +239,7 @@ describe("0181 · appointment lineage is preserved (DB5)", () => {
     expect(await sessionCountFor(clientInB)).toBe(0);
   });
 
-  it("DB5b — an appointment for a DIFFERENT client in the same studio is refused", async () => {
+  it("DB5b: an appointment for a DIFFERENT client in the same studio is refused", async () => {
     await purgeSessions(clientInB);
     const otherClient = randomUUID();
     await adminQuery(
@@ -260,7 +260,7 @@ describe("0181 · appointment lineage is preserved (DB5)", () => {
     expect(await sessionCountFor(clientInB)).toBe(0);
   });
 
-  it("DB5c — an appointment assigned to ANOTHER practitioner is refused", async () => {
+  it("DB5c: an appointment assigned to ANOTHER practitioner is refused", async () => {
     await purgeSessions(clientInB);
     const otherPract = randomUUID();
     const otherUser = randomUUID();
@@ -288,7 +288,7 @@ describe("0181 · appointment lineage is preserved (DB5)", () => {
     expect(await sessionCountFor(clientInB)).toBe(0);
   });
 
-  it("DB5d — an UNASSIGNED appointment in the selected studio links and attributes correctly", async () => {
+  it("DB5d: an UNASSIGNED appointment in the selected studio links and attributes correctly", async () => {
     await purgeSessions(clientInB);
     const appt = await makeAppointment({
       studioId: B.studioId,
@@ -308,7 +308,7 @@ describe("0181 · appointment lineage is preserved (DB5)", () => {
 });
 
 describe("0181 · coalescing is preserved and never crosses studios (DB6)", () => {
-  it("DB6a — two starts in the SAME selected studio reuse one session", async () => {
+  it("DB6a: two starts in the SAME selected studio reuse one session", async () => {
     await purgeSessions(clientInB);
     const first = await asUser(sharedUser, (q) =>
       q(START_EXPLICIT, [clientInB, "electrolysis", null, COALESCE_MINUTES, B.studioId]),
@@ -324,7 +324,7 @@ describe("0181 · coalescing is preserved and never crosses studios (DB6)", () =
     expect(await sessionCountFor(clientInB)).toBe(1);
   });
 
-  it("DB6b — a start in A never reuses a session that belongs to B", async () => {
+  it("DB6b: a start in A never reuses a session that belongs to B", async () => {
     await purgeSessions(clientInA);
     await purgeSessions(clientInB);
     const inB = await asUser(sharedUser, (q) =>
@@ -341,7 +341,7 @@ describe("0181 · coalescing is preserved and never crosses studios (DB6)", () =
     expect((await sessionRow(bRow.session_id)).studio_id).toBe(B.studioId);
   });
 
-  it("DB6c — a different modality does not coalesce", async () => {
+  it("DB6c: a different modality does not coalesce", async () => {
     await purgeSessions(clientInB);
     const e = await asUser(sharedUser, (q) =>
       q(START_EXPLICIT, [clientInB, "electrolysis", null, COALESCE_MINUTES, B.studioId]),
@@ -361,7 +361,7 @@ describe("0181 · legacy four-argument compatibility (DB7)", () => {
   // THE MIGRATION-FIRST PROOF. The currently-deployed application still sends
   // four arguments between the hosted apply and the Vercel deploy. It must work
   // for BOTH memberships, and it must not depend on physical row order.
-  it("DB7a — legacy call for a client in A succeeds in A", async () => {
+  it("DB7a: legacy call for a client in A succeeds in A", async () => {
     await purgeSessions(clientInA);
     const rows = await asUser(sharedUser, (q) =>
       q(START_LEGACY, [clientInA, "electrolysis", null, COALESCE_MINUTES]),
@@ -372,7 +372,7 @@ describe("0181 · legacy four-argument compatibility (DB7)", () => {
     expect(s.practitioner_id).toBe(practInA);
   });
 
-  it("DB7b — legacy call for a client in B succeeds in B (was the 500)", async () => {
+  it("DB7b: legacy call for a client in B succeeds in B (was the 500)", async () => {
     await purgeSessions(clientInB);
     const rows = await asUser(sharedUser, (q) =>
       q(START_LEGACY, [clientInB, "electrolysis", null, COALESCE_MINUTES]),
@@ -383,7 +383,7 @@ describe("0181 · legacy four-argument compatibility (DB7)", () => {
     expect(s.practitioner_id).toBe(practInB);
   });
 
-  it("DB7c — legacy call is independent of physical membership row order", async () => {
+  it("DB7c: legacy call is independent of physical membership row order", async () => {
     // Rewrite both membership rows so their physical order flips, then prove the
     // answer is unchanged. Under the 0167 `limit 1` this is exactly what made
     // the defect intermittent.
@@ -405,7 +405,7 @@ describe("0181 · legacy four-argument compatibility (DB7)", () => {
     }
   });
 
-  it("DB7d — legacy call for a client the caller cannot reach is refused", async () => {
+  it("DB7d: legacy call for a client the caller cannot reach is refused", async () => {
     await purgeSessions(C.clientId);
     await expect(
       asUser(sharedUser, (q) =>

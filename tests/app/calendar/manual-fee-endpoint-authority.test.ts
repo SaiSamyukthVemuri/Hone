@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// Review 3777890257 — ENDPOINT AUTHORITY for the manual-fee execution action.
+// Review 3777890257: ENDPOINT AUTHORITY for the manual-fee execution action.
 //
 // THE BYPASS THIS PROVES CLOSED
 // `runSessionPaymentCharge` has exactly two runtime callers. The session-payment
@@ -11,7 +11,7 @@ import { join } from "node:path";
 // allowlist. That allowlist deliberately permits `session_payment` (ordinary
 // live session payments are allowed), so an authenticated caller could post a
 // ready `session_payment` attempt id to the manual-fee action and reach the
-// shared runner with NO pricing permission check — reopening the stale
+// shared runner with NO pricing permission check, reopening the stale
 // prepared-amount bypass, in TEST mode as well as live.
 //
 // These tests invoke the REAL action and assert on runner call counts. The
@@ -85,7 +85,7 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("manual-fee endpoint executes ONLY manual-fee attempts", () => {
-  it("M1 a ready session_payment attempt is refused — in TEST mode too", async () => {
+  it("M1 a ready session_payment attempt is refused, in TEST mode too", async () => {
     attemptLookup.row = { charge_reason: "session_payment" };
     const res = await chargeManualFeeAttemptAction(form());
     expect(res.ok).toBe(false);
@@ -125,7 +125,7 @@ describe("manual-fee endpoint executes ONLY manual-fee attempts", () => {
 
   it("M5b a read ERROR blocks even when a row IS returned", async () => {
     // The distinguishing case. M5 alone cannot prove the error is honoured,
-    // because a null row blocks anyway — a mutant that drops the error check
+    // because a null row blocks anyway, a mutant that drops the error check
     // still passes it. If the driver reports an error, the row is not
     // trustworthy no matter how valid it looks.
     attemptLookup.row = { charge_reason: "no_show_fee" };

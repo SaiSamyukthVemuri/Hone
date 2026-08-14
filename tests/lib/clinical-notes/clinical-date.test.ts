@@ -13,8 +13,8 @@ import {
 // lands at midnight UTC and reads back as `2026-07-21T00:00:00+00:00`.
 //
 // Rendering that through `new Date(iso).toLocaleDateString()` converts an
-// instant into the viewer's zone: in EVERY negative UTC offset — every Canadian
-// and US studio, Willow included — midnight UTC on the 21st is 8pm on the 20th,
+// instant into the viewer's zone: in EVERY negative UTC offset, every Canadian
+// and US studio, Willow included, midnight UTC on the 21st is 8pm on the 20th,
 // so a note dated July 21 displayed as July 20, disagreeing with the date in
 // its own input field.
 //
@@ -49,11 +49,11 @@ function inZone<T>(tz: string, fn: () => T): T {
 const JULY_21 = "2026-07-21T00:00:00+00:00";
 
 const ZONES = [
-  "America/Toronto", // Chloe / Willow — UTC-4 in July. The reported defect.
-  "America/Los_Angeles", // UTC-7 — the worst negative offset in scope.
+  "America/Toronto", // Chloe / Willow, UTC-4 in July. The reported defect.
+  "America/Los_Angeles", // UTC-7, the worst negative offset in scope.
   "UTC",
-  "Asia/Kolkata", // UTC+5:30 — a half-hour positive offset.
-  "Pacific/Kiritimati", // UTC+14 — the extreme positive offset.
+  "Asia/Kolkata", // UTC+5:30, a half-hour positive offset.
+  "Pacific/Kiritimati", // UTC+14, the extreme positive offset.
 ];
 
 describe("the stored calendar date renders as itself in every timezone", () => {
@@ -68,7 +68,7 @@ describe("the stored calendar date renders as itself in every timezone", () => {
     });
   }
 
-  it("Toronto NEVER shows the prior date — the exact reported defect", () => {
+  it("Toronto NEVER shows the prior date, the exact reported defect", () => {
     // The naive rendering, reproduced, so this test proves the difference
     // rather than merely asserting the fixed value.
     const naive = inZone("America/Toronto", () =>
@@ -199,7 +199,7 @@ describe("parsing and round-tripping", () => {
     expect(civilDateParts(withTime)).toEqual({ year: 2026, month: 7, day: 21 });
   });
 
-  it("a NON-UTC stored offset still renders the stored day — the UTC pin alone cannot save this", () => {
+  it("a NON-UTC stored offset still renders the stored day, the UTC pin alone cannot save this", () => {
     // The test above uses a +00:00 offset, where reading the civil date
     // textually and parsing the string as an instant happen to AGREE. That
     // makes it blind to the parsing half of the contract: swap
@@ -212,7 +212,7 @@ describe("parsing and round-tripping", () => {
     //   naive  new Date("2026-07-21T23:30:00-04:00") -> 2026-07-22T03:30Z -> "Jul 22"
     //   civil  parts {2026,7,21}                                          -> "Jul 21"
     // So this is the assertion that pins the EXTRACTION, independently of the
-    // zone pin — and it is what makes the "restore the old instant conversion"
+    // zone pin, and it is what makes the "restore the old instant conversion"
     // negative control go red.
     const negativeOffset = "2026-07-21T23:30:00-04:00";
     expect(civilDateParts(negativeOffset)).toEqual({ year: 2026, month: 7, day: 21 });
@@ -238,7 +238,7 @@ describe("parsing and round-tripping", () => {
 
   it("an EXPLICIT locale override still works (deliberate callers, pure tests)", () => {
     // This is an override a caller asks for by name. It is NOT how the
-    // component renders — the component passes no locale, so it always gets
+    // component renders, the component passes no locale, so it always gets
     // the deterministic application default.
     expect(formatClinicalDate(JULY_21, { locale: "en-US" })).toMatch(/Jul/);
     expect(formatClinicalDate(JULY_21, { locale: "fr-FR" })).toMatch(/juil/i);
@@ -246,7 +246,7 @@ describe("parsing and round-tripping", () => {
     expect(formatClinicalDate(JULY_21, { locale: "fr-FR" })).toContain("21");
   });
 
-  it("the DEFAULT does not follow the viewer — it follows Hone's locale", () => {
+  it("the DEFAULT does not follow the viewer, it follows Hone's locale", () => {
     expect(HONE_CLINICAL_DATE_LOCALE).toBe("en-CA");
     // The no-options call equals the app-locale call, and is unaffected by any
     // other runtime preference.
@@ -267,7 +267,7 @@ describe("parsing and round-tripping", () => {
     );
   });
 
-  it("a caller cannot override the UTC pin — that override IS the defect", () => {
+  it("a caller cannot override the UTC pin, that override IS the defect", () => {
     const out = inZone("America/Toronto", () =>
       formatClinicalDate(JULY_21, {
         options: { timeZone: "America/Toronto" } as Intl.DateTimeFormatOptions,
@@ -283,7 +283,7 @@ describe("the DEFAULT LOCALE is explicit, never the runtime's", () => {
   // en-US and en-CA render this date IDENTICALLY ("Jul 21, 2026"), and the CI
   // runner defaults to en-US. So a test that only inspects the returned string
   // would pass even if the implementation reverted to
-  // `toLocaleDateString(undefined, …)` — the exact defect. These tests inspect
+  // `toLocaleDateString(undefined, …)`, the exact defect. These tests inspect
   // the ARGUMENT instead, and simulate the two runtimes explicitly.
 
   const realToLocaleDateString = Date.prototype.toLocaleDateString;
@@ -332,8 +332,8 @@ describe("the DEFAULT LOCALE is explicit, never the runtime's", () => {
   });
 
   it("SERVER (en-US default) and BROWSER (fr-CA default) produce the SAME string", () => {
-    // A Client Component is rendered twice — once by Node, once by the browser
-    // — and `undefined` means "each runtime's own default". This models that
+    // A Client Component is rendered twice, once by Node, once by the browser,
+    // and `undefined` means "each runtime's own default". This models that
     // divergence directly: the stub resolves `undefined` to an INJECTED runtime
     // default, exactly as a real runtime would.
     function underRuntimeDefault<T>(runtimeDefault: string, fn: () => T): T {
@@ -445,7 +445,7 @@ describe("every clinical-note date surface uses the shared formatter", () => {
     expect(src).not.toMatch(/<ClinicalDate iso=\{memory\.startedAt\}/);
   });
 
-  it("BOTH axes are pinned in source — locale AND zone, not zone alone", () => {
+  it("BOTH axes are pinned in source, locale AND zone, not zone alone", () => {
     const lib = codeOnly("lib/clinical-notes/clinical-date.ts");
     // Zone: the day.
     expect(lib).toMatch(/timeZone: "UTC"/);

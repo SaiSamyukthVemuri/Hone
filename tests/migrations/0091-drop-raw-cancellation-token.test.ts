@@ -7,7 +7,7 @@ import path from "node:path";
 // migration must: re-create both token-verifying RPCs HASH-ONLY (drop the
 // deploy-window `OR cancellation_token = ...` branches + the raw-column
 // INSERT), drop the deploy-window hashing trigger + its function, drop the
-// dead 2-arg cancel RPC, and drop the raw column — WITHOUT touching the
+// dead 2-arg cancel RPC, and drop the raw column, WITHOUT touching the
 // canonical cancellation_token_hash column / CHECK / unique index, any
 // payment table, RLS, or the live-mode posture.
 
@@ -17,7 +17,7 @@ const MIGRATION_PATH = path.resolve(
 );
 const MIGRATION = readFileSync(MIGRATION_PATH, "utf8");
 
-// Whole-file matcher that ignores the leading comment block — used for the
+// Whole-file matcher that ignores the leading comment block, used for the
 // "no raw reference survives" assertions so a SQL statement (not a comment
 // describing the old behavior) is what we test.
 const CODE = MIGRATION.split("\n")

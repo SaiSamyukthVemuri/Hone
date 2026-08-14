@@ -1,9 +1,9 @@
-// Settings CONTROL census — the audited list behind Global Search V2-A.1.
+// Settings CONTROL census: the audited list behind Global Search V2-A.1.
 //
 // WHY THIS FILE EXISTS
 // V2-A shipped a route-level coverage tripwire: every authenticated page had to
 // carry an explicit searchability decision. It passed, and search was still
-// incomplete — Sam typed the literal visible label "Booking horizon" in
+// incomplete, Sam typed the literal visible label "Booking horizon" in
 // production and got nothing, because the Booking PAGE was registered while six
 // of its eight controls were not. Route coverage answers "can I find this
 // page?". It cannot answer "can I find the exact setting I am looking at?".
@@ -15,12 +15,12 @@
 //
 // tests/lib/search/settings-control-coverage.test.ts enforces three things
 // against it:
-//   1. every `searchable` row resolves — its exact visible label finds its
+//   1. every `searchable` row resolves, its exact visible label finds its
 //      registry entry, and that entry points at the right page;
-//   2. every row is still REAL — the visible label string still exists in the
+//   2. every row is still REAL, the visible label string still exists in the
 //      page's source tree, so a renamed or deleted control fails here loudly
 //      instead of silently becoming unfindable;
-//   3. nothing new slipped in — a structural sweep of the label-bearing files
+//   3. nothing new slipped in, a structural sweep of the label-bearing files
 //      must not surface a control this census has never heard of.
 //
 // Adding a Settings control? Add a row here. That is the whole ceremony.
@@ -296,7 +296,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-service-order",
   },
   // The per-service editor fields live inside a repeated, collapsed accordion
-  // row — one instance per service — so they have no stable anchor to land on
+  // row, one instance per service, so they have no stable anchor to land on
   // and a row per field would collapse under href dedupe anyway. Their
   // vocabulary is carried by the Services entry instead, which is the correct
   // destination for all of them.
@@ -544,7 +544,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     role: "owner",
     decision: "excluded",
     reason:
-      "A mailto: link to Hone, not a studio setting, and it shares the page's href — a second searchable row would collapse into the page entry under dedupe and hide one of the two. The page entry's own description already says the model is operator-assisted.",
+      "A mailto: link to Hone, not a studio setting, and it shares the page's href, a second searchable row would collapse into the page entry under dedupe and hide one of the two. The page entry's own description already says the model is operator-assisted.",
   },
 
   // ------------------------------------------------------------------- data
@@ -592,7 +592,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
  * Files whose visible control labels are swept STRUCTURALLY, so a newly-added
  * control cannot slip past the census unnoticed.
  *
- * Deliberately NOT "parse every <label> in the React tree" — that is brittle
+ * Deliberately NOT "parse every <label> in the React tree", that is brittle
  * and would rot. This is a declared list of files that use one of two verified
  * label idioms, each with the number of labels it must keep yielding. If a file
  * stops matching (idiom changed, file restructured), `minLabels` fails and the

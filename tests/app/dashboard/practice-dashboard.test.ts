@@ -37,8 +37,8 @@ describe("resolvePeriodRange", () => {
   // Dashboard V2 Part 1: the reporting week moved from a Monday anchor to the
   // calendar's SUNDAY anchor, so these two cases invert. 2026-06-11 is a
   // Thursday; its week now runs Sun 2026-06-07 .. Sat 2026-06-13.
-  // Full boundary coverage — Sunday/Monday/Saturday, rollover, month, year,
-  // leap day, DST, and a 365-day agreement check against the calendar helper —
+  // Full boundary coverage, Sunday/Monday/Saturday, rollover, month, year,
+  // leap day, DST, and a 365-day agreement check against the calendar helper,
   // lives in tests/lib/dashboard/practice-metrics-week.test.ts.
   it("week starts Sunday (2026-06-11 is a Thursday)", () => {
     expect(resolvePeriodRange("2026-06-11", "week")).toEqual({
@@ -232,7 +232,7 @@ describe("service value wording (live payments disabled)", () => {
     expect(SNAPSHOT).toMatch(/label="Live payments" value=\{livemode \? "On" : "Off"\}/);
     expect(SNAPSHOT).toMatch(/label="Test payments" value="Available"/);
     expect(SNAPSHOT).toMatch(/Test mode only/);
-    // DASH-TRUTH-03: the prepared row is gone — preparing a payment is
+    // DASH-TRUTH-03: the prepared row is gone, preparing a payment is
     // plumbing, not a practice KPI. The outcome rows stay.
     expect(SNAPSHOT).not.toMatch(/Test payments prepared/);
     expect(SNAPSHOT).toMatch(/Test payments charged/);
@@ -240,7 +240,7 @@ describe("service value wording (live payments disabled)", () => {
   });
 
   it("payments card: NO test-mode copy can render in live mode (labels flip with the mode)", () => {
-    // The heading and all three metric labels are ternaries on livemode —
+    // The heading and all three metric labels are ternaries on livemode,
     // live counts are never displayed under "Test mode only" copy.
     expect(SNAPSHOT).toMatch(/\{livemode \? "Live payments" : "Test mode only"\}/);
     // DASH-TRUTH-03: no prepared label in either mode.
@@ -260,7 +260,7 @@ describe("action metrics + Today section", () => {
     // missing-records assistant already itemizes per client, over a different
     // window and in a different unit (a count of PROCEDURE RECORDS vs a row per
     // SESSION). Aftercare and probe-lot are now per-client To-do rows; the
-    // remainder — the part no per-item row covers — became ONE roll-up row.
+    // remainder, the part no per-item row covers, became ONE roll-up row.
     const MODEL = read("lib/dashboard/todo-model.ts");
     expect(SNAPSHOT).not.toMatch(/Incomplete procedure records/);
     expect(SNAPSHOT).not.toMatch(/Missing probe lot numbers/);
@@ -319,7 +319,7 @@ describe("data behavior safety", () => {
   it("metrics are read-only over existing tables; payment counts are CURRENT-mode scoped", () => {
     expect(METRICS).not.toMatch(/\.insert\(|\.update\(|\.delete\(/);
     // Live mode counts only live attempts; test mode only test attempts.
-    // (The pre-0101 "stripe_livemode=false by DB CHECK" claim is defunct —
+    // (The pre-0101 "stripe_livemode=false by DB CHECK" claim is defunct,
     // the query must scope by the deployment mode, never a literal.)
     const block = METRICS.slice(METRICS.indexOf('.from("payment_charge_attempts")'));
     expect(block.slice(0, 400)).toMatch(/\.eq\("stripe_livemode", inferStripeLivemode\(\)\)/);

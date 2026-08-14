@@ -46,7 +46,7 @@ describe("FREE-01 price matrix", () => {
   });
 
   // The precedence case. A $0 menu price must NOT short-circuit a real
-  // client-specific price — that would charge nothing for a client the studio
+  // client-specific price, that would charge nothing for a client the studio
   // deliberately priced.
   it("F4 zero menu price + current positive custom price => CUSTOM amount, not free", () => {
     const r = resolve({
@@ -178,7 +178,7 @@ describe("FREE-01 no money-moving path", () => {
 
   it("F9 the prepare action returns before any payment attempt is written", () => {
     // Compare against the actual WRITE, not the first textual mention of the
-    // table — the file names it in comments long before it touches it.
+    // table, the file names it in comments long before it touches it.
     const freeIdx = ACTIONS.indexOf('priced.result.kind === "free"');
     const writeIdx = ACTIONS.indexOf(".insert(");
     expect(freeIdx).toBeGreaterThan(-1);
@@ -206,8 +206,8 @@ describe("FREE-01 no money-moving path", () => {
     // succeeded one.
     // Review 3780286321 generalised this: freeness is no longer a special
     // case, it is one of the non-resolved pricing results that withdraw the
-    // ready control. The invariant F10 protects — only `ready` is suppressed,
-    // in-flight and settled survive — is unchanged and now lives in the shared
+    // ready control. The invariant F10 protects, only `ready` is suppressed,
+    // in-flight and settled survive, is unchanged and now lives in the shared
     // decision module.
     // Review 3780371682 corrected the shape: the PANEL is never suppressed by
     // pricing (a prepared attempt is transaction history), only the READY
@@ -216,8 +216,8 @@ describe("FREE-01 no money-moving path", () => {
     const PERM = read("lib/billing/ready-control-permission.ts");
     // Review 3780573779 collapsed the duplicate authority: there is no
     // separate decideReadyControlPermission helper any more. The invariant it
-    // carried — only `ready` has a money-moving control, so pending_stripe and
-    // succeeded are never withdrawn — is now expressed once, in the single
+    // carried, only `ready` has a money-moving control, so pending_stripe and
+    // succeeded are never withdrawn, is now expressed once, in the single
     // runChargeVisible computation.
     expect(PERM).toMatch(/const isReady = attemptStatus === "ready"/);
     expect(PERM).toMatch(

@@ -6,7 +6,7 @@ import {
 } from "@/lib/sms/templates";
 
 // Client-facing SMS must render 12-hour time (e.g. "2:30 PM"), never 24-hour
-// ("14:30"). These are PURE builder unit tests — they format strings only and
+// ("14:30"). These are PURE builder unit tests, they format strings only and
 // never touch Twilio / the network / the DB, so no SMS is sent. Timezone
 // correctness is preserved: the same UTC instant renders differently per tz.
 
@@ -16,7 +16,7 @@ const AFTERNOON = new Date("2026-06-03T18:30:00Z");
 const TORONTO = "America/Toronto";
 const VANCOUVER = "America/Vancouver";
 
-// Any bare 24-hour hour (13–23) followed by :MM — i.e. military time with no
+// Any bare 24-hour hour (13–23) followed by :MM, i.e. military time with no
 // AM/PM. Client-facing SMS must never contain this.
 const MILITARY = /\b(1[3-9]|2[0-3]):[0-5]\d\b/;
 const TWELVE_HOUR = /\b\d{1,2}:[0-5]\d\s?(AM|PM)\b/;

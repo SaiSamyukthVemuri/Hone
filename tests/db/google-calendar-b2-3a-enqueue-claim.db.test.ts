@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// Google Calendar — Phase B2.3-a (migration 0125). Behavioural proof of the
+// Google Calendar: Phase B2.3-a (migration 0125). Behavioural proof of the
 // outbound enqueue + claim ACTIVATION BOUNDARY: the appointment-transition matrix,
 // INTENT vs HEALTH gating, the genuinely-never-raise triggers, the health-aware
 // expired-lease reaper, the append-only suppression telemetry, the repair
@@ -15,7 +15,7 @@ const PHASE_A = [
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ];
-// Google bundles userinfo.profile even though Phase A never requested it — the
+// Google bundles userinfo.profile even though Phase A never requested it, the
 // SUPERSET eligibility check must still treat this as healthy.
 const HEALTHY_SCOPES = [OWNED, ...PHASE_A, "https://www.googleapis.com/auth/userinfo.profile"];
 
@@ -47,7 +47,7 @@ async function seedConn(
   } = opts;
   const id = randomUUID();
   await adminQuery(
-    // B2.4: readiness is destination-aware — these B2.3-a scenarios use the
+    // B2.4: readiness is destination-aware, these B2.3-a scenarios use the
     // existing-owned destination (calendar.events.owned). Not-ready cases still
     // arise from missing scope / secret / flag, unchanged.
     `insert into public.calendar_connections
@@ -164,8 +164,8 @@ describe("enqueue transition matrix (product intent ON)", () => {
     const l = await links(appt);
     expect(l).toHaveLength(1);
     expect(l[0].google_event_id).toBeNull();
-    // Migration 0132 (B2.3-c1 §6): a placeholder link starts at last_hone_version=0
-    // — it never claims the appointment version was applied before Google confirms.
+    // Migration 0132 (B2.3-c1 §6): a placeholder link starts at last_hone_version=0,
+    // it never claims the appointment version was applied before Google confirms.
     expect(Number(l[0].last_hone_version)).toBe(0);
     const o = await outbox(appt);
     expect(o).toHaveLength(1);
@@ -245,8 +245,8 @@ describe("enqueue transition matrix (product intent ON)", () => {
     expect(await links(pred)).toHaveLength(0);
     const sl = await links(succ);
     expect(sl).toHaveLength(1);
-    // 0132 (B2.3-c1 §6): the rebind RESETS the applied-version proof to pending/0 —
-    // it must not claim the successor's timing was applied before Google is updated —
+    // 0132 (B2.3-c1 §6): the rebind RESETS the applied-version proof to pending/0,
+    // it must not claim the successor's timing was applied before Google is updated,
     // while PRESERVING the provider identity/coordinates.
     expect(Number(sl[0].last_hone_version)).toBe(0);
     expect(sl[0].sync_status).toBe("pending");
@@ -517,7 +517,7 @@ describe("condition 2: health-aware expired-lease reaper", () => {
     await Promise.all([claim(25), claim(25)]); // both run the reaper concurrently
     const row = (await adminQuery(`select status, attempts from public.calendar_sync_outbox where id=$1`, [id])).rows[0];
     expect(row.status).toBe("pending");
-    expect(Number(row.attempts)).toBe(7); // released ONCE (not 6) — SKIP LOCKED prevented double-processing
+    expect(Number(row.attempts)).toBe(7); // released ONCE (not 6), SKIP LOCKED prevented double-processing
   });
 });
 

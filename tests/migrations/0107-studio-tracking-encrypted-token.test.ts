@@ -6,13 +6,13 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = "0107_studio_tracking_encrypted_token.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 
-describe("0107 — number", () => {
+describe("0107: number", () => {
   it("is migration 0107 (repo-max tripwire now lives in the newest migration test, 0108)", () => {
     expect(FILE).toMatch(/^0107_/);
   });
 });
 
-describe("0107 — encrypted self-serve token columns", () => {
+describe("0107: encrypted self-serve token columns", () => {
   it("adds encrypted_server_token + last4 + timestamps + token_status", () => {
     for (const col of [
       "encrypted_server_token text",

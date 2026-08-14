@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// IMPORT-01 — the SERVER boundary, exercised for real.
+// IMPORT-01: the SERVER boundary, exercised for real.
 //
 // WHAT THIS PROVES AND WHY SOURCE-PINS ARE NOT ENOUGH
 // quick-import-action.test.ts greps the action source; that catches a deleted
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // statements they actually attempted.
 //
 // The denial claim is "ZERO writes", so the stub records every insert/update
-// on every table — not just the three the import is supposed to touch. A stub
+// on every table, not just the three the import is supposed to touch. A stub
 // that only watched the expected tables could not tell the difference between
 // "wrote nothing" and "wrote somewhere else".
 //
@@ -140,7 +140,7 @@ function writes(): Op[] {
 }
 
 // ---------------------------------------------------------------------------
-// 1. The ordinary studio owner — the whole point of the mitigation
+// 1. The ordinary studio owner, the whole point of the mitigation
 // ---------------------------------------------------------------------------
 
 describe("an ordinary studio owner cannot execute the import", () => {
@@ -151,7 +151,7 @@ describe("an ordinary studio owner cannot execute the import", () => {
     expect(!res.ok && res.error).toMatch(/operator-assisted/i);
   });
 
-  it("confirm writes NOTHING — not the batch, not the clients, not anywhere", async () => {
+  it("confirm writes NOTHING: not the batch, not the clients, not anywhere", async () => {
     await confirmImportAction(TSV, "paper_card");
     expect(writes()).toEqual([]);
   });
@@ -180,7 +180,7 @@ describe("an ordinary studio owner cannot execute the import", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. Direct invocation — the UI is not the control
+// 2. Direct invocation, the UI is not the control
 // ---------------------------------------------------------------------------
 
 describe("direct server-action invocation cannot get around it", () => {
@@ -212,7 +212,7 @@ describe("direct server-action invocation cannot get around it", () => {
     }
   });
 
-  it("no paste shape unlocks it — empty, huge, or crafted", async () => {
+  it("no paste shape unlocks it, empty, huge, or crafted", async () => {
     const huge = [
       "client_name\temail\ttreatment_area",
       ...Array.from(

@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool } from "./helpers/harness";
 
-// Finding 2 — DELAYED-PROVIDER concurrency. Drives the REAL single-flight claim
+// Finding 2: DELAYED-PROVIDER concurrency. Drives the REAL single-flight claim
 // RPC end to end through deliverWelcomeEmail, with the provider send made SLOW
 // and COUNTED, to prove that two concurrent deliveries for one studio result in
 // exactly ONE provider delivery attempt (the loser sees already_in_progress and
@@ -11,7 +11,7 @@ import { adminQuery, closePool } from "./helpers/harness";
 
 const hoisted = vi.hoisted(() => ({ sends: 0 }));
 
-// Mock ONLY the transport factory — the claim/record state adapters and the
+// Mock ONLY the transport factory, the claim/record state adapters and the
 // claim/record RPCs run for real against the local DB via the shim admin below.
 vi.mock("@/lib/email/client", () => ({
   FROM_ADDRESS: "Hone <hello@hone.care>",
@@ -79,7 +79,7 @@ function deliver(studioId: string) {
   });
 }
 
-describe("deliverWelcomeEmail — one provider delivery under concurrency", () => {
+describe("deliverWelcomeEmail: one provider delivery under concurrency", () => {
   it("two concurrent deliveries -> ONE provider send, one 'sent', one 'already_in_progress'", async () => {
     const studioId = await seedBareStudio();
     const [a, b] = await Promise.all([deliver(studioId), deliver(studioId)]);

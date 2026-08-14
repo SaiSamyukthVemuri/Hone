@@ -36,7 +36,7 @@ const READY_SIGNALS: OnboardingSignals = {
   publicBookingUrl: "https://hone.care/book/test",
 };
 
-describe("buildOnboardingModel — progress + honesty", () => {
+describe("buildOnboardingModel: progress + honesty", () => {
   it("a brand-new studio has zero done and is not complete", () => {
     const m = buildOnboardingModel(EMPTY_SIGNALS, FRESH_PERSISTED);
     expect(m.doneCount).toBe(0);
@@ -82,7 +82,7 @@ describe("buildOnboardingModel — progress + honesty", () => {
   });
 });
 
-describe("buildOnboardingModel — payments optionality", () => {
+describe("buildOnboardingModel: payments optionality", () => {
   it("payments is 'skipped' when the owner skipped it and it isn't ready", () => {
     const m = buildOnboardingModel(READY_SIGNALS, {
       ...FRESH_PERSISTED,
@@ -102,7 +102,7 @@ describe("buildOnboardingModel — payments optionality", () => {
   });
 });
 
-describe("buildOnboardingModel — completion + celebrate-once", () => {
+describe("buildOnboardingModel: completion + celebrate-once", () => {
   it("isComplete requires BOTH required data done AND the success acknowledgement", () => {
     const notAcked = buildOnboardingModel(READY_SIGNALS, FRESH_PERSISTED);
     expect(notAcked.requiredComplete).toBe(true);
@@ -133,7 +133,7 @@ describe("buildOnboardingModel — completion + celebrate-once", () => {
   });
 });
 
-describe("buildOnboardingModel — resume pointer", () => {
+describe("buildOnboardingModel: resume pointer", () => {
   it("honours a valid persisted current_step", () => {
     const m = buildOnboardingModel(EMPTY_SIGNALS, {
       ...FRESH_PERSISTED,

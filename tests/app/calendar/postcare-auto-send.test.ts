@@ -10,7 +10,7 @@ const ACTOR = "11111111-2222-3333-4444-555555555555";
 // No real email is ever sent: the pure gate is data-only, and the orchestration
 // tests inject a fake admin client + a fake sender.
 
-describe("shouldAutoSendPostcare — eligibility gate", () => {
+describe("shouldAutoSendPostcare: eligibility gate", () => {
   const base = {
     deliveryMode: "auto_on_complete",
     status: "completed",
@@ -44,12 +44,12 @@ describe("shouldAutoSendPostcare — eligibility gate", () => {
 });
 
 // ===========================================================================
-// B8 / 0177 — ORCHESTRATION against the REAL architecture.
+// B8 / 0177, ORCHESTRATION against the REAL architecture.
 //
 // The pre-B8 suite modelled three direct `.update()` chains on `appointments`.
 // Those no longer exist: the helper now calls claim_postcare_send, then the
 // provider, then settle_postcare_send. Emulating the old chains would have
-// tested an architecture the code no longer has — so the fake records an RPC
+// tested an architecture the code no longer has, so the fake records an RPC
 // TRANSCRIPT and the assertions are about sequencing and arguments.
 // ===========================================================================
 
@@ -128,8 +128,8 @@ const okSender = () => vi.fn(async () => ({ ok: true as const }));
 const failSender = (retryable: boolean) =>
   vi.fn(async () => ({ ok: false as const, retryable, error: "provider exploded" }));
 
-describe("autoSendPostcareOnComplete — governed claim/settle orchestration", () => {
-  it("AUTO-1/AUTO-2 — an ineligible appointment never claims, sends or settles", async () => {
+describe("autoSendPostcareOnComplete: governed claim/settle orchestration", () => {
+  it("AUTO-1/AUTO-2: an ineligible appointment never claims, sends or settles", async () => {
     for (const [label, patch, expected] of [
       ["manual mode", { postcare_delivery_mode: "manual" }, "skipped_mode"],
       ["not completed", null, "skipped_not_completed"],
@@ -151,7 +151,7 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     }
   });
 
-  it("AUTO-3/AUTO-11/AUTO-12 — claim, provider, settle: sequence, actor and token", async () => {
+  it("AUTO-3/AUTO-11/AUTO-12, claim, provider, settle: sequence, actor and token", async () => {
     const calls: RpcCall[] = [];
     const send = okSender();
     const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
@@ -163,18 +163,18 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     expect(calls.map((c) => c.fn)).toEqual(["claim_postcare_send", "settle_postcare_send"]);
     expect(send).toHaveBeenCalledTimes(1);
 
-    // AUTO-11 — the SERVER-RESOLVED practitioner reaches the database, not a
+    // AUTO-11: the SERVER-RESOLVED practitioner reaches the database, not a
     // synthetic actor and not the appointment's own practitioner guessed here.
     expect(calls[0].args.p_actor_practitioner_id).toBe(ACTOR);
     expect(calls[0].args.p_is_resend).toBe(false);
 
-    // AUTO-12 — the token is forwarded EXACTLY. Re-deriving it through a Date
+    // AUTO-12: the token is forwarded EXACTLY. Re-deriving it through a Date
     // would round microseconds away and settlement would miss its own claim.
     expect(calls[1].args.p_claimed_at).toBe(CLAIM_TOKEN);
     expect(calls[1].args.p_success).toBe(true);
   });
 
-  it("AUTO-4 — a lost claim never reaches the provider", async () => {
+  it("AUTO-4: a lost claim never reaches the provider", async () => {
     const calls: RpcCall[] = [];
     const send = okSender();
     const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
@@ -189,7 +189,7 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     expect(calls.map((c) => c.fn)).toEqual(["claim_postcare_send"]);
   });
 
-  it("AUTO-5 — a MISSING command (old DB) fails soft and never sends", async () => {
+  it("AUTO-5: a MISSING command (old DB) fails soft and never sends", async () => {
     // The app-first deployment window. There is deliberately no direct-UPDATE
     // fallback, so this must end before the provider.
     const calls: RpcCall[] = [];
@@ -205,7 +205,7 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("AUTO-6/AUTO-13 — provider failure settled durably reports `failed` and forwards retryable", async () => {
+  it("AUTO-6/AUTO-13: provider failure settled durably reports `failed` and forwards retryable", async () => {
     for (const retryable of [true, false]) {
       const calls: RpcCall[] = [];
       const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
@@ -219,7 +219,7 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     }
   });
 
-  it("AUTO-7/AUTO-8 — a provider failure that does NOT persist is settle_failed, not failed", async () => {
+  it("AUTO-7/AUTO-8: a provider failure that does NOT persist is settle_failed, not failed", async () => {
     for (const settle of [
       { data: null, error: { code: "57014" } },
       { data: [{ result: "stale_claim" }], error: null },
@@ -234,7 +234,7 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     }
   });
 
-  it("AUTO-9/AUTO-10 — provider SUCCESS whose settlement does not persist is never `sent`", async () => {
+  it("AUTO-9/AUTO-10: provider SUCCESS whose settlement does not persist is never `sent`", async () => {
     // The email is out, but Hone has no durable sent_at. Reporting `sent` would
     // be a lie about persisted state; reporting `failed` would be a different
     // lie about the provider.
@@ -256,7 +256,7 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     }
   });
 
-  it("AUTO-14 — never throws into appointment completion, whatever the admin does", async () => {
+  it("AUTO-14: never throws into appointment completion, whatever the admin does", async () => {
     const exploding = {
       from: () => {
         throw new Error("database on fire");
@@ -265,7 +265,7 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
         throw new Error("database on fire");
       },
     } as never;
-    // The property is that it RESOLVES — a throw here would propagate into
+    // The property is that it RESOLVES, a throw here would propagate into
     // mark-complete / start-session and undo an appointment completion because
     // an email helper failed. The exact outcome value matters less than the
     // absence of a throw, so assert both without over-pinning.

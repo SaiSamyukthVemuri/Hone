@@ -6,13 +6,13 @@ import {
   CALENDAR_SYNC_CRON_SCHEDULE,
 } from "@/lib/cron/calendar-cron-schedule";
 
-// Phase B2.3-c — the WORKER ACTIVATION GATE (updated for c2, then c3).
+// Phase B2.3-c: the WORKER ACTIVATION GATE (updated for c2, then c3).
 //
 // c1 shipped the real event-operation layer as a DORMANT operations map and proved
 // NO application route imported it. c2 wires the single authenticated worker-drain
 // route /api/cron/calendar-sync to the c1 operations map through ONE approved
 // server-only seam (lib/google-calendar/sync/worker-runtime.ts). c3 REGISTERS the
-// two calendar cron routes as DAILY schedules in vercel.json — but dormancy is now
+// two calendar cron routes as DAILY schedules in vercel.json, but dormancy is now
 // enforced by worker_enabled=false + the studio intent flags (the claim RPC returns
 // zero rows and mutates nothing), NOT by being unscheduled. This gate proves: no
 // other route or browser path imports the map, the calendar crons are registered at

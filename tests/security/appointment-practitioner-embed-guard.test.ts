@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { readdirSync, statSync } from "node:fs";
 
 // ===========================================================================
-// PostgREST embed disambiguation guard — added by B5 / migration 0174.
+// PostgREST embed disambiguation guard, added by B5 / migration 0174.
 // ===========================================================================
 //
 // WHAT WENT WRONG, so this guard's existence is not a mystery later.
@@ -15,7 +15,7 @@ import { readdirSync, statSync } from "node:fs";
 //
 //     .from("appointments").select("*, practitioner:practitioners(id, ...)")
 //
-// 0174 added THREE more — created_by, cancelled_by and the outside-hours
+// 0174 added THREE more, created_by, cancelled_by and the outside-hours
 // authoriser. PostgREST then refuses to guess and fails the whole request:
 //
 //     PGRST201: Could not embed because more than one relationship
@@ -37,8 +37,8 @@ import { readdirSync, statSync } from "node:fs";
 // for whatever embed already existed.
 //
 // SHIPPED AHEAD OF 0174, DELIBERATELY. The qualified form is valid on the
-// CURRENT schema too — `appointments_practitioner_same_studio_fk` has existed
-// since 0151 — so naming the constraint is backward compatible. Deploying the
+// CURRENT schema too, `appointments_practitioner_same_studio_fk` has existed
+// since 0151, so naming the constraint is backward compatible. Deploying the
 // app first means the migration never lands on code that cannot express an
 // unambiguous embed. Migration-first would put PGRST201 in production.
 //
@@ -64,7 +64,7 @@ import { readdirSync, statSync } from "node:fs";
 const ROOTS = ["app", "lib", "components"] as const;
 const REPO = join(__dirname, "..", "..");
 
-/** The FK that carries the ASSIGNED practitioner — the one an embed means. */
+/** The FK that carries the ASSIGNED practitioner, the one an embed means. */
 const ASSIGNMENT_FK = "appointments_practitioner_same_studio_fk";
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -81,8 +81,8 @@ const FILES = ROOTS.flatMap((r) => walk(join(REPO, r)));
 
 /**
  * Every `.select(...)` string that belongs to a `.from("appointments")` query.
- * The window is deliberately generous — the select is sometimes assembled from
- * a const a few lines above the `.from` — and the const form is picked up by
+ * The window is deliberately generous, the select is sometimes assembled from
+ * a const a few lines above the `.from`, and the const form is picked up by
  * the whole-file scan below, so a query split across helpers cannot hide.
  */
 type Embed = { file: string; select: string };
@@ -110,7 +110,7 @@ describe("PostgREST: appointments -> practitioners embeds must name their FK", (
   const embeds = appointmentSelects();
 
   it("finds the embeds at all (the guard is not vacuous)", () => {
-    // Without this, deleting every embed — or breaking the scanner — would
+    // Without this, deleting every embed, or breaking the scanner, would
     // leave the suite green while proving nothing.
     expect(embeds.length).toBeGreaterThanOrEqual(8);
   });
@@ -129,7 +129,7 @@ describe("PostgREST: appointments -> practitioners embeds must name their FK", (
 
   it("the named FK is the ASSIGNMENT one, not an attribution column", () => {
     // Embedding through created_by/cancelled_by would compile and return a
-    // row — the wrong practitioner. That is worse than an error, because the
+    // row, the wrong practitioner. That is worse than an error, because the
     // UI would silently show whoever booked the appointment as the person
     // performing it.
     for (const e of embeds) {

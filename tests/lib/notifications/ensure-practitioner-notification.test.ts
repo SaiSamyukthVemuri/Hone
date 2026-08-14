@@ -70,7 +70,7 @@ const baseInput = {
   dedupeKey: "stripe:setup_intent:test:seti_abc",
 };
 
-describe("ensurePractitionerNotification — hardened 23505 handling", () => {
+describe("ensurePractitionerNotification: hardened 23505 handling", () => {
   it("clean insert returns { deduped: false } and does NOT run the dedupe check", async () => {
     const f = fakeAdmin({ insertError: null, existingRow: null });
     const r = await ensurePractitionerNotification(f.admin, baseInput);

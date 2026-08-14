@@ -20,7 +20,7 @@ import {
 } from "../e2e-payment/helpers/fake-stripe-ledger-e2e";
 
 // ===========================================================================
-// Mobile completion + payment journey (Chloe workflow fix) — Chromium at iPhone
+// Mobile completion + payment journey (Chloe workflow fix), Chromium at iPhone
 // dimensions (iPhone 13 viewport + iOS UA + hasTouch) + a Pixel 5 control.
 // ===========================================================================
 //
@@ -35,24 +35,24 @@ import {
 // runs the Chromium engine at iPhone dimensions. The repo E2E harness is
 // hard-wired to a plain-http http://localhost:3111 origin, and a real WebKit
 // context upgrades every localhost subresource to https (no hydration) and drops
-// Secure cookies over http (auth fails) — so a real-WebKit lane needs an HTTPS
+// Secure cookies over http (auth fails), so a real-WebKit lane needs an HTTPS
 // E2E harness (a separate follow-up). Chromium emulation is NOT equivalent to
 // Safari validation; a supervised manual pass on a real iPhone Safari against
 // the HTTPS Vercel preview is a required release gate before merge/staging.
 //
 // It proves:
-//   * Phase 2 — the confirmation is an accessible in-DOM dialog (role=alertdialog,
+//   * Phase 2, the confirmation is an accessible in-DOM dialog (role=alertdialog,
 //     aria-modal), with separate copy for complete vs no-show, and Cancel sends
 //     NO request.
-//   * Phase 3 — the internal note is OPTIONAL; a blank note persists as NULL.
-//   * Phase 4 — after Prepare the "Run charge" CTA surfaces IN PLACE (no
+//   * Phase 3, the internal note is OPTIONAL; a blank note persists as NULL.
+//   * Phase 4, after Prepare the "Run charge" CTA surfaces IN PLACE (no
 //     close/reopen), the charge succeeds, and the canonical "Send receipt" action
 //     is exposed on the durable billing surface.
 //
 // Provider-effect ledger (Phase 5): the whole journey moves ZERO real money and
 // sends ZERO email/SMS. We assert exactly ONE fake Stripe charge for this
-// scenario's connected account and — because Twilio has no fake transport and
-// Resend is only faked on the welcome path — ZERO real egress to
+// scenario's connected account and, because Twilio has no fake transport and
+// Resend is only faked on the welcome path, ZERO real egress to
 // api.stripe.com / api.twilio.com / api.resend.com / googleapis.com via a
 // page-level request monitor, plus DB emptiness. The seeded studio uses the
 // default postcare mode (manual) and no SMS consent, so marking complete
@@ -115,11 +115,11 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
 
   // Chloe's exact starting state: a CONFIRMED appointment whose end time has
   // passed (the seed sets ends_at 30 min ago), with a session + saved card +
-  // connected account — but NOT yet marked complete.
+  // connected account, but NOT yet marked complete.
   // F-PAY-001: this journey promises "one fake charge", so it needs a REAL
   // priced booked service. It previously had appointment.service_id = NULL and
   // no service row, and relied on sessions.price_paid_cents to populate an
-  // editable amount field — the historical fallback that is now retired,
+  // editable amount field, the historical fallback that is now retired,
   // because a past payment is not an authority for what to charge today.
   seed = await seedEligiblePaymentWithLogin({
     label: "mobile-complete",
@@ -145,7 +145,7 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
   await expect(markCompleted).toBeVisible();
   await expect(markCompleted).toBeEnabled();
 
-  // --- Clicking opens the ACCESSIBLE in-DOM dialog — NOT native window.confirm
+  // --- Clicking opens the ACCESSIBLE in-DOM dialog, NOT native window.confirm
   //     (which WebKit can suppress). This is the core iPhone fix.
   await markCompleted.click();
   const dialog = page.getByTestId("confirm-dialog");
@@ -171,7 +171,7 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
   const checkoutButton = page.getByTestId("checkout-button");
   await expect(checkoutButton).toBeVisible();
 
-  // --- Open quick checkout. The internal note is OPTIONAL now — leave it blank.
+  // --- Open quick checkout. The internal note is OPTIONAL now, leave it blank.
   await checkoutButton.click();
   const modal = page.getByTestId("quick-checkout-modal");
   await expect(modal).toBeVisible();
@@ -223,7 +223,7 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
 
   // --- Charge succeeded: the calendar/[id] page auto-refreshes (server action)
   //     and the checkout cell becomes the persisted "Paid" badge. (The modal is
-  //     replaced by that badge on this surface — expected, not a regression.)
+  //     replaced by that badge on this surface, expected, not a regression.)
   await expect(page.getByTestId("appointment-payment-paid")).toBeVisible({
     timeout: 30_000,
   });

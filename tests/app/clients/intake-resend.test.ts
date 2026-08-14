@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR #293. Intake link resend / refresh — a UX/discoverability fix over the
+// PR #293. Intake link resend / refresh, a UX/discoverability fix over the
 // existing safe backend. Source-grep pins (the intake UI is not DOM-rendered
 // in the node test env) proving the prominent "Resend intake link" CTA is
 // wired to the EXISTING resendIntakeEmailAction (same row → keeps answers),
@@ -28,7 +28,7 @@ const PAGE = read("app/(app)/clients/[id]/intake/page.tsx");
 const REISSUE = read("app/(app)/clients/[id]/intake/IntakeReissueCard.tsx");
 const REISSUE_CODE = codeOnly(REISSUE);
 // The practitioner-facing "Health & Forms" tab is this inline overview card,
-// not the dedicated /intake page — the #293 follow-up surfaces the CTA here.
+// not the dedicated /intake page, the #293 follow-up surfaces the CTA here.
 const OVERVIEW = read("app/(app)/clients/[id]/page.tsx");
 
 describe("Resend intake link CTA wiring (PR #293)", () => {

@@ -23,7 +23,7 @@ import {
 } from "./helpers/fake-stripe-ledger-e2e";
 
 // ===========================================================================
-// Quick-checkout payment — the iPad success journey (PR #419).
+// Quick-checkout payment, the iPad success journey (PR #419).
 // ===========================================================================
 //
 // Drives the COMPLETE browser charge flow through the guarded fake-Stripe
@@ -32,7 +32,7 @@ import {
 // no real money, and left the clinical record untouched.
 //
 // The eligibility chain is the untouched, CI-proven fixture (the REAL
-// getSessionPaymentEligibility resolver governs it — see the DB-integration
+// getSessionPaymentEligibility resolver governs it, see the DB-integration
 // lane tests/db/quick-checkout-eligibility.db.test.ts). Here the browser
 // re-confirms it through the live server action (the modal shows the Prepare
 // form only when the resolver returns eligible), then charges through the fake.
@@ -49,8 +49,8 @@ test.beforeAll(async () => {
   clearFakeStripeOutcome();
   // F-PAY-001: this success journey must have a REAL booked service priced at
   // the amount it charges. It previously carried no service at all and relied
-  // on the historical sessions.price_paid_cents fallback to populate the field
-  // — the exact fallback this change removed, because a past payment is not an
+  // on the historical sessions.price_paid_cents fallback to populate the field,
+  // the exact fallback this change removed, because a past payment is not an
   // authority for what to charge today.
   seed = await seedEligiblePaymentWithLogin({
     label: "success",
@@ -128,7 +128,7 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   const modal = page.getByTestId("quick-checkout-modal");
   await expect(modal).toBeVisible();
   await expect(modal.getByText(seed.clientName)).toBeVisible();
-  // F-PAY-001: the amount is the server's decision, rendered not edited — and
+  // F-PAY-001: the amount is the server's decision, rendered not edited, and
   // quick checkout shows exactly what session detail shows.
   await expect(modal.getByTestId("authoritative-amount")).toHaveText("$225.00");
   await expect(modal.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
@@ -145,7 +145,7 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   await modal.getByRole("button", { name: /prepare session payment/i }).click();
 
   // --- Chloe workflow fix (CTA discoverability): the "Run charge" button now
-  //     surfaces IN PLACE right after Prepare — no close/reopen. The modal
+  //     surfaces IN PLACE right after Prepare, no close/reopen. The modal
   //     silently re-resolves trusted context on a successful action, so the
   //     persisted 'ready' attempt drives the Ready panel without tearing the
   //     modal down. Waiting for Run charge also confirms the row committed.
@@ -203,7 +203,7 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   //     checkout cell into the persisted "Paid" badge, which unmounts the modal.
   //     So click Close only when it is still visible; skip it when the server
   //     refresh already closed it. The click itself stays UNGUARDED so a real
-  //     interaction failure surfaces — we only avoid clicking an element that is
+  //     interaction failure surfaces, we only avoid clicking an element that is
   //     no longer there. Either way the modal must end up gone.
   const closeButton = modal.getByTestId("quick-checkout-close");
   if (await closeButton.isVisible()) {

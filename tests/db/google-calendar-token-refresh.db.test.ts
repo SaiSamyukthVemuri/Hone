@@ -8,7 +8,7 @@ import { createTokenManager, type ConnectionStore, type TokenCrypto } from "@/li
 import type { GoogleFailure, GoogleRestClient, RefreshTokenSuccess } from "@/lib/google-calendar/sync/google-rest-client";
 import { decryptGoogleSecret, encryptGoogleSecret } from "@/lib/google-calendar/token-crypto";
 
-// Google Calendar — Phase B2.1 DB integration (LOCAL disposable Supabase only).
+// Google Calendar: Phase B2.1 DB integration (LOCAL disposable Supabase only).
 // Proves: pg_advisory_xact_lock single-flight serialization; independence across
 // connections; rotated-token persist + next-refresh-uses-it (real crypto through
 // the DB); browser roles cannot read the ciphertext; cross-studio refresh
@@ -132,7 +132,7 @@ describe("advisory-lock single-flight", () => {
     const [r1, r2] = await Promise.all([tm1.ensureAccessToken(conn, studio.studioId), tm2.ensureAccessToken(conn, studio.studioId)]);
     expect(r1.ok && r2.ok).toBe(true);
     expect(state.calls.length).toBe(2); // both processes minted their own access token
-    expect(state.max).toBe(1); // but never concurrently — the lock serialized them
+    expect(state.max).toBe(1); // but never concurrently, the lock serialized them
   });
 
   it("does NOT serialize DIFFERENT connections (they refresh in parallel)", async () => {

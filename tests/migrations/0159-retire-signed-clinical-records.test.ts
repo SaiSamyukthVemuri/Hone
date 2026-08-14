@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-// Migration 0159 — PERMANENTLY RETIRE signed/finalized clinical records, plus the
+// Migration 0159: PERMANENTLY RETIRE signed/finalized clinical records, plus the
 // privilege hardening that is safe to take without an application change.
 //
 // Hone will not offer signed or cryptographically finalized clinical records.
 // Treatment sessions stay ORDINARY EDITABLE operational records. 0119/0120 built a
 // signed-snapshot system that was never enabled for a real studio; 0159 makes the
 // decision structural instead of leaving it to an operator remembering to keep a
-// flag off — which matters, because `authenticated` holds EXECUTE on the four
+// flag off, which matters, because `authenticated` holds EXECUTE on the four
 // signed-record RPCs and can PATCH the flag through the studios owners-update RLS
 // policy, so the capability is browser-reachable today.
 //
 // Carries the repo migration-max tripwire (moved here from the 0157 test). 0158 is
-// intentionally skipped — DRAFT PR #481 carries a different, superseded migration
+// intentionally skipped, DRAFT PR #481 carries a different, superseded migration
 // under that number on a branch retained for audit evidence.
 
 const MIG_DIR = join(process.cwd(), "supabase/migrations");
@@ -46,7 +46,7 @@ const RETIRED_RPCS = [
   "amend_finalized_session",
   "amend_finalized_session_with_image",
   "build_session_snapshot",
-  // The five correction appliers — the only leftover that still held WRITE
+  // The five correction appliers: the only leftover that still held WRITE
   // authority (0120 never revoked service_role from them).
   "_apply_session_correction",
   "_apply_block_correction",
@@ -70,7 +70,7 @@ const CLINICAL_TABLES = [
   "treatment_images",
 ] as const;
 
-describe("0159 — retirement (repo migration-max tripwire)", () => {
+describe("0159: retirement (repo migration-max tripwire)", () => {
   it("is present, 0157 precedes it, exactly one 0159, nothing 0161+ (repo max pin now lives in the 0160 test)", () => {
     expect(FILE).toMatch(/^0159_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -87,7 +87,7 @@ describe("0159 — retirement (repo migration-max tripwire)", () => {
 
   it("0158 is deliberately absent, and the file says why", () => {
     // PR #481's superseded migration owns that number on a retained branch. Two
-    // artifacts must never share a number, so the gap is intentional — record the
+    // artifacts must never share a number, so the gap is intentional, record the
     // reason here so a future reader does not "fix" it.
     expect(readdirSync(MIG_DIR).filter((f) => /^0158_/.test(f))).toEqual([]);
     expect(SQL).toMatch(/0158 is deliberately skipped/i);
@@ -101,7 +101,7 @@ describe("0159 — retirement (repo migration-max tripwire)", () => {
   });
 });
 
-describe("0159 — the flags can never be turned on again", () => {
+describe("0159: the flags can never be turned on again", () => {
   it("pins both to false with CHECK constraints, not a trigger and not a default", () => {
     // A CHECK binds every role including the owner and is visible in the schema.
     for (const col of [
@@ -131,7 +131,7 @@ describe("0159 — the flags can never be turned on again", () => {
   });
 });
 
-describe("0159 — no runtime role can invoke the retired capability", () => {
+describe("0159: no runtime role can invoke the retired capability", () => {
   it("revokes ALL on every retired RPC from every runtime role", () => {
     for (const rpc of RETIRED_RPCS) {
       const re = new RegExp(
@@ -153,14 +153,14 @@ describe("0159 — no runtime role can invoke the retired capability", () => {
     }
   });
 
-  it("does NOT drop the retired functions — 0119/0120 must stay replayable", () => {
+  it("does NOT drop the retired functions, 0119/0120 must stay replayable", () => {
     for (const rpc of RETIRED_RPCS) {
       expect(CODE, rpc).not.toMatch(new RegExp(`drop function .*${rpc}`, "i"));
     }
   });
 });
 
-describe("0159 — nothing can enter the retired lifecycle", () => {
+describe("0159: nothing can enter the retired lifecycle", () => {
   it("guards the record_status TRANSITION, so the legacy row is preserved", () => {
     const body = fn("guard_retired_finalization_transition");
     expect(body).toMatch(/security invoker/);
@@ -195,7 +195,7 @@ describe("0159 — nothing can enter the retired lifecycle", () => {
   });
 
   it("leaves the 0119/0120 guards that PROTECT the legacy artifact in place", () => {
-    // Dropping these would un-protect the one preserved record — the opposite of
+    // Dropping these would un-protect the one preserved record, the opposite of
     // what the decision asks for.
     for (const keep of [
       "guard_finalized_clinical_write",
@@ -218,7 +218,7 @@ describe("0159 — nothing can enter the retired lifecycle", () => {
   });
 });
 
-describe("0159 — privilege hardening that breaks nothing today", () => {
+describe("0159: privilege hardening that breaks nothing today", () => {
   it("removes every anon write privilege on all six clinical tables", () => {
     for (const t of CLINICAL_TABLES) {
       expect(CODE, t).toMatch(
@@ -239,7 +239,7 @@ describe("0159 — privilege hardening that breaks nothing today", () => {
 
   it("does NOT revoke row DML from authenticated on the five tables the app still writes", () => {
     // The deployed application writes these directly. Revoking here would break
-    // Willow's live charting the moment the migration applied — that is PR B, after
+    // Willow's live charting the moment the migration applied, that is PR B, after
     // the callers move onto narrow commands.
     for (const t of ["sessions", "session_blocks", "electrolysis_entries", "laser_entries", "treatment_images"]) {
       expect(CODE, t).not.toMatch(
@@ -289,7 +289,7 @@ describe("0159 — privilege hardening that breaks nothing today", () => {
   });
 });
 
-describe("0159 — ZERO data operations, nothing destructive", () => {
+describe("0159: ZERO data operations, nothing destructive", () => {
   it("runs no INSERT / UPDATE / DELETE / TRUNCATE at apply time", () => {
     // Scoped to a real table reference: the comment strings legitimately contain
     // the words "INSERT into the retired ... ledgers" when describing the guard.

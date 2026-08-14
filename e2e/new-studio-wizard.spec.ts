@@ -85,7 +85,7 @@ test.describe("operator creates a studio + owner invitation", () => {
       .click();
 
     // Confirmation panel reads the created rows back via the service-role
-    // client — its presence proves both DB writes landed.
+    // client, its presence proves both DB writes landed.
     await expect(
       page.getByRole("heading", { name: "Studio created", level: 1 }),
     ).toBeVisible({ timeout: 20_000 });
@@ -95,7 +95,7 @@ test.describe("operator creates a studio + owner invitation", () => {
     await expect(page.getByText(ownerEmail)).toBeVisible();
     // Owner invitation is pending until the owner's first sign-in.
     await expect(page.getByText(/owner · pending/i)).toBeVisible();
-    // PR B: accurate onboarding copy — payments connect per studio.
+    // PR B: accurate onboarding copy, payments connect per studio.
     await expect(
       page.getByText(/Payments are not connected until the studio completes Stripe/),
     ).toBeVisible();

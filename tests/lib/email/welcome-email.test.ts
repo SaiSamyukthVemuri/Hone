@@ -8,7 +8,7 @@ const BASE = {
   bookingUrl: "https://hone.care/book/rivera",
 };
 
-describe("buildWelcomeEmail — one truthful invitation email", () => {
+describe("buildWelcomeEmail: one truthful invitation email", () => {
   const email = buildWelcomeEmail(BASE);
 
   it("uses an invitation subject naming the studio", () => {
@@ -45,7 +45,7 @@ describe("buildWelcomeEmail — one truthful invitation email", () => {
   });
 });
 
-describe("buildWelcomeEmail — safety", () => {
+describe("buildWelcomeEmail: safety", () => {
   it("escapes HTML in the studio name", () => {
     const email = buildWelcomeEmail({
       ...BASE,

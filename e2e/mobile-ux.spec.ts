@@ -59,7 +59,7 @@ async function expectInsideViewport(
 }
 
 // V2-A.1: after a hash navigation the TARGET CONTROL must actually be on
-// screen. Presence in the DOM is not the contract Global Search promises — a
+// screen. Presence in the DOM is not the contract Global Search promises, a
 // result that names one specific setting has to land the practitioner on that
 // setting. This asserts real vertical intersection with the viewport, which is
 // the part expectInsideViewport (horizontal only) cannot see.
@@ -69,15 +69,15 @@ async function expectScrolledIntoView(
   label: string,
 ) {
   const box = await locator.boundingBox();
-  expect(box, `${label}: no bounding box — not rendered`).not.toBeNull();
+  expect(box, `${label}: no bounding box, not rendered`).not.toBeNull();
   const viewport = page.viewportSize()!;
   expect(
     box!.y,
-    `${label}: top is below the fold (y=${box!.y}, viewport height ${viewport.height}) — the hash did not scroll`,
+    `${label}: top is below the fold (y=${box!.y}, viewport height ${viewport.height}), the hash did not scroll`,
   ).toBeLessThan(viewport.height);
   expect(
     box!.y + box!.height,
-    `${label}: bottom is above the fold (y+h=${box!.y + box!.height}) — scrolled past`,
+    `${label}: bottom is above the fold (y+h=${box!.y + box!.height}), scrolled past`,
   ).toBeGreaterThan(0);
 }
 
@@ -451,7 +451,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     sessionPath = new URL(page.url()).pathname;
     await expectNoPageOverflow(page, "charting page");
 
-    // Charting polish: the settings form no longer auto-opens — open the
+    // Charting polish: the settings form no longer auto-opens, open the
     // compact CTA before reaching for the in-form controls.
     await page.getByTestId("add-settings-block-cta").click({ timeout: 20_000 });
 
@@ -563,7 +563,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
   await test.step("calendar: mobile day view loads as ONE day, no page-wide overflow", async () => {
     await page.goto("/calendar");
     // The mobile single-day timeline renders (its floating +, day controls, and
-    // tap-to-book layer) — NOT the sideways-scrollable 7-day week grid.
+    // tap-to-book layer), NOT the sideways-scrollable 7-day week grid.
     await expect(
       page.getByRole("button", { name: "Add appointment or block time" }),
     ).toBeVisible({ timeout: 15_000 });
@@ -576,7 +576,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(
       page.getByRole("button", { name: /^Book on /i }).first(),
     ).toBeAttached();
-    // The core win: one day, vertical only — no horizontal week-grid panning.
+    // The core win: one day, vertical only, no horizontal week-grid panning.
     await expectNoPageOverflow(page, "calendar mobile day view");
   });
 
@@ -721,13 +721,13 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await desktopPage.goto("/dashboard");
 
     // -----------------------------------------------------------------
-    // V2-A.1 — THE REPORTED PRODUCTION FAILURE, in a real browser.
+    // V2-A.1, THE REPORTED PRODUCTION FAILURE, in a real browser.
     //
     // Sam searched the exact visible setting name "booking horizon" and
     // Global Search returned nothing: V2-A registered the Booking PAGE and
     // three of its concepts, and Booking horizon was not one of them. The
     // unit suite proves the registry resolves it; only the browser can prove
-    // the journey — found by name, clicked, and LANDED ON THE CONTROL.
+    // the journey, found by name, clicked, and LANDED ON THE CONTROL.
     // -----------------------------------------------------------------
     await search.fill("booking horizon");
     const horizonResult = desktopPage.getByRole("link", {
@@ -752,7 +752,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
         url.pathname === "/settings/booking" && url.hash === "#booking-horizon",
     );
 
-    // The real anchored control, on screen — not merely somewhere in the DOM.
+    // The real anchored control, on screen, not merely somewhere in the DOM.
     const horizonControl = desktopPage.locator("#booking-horizon");
     await expect(horizonControl).toBeVisible();
     await expect(horizonControl).toContainText("Booking horizon");
@@ -771,8 +771,8 @@ test("mobile: shell, core pages, calendar touch safety", async ({
 
     // -----------------------------------------------------------------
     // Sibling control on the SAME page resolves to its OWN anchor. This is
-    // what proves href dedupe cannot collapse two controls that share a page
-    // — the failure mode that would silently make one of them unreachable.
+    // what proves href dedupe cannot collapse two controls that share a page,
+    // the failure mode that would silently make one of them unreachable.
     // -----------------------------------------------------------------
     await desktopPage.goto("/dashboard");
     await search.fill("buffer");

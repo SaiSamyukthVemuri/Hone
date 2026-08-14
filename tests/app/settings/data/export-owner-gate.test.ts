@@ -134,7 +134,7 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
     expect(exposureIdx).toBeGreaterThan(gateIdx);
   });
 
-  it("audit export is REDUCED — no full changes value-snapshot JSON or metadata", () => {
+  it("audit export is REDUCED: no full changes value-snapshot JSON or metadata", () => {
     // The audit load selects changed_fields (names) but NOT `changes` / `metadata`.
     const load = CODE.slice(
       CODE.indexOf('.from("record_keeping_audit_events")'),

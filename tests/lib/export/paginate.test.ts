@@ -14,7 +14,7 @@ import {
 //
 // These are BEHAVIOURAL tests against a fake page source that reproduces the
 // server's cap: it never returns more than `pageSize` rows and it honours the
-// requested range. If the helper stops paginating, these fail — that is proved
+// requested range. If the helper stops paginating, these fail, that is proved
 // by the negative control recorded in the PR, not assumed.
 
 type Row = { id: string; name: string };
@@ -38,7 +38,7 @@ function pageSource(rows: Row[], pageSize = EXPORT_PAGE_SIZE) {
   return { factory, callCount: () => calls };
 }
 
-describe("E1 — a source larger than one page exports every row", () => {
+describe("E1: a source larger than one page exports every row", () => {
   it("1001 rows: all 1001 are returned, not the first 1000", async () => {
     const rows = makeRows(1001);
     const { factory } = pageSource(rows);
@@ -72,7 +72,7 @@ describe("E1 — a source larger than one page exports every row", () => {
   });
 });
 
-describe("E2 — pages do not overlap", () => {
+describe("E2: pages do not overlap", () => {
   it("no duplicate ids across a multi-page read", async () => {
     const { data } = await fetchAllRows(pageSource(makeRows(3001)).factory);
     const ids = data!.map((r) => r.id);
@@ -80,7 +80,7 @@ describe("E2 — pages do not overlap", () => {
   });
 });
 
-describe("E3 — a non-unique sort still paginates deterministically", () => {
+describe("E3: a non-unique sort still paginates deterministically", () => {
   it("every row survives when the primary sort value repeats across the boundary", async () => {
     // Every row shares one `name`, so `order("name")` alone has no defined
     // order within the tie and a row can land on two pages or none. The `id`
@@ -102,11 +102,11 @@ describe("E3 — a non-unique sort still paginates deterministically", () => {
   });
 });
 
-describe("E4 — a parent page boundary must not delete child rows", () => {
+describe("E4: a parent page boundary must not delete child rows", () => {
   // THE AMPLIFICATION. electrolysis_entries / laser_entries carry no studio_id;
   // the export filters them against the set of session ids it fetched. Truncate
   // sessions at 1000 and every child of session 1001+ vanishes from the ZIP as
-  // well — clinical rows lost because a DIFFERENT table hit a page cap.
+  // well, clinical rows lost because a DIFFERENT table hit a page cap.
   const sessions = makeRows(1001);
   const lateSessionId = sessions[1000].id;
   const entries = [
@@ -131,7 +131,7 @@ describe("E4 — a parent page boundary must not delete child rows", () => {
   });
 });
 
-describe("E5 — a failed page fails the whole read", () => {
+describe("E5: a failed page fails the whole read", () => {
   it("an error on page 2 returns an error, never the first page as the table", async () => {
     const rows = makeRows(2500);
     const factory = (from: number, to: number): PromiseLike<PageResult<Row>> => {
@@ -153,7 +153,7 @@ describe("E5 — a failed page fails the whole read", () => {
 
   it("a runaway read refuses rather than returning a capped set", async () => {
     // Always-full pages: a source that never terminates. Better to fail loudly
-    // than to hand back a silently bounded slice — the whole point of #4.
+    // than to hand back a silently bounded slice, the whole point of #4.
     const always = (): PromiseLike<PageResult<Row>> =>
       Promise.resolve({ data: makeRows(10), error: null });
     const { data, error } = await fetchAllRows(always, {

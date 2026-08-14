@@ -76,7 +76,7 @@ describe("pillar + feature pages", () => {
     const h1s = PAGES.map((p) => h1Inner(read(p.file)));
     for (const h of h1s) expect(h.length).toBeGreaterThan(0);
     expect(new Set(h1s).size).toBe(h1s.length);
-    // Homepage H1 renders a constant reference; feature H1s are literal — never equal.
+    // Homepage H1 renders a constant reference; feature H1s are literal, never equal.
     for (const h of h1s) expect(h).not.toMatch(/POSITIONING\.heroH1/);
   });
 });

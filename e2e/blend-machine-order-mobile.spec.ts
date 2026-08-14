@@ -223,7 +223,7 @@ test.describe("iPhone 390px", () => {
     const form = page.getByTestId("add-pass-form");
     await expect(form).toBeVisible({ timeout: T });
 
-    // This form has no energy level — it inherits the block's.
+    // This form has no energy level, it inherits the block's.
     const expected = BLEND_ORDER.filter((n) => n !== "Energy level (EL)");
     expect(await visualOrder(form, expected)).toEqual(expected);
     await expectNoHorizontalOverflow(page);

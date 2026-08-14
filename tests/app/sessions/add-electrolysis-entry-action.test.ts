@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Behavioural test of addElectrolysisEntryAction covering the corrected contracts:
-//   * Gate 3 — malformed / non-array chip payload FAILS before any insert (never
+//   * Gate 3, malformed / non-array chip payload FAILS before any insert (never
 //     silently coerced to [] then "verified" as success).
-//   * Gate 4 — STRICT read-back: a raw stored duplicate / non-canonical / non-array
+//   * Gate 4, STRICT read-back: a raw stored duplicate / non-canonical / non-array
 //     value fails verification (not masked by dedup).
-//   * Gate 5 — the read-back is a SEPARATE query by the written row id (scoped to
+//   * Gate 5, the read-back is a SEPARATE query by the written row id (scoped to
 //     the session); a post-write failure returns a distinct persisted-but-
 //     unverified result carrying the entryId and does NOT auto-retry.
 //
-// L18 Phase 2: the write is no longer a direct INSERT — it is the
+// L18 Phase 2: the write is no longer a direct INSERT, it is the
 // `add_electrolysis_pass` command (migration 0166), which resolves the block and
 // writes the entry in one transaction. Every gate above is unchanged in
 // meaning; what the mock counts is now the RPC rather than the insert chain.
@@ -124,7 +124,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.clearAllMocks());
 
-describe("Gate 3 — malformed-payload contract (fail BEFORE any insert)", () => {
+describe("Gate 3: malformed-payload contract (fail BEFORE any insert)", () => {
   it("MISSING field → normalizes to [], proceeds, creates exactly one entry", async () => {
     const res = await addElectrolysisEntryAction(fd({ omitChips: true }));
     expect(res).toEqual({ ok: true, entryId: "e1", observationChips: [] });
@@ -178,7 +178,7 @@ describe("Gate 3 — malformed-payload contract (fail BEFORE any insert)", () =>
   });
 });
 
-describe("Gate 4 — duplicate-verification contract (raw stored duplicate FAILS)", () => {
+describe("Gate 4: duplicate-verification contract (raw stored duplicate FAILS)", () => {
   it("submitted duplicates are DEDUPED before insert (one canonical copy)", async () => {
     state.readReturn = { data: { observation_chips: [A] }, error: null };
     const res = await addElectrolysisEntryAction(
@@ -227,7 +227,7 @@ describe("Gate 4 — duplicate-verification contract (raw stored duplicate FAILS
   });
 });
 
-describe("Gate 5 — atomicity / retry safety", () => {
+describe("Gate 5: atomicity / retry safety", () => {
   it("SUCCESS: exactly one insert + exactly one SEPARATE read by the returned id (session-scoped)", async () => {
     state.readReturn = { data: { observation_chips: [A] }, error: null };
     const res = await addElectrolysisEntryAction(fd({ chips: JSON.stringify([A]) }));
@@ -262,7 +262,7 @@ describe("Gate 5 — atomicity / retry safety", () => {
     state.readReturn = { data: { observation_chips: [] }, error: null }; // stored dropped the chip
     const res = await addElectrolysisEntryAction(fd({ chips: JSON.stringify([A]) }));
     expect(res).toMatchObject({ ok: false, code: "unverified" });
-    expect(state.writeCalls).toBe(1); // exactly one — never a blind retry inside the action
+    expect(state.writeCalls).toBe(1); // exactly one, never a blind retry inside the action
   });
 
   it("comments stay SEPARATE from the chip array in the command payload", async () => {
@@ -287,7 +287,7 @@ describe("Gate 5 — atomicity / retry safety", () => {
     expect(state.writePayload?.p_block_id).toBe("b1");
   });
 
-  it("a MISSING block_id sends null plus the default bag — the DB resolves it", async () => {
+  it("a MISSING block_id sends null plus the default bag, the DB resolves it", async () => {
     state.readReturn = { data: { observation_chips: [] }, error: null };
     await addElectrolysisEntryAction(fd({ omitBlockId: true }));
     expect(state.writePayload?.p_block_id).toBeNull();

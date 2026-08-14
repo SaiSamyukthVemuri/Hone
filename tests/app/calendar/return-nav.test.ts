@@ -8,7 +8,7 @@ import {
 
 // Calendar return-to-date navigation (Chloe pilot feedback). When a
 // practitioner opens an appointment from the calendar and returns, the back
-// link must restore the view/date they came from — without ever becoming an
+// link must restore the view/date they came from, without ever becoming an
 // external/open-redirect URL.
 
 describe("buildCalendarReturnParams", () => {

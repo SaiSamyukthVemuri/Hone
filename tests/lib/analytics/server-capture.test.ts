@@ -38,7 +38,7 @@ beforeEach(() => {
   flushMock.mockResolvedValue(undefined);
 });
 
-describe("captureServerEvent — dispatch discipline (scenario 15)", () => {
+describe("captureServerEvent: dispatch discipline (scenario 15)", () => {
   it("schedules via after() and does not touch PostHog inline", () => {
     captureServerEvent({
       actor: { kind: "user", id: UID },
@@ -78,7 +78,7 @@ describe("captureServerEvent — dispatch discipline (scenario 15)", () => {
   });
 });
 
-describe("captureServerEvent — opaque-id enforcement (Correction 2)", () => {
+describe("captureServerEvent: opaque-id enforcement (Correction 2)", () => {
   it("drops the event when the actor id is not a UUID, without logging the value", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     captureServerEvent({
@@ -94,7 +94,7 @@ describe("captureServerEvent — opaque-id enforcement (Correction 2)", () => {
   });
 });
 
-describe("captureServerEvent — never affects product (scenario 16)", () => {
+describe("captureServerEvent: never affects product (scenario 16)", () => {
   it("does not throw when capture or flush fail", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     captureMock.mockImplementation(() => {

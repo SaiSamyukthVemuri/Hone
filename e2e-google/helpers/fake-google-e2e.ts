@@ -7,8 +7,8 @@ import { GOOGLE_E2E_RUN_ID } from "./google-env";
 // Next.js server writes/reads it through the SERVER-ONLY guarded module
 // lib/google-calendar/e2e/fake-google-ledger.ts. The Playwright runner is a
 // SEPARATE process and CANNOT import that module (`import "server-only"` throws at
-// spec-compile time). So — exactly like e2e-payment/helpers/fake-stripe-ledger-
-// e2e.ts — this helper reads/writes the SAME run-scoped temp files directly; the
+// spec-compile time). So, exactly like e2e-payment/helpers/fake-stripe-ledger-
+// e2e.ts, this helper reads/writes the SAME run-scoped temp files directly; the
 // file format is the cross-process contract. Test-only; synthetic data only.
 
 const PREFIX = "hone-e2e-google-";
@@ -54,7 +54,7 @@ function eventsPath(): string {
   return join(tmpdir(), `${PREFIX}${assertValidRunId(GOOGLE_E2E_RUN_ID)}.events.jsonl`);
 }
 
-// The runner writes the scenario (atomically — write tmp then rename, so the
+// The runner writes the scenario (atomically, write tmp then rename, so the
 // server never reads a half-written file). The server merges DEFAULT_SCENARIO on
 // read, but we write the full merged object for robustness.
 export function configureFakeGoogle(scenario: Partial<FakeGoogleScenario>): void {
@@ -84,7 +84,7 @@ export function cleanupFakeGoogle(): void {
   resetFakeGoogle();
 }
 
-// The scope(s) requested at each (fake) authorize step — proves the ACTIVE OAuth
+// The scope(s) requested at each (fake) authorize step, proves the ACTIVE OAuth
 // request asked for ONLY the exact destination scope.
 export function fakeAuthorizeScopeSets(): string[][] {
   return fakeGoogleEvents()

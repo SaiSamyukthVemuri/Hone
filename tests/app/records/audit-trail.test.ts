@@ -70,7 +70,7 @@ describe("audit table + immutability (migration 0086)", () => {
       .trim();
     expect(out).toBe("");
     // And no app code inserts into the audit table directly (triggers are the
-    // only writers). App code may READ it — lib/record-keeping/queries.ts
+    // only writers). App code may READ it, lib/record-keeping/queries.ts
     // surfaces the history, and (PR #312) the owner-only studio export includes
     // a reduced audit CSV. Both are SELECT-only.
     const refs = execSync(

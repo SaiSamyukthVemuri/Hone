@@ -1,4 +1,4 @@
-// APPOINTMENT BOUNDARY B4 — behavioural suite for 0173 GROUP 5 (L23).
+// APPOINTMENT BOUNDARY B4: behavioural suite for 0173 GROUP 5 (L23).
 //
 // This closure was briefly drafted as a companion migration 0174 and withdrawn:
 // the canonical appointment-DML program reserves 0174 for B5 (attribution +
@@ -18,7 +18,7 @@
 // WHY THIS FILE CARRIES A TWO-WAY SELF-TEST
 //
 // Every assertion here is of the form "the browser role cannot do X". That
-// shape passes for the WRONG reason with depressing ease — if the seeded rows
+// shape passes for the WRONG reason with depressing ease, if the seeded rows
 // were invisible, if the delete matched nothing, or if the local stack simply
 // never granted the privilege in the first place, "0 rows deleted" and
 // "permission denied" both look like success.
@@ -30,7 +30,7 @@
 // would pass green while proving nothing whatsoever about GROUP 5.
 //
 // So the central test RESTORES the pre-GROUP-5 world inside a rolled-back
-// transaction — re-granting DELETE and recreating the FOR ALL policy — and
+// transaction, re-granting DELETE and recreating the FOR ALL policy, and
 // proves the appointment lineage really IS nulled that way. Only then is the
 // post-GROUP-5 refusal evidence of anything.
 
@@ -92,7 +92,7 @@ async function seedServiceAndAppointment(
 
 // ---------------------------------------------------------------------------
 
-describe("0173 GROUP 5 — the L23 hazard is real (two-way self-test)", () => {
+describe("0173 GROUP 5: the L23 hazard is real (two-way self-test)", () => {
   it("RESTORING the pre-GROUP-5 grant + policy really does null appointments.service_id", async () => {
     // This is the control that makes every other test in this file meaningful.
     // If this ever stops nulling the column, the refusals below are proving
@@ -141,10 +141,10 @@ describe("0173 GROUP 5 — the L23 hazard is real (two-way self-test)", () => {
   });
 });
 
-describe("0173 GROUP 5 — the privilege layer", () => {
+describe("0173 GROUP 5: the privilege layer", () => {
   // 0178 SUPERSEDED THE PRACTITIONER HALF OF THIS BLOCK.
   //
-  // 0173's claim was that its GROUP 5 revoke was SURGICAL — DELETE only, with
+  // 0173's claim was that its GROUP 5 revoke was SURGICAL, DELETE only, with
   // SELECT/INSERT/UPDATE deliberately untouched on BOTH tables. That is still
   // exactly true of `services`, which 0178 does not touch, so it keeps the
   // original assertions below.
@@ -152,9 +152,9 @@ describe("0173 GROUP 5 — the privilege layer", () => {
   // `practitioners` moved on: 0178 reduced it to SELECT-only for every runtime
   // role, because the recon census found the table still carried Supabase's
   // default ALL grant (INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER) with RLS as
-  // the only gate — and RLS never governed the last three. Its expectations
+  // the only gate, and RLS never governed the last three. Its expectations
   // therefore live in tests/db/practitioner-identity-boundary.db.test.ts, which
-  // asserts the stronger posture directly — SELECT-only, MAINTAIN included, with
+  // asserts the stronger posture directly, SELECT-only, MAINTAIN included, with
   // zero column-level write authority. Re-asserting "INSERT/UPDATE are
   // untouched" here would pin a posture the product deliberately left behind,
   // and restating the DELETE half would duplicate that suite for no evidence.
@@ -196,7 +196,7 @@ describe("0173 GROUP 5 — the privilege layer", () => {
 
 });
 
-describe("0173 GROUP 5 — the policy layer", () => {
+describe("0173 GROUP 5: the policy layer", () => {
   it("no DELETE-capable policy remains on services or practitioners", async () => {
     const r = await adminQuery(
       `select tablename::text tbl, policyname::text pol, cmd::text
@@ -229,7 +229,7 @@ describe("0173 GROUP 5 — the policy layer", () => {
     }
   });
 
-  it("anon reads zero services — the TO authenticated narrowing is inert", async () => {
+  it("anon reads zero services: the TO authenticated narrowing is inert", async () => {
     // The narrowing only matters if anon could read services before. It could
     // not: is_studio_member() resolves auth.uid() to null for anon.
     const studio = await seedStudio("l23-anon");
@@ -243,7 +243,7 @@ describe("0173 GROUP 5 — the policy layer", () => {
   });
 });
 
-describe("0173 GROUP 5 — appointment lineage is no longer reachable through a parent delete", () => {
+describe("0173 GROUP 5: appointment lineage is no longer reachable through a parent delete", () => {
   it("a MEMBER can no longer null appointments.service_id", async () => {
     const studio = await seedStudio("l23-service");
     const member = await seedMember(studio, "l23-service-m");
@@ -285,7 +285,7 @@ describe("0173 GROUP 5 — appointment lineage is no longer reachable through a 
       [appointmentId, studio.studioId, victim.practitionerId, studio.clientId],
     );
 
-    // studio.userId is the OWNER — the role the old policy authorized.
+    // studio.userId is the OWNER: the role the old policy authorized.
     const failure = await asUser(studio.userId, async (q) => {
       try {
         await q(`delete from public.practitioners where id = $1`, [
@@ -316,7 +316,7 @@ describe("0173 GROUP 5 — appointment lineage is no longer reachable through a 
     // L23 is an ON DELETE story, but ON UPDATE is the same mechanism: a
     // referential action runs as the constraint's owner and consults neither
     // the ACL nor RLS. `authenticated` still holds UPDATE on services and
-    // practitioners (GROUP 5 deliberately kept it — that is how the settings pages
+    // practitioners (GROUP 5 deliberately kept it, that is how the settings pages
     // work), so an ON UPDATE CASCADE on either parent key would reopen exactly
     // the hazard GROUP 5 just closed, by a different verb. Every FK is currently
     // NO ACTION; this pins it.
@@ -351,7 +351,7 @@ describe("0173 GROUP 5 — appointment lineage is no longer reachable through a 
   });
 });
 
-describe("0173 GROUP 5 — the product workflows it must not break", () => {
+describe("0173 GROUP 5: the product workflows it must not break", () => {
   it("a member can still read, create and UPDATE a service", async () => {
     const studio = await seedStudio("l23-crud");
     const member = await seedMember(studio, "l23-crud-m");
@@ -379,7 +379,7 @@ describe("0173 GROUP 5 — the product workflows it must not break", () => {
     expect(after.rows[0].name).toBe("Renamed");
   });
 
-  it("DEACTIVATION — the real product workflow — still works for a member", async () => {
+  it("DEACTIVATION: the real product workflow, still works for a member", async () => {
     const studio = await seedStudio("l23-deactivate");
     const { serviceId } = await seedServiceAndAppointment(studio);
 
@@ -398,9 +398,9 @@ describe("0173 GROUP 5 — the product workflows it must not break", () => {
     );
   });
 
-  it("an owner can still deactivate a practitioner — now via the governed command", async () => {
+  it("an owner can still deactivate a practitioner, now via the governed command", async () => {
     // 0173's point was that DEACTIVATION, not deletion, is how a practitioner
-    // retires — and that is unchanged. What changed in 0178 is the ROUTE: the
+    // retires, and that is unchanged. What changed in 0178 is the ROUTE: the
     // direct authenticated UPDATE this used to perform is now a privilege
     // error, and the capability lives in `set_practitioner_active_locked`,
     // which is owner-gated per studio and multi-owner safe.
@@ -450,7 +450,7 @@ describe("0173 GROUP 5 — the product workflows it must not break", () => {
   });
 });
 
-describe("0173 GROUP 5 — 0172's boundary is not disturbed", () => {
+describe("0173 GROUP 5: 0172's boundary is not disturbed", () => {
   it("direct appointment DML remains denied for both browser roles", async () => {
     const studio = await seedStudio("l23-appt-dml");
     const { appointmentId } = await seedServiceAndAppointment(studio);

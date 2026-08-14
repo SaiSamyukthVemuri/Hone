@@ -7,7 +7,7 @@ import {
 
 const META = getProviderEntry("meta")!;
 
-describe("provider registry — shape", () => {
+describe("provider registry: shape", () => {
   it("has all 8 enum providers; Meta is the only available + editable one", () => {
     const ids = PROVIDER_REGISTRY.map((p) => p.provider);
     for (const id of ["meta", "google_ads", "ga4", "tiktok", "pinterest", "linkedin", "microsoft_ads", "custom"]) {
@@ -22,7 +22,7 @@ describe("provider registry — shape", () => {
   });
 });
 
-describe("provider registry — Meta onboarding copy", () => {
+describe("provider registry: Meta onboarding copy", () => {
   const steps = META.setupSections.flatMap((s) => s.steps).join(" ");
   const titles = META.setupSections.map((s) => s.title);
 
@@ -65,7 +65,7 @@ describe("provider registry — Meta onboarding copy", () => {
   });
 });
 
-describe("provider registry — coming-soon providers", () => {
+describe("provider registry: coming-soon providers", () => {
   it("each has purpose + future requirements + the architecture note; NO editable flag", () => {
     for (const p of PROVIDER_REGISTRY.filter((x) => x.status === "coming_soon")) {
       expect(p.purpose.length).toBeGreaterThan(0);
@@ -76,7 +76,7 @@ describe("provider registry — coming-soon providers", () => {
   });
 });
 
-describe("provider registry — links are OFFICIAL only; no third-party video", () => {
+describe("provider registry: links are OFFICIAL only; no third-party video", () => {
   const OFFICIAL = [
     "facebook.com", "developers.facebook.com",
     "support.google.com", "developers.google.com",

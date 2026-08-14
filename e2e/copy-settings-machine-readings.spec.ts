@@ -10,17 +10,17 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// In-form "Copy settings from another area in this session" — real browser,
+// In-form "Copy settings from another area in this session", real browser,
 // real stack, iPhone (390px) width. Proves the copy carries the primary entry's
 // machine READINGS (thermolysis intensity/duration/pulse), preserves the
-// destination area, and — after Save + reload — the copied setup PERSISTS
+// destination area, and, after Save + reload, the copied setup PERSISTS
 // exactly while every outcome stays blank. It is a client-side prefill: nothing
 // persists until Save, so it cannot fabricate performed treatment.
 //
 // Session 1C adds the MINUTES half. Minutes performed describes the treatment
 // that already happened, so it is not reusable setup: copying it silently
 // overwrote destination-specific minutes the practitioner had already typed.
-// Two real-browser cases below — a blank destination stays blank, and a
+// Two real-browser cases below, a blank destination stays blank, and a
 // destination that was already filled in keeps its own number, not the source's.
 
 const MINUTES_FIELD = /Minutes performed/i;
@@ -89,7 +89,7 @@ test("in-form Copy settings carries machine readings, preserves the destination 
 
   await test.step("Save the new area → the destination block is created; then reload", async () => {
     await page.getByTestId("save-treatment-area").click();
-    // A SECOND block (the Cheeks destination) now exists — the copy persisted
+    // A SECOND block (the Cheeks destination) now exists, the copy persisted
     // only on Save.
     await expect
       .poll(async () => getSessionBlockCount(sessionId), { timeout: T })
@@ -120,7 +120,7 @@ test("in-form Copy settings carries machine readings, preserves the destination 
     expect(Number(saved.entry!.thermolysis_duration_seconds)).toBeCloseTo(0.12, 5);
     expect(Number(saved.entry!.pulse_count)).toBe(3);
     expect(Number(saved.entry!.pulse_delay_seconds)).toBeCloseTo(0.4, 5);
-    // Every outcome/response field is blank/fresh — INCLUDING minutes, which
+    // Every outcome/response field is blank/fresh, INCLUDING minutes, which
     // the source block carries as 37 and the copy must never have written.
     expect(saved.minutes_performed).toBeNull();
     expect(saved.tolerance_rating).toBeNull();
@@ -144,7 +144,7 @@ test("in-form Copy settings carries machine readings, preserves the destination 
 test("Copy settings preserves minutes the practitioner already typed on the destination (390px)", async ({ page }) => {
   // The destructive case the old contract actually caused: the destination's own
   // minutes are charted FIRST, then Copy settings is pressed to pull the machine
-  // setup across — and the source's minutes silently replaced them.
+  // setup across, and the source's minutes silently replaced them.
   const seed = await seedE2eStudio();
   const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
   await seedE2eChartedThermolysisBlock(seed, sessionId, {
@@ -188,7 +188,7 @@ test("Copy settings preserves minutes the practitioner already typed on the dest
     const saved = (await getSavedBlockSetup(sessionId)) as Record<string, unknown>;
     expect(Number(saved.minutes_performed)).toBe(12);
     expect(Number(saved.energy_level)).toBe(42);
-    // The source block is a treatment that already happened — untouched.
+    // The source block is a treatment that already happened, untouched.
     expect(await getFirstBlockMinutes(sessionId)).toBe(37);
   });
 });

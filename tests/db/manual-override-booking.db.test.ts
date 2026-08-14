@@ -7,7 +7,7 @@ import {
 } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// Migration 0152 — Chloe manual-override booking blocker.
+// Migration 0152: Chloe manual-override booking blocker.
 //   * Actual treatment overlap is a HARD GiST exclusion (never bypassable).
 //   * The configured buffer/gap is SOFT: enforced for every normal writer,
 //     bypassed only by an authenticated internal OWNER override
@@ -93,7 +93,7 @@ for (const capacity of [false, true]) {
   // The resource: cap ON scopes to the practitioner; cap OFF is studio-wide.
   const P = () => (capacity ? owner() : owner());
 
-  describe(`0152 manual override — ${mode}`, () => {
+  describe(`0152 manual override: ${mode}`, () => {
     beforeEach(async () => {
       await setup(capacity);
       // Existing neighbour 13:00–14:00, booked normally by the owner.
@@ -172,7 +172,7 @@ for (const capacity of [false, true]) {
   });
 }
 
-describe("0152 — a NULL-practitioner direct insert (public booking, cap OFF) still buffered", () => {
+describe("0152: a NULL-practitioner direct insert (public booking, cap OFF) still buffered", () => {
   beforeEach(async () => {
     await setup(false);
     await book(owner(), owner(), T("13:00")); // neighbour on the owner

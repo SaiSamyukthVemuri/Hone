@@ -12,10 +12,10 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// F-CLIN-004 — DATABASE BOUNDARY, CLOSED BY MIGRATION 0162
+// F-CLIN-004, DATABASE BOUNDARY, CLOSED BY MIGRATION 0162
 // ===========================================================================
 //
-// STATUS: APPLICATION DEPLOYED — DATABASE FIX IMPLEMENTED, NOT APPLIED.
+// STATUS: APPLICATION DEPLOYED, DATABASE FIX IMPLEMENTED, NOT APPLIED.
 //
 // THIS FILE HAS BEEN INVERTED. Before 0162 it deliberately pinned a LIVE
 // defect: an authenticated direct PostgREST/SQL update could drive
@@ -124,7 +124,7 @@ const APP_REVIEW_SQL = `
   returning id, client_id`;
 
 // ===========================================================================
-// 1-3. THE INVERTED CASES — these used to succeed. They must now be refused.
+// 1-3. THE INVERTED CASES, these used to succeed. They must now be refused.
 // ===========================================================================
 
 describe("F-CLIN-004 / INVERTED: the incoming review transition is now guarded", () => {
@@ -210,7 +210,7 @@ describe("F-CLIN-004 / the legitimate review still succeeds", () => {
     expect(first.rowCount).toBe(1);
     expect((await readRow(id)).status).toBe("reviewed");
 
-    // A second identical statement matches zero rows on the status predicate —
+    // A second identical statement matches zero rows on the status predicate,
     // it does not raise, and it rewrites nothing.
     const stamped = await readRow(id);
     const second = await userQuery(
@@ -304,7 +304,7 @@ describe("F-CLIN-004 / reviewer must be the caller's own active same-studio prac
     expect((await readRow(id)).reviewed_by).toBeNull();
   });
 
-  it("8. an INACTIVE practitioner cannot review — RLS removes the row before the trigger is reached", async () => {
+  it("8. an INACTIVE practitioner cannot review, RLS removes the row before the trigger is reached", async () => {
     // public.is_studio_member() itself requires `active = true`, so a
     // deactivated member cannot even SEE the intake: the UPDATE matches zero
     // rows and the trigger never fires. That is a STRONGER outcome than a
@@ -344,7 +344,7 @@ describe("F-CLIN-004 / reviewer must be the caller's own active same-studio prac
   //   * public.is_studio_member() itself requires `active = true`.
   // So a caller's own row in the intake's studio is either ACTIVE (the predicate
   // is trivially satisfied) or INACTIVE (RLS removes the row before the trigger
-  // runs — proven by case 8 above). There is no reachable state in between.
+  // runs, proven by case 8 above). There is no reachable state in between.
   // The predicate is retained so the guard does not silently weaken if
   // is_studio_member() is ever changed to stop requiring `active`.
   it("8b. an ACTIVE caller naming ANOTHER user's deactivated practitioner is REJECTED", async () => {
@@ -545,13 +545,13 @@ describe("F-CLIN-004 / terminal immutability preserved and hardened", () => {
     expect((await readRow(id)).status).toBe("reviewed");
   });
 
-  it("14b. 0162 HARDENING — reviewed -> submitted is REJECTED (closes two-step attribution laundering)", async () => {
+  it("14b. 0162 HARDENING: reviewed -> submitted is REJECTED (closes two-step attribution laundering)", async () => {
     const id = await seedIntake(A);
     await reviewIt(A, id);
     const stamped = await readRow(id);
 
     // Step one of the laundering attack: drop back to 'submitted' while keeping
-    // the original attribution — which 0118 alone permitted, because its
+    // the original attribution, which 0118 alone permitted, because its
     // attribution check only fires when the VALUES change.
     await expect(
       userQuery(
@@ -571,7 +571,7 @@ describe("F-CLIN-004 / terminal immutability preserved and hardened", () => {
   // on a CI-parity database. Without hardening (9) the entire section-1 contract
   // was bypassable in TWO statements: forge the submission, then perform a
   // "legitimate" review against the evidence you just manufactured.
-  it("14c. 0162 HARDENING — an authenticated member cannot forge the CLIENT'S SUBMISSION", async () => {
+  it("14c. 0162 HARDENING: an authenticated member cannot forge the CLIENT'S SUBMISSION", async () => {
     const id = await seedIntake(A, { status: "in_progress", submitted_at: null });
 
     await expect(
@@ -633,7 +633,7 @@ describe("F-CLIN-004 / terminal immutability preserved and hardened", () => {
     expect((await readRow(id)).status).toBe("submitted");
   });
 
-  it("15b. 0162 HARDENING — review metadata cannot be attached to a non-reviewed row", async () => {
+  it("15b. 0162 HARDENING: review metadata cannot be attached to a non-reviewed row", async () => {
     const draft = await seedIntake(A, { status: "in_progress", submitted_at: null });
     await expect(
       userQuery(
@@ -807,8 +807,8 @@ describe("F-CLIN-004 / tenancy and caller class", () => {
 
   it("23. an ANONYMOUS direct update is refused", async () => {
     const id = await seedIntake(A);
-    // Record the OUTCOME precisely instead of collapsing every possible failure
-    // — including the fixture itself breaking — into one `refused = true`.
+    // Record the OUTCOME precisely instead of collapsing every possible failure,
+    // including the fixture itself breaking, into one `refused = true`.
     const client = new PgClient({ connectionString: resolveLocalDbUrl() });
     await client.connect();
     let outcome: { kind: "rows"; n: number } | { kind: "error"; code?: string };
@@ -833,7 +833,7 @@ describe("F-CLIN-004 / tenancy and caller class", () => {
 
     // anon holds no UPDATE grant / no policy, so it is refused outright
     // (42501 insufficient_privilege) or matches zero rows. Either is a genuine
-    // refusal, but the test now says WHICH — a fixture failure (e.g. a bad
+    // refusal, but the test now says WHICH, a fixture failure (e.g. a bad
     // connection string) would surface as a different code and fail here.
     if (outcome.kind === "error") {
       expect(outcome.code, "anon must be refused by privilege/RLS, not a harness error")
@@ -850,8 +850,8 @@ describe("F-CLIN-004 / tenancy and caller class", () => {
   it("24. SERVICE-ROLE review transitions are REJECTED (explicit 0162 decision)", async () => {
     // 0118 exempted every auth.uid() IS NULL write. 0162 deliberately does NOT
     // preserve that exemption for the incoming review transition: no runtime
-    // service-role path marks an intake reviewed — `status: "reviewed"` appears
-    // in exactly one place in the repository, on the authenticated path — so
+    // service-role path marks an intake reviewed, `status: "reviewed"` appears
+    // in exactly one place in the repository, on the authenticated path, so
     // this fails closed.
     const id = await seedIntake(A);
     await expect(
@@ -912,7 +912,7 @@ describe("F-CLIN-004 / deployed PR #497 application compatibility", () => {
     expect(row.status).toBe("reviewed");
     expect(row.reviewed_by).toBe(A.practitionerId);
     expect(row.practitioner_notes).toBe("clinical note");
-    // The DB overrode the application's own timestamp — the documented
+    // The DB overrode the application's own timestamp, the documented
     // behaviour change: the database is now authoritative for reviewed_at.
     expect((row.reviewed_at as Date).getTime()).not.toBe(
       new Date(appSentReviewedAt).getTime(),
@@ -971,7 +971,7 @@ describe("F-CLIN-004 / deployed PR #497 application compatibility", () => {
 });
 
 // ===========================================================================
-// RESIDUAL — CLOSED BY MIGRATION 0163 (was: the INSERT path).
+// RESIDUAL, CLOSED BY MIGRATION 0163 (was: the INSERT path).
 // ===========================================================================
 //
 // 0162's guard is a BEFORE **UPDATE** trigger, so it never fires on INSERT.
@@ -980,10 +980,10 @@ describe("F-CLIN-004 / deployed PR #497 application compatibility", () => {
 // historical reviewed_at, because `authenticated` held INSERT on the table and
 // the INSERT policy's WITH CHECK was only `is_studio_member(studio_id)`.
 //
-// THIS BLOCK HAS BEEN INVERTED. Migration 0163 removes the capability outright
-// — it drops `client_intake_forms_member_insert` (plus any legacy FOR ALL
-// policy, defensively) and REVOKEs INSERT from both `authenticated` and `anon`
-// — so the forgery that used to succeed here must now be REFUSED.
+// THIS BLOCK HAS BEEN INVERTED. Migration 0163 removes the capability outright,
+// it drops `client_intake_forms_member_insert` (plus any legacy FOR ALL
+// policy, defensively) and REVOKEs INSERT from both `authenticated` and `anon`,
+// so the forgery that used to succeed here must now be REFUSED.
 //
 // SCOPE: 0163 closes the `client_intake_forms` authenticated INSERT residual
 // ONLY. Broader direct clinical DML findings remain OPEN under **L18**;
@@ -1023,7 +1023,7 @@ describe("F-CLIN-004 / RESIDUAL: the INSERT path is CLOSED by 0163", () => {
     expect(still.rowCount, "no forged row may exist").toBe(0);
   });
 
-  it("a plain authenticated INSERT is refused too — the capability is gone, not merely constrained", async () => {
+  it("a plain authenticated INSERT is refused too, the capability is gone, not merely constrained", async () => {
     // 0163 removes the capability rather than policing the values, so even a
     // perfectly ordinary in_progress row cannot be created from the browser
     // role. Both legitimate writers use the service-role admin client.
@@ -1042,7 +1042,7 @@ describe("F-CLIN-004 / RESIDUAL: the INSERT path is CLOSED by 0163", () => {
 
   it("0162 still binds a service-role-created row: it cannot be UPDATED into a new review", async () => {
     // The row can now only be born through the service-role path, but once it
-    // exists the 0162 UPDATE guard applies exactly as before — attribution
+    // exists the 0162 UPDATE guard applies exactly as before, attribution
     // cannot be rewritten and the status cannot regress.
     const forgedId = randomUUID();
     await adminQuery(
@@ -1074,7 +1074,7 @@ describe("F-CLIN-004 / RESIDUAL: the INSERT path is CLOSED by 0163", () => {
 });
 
 // ===========================================================================
-// CONCURRENCY — a real two-connection race, not mocked action calls.
+// CONCURRENCY, a real two-connection race, not mocked action calls.
 // ===========================================================================
 
 describe("F-CLIN-004 / concurrency: exactly one transition", () => {

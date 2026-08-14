@@ -20,7 +20,7 @@ function fnBlock(name: string): string {
   );
 }
 
-describe("0141 — file present + single transaction", () => {
+describe("0141: file present + single transaction", () => {
   it("exists with a purpose-encoding filename", () => {
     expect(FILE).toBe("0141_onboarding_invitation_reconciliation.sql");
     expect(SQL.length).toBeGreaterThan(2000);
@@ -31,7 +31,7 @@ describe("0141 — file present + single transaction", () => {
   });
 });
 
-describe("0141 — Defect 2: handle_new_user no longer fabricates consent", () => {
+describe("0141, Defect 2: handle_new_user no longer fabricates consent", () => {
   it("handle_new_user is a NO-OP: no membership insert, no acceptance stamp", () => {
     const h = fnBlock("handle_new_user\\(\\)");
     expect(h).toBeTruthy();
@@ -42,7 +42,7 @@ describe("0141 — Defect 2: handle_new_user no longer fabricates consent", () =
   });
 });
 
-describe("0141 — Defect 1: acceptance command is service-role only", () => {
+describe("0141, Defect 1: acceptance command is service-role only", () => {
   it("admin_accept_pending_invitation(uuid) is SECURITY DEFINER + pinned path", () => {
     const a = fnBlock("admin_accept_pending_invitation\\(p_user_id uuid\\)");
     expect(a).toMatch(/security definer/i);
@@ -63,7 +63,7 @@ describe("0141 — Defect 1: acceptance command is service-role only", () => {
   });
 });
 
-describe("0141 — reconcile stays authenticated + self-scoped", () => {
+describe("0141: reconcile stays authenticated + self-scoped", () => {
   it("reconcile + my_pending_invitation are SECURITY DEFINER, granted to authenticated only", () => {
     for (const fn of ["reconcile_my_pending_invitation\\(\\)", "my_pending_invitation\\(\\)"]) {
       const b = fnBlock(fn);
@@ -75,7 +75,7 @@ describe("0141 — reconcile stays authenticated + self-scoped", () => {
   });
 });
 
-describe("0141 — no fabricated consent (evidence rules)", () => {
+describe("0141: no fabricated consent (evidence rules)", () => {
   it("reconcile copies a SINGLE current-version row's evidence, never now()", () => {
     const r = fnBlock("reconcile_my_pending_invitation\\(\\)");
     expect(r).toMatch(/terms_version = public\.current_terms_version\(\)/i);
@@ -92,7 +92,7 @@ describe("0141 — no fabricated consent (evidence rules)", () => {
   });
 });
 
-describe("0141 — Defect 3: linker reactivates in place (UPDATE, never dup INSERT)", () => {
+describe("0141, Defect 3: linker reactivates in place (UPDATE, never dup INSERT)", () => {
   it("link_invited_membership UPDATEs a same-user row, else INSERTs", () => {
     const l = fnBlock("link_invited_membership\\(");
     expect(l).toMatch(/where studio_id = p_invite\.studio_id and user_id = p_uid/i);
@@ -106,7 +106,7 @@ describe("0141 — Defect 3: linker reactivates in place (UPDATE, never dup INSE
   });
 });
 
-describe("0141 — Defect 5: no two active practitioners sharing one login email", () => {
+describe("0141, Defect 5: no two active practitioners sharing one login email", () => {
   it("reconcile's conflict guard keys on an ACTIVE another-user row", () => {
     const r = fnBlock("reconcile_my_pending_invitation\\(\\)");
     expect(r).toMatch(
@@ -134,7 +134,7 @@ describe("0141 — Defect 5: no two active practitioners sharing one login email
   });
 });
 
-describe("0141 — concurrency + authorization posture", () => {
+describe("0141: concurrency + authorization posture", () => {
   it("serializes per-email with an advisory xact lock + FOR UPDATE", () => {
     for (const fn of ["reconcile_my_pending_invitation\\(\\)", "admin_accept_pending_invitation\\(p_user_id uuid\\)"]) {
       const b = fnBlock(fn);
@@ -149,7 +149,7 @@ describe("0141 — concurrency + authorization posture", () => {
   });
 });
 
-describe("0141 — Defect 1: truthful welcome-email attempt state machine", () => {
+describe("0141, Defect 1: truthful welcome-email attempt state machine", () => {
   it("claim mints a fresh attempt_id, flips to 'sending', returns the attempt_id", () => {
     const c = fnBlock("claim_welcome_email_attempt\\(p_studio_id uuid\\)");
     expect(c).toMatch(/returns uuid/i);
@@ -157,7 +157,7 @@ describe("0141 — Defect 1: truthful welcome-email attempt state machine", () =
     expect(c).toMatch(/welcome_email_status = 'sending'/i);
     expect(c).toMatch(/welcome_email_attempt_id = gen_random_uuid\(\)/i);
     // Only claims when no LIVE attempt is in progress. The stale fence is a
-    // CONSERVATIVE 15 minutes (recovers a crashed attempt) — NOT 30s, which
+    // CONSERVATIVE 15 minutes (recovers a crashed attempt), NOT 30s, which
     // could duplicate a merely-slow in-flight provider send.
     expect(c).toMatch(/welcome_email_status <> 'sending'[\s\S]*?welcome_email_last_attempted_at < now\(\) - interval '15 minutes'/i);
     expect(c).not.toMatch(/interval '30 seconds'/i);

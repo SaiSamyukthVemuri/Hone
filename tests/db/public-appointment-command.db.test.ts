@@ -3,7 +3,7 @@ import { adminQuery, asRole, closePool } from "./helpers/harness";
 import { randomUUID } from "node:crypto";
 
 // ===========================================================================
-// 0170 — public.create_public_appointment, proven on the real migrated DB.
+// 0170, public.create_public_appointment, proven on the real migrated DB.
 // ===========================================================================
 //
 // The public booking route used to INSERT the appointment itself and then write
@@ -108,7 +108,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("success — the appointment and its audit row are created together", () => {
+describe("success: the appointment and its audit row are created together", () => {
   it("creates a confirmed appointment with server-derived values", async () => {
     const row = await book(A, at(3, 10));
     expect(row.result).toBe("created");
@@ -230,7 +230,7 @@ describe("tenant isolation", () => {
   });
 });
 
-describe("availability contract — enforced with capacity OFF", () => {
+describe("availability contract: enforced with capacity OFF", () => {
   it("rejects a past instant", async () => {
     const past = new Date(Date.now() - 3600_000).toISOString();
     const r = await book(A, past);
@@ -287,7 +287,7 @@ describe("availability contract — enforced with capacity OFF", () => {
     expect(r.result).toBe("studio_closed");
   });
 
-  it("rejects a timed block — which capacity-OFF reservations alone would miss", async () => {
+  it("rejects a timed block: which capacity-OFF reservations alone would miss", async () => {
     const s = await seedPublicStudio("timed-block");
     const target = at(5, 10);
     await adminQuery(
@@ -363,7 +363,7 @@ describe("the caller cannot request privileged behaviour", () => {
   });
 
   // NOTE: a studio with no active owner is covered by the regression block
-  // below — it must still BOOK (with a null practitioner), which is what the
+  // below, it must still BOOK (with a null practitioner), which is what the
   // pre-0170 route did. Refusing was a silent visitor-facing regression.
 });
 
@@ -479,8 +479,8 @@ describe("privileges", () => {
     //
     // All seven revoked verbs are probed, not just the three the old test knew
     // about: a partial revoke that left TRUNCATE or MAINTAIN behind would
-    // otherwise pass here. The full behavioural proof — including the
-    // privilege-vs-RLS message discriminator, which an ACL read cannot give —
+    // otherwise pass here. The full behavioural proof, including the
+    // privilege-vs-RLS message discriminator, which an ACL read cannot give,
     // lives in tests/db/appointment-boundary-revocation.db.test.ts.
     const r = await adminQuery(
       `select r.rolname,
@@ -505,7 +505,7 @@ describe("privileges", () => {
       expect(row.refs, `${row.rolname} REFERENCES`).toBe(false);
       expect(row.trig, `${row.rolname} TRIGGER`).toBe(false);
       expect(row.maint, `${row.rolname} MAINTAIN`).toBe(false);
-      // SELECT is deliberately RETAINED — ~22 authenticated read sites depend on
+      // SELECT is deliberately RETAINED: ~22 authenticated read sites depend on
       // it, and its survival is what makes `revoke all` forbidden.
       expect(row.sel, `${row.rolname} SELECT must be retained`).toBe(true);
     }
@@ -530,13 +530,13 @@ describe("regressions from adversarial review", () => {
     // (lib/booking/studio-wide-availability.ts filters practitioner_id IS NULL).
     // A studio that ever ran practitioner capacity retains scoped rows, and both
     // rows can coexist. If the command preferred the scoped row it would refuse
-    // every slot the page offers — permanently, for every visitor.
+    // every slot the page offers, permanently, for every visitor.
     const s = await seedPublicStudio("scoped-availability");
     const target = at(3, 10); // 10:00 UTC, studio-wide window is 00:00-23:59
     const dow = new Date(target).getUTCDay();
     // Model the real lifecycle: scoped rows can only be written while capacity
     // is ON (guard_availability_practitioner_scope, 0135), and they are RETAINED
-    // when it is switched back OFF — which is precisely the state that made this
+    // when it is switched back OFF, which is precisely the state that made this
     // a live hazard.
     await adminQuery(
       `update public.studios set practitioner_capacity_enabled = true where id = $1`,
@@ -555,7 +555,7 @@ describe("regressions from adversarial review", () => {
     const r = await book(s, target);
     expect(
       r.result,
-      "the studio-wide window must win — the loader never sees the scoped row",
+      "the studio-wide window must win, the loader never sees the scoped row",
     ).toBe("created");
   });
 
@@ -608,10 +608,10 @@ describe("regressions from adversarial review", () => {
           set open_time='09:00', close_time='17:00' where studio_id=$1`,
       [s.studioId],
     );
-    // 14:00 UTC is 09:00/10:00 Toronto depending on DST — inside the window.
+    // 14:00 UTC is 09:00/10:00 Toronto depending on DST, inside the window.
     const inside = await book(s, at(6, 14));
     expect(inside.result).toBe("created");
-    // 04:00 UTC is 23:00/00:00 Toronto the previous day — outside it.
+    // 04:00 UTC is 23:00/00:00 Toronto the previous day, outside it.
     const outside = await book(s, at(7, 4));
     expect(["outside_availability", "studio_closed"]).toContain(outside.result);
   });
@@ -641,7 +641,7 @@ describe("practitioner attribution is resolved by the command, under the lock", 
     const s = await seedPublicStudio("owner-swap");
     const ownerA = s.ownerId;
 
-    // Introduce owner B and retire owner A — exactly the window that produced
+    // Introduce owner B and retire owner A, exactly the window that produced
     // the stale-attribution defect.
     const bUser = randomUUID();
     const ownerB = randomUUID();
@@ -677,14 +677,14 @@ describe("practitioner attribution is resolved by the command, under the lock", 
   });
 });
 
-describe("owner ambiguity — exactly one active owner, otherwise NULL", () => {
+describe("owner ambiguity: exactly one active owner, otherwise NULL", () => {
   // The schema does not guarantee one active owner per studio. An earlier
   // revision used `order by created_at asc limit 1`, silently inventing a
   // product rule ("the oldest active owner receives all public bookings") that
   // nothing declares and that would decide attribution, the notification
   // recipient and the client-facing name by row creation order. The pre-0170
   // route used `.maybeSingle()`, which errors on multiple rows and left the
-  // practitioner null — i.e. it already treated ambiguity as "no practitioner".
+  // practitioner null, i.e. it already treated ambiguity as "no practitioner".
 
   async function addOwner(studioId: string, label: string, createdAt?: string) {
     const id = randomUUID();
@@ -783,10 +783,10 @@ describe("owner ambiguity — exactly one active owner, otherwise NULL", () => {
   });
 });
 
-describe("precision — public booking accepts ONLY exact-millisecond instants", () => {
+describe("precision: public booking accepts ONLY exact-millisecond instants", () => {
   // Postgres keeps microseconds; a browser ISO string never does. An earlier
   // revision TRUNCATED inside the membership comparison but then derived,
-  // persisted and returned the RAW p_starts_at — so `...123999Z` matched the
+  // persisted and returned the RAW p_starts_at, so `...123999Z` matched the
   // legitimate `...123000Z` candidate and was stored as `...123999Z`, an instant
   // the browser never offered. Sub-millisecond input is now REJECTED.
 
@@ -835,7 +835,7 @@ describe("precision — public booking accepts ONLY exact-millisecond instants",
       [r.appointment_id],
     );
     const row = raw.rows[0];
-    // Raw textual proof — Date.getTime() would truncate and hide microseconds.
+    // Raw textual proof: Date.getTime() would truncate and hide microseconds.
     for (const [k, v] of Object.entries(row)) {
       expect(String(v).slice(-3), `${k} must have zero microsecond remainder`).toBe("000");
     }
@@ -888,7 +888,7 @@ describe("precision — public booking accepts ONLY exact-millisecond instants",
                 ($4::timestamptz + interval '456 microseconds') + make_interval(mins => 60)) as v`,
       [s.studioId, s.ownerId, s.serviceId, candidate],
     );
-    // Specifically invalid_time — NOT not_a_public_slot.
+    // Specifically invalid_time: NOT not_a_public_slot.
     expect(r.rows[0].v).toBe("invalid_time");
   });
 

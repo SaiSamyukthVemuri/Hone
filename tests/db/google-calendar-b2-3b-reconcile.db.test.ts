@@ -11,10 +11,10 @@ import {
   type ReconcileStore,
 } from "@/lib/google-calendar/sync/reconcile";
 
-// Google Calendar — Phase B2.3-b. Behavioural proof of the reconciliation SWEEP
+// Google Calendar: Phase B2.3-b. Behavioural proof of the reconciliation SWEEP
 // against the REAL migrated DB: the sweep detects drift left by an INTENT-OFF
 // window (or a swallowed enqueue) and re-drives EXACTLY ONE effective operation
-// per appointment through the EXISTING enqueue trigger + repair RPCs — with no
+// per appointment through the EXISTING enqueue trigger + repair RPCs, with no
 // duplicates on repeat/concurrent runs, no touching of health-parked work, and
 // operational-metadata-only queue rows. The sweep core is transport-neutral; here
 // it is driven by a raw-pg ReconcileStore so the actual trigger/RPCs execute.
@@ -226,7 +226,7 @@ function pgStore(studioFilter?: string): ReconcileStore {
 }
 
 // Scope eligibility to a SET of the test's studios (isolation from cross-suite
-// accumulation) — used by the multi-studio anti-starvation test.
+// accumulation), used by the multi-studio anti-starvation test.
 function pgStoreForStudios(ids: string[]): ReconcileStore {
   const base = pgStore();
   return {
@@ -332,7 +332,7 @@ afterAll(async () => {
 });
 
 // =========================================================================
-describe("sweep recovery — intent-off window", () => {
+describe("sweep recovery: intent-off window", () => {
   it("outbound-off mutation -> restore flag -> sweep creates exactly one; repeat is a no-op", async () => {
     const a = await seedStudio("bo1");
     await seedConn(a, { flag: false }); // owner + write calendar, but INTENT OFF
@@ -381,7 +381,7 @@ describe("sweep recovery — intent-off window", () => {
     await seedConn(a);
     const appt = randomUUID();
     // Force the outbox insert to fail during booking; the never-raise guard swallows
-    // it, leaving NO link + NO job (+ a skip marker) — the exact Class-1 gap.
+    // it, leaving NO link + NO job (+ a skip marker), the exact Class-1 gap.
     const fname = `_t_fail_${randomUUID().slice(0, 8)}`;
     const tname = `${fname}_trg`;
     await adminQuery(`create function public.${fname}() returns trigger language plpgsql as $$ begin raise exception 'boom'; end $$`);
@@ -420,7 +420,7 @@ describe("sweep recovery — intent-off window", () => {
 });
 
 // =========================================================================
-describe("sweep recovery — link-behind (Class 3)", () => {
+describe("sweep recovery: link-behind (Class 3)", () => {
   it("a link trailing the appointment with no current job -> one update; repeat is a no-op", async () => {
     const a = await seedStudio("lb1");
     await seedConn(a);
@@ -444,7 +444,7 @@ describe("sweep recovery — link-behind (Class 3)", () => {
 });
 
 // =========================================================================
-describe("sweep recovery — orphan / surplus delete (Classes 2 & 4)", () => {
+describe("sweep recovery: orphan / surplus delete (Classes 2 & 4)", () => {
   it("orphaned link (appointment gone) + real event -> one delete; repeat is delete_in_flight", async () => {
     const a = await seedStudio("or1");
     const conn = await seedConn(a);
@@ -525,7 +525,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
     const a2 = await insertAppt(a);
     await setFlag(a.studioId, true);
     await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD, pageSize: 1 });
-    // Move a1 far into the future (mutating starts_at) — a starts_at cursor would
+    // Move a1 far into the future (mutating starts_at), a starts_at cursor would
     // reorder it; the immutable id cursor is unaffected.
     const later = new Date(Date.now() + 500 * 3_600_000);
     await adminQuery(`update public.appointments set starts_at=$2, ends_at=$3 where id=$1`, [
@@ -534,7 +534,7 @@ describe("stable UUID pagination + snapshot boundary", () => {
       new Date(later.getTime() + 30 * 60_000).toISOString(),
     ]);
     await runReconciliation({ store: pgStore(a.studioId), lock: lockAlways, coordinator: memCoordinator(), continuation: memContinuation(), now: NOW_AHEAD, pageSize: 1 });
-    // a1 already has a create + now a trigger-made update (from the reschedule) — but
+    // a1 already has a create + now a trigger-made update (from the reschedule), but
     // NO second create; a2 still exactly one create.
     expect((await outbox(a1)).filter((x) => x.op_type === "event.create")).toHaveLength(1);
     expect((await outbox(a2)).map((x) => x.op_type)).toEqual(["event.create"]);
@@ -611,7 +611,7 @@ describe("tenant isolation + dormancy", () => {
 });
 
 // =========================================================================
-describe("privacy — operational metadata only", () => {
+describe("privacy: operational metadata only", () => {
   it("sweep-produced outbox rows carry no client identity", async () => {
     const a = await seedStudio("pv1");
     await seedConn(a, { flag: false });
@@ -883,7 +883,7 @@ describe("§8 dead-row inventory", () => {
         [a.studioId, conn, randomUUID(), `dead-${randomUUID()}`],
       );
     }
-    // The view aggregates dead per studio; page it (this studio's rows are the only ones — beforeEach cleared).
+    // The view aggregates dead per studio; page it (this studio's rows are the only ones, beforeEach cleared).
     const rows = await pgStore().pageStudiosWithDeadOutbox(null, 100);
     expect(rows.find((r) => r.studioId === a.studioId)?.deadCount).toBe(2);
   });

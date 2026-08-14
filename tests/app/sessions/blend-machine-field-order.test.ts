@@ -13,7 +13,7 @@ import {
 // field instead of reading straight down. These pins assert every ACTIVE
 // surface against the one canonical contract.
 //
-// The DOM/tab-order proof is in e2e/blend-machine-order-mobile.spec.ts — these
+// The DOM/tab-order proof is in e2e/blend-machine-order-mobile.spec.ts, these
 // are source pins (vitest runs in "node": no DOM here).
 
 function read(rel: string): string {
@@ -58,7 +58,7 @@ describe("the canonical contract itself", () => {
   it("EL and UL are adjacent at the top, and the whole galvanic group precedes thermolysis", () => {
     const o = MACHINE_READING_ORDER;
     expect(o.indexOf("unitsOfLye")).toBe(o.indexOf("energyLevel") + 1);
-    // Galvanic group = UL, duration, mA — contiguous, and all before thermolysis.
+    // Galvanic group = UL, duration, mA, contiguous, and all before thermolysis.
     expect(o.indexOf("galvanicMa")).toBeLessThan(o.indexOf("thermolysisDurationSeconds"));
     expect(o.indexOf("galvanicDurationSeconds")).toBeLessThan(o.indexOf("galvanicMa"));
     expect(o.indexOf("thermolysisDurationSeconds")).toBeLessThan(
@@ -104,7 +104,7 @@ describe("the canonical contract itself", () => {
     ]);
   });
 
-  it("owns ordering ONLY — no validation, ranges, storage or mode mutation", () => {
+  it("owns ordering ONLY: no validation, ranges, storage or mode mutation", () => {
     const SRC = read("lib/sessions/reading-field-order.ts");
     for (const forbidden of ["min=", "max=", "parseFloat", "Number(", "supabase", "insert", "update"]) {
       expect(SRC).not.toContain(forbidden);
@@ -114,7 +114,7 @@ describe("the canonical contract itself", () => {
 
 describe("ACTIVE surface: the one-page charting form (new chart + edit chart)", () => {
   // The two sections are built as consts and rendered later, so RENDER order is
-  // what the practitioner sees — assert the render site, not the definitions.
+  // what the practitioner sees, assert the render site, not the definitions.
   it("renders energy level, then the galvanic group, then thermolysis", () => {
     const energyAt = FORM.indexOf(READING_FIELD_LABELS.energyLevel);
     const renderAt = FORM.indexOf("{galvSection}\n        {thermoSection}");
@@ -228,7 +228,7 @@ describe("ACTIVE surface: saved record display (ElectrolysisEntryRow)", () => {
 });
 
 describe("LEGACY, UNREACHABLE: LogElectrolysisEntryForm is not updated", () => {
-  it("has no importer anywhere in app/, components/ or lib/ — it is dead code", () => {
+  it("has no importer anywhere in app/, components/ or lib/, it is dead code", () => {
     // Deliberately NOT reordered. Editing an unreachable form to satisfy a grep
     // would imply it ships; it does not. This test IS the proof of that claim,
     // and will fail the moment someone mounts it, forcing the order question.

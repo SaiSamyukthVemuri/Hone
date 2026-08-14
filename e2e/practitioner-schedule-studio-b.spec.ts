@@ -20,7 +20,7 @@ import {
 import { loginAsOwner } from "./helpers/flows";
 import { randomUUID } from "node:crypto";
 
-// PR B 3E-8 / §8 / §14 — the Studio B multi-practitioner block + recurring-break
+// PR B 3E-8 / §8 / §14, the Studio B multi-practitioner block + recurring-break
 // owner contract, driven through the REAL browser and verified against the DB.
 // Covers: scope-selector a11y, practitioner-scoped one-off + ALL-DAY blocks,
 // recurring toggle scope-preservation, the inactive-practitioner re-enable
@@ -60,7 +60,7 @@ test.beforeAll(async () => {
   memberA = await seedE2eMember(seed);
   memberB = await seedE2eMember(seed);
   await setStudioCapacityEnabled(seed.studioId, true);
-  // Pin UTC so block/break local wall-clock == UTC — the conflict test can seed
+  // Pin UTC so block/break local wall-clock == UTC, the conflict test can seed
   // an appointment at a UTC instant that lines up with the local block times.
   await setStudioTimezone(seed.studioId, "UTC");
   await seedStudioWideDefault(seed.studioId, MON, true, "09:00", "17:00");
@@ -139,7 +139,7 @@ test("a practitioner-scoped ALL-DAY block still scopes to one practitioner (sele
       const allDay = blocks.find((b) => b.practitioner_id === memberB.practitionerId);
       return allDay ? await getSourceReservationKeys("timed_block", allDay.id) : null;
     })
-    .toEqual([memberB.practitionerId]); // B's whole day only — A + owner untouched
+    .toEqual([memberB.practitionerId]); // B's whole day only, A + owner untouched
 });
 
 test("toggling a scoped recurring break preserves its practitioner scope (never widens to studio-wide)", async ({
@@ -173,7 +173,7 @@ test("toggling a scoped recurring break preserves its practitioner scope (never 
   await expect
     .poll(async () => (await getRecurringRuleScopes(seed.studioId)).find((r) => r.id === ruleId)?.active)
     .toBe(true);
-  // Still scoped to A after re-enable — the mandatory scope-preservation invariant.
+  // Still scoped to A after re-enable, the mandatory scope-preservation invariant.
   expect(
     (await getRecurringRuleScopes(seed.studioId)).find((r) => r.id === ruleId)?.practitioner_id,
   ).toBe(memberA.practitionerId);
@@ -207,7 +207,7 @@ test("a recurring break assigned to a now-inactive practitioner cannot be re-ena
   // Re-enabling is blocked with a safe, actionable message (no raw DB text).
   await row.getByRole("button", { name: "Enable" }).click();
   await expect(s.getByText(/Reassign it before enabling it/i)).toBeVisible();
-  // Still disabled in the DB — the guard held.
+  // Still disabled in the DB, the guard held.
   expect(
     (await getRecurringRuleScopes(seed.studioId)).find((r) => r.id === ruleId)?.active,
   ).toBe(false);
@@ -240,7 +240,7 @@ test("resource-aware conflict is non-vacuous: A's appointment blocks an A-only b
     `${d}T19:00:00Z`,
   );
   const before = await getAppointmentInterval(apptId);
-  // Unique markers so each assertion targets the EXACT new row — never a block
+  // Unique markers so each assertion targets the EXACT new row, never a block
   // from another test or a prior retry.
   const noteB = `cx-B-${randomUUID().slice(0, 8)}`;
   const noteA = `cx-A-${randomUUID().slice(0, 8)}`;
@@ -371,7 +371,7 @@ test("timed-block lifecycle: studio-wide create → scope A → B → studio-wid
     await expect
       .poll(async () => (await getTimedBlocksByNote(seed.studioId, note))[0].starts_at)
       .toContain("00:00:00");
-    // Re-edit the category — all-day must be PRESERVED (not reshaped to timed).
+    // Re-edit the category: all-day must be PRESERVED (not reshaped to timed).
     await li().getByRole("button", { name: "Edit" }).click();
     await expect(s().getByLabel(/All day/)).toBeChecked(); // detected from the stored boundaries
     await s().getByLabel("Category").selectOption("break");

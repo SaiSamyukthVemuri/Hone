@@ -10,7 +10,7 @@ import {
 // Calendar color represents the booked SERVICE explicitly (0153 persisted
 // calendar_color), never a hash of id/duration/client history.
 
-describe("service colors — explicit persisted color contract", () => {
+describe("service colors: explicit persisted color contract", () => {
   it("maps each allowed key to a distinct trusted bundle; rose/red never appears", () => {
     // 0161 widened the set from six to ten. The six 0153 keys keep their exact
     // positions so no stored value changes meaning; the four additions skip the
@@ -52,7 +52,7 @@ describe("service colors — explicit persisted color contract", () => {
     expect(isServiceColorKey("violet")).toBe(true);
   });
 
-  it("color is the SERVICE's key — equal durations can differ; one service stays stable across durations", () => {
+  it("color is the SERVICE's key, equal durations can differ; one service stays stable across durations", () => {
     // 1 & 2: consultation violet, existing-service emerald, both booked at 45 min.
     const consult45 = appointmentCardClasses({ id: "svc-consult", name: "Consultation", calendar_color: "violet" });
     const existing45 = appointmentCardClasses({ id: "svc-existing", name: "Electrolysis follow-up", calendar_color: "emerald" });

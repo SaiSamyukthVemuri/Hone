@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #302 — Postcare sent visibility (Chloe pilot feedback). Surface the
+// PR #302: Postcare sent visibility (Chloe pilot feedback). Surface the
 // EXISTING postcare send timestamp (appointments.postcare_email_sent_at +
 // postcare_email_send_attempts, migration 0043) more clearly: a "Postcare
 // sent" status on the appointment detail + a per-client postcare history on
-// the appointment timeline. Read-only — no migration, no send on render, and
+// the appointment timeline. Read-only, no migration, no send on render, and
 // the copy never claims delivery.
 
 const root = path.resolve(__dirname, "../../../");
@@ -80,8 +80,8 @@ describe("scope guard: read-only, action + schema untouched", () => {
     // the action to runPostcareSend as a dependency, which is what makes
     // "exactly one send, never a retry" drivable by a test with a mocked
     // action (tests/app/calendar/b8-postcare-provider-unrecorded.test.ts).
-    // The property this guard exists for is unchanged — there is still exactly
-    // one send path and it is still triggered only by an explicit confirm — so
+    // The property this guard exists for is unchanged, there is still exactly
+    // one send path and it is still triggered only by an explicit confirm, so
     // it is restated against the wiring that now exists.
     const confirm = BUTTON.match(/function confirm\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0] ?? "";
     expect(confirm).not.toBe("");

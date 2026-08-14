@@ -29,8 +29,8 @@ import { openCheckout, prepareInModal, closeModal, armReady } from "./helpers/ch
 // The SAME authorized practitioner, in two independent browser contexts (Context
 // A = dashboard checkout, Context B = calendar checkout), charges the SAME
 // prepared attempt with both final requests released simultaneously by a request
-// barrier. The financial invariant — exactly ONE processor EFFECT / one succeeded
-// attempt / no duplicate persisted charge — is enforced server-side (claim RPC +
+// barrier. The financial invariant, exactly ONE processor EFFECT / one succeeded
+// attempt / no duplicate persisted charge, is enforced server-side (claim RPC +
 // deterministic idempotency key + active-attempt unique constraint) and asserted
 // HARD. The exact adapter INVOCATION count is measured and reported: the fake can
 // never hide a duplicate application-level request behind one synthetic result.
@@ -45,7 +45,7 @@ test.beforeAll(async () => {
   // F-PAY-001: this is a SUCCESSFUL payment journey, so it must start from
   // resolvable authoritative pricing. It previously had no booked service at
   // all and leaned on sessions.price_paid_cents to populate an editable amount
-  // field — the historical fallback this PR retires. Without a priced service
+  // field, the historical fallback this PR retires. Without a priced service
   // the card now (correctly) renders its blocked state and withdraws the
   // prepare form, which is why this spec failed before ever reaching Prepare.
   seed = await seedEligiblePaymentWithLogin({
@@ -173,7 +173,7 @@ test("two contexts charge the same attempt concurrently: one effect, one succeed
   ).toHaveLength(0);
 
   // --- Measurement: exactly one processor EFFECT (financial guarantee); the exact
-  //     INVOCATION count is reported (1 or 2 — both financially safe; the fake
+  //     INVOCATION count is reported (1 or 2, both financially safe; the fake
   //     never hides a duplicate app request).
   const invocations = countInvocationsForAccount(seed.connectedAccountId);
   const effects = countEffectsForAccount(seed.connectedAccountId);

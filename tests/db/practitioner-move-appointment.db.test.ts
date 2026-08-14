@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, purgeAppointmentAudit, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// Practitioner "Move appointment" — DB integration proof (migration 0133,
+// Practitioner "Move appointment": DB integration proof (migration 0133,
 // public.practitioner_move_appointment). LOCAL disposable Supabase only (CI db lane).
 // Proves the atomic SAME-RECORD move: it updates only starts_at/ends_at/updated_at on
 // the same appointments row (id + all relationships preserved), the existing triggers
@@ -70,16 +70,16 @@ type MoveRow = {
 };
 // B6 / 0175 REPOINTED. `practitioner_move_appointment` was retired after a
 // zero-caller census; `move_or_reassign_appointment` (0174) is the governed
-// successor and this suite's DOMAIN invariants — identity preservation,
+// successor and this suite's DOMAIN invariants, identity preservation,
 // reservation re-sync, the buffer snapshot, the conflict-class matrix,
-// terminal-status immovability, cross-studio opacity — all still apply to it.
+// terminal-status immovability, cross-studio opacity, all still apply to it.
 // Only the call site moved.
 //
 // The successor is a SUPERSET: it takes an explicit target practitioner (a
 // time-only move passes the appointment's current practitioner, which is what
 // the retired wrapper forwarded) and an outside-availability flag that stays
 // false here, because these tests are about move mechanics rather than the
-// hours bypass — that is move-availability-validator.db.test.ts's subject.
+// hours bypass, that is move-availability-validator.db.test.ts's subject.
 // Its returned columns are named identically, so MoveRow is unchanged.
 async function move(opts: {
   apptId: string;
@@ -182,7 +182,7 @@ describe("successful move preserves the same record + every relationship", () =>
     expect(Number(after.sync_version)).toBeGreaterThan(Number(before.sync_version));
   });
 
-  it("9: an appointment_payments-style FK link cannot detach (move never deletes) — id preserved + no duplicate appointment", async () => {
+  it("9: an appointment_payments-style FK link cannot detach (move never deletes), id preserved + no duplicate appointment", async () => {
     // appointment_payments FKs appointments(id) ON DELETE RESTRICT via a deep Stripe
     // chain; the point of "payment relationships preserved" is that Move updates in
     // place and NEVER deletes/recreates the appointment, so any row keyed by
@@ -251,7 +251,7 @@ describe("successful move preserves the same record + every relationship", () =>
   });
 
   // Custom-time (owner override) rides the SAME RPC. The RPC enforces NO operating-
-  // hours gate — that gate lives only in the studio's generated slot list, which
+  // hours gate, that gate lives only in the studio's generated slot list, which
   // custom mode intentionally bypasses. So a move to an arbitrary out-of-window
   // instant SUCCEEDS as long as no concrete reservation conflicts; the real guard is
   // the DB exclusion constraints, not the published hours. (§24.1 + §24.11)
@@ -278,7 +278,7 @@ describe("successful move preserves the same record + every relationship", () =>
   });
 });
 
-describe("conflict rolls back completely (23P01 not caught) — no change, no audit", () => {
+describe("conflict rolls back completely (23P01 not caught), no change, no audit", () => {
   async function expectConflictNoChange(setup: (targetStart: string, targetEnd: string) => Promise<void>) {
     const a = await insertAppt({ startsAt: nextSlot().start });
     const target = new Date(new Date(a.startsAt).getTime() + 5 * 3600 * 1000).toISOString();
@@ -466,19 +466,19 @@ describe("atomicity + buffer invariant + grants", () => {
   });
 
   // RETIRED (B6 / 0175). This asserted that the legacy `reschedule_appointment`
-  // wrapper still EXISTED and stayed service_role-only — a pure legacy-contract
+  // wrapper still EXISTED and stayed service_role-only, a pure legacy-contract
   // claim. B6 dropped that function by exact signature after a zero-caller
   // census, so the assertion is not merely failing, it is meaningless: there is
   // no object left to hold a grant.
   //
-  // Deliberately NOT replaced with a "the function does not exist" check here —
+  // Deliberately NOT replaced with a "the function does not exist" check here,
   // tests/migrations/0175-appointment-transition-integrity.test.ts already pins
   // the exact DROP statements, and tests/db/appointment-transition-integrity
   // .db.test.ts already proves all three are absent from pg_proc while their
   // successors survive. A third copy would be duplication, not coverage.
   //
-  // What that test was really protecting — "this migration did not weaken some
-  // OTHER command's EXECUTE posture" — is preserved by the reschedule
+  // What that test was really protecting, "this migration did not weaken some
+  // OTHER command's EXECUTE posture", is preserved by the reschedule
   // successor's own suite (public-reschedule-command.db.test.ts).
   it("38: the retirement did not weaken the reschedule SUCCESSOR's EXECUTE posture", async () => {
     const pub = await adminQuery(

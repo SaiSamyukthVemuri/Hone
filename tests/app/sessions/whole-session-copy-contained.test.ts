@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Behavioural proof that the TEMPORARILY CONTAINED whole-session copy action
-// writes nothing — even when called DIRECTLY (bypassing the UI, which no longer
+// writes nothing, even when called DIRECTLY (bypassing the UI, which no longer
 // renders an interactive control). The real action is invoked; the DB client
 // constructor is a spy that must NEVER be called, so we prove zero reads and
 // zero writes (no session_blocks, electrolysis_entries, session_block_areas,
@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Spies are created via vi.hoisted so they exist when the hoisted vi.mock
 // factories run. There are TWO DB paths out of this module: the RLS client
 // (@/lib/supabase/server createClient) and the service-role client
-// (@/lib/supabase/admin-server createAdminClient — the audit/metrics path).
+// (@/lib/supabase/admin-server createAdminClient, the audit/metrics path).
 // Spies that throw prove, behaviourally, that the contained action touches
 // NEITHER, so it writes no blocks/entries/areas AND no metrics/audit rows.
 const {
@@ -43,7 +43,7 @@ import { copyPreviousSessionAreasAction } from "@/app/(app)/clients/[id]/session
 
 const input = { clientId: "client-1", sessionId: "session-today", previousSessionId: "session-prev" };
 
-describe("whole-session copy — contained, zero writes, cannot be bypassed", () => {
+describe("whole-session copy: contained, zero writes, cannot be bypassed", () => {
   beforeEach(() => {
     createClientSpy.mockClear();
     createAdminClientSpy.mockClear();
@@ -61,7 +61,7 @@ describe("whole-session copy — contained, zero writes, cannot be bypassed", ()
     if (!res.ok) expect(res.error).toMatch(/temporarily unavailable/i);
   });
 
-  it("NEVER constructs a DB client — zero session_blocks / electrolysis_entries / session_block_areas / drafts / metrics / audit", async () => {
+  it("NEVER constructs a DB client, zero session_blocks / electrolysis_entries / session_block_areas / drafts / metrics / audit", async () => {
     const res = await copyPreviousSessionAreasAction(input);
     expect(res.ok).toBe(false);
     // Neither DB client was ever created => no read of the source session and no

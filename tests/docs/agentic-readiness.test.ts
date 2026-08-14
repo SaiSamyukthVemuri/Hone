@@ -41,13 +41,13 @@ describe("docs/22 exists and is a plan, not a runtime", () => {
     expect(PLAN).toMatch(/No model is called anywhere in the product/);
   });
 
-  // SUPERSEDED PIN (2026-07-27) — was "states live payments remain disabled",
+  // SUPERSEDED PIN (2026-07-27): was "states live payments remain disabled",
   // requiring /Live payments remain disabled\./ and
   // /Controlled live payment enablement has not started\./. Both are false:
   // controlled live enablement COMPLETED and live session payments are in use
   // for approved studios. The guard now pins the true, narrower posture.
   it("states the controlled live-payment posture accurately", () => {
-    // Enabled — but only for approved studios, never broadly.
+    // Enabled: but only for approved studios, never broadly.
     expect(PLAN).toMatch(/enabled for approved studios/i);
     expect(PLAN).toMatch(/production-exercised/i);
     expect(PLAN).toMatch(/broad self-serve/i);
@@ -192,7 +192,7 @@ describe("roadmap docs updated", () => {
     expect(DECISIONS).toMatch(/starts with a safety plan, not a runtime/);
     // AMENDED 2026-07-27: this previously also required
     // /Live payments remain disabled\./ in docs/13. That string still occurs
-    // there, but only inside DATED decision-log entries — it is history, not
+    // there, but only inside DATED decision-log entries, it is history, not
     // current state, so pinning it as a standing fact was wrong. docs/13 must
     // instead carry a banner that explicitly disarms those dated entries.
     expect(DECISIONS).toMatch(/point-in-time and superseded/i);

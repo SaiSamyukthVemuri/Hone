@@ -4,7 +4,7 @@ import { createAccessTokenCache } from "@/lib/google-calendar/sync/access-token-
 import { createTokenManager, type ConnectionStore, type TokenCrypto } from "@/lib/google-calendar/sync/token-manager";
 import type { GoogleRestClient } from "@/lib/google-calendar/sync/google-rest-client";
 
-// Phase B2.1 — the worker core must NEVER log tokens, secrets, codes, or event
+// Phase B2.1: the worker core must NEVER log tokens, secrets, codes, or event
 // bodies. We spy on every console method and assert no sensitive material is
 // emitted while refreshing (incl. rotation + invalid_grant).
 

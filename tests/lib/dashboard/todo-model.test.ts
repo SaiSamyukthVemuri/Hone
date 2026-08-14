@@ -13,7 +13,7 @@ import type { ClientsNeedingAttention } from "@/lib/dashboard/clients-needing-at
 import type { ProcedureActionMetrics } from "@/lib/dashboard/practice-metrics";
 
 // ===========================================================================
-// Dashboard V2 Part 2B — ONE To-do model.
+// Dashboard V2 Part 2B, ONE To-do model.
 // ===========================================================================
 //
 // These are BEHAVIOURAL tests against the normalizer, not snapshot tests
@@ -107,7 +107,7 @@ function attentionClient(
 
 // ---------------------------------------------------------------------------
 
-describe("To-do model — all four source domains are still represented", () => {
+describe("To-do model: all four source domains are still represented", () => {
   const built = buildDashboardTodo(
     input({
       assistant: assistant([aftercareItem("c1", "Maya", "s1")]),
@@ -150,7 +150,7 @@ describe("To-do model — all four source domains are still represented", () => 
   });
 });
 
-describe("To-do model — deterministic ordering", () => {
+describe("To-do model: deterministic ordering", () => {
   it("orders by priority tier, and the tiers are the documented ones", () => {
     // Blocking (10s) < record gaps (20s) < context (30s) < soft nudges (40s).
     expect(TODO_PRIORITY.intake_review).toBeLessThan(TODO_PRIORITY.charting);
@@ -213,7 +213,7 @@ describe("To-do model — deterministic ordering", () => {
     );
   });
 
-  it("ties break newest-first, then by id — a TOTAL order", () => {
+  it("ties break newest-first, then by id, a TOTAL order", () => {
     const mk = (id: string, occurredAt: string | null): DashboardTodoItem => ({
       id,
       kind: "aftercare",
@@ -259,9 +259,9 @@ describe("To-do model — deterministic ordering", () => {
   });
 });
 
-describe("To-do model — deduplication is on DOMAIN IDENTITY", () => {
+describe("To-do model: deduplication is on DOMAIN IDENTITY", () => {
   it("PINNED: the same unresolved aftercare cannot appear twice for one client", () => {
-    // Two aftercare rows reach the normalizer for the SAME client — the exact
+    // Two aftercare rows reach the normalizer for the SAME client, the exact
     // shape the old dashboard produced when the assistant listed a session and
     // the Action-needed tile counted the same gap over a different window.
     const built = buildDashboardTodo(
@@ -297,7 +297,7 @@ describe("To-do model — deduplication is on DOMAIN IDENTITY", () => {
     expect(built.hasItems).toBe(false);
   });
 
-  it("dedupe is NOT by rendered text — identical text for two clients stays two rows", () => {
+  it("dedupe is NOT by rendered text, identical text for two clients stays two rows", () => {
     const built = buildDashboardTodo(
       input({
         assistant: assistant([
@@ -418,7 +418,7 @@ describe("To-do model — deduplication is on DOMAIN IDENTITY", () => {
   });
 });
 
-describe("To-do model — one client's item never adopts another's identity", () => {
+describe("To-do model: one client's item never adopts another's identity", () => {
   it("subject, href and id all stay bound to the same client", () => {
     const built = buildDashboardTodo(
       input({
@@ -455,7 +455,7 @@ describe("To-do model — one client's item never adopts another's identity", ()
   });
 });
 
-describe("To-do model — completed work disappears", () => {
+describe("To-do model: completed work disappears", () => {
   it.each([
     [
       "the assistant's gap is filled",
@@ -527,7 +527,7 @@ describe("To-do model — completed work disappears", () => {
   });
 });
 
-describe("To-do model — existing actions are preserved, none are dead", () => {
+describe("To-do model: existing actions are preserved, none are dead", () => {
   it("the assistant's deep links survive verbatim", () => {
     const deep = "/clients/c1/sessions/new?appointment_id=appt-1";
     const built = buildDashboardTodo(
@@ -657,7 +657,7 @@ describe("To-do model — existing actions are preserved, none are dead", () => 
   });
 });
 
-describe("To-do model — empty state", () => {
+describe("To-do model: empty state", () => {
   it("nothing unresolved => no items at all", () => {
     const built = buildDashboardTodo(input());
     expect(built.items).toEqual([]);
@@ -675,13 +675,13 @@ describe("To-do model — empty state", () => {
   });
 });
 
-describe("To-do model — no I/O, no N+1", () => {
+describe("To-do model: no I/O, no N+1", () => {
   const SRC = readFileSync(
     join(process.cwd(), "lib/dashboard/todo-model.ts"),
     "utf8",
   );
 
-  it("the normalizer is synchronous and pure — it cannot query", () => {
+  it("the normalizer is synchronous and pure, it cannot query", () => {
     expect(buildDashboardTodo(input())).not.toBeInstanceOf(Promise);
     expect(SRC).not.toMatch(/\bawait\b/);
     expect(SRC).not.toMatch(/\basync\b/);

@@ -34,7 +34,7 @@ describe("check-stripe-gates script (PR #154)", () => {
     const stdout = result.stdout ?? "";
     // Each documented rule must show up as PASS in the output.
     expect(stdout).toMatch(/^PASS paymentIntents\.create:/m);
-    // PR #320: the requires_action safety cancel — pinned to exactly one site.
+    // PR #320: the requires_action safety cancel, pinned to exactly one site.
     expect(stdout).toMatch(/^PASS paymentIntents\.cancel:/m);
     expect(stdout).toMatch(/^PASS charges\.create:/m);
     expect(stdout).toMatch(/^PASS refunds\.create:/m);
@@ -175,7 +175,7 @@ describe("check-stripe-gates: unknown Stripe writes hard-fail (PR #309)", () => 
   // fake call site without touching the repo. cwd = tmp → REPO_ROOT = tmp;
   // the script scans tmp/app + tmp/lib. We assert on the catch-all line +
   // a non-zero exit (other rules also fail for want of the real call sites,
-  // which is fine — we pin the catch-all's behavior specifically).
+  // which is fine, we pin the catch-all's behavior specifically).
   let dir: string | null = null;
   function runAgainst(relFile: string, contents: string) {
     dir = mkdtempSync(path.join(tmpdir(), "stripe-gate-"));

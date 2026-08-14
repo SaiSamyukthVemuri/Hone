@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// Migration 0165 — revoke the unintended `service_role` EXECUTE that 0164 left
+// Migration 0165: revoke the unintended `service_role` EXECUTE that 0164 left
 // on `create_laser_entry`. Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE
 // to anon, authenticated AND service_role at create time; 0164 revoked only
-// from public and anon, so service_role kept it — the same defect 0129/0130
+// from public and anon, so service_role kept it, the same defect 0129/0130
 // had, one role over.
 //
 // This file carries the REPO migration-max pin (it moved off the 0164 test when
@@ -22,7 +22,7 @@ const CODE = SQL.split("\n")
   .join("\n");
 const FLAT_CODE = CODE.replace(/\s+/g, " ");
 
-describe("0165 — service_role EXECUTE repair (repo migration-max tripwire)", () => {
+describe("0165: service_role EXECUTE repair (repo migration-max tripwire)", () => {
   it("is present, 0164 precedes it, and there is exactly one 0165", () => {
     expect(FILE).toMatch(/^0165_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -43,7 +43,7 @@ describe("0165 — service_role EXECUTE repair (repo migration-max tripwire)", (
   });
 });
 
-describe("0165 — transactional with an armed lock_timeout", () => {
+describe("0165: transactional with an armed lock_timeout", () => {
   it("opens its own transaction and commits exactly once", () => {
     expect(CODE.match(/^\s*begin\s*;/gim) ?? []).toHaveLength(1);
     expect(CODE.match(/^\s*commit\s*;/gim) ?? []).toHaveLength(1);
@@ -64,7 +64,7 @@ describe("0165 — transactional with an armed lock_timeout", () => {
   });
 });
 
-describe("0165 — revokes exactly one grant on exactly one signature", () => {
+describe("0165: revokes exactly one grant on exactly one signature", () => {
   it("revokes EXECUTE from service_role on the exact signature", () => {
     expect(FLAT_CODE).toMatch(
       /revoke execute on function public\.create_laser_entry\(\s*uuid, uuid, text, integer, jsonb, text\s*\) from service_role/i,
@@ -103,14 +103,14 @@ describe("0165 — revokes exactly one grant on exactly one signature", () => {
     expect(FLAT_CODE).not.toMatch(/\binsert into\b|\bupdate public\.|\bdelete from\b|\btruncate\b/i);
   });
 
-  it("revokes NO table privilege — Phase 1A stays additive", () => {
+  it("revokes NO table privilege: Phase 1A stays additive", () => {
     expect(FLAT_CODE).not.toMatch(
       /revoke[^;]*on public\.(laser_entries|electrolysis_entries)/i,
     );
   });
 });
 
-describe("0165 — records the defect honestly", () => {
+describe("0165: records the defect honestly", () => {
   it("names 0164's false 'no service_role grant' claim", () => {
     expect(PROSE).toMatch(/deliberately no service_role grant/i);
     expect(PROSE).toMatch(/FALSE as deployed/i);

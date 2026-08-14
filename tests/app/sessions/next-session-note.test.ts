@@ -35,7 +35,7 @@ describe("capture: updateNextSessionNoteAction", () => {
   const CODE = codeOnly(SESSION_ACTIONS);
 
   it("writes sessions.next_session_note through the studio-scoped command", () => {
-    // L18 Phase 3: the studio is no longer supplied by the caller at all — the
+    // L18 Phase 3: the studio is no longer supplied by the caller at all, the
     // command DERIVES it from the session, which is strictly stronger than the
     // old .eq("studio_id", studio.id) scoping it replaces.
     expect(CODE).toMatch(/rpc\("set_next_session_note"/);
@@ -139,7 +139,7 @@ describe("surfacing: the latest previous note appears when charting", () => {
     // (buildLastSessionSummary → FromLastVisitForToday) to the full appointment
     // prep model, which carries the same note as its own labelled section
     // rather than folded into a combined watch/plan band. The loop this file
-    // pins — written while charting, read before the next visit — is unchanged;
+    // pins, written while charting, read before the next visit, is unchanged;
     // only the surface that reads it is richer.
     // The literal input object moved into the shared mapper
     // (prepMemoryInputFromTreatment) when the dashboard became a second
@@ -147,8 +147,8 @@ describe("surfacing: the latest previous note appears when charting", () => {
     expect(APPOINTMENT_PAGE).toMatch(
       /buildAppointmentPrepMemory\(\s*prepMemoryInputFromTreatment\(selected\),?\s*\)/,
     );
-    // ...and the plan passthrough is pinned where it now lives — the shared
-    // mapper — so it protects the dashboard's copy of this surface too.
+    // ...and the plan passthrough is pinned where it now lives, the shared
+    // mapper, so it protects the dashboard's copy of this surface too.
     expect(
       readFileSync(path.join(ROOT, "lib/sessions/appointment-prep-memory.ts"), "utf8"),
     ).toMatch(/next_session_note: selected\.session\.next_session_note \?\? null/);

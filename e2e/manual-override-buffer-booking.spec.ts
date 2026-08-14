@@ -13,7 +13,7 @@ import {
 } from "./helpers/seed";
 import { loginByMagicLink } from "./helpers/flows";
 
-// Migration 0152 — Chloe's manual-override booking blocker, end-to-end through
+// Migration 0152: Chloe's manual-override booking blocker, end-to-end through
 // the REAL client-profile booking UI against the LOCAL stack.
 //
 // The bug: a practitioner could tick "Book outside your normal availability" and
@@ -27,13 +27,13 @@ import { loginByMagicLink } from "./helpers/flows";
 // bypass. This spec proves both, at desktop and at Chloe's iPhone viewport:
 //
 //   * A buffer-proximate, non-overlapping override booking SUCCEEDS. (Such a time
-//     is deliberately absent from the suggested slots — the buffer filters it —
+//     is deliberately absent from the suggested slots, the buffer filters it,
 //     so the manual override is the only way to reach it. Exactly Chloe's flow.)
 //   * A truly overlapping override booking is STILL rejected (hard 23P01 → safe
 //     copy), so the override never lets two treatments collide.
 //   * A non-owner never sees the override control at all (owner-only).
 //
-// Studio is capacity-OFF (studio-wide) — Chloe's single-chair setup. Buffer 30.
+// Studio is capacity-OFF (studio-wide), Chloe's single-chair setup. Buffer 30.
 // The seeded neighbour is 60 min (seedFutureAppointmentAt) at 15:00 → 15:00–16:00;
 // the booking service is 30 min (seedE2eStudio). 14:30–15:00 touches the
 // neighbour's start (no overlap) but is inside the 30-min buffer; 15:30–16:00
@@ -46,7 +46,7 @@ const PROXIMATE = "14:30"; // 14:30–15:00 (30-min svc): inside the buffer, NOT
 const OVERLAP = "15:30"; //  15:30–16:00 (30-min svc): truly overlaps the neighbour → hard reject even with override
 
 // The safe copy the internal booking action returns when the hard actual-overlap
-// exclusion (23P01) fires — never a raw SQLSTATE.
+// exclusion (23P01) fires, never a raw SQLSTATE.
 const OVERLAP_COPY = /That time is no longer available/i;
 
 async function expectNoPageOverflow(page: Page, label: string) {
@@ -118,7 +118,7 @@ test("owner override books a buffer-proximate time the suggested slots hide; act
   await expect(page.getByText(OVERLAP_COPY)).toBeVisible({ timeout: 20_000 });
   await expect(page).toHaveURL(/\/clients\//); // stayed on the form, no redirect
   const afterTwo = await getAppointmentsForClient(seed.studioId, clientId);
-  expect(afterTwo, "overlap rejected — still only 2 appointments").toHaveLength(2);
+  expect(afterTwo, "overlap rejected, still only 2 appointments").toHaveLength(2);
 });
 
 test("non-owner never sees the override control (owner-only)", async ({ page }) => {

@@ -14,7 +14,7 @@ const SQL = FILE ? readFileSync(join(MIGRATIONS_DIR, FILE), "utf8") : "";
 // Comment-stripped copy so doc-comments can't satisfy or trip a grep.
 const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
 
-describe("0140 — file present", () => {
+describe("0140: file present", () => {
   it("exists with a purpose-encoding filename", () => {
     expect(FILE).toBe("0140_studio_onboarding.sql");
     expect(SQL.length).toBeGreaterThan(1000);
@@ -26,7 +26,7 @@ describe("0140 — file present", () => {
   });
 });
 
-describe("0140 — Gate 1: onboarding-v2 flag is additive + default OFF + operator-controlled", () => {
+describe("0140, Gate 1: onboarding-v2 flag is additive + default OFF + operator-controlled", () => {
   it("adds the flag as additive, default false (byte-for-byte OFF contract)", () => {
     expect(CODE).toMatch(
       /add column if not exists onboarding_v2_enabled boolean not null default false/i,
@@ -53,7 +53,7 @@ describe("0140 — Gate 1: onboarding-v2 flag is additive + default OFF + operat
   });
 });
 
-describe("0140 — Gate 2: studio_onboarding table shape + honest state", () => {
+describe("0140, Gate 2: studio_onboarding table shape + honest state", () => {
   it("is keyed one-row-per-studio and CASCADE-torn-down", () => {
     expect(CODE).toMatch(
       /create table if not exists public\.studio_onboarding[\s\S]*?studio_id\s+uuid primary key[\s\S]*?references public\.studios\(id\) on delete cascade/i,
@@ -89,7 +89,7 @@ describe("0140 — Gate 2: studio_onboarding table shape + honest state", () => 
   });
 });
 
-describe("0140 — Gate 3: RLS is member-read / owner-write, no browser delete", () => {
+describe("0140, Gate 3: RLS is member-read / owner-write, no browser delete", () => {
   it("enables RLS", () => {
     expect(CODE).toMatch(/alter table public\.studio_onboarding enable row level security/i);
   });
@@ -108,7 +108,7 @@ describe("0140 — Gate 3: RLS is member-read / owner-write, no browser delete",
   });
 });
 
-describe("0140 — Gate 4: trigger functions are execute-locked", () => {
+describe("0140, Gate 4: trigger functions are execute-locked", () => {
   it("revokes execute from public + anon + authenticated for both trigger fns", () => {
     expect(CODE).toMatch(/revoke execute on function %s from public/i);
     expect(CODE).toMatch(/revoke execute on function %s from anon/i);
@@ -118,7 +118,7 @@ describe("0140 — Gate 4: trigger functions are execute-locked", () => {
   });
 });
 
-describe("0140 — completion is TRUSTED-SERVER-ONLY (admin commands + field guard)", () => {
+describe("0140: completion is TRUSTED-SERVER-ONLY (admin commands + field guard)", () => {
   function fn(name: string): string {
     return (
       CODE.match(
@@ -154,7 +154,7 @@ describe("0140 — completion is TRUSTED-SERVER-ONLY (admin commands + field gua
     expect(f).toMatch(/on conflict \(studio_id\) do update[\s\S]*?where so\.celebrated_at is null/i);
   });
 
-  it("both commands are SERVICE-ROLE ONLY — no public/anon/authenticated execute", () => {
+  it("both commands are SERVICE-ROLE ONLY, no public/anon/authenticated execute", () => {
     for (const sig of [
       "public.admin_complete_onboarding(uuid, uuid)",
       "public.admin_mark_onboarding_celebrated(uuid, uuid)",
@@ -175,12 +175,12 @@ describe("0140 — completion is TRUSTED-SERVER-ONLY (admin commands + field gua
     expect(g).toMatch(/celebrated_at/i);
     expect(g).toMatch(/status = 'completed'/i);
     expect(g).toMatch(/'done' = any \(new\.completed_steps\)/i);
-    // Welcome-email lifecycle fields — INSERT (non-default forged values).
+    // Welcome-email lifecycle fields: INSERT (non-default forged values).
     expect(g).toMatch(/new\.welcome_email_status is distinct from 'not_sent'/i);
     expect(g).toMatch(/new\.welcome_email_attempt_id is not null/i);
     expect(g).toMatch(/new\.welcome_email_last_attempted_at is not null/i);
     expect(g).toMatch(/new\.welcome_email_last_sent_at is not null/i);
-    // Welcome-email lifecycle fields — UPDATE (set / replace / clear).
+    // Welcome-email lifecycle fields: UPDATE (set / replace / clear).
     expect(g).toMatch(/new\.welcome_email_status is distinct from old\.welcome_email_status/i);
     expect(g).toMatch(/new\.welcome_email_attempt_id is distinct from old\.welcome_email_attempt_id/i);
     expect(g).toMatch(/new\.welcome_email_last_attempted_at is distinct from old\.welcome_email_last_attempted_at/i);

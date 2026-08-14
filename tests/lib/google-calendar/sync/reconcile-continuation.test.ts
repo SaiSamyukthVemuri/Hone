@@ -3,7 +3,7 @@ import { createReconcileContinuationStore, type ContinuationRedis } from "@/lib/
 import { reconcileLockKey } from "@/lib/google-calendar/sync/reconcile-lock";
 import type { ReconcileContinuation } from "@/lib/google-calendar/sync/reconcile";
 
-// Phase B2.3-b §3 — the OWNERSHIP-ATOMIC continuation store. write/clear are Lua
+// Phase B2.3-b §3: the OWNERSHIP-ATOMIC continuation store. write/clear are Lua
 // compare-token scripts (guarded by the per-studio lock key); read distinguishes an
 // I/O error (fail-closed) from an absent record.
 
@@ -33,14 +33,14 @@ describe("read (fail-closed vs absent)", () => {
   });
 });
 
-describe("write — token-atomic, no arbitrary expiry", () => {
+describe("write: token-atomic, no arbitrary expiry", () => {
   it("evals a compare-token SET guarded by the per-studio LOCK key; true when owned (eval->1)", async () => {
     const redis = okRedis();
     const store = createReconcileContinuationStore(redis);
     expect(await store.write("studio-9", "tok", CONT)).toBe(true);
     const call = (redis.eval as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[0]).toContain("redis.call('get', KEYS[1]) == ARGV[1]"); // guards on the lock token
-    expect(call[0]).not.toContain("EX"); // NO arbitrary expiry — durable correctness state
+    expect(call[0]).not.toContain("EX"); // NO arbitrary expiry, durable correctness state
     expect(call[1]).toEqual([reconcileLockKey("studio-9"), "gcal_reconcile:cursor:studio-9"]);
     expect(call[2][0]).toBe("tok");
   });
@@ -53,7 +53,7 @@ describe("write — token-atomic, no arbitrary expiry", () => {
   });
 });
 
-describe("clear — token-atomic", () => {
+describe("clear: token-atomic", () => {
   it("evals a compare-token DEL; true when owned (eval->1), false when not (eval->0)", async () => {
     const redis = okRedis();
     expect(await createReconcileContinuationStore(redis).clear("s9", "tok")).toBe(true);

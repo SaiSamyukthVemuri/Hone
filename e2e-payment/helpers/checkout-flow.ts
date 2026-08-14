@@ -8,21 +8,21 @@ import { expect, type Locator, type Page } from "@playwright/test";
 //
 // WHY THIS EXISTS. SessionPaymentPrepareCard renders a transient
 // "Session payment prepared." banner gated on `prepareJustSucceeded &&
-// !activeAttempt` — it exists only in the brief window between the action
+// !activeAttempt`, it exists only in the brief window between the action
 // resolving and router.refresh() landing the persisted row, and it DISAPPEARS
 // the moment that row arrives. Waiting on it asks the test to observe a FRAME,
 // not a STATE. It passed by timing luck until page timing changed, then failed
 // in CI while the payment was perfectly prepared: one `ready` attempt, the
 // correct amount, a NULL note, and Run charge on screen.
 //
-// Durable state is the oracle instead — the persisted ready panel, which is
+// Durable state is the oracle instead, the persisted ready panel, which is
 // what the practitioner actually relies on and which does not evaporate.
 export async function expectPreparedDurable(scope: Locator): Promise<void> {
   await expect(scope.getByText(/Prepared .* not yet charged/i)).toBeVisible({
     timeout: 20_000,
   });
   await expect(scope.getByRole("button", { name: /^run charge$/i })).toBeVisible();
-  // The form is replaced by the ready panel — proof the persisted row landed.
+  // The form is replaced by the ready panel, proof the persisted row landed.
   await expect(
     scope.getByRole("button", { name: /prepare session payment/i }),
   ).toHaveCount(0);
@@ -37,7 +37,7 @@ export function modalOf(page: Page): Locator {
   return page.getByTestId("quick-checkout-modal");
 }
 
-// Open checkout from the current surface (dashboard or calendar — same testid on
+// Open checkout from the current surface (dashboard or calendar, same testid on
 // both) and wait for the modal.
 export async function openCheckout(page: Page): Promise<Locator> {
   await page.getByTestId("checkout-button").click();

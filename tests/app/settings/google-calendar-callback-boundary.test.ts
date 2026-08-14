@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Phase B2.4 — the OAuth CALLBACK credential boundary, verified by SOURCE PIN.
+// Phase B2.4: the OAuth CALLBACK credential boundary, verified by SOURCE PIN.
 // The callback runs on the Node runtime with a real Supabase session + Google
 // round-trips, so the Vitest node env cannot execute it. Instead we pin the exact
 // structure that makes it safe: single-use state consumed BEFORE any persist;
@@ -17,7 +17,7 @@ const SRC = readFileSync(
 // Index of the ACTUAL call site (not the import) of the credential-replacement fn.
 const PERSIST_CALL = SRC.indexOf("await persistConnectedFromCallback(");
 
-describe("callback boundary — state consumed before persist", () => {
+describe("callback boundary: state consumed before persist", () => {
   it("consumes the single-use OAuth state", () => {
     expect(SRC).toMatch(/consumeOAuthState\(\{ state, nonce, userId: user\.id \}\)/);
   });
@@ -34,7 +34,7 @@ describe("callback boundary — state consumed before persist", () => {
   });
 });
 
-describe("callback boundary — uses the exact destination-scope helpers", () => {
+describe("callback boundary: uses the exact destination-scope helpers", () => {
   it("imports/uses normalizeGrantedScopes, hasRequiredEventScopes, requiredEventScopeFor", () => {
     expect(SRC).toMatch(/normalizeGrantedScopes/);
     expect(SRC).toMatch(/hasRequiredEventScopes/);
@@ -46,7 +46,7 @@ describe("callback boundary — uses the exact destination-scope helpers", () =>
   });
 });
 
-describe("callback boundary — boundMode / destination_changed gate", () => {
+describe("callback boundary: boundMode / destination_changed gate", () => {
   it("has a boundMode branch returning destination_changed when the mode differs", () => {
     expect(SRC).toMatch(/const boundMode = consumed\.destinationMode/);
     expect(SRC).toMatch(/existing\.destinationMode !== boundMode/);
@@ -59,7 +59,7 @@ describe("callback boundary — boundMode / destination_changed gate", () => {
   });
 });
 
-describe("callback boundary — partial/wrong-scope grant is pre-replacement", () => {
+describe("callback boundary: partial/wrong-scope grant is pre-replacement", () => {
   it("returns event_scope_not_granted when the exact destination scope is missing", () => {
     expect(SRC).toMatch(/!hasRequiredEventScopes\(boundMode, grantedScopes\)/);
     expect(SRC).toMatch(/"event_scope_not_granted"/);
@@ -71,7 +71,7 @@ describe("callback boundary — partial/wrong-scope grant is pre-replacement", (
   });
 });
 
-describe("callback boundary — account-switch protection", () => {
+describe("callback boundary: account-switch protection", () => {
   it("rejects a returned identity that differs from the stored account => account_mismatch", () => {
     expect(SRC).toMatch(/existingAccountId !== null && existingAccountId !== info\.sub/);
     expect(SRC).toMatch(/"account_mismatch"/);
@@ -83,7 +83,7 @@ describe("callback boundary — account-switch protection", () => {
   });
 });
 
-describe("callback boundary — the removed broad scope + no event I/O", () => {
+describe("callback boundary: the removed broad scope + no event I/O", () => {
   it("does NOT import or reference the removed broad EVENT_WRITE_SCOPE", () => {
     expect(SRC).not.toMatch(/EVENT_WRITE_SCOPE/);
   });

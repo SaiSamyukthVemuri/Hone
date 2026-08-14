@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// SERVER-ACTION CONTRACT — startSessionAction must name the SELECTED studio.
+// SERVER-ACTION CONTRACT: startSessionAction must name the SELECTED studio.
 //
 // 0181 moved studio authority into an explicit RPC argument. The value is only
 // safe because of WHERE IT COMES FROM: getCurrentPractitionerWithStudio(), the
 // server-side resolver that honours the user's validated studio selection.
 //
 // Two things must stay true, and a behavioural test cannot see either:
-//   1. the action passes p_studio_id at all — otherwise the new application
+//   1. the action passes p_studio_id at all, otherwise the new application
 //      silently keeps riding the deprecated compatibility wrapper forever;
 //   2. the value is NEVER read from FormData, searchParams or any other
 //      browser-supplied channel. The browser does not choose tenant scope.
@@ -32,7 +32,7 @@ function startSessionRpcCall(): string {
   return CODE.slice(open, close);
 }
 
-describe("startSessionAction — explicit studio authority", () => {
+describe("startSessionAction: explicit studio authority", () => {
   it("passes p_studio_id to the start_session RPC", () => {
     expect(startSessionRpcCall()).toMatch(/p_studio_id\s*:/);
   });
@@ -58,7 +58,7 @@ describe("startSessionAction — explicit studio authority", () => {
   });
 });
 
-describe("startSessionAction — the browser never chooses tenant scope", () => {
+describe("startSessionAction: the browser never chooses tenant scope", () => {
   it("never reads a studio id from FormData", () => {
     expect(CODE).not.toMatch(/formData\.get\(\s*["'`][^"'`]*studio/i);
   });
@@ -78,11 +78,11 @@ describe("startSessionAction — the browser never chooses tenant scope", () => 
   });
 });
 
-describe("startSessionAction — reverse-skew floor (new app, old database)", () => {
+describe("startSessionAction: reverse-skew floor (new app, old database)", () => {
   // 0181's four-argument wrapper protects OLD app / NEW database. This covers
   // the other direction: a rolled-back migration, or a deploy that outran the
   // apply, leaves only the four-argument signature and PostgREST answers
-  // PGRST202 — which without a fallback would fail EVERY session start for
+  // PGRST202, which without a fallback would fail EVERY session start for
   // EVERY practitioner, including the single-studio majority the incident
   // never touched. Raised by Codex on PR #573; the code was confirmed
   // empirically against local PostgREST, not assumed.
@@ -111,12 +111,12 @@ describe("startSessionAction — reverse-skew floor (new app, old database)", ()
   it("emits a structural operational signal carrying no identity", () => {
     expect(CODE).toMatch(/start_session_studio_aware_signature_missing/);
     // Scope to the LOGGED OBJECT only. A looser window runs past the closing
-    // brace into the retry RPC call, which legitimately contains `clientId` —
+    // brace into the retry RPC call, which legitimately contains `clientId`,
     // the assertion would then fail on code it was never meant to police.
     const at = CODE.indexOf("start_session_studio_aware_signature_missing");
     const evt = CODE.slice(at, CODE.indexOf("}),", at));
     // PII guard: never a client, practitioner or studio identifier, and the
-    // key must be `errorClass` — the guard bans `*Name*`.
+    // key must be `errorClass`, the guard bans `*Name*`.
     expect(evt).not.toMatch(/clientId|client_id|practitioner|studio\.id|studioId/);
     expect(evt).toMatch(/errorClass/);
     expect(evt).not.toMatch(/errorName/);

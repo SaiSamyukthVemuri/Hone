@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Owner-only availability-bypass — direct behaviour test of the SERVER gate in
+// Owner-only availability-bypass: direct behaviour test of the SERVER gate in
 // bookAppointmentForClientAction (shared by the calendar Quick Book and the
 // client-profile Book flow). The gate is authoritative and enforced on the
 // server-resolved role ONLY: allow_outside_availability=true requires owner,
@@ -25,7 +25,7 @@ vi.mock("@/lib/supabase/queries", () => ({
 }));
 
 // A chainable Supabase stub whose services lookup returns no row, so the action
-// returns "Service not found." immediately AFTER the owner gate — proving the
+// returns "Service not found." immediately AFTER the owner gate, proving the
 // call passed (or did not pass) the gate without exercising insert/email paths.
 vi.mock("@/lib/supabase/server", () => {
   const q: Record<string, unknown> = {};
@@ -123,7 +123,7 @@ describe("no client-supplied field is trusted as authorization", () => {
   it("custom duration WITHOUT the availability bypass keeps existing behaviour (rejected, not owner-gated)", async () => {
     // The pre-existing contract: a custom length requires the bypass flag. A
     // non-owner sending only a duration is refused with the existing message,
-    // NOT the owner error — confirming the gate is on the bypass, not duration.
+    // NOT the owner error, confirming the gate is on the bypass, not duration.
     practitionerState.role = "practitioner";
     const r = await bookAppointmentForClientAction(
       fd({ ...base, duration_minutes_override: "45" }),

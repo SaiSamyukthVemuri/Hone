@@ -11,7 +11,7 @@ import {
 import { bookAppointment } from "./helpers/flows";
 
 // ===========================================================================
-// PUBLIC RESCHEDULE v2 (migration 0171) — browser contract.
+// PUBLIC RESCHEDULE v2 (migration 0171), browser contract.
 // ===========================================================================
 //
 // This PR changes what the reschedule page POSTS and what the server does with
@@ -57,7 +57,7 @@ async function openReschedule(page: Page, token: string) {
  *
  * Starting on the original's day is a trap the 0171 exclusion creates: the
  * original's own reservation is no longer a conflict against itself, so its
- * current start IS offered again — and picking it yields `same_time`, which is
+ * current start IS offered again, and picking it yields `same_time`, which is
  * a correct refusal but not what most of these tests are exercising. B4 asserts
  * that refusal deliberately.
  */
@@ -137,7 +137,7 @@ test.describe("public reschedule v2", () => {
 
     await expect(page.getByText(/You.re rescheduled\./i)).toBeVisible({ timeout: 20_000 });
 
-    // B7 — PROVIDER FAILURE AFTER COMMIT, in the browser. The local stack has
+    // B7: PROVIDER FAILURE AFTER COMMIT, in the browser. The local stack has
     // no valid Resend key, so the confirmation genuinely FAILS. The page must
     // say so rather than claiming an email is on its way, and must still hand
     // the client a working management link.
@@ -191,7 +191,7 @@ test.describe("public reschedule v2", () => {
     expect(acks[0].action).toBe("reschedule");
 
     // B7 (PROVIDER FAILURE AFTER COMMIT). The local stack has no valid Resend
-    // key, so the confirmation email genuinely FAILS on every run — and the
+    // key, so the confirmation email genuinely FAILS on every run, and the
     // browser above still saw success. That is the post-commit contract: the
     // attempt is recorded truthfully (attempts incremented, sent_at NOT
     // stamped) and the reschedule is not reported as failed.
@@ -211,7 +211,7 @@ test.describe("public reschedule v2", () => {
     );
     expect(res.map((r) => r.source_id)).toEqual([succ.id]);
 
-    // The management link RESOLVES — to the successor, not the cancelled
+    // The management link RESOLVES: to the successor, not the cancelled
     // original. /manage renders the appointment it resolves.
     await page.goto(manageHref!);
     await expect(page.getByText(/can.t be used right now/i)).toHaveCount(0);
@@ -236,7 +236,7 @@ test.describe("public reschedule v2", () => {
     await page.getByRole("button", { name: /confirm new time/i }).click();
 
     await expect(page.getByText(/You.re rescheduled\./i)).toBeVisible({ timeout: 20_000 });
-    // No false email claim of ANY kind — neither "on its way" nor "has been sent".
+    // No false email claim of ANY kind, neither "on its way" nor "has been sent".
     await expect(page.getByText(/on its way/i)).toHaveCount(0);
     await expect(page.getByText(/confirmation email has been sent/i)).toHaveCount(0);
     await expect(page.getByText(/couldn.t send the confirmation email/i)).toHaveCount(0);
@@ -299,7 +299,7 @@ test.describe("public reschedule v2", () => {
 
     // The studio edits its policy while this page is open. The hidden hash the
     // page posts now describes text nobody is showing any more.
-    await setStudioPolicy(seed.studioId, "POLICY VERSION B — MATERIALLY DIFFERENT.");
+    await setStudioPolicy(seed.studioId, "POLICY VERSION B, MATERIALLY DIFFERENT.");
 
     await page.getByRole("button", { name: /confirm new time/i }).click();
     await expect(page.getByText(/policies changed/i)).toBeVisible({ timeout: 20_000 });
@@ -336,7 +336,7 @@ test.describe("public reschedule v2", () => {
 
     // 0171 EXCLUSION, VISIBLE IN THE BROWSER: the original's own reservation no
     // longer conflicts with itself, so its current start is OFFERED again. That
-    // is deliberate — and it is exactly why the command needs a same-time guard,
+    // is deliberate, and it is exactly why the command needs a same-time guard,
     // because without one this click would cancel and recreate the booking
     // purely to rotate its token.
     const tz = await getStudioTimezone(seed.studioId);
@@ -383,7 +383,7 @@ test.describe("public reschedule v2", () => {
     // Steal the displayed slot out from under the visitor by dropping a
     // timed-block reservation across the whole offered day. A reservation is
     // used rather than an appointment so no appointment CHECK/exclusion has to
-    // be satisfied — and crucially there is NO .catch() here: a fixture that
+    // be satisfied, and crucially there is NO .catch() here: a fixture that
     // fails to block must fail the test, not let it pass vacuously.
     const dateStr = await page.locator('input[type="date"]').inputValue();
     await sql(
@@ -437,7 +437,7 @@ test.describe("public reschedule v2", () => {
     const successors = await successorOf(appointmentId);
     expect(successors).toHaveLength(1);
 
-    // Exactly ONE cancellation audit — the loser must not have written a second.
+    // Exactly ONE cancellation audit: the loser must not have written a second.
     // (The original also carries its original booking 'created' audit.)
     const audits = await sql<{ n: string }>(
       `select count(*)::int n from public.appointment_audit

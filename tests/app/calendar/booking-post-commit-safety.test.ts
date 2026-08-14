@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR B Part 4 Item 8 — regression guard for the three defects the adversarial
+// PR B Part 4 Item 8, regression guard for the three defects the adversarial
 // review confirmed in the booking action: a post-commit dispatch that could
 // falsely fail a committed booking, and two raw-DB-message leaks to the browser.
 
@@ -11,7 +11,7 @@ const ACTIONS = readFileSync(
   "utf8",
 );
 
-describe("booking action — post-commit + safe-error hardening (Item 8)", () => {
+describe("booking action: post-commit + safe-error hardening (Item 8)", () => {
   it("the post-commit notification dispatch is fail-open (a throw never fails a committed booking)", () => {
     // dispatchBookingEmails must be wrapped so a throwing helper cannot reject
     // the already-committed booking.

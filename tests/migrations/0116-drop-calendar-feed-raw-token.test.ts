@@ -13,7 +13,7 @@ const FILE = "0116_drop_calendar_feed_raw_token.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0116 — number", () => {
+describe("0116: number", () => {
   it("0116 exists; the repo-max tripwire now lives in the 0117 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
@@ -27,7 +27,7 @@ describe("0116 — number", () => {
   });
 });
 
-describe("0116 — drop raw calendar-feed token", () => {
+describe("0116: drop raw calendar-feed token", () => {
   it("drops the raw calendar_feed_token column (idempotent)", () => {
     expect(SQL_CODE).toMatch(
       /alter table public\.practitioners\s+drop column if exists calendar_feed_token\b/,

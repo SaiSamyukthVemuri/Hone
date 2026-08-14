@@ -16,7 +16,7 @@ const base = {
 describe("buildIntakeReminderEmail", () => {
   const email = buildIntakeReminderEmail(base);
 
-  it("subject is generic — no PII, no date, no studio name", () => {
+  it("subject is generic: no PII, no date, no studio name", () => {
     expect(email.subject).toBe(
       "Reminder: please complete your intake form before your appointment",
     );

@@ -5,14 +5,14 @@ import {
   SEARCH_TOTAL_CAP,
 } from "@/lib/search/global-search";
 
-// Global Search V2-A — the server action, end to end.
+// Global Search V2-A: the server action, end to end.
 //
 // tests/lib/search/navigation-registry.test.ts proves the registry in
 // isolation. This file proves the WIRING: that the action derives the
 // practitioner's real role from the session and hands it to the registry, and
 // that adding navigation results did not disturb the four V1 data categories.
 //
-// A source pin would not have caught the failure mode that matters here — an
+// A source pin would not have caught the failure mode that matters here, an
 // action that resolves the session but forwards the wrong role would still
 // contain every string a regex could look for. So this drives the real
 // exported action against a fake Supabase and asserts on the results.
@@ -166,7 +166,7 @@ describe("the action derives navigation visibility from the real session", () =>
     expect(hrefs(await search("photo consent"))).toContain("/settings/consent");
   });
 
-  it("a practitioner is never offered them — not by any of their words", async () => {
+  it("a practitioner is never offered them, not by any of their words", async () => {
     signInAs("practitioner");
     for (const query of [
       "payments",
@@ -294,7 +294,7 @@ describe("navigation results are shaped safely", () => {
 
 describe("V1 categories are not degraded", () => {
   // Every row here matches the word "consent", which is ALSO a settings
-  // keyword — the collision the split cap exists to survive.
+  // keyword, the collision the split cap exists to survive.
   function seedData(n: number) {
     tables.clients = Array.from({ length: n }, (_, i) => ({
       id: `c${i}`,
@@ -380,7 +380,7 @@ describe("V1 categories are not degraded", () => {
   });
 
   it("a data-saturated query keeps its full data budget AND still answers with the setting", async () => {
-    // The V1 shape — page shortcuts appended LAST into one shared cap of 12 —
+    // The V1 shape: page shortcuts appended LAST into one shared cap of 12,
     // dropped every page result once twelve data rows matched. Chloe typing
     // "consent" in a studio whose clients and probes are also named "consent"
     // would have been shown no consent SETTING at all.

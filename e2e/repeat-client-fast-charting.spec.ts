@@ -10,7 +10,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Repeat-client fast charting — "Start from last session".
+// Repeat-client fast charting: "Start from last session".
 //
 // THE WORKFLOW THIS REPLACES, for a client Chloe has treated before:
 //   1. tap "Preview last session's areas"
@@ -21,7 +21,7 @@ import { loginAsOwner } from "./helpers/flows";
 //   6. tap "Edit" to reopen it
 //   7. only NOW can she type today's minutes / hairs / observations
 //
-// THE WORKFLOW NOW: one tap, and she is typing. This spec MEASURES that —
+// THE WORKFLOW NOW: one tap, and she is typing. This spec MEASURES that,
 // every practitioner interaction is counted through a wrapper, so the assertion
 // "one click to typeable" is a number the run produced, not a claim.
 //
@@ -98,7 +98,7 @@ test("ONE tap goes from repeat-client chart to typing today's facts; setup copie
   const minutes = page.getByLabel("Minutes performed (optional)");
   const hairs = page.getByLabel("Hairs treated");
 
-  await test.step("ONE tap lands directly in today's editor — no preview, no reopen", async () => {
+  await test.step("ONE tap lands directly in today's editor, no preview, no reopen", async () => {
     await tap.click(page.getByTestId("copy-previous-fast-start"));
 
     // Typeable, with no further interaction of any kind.
@@ -114,7 +114,7 @@ test("ONE tap goes from repeat-client chart to typing today's facts; setup copie
     await expect(page.getByTestId("copy-previous-preview-panel")).toHaveCount(0);
     //  * the copy panel is gone (the chart is no longer empty);
     await expect(page.getByTestId("copy-previous-fast-start")).toHaveCount(0);
-    //  * no "Edit" reopen was needed — the landed area exposes no Edit button
+    //  * no "Edit" reopen was needed, the landed area exposes no Edit button
     //    precisely because it is already open;
     const blocks = await getSessionBlocksWithFacts(todaySessionId);
     expect(blocks).toHaveLength(2);
@@ -136,12 +136,12 @@ test("ONE tap goes from repeat-client chart to typing today's facts; setup copie
     expect(blocks.map((b) => Number(b.energy_level))).toEqual([11, 24]);
     expect(blocks.map((b) => b.machine_frequency)).toEqual(["13.56 MHz", "27.12 MHz"]);
     expect(blocks.map((b) => b.thermolysis_intensity_percent)).toEqual([44, 44]);
-    // She lands in the FIRST area — the one the previous chart listed first.
+    // She lands in the FIRST area, the one the previous chart listed first.
     expect(blocks[0].sort_order).toBe(1);
     expect(blocks[0].primary_area).toBe("Chin");
   });
 
-  await test.step("today's clinical facts start BLANK — nothing was manufactured", async () => {
+  await test.step("today's clinical facts start BLANK, nothing was manufactured", async () => {
     // In the form she is looking at.
     await expect(minutes).toHaveValue("");
     await expect(hairs).toHaveValue("");
@@ -188,14 +188,14 @@ test("ONE tap goes from repeat-client chart to typing today's facts; setup copie
     expect(blocks[0].primary_area).toBe("Chin");
     expect(Number(blocks[0].energy_level)).toBe(11);
     expect(blocks[0].machine_frequency).toBe("13.56 MHz");
-    // The second copied area is untouched and still blank — saving one area did
+    // The second copied area is untouched and still blank, saving one area did
     // not write facts into another.
     expect(blocks[1].primary_area).toBe("Upper lip");
     expect(blocks[1].minutes_performed).toBeNull();
     expect(blocks[1].hairs_treated).toBeNull();
   });
 
-  await test.step("the HISTORICAL visit is byte-identical — Treatment Memory was not rewritten", async () => {
+  await test.step("the HISTORICAL visit is byte-identical, Treatment Memory was not rewritten", async () => {
     expect(await getSessionContentDigest(previousSessionId)).toBe(historyBefore);
     // Its own outcomes are still its own.
     const prev = await getSessionBlocksWithFacts(previousSessionId);
@@ -228,7 +228,7 @@ test("a double tap on the fast path does not duplicate the copied setup @390px",
 
   await expect
     .poll(() => getSessionBlockCount(todaySessionId), { timeout: T })
-    .toBe(2); // the two source areas — never four
+    .toBe(2); // the two source areas, never four
   // Give any second in-flight request time to land before asserting stability.
   await expect(page.getByTestId("save-treatment-area")).toBeVisible({ timeout: T });
   expect(await getSessionBlockCount(todaySessionId)).toBe(2);
@@ -245,14 +245,14 @@ test("the fast path refuses a source that changed under it, and writes nothing @
   await page.goto(`/clients/${clientId}/sessions/${todaySessionId}`);
   await expect(page.getByTestId("copy-previous-fast-start")).toBeVisible({ timeout: T });
 
-  // Freeze the fast path mid-flight: hold the COMMIT request — and ONLY the
-  // commit — until the previous visit has been edited underneath it, so the
+  // Freeze the fast path mid-flight: hold the COMMIT request, and ONLY the
+  // commit, until the previous visit has been edited underneath it, so the
   // fingerprint the read returned is genuinely stale by the time the server
   // evaluates it. This is the real concurrency window, not a simulated one.
   //
   // The fast path issues TWO server-action POSTs to this URL (read, then
   // commit). Holding "the first POST" would hold the READ, which would then
-  // observe the edit and succeed — proving nothing. The commit is identified by
+  // observe the edit and succeed, proving nothing. The commit is identified by
   // its own argument name instead.
   let released: (() => void) | null = null;
   const editDone = new Promise<void>((resolve) => {
@@ -292,7 +292,7 @@ test("a LOST COMMIT RESPONSE replays the same governed request instead of re-rea
   // THE DEFECT THIS PROVES FIXED: the first commit succeeds server-side but its
   // RESPONSE never arrives. Today's chart is now non-empty, so re-reading the
   // source would make whole_session_copy_source_descriptor report
-  // eligible=false / not_empty — and the panel would announce "there's nothing
+  // eligible=false / not_empty, and the panel would announce "there's nothing
   // from a previous visit to copy here" about a copy that had just succeeded,
   // never reaching the retained idempotency key that would have settled it.
   //
@@ -336,7 +336,7 @@ test("a LOST COMMIT RESPONSE replays the same governed request instead of re-rea
   await test.step("attempt 1: the write lands, the response does not", async () => {
     await page.getByTestId("copy-previous-fast-start").click();
 
-    // (3) the UI experienced a transport failure and says so TRUTHFULLY —
+    // (3) the UI experienced a transport failure and says so TRUTHFULLY,
     // it does not claim nothing was written.
     const ambiguous = page.getByTestId("copy-previous-ambiguous");
     await expect(ambiguous).toBeVisible({ timeout: T });
@@ -382,20 +382,20 @@ test("a LOST COMMIT RESPONSE replays the same governed request instead of re-rea
   });
 
   await test.step("the replay added nothing and named the same areas", async () => {
-    // (8/9) one ledger row, block count unchanged — a REPLAY, not a second copy.
+    // (8/9) one ledger row, block count unchanged, a REPLAY, not a second copy.
     expect(await getSessionBlockCount(todaySessionId)).toBe(2);
     expect(await getCopyOperationCount(todaySessionId)).toBe(1);
 
     const blocks = await getSessionBlocksWithFacts(todaySessionId);
     expect(blocks.map((b) => b.primary_area)).toEqual(["Chin", "Upper lip"]);
-    // She landed in the FIRST created area — the ids the original attempt made.
+    // She landed in the FIRST created area, the ids the original attempt made.
     await expect(page.getByTestId(`area-section-${blocks[0].id}`)).toHaveAttribute(
       "data-editing",
       "true",
     );
     // (11) still never shown.
     await expect(page.getByText(NOTHING_TO_COPY_TEXT)).toHaveCount(0);
-    // Today's facts are still blank — a replay records no outcome either.
+    // Today's facts are still blank, a replay records no outcome either.
     for (const b of blocks) {
       expect(b.minutes_performed).toBeNull();
       expect(b.hairs_treated).toBeNull();
@@ -419,7 +419,7 @@ test("the retained Preview route still reviews and commits, and also lands in th
   // Both prior areas are offered for review.
   await expect(page.getByTestId(/^copy-draft-[0-9a-f-]+$/)).toHaveCount(2);
 
-  // Removing one before committing still works — her ability to alter the copy
+  // Removing one before committing still works, her ability to alter the copy
   // before recording today's treatment is preserved.
   await tap.click(page.getByTestId(/^copy-draft-remove-/).first());
   await expect(page.getByTestId(/^copy-draft-[0-9a-f-]+$/)).toHaveCount(1);
@@ -427,7 +427,7 @@ test("the retained Preview route still reviews and commits, and also lands in th
   await tap.click(page.getByTestId("copy-previous-commit"));
   await expect.poll(() => getSessionBlockCount(todaySessionId), { timeout: T }).toBe(1);
 
-  // The reviewed route lands in today's editor too — the reopen loop is gone on
+  // The reviewed route lands in today's editor too, the reopen loop is gone on
   // BOTH routes. It simply costs more taps than the fast path.
   await expect(page.getByTestId("save-treatment-area")).toBeVisible({ timeout: T });
   await expect(page.getByLabel("Minutes performed (optional)")).toHaveValue("");

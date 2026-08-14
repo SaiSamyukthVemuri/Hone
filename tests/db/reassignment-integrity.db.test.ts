@@ -3,7 +3,7 @@ import { adminQuery, closePool } from "./helpers/harness";
 import { dropSynthStudio, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 Item 7 — data-integrity of a practitioner reassignment via
+// PR B Part 4 Item 7, data-integrity of a practitioner reassignment via
 // move_or_reassign_appointment. The command's outcomes are proven broadly in
 // move-reassign-appointment.db + move-target-integrity.db; this pins the explicit
 // Item 7 checklist: same row, PHI/relationships preserved, shadow re-keyed, one
@@ -70,7 +70,7 @@ const audits = (id: string) =>
     [id],
   ).then((r) => r.rows as { action: string; details: Record<string, unknown> }[]);
 
-describe("Item 7 — reassignment data integrity", () => {
+describe("Item 7: reassignment data integrity", () => {
   it("same-time A→B: same row + client/service/duration preserved, practitioner + shadow re-keyed, one 'reassigned' audit", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     const before = await fullRow(a.id);

@@ -21,7 +21,7 @@ function event(over: Partial<ConversionEvent> = {}): ConversionEvent {
   };
 }
 
-describe("meta adapter — buildPayload", () => {
+describe("meta adapter: buildPayload", () => {
   it("maps booking_confirmed → Meta Schedule with the deterministic event_id", () => {
     const p = metaAdapter.buildPayload(event(), config)!;
     expect(p).not.toBeNull();
@@ -43,7 +43,7 @@ describe("meta adapter — buildPayload", () => {
     expect(json).not.toContain("4165551234");
   });
 
-  it("sends only a GENERIC service_category — a free-text name collapses to 'other'", () => {
+  it("sends only a GENERIC service_category, a free-text name collapses to 'other'", () => {
     const clean = metaAdapter.buildPayload(event({ serviceCategory: "electrolysis" }), config)!;
     expect((clean.body as { data: Array<{ custom_data: unknown }> }).data[0].custom_data).toEqual({
       service_category: "electrolysis",
@@ -74,7 +74,7 @@ describe("meta adapter — buildPayload", () => {
   });
 });
 
-describe("meta adapter — send() (token via ctx; no global env)", () => {
+describe("meta adapter: send() (token via ctx; no global env)", () => {
   it("skips with missing_token when no token is supplied (no network)", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);

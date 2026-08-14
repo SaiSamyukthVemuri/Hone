@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// T8 / T9 — SOURCE-CONTRACT proof (this file does NOT execute the helper).
+// T8 / T9: SOURCE-CONTRACT proof (this file does NOT execute the helper).
 //
 // B6 makes an early-completed appointment payment-eligible, and does so with no
 // payment-runtime change. This file reads the live helper's SOURCE and asserts
@@ -12,13 +12,13 @@ import { join } from "node:path";
 //
 // THE BEHAVIOURAL PROOF LIVES ELSEWHERE, and it does run the real function:
 // tests/db/quick-checkout-eligibility.db.test.ts "Stage J" invokes the actual
-// getSessionPaymentEligibility against real seeded rows — a mid-visit
+// getSessionPaymentEligibility against real seeded rows, a mid-visit
 // appointment (started, not yet ended) that is already completed resolves
 // ELIGIBLE, and the same mid-visit appointment left confirmed is refused for
 // LIFECYCLE rather than for its clock. Nothing is mocked there.
 //
 // Keeping both is deliberate: the live test proves what happens, this one
-// proves WHY — that no end-time check exists in the gate at all, which a
+// proves WHY, that no end-time check exists in the gate at all, which a
 // passing behavioural case cannot demonstrate on its own. Read together with
 // tests/db/appointment-transition-integrity.db.test.ts (T1/T2/T2b/T3), which
 // establishes when 'completed' becomes reachable.
@@ -28,12 +28,12 @@ const SRC = readFileSync(
   "utf8",
 );
 
-describe("T8/T9 (SOURCE CONTRACT) — the payment gate is status-keyed, with no end-time check", () => {
-  it("T8 — admits the appointment ONLY when its status is 'completed'", () => {
+describe("T8/T9 (SOURCE CONTRACT): the payment gate is status-keyed, with no end-time check", () => {
+  it("T8: admits the appointment ONLY when its status is 'completed'", () => {
     expect(SRC).toMatch(/appointmentSummary\.status !== "completed"/);
   });
 
-  it("T9 — anything other than completed is refused, and the reason names the status", () => {
+  it("T9: anything other than completed is refused, and the reason names the status", () => {
     // A started-but-confirmed appointment falls into this branch: B6 changed
     // when a practitioner MAY complete, never what 'completed' means.
     expect(SRC).toMatch(
@@ -41,7 +41,7 @@ describe("T8/T9 (SOURCE CONTRACT) — the payment gate is status-keyed, with no 
     );
   });
 
-  it("consults NO appointment end time — which is why B6 needed no payment change", () => {
+  it("consults NO appointment end time, which is why B6 needed no payment change", () => {
     // If eligibility had its own ends_at gate, early completion would have
     // produced a completed appointment that still could not be charged, and
     // B6 would have had to touch payment code. It does not.

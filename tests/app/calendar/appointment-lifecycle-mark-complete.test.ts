@@ -11,7 +11,7 @@ import path from "node:path";
 
 // The completion control was EXTRACTED so the calendar surface and the
 // charting "Finish appointment" workflow share one implementation instead of
-// two lookalikes. Everything these tests pin still exists — it just lives in
+// two lookalikes. Everything these tests pin still exists, it just lives in
 // the shared control now, which is exactly the point: one place to regress.
 const COMPONENT_PATH = path.resolve(
   __dirname,
@@ -103,7 +103,7 @@ describe("AppointmentLifecycleActions: Mark completed gating", () => {
     expect(COMPONENT).not.toMatch(/const hasEnded = /);
   });
 
-  it("NO-SHOW keeps its own ends_at clock — the two never share a variable", () => {
+  it("NO-SHOW keeps its own ends_at clock, the two never share a variable", () => {
     // B6 moved completion only. If a future edit rekeys no-show to startsAt,
     // a booked-but-not-yet-elapsed appointment could be marked no-show.
     expect(CALENDAR).toMatch(/const hasEnded = Number\.isFinite\(endsAtMs\) && endsAtMs <= nowTick;/);
@@ -119,7 +119,7 @@ describe("AppointmentLifecycleActions: confirmation dialog (replaces window.conf
   // Chloe workflow fix. The confirmation step is now an in-DOM accessible
   // dialog, not native window.confirm(), because window.confirm can be
   // silently suppressed on iOS Safari (returns false with nothing shown),
-  // which the old code treated as a Cancel — so "Mark completed" did nothing.
+  // which the old code treated as a Cancel, so "Mark completed" did nothing.
 
   it("imports and renders the accessible ConfirmDialog", () => {
     expect(COMPONENT).toMatch(
@@ -203,7 +203,7 @@ describe("AppointmentLifecycleActions: confirm runs the action once", () => {
   it("guards against a double request (early-return while pending; dialog disables Confirm)", () => {
     expect(handleConfirm).toMatch(/if \(pending\) return;/);
     // The dialog is told the pending state so its Confirm button is disabled
-    // while a request is in flight — one request maximum per confirmation.
+    // while a request is in flight, one request maximum per confirmation.
     expect(COMPONENT).toMatch(/pending=\{pending\}/);
   });
 
@@ -275,7 +275,7 @@ describe("markAppointmentCompleteAction (unchanged): RPC + scoping", () => {
 });
 
 // ===========================================================================
-// Appointment boundary B2 — T6.8: the actions branch truthfully on EVERY
+// Appointment boundary B2, T6.8: the actions branch truthfully on EVERY
 // sentinel the three lifecycle commands can return
 // ===========================================================================
 //
@@ -284,7 +284,7 @@ describe("markAppointmentCompleteAction (unchanged): RPC + scoping", () => {
 // invisible: an action that ignores the return value renders a refusal as
 // success, with no error anywhere in the stack.
 //
-// The DB half of this contract — one behavioural case per sentinel — lives in
+// The DB half of this contract, one behavioural case per sentinel, lives in
 // tests/db/appointment-lifecycle-commands.db.test.ts. This half pins the
 // APPLICATION's reading of them. B2 changes no application source; if a
 // branch were found missing it would be recorded as a finding, not fixed here.
@@ -293,7 +293,7 @@ describe("markAppointmentCompleteAction (unchanged): RPC + scoping", () => {
 // treats a KNOWN success literal as the only success and falls through to an
 // error for everything else. That is what makes a future, unrecognised result
 // code fail closed instead of being reported as success.
-// Every assertion below runs against codeOnly(...) — the source with `//`
+// Every assertion below runs against codeOnly(...), the source with `//`
 // lines stripped. Asserting against RAW source is the vacuity trap this repo
 // has already been bitten by: a refactor that consolidates the sentinel
 // branches into a helper and leaves the old block behind AS A COMMENT would
@@ -324,7 +324,7 @@ const COMPLETE_BODY = actionBody("markAppointmentCompleteAction");
 describe("T6.8 the action bodies were located (anti-vacuity for every block below)", () => {
   it("all three server actions were extracted from comment-stripped source", () => {
     // Without this, a regex that stopped matching would turn every assertion
-    // in this section into `expect("").toMatch(...)` — which fails loudly — or,
+    // in this section into `expect("").toMatch(...)`, which fails loudly, or,
     // worse, into a `.not.toMatch` that passes vacuously.
     expect(CANCEL_BODY.length).toBeGreaterThan(500);
     expect(NO_SHOW_BODY.length).toBeGreaterThan(400);
@@ -414,7 +414,7 @@ describe("T6.8 markAppointmentNoShowAction handles every mark_appointment_no_sho
     expect(b).toMatch(/ok: false/);
   });
 
-  it("'marked' is the ONLY value treated as success — 'wrong_status' and anything new fall through", () => {
+  it("'marked' is the ONLY value treated as success, 'wrong_status' and anything new fall through", () => {
     const b = branchFor(NO_SHOW_BODY, 'rpcResult !== "marked"');
     expect(b, "the fail-closed fallthrough must exist").not.toBe("");
     expect(b).toMatch(/ok: false/);
@@ -443,14 +443,14 @@ describe("T6.8 markAppointmentCompleteAction handles the RAISING command's excep
   it("mark_appointment_complete RAISES rather than returning a sentinel, so the action branches on rpcErr", () => {
     // Unlike the two 0033 commands, 0032's mark_appointment_complete returns
     // void and signals refusal with 42501 / P0002 exceptions. The action must
-    // therefore treat ANY rpcErr as a failure — there is no result value to
+    // therefore treat ANY rpcErr as a failure, there is no result value to
     // inspect, and it correctly does not destructure `data`.
     expect(COMPLETE_BODY).toMatch(
       /const \{ error: rpcErr \} = await admin\.rpc\(\s*"mark_appointment_complete"/,
     );
     const b = branchFor(COMPLETE_BODY, "rpcErr");
     expect(b, "the rpcErr branch must exist").not.toBe("");
-    // Every path out of the error branch is a failure — no `ok: true` inside it.
+    // Every path out of the error branch is a failure, no `ok: true` inside it.
     expect(b).not.toMatch(/ok: true/);
   });
 
@@ -460,8 +460,8 @@ describe("T6.8 markAppointmentCompleteAction handles the RAISING command's excep
     expect(b).toMatch(/not yet ended/);
     // 'appointment is not confirmed (current: …)' (0032:4080)
     expect(b).toMatch(/not confirmed/);
-    // Everything else — including the 42501 active-membership raise and any
-    // future errcode — reaches the generic failure. Fail-closed.
+    // Everything else: including the 42501 active-membership raise and any
+    // future errcode, reaches the generic failure. Fail-closed.
     expect(b).toMatch(/Could not mark this appointment complete/i);
   });
 
@@ -503,8 +503,8 @@ describe("T6.8 no lifecycle action can report success on an unknown result code"
   });
 
   it("no equality comparison against rpcResult returns success except the documented idempotent one", () => {
-    // Scans EVERY equality form — double quotes, single quotes, backticks, ==
-    // and === — so adding `if (rpcResult === 'settled') return { ok: true };`
+    // Scans EVERY equality form: double quotes, single quotes, backticks, ==
+    // and ===, so adding `if (rpcResult === 'settled') return { ok: true };`
     // cannot slip past a double-quote-only regex.
     const EQ = /rpcResult\s*===?\s*(?:"([^"]+)"|'([^']+)'|`([^`]+)`)/g;
 
@@ -541,7 +541,7 @@ describe("T6.8 no lifecycle action can report success on an unknown result code"
   it("every explicit sentinel branch is reached BEFORE the catch-all that would shadow it", () => {
     // Order is load-bearing and is NOT implied by the branch-content assertions
     // above. Each `if` returns, so hoisting the `!== <success>` catch-all above
-    // the explicit branches leaves all of them syntactically intact — and
+    // the explicit branches leaves all of them syntactically intact, and
     // permanently unreachable. Every explicit branch would still contain its
     // literal and its return, so a content-only check stays green while
     // 'already_cancelled' silently becomes a hard error on a double-click and

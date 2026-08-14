@@ -24,7 +24,7 @@ import {
 // `services:service_id(name, price_cents)` started returning
 // HTTP 400 / PGRST200 on every load. The page discarded the error, the booked
 // service resolved to null, and the amount field was ALWAYS blank on session
-// detail — while quick checkout, which already used the bare-table
+// detail, while quick checkout, which already used the bare-table
 // `service:services(...)` form, kept working. That is exactly "the amount does
 // not RELIABLY populate": it depended on which surface you opened.
 //
@@ -34,7 +34,7 @@ import {
 // came from the sessions.price_paid_cents fallback.
 //
 // They also pin that the internal note is OPTIONAL on BOTH payment surfaces and
-// that a blank note persists as NULL — the belief that it is mandatory comes
+// that a blank note persists as NULL, the belief that it is mandatory comes
 // from the separate manual no-show FEE card, which genuinely requires one.
 //
 // Local-only lane: guarded fake Stripe, sk_test_dummy, no real provider egress.
@@ -108,7 +108,7 @@ test.describe("priced booked service", () => {
     ).toHaveValue("14500");
   });
 
-  test("quick checkout prefills identically — the two surfaces agree", async ({ page }) => {
+  test("quick checkout prefills identically: the two surfaces agree", async ({ page }) => {
     await loginAsOwner(page, seed);
     await page.goto("/dashboard");
     await page.getByTestId("checkout-button").first().click();
@@ -211,7 +211,7 @@ test.describe("no resolvable price", () => {
       await openSessionDetail(page, seed);
       // F-PAY-001: an unresolvable price now BLOCKS preparation instead of
       // offering a blank editable field. There is no amount, no expected
-      // amount and no Prepare action — and nothing is inserted.
+      // amount and no Prepare action, and nothing is inserted.
       await expect(amountField(page)).toHaveCount(0);
       await expect(page.getByTestId("pricing-blocked")).toContainText(
         /No price is configured/i,
@@ -356,10 +356,10 @@ test.describe("internal note is optional everywhere", () => {
         order by created_at desc limit 1`,
       [seed.sessionId],
     );
-    // Exactly one attempt — no duplicate from a double submit.
+    // Exactly one attempt: no duplicate from a double submit.
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0].status).toBe("ready");
-    // Blank note persists as NULL — never an auto-generated placeholder.
+    // Blank note persists as NULL, never an auto-generated placeholder.
     expect(rows.rows[0].internal_note).toBeNull();
     // The prepared amount is the booked-service default that populated the form.
     expect(Number(rows.rows[0].amount_cents)).toBe(SERVICE_PRICE_CENTS);

@@ -11,7 +11,7 @@ const DISCOVERY_SCOPE = "https://www.googleapis.com/auth/calendar.calendarlist.r
 // EXACT calendar.events.owned scope (broad calendar.events no longer satisfies it).
 const EVENTS_OWNED_SCOPE = "https://www.googleapis.com/auth/calendar.events.owned";
 
-// Google Calendar — Phase A + B2.4, real browser. Exercises the connection UI and
+// Google Calendar: Phase A + B2.4, real browser. Exercises the connection UI and
 // the owner DESTINATION chooser WITHOUT any Google account: the studio flag gate,
 // the dormant/iCal-distinction copy, the destination chooser rendering, and the
 // fail-closed OAuth paths when the integration is not provisioned (no GOOGLE_* env
@@ -51,7 +51,7 @@ test("Google Calendar card: flag-gated, dormant, fail-closed when unconfigured",
   });
 });
 
-// B2.4 — a connected owner with NO destination sees the destination chooser; the
+// B2.4: a connected owner with NO destination sees the destination chooser; the
 // dormant statement is explicit. Choosing a mode records it (a plain DB write, no
 // Google call), then the destination-scope grant fails closed (no GOOGLE_* env).
 test("Google Calendar card: connected owner sees the destination chooser + fail-closed grant", async ({
@@ -95,7 +95,7 @@ test("Google Calendar card: a fully-configured owned destination reads as ready-
   await page.goto("/settings/profile");
   await expect(page.getByTestId("gcal-ready")).toBeVisible();
   await expect(page.getByText(/Destination ready for future event sync/i)).toBeVisible();
-  // Even when ready, the dormant statement remains — sync is never claimed active.
+  // Even when ready, the dormant statement remains, sync is never claimed active.
   await expect(
     page.getByText(/Synchronization is off\. Hone is not creating or changing appointment events\./i),
   ).toBeVisible();

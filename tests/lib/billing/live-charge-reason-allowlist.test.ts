@@ -57,7 +57,7 @@ describe("allowlist logic", () => {
   });
 });
 
-describe("prepare gate — manual-fee eligibility", () => {
+describe("prepare gate: manual-fee eligibility", () => {
   const src = read("lib/billing/manual-fee-eligibility.ts");
   it("pushes the live hold into the eligibility blocking reasons", () => {
     expect(src).toMatch(/from "@\/lib\/billing\/live-charge-reason-allowlist"/);
@@ -66,7 +66,7 @@ describe("prepare gate — manual-fee eligibility", () => {
   });
 });
 
-describe("execute gate — manual-fee charge action (defense-in-depth)", () => {
+describe("execute gate: manual-fee charge action (defense-in-depth)", () => {
   const src = read("app/(app)/calendar/[id]/manual-fee-actions.ts");
   it("re-checks the hold before calling the charge executor and blocks", () => {
     const gate = src.indexOf("liveChargeReasonBlockMessage");
@@ -80,7 +80,7 @@ describe("execute gate — manual-fee charge action (defense-in-depth)", () => {
 
   it("does NOT change the session-payment executor itself (no Stripe SDK / no charge-logic edit)", () => {
     const charge = read("lib/billing/session-payment-charge.ts");
-    // The shared executor is untouched by this PR — it does not import the
+    // The shared executor is untouched by this PR, it does not import the
     // manual-fee allowlist (session payments are allowed everywhere).
     expect(charge).not.toMatch(/live-charge-reason-allowlist/);
   });
@@ -97,7 +97,7 @@ describe("session payments remain allowed (not gated by the hold)", () => {
   });
 });
 
-describe("UI — fee settings reflect the hold and stay configurable", () => {
+describe("UI: fee settings reflect the hold and stay configurable", () => {
   const src = read("app/(app)/settings/payments/FeeAmountsCard.tsx");
   it("says live manual fee charging is on hold, money not charged, session payments unaffected", () => {
     expect(src).toMatch(/Live manual fee charging is currently on hold for this launch/);

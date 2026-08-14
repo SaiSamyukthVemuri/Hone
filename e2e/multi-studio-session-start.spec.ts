@@ -10,7 +10,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// MULTI-STUDIO SESSION START — the 0181 production regression, in a real browser.
+// MULTI-STUDIO SESSION START: the 0181 production regression, in a real browser.
 //
 // THE INCIDENT. A practitioner active in TWO studios opened
 // /clients/<id>/sessions/new (HTTP 200) and got HTTP 500 on tapping a modality:
@@ -24,7 +24,7 @@ import { loginAsOwner } from "./helpers/flows";
 // was structurally incapable of expressing the defect. This spec seeds the shape
 // that can.
 //
-// WHAT THIS DRIVES. The REAL journey — profile → "+ Log session" → modality —
+// WHAT THIS DRIVES. The REAL journey, profile → "+ Log session" → modality,
 // not a page.goto to the destination. A soft navigation and a form POST to a
 // server action are exactly the two hops the incident lived in, and a goto skips
 // the first while asserting only a URL would miss a 500 on the second. The
@@ -38,7 +38,7 @@ let studioB: SecondStudio;
 let clientInA: { clientId: string; clientName: string };
 let practInA: string;
 
-/** Fail the test on ANY uncaught page error — the class this incident produced. */
+/** Fail the test on ANY uncaught page error, the class this incident produced. */
 function trackPageErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
@@ -74,7 +74,7 @@ test("a two-studio practitioner can start a session in EITHER studio", async ({
   });
 
   await test.step("the SAME human gains a second active studio membership", async () => {
-    // Deliberately AFTER sign-in: this is how the shape arises in reality — an
+    // Deliberately AFTER sign-in: this is how the shape arises in reality, an
     // existing practitioner is added to a second studio. From the next request
     // on, a user with 2+ memberships and no valid selection must choose.
     studioB = await seedSecondStudioForSameUser(seed);
@@ -82,7 +82,7 @@ test("a two-studio practitioner can start a session in EITHER studio", async ({
   });
 
   // -------------------------------------------------------------------------
-  // STUDIO B — the side that produced the production 500.
+  // STUDIO B, the side that produced the production 500.
   // -------------------------------------------------------------------------
   await test.step("select Studio B through the real chooser", async () => {
     await chooseStudio(page, studioB.studioName);
@@ -121,13 +121,13 @@ test("a two-studio practitioner can start a session in EITHER studio", async ({
     const rows = await getSessionsForClient(studioB.clientId);
     expect(rows).toHaveLength(1);
     expect(rows[0].studio_id).toBe(studioB.studioId);
-    // The SPECIFIC membership — not "some" row that happened to work.
+    // The SPECIFIC membership: not "some" row that happened to work.
     expect(rows[0].practitioner_id).toBe(studioB.practitionerId);
     expect(rows[0].modality).toBe("electrolysis");
   });
 
   // -------------------------------------------------------------------------
-  // STUDIO A — the other authorized membership must work too, so the fix is
+  // STUDIO A, the other authorized membership must work too, so the fix is
   // "bind to the selection", not "prefer the other studio".
   // -------------------------------------------------------------------------
   await test.step("switch to Studio A and chart there as well", async () => {

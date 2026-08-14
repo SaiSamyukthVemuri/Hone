@@ -3,7 +3,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // ===========================================================================
-// 0173 GROUP 5 — L23 parent-delete appointment-lineage closure, source contract.
+// 0173 GROUP 5, L23 parent-delete appointment-lineage closure, source contract.
 //
 // L23 was briefly drafted as a companion migration `0174`. That was wrong: the
 // canonical appointment-DML program reserves 0174 for B5 (attribution + audit
@@ -13,7 +13,7 @@ import { join } from "node:path";
 //
 // It keeps its own test file rather than being merged into
 // tests/migrations/0173-appointment-repair-commands.test.ts because it is a
-// genuinely separate subject — a privilege/policy change on two OTHER tables —
+// genuinely separate subject, a privilege/policy change on two OTHER tables,
 // and reviewing it on its own terms is the point. Both files are 0173-scoped.
 //
 // Behaviour lives in tests/db/appointment-parent-delete-boundary.db.test.ts,
@@ -42,7 +42,7 @@ const L23_PROSE = L23_SECTION.split("\n")
   .join(" ");
 
 /**
- * Every executable REVOKE in the WHOLE file, whole. NOT `^revoke` — see the
+ * Every executable REVOKE in the WHOLE file, whole. NOT `^revoke`, see the
  * 0172 test: anchoring at column 0 makes a single-space-indented statement
  * invisible to this list and to every guard built on it, and an adversarial
  * pass found four mutants that survived a full suite that way.
@@ -65,7 +65,7 @@ const PARENTS = ["services", "practitioners"] as const;
 
 // ---------------------------------------------------------------------------
 
-describe("0173 GROUP 5 — migration ownership", () => {
+describe("0173 GROUP 5: migration ownership", () => {
   it("GROUP 5 exists inside 0173", () => {
     expect(G5_START, "the GROUP 5 banner must be present").toBeGreaterThan(-1);
     expect(L23_CODE.length).toBeGreaterThan(100);
@@ -73,7 +73,7 @@ describe("0173 GROUP 5 — migration ownership", () => {
 
   it("0174 went to B5, exactly as this reservation intended", () => {
     // This assertion previously read "NO 0174 migration exists". It was never
-    // about 0174 being EMPTY — it was about 0174 not being spent on L23. B5 has
+    // about 0174 being EMPTY, it was about 0174 not being spent on L23. B5 has
     // now claimed it for appointment attribution + audit integrity, which is
     // the outcome the reservation was protecting, so the assertion is restated
     // rather than deleted: the withdrawn L23 companion must still not exist,
@@ -95,7 +95,7 @@ describe("0173 GROUP 5 — migration ownership", () => {
   });
 });
 
-describe("0173 GROUP 5 — the privilege change is exactly DELETE on exactly two tables", () => {
+describe("0173 GROUP 5: the privilege change is exactly DELETE on exactly two tables", () => {
   it.each(PARENTS)("%s: DELETE revoked from anon AND authenticated", (table) => {
     const re = new RegExp(
       `revoke\\s+delete\\s+on\\s+table\\s+public\\.${table}\\s+from\\s+anon,\\s*authenticated\\s*;`,
@@ -149,7 +149,7 @@ describe("0173 GROUP 5 — the privilege change is exactly DELETE on exactly two
     }
   });
 
-  it("does NOT touch clients or studios — already default-denied", () => {
+  it("does NOT touch clients or studios, already default-denied", () => {
     for (const stmt of L23_STATEMENTS) {
       const s = stmt.toLowerCase();
       if (/^(grant|revoke|drop policy|create policy)/.test(s)) {
@@ -162,7 +162,7 @@ describe("0173 GROUP 5 — the privilege change is exactly DELETE on exactly two
   });
 });
 
-describe("0173 GROUP 5 — the policy residue", () => {
+describe("0173 GROUP 5: the policy residue", () => {
   it("drops the standalone practitioners DELETE policy outright", () => {
     expect(L23_CODE).toMatch(
       /drop policy if exists "practitioners: owners delete" on public\.practitioners\s*;/,
@@ -236,7 +236,7 @@ describe("0173 GROUP 5 — the policy residue", () => {
   });
 });
 
-describe("0173 GROUP 5 — what it must not do", () => {
+describe("0173 GROUP 5: what it must not do", () => {
   it("alters NO foreign key or referential action", () => {
     for (const stmt of L23_STATEMENTS) {
       const s = stmt.toLowerCase();
@@ -263,7 +263,7 @@ describe("0173 GROUP 5 — what it must not do", () => {
     }
   });
 
-  it("grants nothing to a browser role — B3's boundary is untouched", () => {
+  it("grants nothing to a browser role, B3's boundary is untouched", () => {
     for (const stmt of L23_STATEMENTS) {
       const s = stmt.toLowerCase();
       if (/^grant\b/.test(s)) {
@@ -273,7 +273,7 @@ describe("0173 GROUP 5 — what it must not do", () => {
   });
 });
 
-describe("0173 GROUP 5 — the census that authorises it is recorded", () => {
+describe("0173 GROUP 5: the census that authorises it is recorded", () => {
   it("records the FK census, the runtime delete census and the deactivation workflow", () => {
     const p = L23_PROSE.toLowerCase();
     expect(p).toContain("services.active");

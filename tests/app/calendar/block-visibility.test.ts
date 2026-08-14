@@ -8,9 +8,9 @@ import {
   TIMED_BLOCK_LABEL,
 } from "@/app/(app)/calendar/calendar-format";
 
-// PR #300 — calendar blocked-time visibility + open-hours clarity (Chloe pilot
+// PR #300: calendar blocked-time visibility + open-hours clarity (Chloe pilot
 // feedback). Month view now surfaces blocked time; the week full-day blockout
-// shows its reason; open hours read more clearly. Render/source only — no
+// shows its reason; open hours read more clearly. Render/source only, no
 // booking-slot change, no settings IA change, no migration.
 
 const TZ = "America/Toronto";

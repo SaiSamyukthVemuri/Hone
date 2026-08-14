@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 
-// PR #273. Inline Treatment Photos gallery previews — the page server-signs a
+// PR #273. Inline Treatment Photos gallery previews, the page server-signs a
 // short-TTL preview URL per image (after the studio-scoped RLS load), the grid
 // renders inline <img> previews, and clicking opens an in-app modal (no new tab
 // as the primary path). Security model unchanged: private bucket, signed-URL
@@ -96,7 +96,7 @@ describe("scope: no annotation/OCR/AI/AR assets/comparison/export", () => {
       expect(src).not.toMatch(/<canvas|getContext\(|toDataURL|tesseract|createWorker|\bOCR\b/i);
       expect(src).not.toMatch(/annotat|sketch|drawing/i);
       expect(src).not.toMatch(/aestheticrecord|aesthetic.record|smartmatch|before.?\/?.?after/i);
-      // No side-by-side comparison feature (deferred). ("export" is omitted —
+      // No side-by-side comparison feature (deferred). ("export" is omitted,
       // it is the JS keyword, not an export feature.)
       expect(src).not.toMatch(/side-by-side|\bcomparison\b/i);
     });

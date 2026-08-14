@@ -5,7 +5,7 @@ import {
   MIN_BACKOFF_SECONDS,
 } from "@/lib/google-calendar/sync/backoff";
 
-// Phase B2.1 — bounded exponential backoff with full jitter, injectable rng.
+// Phase B2.1: bounded exponential backoff with full jitter, injectable rng.
 
 describe("computeBackoff", () => {
   it("always returns a whole number in [5, 21600]", () => {

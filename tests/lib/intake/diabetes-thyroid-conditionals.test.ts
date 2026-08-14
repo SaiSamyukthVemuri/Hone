@@ -19,7 +19,7 @@ import {
 } from "@/lib/intake/review-answers";
 
 // What the reviewer actually READS for a given state. The "answered" case has
-// no fixed copy — the stored answer is rendered — so it is named as such rather
+// no fixed copy, the stored answer is rendered, so it is named as such rather
 // than indexed out of a map that deliberately does not contain it.
 function reviewerSees(state: ReviewAnswerState): string {
   return state === "answered" ? "<the stored answer>" : REVIEW_ANSWER_COPY[state];
@@ -28,8 +28,8 @@ function reviewerSees(state: ReviewAnswerState): string {
 // Diabetes / thyroid subtype conditionals.
 //
 // Chloe asked for the type when a client reports diabetes or a thyroid
-// condition. The parent is NOT a yes/no question — it is one option inside the
-// `medical_conditions` multi_select — so "affirmative" means "that option is
+// condition. The parent is NOT a yes/no question, it is one option inside the
+// `medical_conditions` multi_select, so "affirmative" means "that option is
 // selected", and the child follows the same shape the metal-implants and
 // recent-surgery follow-ups already use.
 //
@@ -104,7 +104,7 @@ describe("1. the question definitions", () => {
 
   it("gives every set a truthful catch-all, because the field is required", () => {
     // A required question whose options exclude the client's real situation
-    // does not collect better data — it manufactures wrong data. This is the
+    // does not collect better data, it manufactures wrong data. This is the
     // property that makes requiring an answer defensible at all.
     for (const key of ["diabetes_type", "thyroid_type"]) {
       const values = q(key).options?.map((o) => o.value) ?? [];
@@ -173,7 +173,7 @@ describe("2. visibility follows the affirmative parent answer", () => {
     expect(visible).not.toContain("thyroid_type");
   });
 
-  it("shows the diabetes child — and ONLY it — when diabetes is selected", () => {
+  it("shows the diabetes child: and ONLY it, when diabetes is selected", () => {
     const visible = visibleQuestionsForStep(
       MEDICAL_STEP_ID,
       withConditions("diabetes"),
@@ -182,7 +182,7 @@ describe("2. visibility follows the affirmative parent answer", () => {
     expect(visible).not.toContain("thyroid_type");
   });
 
-  it("shows the thyroid child — and ONLY it — when thyroid is selected", () => {
+  it("shows the thyroid child: and ONLY it, when thyroid is selected", () => {
     const visible = visibleQuestionsForStep(
       MEDICAL_STEP_ID,
       withConditions("thyroid"),
@@ -282,8 +282,8 @@ describe("4. only the offered values are accepted", () => {
   });
 
   it("keeps the two questions' option sets separate", () => {
-    // They now SHARE the `other_or_unsure` token, which is fine — values are
-    // scoped per question — but a diabetes-only value must still be rejected on
+    // They now SHARE the `other_or_unsure` token, which is fine, values are
+    // scoped per question, but a diabetes-only value must still be rejected on
     // the thyroid question and vice versa.
     expect(
       findInvalidChoiceAnswers({
@@ -354,7 +354,7 @@ describe("4. only the offered values are accepted", () => {
 
   it("ignores a value whose question does not apply", () => {
     // A crafted payload cannot be blocked forever by a stale value it can no
-    // longer see — and a hidden question is not being answered.
+    // longer see, and a hidden question is not being answered.
     expect(
       findInvalidChoiceAnswers({
         medical_conditions: ["pcos"],
@@ -422,11 +422,11 @@ describe("5. the practitioner review tells the truth about what is known", () =>
       "Other / not sure",
     );
 
-    // Never asked (predates the question) — a different, weaker statement.
+    // Never asked (predates the question), a different, weaker statement.
     expect(
       reviewAnswerState(q("diabetes_type"), withConditions("diabetes"), "reviewed"),
     ).toBe("not_collected");
-    // Never applicable — weaker still.
+    // Never applicable: weaker still.
     expect(
       reviewAnswerState(q("diabetes_type"), withConditions("pcos"), "reviewed"),
     ).toBe("not_applicable");
@@ -453,7 +453,7 @@ describe("5. the practitioner review tells the truth about what is known", () =>
   it("does NOT present a stale type as the client's answer", () => {
     // THE regression this projection exists to prevent: the client picked
     // Type 1, then unchecked diabetes. The value is still in the jsonb (the
-    // wizard merges, the server spreads — nothing deletes it), and before this
+    // wizard merges, the server spreads, nothing deletes it), and before this
     // the grid would have printed "Type 1" under a client who reports no
     // diabetes at all.
     const stale = {
@@ -468,7 +468,7 @@ describe("5. the practitioner review tells the truth about what is known", () =>
     );
   });
 
-  it("says 'never collected' — not 'not answered' — for a historical intake", () => {
+  it("says 'never collected': not 'not answered', for a historical intake", () => {
     // The legacy shape: submitted long before the subtype existed. The client
     // was never asked, so blaming them for an omission would be a lie, and
     // inventing a type would be a worse one.
@@ -510,7 +510,7 @@ describe("5. the practitioner review tells the truth about what is known", () =>
 
   it("keeps an optional unanswered question out of 'never collected'", () => {
     // `outcome_hoped` is optional, so a terminal intake without it is a client
-    // who skipped it — not a form that predates it. Getting this wrong would
+    // who skipped it, not a form that predates it. Getting this wrong would
     // relabel ordinary skips as history.
     const optional = q("outcome_hoped");
     expect(optional.required).toBeFalsy();
@@ -551,7 +551,7 @@ describe("6. the practitioner-assisted path reaches these answers", () => {
 
   it("does NOT make the new answers client-owned", () => {
     // A practitioner sitting with the client may record what the client tells
-    // them about their health history — that is the whole point of #525/#527.
+    // them about their health history, that is the whole point of #525/#527.
     // Only the client's own first-person confirmations are off limits.
     for (const key of [
       "diabetes_type",

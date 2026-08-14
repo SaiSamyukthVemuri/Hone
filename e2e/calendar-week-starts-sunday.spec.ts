@@ -11,7 +11,7 @@ import { loginAsOwner } from "./helpers/flows";
 // The practitioner working calendar runs SUNDAY → SATURDAY, and the same
 // Sunday boundary drives the DATA RANGE, not just the headers.
 //
-// THE FAILURE THIS EXISTS TO CATCH is not a mis-ordered header — that is
+// THE FAILURE THIS EXISTS TO CATCH is not a mis-ordered header, that is
 // obvious the moment anyone looks. It is the silent one: a grid that starts
 // Sunday while the query still starts Monday. The header reads correctly, the
 // page looks perfect, and the practitioner's Sunday appointment is simply
@@ -99,13 +99,13 @@ async function headerWeekdayLabels(page: Page): Promise<string[]> {
     );
 }
 
-// Independent weekday naming — never ask the code under test what "Sunday" is.
+// Independent weekday naming: never ask the code under test what "Sunday" is.
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function weekdayOf(dateStr: string): string {
   return DOW[new Date(`${dateStr}T12:00:00Z`).getUTCDay()];
 }
 
-test.describe("practitioner calendar — week starts Sunday", () => {
+test.describe("practitioner calendar: week starts Sunday", () => {
   test("a midweek date opens the Sunday→Saturday week, with the data range to match", async ({
     page,
   }) => {
@@ -186,7 +186,7 @@ test.describe("practitioner calendar — week starts Sunday", () => {
     const dates = await headerDates(page);
     expect(dates[0]).toBe(NEXT_SUNDAY);
     expect(dates.map(weekdayOf)).toEqual(DOW);
-    // The appointment excluded from the previous week now appears — proving the
+    // The appointment excluded from the previous week now appears, proving the
     // boundary MOVED the appointment rather than dropping it.
     await expect(
       page

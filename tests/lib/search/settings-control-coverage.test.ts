@@ -12,7 +12,7 @@ import {
   type SettingsControl,
 } from "./fixtures/settings-controls.census";
 
-// Global Search V2-A.1 — SETTINGS CONTROL coverage.
+// Global Search V2-A.1: SETTINGS CONTROL coverage.
 //
 // THE BUG THIS EXISTS TO PREVENT
 // V2-A's tripwire proved every authenticated ROUTE carried a searchability
@@ -20,8 +20,8 @@ import {
 // visible label "Booking horizon" in production and got nothing, because the
 // Booking page was registered while six of its eight controls were not.
 //
-//   ROUTE COVERAGE  — "can I find this page?"     (navigation-registry.test.ts)
-//   CONTROL COVERAGE — "can I find the exact setting I am looking at?"  (here)
+//   ROUTE COVERAGE, "can I find this page?"     (navigation-registry.test.ts)
+//   CONTROL COVERAGE, "can I find the exact setting I am looking at?"  (here)
 //
 // Both are required. Route coverage cannot detect a missing control, because
 // the route it checks is already present and already decided.
@@ -121,7 +121,7 @@ const renderCache = new Map<string, string>();
  * check at first, because `booking/actions.ts` contains the same words inside
  * a validation error message ("Booking horizon must be one of: ..."). A check
  * that greps whole files therefore reports a control as present after the
- * control is gone — the exact false-negative this whole test file exists to
+ * control is gone, the exact false-negative this whole test file exists to
  * eliminate.
  */
 function renderSourceFor(route: string): string {
@@ -169,10 +169,10 @@ function collapse(value: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// 1. The census is honest — every label it claims still exists
+// 1. The census is honest, every label it claims still exists
 // ---------------------------------------------------------------------------
 
-describe("census integrity — every audited control is still real", () => {
+describe("census integrity: every audited control is still real", () => {
   it("audits a meaningful number of controls across every settings page", () => {
     expect(SETTINGS_CONTROLS.length).toBeGreaterThanOrEqual(50);
     expect(searchable.length).toBeGreaterThanOrEqual(35);
@@ -207,7 +207,7 @@ describe("census integrity — every audited control is still real", () => {
     for (const control of SETTINGS_CONTROLS) {
       expect(
         rendersLabel(control.page, control.label),
-        `${control.page}: the audited label "${control.label}" is no longer RENDERED by the page's components — rename it in the census or remove the row`,
+        `${control.page}: the audited label "${control.label}" is no longer RENDERED by the page's components, rename it in the census or remove the row`,
       ).toBe(true);
     }
   });
@@ -230,7 +230,7 @@ describe("census integrity — every audited control is still real", () => {
 // 2. Every searchable control actually resolves
 // ---------------------------------------------------------------------------
 
-describe("control coverage — the exact visible label finds the setting", () => {
+describe("control coverage: the exact visible label finds the setting", () => {
   it("every searchable control names a registry entry that exists", () => {
     for (const control of searchable) {
       expect(control.entryId, control.label).toBeTruthy();
@@ -306,7 +306,7 @@ describe("anchors keep sibling controls distinct", () => {
   it("every control-level entry on a shared page has its own anchor", () => {
     // Group searchable controls by page and count how many DIFFERENT registry
     // entries serve them. Where a page has more than one entry, those entries
-    // must have distinct hrefs — otherwise href dedupe silently collapses them
+    // must have distinct hrefs, otherwise href dedupe silently collapses them
     // and only one control on the page is ever findable.
     const byPage = new Map<string, Set<string>>();
     for (const control of searchable) {
@@ -322,7 +322,7 @@ describe("anchors keep sibling controls distinct", () => {
       const hrefs = [...entryIds].map((id) => ENTRY_BY_ID.get(id)!.href);
       expect(
         new Set(hrefs).size,
-        `${page} has ${entryIds.size} searchable entries but only ${new Set(hrefs).size} distinct hrefs — dedupe will hide some`,
+        `${page} has ${entryIds.size} searchable entries but only ${new Set(hrefs).size} distinct hrefs, dedupe will hide some`,
       ).toBe(hrefs.length);
     }
     // Not vacuous: several settings pages genuinely carry multiple controls.
@@ -369,7 +369,7 @@ function extractLabels(src: string): string[] {
   return [...out];
 }
 
-describe("structural sweep — a new control cannot slip in unaudited", () => {
+describe("structural sweep: a new control cannot slip in unaudited", () => {
   it("the sweep still finds the labels it is supposed to find", () => {
     // Guards the EXTRACTOR itself. If an idiom changes and extraction silently
     // returns nothing, this fails instead of the sweep passing vacuously.
@@ -377,7 +377,7 @@ describe("structural sweep — a new control cannot slip in unaudited", () => {
       const labels = extractLabels(readFileSync(path.join(ROOT, file), "utf8"));
       expect(
         labels.length,
-        `${file}: extracted ${labels.length} labels, expected at least ${minLabels} — the label idiom changed and the sweep needs updating`,
+        `${file}: extracted ${labels.length} labels, expected at least ${minLabels}, the label idiom changed and the sweep needs updating`,
       ).toBeGreaterThanOrEqual(minLabels);
     }
   });
@@ -402,7 +402,7 @@ describe("structural sweep — a new control cannot slip in unaudited", () => {
       undecided.sort(),
       [
         "These visible Settings controls have no searchability decision.",
-        "Add a row to tests/lib/search/fixtures/settings-controls.census.ts —",
+        "Add a row to tests/lib/search/fixtures/settings-controls.census.ts,",
         'either decision: "searchable" with the registry entry that resolves its',
         'exact visible label, or decision: "excluded" with the reason it is withheld.',
         "Route coverage cannot catch this: the page is already registered.",
@@ -415,7 +415,7 @@ describe("structural sweep — a new control cannot slip in unaudited", () => {
 // 5. The reported production failure, pinned by name
 // ---------------------------------------------------------------------------
 
-describe("regression — the reported production failure", () => {
+describe("regression: the reported production failure", () => {
   const horizonQueries = [
     "booking horizon",
     "Booking horizon",
@@ -501,7 +501,7 @@ describe("settings pages are all represented", () => {
     const missing = routes.filter((r) => !audited.has(r) && !exempt.has(r));
     expect(
       missing.sort(),
-      "These settings pages have no control census at all — add their controls to settings-controls.census.ts",
+      "These settings pages have no control census at all, add their controls to settings-controls.census.ts",
     ).toEqual([]);
   });
 });

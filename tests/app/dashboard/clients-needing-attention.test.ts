@@ -52,8 +52,8 @@ function block(
 describe("buildClientsNeedingAttention", () => {
   // DASH-TRUTH-01: a plan for the next visit is clinical MEMORY, not work.
   // It was inclusion rule B; it no longer includes anyone on its own. The
-  // original invariant this test proved — a client matching more than one
-  // signal is counted exactly ONCE — is unchanged and still asserted, and the
+  // original invariant this test proved, a client matching more than one
+  // signal is counted exactly ONCE, is unchanged and still asserted, and the
   // plan itself is still carried on the row as context.
   it("watch note includes a client; a plan alone does NOT; overlap counts ONCE", () => {
     const out = buildClientsNeedingAttention(
@@ -71,7 +71,7 @@ describe("buildClientsNeedingAttention", () => {
     expect(out.clients.map((c) => c.clientId)).not.toContain("planny");
     const both = out.clients.find((c) => c.clientId === "both")!;
     expect(both.hasWatch).toBe(true);
-    // still carried, still just once — a watch+plan client is ONE row
+    // still carried, still just once, a watch+plan client is ONE row
     expect(both.hasPlan).toBe(true);
     expect(out.clients.filter((c) => c.clientId === "both")).toHaveLength(1);
   });
@@ -132,7 +132,7 @@ describe("buildClientsNeedingAttention", () => {
   });
 
   it("a plan-only newer session does NOT suppress an older watch note", () => {
-    // Review 3778510290 — a clinical-safety regression introduced by
+    // Review 3778510290: a clinical-safety regression introduced by
     // DASH-TRUTH-01, and a correction to what this file previously asserted.
     //
     // The old rule was "newest session with watch OR PLAN content wins". That
@@ -175,8 +175,8 @@ describe("buildClientsNeedingAttention", () => {
 
   it("sorting: watch first, then date desc; a plan-only client never consumes the cap", () => {
     // Was "watch first, then plan-only, then date desc". Plan is no longer a
-    // ranking signal, because ordering by it pushed reaction-only clients —
-    // actual work — below clients with nothing to do. The surviving invariants
+    // ranking signal, because ordering by it pushed reaction-only clients,
+    // actual work, below clients with nothing to do. The surviving invariants
     // are: watch outranks everything, ties break newest-first, and the cap is
     // applied to the included set.
     const out = buildClientsNeedingAttention(
@@ -205,7 +205,7 @@ describe("buildClientsNeedingAttention", () => {
     // The other reason used to be a plan; a plan no longer includes anyone, so
     // this now rides along with a watch note. The invariant is unchanged:
     // tolerance is CONTEXT on an already-included client, never an inclusion
-    // rule of its own — we invent no low-tolerance threshold.
+    // rule of its own, we invent no low-tolerance threshold.
     const out = buildClientsNeedingAttention(
       [session("s1", "c1", "2026-06-10T10:00:00Z")],
       [block("s1", { caution_note: "watch", tolerance_rating: 2 })],
@@ -252,7 +252,7 @@ describe("placement + UI", () => {
 
   it("the snapshot no longer carries an attention surface at all", () => {
     // The duplicate is gone by construction, not by ordering. Assert on
-    // RENDERED surface and on the data dependency — a prose mention in a
+    // RENDERED surface and on the data dependency, a prose mention in a
     // comment is not an attention surface, and asserting on prose would make
     // this test fail for a documentation edit.
     expect(SNAPSHOT).not.toMatch(/<h[23][^>]*>\s*Action needed/);
@@ -282,7 +282,7 @@ describe("data/performance + safety", () => {
   });
 
   it("no unsafe wording", () => {
-    // Previously sliced SNAPSHOT from "Action needed" — an index that no
+    // Previously sliced SNAPSHOT from "Action needed", an index that no
     // longer exists, so the sweep silently degraded to one character. Point it
     // at the surfaces that actually render this now.
     for (const src of [MODEL, LIST, HELPER]) {

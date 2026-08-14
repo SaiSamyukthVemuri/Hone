@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 //   * studio_onboarding RLS = member-read / owner-write, studio-isolated, no
 //     browser delete.
 //   * onboarding_v2_enabled is operator-controlled: a browser (authenticated)
-//     role — studio owners included — cannot flip it; service-role can.
+//     role, studio owners included, cannot flip it; service-role can.
 // The app-layer flag/owner gating is pinned separately by the flag-off contract
 // + the owner-gated actions.
 
@@ -34,7 +34,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("studio_onboarding — owner write / member read", () => {
+describe("studio_onboarding: owner write / member read", () => {
   it("the owner can INSERT and SELECT their studio's row", async () => {
     await userQuery(
       studioA.userId,
@@ -82,7 +82,7 @@ describe("studio_onboarding — owner write / member read", () => {
 
     // But cannot actually update it: the owner-write UPDATE policy's USING
     // clause hides the row from a non-owner member, so the UPDATE matches 0 rows
-    // and changes nothing. (RLS UPDATE denial is SILENT — 0 rows — not an error;
+    // and changes nothing. (RLS UPDATE denial is SILENT, 0 rows, not an error;
     // only a failing INSERT WITH CHECK or a revoked grant raises.)
     const memberUpdate = await userQuery(
       memberA.userId,
@@ -146,7 +146,7 @@ describe("studio_onboarding — owner write / member read", () => {
   });
 });
 
-describe("studio_onboarding — parent CASCADE", () => {
+describe("studio_onboarding: parent CASCADE", () => {
   it("deleting the studio tears down its onboarding row", async () => {
     const s = await seedStudio("onboarding-cascade");
     await adminQuery(
@@ -163,7 +163,7 @@ describe("studio_onboarding — parent CASCADE", () => {
   });
 });
 
-describe("onboarding_v2_enabled — operator-controlled flag", () => {
+describe("onboarding_v2_enabled: operator-controlled flag", () => {
   it("an authenticated OWNER cannot flip the flag (guard raises 42501)", async () => {
     await expect(
       userQuery(
@@ -198,12 +198,12 @@ describe("onboarding_v2_enabled — operator-controlled flag", () => {
   });
 });
 
-// Findings 1+2 — completion is TRUSTED-SERVER-ONLY. admin_complete_onboarding /
+// Findings 1+2: completion is TRUSTED-SERVER-ONLY. admin_complete_onboarding /
 // admin_mark_onboarding_celebrated are service-role commands (browser roles are
 // denied) that verify active ownership + the flag and do an atomic CAS; a
 // guard trigger blocks any direct browser write of the completion fields.
 async function enableFlag(studioId: string): Promise<void> {
-  // Service-role/superuser write — the flag guard only blocks browser roles.
+  // Service-role/superuser write: the flag guard only blocks browser roles.
   await adminQuery(
     `update public.studios set onboarding_v2_enabled = true where id = $1`,
     [studioId],
@@ -225,7 +225,7 @@ async function adminCelebrate(userId: string, studioId: string): Promise<boolean
   return r.rows[0].t === true;
 }
 
-describe("0140 — completion command is trusted-server-only + atomic", () => {
+describe("0140: completion command is trusted-server-only + atomic", () => {
   it("anon / authenticated-member / authenticated-owner direct RPC are all DENIED", async () => {
     const s = await seedStudio("complete-deny");
     await enableFlag(s.studioId);
@@ -325,7 +325,7 @@ describe("0140 — completion command is trusted-server-only + atomic", () => {
   });
 });
 
-describe("0140 — lifecycle fields are protected from direct browser writes", () => {
+describe("0140: lifecycle fields are protected from direct browser writes", () => {
   // Seed a normal in-progress wizard row as the owner (allowed) so UPDATE cases
   // have a row to target.
   async function seedInProgress(): Promise<SeededStudio> {

@@ -110,7 +110,7 @@ describe("8-9. blocked states", () => {
 
   // FREE-01 changed this deliberately. A zero menu price is a DECIDED price of
   // nothing (a free consultation), not an absent one. It resolves to its own
-  // `free` state — which can never be prepared or charged — while a NULL price
+  // `free` state, which can never be prepared or charged, while a NULL price
   // still blocks as missing_price. The two are no longer conflated.
   it("a zero menu price is FREE, not blocked", () => {
     expect(run({ service: svc({ price_cents: 0 }) })).toMatchObject({ kind: "free" });
@@ -166,7 +166,7 @@ describe("12-14. metadata and forbidden inputs", () => {
     expect(run({ appointmentDurationMinutes: null })).toMatchObject({ durationMinutes: null });
   });
 
-  it("duration NEVER changes the amount — no per-minute arithmetic", () => {
+  it("duration NEVER changes the amount, no per-minute arithmetic", () => {
     const a = run({ appointmentDurationMinutes: 30 }) as { amountCents: number };
     const b = run({ appointmentDurationMinutes: 120 }) as { amountCents: number };
     expect(a.amountCents).toBe(b.amountCents);

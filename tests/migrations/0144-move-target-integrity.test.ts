@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR B Part 4 — migration 0144 structural contract (Item 1 + Item 3). Behaviour
+// PR B Part 4: migration 0144 structural contract (Item 1 + Item 3). Behaviour
 // is proven in tests/db/move-target-integrity.db.test.ts.
 
 const SQL = readFileSync(
@@ -11,7 +11,7 @@ const SQL = readFileSync(
 );
 const CODE = SQL.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
 
-describe("0144 — final-target integrity on every move (Item 1)", () => {
+describe("0144: final-target integrity on every move (Item 1)", () => {
   it("validates the target under `if v_cap then` (NOT gated on v_reassign) with the reassignment-required code", () => {
     expect(SQL).toMatch(/create or replace function public\.move_or_reassign_appointment\(/);
     // The final-target check is inside a capacity gate, not a reassign gate.
@@ -26,7 +26,7 @@ describe("0144 — final-target integrity on every move (Item 1)", () => {
   });
 });
 
-describe("0144 — 0133 compatibility wrapper (Item 3)", () => {
+describe("0144: 0133 compatibility wrapper (Item 3)", () => {
   it("redefines practitioner_move_appointment as a delegate that keeps the old 6-column shape", () => {
     expect(SQL).toMatch(/create or replace function public\.practitioner_move_appointment\(/);
     // Old return shape (no practitioner columns).

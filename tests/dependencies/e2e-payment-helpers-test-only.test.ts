@@ -4,7 +4,7 @@ import { execSync } from "node:child_process";
 // Dependency guard: the payment browser-E2E helpers are TEST-ONLY. The
 // Playwright-side fake ledger reader (e2e-payment/helpers/fake-stripe-ledger-e2e)
 // can read/write the guarded run-scoped temp files directly, and the fixture
-// bridge chains privileged local SQL — neither may EVER be reachable from any
+// bridge chains privileged local SQL, neither may EVER be reachable from any
 // production route, server action, component, or library, and no production code
 // may enable fake Stripe.
 describe("e2e-payment helpers are test-only (no production import)", () => {

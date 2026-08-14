@@ -21,7 +21,7 @@ function fakeAdmin(capture: { row?: Record<string, unknown> }, behavior: "ok" | 
   };
 }
 
-describe("logPortalAccessEvent — safe fields only, metadata allowlist, fail-soft", () => {
+describe("logPortalAccessEvent: safe fields only, metadata allowlist, fail-soft", () => {
   it("inserts only ids + event_type + channel + allowlisted metadata", async () => {
     const cap: { row?: Record<string, unknown> } = {};
     await logPortalAccessEvent(fakeAdmin(cap), {
@@ -58,7 +58,7 @@ describe("logPortalAccessEvent — safe fields only, metadata allowlist, fail-so
 });
 
 // ---- computePortalPendingTasks: accuracy ----------------------------------
-describe("computePortalPendingTasks — accurate quick status", () => {
+describe("computePortalPendingTasks: accurate quick status", () => {
   const templates = [{ id: "t1", version: 2, status: "active" }, { id: "t2", version: 1, status: "active" }];
   it("intake in_progress → incomplete; submitted/reviewed → complete", () => {
     expect(computePortalPendingTasks({ intakeStatus: "in_progress", activeConsentTemplates: [], latestSignatures: [], portalMessages: [] }).intakeIncomplete).toBe(true);
@@ -106,7 +106,7 @@ describe("event logging wired at safe points; enumeration path untouched", () =>
   });
   it("portal verify logs portal_magic_link_consumed after a successful consume", () => {
     expect(VERIFY).toMatch(/eventType: "portal_magic_link_consumed"/);
-    // the log CALL passes only ids + the event type — never the token.
+    // the log CALL passes only ids + the event type, never the token.
     const start = VERIFY.indexOf("logPortalAccessEvent(admin");
     const call = VERIFY.slice(start, VERIFY.indexOf("});", start));
     expect(call).toMatch(/studioId: link\.studio_id/);

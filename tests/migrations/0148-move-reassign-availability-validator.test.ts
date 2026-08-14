@@ -7,7 +7,7 @@ const SQL = readFileSync(
   "utf8",
 );
 
-describe("0148 — move/reassign wires the shared availability validator", () => {
+describe("0148: move/reassign wires the shared availability validator", () => {
   it("drops the 7-arg signature and recreates an 8-arg one with a defaulted outside flag", () => {
     expect(SQL).toMatch(/drop function if exists public\.move_or_reassign_appointment\(uuid, uuid, uuid, uuid, timestamptz, timestamptz, timestamptz\)/);
     expect(SQL).toMatch(/p_allow_outside_availability boolean default false/);

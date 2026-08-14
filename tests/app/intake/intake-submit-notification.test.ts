@@ -5,7 +5,7 @@ import path from "node:path";
 // In-app notification on intake submit. When a client successfully submits
 // their intake form, submitIntakeAction fires a fire-and-forget
 // recordPractitionerNotification (the PR #164 helper) so the studio sees it in
-// Hone's notification center — no email, no SMS. This is a source-grep guard
+// Hone's notification center, no email, no SMS. This is a source-grep guard
 // (submitIntakeAction has no direct harness; the flow mirrors the book/cancel/
 // reschedule notification wiring, which are pinned the same way). It asserts
 // the wiring, the once-only placement (idempotency), and the privacy posture.
@@ -21,7 +21,7 @@ const CODE = ACTIONS.split("\n")
   .join("\n");
 
 // The submit action body (from `export async function submitIntakeAction` to
-// the next top-level function) — so positional assertions are scoped to it.
+// the next top-level function), so positional assertions are scoped to it.
 function submitBody(): string {
   const start = ACTIONS.indexOf("export async function submitIntakeAction");
   expect(start).toBeGreaterThan(-1);
@@ -59,7 +59,7 @@ describe("intake submit → in-app notification wiring", () => {
 });
 
 describe("intake submit → notification is once-only (idempotent)", () => {
-  it("fires only in the winner branch — AFTER the zero-rows-updated guard", () => {
+  it("fires only in the winner branch, AFTER the zero-rows-updated guard", () => {
     const body = submitBody();
     const guardIdx = body.indexOf("if (!updated || updated.length === 0)");
     const notifyIdx = body.indexOf("recordPractitionerNotification(");
@@ -81,7 +81,7 @@ describe("intake submit → notification is once-only (idempotent)", () => {
 });
 
 describe("intake submit → notification is privacy-safe", () => {
-  it("body is safe text with a client-name fallback — no raw intake answers", () => {
+  it("body is safe text with a client-name fallback, no raw intake answers", () => {
     const body = submitBody();
     expect(body).toMatch(/submitted an intake form\./);
     expect(body).toMatch(/A client submitted an intake form\./);

@@ -52,7 +52,7 @@ describe("discard_due_date column", () => {
     expect(r.rows[0].date_discarded).toBeNull();
   });
 
-  it("is nullable — a legacy-style row without a due date is valid", async () => {
+  it("is nullable: a legacy-style row without a due date is valid", async () => {
     const id = randomUUID();
     const ins = await adminQuery(
       `insert into public.record_keeping_disinfectants

@@ -147,7 +147,7 @@ describe("practitioner A cannot read studio B rows", () => {
 });
 
 // ===========================================================================
-// Appointment boundary B2 — T4.1..T4.4
+// Appointment boundary B2, T4.1..T4.4
 // ===========================================================================
 //
 // Until this block the suite covered clients, sessions, session_blocks and two
@@ -166,7 +166,7 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
   // Every appointment below gets a unique whole-day offset. The studio-wide
   // EXCLUDE constraint (no_overlapping_appointments_studio_wide, active while
   // capacity is off) would otherwise be able to reject an insert for a reason
-  // that has nothing to do with the foreign key under test — and a 23P01 read
+  // that has nothing to do with the foreign key under test, and a 23P01 read
   // as "the FK worked" is exactly the false pass this guards against.
   let dayCursor = 0;
   const nextDayOffset = () => (dayCursor += 1);
@@ -244,7 +244,7 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T4.1 / T4.2 — the 0151 composite same-studio foreign keys, under service_role
+  // T4.1 / T4.2, the 0151 composite same-studio foreign keys, under service_role
   // -------------------------------------------------------------------------
   //
   // Run as `postgres` (adminQuery) on purpose, since B5 / 0174.
@@ -253,7 +253,7 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
   // so RLS could not be what rejected the rows and the composite FK was
   // genuinely the control under test. 0174 GROUP 10.1 revoked service_role's
   // INSERT on public.appointments, so that role now fails at 42501 BEFORE any
-  // constraint is consulted — which would silently destroy the FK coverage.
+  // constraint is consulted, which would silently destroy the FK coverage.
   //
   // The proof therefore moves to `postgres`, the table owner and migration
   // channel: the only role that still holds INSERT, and also a BYPASSRLS role,
@@ -347,7 +347,7 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
     it("the three violations really do trip three DIFFERENT constraints", async () => {
       // Guards against the shortcut of forging all three references at once and
       // claiming coverage of all three keys. This does NOT assert a set literal
-      // of three hand-written strings — that could not fail. It re-runs the
+      // of three hand-written strings, that could not fail. It re-runs the
       // three violations and collects the constraint name Postgres actually
       // reported for each, then asserts those three OBSERVED names are
       // distinct and are exactly the three composite same-studio keys.
@@ -390,7 +390,7 @@ describe("T4 appointments and appointment_audit cross-studio isolation", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T4.3 / T4.4 — authenticated read isolation
+  // T4.3 / T4.4, authenticated read isolation
   // -------------------------------------------------------------------------
 
   describe("T4.3 appointments SELECT isolation", () => {

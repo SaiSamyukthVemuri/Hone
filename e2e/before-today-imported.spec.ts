@@ -5,13 +5,13 @@ import { loginAsOwner } from "./helpers/flows";
 
 // PR #259: imported treatment memory surfaced in Before Today, proven end to
 // end on the real local stack. An owner opens a client who has imported
-// history — that history appears in the Before Today briefing, clearly
+// history, that history appears in the Before Today briefing, clearly
 // labelled and NOT charted live in Hone.
 //
 // IMPORT-01: the fixture used to be a real Quick Import driven through the UI
 // as an ordinary owner. Self-service execution is now operator-assisted, so
 // that path no longer exists for this seed's owner. The imported rows are
-// seeded directly instead — which is what this spec always actually needed.
+// seeded directly instead, which is what this spec always actually needed.
 // It is a DISPLAY test: what it proves is that imported memory reaches Before
 // Today correctly labelled, not that the importer works. Seeding through the
 // same tables the importer writes keeps the assertions identical, and drops a

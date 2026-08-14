@@ -10,8 +10,8 @@ import { monthGridDates } from "@/lib/booking/month-grid";
 //
 // WHY THIS FILE EXISTS
 // --------------------
-// This behaviour was already correct — `startOfWeek` has returned "the Sunday
-// on or before" since its first commit — but it was almost entirely UNTESTED.
+// This behaviour was already correct, `startOfWeek` has returned "the Sunday
+// on or before" since its first commit, but it was almost entirely UNTESTED.
 // A cosmetic header reorder, or a fetch range that quietly went back to
 // Monday, would have shipped green. The failure mode that matters is not
 // "headers look wrong"; it is a SUNDAY APPOINTMENT SILENTLY DISAPPEARING
@@ -25,15 +25,15 @@ import { monthGridDates } from "@/lib/booking/month-grid";
 // Nothing here is a settings/locale preference. The practitioner calendar has
 // a FIXED Sunday-start week.
 //
-// SCOPE — this note used to say Hone was NOT Sunday-first everywhere, because
+// SCOPE, this note used to say Hone was NOT Sunday-first everywhere, because
 // `lib/dashboard/practice-metrics.ts` anchored its "this week" REPORTING period
 // on MONDAY (`const sinceMonday = (dow + 6) % 7`). It called reconciling them
 // "a product call, not a refactor", and it was right.
 //
 // THAT PRODUCT CALL HAS NOW BEEN MADE (Dashboard V2 Part 1). The consequence
-// this note warned about — on a Sunday, the dashboard's "this week" and the
+// this note warned about, on a Sunday, the dashboard's "this week" and the
 // calendar's week differed by a FULL WEEK, because Sunday was day 7 of one and
-// day 1 of the other — is closed: `resolvePeriodRange` now delegates to the
+// day 1 of the other, is closed: `resolvePeriodRange` now delegates to the
 // SAME `startOfWeek` helper asserted throughout this file, so there is exactly
 // one Sunday boundary in the product. The dashboard's own boundary cases live
 // in tests/lib/dashboard/practice-metrics-week.test.ts.
@@ -120,7 +120,7 @@ describe("display order", () => {
       "Sat",
     ]);
     // page.tsx renders `weekdayLabel(i)` against `days[i]`. The label is
-    // therefore only truthful while days[0] is a Sunday — assert the two
+    // therefore only truthful while days[0] is a Sunday, assert the two
     // agree, which is exactly what a Monday-start regression would break.
     weekDays("2026-08-12").forEach((date, i) => {
       expect(weekdayLabel(i)).toBe(weekdayOf(date));
@@ -243,7 +243,7 @@ describe("navigation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 11-12. Month and year boundaries — the seven days need not share a month.
+// 11-12. Month and year boundaries, the seven days need not share a month.
 // ---------------------------------------------------------------------------
 describe("month and year boundaries", () => {
   it("11. a week spanning a month boundary stays Sunday → Saturday", () => {
@@ -269,7 +269,7 @@ describe("month and year boundaries", () => {
 // ---------------------------------------------------------------------------
 // 13-14. DST. The week is a LOCAL-MIDNIGHT range, not 168 elapsed hours.
 // ---------------------------------------------------------------------------
-describe("DST — local midnight boundaries, never 168 fixed hours", () => {
+describe("DST: local midnight boundaries, never 168 fixed hours", () => {
   const HOUR = 3_600_000;
   function elapsedHours(weekStart: string, tz: string): number {
     const s = utcInstantFromLocal(weekStart, "00:00", tz);
@@ -311,7 +311,7 @@ describe("DST — local midnight boundaries, never 168 fixed hours", () => {
   // The cases above prove the SEMANTICS are DST-correct, but they compute the
   // range through this file's own `range()` mirror, so none of them can notice
   // page.tsx swapping its end boundary for elapsed time. That swap is the one
-  // DST regression that reads as harmless in review — `startUtc + 168h` is
+  // DST regression that reads as harmless in review, `startUtc + 168h` is
   // right 50 weeks a year and silently off by an hour in the other two. Pin it
   // HERE, next to the semantics it would break, not only in the wiring block.
   it("the PAGE's end boundary is a local midnight, never start + a fixed span", () => {
@@ -379,7 +379,7 @@ describe("calendar page wiring (source pins)", () => {
     );
   });
 
-  it("15. this behaviour is calendar presentation only — booking math is untouched", () => {
+  it("15. this behaviour is calendar presentation only, booking math is untouched", () => {
     // The calendar page must not import public-booking slot generation or the
     // smart-scheduling packer; Sunday-start is a VIEW boundary, not
     // availability business logic.

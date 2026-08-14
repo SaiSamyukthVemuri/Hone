@@ -40,7 +40,7 @@ function event(over: Partial<ConversionEvent> = {}): ConversionEvent {
 
 const enabledMeta: ProviderConfig = { provider: "meta", enabled: true, browserTagId: "PX" };
 
-describe("deliverConversionEvent — gating", () => {
+describe("deliverConversionEvent: gating", () => {
   it("disabled provider sends nothing (skipped: provider_disabled)", async () => {
     const a = fakeAdapter();
     const recs = await deliverConversionEvent(event(), {
@@ -75,7 +75,7 @@ describe("deliverConversionEvent — gating", () => {
   });
 });
 
-describe("deliverConversionEvent — reliability + dedup", () => {
+describe("deliverConversionEvent: reliability + dedup", () => {
   it("does NOT throw / fail booking when a provider send fails", async () => {
     const throwing = fakeAdapter({
       send: async () => {
@@ -103,7 +103,7 @@ describe("deliverConversionEvent — reliability + dedup", () => {
   });
 });
 
-describe("deliverConversionEvent — isolation + redaction", () => {
+describe("deliverConversionEvent: isolation + redaction", () => {
   it("only processes the caller-supplied (single-studio) configs; records carry that studioId", async () => {
     const a = fakeAdapter();
     const recs = await deliverConversionEvent(event({ studioId: "studio_A" }), {

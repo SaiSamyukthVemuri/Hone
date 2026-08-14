@@ -4,7 +4,7 @@ import path from "node:path";
 
 // Portal verify-page TTL copy fix (copy only). The login page + email were
 // already correct ("1 hour"); the verify page still said "30 minutes" (stale
-// since the TTL was raised to 60 min in PR #166). Fix the copy only — no token /
+// since the TTL was raised to 60 min in PR #166). Fix the copy only, no token /
 // hashing / TTL / verify-behavior / enumeration change.
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");

@@ -17,7 +17,7 @@ import { buildConsentTemplateSnapshot } from "@/lib/consent/template-snapshot";
 // four-clause lookup is deliberately form_type-AGNOSTIC (the portal signs
 // every live type through one ceremony), so the narrowing has to live in the
 // core. Testing it here means the control is proven BEFORE the caller that
-// depends on it exists — a UI-level filter would not be a control at all,
+// depends on it exists, a UI-level filter would not be a control at all,
 // since template_id comes from the browser.
 
 type Row = Record<string, unknown>;

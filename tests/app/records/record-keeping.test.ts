@@ -143,7 +143,7 @@ describe("Client Procedure Records (generated, never invented)", () => {
     expect(ACTIONS).toMatch(/markAftercareExplainedAction/);
     // L18 Phase 3: both columns are now set/cleared together inside
     // set_session_aftercare_explained (migration 0167). The property is
-    // unchanged and asserted MORE strongly there — the stamping practitioner
+    // unchanged and asserted MORE strongly there, the stamping practitioner
     // is derived from auth.uid() instead of being sent by the caller.
     expect(ACTIONS).toMatch(/rpc\("set_session_aftercare_explained"/);
     expect(ACTIONS).toMatch(/p_explained: explained/);

@@ -69,7 +69,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("booking_tracking_consents — built row persists (true + false)", () => {
+describe("booking_tracking_consents: built row persists (true + false)", () => {
   it("stores consent=true and consent=false with the fixed version + source", async () => {
     const { rows } = await adminQuery(
       `select marketing_analytics_consent, consent_text_version, consent_source

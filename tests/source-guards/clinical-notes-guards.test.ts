@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
 
-// Permanent source guards for Willow PR A — dedicated consultation +
+// Permanent source guards for Willow PR A, dedicated consultation +
 // skin/hair analysis clinical notes (migration 0126). These pin the safety
 // contract that the DB tests cannot see: the feature is authenticated
 // practitioner-only, RLS-scoped, append-only, and never wired into any portal,
@@ -51,11 +51,11 @@ const SECTION_DATA = "lib/clinical-notes/section-data.ts";
 // Every server-side file in the clinical-notes feature. The append-only DELETE
 // contract (0126) allows service_role/postgres hard-delete only for controlled
 // admin/tenant-teardown; the APPLICATION note paths must therefore never reach
-// for the service-role/admin client — they use the RLS-scoped user client so
+// for the service-role/admin client, they use the RLS-scoped user client so
 // authenticated practitioners can neither UPDATE nor DELETE.
 const CLINICAL_SERVER_FILES = [ACTIONS, QUERIES, SECTION_DATA, PRINT];
 
-describe("clinical-notes server actions — trust boundary", () => {
+describe("clinical-notes server actions: trust boundary", () => {
   const src = read(ACTIONS);
   const bare = code(ACTIONS);
 
@@ -103,7 +103,7 @@ describe("clinical-notes reads stay RLS-scoped and server-only", () => {
 describe("application note paths never use the admin/service-role client", () => {
   // The admin client factory is createAdminClient() from lib/supabase/admin-server.
   // No clinical-notes server file may import it or otherwise reach for the
-  // service role — that capability is reserved for controlled admin/teardown
+  // service role, that capability is reserved for controlled admin/teardown
   // paths, not the practitioner-facing note actions/reads.
   for (const rel of CLINICAL_SERVER_FILES) {
     it(`${rel} does not import or instantiate the admin/service-role client`, () => {

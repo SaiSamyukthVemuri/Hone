@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
-// PR #301 — Settings Availability / Breaks & Blocks consolidation (Chloe pilot
+// PR #301: Settings Availability / Breaks & Blocks consolidation (Chloe pilot
 // feedback). The separate "Breaks & blocks" (/settings/calendar) tab is folded
 // into the Availability page; recurring breaks + one-off timed blocks now live
-// there. Render/IA only — no DB table merge, no booking-slot change, no
+// there. Render/IA only, no DB table merge, no booking-slot change, no
 // calendar rendering change, no migration.
 
 const root = path.resolve(__dirname, "../../../");

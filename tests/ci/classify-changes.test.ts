@@ -10,7 +10,7 @@ const c = (...files: string[]) => classify(files) as Result;
 const tier = (...files: string[]) => c(...files).baselineRiskTier;
 const reasons = (...files: string[]) => c(...files).riskReasons as string[];
 
-describe("classifier — docs-only PRs", () => {
+describe("classifier: docs-only PRs", () => {
   it("a docs + apply-record change is docs_only and triggers nothing expensive", () => {
     const r = c(
       "docs/production/migration-ledger.md",
@@ -40,7 +40,7 @@ describe("classifier — docs-only PRs", () => {
   });
 });
 
-describe("classifier — database / migration PRs", () => {
+describe("classifier: database / migration PRs", () => {
   it("a migration runs database + security, not payment/google/mobile", () => {
     const r = c(
       "supabase/migrations/0166_example.sql",
@@ -62,7 +62,7 @@ describe("classifier — database / migration PRs", () => {
   });
 });
 
-describe("classifier — lane-specific PRs", () => {
+describe("classifier: lane-specific PRs", () => {
   it("a payment change runs the payment lane", () => {
     const r = c("app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts");
     expect(r.payment).toBe(true);
@@ -93,7 +93,7 @@ describe("classifier — lane-specific PRs", () => {
   });
 });
 
-describe("classifier — full matrix", () => {
+describe("classifier: full matrix", () => {
   for (const f of [
     "package.json",
     "package-lock.json",
@@ -125,7 +125,7 @@ describe("classifier — full matrix", () => {
   });
 });
 
-describe("classifier — output contract", () => {
+describe("classifier: output contract", () => {
   it("always emits every documented boolean key", () => {
     const r = c("app/page.tsx");
     for (const k of [
@@ -147,14 +147,14 @@ describe("classifier — output contract", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Baseline risk tier — ENGINEERING_STANDARDS.md.
+// Baseline risk tier, ENGINEERING_STANDARDS.md.
 //
 // These cases pin DETERMINISTIC PATH EVIDENCE only. They deliberately prove
 // nothing about semantics: a T1 verdict here is a starting point for review,
 // never a licence to skip it.
 // ---------------------------------------------------------------------------
 
-describe("classifier — baseline risk tier", () => {
+describe("classifier: baseline risk tier", () => {
   it("a docs-only diff is T0", () => {
     expect(tier("docs/production/migration-ledger.md", "README.md")).toBe("T0");
   });
@@ -217,11 +217,11 @@ describe("classifier — baseline risk tier", () => {
     expect(h(["T1", "T1"])).toBe("T1");
   });
 
-  it("T1 + T3 resolves to T3 — the highest deterministic tier wins", () => {
+  it("T1 + T3 resolves to T3, the highest deterministic tier wins", () => {
     expect(tier("components/client-form.tsx", "supabase/migrations/0177_example.sql")).toBe("T3");
   });
 
-  it("T2 + T3 resolves to T3 — the highest deterministic tier wins", () => {
+  it("T2 + T3 resolves to T3, the highest deterministic tier wins", () => {
     expect(tier("lib/booking/slots.ts", "lib/security/rls-helpers.ts")).toBe("T3");
   });
 
@@ -268,9 +268,9 @@ describe("classifier — baseline risk tier", () => {
 });
 
 // ---------------------------------------------------------------------------
-// INDEPENDENT REVIEW — two classifier precision findings.
+// INDEPENDENT REVIEW, two classifier precision findings.
 // ---------------------------------------------------------------------------
-describe("classifier — conventional nested server actions (review P1-1)", () => {
+describe("classifier: conventional nested server actions (review P1-1)", () => {
   // Hone uses THREE server-action shapes and the rule originally matched two,
   // so a colocated `actions.ts` beside its page fell through to the generic T1
   // application signal. `app/(app)/dashboard/actions.ts` is real, is
@@ -296,7 +296,7 @@ describe("classifier — conventional nested server actions (review P1-1)", () =
     ]);
   });
 
-  it("is anchored to app/ — it does not sweep in fixtures or unrelated modules", () => {
+  it("is anchored to app/: it does not sweep in fixtures or unrelated modules", () => {
     // An unanchored /actions\.ts$/ would fire on files that are not server
     // boundaries at all, and a rule that cries wolf gets ignored.
     expect(tier("tests/fixtures/b8-base-f2d4a5aa/calendar-actions.ts.txt")).not.toBe("T2");
@@ -306,7 +306,7 @@ describe("classifier — conventional nested server actions (review P1-1)", () =
   });
 });
 
-describe("classifier — payment AUTHORITY vs the broad payment lane (review P1-2)", () => {
+describe("classifier: payment AUTHORITY vs the broad payment lane (review P1-2)", () => {
   // The CI payment lane matches the bare words payment/stripe anywhere in a
   // path. Correct for selecting tests; wrong for assigning ceremony. The tier
   // now names authority surfaces; the lane is untouched.
@@ -325,12 +325,12 @@ describe("classifier — payment AUTHORITY vs the broad payment lane (review P1-
     "components/checkout-button.tsx",
   ];
 
-  it.each(AUTHORITY)("%s is payment authority — T3", (f) => {
+  it.each(AUTHORITY)("%s is payment authority: T3", (f) => {
     expect(tier(f)).toBe("T3");
     expect(reasons(f)).toContain("payment authority path changed");
   });
 
-  it.each(PRESENTATION)("%s is presentation — T1, not T3 by filename", (f) => {
+  it.each(PRESENTATION)("%s is presentation: T1, not T3 by filename", (f) => {
     expect(tier(f)).toBe("T1");
     expect(reasons(f)).toEqual([
       "application or interface code with no higher-risk path signal",
@@ -339,8 +339,8 @@ describe("classifier — payment AUTHORITY vs the broad payment lane (review P1-
 
   it("THE REGRESSION: a read-only payment card stays T1 while its CI lane still fires", () => {
     // This single case is the finding. Under `lane: "payment"` this file
-    // baselined T3, so a copy tweak on read-only practitioner UI — no Charge,
-    // no Replace, no Remove — demanded the heaviest process in the system.
+    // baselined T3, so a copy tweak on read-only practitioner UI, no Charge,
+    // no Replace, no Remove, demanded the heaviest process in the system.
     // Both halves matter: the tier drops AND the lane must not.
     const r = c("components/payment-method-card.tsx");
     expect(r.baselineRiskTier).toBe("T1");
@@ -363,7 +363,7 @@ describe("classifier — payment AUTHORITY vs the broad payment lane (review P1-
   });
 });
 
-describe("classifier — mixed diffs still take the highest tier", () => {
+describe("classifier: mixed diffs still take the highest tier", () => {
   it("T1 + T3 => T3, and only the winning tier's reasons are reported", () => {
     const r = c("components/payment-method-card.tsx", "lib/stripe/account.ts");
     expect(r.baselineRiskTier).toBe("T3");

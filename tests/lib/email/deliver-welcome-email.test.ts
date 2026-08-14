@@ -42,7 +42,7 @@ afterEach(() => {
   record.mockReset();
 });
 
-describe("deliverWelcomeEmail — truthful send outcomes", () => {
+describe("deliverWelcomeEmail: truthful send outcomes", () => {
   it("success -> 'sent', result stamped on THIS attempt, nothing logged", async () => {
     setFake("success");
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -70,7 +70,7 @@ describe("deliverWelcomeEmail — truthful send outcomes", () => {
   });
 });
 
-describe("deliverWelcomeEmail — claim / stamp error handling (no false success)", () => {
+describe("deliverWelcomeEmail: claim / stamp error handling (no false success)", () => {
   it("claim RPC error -> 'failed', NOTHING sent, NOTHING recorded", async () => {
     setFake("success");
     claim.mockResolvedValueOnce({ attemptId: null, error: true });

@@ -4,13 +4,13 @@ import path from "node:path";
 
 // PR #297 safety-lock, REPOINTED at PR #323 to the ENV-GATED model.
 //
-// Live payments are still DISABLED — but the dormancy model changed. Before
+// Live payments are still DISABLED, but the dormancy model changed. Before
 // #323 the money paths HARDCODED stripe_livemode=false. After #322 (DB) + #323
 // (runtime) they are now live-CAPABLE, and live is off SOLELY because:
 //   * the env/key gate (Layer 1) rejects an sk_live_ key unless
 //     STRIPE_ALLOW_LIVE_MODE === "true" (unset today), so inferStripeLivemode()
 //     is false; and
-//   * every money-path guard is gated on inferStripeLivemode() (Layer 2) — with
+//   * every money-path guard is gated on inferStripeLivemode() (Layer 2), with
 //     it false, they enforce test-mode exactly as before, and no runtime path
 //     ever WRITES a live row (prepare-inserts write inferStripeLivemode()).
 // So this test now asserts the guards are DYNAMIC (compare inferStripeLivemode()
@@ -50,7 +50,7 @@ const STRIPE_GATE_SCRIPT = read("scripts/check-stripe-gates.mjs");
 const MONEY_PATHS = { CHARGE_CODE, REFUND_CODE, RECEIPT_CODE, WEBHOOK_CODE, PREPARE, FEE_PREPARE };
 
 // ---------------------------------------------------------------------------
-// Layer 1 — env / key gate (unchanged; this is now the PRIMARY reason live is off)
+// Layer 1, env / key gate (unchanged; this is now the PRIMARY reason live is off)
 // ---------------------------------------------------------------------------
 describe("Layer 1: Stripe key/env gate still requires explicit live opt-in", () => {
   it("assertStripeKeyAllowed requires STRIPE_ALLOW_LIVE_MODE === 'true' before a live key", () => {
@@ -72,7 +72,7 @@ describe("Layer 1: Stripe key/env gate still requires explicit live opt-in", () 
 });
 
 // ---------------------------------------------------------------------------
-// Layer 2 — runtime guards are ENV-GATED on inferStripeLivemode() (not false)
+// Layer 2, runtime guards are ENV-GATED on inferStripeLivemode() (not false)
 // ---------------------------------------------------------------------------
 describe("Layer 2: runtime money-path guards are env-gated, not hardcoded false", () => {
   it("the charge path uses inferStripeLivemode() + a mode-consistency row guard", () => {
@@ -119,7 +119,7 @@ describe("Layer 2: runtime money-path guards are env-gated, not hardcoded false"
 });
 
 // ---------------------------------------------------------------------------
-// Layer 3 — DB is now live-CAPABLE (0101); dormancy shifted to env/runtime
+// Layer 3, DB is now live-CAPABLE (0101); dormancy shifted to env/runtime
 // ---------------------------------------------------------------------------
 describe("Layer 3: DB is live-capable via 0101 (dormancy is now env/runtime)", () => {
   it("0101 replaced the livemode-false CHECK with the account-requiring CHECK", () => {
@@ -139,7 +139,7 @@ describe("Layer 3: DB is live-capable via 0101 (dormancy is now env/runtime)", (
 });
 
 // ---------------------------------------------------------------------------
-// Layer 4 — webhook now MODE-MATCHES the deployment (ignore mismatched safely)
+// Layer 4, webhook now MODE-MATCHES the deployment (ignore mismatched safely)
 // ---------------------------------------------------------------------------
 describe("Layer 4: webhook processes only deployment-mode events", () => {
   it("shouldIgnoreLiveModeEvent compares event.livemode to inferStripeLivemode()", () => {

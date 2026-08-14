@@ -12,7 +12,7 @@ function solid(width = 8, height = 8) {
   });
 }
 
-describe("sanitizeTreatmentImage — accepts genuine JPEG/PNG/WebP", () => {
+describe("sanitizeTreatmentImage: accepts genuine JPEG/PNG/WebP", () => {
   it("accepts a real JPEG and returns image/jpeg", async () => {
     const bytes = await solid().jpeg().toBuffer();
     const r = await sanitizeTreatmentImage({ bytes, declaredContentType: "image/jpeg" });
@@ -42,7 +42,7 @@ describe("sanitizeTreatmentImage — accepts genuine JPEG/PNG/WebP", () => {
   });
 });
 
-describe("sanitizeTreatmentImage — rejects fakes / mismatches / corrupt", () => {
+describe("sanitizeTreatmentImage: rejects fakes / mismatches / corrupt", () => {
   it("rejects a PDF body declared as PNG", async () => {
     const bytes = Buffer.from("%PDF-1.4\n%fake pdf body\n");
     expect((await sanitizeTreatmentImage({ bytes, declaredContentType: "image/png" })).ok).toBe(false);
@@ -68,7 +68,7 @@ describe("sanitizeTreatmentImage — rejects fakes / mismatches / corrupt", () =
   });
   it("rejects an unsupported HEIC/HEIF container", async () => {
     // Minimal ISO-BMFF ftyp box with the 'heic' major brand. sharp either
-    // detects 'heif' (not in the allowlist) or throws — both reject.
+    // detects 'heif' (not in the allowlist) or throws, both reject.
     const bytes = Buffer.from([
       0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, // ....ftyp
       0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00, // heic....
@@ -78,7 +78,7 @@ describe("sanitizeTreatmentImage — rejects fakes / mismatches / corrupt", () =
   });
 });
 
-describe("sanitizeTreatmentImage — strips metadata + deterministic output", () => {
+describe("sanitizeTreatmentImage: strips metadata + deterministic output", () => {
   it("strips EXIF/GPS from a JPEG (input has EXIF, output has none)", async () => {
     const withExif = await solid()
       .withExif({ IFD0: { Copyright: "Hone test", Software: "exiftest" } })
@@ -96,11 +96,11 @@ describe("sanitizeTreatmentImage — strips metadata + deterministic output", ()
   });
   it("BAKES EXIF orientation into the pixels rather than relying on the tag", async () => {
     // libvips moved 8.17.3 -> 8.18.3 with sharp 0.35, and orientation handling
-    // lives in libvips — so this is proven BEHAVIOURALLY, not by grepping for
+    // lives in libvips, so this is proven BEHAVIOURALLY, not by grepping for
     // `.rotate()`. A non-square image tagged Orientation=6 (rotate 90° CW) must
     // come back with its dimensions SWAPPED and no orientation tag left: that is
     // only possible if the rotation was applied to the pixels.
-    // `withMetadata({ orientation })` is the API that actually writes the tag —
+    // `withMetadata({ orientation })` is the API that actually writes the tag,
     // `withExif({ IFD0: { Orientation } })` does not (verified: sharp reads it
     // back as 1), which would have made this test pass vacuously.
     const tagged = await solid(12, 4)

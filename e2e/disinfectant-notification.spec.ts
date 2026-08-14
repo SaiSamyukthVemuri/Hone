@@ -9,7 +9,7 @@ import { loginAsOwner } from "./helpers/flows";
 // Local-only, synthetic data (e2e/helpers/local-env.ts refuses hosted URLs). The
 // alert is COMPUTED, so recording a replacement (setting the actual discard date
 // through the REAL Records edit form) makes it no longer overdue and the alert
-// disappears — no cron, no email/SMS.
+// disappears, no cron, no email/SMS.
 
 test("overdue disinfectant surfaces in Notification Centre and resolves on replacement", async ({
   page,
@@ -68,7 +68,7 @@ test("overdue disinfectant surfaces in Notification Centre and resolves on repla
   // The record is no longer overdue (the row's "Replace now" badge is gone).
   await expect(page.getByText(/Overdue: replace now/i)).toHaveCount(0);
 
-  // Back in the Notification Centre, the alert is resolved/absent — and no
+  // Back in the Notification Centre, the alert is resolved/absent, and no
   // duplicate was created.
   await page.goto("/notifications");
   await expect(page.getByText("Replace disinfectant now")).toHaveCount(0);

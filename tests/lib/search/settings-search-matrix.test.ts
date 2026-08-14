@@ -5,7 +5,7 @@ import {
 } from "@/lib/search/navigation-registry";
 import { NAV_RESULT_CAP } from "@/lib/search/global-search";
 
-// Global Search V2-A.1 — the settings search ACCEPTANCE MATRIX.
+// Global Search V2-A.1: the settings search ACCEPTANCE MATRIX.
 //
 // One table of "what a practitioner types" → "what must come back first",
 // drawn from the real, current Settings pages. The coverage contract in
@@ -27,10 +27,10 @@ function titles(query: string, ctx: NavSearchContext = OWNER) {
 }
 
 // ---------------------------------------------------------------------------
-// Booking — the page the reported failure came from
+// Booking, the page the reported failure came from
 // ---------------------------------------------------------------------------
 
-describe("acceptance matrix — Booking", () => {
+describe("acceptance matrix: Booking", () => {
   const CASES: Array<[string, string, string]> = [
     // query                        expected title              expected href
     ["booking horizon", "Booking horizon", "/settings/booking#booking-horizon"],
@@ -100,7 +100,7 @@ describe("acceptance matrix — Booking", () => {
 // Representative controls from every other Settings page
 // ---------------------------------------------------------------------------
 
-describe("acceptance matrix — every other Settings page", () => {
+describe("acceptance matrix: every other Settings page", () => {
   const CASES: Array<[string, string]> = [
     // profile
     ["your name", "Your name"],
@@ -176,7 +176,7 @@ describe("acceptance matrix — every other Settings page", () => {
 // Authorization holds at CONTROL granularity too
 // ---------------------------------------------------------------------------
 
-describe("acceptance matrix — authorization", () => {
+describe("acceptance matrix: authorization", () => {
   it("owner-only controls return nothing for a practitioner", () => {
     for (const query of [
       "booking horizon",

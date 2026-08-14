@@ -4,7 +4,7 @@ import path from "node:path";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 
-// PR — smart / packed booking slots. getAvailableSlots no longer offers a fixed
+// PR: smart / packed booking slots. getAvailableSlots no longer offers a fixed
 // every-15-minute grid (10:00/10:15/10:30/…). Candidate starts are anchored to
 // the opening time + immediately after each existing reservation's protected
 // end, with a COARSE (hourly) fallback so an empty day still offers a few
@@ -14,7 +14,7 @@ const TZ = "America/Toronto";
 const DATE = "2026-07-06"; // a summer Monday (EDT, no DST transition that day)
 
 // Build a UTC ISO instant for a local HH:MM on DATE, using the SAME helper the
-// generator uses — so expectations are tz/DST-correct by construction.
+// generator uses, so expectations are tz/DST-correct by construction.
 function localISO(hhmm: string): string {
   return utcInstantFromLocal(DATE, hhmm, TZ).toISOString();
 }
@@ -77,7 +77,7 @@ const block = (startHHMM: string, endHHMM: string) => ({
 });
 
 describe("smart scheduling: empty day", () => {
-  it("offers the opening anchor + a coarse hourly fallback — NOT every 15 minutes", async () => {
+  it("offers the opening anchor + a coarse hourly fallback, NOT every 15 minutes", async () => {
     const slots = await getAvailableSlots(
       mockSupabase({ defaultRow: OPEN_10_17, reservations: [] }),
       studio(15),
@@ -148,7 +148,7 @@ describe("smart scheduling: packs immediately BEFORE the next appointment (Chloe
   //   - 11:30 packs BEFORE: 12:30 + 30 touches 13:00 (backward anchor
   //     reservation.start − duration − buffer = 11:30).
   //   - 14:30 packs AFTER: the appointment's protected end (14:00 + 30).
-  //   - 14:00 is EXCLUDED — it violates the appointment's 30-min buffer, exactly
+  //   - 14:00 is EXCLUDED, it violates the appointment's 30-min buffer, exactly
   //     as the authoritative DB validator (0152) rejects it.
   const chloeCase = () =>
     getAvailableSlots(
@@ -161,7 +161,7 @@ describe("smart scheduling: packs immediately BEFORE the next appointment (Chloe
       60,
     );
 
-  it("produces the exact expected list — 11:30 + 14:30 in, 14:00 out (buffer parity)", async () => {
+  it("produces the exact expected list, 11:30 + 14:30 in, 14:00 out (buffer parity)", async () => {
     const s = starts(await chloeCase());
     expect(s).toEqual([
       localISO("11:00"),
@@ -176,7 +176,7 @@ describe("smart scheduling: packs immediately BEFORE the next appointment (Chloe
     expect(s).toContain(localISO("14:30"));
     expect(s).not.toContain(localISO("12:00"));
     expect(s).not.toContain(localISO("13:00"));
-    expect(s).not.toContain(localISO("14:00")); // buffer violation — must not appear
+    expect(s).not.toContain(localISO("14:00")); // buffer violation, must not appear
     // Sorted + unique.
     expect(s).toEqual([...s].sort());
     expect(new Set(s).size).toBe(s.length);
@@ -201,7 +201,7 @@ describe("smart scheduling: packs immediately BEFORE the next appointment (Chloe
 
   it("does NOT offer a backward-packed slot that would cross the boundary (buffer respected)", async () => {
     // Same case but a 45-min buffer: 13:00 − 45 − 60 = 11:15 would be the anchor,
-    // and its protected end (11:15 + 60 + 45 = 13:00) still touches — valid. But a
+    // and its protected end (11:15 + 60 + 45 = 13:00) still touches, valid. But a
     // candidate one minute later must be rejected. Assert the exact anchor is the
     // latest offered start before the appointment, never anything overlapping.
     const s = starts(

@@ -2,14 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, closePool, seedSession, seedStudio, userQuery, type SeededStudio } from "./helpers/harness";
 
 // ===========================================================================
-// L18 FINAL — migration 0169 behavioural proof, against a fresh chain.
+// L18 FINAL, migration 0169 behavioural proof, against a fresh chain.
 // ===========================================================================
 //
 // The cutover: `authenticated` keeps SELECT on all six clinical tables and
 // loses INSERT, UPDATE and DELETE. Every write must now go through a command.
 //
 // The denial must be a DATABASE PRIVILEGE denial (42501), not a zero-row RLS
-// result — a zero-row UPDATE would look identical to a successful no-op and
+// result, a zero-row UPDATE would look identical to a successful no-op and
 // would prove nothing. Every probe below therefore uses a predicate that
 // matches NO rows: if the privilege were still granted the statement would
 // SUCCEED with rowCount 0, and the test would fail. Nothing is mutated.
@@ -45,21 +45,21 @@ async function codeFor(sql: string): Promise<string | null> {
   }
 }
 
-describe("0169 — authenticated SELECT is retained on every table", () => {
+describe("0169: authenticated SELECT is retained on every table", () => {
   for (const t of TABLES) {
     it(`${t}: SELECT still allowed`, async () => {
       const r = await adminQuery(
         `select has_table_privilege('authenticated','public.${t}','SELECT') p`,
       );
       expect(r.rows[0].p).toBe(true);
-      // And it genuinely runs (RLS may return zero rows; that is fine — this
+      // And it genuinely runs (RLS may return zero rows; that is fine, this
       // asserts the privilege layer does not refuse the statement).
       expect(await codeFor(`select count(*) from public.${t}`)).toBeNull();
     });
   }
 });
 
-describe("0169 — authenticated INSERT/UPDATE/DELETE are denied by PRIVILEGE", () => {
+describe("0169: authenticated INSERT/UPDATE/DELETE are denied by PRIVILEGE", () => {
   for (const t of TABLES) {
     it(`${t}: privilege flags are false for all three writes`, async () => {
       const r = await adminQuery(
@@ -90,7 +90,7 @@ describe("0169 — authenticated INSERT/UPDATE/DELETE are denied by PRIVILEGE", 
     });
 
     it(`${t}: an INSERT is refused with 42501`, async () => {
-      // Deliberately invalid column values — if the privilege check did not
+      // Deliberately invalid column values: if the privilege check did not
       // fire first this would fail with a DIFFERENT code (not-null / type),
       // so 42501 proves privilege is evaluated before anything else.
       const code = await codeFor(`insert into public.${t} default values`);
@@ -99,7 +99,7 @@ describe("0169 — authenticated INSERT/UPDATE/DELETE are denied by PRIVILEGE", 
   }
 });
 
-describe("0169 — anon and PUBLIC hold no direct write privilege", () => {
+describe("0169: anon and PUBLIC hold no direct write privilege", () => {
   for (const t of TABLES) {
     it(`${t}: anon has no INSERT/UPDATE/DELETE`, async () => {
       const r = await adminQuery(
@@ -125,7 +125,7 @@ describe("0169 — anon and PUBLIC hold no direct write privilege", () => {
   }
 });
 
-describe("0169 — service_role is unchanged from the pre-0169 baseline", () => {
+describe("0169: service_role is unchanged from the pre-0169 baseline", () => {
   // Baseline measured in production before writing 0169: service_role held
   // SELECT+INSERT+UPDATE+DELETE on all six tables. It must be untouched, or the
   // migration has reached beyond its scope.
@@ -145,7 +145,7 @@ describe("0169 — service_role is unchanged from the pre-0169 baseline", () => 
   }
 });
 
-describe("0169 — TRUNCATE remains denied to the client roles", () => {
+describe("0169: TRUNCATE remains denied to the client roles", () => {
   for (const t of TABLES) {
     it(`${t}: neither authenticated nor anon may TRUNCATE`, async () => {
       const r = await adminQuery(
@@ -158,7 +158,7 @@ describe("0169 — TRUNCATE remains denied to the client roles", () => {
   }
 });
 
-describe("0169 — the command surface is untouched", () => {
+describe("0169: the command surface is untouched", () => {
   const COMMANDS = [
     "create_laser_entry",
     "create_block_with_entry",
@@ -180,7 +180,7 @@ describe("0169 — the command surface is untouched", () => {
 
   // 0181 gave start_session a SECOND overload (the explicit-studio command
   // alongside the retained four-argument compatibility wrapper), so a raw ROW
-  // count is no longer the right shape — one command name can legitimately map
+  // count is no longer the right shape, one command name can legitimately map
   // to several signatures. The guard's actual claim is unchanged and is now
   // asserted directly: every listed command NAME is present, and EVERY
   // signature of it is authenticated-only. That is strictly stronger than the

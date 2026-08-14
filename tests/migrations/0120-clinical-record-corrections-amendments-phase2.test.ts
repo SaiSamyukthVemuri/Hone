@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-// Migration 0120: Clinical Record — Phase 2 (corrections & amendments). Snapshot
+// Migration 0120: Clinical Record, Phase 2 (corrections & amendments). Snapshot
 // lineage fields, an append-only clinical_record_amendments table, a dedicated
 // append-only clinical_audit_events table, a NARROW session-scoped transaction-local
 // correction permit on the Phase 1 guard, typed correction-payload appliers, and
@@ -14,7 +14,7 @@ const FILE = "0120_clinical_record_corrections_amendments_phase2.sql";
 const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0120 — repo migration-max tripwire", () => {
+describe("0120: repo migration-max tripwire", () => {
   it("is the repo migration max", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
@@ -22,7 +22,7 @@ describe("0120 — repo migration-max tripwire", () => {
         .filter(Boolean)
         .map((m) => Number((m as RegExpExecArray)[1])),
     );
-    // Advanced to 0136 (PR B — capacity booking kill-switch), on top of 0135
+    // Advanced to 0136 (PR B, capacity booking kill-switch), on top of 0135
     // (per-practitioner availability). Bump this tripwire consciously
     // when a new migration lands.
     // DRAFT PR #481 carries a different, superseded migration under that number on a
@@ -31,7 +31,7 @@ describe("0120 — repo migration-max tripwire", () => {
   });
 });
 
-describe("0120 — additive & non-destructive", () => {
+describe("0120: additive & non-destructive", () => {
   it("adds snapshot lineage columns (existing v1 -> 'original') and does not rewrite v1", () => {
     expect(SQL_CODE).toMatch(/add column if not exists version_type text not null default 'original'/);
     expect(SQL_CODE).toMatch(/add column if not exists supersedes_snapshot_id uuid/);
@@ -53,7 +53,7 @@ describe("0120 — additive & non-destructive", () => {
   });
 });
 
-describe("0120 — append-only amendments + audit tables", () => {
+describe("0120: append-only amendments + audit tables", () => {
   it("clinical_record_amendments: RESTRICT FKs, non-empty reason, member SELECT, revoked writes, append-only", () => {
     expect(SQL_CODE).toMatch(/create table if not exists public\.clinical_record_amendments/);
     expect(SQL_CODE).toMatch(/check \(length\(btrim\(reason\)\) > 0\)/);
@@ -80,7 +80,7 @@ describe("0120 — append-only amendments + audit tables", () => {
   });
 });
 
-describe("0120 — narrow correction bypass (session-scoped, no broad escape hatch)", () => {
+describe("0120: narrow correction bypass (session-scoped, no broad escape hatch)", () => {
   it("adds exactly ONE GUC key, session-scoped, and set only inside the trusted RPCs", () => {
     // Exactly the one allowed key.
     const guc = SQL_CODE.match(/hone\.correction_session_id/g) ?? [];
@@ -111,7 +111,7 @@ describe("0120 — narrow correction bypass (session-scoped, no broad escape hat
   });
 });
 
-describe("0120 — typed correction payload (allow-listed; no arbitrary columns)", () => {
+describe("0120: typed correction payload (allow-listed; no arbitrary columns)", () => {
   it("per-entity appliers reject unknown keys and are revoked from clients", () => {
     for (const fn of [
       "_apply_session_correction",
@@ -139,7 +139,7 @@ describe("0120 — typed correction payload (allow-listed; no arbitrary columns)
   });
 });
 
-describe("0120 — amendment RPC (append-only; no normalized/version/snapshot change)", () => {
+describe("0120: amendment RPC (append-only; no normalized/version/snapshot change)", () => {
   it("inserts one immutable amendment + clinical audit, requires reason, native+finalized, and does NOT touch canonical rows", () => {
     expect(SQL_CODE).toMatch(/create or replace function public\.amend_finalized_session/);
     expect(SQL_CODE).toMatch(/A reason is required/);
@@ -156,7 +156,7 @@ describe("0120 — amendment RPC (append-only; no normalized/version/snapshot ch
   });
 });
 
-describe("0120 — correction RPC (atomic version N -> N+1)", () => {
+describe("0120: correction RPC (atomic version N -> N+1)", () => {
   it("CAS, native+finalized, min-charting re-check, supersede chain, single record_version increment, audit", () => {
     expect(SQL_CODE).toMatch(/create or replace function public\.correct_finalized_session/);
     expect(SQL_CODE).toMatch(/for update/);

@@ -5,7 +5,7 @@ import { weekRangeLabel } from "@/app/(app)/calendar/calendar-format";
 
 // Desktop PR A: a Google/Apple-style calendar toolbar (Today · ‹ › · visible
 // date range · Week/Month toggle) shared by the week + month renders.
-// Presentational only — no booking/view-resolution/param changes.
+// Presentational only, no booking/view-resolution/param changes.
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
@@ -13,7 +13,7 @@ const PAGE = read("app/(app)/calendar/page.tsx");
 const TOOLBAR = read("app/(app)/calendar/CalendarToolbar.tsx");
 const DAYCOL = read("app/(app)/calendar/DayColumn.tsx");
 
-describe("weekRangeLabel — Google-style visible date range", () => {
+describe("weekRangeLabel: Google-style visible date range", () => {
   it("same month", () => {
     expect(weekRangeLabel("2026-07-07", "2026-07-13")).toBe("Jul 7 – 13, 2026");
   });
@@ -76,7 +76,7 @@ describe("nothing else changed", () => {
     expect(DAYCOL).toMatch(/<QuickBookDrawer/);
     expect(DAYCOL).toMatch(/onClick=\{\(\) => setEditingBlock\(tb\)\}/);
   });
-  it("the toolbar is presentational — no booking/server-action/mutation", () => {
+  it("the toolbar is presentational: no booking/server-action/mutation", () => {
     expect(TOOLBAR).not.toMatch(/"use server"|bookAppointment|createClient|supabase|<form|stripe/i);
   });
 });

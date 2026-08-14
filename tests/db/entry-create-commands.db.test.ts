@@ -10,7 +10,7 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// L18 Phase 1A — the ONE clean entry create command (migration 0164)
+// L18 Phase 1A, the ONE clean entry create command (migration 0164)
 // ===========================================================================
 //
 // `create_laser_entry` replaces the direct table INSERT in addLaserEntryAction.
@@ -24,11 +24,11 @@ import {
 // electrolysis_entries is NOT command-bound by this phase. ALL THREE of its
 // runtime writers can write session_blocks AND electrolysis_entries for a
 // single user intent and therefore move together in the combined phase:
-//   * addElectrolysisEntryAction — via ensureBlockForSession, when the
+//   * addElectrolysisEntryAction, via ensureBlockForSession, when the
 //     submitted form omits block_id (a legacy caller shape it still supports)
-//   * createTreatmentAreaWithEntryAction — block then entry, compensating soft
+//   * createTreatmentAreaWithEntryAction, block then entry, compensating soft
 //     delete on failure
-//   * updateTreatmentAreaWithEntryAction — block then entry, no compensation
+//   * updateTreatmentAreaWithEntryAction, block then entry, no compensation
 //
 // Every row is synthetic and confined to the disposable local database.
 
@@ -82,7 +82,7 @@ async function expectLaserDenied(
 // The authorized happy path.
 // ---------------------------------------------------------------------------
 
-describe("0164 — authorized laser create succeeds through the command", () => {
+describe("0164: authorized laser create succeeds through the command", () => {
   it("creates the entry and stores its values", async () => {
     const res = await userQuery(A.userId, LASER_SQL, [
       sessionA,
@@ -127,7 +127,7 @@ describe("0164 — authorized laser create succeeds through the command", () => 
 // Authorization and lineage.
 // ---------------------------------------------------------------------------
 
-describe("0164 — authorization and lineage are database-derived", () => {
+describe("0164: authorization and lineage are database-derived", () => {
   it("a cross-studio caller is denied", async () => {
     const before = await countLaser(sessionA);
     await expectLaserDenied(B.userId, [sessionA, A.clientId, "z", null, null, null]);
@@ -171,7 +171,7 @@ describe("0164 — authorization and lineage are database-derived", () => {
     }
   });
 
-  it("a caller cannot assert another practitioner — there is no such parameter", async () => {
+  it("a caller cannot assert another practitioner, there is no such parameter", async () => {
     const args = await adminQuery(
       `select pg_get_function_arguments(p.oid) as args
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -207,7 +207,7 @@ describe("0164 — authorization and lineage are database-derived", () => {
 // Validation and residue.
 // ---------------------------------------------------------------------------
 
-describe("0164 — validation preserved; a failed command leaves no residue", () => {
+describe("0164: validation preserved; a failed command leaves no residue", () => {
   it("a NULL zone is rejected (the NOT NULL column is still the authority)", async () => {
     // 23502 = not_null_violation
     await expectLaserDenied(
@@ -231,7 +231,7 @@ describe("0164 — validation preserved; a failed command leaves no residue", ()
 // EXECUTE privileges.
 // ---------------------------------------------------------------------------
 
-describe("0164 — EXECUTE is authenticated-only", () => {
+describe("0164: EXECUTE is authenticated-only", () => {
   it("anon and PUBLIC cannot execute the command", async () => {
     const r = await adminQuery(
       `select has_function_privilege('anon', p.oid, 'execute') as anon_x
@@ -296,7 +296,7 @@ describe("0164 — EXECUTE is authenticated-only", () => {
     expect(r.rows[0].cfg).toBe('search_path=""');
   });
 
-  it("a service-role caller (no auth.uid()) is refused — no admin shortcut", async () => {
+  it("a service-role caller (no auth.uid()) is refused, no admin shortcut", async () => {
     let code: string | undefined;
     try {
       await adminQuery(LASER_SQL, [sessionA, A.clientId, "z", null, null, null]);
@@ -323,13 +323,13 @@ describe("0164 — EXECUTE is authenticated-only", () => {
 // Additive property and neighbouring boundaries.
 // ---------------------------------------------------------------------------
 
-describe("0164 — additive phase: direct DML and existing boundaries intact", () => {
-  it("0164 itself revoked nothing — the capability was removed later, by 0169", async () => {
+describe("0164, additive phase: direct DML and existing boundaries intact", () => {
+  it("0164 itself revoked nothing: the capability was removed later, by 0169", async () => {
     // This case originally asserted that direct DML was STILL AVAILABLE, which
     // was the correct scope statement for 0164: that phase was additive and had
     // to leave the deployed application working. Migration 0169 is the cutover
     // that finally removes the capability, so the assertion is inverted here
-    // rather than deleted — the history stays legible.
+    // rather than deleted, the history stays legible.
     const r = await adminQuery(
       `select has_table_privilege('authenticated','public.electrolysis_entries','insert') as e_ins,
               has_table_privilege('authenticated','public.laser_entries','insert')        as l_ins,
@@ -409,7 +409,7 @@ describe("0164 — additive phase: direct DML and existing boundaries intact", (
     ]);
     // TWO layers now refuse this, and both are asserted.
     //
-    // 1. PRIVILEGE — after 0169 `authenticated` has no UPDATE at all.
+    // 1. PRIVILEGE, after 0169 `authenticated` has no UPDATE at all.
     let code: string | undefined;
     try {
       await userQuery(
@@ -422,7 +422,7 @@ describe("0164 — additive phase: direct DML and existing boundaries intact", (
     }
     expect(code).toBe("42501");
 
-    // 2. TRIGGER — the 0160 lineage guard itself is UNCHANGED. Proven through
+    // 2. TRIGGER: the 0160 lineage guard itself is UNCHANGED. Proven through
     // service_role, which still holds DML, so the revocation cannot be mistaken
     // for having replaced the protection it sits in front of.
     let trigCode: string | undefined;

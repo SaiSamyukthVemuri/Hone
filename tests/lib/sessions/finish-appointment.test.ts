@@ -12,7 +12,7 @@ import {
 
 // Chloe finishes charting and the two visit-closing actions live on a different
 // page, so they get forgotten. These prove the presenter that brings them into
-// one workflow — and prove it decides only what to SHOW, never what is allowed.
+// one workflow, and prove it decides only what to SHOW, never what is allowed.
 
 const NOW = Date.parse("2026-07-31T15:00:00Z");
 // B6: explicit completion is keyed on the appointment having STARTED. These
@@ -48,7 +48,7 @@ describe("1-2. treatment chart state", () => {
     expect(chartingLabel("charted")).toBe("Charting recorded");
   });
 
-  it("an empty session reads as empty — and is NOT blocked from completing", () => {
+  it("an empty session reads as empty, and is NOT blocked from completing", () => {
     const s = resolveFinishAppointmentState(input({ chartedBlockCount: 0 }));
     expect(s.charting).toBe("empty");
     expect(chartingLabel("empty")).toBe("No treatment charted yet");
@@ -106,7 +106,7 @@ describe("4-8. completion state, keyed to the appointment", () => {
     expect(s.completion).toEqual({ kind: "ready", appointmentId: "appt-1", startsAt: STARTED });
   });
 
-  it("completed is terminal — no action", () => {
+  it("completed is terminal: no action", () => {
     const s = resolveFinishAppointmentState(
       input({ appointment: { id: "a", status: "completed", startsAt: STARTED, endsAt: ENDED } }),
     );
@@ -114,14 +114,14 @@ describe("4-8. completion state, keyed to the appointment", () => {
     expect(completionLabel(s.completion)).toBe("Completed");
   });
 
-  it("cancelled is terminal — no action", () => {
+  it("cancelled is terminal: no action", () => {
     const s = resolveFinishAppointmentState(
       input({ appointment: { id: "a", status: "cancelled", startsAt: STARTED, endsAt: ENDED } }),
     );
     expect(s.completion.kind).toBe("cancelled");
   });
 
-  it("no_show is terminal — no action", () => {
+  it("no_show is terminal: no action", () => {
     const s = resolveFinishAppointmentState(
       input({ appointment: { id: "a", status: "no_show", startsAt: STARTED, endsAt: ENDED } }),
     );
@@ -164,7 +164,7 @@ describe("10-14. postcare state", () => {
     expect(s.postcare.kind).toBe("sending");
   });
 
-  it("a STALE claim is not 'sending' — the sender died", () => {
+  it("a STALE claim is not 'sending', the sender died", () => {
     const s = resolveFinishAppointmentState(
       input({ postcareClaimedAt: new Date(NOW - 6 * 60_000).toISOString() }),
     );
@@ -179,7 +179,7 @@ describe("10-14. postcare state", () => {
     expect(postcareLabel(s.postcare)).toBe("Postcare send failed");
   });
 
-  it("sent requires a provider-confirmed sent_at — a claim alone is NOT sent", () => {
+  it("sent requires a provider-confirmed sent_at, a claim alone is NOT sent", () => {
     const claimedOnly = resolveFinishAppointmentState(
       input({ postcareClaimedAt: new Date(NOW - 10_000).toISOString(), postcareSendAttempts: 1 }),
     );
@@ -194,7 +194,7 @@ describe("10-14. postcare state", () => {
     });
   });
 
-  it("sent WINS over a later failed resend — the client did receive one", () => {
+  it("sent WINS over a later failed resend, the client did receive one", () => {
     const s = resolveFinishAppointmentState(
       input({
         postcareSentAt: "2026-07-31T14:45:00Z",
@@ -283,7 +283,7 @@ describe("18-19. purity and the injected clock", () => {
 
   // The rule that makes B6 safe: a visit that has begun but NOT ended is
   // explicitly completable. Under the old ends_at rule this was "before_end".
-  it("MID-VISIT — started but not ended is READY (the whole point of B6)", () => {
+  it("MID-VISIT: started but not ended is READY (the whole point of B6)", () => {
     const s = resolveFinishAppointmentState(
       input({
         appointment: {

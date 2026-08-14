@@ -4,13 +4,13 @@ import path from "node:path";
 
 // Migration 0103 companion: a studio can hold one studio_payment_settings row
 // per Stripe mode, so EVERY runtime read of the table must be scoped to the
-// CURRENT deployment mode — an unscoped studio_id-only .maybeSingle() errors
+// CURRENT deployment mode, an unscoped studio_id-only .maybeSingle() errors
 // the moment a studio has both a test and a live row, and an unscoped read is
 // exactly the production bug that handed the LIVE key a TEST acct_ id
 // (StripePermissionError account_invalid). This suite pins:
 //   * every .from("studio_payment_settings") read carries a stripe_livemode
 //     filter derived from a VARIABLE (inferStripeLivemode() / livemode /
-//     ctx.livemode) — never a hardcoded literal
+//     ctx.livemode), never a hardcoded literal
 //   * both get_studio_payment_settings_display callers pass p_stripe_livemode
 //   * live runtime can therefore never retrieve/login/link the other mode's
 //     account id
@@ -24,7 +24,7 @@ function read(rel: string): string {
 // appears elsewhere, the repo-wide scan below catches it.
 // Deliberately BOTH-mode reader (PR B): the admin status helper fetches a
 // studio's test AND live settings rows to display them side by side, and
-// splits every count by the ROW's own stripe_livemode — mode-correct by
+// splits every count by the ROW's own stripe_livemode, mode-correct by
 // construction, so it is exempt from the per-block current-mode filter rule
 // below (its platform-summary read IS current-mode scoped).
 const BOTH_MODE_READERS = ["lib/payments/admin-payment-status.ts"];

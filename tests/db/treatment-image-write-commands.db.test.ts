@@ -12,7 +12,7 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// L18 Phase 4 — treatment_images write commands (migration 0168)
+// L18 Phase 4, treatment_images write commands (migration 0168)
 // ===========================================================================
 //
 // Three runtime writers wrote public.treatment_images directly. Three
@@ -24,7 +24,7 @@ import {
 // keeps its compensating cleanup because the two planes are not one
 // transaction.
 //
-// SCOPE: additive. No table privilege is revoked — asserted below.
+// SCOPE: additive. No table privilege is revoked, asserted below.
 
 const CHECK_VIOLATION = "23514";
 
@@ -108,7 +108,7 @@ const readImage = async (id: string) =>
 // 1. Metadata creation.
 // --------------------------------------------------------------------------
 
-describe("0168 — create_treatment_image_metadata", () => {
+describe("0168: create_treatment_image_metadata", () => {
   it("1. records a valid same-studio image and DERIVES uploaded_by", async () => {
     const id = await newId();
     await userQuery(A.userId, CREATE, createArgs(id));
@@ -245,7 +245,7 @@ describe("0168 — create_treatment_image_metadata", () => {
 // 2. Note.
 // --------------------------------------------------------------------------
 
-describe("0168 — set_treatment_image_note", () => {
+describe("0168: set_treatment_image_note", () => {
   let imageId: string;
   beforeAll(async () => {
     imageId = await newId();
@@ -301,7 +301,7 @@ describe("0168 — set_treatment_image_note", () => {
 // 3. Archive.
 // --------------------------------------------------------------------------
 
-describe("0168 — archive_treatment_image", () => {
+describe("0168: archive_treatment_image", () => {
   it("19. soft-archives and DERIVES deleted_by from the actor", async () => {
     const id = await newId();
     await userQuery(A.userId, CREATE, createArgs(id));
@@ -313,7 +313,7 @@ describe("0168 — archive_treatment_image", () => {
     expect(row.deleted_by).toBe(m.practitionerId); // the ACTOR
   });
 
-  it("20. the row still EXISTS — archive is soft, never a delete", async () => {
+  it("20. the row still EXISTS, archive is soft, never a delete", async () => {
     const id = await newId();
     await userQuery(A.userId, CREATE, createArgs(id));
     await userQuery(A.userId, ARCHIVE, [id, A.clientId]);
@@ -367,7 +367,7 @@ describe("0168 — archive_treatment_image", () => {
 // 4. Preserved protections and privileges.
 // --------------------------------------------------------------------------
 
-describe("0168 — preserved protections and privileges", () => {
+describe("0168: preserved protections and privileges", () => {
   it("24. the 0093 integrity trigger and the finalized guard are intact", async () => {
     const r = await adminQuery(
       `select tgname from pg_trigger
@@ -393,7 +393,7 @@ describe("0168 — preserved protections and privileges", () => {
     }
     if (!blocked) {
       // If the guard permits the metadata write, the legacy record's own
-      // status must still be untouched — that is the invariant 0160 protects.
+      // status must still be untouched, that is the invariant 0160 protects.
       const sess = await adminQuery(
         `select record_status from public.sessions where id=$1`,
         [s.sessionId],
@@ -450,7 +450,7 @@ describe("0168 — preserved protections and privileges", () => {
   });
 
   it("28. direct table DML is revoked by 0169; 0168 itself revoked nothing", async () => {
-    // This phase revoked nothing — correct for its own scope. Migration 0169 is
+    // This phase revoked nothing: correct for its own scope. Migration 0169 is
     // the cutover that removes the capability, so the assertion is INVERTED here
     // rather than deleted, and SELECT is asserted retained.
     const r = await adminQuery(

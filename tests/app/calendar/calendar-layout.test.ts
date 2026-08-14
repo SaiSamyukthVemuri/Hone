@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR B — calendar layout usability (layout-only; no booking logic). The calendar
+// PR B: calendar layout usability (layout-only; no booking logic). The calendar
 // body now scrolls INTERNALLY (fits the viewport) with a sticky day header and a
 // sticky-left time rail so hour labels stay visible while scrolling across days.
 // vitest env is "node" (no DOM) → verified by source pins. Drag/positioning math
@@ -13,14 +13,14 @@ function read(rel: string): string {
 const PAGE = read("app/(app)/calendar/page.tsx");
 const DAYCOL = read("app/(app)/calendar/DayColumn.tsx");
 
-describe("A. desktop — calendar body scrolls internally (not the whole page)", () => {
+describe("A. desktop: calendar body scrolls internally (not the whole page)", () => {
   it("the grid scroll container is height-bounded + ONE clean vertical scroll (no horizontal)", () => {
     // PR B: single vertical scroll; the horizontal-scroll machinery is gone.
     expect(PAGE).toMatch(/max-h-\[calc\(100dvh-13rem\)\][^"]*overflow-y-auto/);
     expect(PAGE).not.toMatch(/max-h-\[calc\(100dvh-13rem\)\][^"]*overflow-x-auto/);
   });
   it("the day-of-week header row is sticky at the top", () => {
-    // PR B: no more min-w-[760px] forcing — columns flex (minmax(0,1fr)).
+    // PR B: no more min-w-[760px] forcing, columns flex (minmax(0,1fr)).
     expect(PAGE).toMatch(/className="sticky top-0 z-20 grid grid-cols-\[60px_repeat\(7/);
   });
   it("no desktop horizontal min-width forcing remains", () => {
@@ -29,7 +29,7 @@ describe("A. desktop — calendar body scrolls internally (not the whole page)",
   });
 });
 
-describe("B. mobile — time rail stays visible while scrolling across days", () => {
+describe("B. mobile: time rail stays visible while scrolling across days", () => {
   it("the time rail is sticky-left with an opaque background + z above cards", () => {
     expect(PAGE).toMatch(/className="sticky left-0 z-30 border-r border-neutral-200 bg-white/);
   });

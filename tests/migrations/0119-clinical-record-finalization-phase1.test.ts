@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-// Migration 0119: Clinical Record — Phase 1 (finalization boundary). Additive
+// Migration 0119: Clinical Record, Phase 1 (finalization boundary). Additive
 // lifecycle + provenance columns, a studio-scoped feature flag, an immutable
 // append-only snapshot artifact, a deterministic UTC-canonical snapshot builder,
 // full finalized-aggregate write guards (sessions + children + treatment_images,
@@ -17,7 +17,7 @@ const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 // avoids them) can't satisfy or trip the greps.
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0119 — exists", () => {
+describe("0119: exists", () => {
   it("0119 is present; the repo-max tripwire now lives in the 0120 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
@@ -31,8 +31,8 @@ describe("0119 — exists", () => {
   });
 });
 
-describe("0119 — additive, non-destructive, legacy-truthful", () => {
-  it("adds lifecycle columns (default draft) — no rewrite/backfill of existing rows", () => {
+describe("0119: additive, non-destructive, legacy-truthful", () => {
+  it("adds lifecycle columns (default draft), no rewrite/backfill of existing rows", () => {
     expect(SQL_CODE).toMatch(
       /add column if not exists record_status text not null default 'draft'/,
     );
@@ -77,7 +77,7 @@ describe("0119 — additive, non-destructive, legacy-truthful", () => {
   });
 });
 
-describe("0119 — snapshot retention: never cascade-delete", () => {
+describe("0119, snapshot retention: never cascade-delete", () => {
   it("has NO ON DELETE CASCADE anywhere (snapshots/lineage are permanent)", () => {
     expect(SQL_CODE).not.toMatch(/on delete cascade/i);
   });
@@ -106,7 +106,7 @@ describe("0119 — snapshot retention: never cascade-delete", () => {
   });
 });
 
-describe("0119 — immutable, append-only snapshot artifact", () => {
+describe("0119: immutable, append-only snapshot artifact", () => {
   it("has the required schema columns incl. hash_algorithm + canonicalization_version + attestation", () => {
     expect(SQL_CODE).toMatch(/create table if not exists public\.clinical_record_snapshots/);
     expect(SQL_CODE).toMatch(/content_hash text not null/);
@@ -136,7 +136,7 @@ describe("0119 — immutable, append-only snapshot artifact", () => {
   });
 });
 
-describe("0119 — deterministic, UTC-canonical snapshot builder", () => {
+describe("0119: deterministic, UTC-canonical snapshot builder", () => {
   it("orders every array with a stable id tiebreak and renders timestamps in UTC", () => {
     expect(SQL_CODE).toMatch(/function public\.build_session_snapshot/);
     expect(SQL_CODE).toMatch(/order by b\.sort_order, b\.id/);
@@ -164,7 +164,7 @@ describe("0119 — deterministic, UTC-canonical snapshot builder", () => {
   });
 });
 
-describe("0119 — full finalized-aggregate freeze (NO bypass)", () => {
+describe("0119: full finalized-aggregate freeze (NO bypass)", () => {
   it("guards sessions (UPDATE+DELETE), all 3 children (INSERT+UPDATE+DELETE), and treatment_images (INSERT+UPDATE+DELETE)", () => {
     expect(SQL_CODE).toMatch(/function public\.guard_finalized_clinical_write/);
     expect(SQL_CODE).toMatch(
@@ -200,7 +200,7 @@ describe("0119 — full finalized-aggregate freeze (NO bypass)", () => {
   });
 });
 
-describe("0119 — practitioner attribution retention", () => {
+describe("0119: practitioner attribution retention", () => {
   it("blocks hard-deleting a practitioner referenced by a finalized record (deactivation still allowed)", () => {
     expect(SQL_CODE).toMatch(/function public\.guard_practitioner_finalized_refs/);
     expect(SQL_CODE).toMatch(
@@ -211,7 +211,7 @@ describe("0119 — practitioner attribution retention", () => {
   });
 });
 
-describe("0119 — trusted finalize RPC", () => {
+describe("0119: trusted finalize RPC", () => {
   it("is SECURITY DEFINER with hardened search_path, locks the row, server-derives actor/studio", () => {
     expect(SQL_CODE).toMatch(/function public\.finalize_session/);
     expect(SQL_CODE).toMatch(/security definer/);
@@ -236,7 +236,7 @@ describe("0119 — trusted finalize RPC", () => {
 
   it("uses compare-and-set (expected=1) and does NOT increment version at initial finalization", () => {
     expect(SQL_CODE).toMatch(/p_expected_record_version is null or p_expected_record_version <> v_version/);
-    // session.record_version stays 1 — no increment.
+    // session.record_version stays 1: no increment.
     expect(SQL_CODE).not.toMatch(/record_version\s*=\s*record_version\s*\+\s*1/);
     // snapshot version 1 + current_snapshot_id set atomically in the flip.
     expect(SQL_CODE).toMatch(/current_snapshot_id = v_snap_id/);
@@ -248,7 +248,7 @@ describe("0119 — trusted finalize RPC", () => {
     expect(SQL_CODE).toMatch(/finalized_at = now\(\)/);
     // Deterministic hash via pgcrypto digest (extensions schema).
     expect(SQL_CODE).toMatch(/encode\(extensions\.digest\(v_snapshot::text, 'sha256'\), 'hex'\)/);
-    // Audit event carries only lifecycle transition — no PHI.
+    // Audit event carries only lifecycle transition, no PHI.
     expect(SQL_CODE).toMatch(/'record_status', 'draft', 'finalized'/);
   });
 

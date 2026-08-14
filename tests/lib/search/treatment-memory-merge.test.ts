@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
 
-// Global Search finds a treatment-memory block down two paths — the block's own
+// Global Search finds a treatment-memory block down two paths, the block's own
 // text columns (DIRECT) and its structured treatment areas (CHILD). This module
 // is the pure half that turns two overlapping candidate lists into one ordered,
 // capped, deduplicated result set. Everything here is behavioural: real inputs
@@ -124,7 +124,7 @@ describe("deterministic newest-first ranking", () => {
     expect(out.map((r) => r.id)).toEqual(["a", "z"]);
   });
 
-  it("ranks a Date the same as its ISO string — driver shape must not matter", () => {
+  it("ranks a Date the same as its ISO string, driver shape must not matter", () => {
     // node-postgres returns a real Date where PostgREST returns a string. The
     // DB lane reuses this helper, and treating a Date as undated silently
     // collapsed newest-first into the id tiebreak without failing anything.
@@ -192,7 +192,7 @@ describe("the cap is applied AFTER deduplication", () => {
     ]);
   });
 
-  it("a cap of zero or below yields nothing — a cap must not fail open", () => {
+  it("a cap of zero or below yields nothing, a cap must not fail open", () => {
     expect(mergeMemoryBlockRows([row("a")], [row("b")], 0)).toEqual([]);
     expect(mergeMemoryBlockRows([row("a")], [row("b")], -1)).toEqual([]);
     expect(mergeMemoryBlockRows([row("a")], [row("b")], Number.NaN)).toEqual([]);

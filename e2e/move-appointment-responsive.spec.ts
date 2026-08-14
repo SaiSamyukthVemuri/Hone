@@ -7,12 +7,12 @@ import {
 } from "./helpers/seed";
 import { bookAppointment, loginAsOwner } from "./helpers/flows";
 
-// Practitioner Move appointment — the ONE shared responsive workflow (migration
+// Practitioner Move appointment: the ONE shared responsive workflow (migration
 // 0133), exercised end-to-end on mobile, tablet, and desktop against the LOCAL
 // stack. This spec proves the parts only a real browser can:
 //   * the SAME MoveAppointmentDialog + server actions drive a real move at each
 //     viewport (bottom sheet on phone, centered modal on tablet/desktop);
-//   * a move UPDATES the same appointment row — the id is preserved, the row
+//   * a move UPDATES the same appointment row, the id is preserved, the row
 //     count never grows (no cancel + rebook), the status stays confirmed, and
 //     only the time changes;
 //   * the dialog is an accessible modal: Escape closes it when idle, and the
@@ -30,7 +30,7 @@ test.describe.configure({ mode: "serial" });
 const SLOT = /^\d{1,2}:\d{2} (AM|PM)$/; // same 12h label the booking flow matches
 
 // getAppointmentsForClient runs raw `pg`, which returns timestamptz as a Date
-// object — so compare the INSTANT (epoch ms), never the Date reference.
+// object, so compare the INSTANT (epoch ms), never the Date reference.
 const instant = (v: string | Date): number => new Date(v).getTime();
 
 let seed: E2eSeed;

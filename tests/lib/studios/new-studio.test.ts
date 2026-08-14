@@ -18,7 +18,7 @@ const VALID = {
   timezone: "America/Toronto",
 };
 
-describe("parseNewStudioInput — happy path + normalization", () => {
+describe("parseNewStudioInput: happy path + normalization", () => {
   it("accepts a complete valid input and returns normalized values", () => {
     const r = parseNewStudioInput(VALID);
     expect(r.ok).toBe(true);
@@ -57,7 +57,7 @@ describe("parseNewStudioInput — happy path + normalization", () => {
   });
 });
 
-describe("parseNewStudioInput — required fields", () => {
+describe("parseNewStudioInput: required fields", () => {
   it("rejects a missing studio name", () => {
     const r = parseNewStudioInput({ ...VALID, name: "  " });
     expect(r.ok).toBe(false);
@@ -80,7 +80,7 @@ describe("parseNewStudioInput — required fields", () => {
   });
 });
 
-describe("parseNewStudioInput — format validation", () => {
+describe("parseNewStudioInput: format validation", () => {
   it("rejects an invalid email address", () => {
     const r = parseNewStudioInput({ ...VALID, ownerEmail: "not-an-email" });
     expect(!r.ok && r.error).toMatch(/valid email/i);

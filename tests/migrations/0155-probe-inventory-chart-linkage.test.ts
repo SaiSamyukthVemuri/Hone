@@ -5,7 +5,7 @@ const MIG_DIR = join(process.cwd(), "supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0155_")) as string;
 const SQL = readFileSync(join(MIG_DIR, FILE), "utf8");
 
-describe("0155 — probe inventory chart linkage (additive, same-studio FK, no backfill)", () => {
+describe("0155: probe inventory chart linkage (additive, same-studio FK, no backfill)", () => {
   it("is present, 0154 precedes it, nothing 0156+ yet", () => {
     expect(FILE).toMatch(/^0155_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -72,7 +72,7 @@ describe("0155 — probe inventory chart linkage (additive, same-studio FK, no b
     expect(SQL).not.toMatch(/for delete/i);
   });
 
-  it("keeps the dormant probe_lots / electrolysis_entries.probe_lot_id boundary — never touched in DDL", () => {
+  it("keeps the dormant probe_lots / electrolysis_entries.probe_lot_id boundary, never touched in DDL", () => {
     // The header comment names them to document the boundary; the executable
     // SQL must never reference them.
     const code = SQL.split("\n")

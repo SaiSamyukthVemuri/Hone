@@ -7,7 +7,7 @@ import path from "node:path";
 // The final pre-live review found a P1 asymmetry: when Stripe returns a
 // failed/non-success outcome and Hone cannot persist that local 'failed' state,
 // the DB-error branch of writeFailedOutcome logged to stderr ONLY (no ops
-// alert), and the zero-row branch raised a WARNING — both invisible to the
+// alert), and the zero-row branch raised a WARNING, both invisible to the
 // critical-only manual-review queue, unlike the succeeded-outcome path (PR
 // #281, critical on both). This PR makes the two symmetric: DB-error now raises
 // a CRITICAL `session_payment_failed_write_failed`, and the zero-row alert is
@@ -85,7 +85,7 @@ describe("writeFailedOutcome: zero-row persistence failure is CRITICAL (PR #310)
   });
 });
 
-describe("writeFailedOutcome: safe details only — no PII / no raw payload (PR #310)", () => {
+describe("writeFailedOutcome: safe details only, no PII / no raw payload (PR #310)", () => {
   it("never logs client name/email/phone or health/treatment notes", () => {
     expect(FAILED_FN).not.toMatch(/\b(name|email|phone|first_name|last_name|notes?|health|treatment|dob|address)\b\s*:/i);
   });

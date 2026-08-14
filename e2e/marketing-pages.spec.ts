@@ -31,7 +31,7 @@ test.describe("marketing routes are public + well-formed", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
   for (const route of ROUTES) {
-    test(`${route.path} — 200, one H1, landmarks`, async ({ page }) => {
+    test(`${route.path}: 200, one H1, landmarks`, async ({ page }) => {
       const resp = await page.goto(route.path);
       expect(resp?.status(), `${route.path} status`).toBe(200);
       // Not bounced to the practitioner login.
@@ -50,7 +50,7 @@ test.describe("marketing routes fit small screens", () => {
   test.use({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true });
 
   for (const route of ROUTES) {
-    test(`${route.path} — no phone overflow`, async ({ page }) => {
+    test(`${route.path}: no phone overflow`, async ({ page }) => {
       await page.goto(route.path);
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       await noOverflow(page, `${route.path} mobile`);

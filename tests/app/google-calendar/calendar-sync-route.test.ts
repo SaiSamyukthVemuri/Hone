@@ -6,9 +6,9 @@ import {
 import type { WorkerHeartbeat } from "@/lib/google-calendar/sync/worker-heartbeat";
 import type { ClaimedJob } from "@/lib/google-calendar/sync/job-result";
 
-// Google Calendar — Phase B2.3-c2: the /api/cron/calendar-sync route contract
+// Google Calendar: Phase B2.3-c2: the /api/cron/calendar-sync route contract
 // (§21). Exercised through the server-only seam handleWorkerRoute with an INJECTED
-// runtime + observers — no Supabase, no Redis, no Google. Plus the route module's
+// runtime + observers, no Supabase, no Redis, no Google. Plus the route module's
 // GET wrapper (runtime/dynamic/no-store) via its unauthorized path.
 
 const SECRET = "test-cron-secret-value";
@@ -57,7 +57,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("worker route — authentication (§21)", () => {
+describe("worker route: authentication (§21)", () => {
   it("missing Authorization -> 401 and NEVER builds/claims", async () => {
     const rt = fakeRuntime();
     const res = await handleWorkerRoute(new Request(URL_BASE), { runtime: rt });
@@ -96,7 +96,7 @@ describe("worker route — authentication (§21)", () => {
   });
 });
 
-describe("worker route — no caller-controlled targeting (§7/§21)", () => {
+describe("worker route: no caller-controlled targeting (§7/§21)", () => {
   for (const q of ["studio_id=s", "connection_id=c", "appointment_id=a", "event_id=e", "link_id=l", "calendar_id=cal", "batch_size=999", "limit=999", "deadline=1"]) {
     it(`rejects ?${q} with a PHI-free 400 before claiming`, async () => {
       const rt = fakeRuntime();
@@ -108,7 +108,7 @@ describe("worker route — no caller-controlled targeting (§7/§21)", () => {
   }
 });
 
-describe("worker route — no-work (§20/§21)", () => {
+describe("worker route: no-work (§20/§21)", () => {
   it("claim returns zero -> truthful no-work; no handle/record; heartbeat records no-work", async () => {
     const rt = fakeRuntime();
     const hbs: WorkerHeartbeat[] = [];
@@ -139,7 +139,7 @@ describe("worker route — no-work (§20/§21)", () => {
   });
 });
 
-describe("worker route — one successful job returns PHI-free aggregates only (§18/§21)", () => {
+describe("worker route: one successful job returns PHI-free aggregates only (§18/§21)", () => {
   it("records durable done; response carries no identifiers", async () => {
     const rt = fakeRuntime({ claim: vi.fn(async () => [job("1")]) });
     const res = await handleWorkerRoute(authed(), { runtime: rt });
@@ -152,7 +152,7 @@ describe("worker route — one successful job returns PHI-free aggregates only (
   });
 });
 
-describe("worker route — observability sabotage cannot alter correctness (§21)", () => {
+describe("worker route: observability sabotage cannot alter correctness (§21)", () => {
   const scenarios: Array<[string, () => Partial<import("@/lib/google-calendar/sync/worker-runtime").WorkerRouteObservers>]> = [
     ["heartbeat throws", () => ({ recordHeartbeat: async () => { throw new Error("hb"); } })],
     ["alert throws", () => ({ emitAlert: async () => { throw new Error("al"); } })],
@@ -160,7 +160,7 @@ describe("worker route — observability sabotage cannot alter correctness (§21
   ];
   for (const [name, obs] of scenarios) {
     it(`${name}: claim/handle/record counts + truthful result preserved`, async () => {
-      // A degraded run (record_rejected) so an alert would fire — proving a
+      // A degraded run (record_rejected) so an alert would fire, proving a
       // throwing alert/heartbeat cannot corrupt the outcome.
       const rt = fakeRuntime({ claim: vi.fn(async () => [job("1")]), record: vi.fn(async () => "stale_token") });
       const res = await handleWorkerRoute(authed(), { runtime: rt, observers: obs() });
@@ -173,7 +173,7 @@ describe("worker route — observability sabotage cannot alter correctness (§21
   }
 });
 
-describe("worker route — record failure surfaces truthfully, not hidden by heartbeat (§10/§19)", () => {
+describe("worker route: record failure surfaces truthfully, not hidden by heartbeat (§10/§19)", () => {
   it("record transport failure -> 500 error even if a heartbeat is written", async () => {
     const rt = fakeRuntime({
       claim: vi.fn(async () => [job("1")]),

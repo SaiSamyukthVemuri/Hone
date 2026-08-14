@@ -131,7 +131,7 @@ const blockedCases: BlockedCase[] = [
 // policy on them; 0115 drops it AND revokes the DELETE/TRUNCATE grant from
 // authenticated. Because the grant itself is gone (not just the policy), an
 // authenticated member's hard DELETE now raises `permission denied` (it
-// REJECTS) rather than silently affecting zero rows — the stronger posture used
+// REJECTS) rather than silently affecting zero rows, the stronger posture used
 // by treatment_images (0092). Removals must go through the soft-delete UPDATE
 // path (PR #391).
 async function seedElectrolysisPass(): Promise<string> {
@@ -164,9 +164,9 @@ describe("D: members cannot DELETE from protected clinical tables", () => {
     it(`${c.table}: DELETE is blocked and the row survives`, async () => {
       const id = await c.seed();
       // Two legitimate ways to be blocked, and BOTH must leave the row intact:
-      //   * PRIVILEGE denial (42501) — after 0169, for the clinical tables whose
+      //   * PRIVILEGE denial (42501), after 0169, for the clinical tables whose
       //     authenticated DELETE grant was revoked;
-      //   * a zero-row result — where the grant remains and RLS filters it out.
+      //   * a zero-row result, where the grant remains and RLS filters it out.
       // Asserting "blocked" rather than one specific mechanism keeps this case
       // honest for both, and the survival check is the invariant either way.
       let rowCount: number | null = null;
@@ -229,7 +229,7 @@ describe("D: treatment passes are hard-delete-blocked + soft-delete-only after 0
 
   it("member CAN still soft-delete a pass via UPDATE (Remove pass path intact)", async () => {
     const id = await seedElectrolysisPass();
-    // After 0169 the member no longer holds UPDATE on this table — the "Remove
+    // After 0169 the member no longer holds UPDATE on this table, the "Remove
     // pass" path is a command. The INVARIANT is unchanged and is what matters:
     // removal is SOFT, the row survives, and a second removal is refused.
     let directCode: string | undefined;

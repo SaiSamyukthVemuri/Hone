@@ -10,14 +10,14 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// L18 Phase 2 — session_blocks + electrolysis_entries commands (migration 0166)
+// L18 Phase 2, session_blocks + electrolysis_entries commands (migration 0166)
 // ===========================================================================
 //
 // Three workflows previously wrote a block AND an entry for ONE user intent
 // across SEPARATE transactions. Each command below performs its whole workflow
 // in one function body, so a failure anywhere rolls the lot back.
 //
-// SCOPE: additive. No table privilege is revoked, so direct DML still works —
+// SCOPE: additive. No table privilege is revoked, so direct DML still works,
 // asserted below so this PR cannot be mistaken for having revoked production
 // access. L18 remains OPEN.
 
@@ -136,7 +136,7 @@ const countEntries = async (s: string) =>
 // 1-3. Happy paths.
 // --------------------------------------------------------------------------
 
-describe("0166 — authorized workflows succeed", () => {
+describe("0166: authorized workflows succeed", () => {
   it("1. same-studio block + entry creation succeeds atomically", async () => {
     const r = await userQuery(A.userId, CREATE_SQL, createArgs());
     const { block_id, entry_id } = r.rows[0];
@@ -204,7 +204,7 @@ describe("0166 — authorized workflows succeed", () => {
   it("3c. the default block it creates keeps probe_type and probe_size", async () => {
     // 0129's create INSERT column list contains neither, so routing the legacy
     // block-less caller through this command would otherwise have silently
-    // stopped persisting both on the auto-created "Main" block — the same
+    // stopped persisting both on the auto-created "Main" block, the same
     // field-drop class this migration exists to close.
     const fresh = await adminQuery(
       `insert into public.sessions (studio_id, client_id, practitioner_id, modality)
@@ -254,10 +254,10 @@ describe("0166 — authorized workflows succeed", () => {
 });
 
 // --------------------------------------------------------------------------
-// 4-5. Atomicity — the point of this phase.
+// 4-5. Atomicity, the point of this phase.
 // --------------------------------------------------------------------------
 
-describe("0166 — atomicity: no partial charting state survives", () => {
+describe("0166, atomicity: no partial charting state survives", () => {
   it("4. a failing ENTRY write rolls back the block (and its areas)", async () => {
     const before = await countBlocks(sessionA);
     // An invalid mode fails the electrolysis CHECK *after* the block insert.
@@ -300,7 +300,7 @@ describe("0166 — atomicity: no partial charting state survives", () => {
 // 6-11. Tenancy and forgery.
 // --------------------------------------------------------------------------
 
-describe("0166 — cross-studio and forged relationships are refused", () => {
+describe("0166: cross-studio and forged relationships are refused", () => {
   it("6. a cross-studio session id is rejected", async () => {
     await expectDenied(A.userId, CREATE_SQL, createArgs({ session: sessionB, client: B.clientId }));
   });
@@ -341,7 +341,7 @@ describe("0166 — cross-studio and forged relationships are refused", () => {
        JSON.stringify([]), null, null, null, null, null, null, null, null, null, null, null]);
   });
 
-  it("11. studio and actor identity cannot be forged — no such parameter exists", async () => {
+  it("11. studio and actor identity cannot be forged, no such parameter exists", async () => {
     const r = await adminQuery(
       `select p.proname, pg_get_function_arguments(p.oid) as args
          from pg_proc p join pg_namespace n on n.oid=p.pronamespace
@@ -378,7 +378,7 @@ describe("0166 — cross-studio and forged relationships are refused", () => {
 // 12-17. Existing protections survive.
 // --------------------------------------------------------------------------
 
-describe("0166 — existing clinical protections are preserved", () => {
+describe("0166: existing clinical protections are preserved", () => {
   it("12/13. retirement + legacy snapshot protections are untouched", async () => {
     const r = await adminQuery(
       `select count(*)::int n from pg_trigger t join pg_class c on c.oid=t.tgrelid
@@ -420,7 +420,7 @@ describe("0166 — existing clinical protections are preserved", () => {
     expect(String(args.rows[0].a)).not.toMatch(/p_session_id_new|p_new_client/i);
   });
 
-  it("15. soft-delete semantics preserved — never a hard delete", async () => {
+  it("15. soft-delete semantics preserved: never a hard delete", async () => {
     const c = await userQuery(A.userId, CREATE_SQL, createArgs());
     const blockId = c.rows[0].block_id as string;
     const r = await userQuery(A.userId,
@@ -430,7 +430,7 @@ describe("0166 — existing clinical protections are preserved", () => {
     const row = await adminQuery(
       `select deleted_at, deleted_by, delete_reason from public.session_blocks where id=$1`,
       [blockId]);
-    expect(row.rowCount, "the row must still exist — soft delete only").toBe(1);
+    expect(row.rowCount, "the row must still exist, soft delete only").toBe(1);
     expect(row.rows[0].deleted_at).not.toBeNull();
     // deleted_by is derived from auth.uid(), never caller-supplied.
     expect(row.rows[0].deleted_by).toBe(A.practitionerId);
@@ -467,7 +467,7 @@ describe("0166 — existing clinical protections are preserved", () => {
 // 18-20. Privileges.
 // --------------------------------------------------------------------------
 
-describe("0166 — effective EXECUTE privileges", () => {
+describe("0166: effective EXECUTE privileges", () => {
   const COMMANDS = [
     "create_block_with_entry",
     "update_block_with_entry",
@@ -540,7 +540,7 @@ describe("0166 — effective EXECUTE privileges", () => {
   });
 
   it("direct table DML is revoked by 0169; 0166 itself revoked nothing", async () => {
-    // This phase revoked nothing — correct for its own scope. Migration 0169 is
+    // This phase revoked nothing: correct for its own scope. Migration 0169 is
     // the cutover that removes the capability, so the assertion is INVERTED here
     // rather than deleted, and SELECT is asserted retained.
     const r = await adminQuery(
@@ -584,7 +584,7 @@ const readBlock = async (id: string) =>
     `select block_name, block_notes, probe_type, probe_size, started_at, ended_at
        from public.session_blocks where id=$1`, [id])).rows[0];
 
-describe("0166 — the area set and the inventory link are never silently lost", () => {
+describe("0166: the area set and the inventory link are never silently lost", () => {
   it("an ABSENT area set (p_areas null) leaves the recorded areas untouched", async () => {
     // The legacy single-area edit path submits no areas. 0129's update always
     // REPLACES the set, so coalescing null to '[]' would delete them.
@@ -664,7 +664,7 @@ describe("0166 — the area set and the inventory link are never silently lost",
   });
 });
 
-describe("0166 — strict allow-list block patch", () => {
+describe("0166: strict allow-list block patch", () => {
   it("1/2. CREATE persists block_notes and probe_size exactly", async () => {
     const id = await freshBlock({ block_notes: "left cheek tender", probe_size: "F2" });
     const b = await readBlock(id);
@@ -746,7 +746,7 @@ describe("0166 — strict allow-list block patch", () => {
 
   it("14. the extra UPDATE does not duplicate audit/lineage triggers", async () => {
     // The block is written twice inside one command (0129 + the extra patch).
-    // Confirm the lineage guards still fire and the row is coherent — a second
+    // Confirm the lineage guards still fire and the row is coherent, a second
     // UPDATE must not corrupt or re-tenant it.
     const id = await freshBlock({ block_notes: "audit check" });
     const b = await adminQuery(
@@ -754,7 +754,7 @@ describe("0166 — strict allow-list block patch", () => {
     expect(b.rows[0].studio_id).toBe(A.studioId);
     expect(b.rows[0].session_id).toBe(sessionA);
     expect(b.rows[0].deleted_at).toBeNull();
-    // Re-pointing is still refused by 0160 — proven through service_role, since
+    // Re-pointing is still refused by 0160, proven through service_role, since
     // after 0169 `authenticated` no longer reaches the trigger at all.
     let trigCode: string | undefined;
     try {

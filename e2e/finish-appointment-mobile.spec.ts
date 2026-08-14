@@ -12,8 +12,8 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Chloe finishes charting and the two visit-closing actions — mark completed
-// and send postcare — live on the calendar appointment page, a different
+// Chloe finishes charting and the two visit-closing actions, mark completed
+// and send postcare, live on the calendar appointment page, a different
 // surface. They get forgotten, and payment (gated on completion) stays locked.
 //
 // This spec drives the real stack. It never reaches a provider: the E2E lane's
@@ -52,7 +52,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await loginAsOwner(page, seed);
       await openSession(page, s.clientId, s.sessionId);
 
-      await test.step("the four states are visible at once — no wizard", async () => {
+      await test.step("the four states are visible at once, no wizard", async () => {
         await expect(finish(page).getByText("Treatment chart")).toBeVisible();
         await expect(page.getByTestId("finish-charting-status")).toHaveText(
           "Charting recorded",
@@ -87,7 +87,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
             timeout: T,
           })
           .toBe("completed");
-        // Exactly one audit row — no double submit.
+        // Exactly one audit row: no double submit.
         const audits = await getAppointmentAuditActions(s.appointmentId);
         expect(audits.filter((a) => a === "marked_complete")).toHaveLength(1);
       });
@@ -117,7 +117,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await expectNoHorizontalScroll(page);
     });
 
-    test("pre-start: the button is MOUNTED and disabled, then enables itself when starts_at passes — no reload", async ({
+    test("pre-start: the button is MOUNTED and disabled, then enables itself when starts_at passes, no reload", async ({
       page,
     }) => {
       const seed = await seedE2eStudio();
@@ -139,7 +139,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         /updates on its own/,
       );
 
-      // No navigation, no reload — the SAME mounted button becomes enabled.
+      // No navigation, no reload: the SAME mounted button becomes enabled.
       const url = page.url();
       await expect(button).toBeEnabled({ timeout: 20_000 });
       expect(page.url()).toBe(url);
@@ -149,7 +149,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
     test("pre-start appointment: exit still available", async ({ page }) => {
       const seed = await seedE2eStudio();
       // endedHoursAgo: -2 ends two hours from now, so it has not STARTED
-      // either — still the disabled case under B6's starts_at gate.
+      // either, still the disabled case under B6's starts_at gate.
       const s = await seedE2eEndedAppointmentSession(seed, { endedHoursAgo: -2 });
       await loginAsOwner(page, seed);
       await openSession(page, s.clientId, s.sessionId);

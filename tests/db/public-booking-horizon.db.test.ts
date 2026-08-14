@@ -26,7 +26,7 @@ function setHorizon(months: number) {
   );
 }
 
-describe("public_booking_horizon_months CHECK — 1..12", () => {
+describe("public_booking_horizon_months CHECK: 1..12", () => {
   it("accepts every whole month 1..12", async () => {
     for (let m = 1; m <= 12; m++) {
       await expect(setHorizon(m)).resolves.toBeDefined();

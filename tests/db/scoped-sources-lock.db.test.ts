@@ -4,7 +4,7 @@ import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./help
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B 3E-0..3E-4 — lock coverage on every structural source mutation (incl.
+// PR B 3E-0..3E-4: lock coverage on every structural source mutation (incl.
 // DELETE + blockouts + timezone), Legacy occurrence dormancy, lock-then-reread
 // materialization, and authenticated-owner RLS for scoped timed blocks.
 
@@ -106,9 +106,9 @@ describe("3E-1: Legacy recurring-rule dormancy (materialization must not 42501)"
   it("a retained scoped rule extends its horizon in Legacy: occurrences stored, ZERO reservations, no 42501", async () => {
     const rule = await createRule(P(1)); // capacity ON
     const before = await occCount(rule);
-    await setCap(false); // Legacy — reservations drained
+    await setCap(false); // Legacy, reservations drained
     expect(await resForRule(rule)).toBe(0);
-    // Extend the horizon — must SUCCEED (not 42501) and store more occurrences.
+    // Extend the horizon: must SUCCEED (not 42501) and store more occurrences.
     await expect(
       adminQuery(`select public.materialize_recurring_break_rule($1, $2::date)`, [rule, HORIZON]),
     ).resolves.toBeTruthy();
@@ -147,7 +147,7 @@ describe("3E-4: authenticated-owner RLS CRUD for scoped timed blocks", () => {
       [randomUUID(), B.studioId, pid, starts, ends],
     );
 
-  it("owner can INSERT studio-wide + scoped, UPDATE scope, DELETE — all via authenticated RLS", async () => {
+  it("owner can INSERT studio-wide + scoped, UPDATE scope, DELETE, all via authenticated RLS", async () => {
     const scopedId = await asUser(owner().userId, async (q) => {
       // Different times so the studio-wide fan-out (incl P1) and the P1-scoped
       // block do not both reserve P1 at the same instant.
@@ -157,7 +157,7 @@ describe("3E-4: authenticated-owner RLS CRUD for scoped timed blocks", () => {
       expect(scoped.rowCount).toBe(1);
       return scoped.rows[0].id;
     });
-    // UPDATE scope P1 -> P2, then DELETE — same authenticated owner.
+    // UPDATE scope P1 -> P2, then DELETE, same authenticated owner.
     await asUser(owner().userId, async (q) => {
       const upd = await q(`update public.studio_timed_blocks set practitioner_id = $2 where id = $1`, [scopedId, P(2)]);
       expect(upd.rowCount).toBe(1);
@@ -181,7 +181,7 @@ describe("3E-4: authenticated-owner RLS CRUD for scoped timed blocks", () => {
 });
 
 // -------------------------------------------------------------------------
-// §1 — direct concurrency proofs. A second connection holding the studio
+// §1, direct concurrency proofs. A second connection holding the studio
 // capacity lock must block EVERY recurring-rule mutation (each 57014, no
 // partial mutation, rollback releases, retry succeeds), and the retirement ×
 // timezone lock ordering must never deadlock in either direction.
@@ -282,7 +282,7 @@ describe("§1: every recurring-rule mutation blocks on the capacity lock", () =>
     );
     // B's aborted transaction left no rule behind.
     expect(await ruleCount()).toBe(before);
-    // The lock is released (A rolled back) — the same create now succeeds.
+    // The lock is released (A rolled back), the same create now succeeds.
     await seedRule(P(1));
     expect(await ruleCount()).toBe(before + 1);
   });

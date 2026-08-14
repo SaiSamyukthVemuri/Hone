@@ -9,8 +9,8 @@ import {
 } from "@/lib/google-calendar/sync/upstash-refresh-coordinator";
 import { WORKER_JOB_ADMISSION_WINDOW_MS } from "@/lib/google-calendar/sync/worker-runtime";
 
-// Google Calendar — Phase B2.3-c2: the Upstash per-connection token-refresh mutex.
-// Addendum §6 — the ten required direct tests. No real Redis, no real Google.
+// Google Calendar: Phase B2.3-c2: the Upstash per-connection token-refresh mutex.
+// Addendum §6, the ten required direct tests. No real Redis, no real Google.
 
 type SetCall = { key: string; value: string; opts: { nx: true; ex: number } };
 
@@ -183,7 +183,7 @@ describe("upstash refresh coordinator", () => {
   it("8. TTL is fixed, not caller-controlled, and exceeds the worker route budget", async () => {
     const { redis, setCalls } = makeFakeRedis();
     const coord = createRefreshCoordinator(redis);
-    // runExclusive has no TTL parameter — the caller cannot influence it.
+    // runExclusive has no TTL parameter, the caller cannot influence it.
     await coord.runExclusive("conn-1", async () => 0);
     expect(setCalls[0].opts.ex).toBe(GCAL_REFRESH_LOCK_TTL_SECONDS);
     expect(GCAL_REFRESH_LOCK_TTL_SECONDS * 1000).toBeGreaterThan(WORKER_JOB_ADMISSION_WINDOW_MS);

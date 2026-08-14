@@ -4,7 +4,7 @@ import { loginAsOwner } from "./helpers/flows";
 
 // Client-page outside-hours booking parity (owner flow). The owner sees the
 // "Book outside your normal availability" override on the client profile's Book
-// appointment card, enters an out-of-hours time, confirms, and books — reusing
+// appointment card, enters an out-of-hours time, confirms, and books, reusing
 // the same server action + override contract as the calendar Quick Book. The
 // server-side owner enforcement is proven in the unit test; this proves the
 // owner UI end-to-end at mobile width.

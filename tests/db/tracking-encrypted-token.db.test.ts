@@ -35,7 +35,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("0107 — schema stores an opaque token (no raw-token column)", () => {
+describe("0107: schema stores an opaque token (no raw-token column)", () => {
   it("persists the ciphertext blob + last4 + status", async () => {
     const { rows } = await adminQuery(
       `select encrypted_server_token, server_token_last4, token_status
@@ -59,7 +59,7 @@ describe("0107 — schema stores an opaque token (no raw-token column)", () => {
   });
 });
 
-describe("0107 — only OWNERS manage provider config (RLS)", () => {
+describe("0107: only OWNERS manage provider config (RLS)", () => {
   it("the studio owner can update their own config", async () => {
     const res = await asUser(a.userId, (q) =>
       q(`update public.studio_tracking_providers set enabled = true where studio_id = $1 and provider = 'meta'`, [a.studioId]),

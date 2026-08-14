@@ -223,7 +223,7 @@ describe("portal sign action (app/portal/consent-actions.ts)", () => {
 // ---------------------------------------------------------------------------
 // 2026-08-09. Photo consent moved OUT of the intake and is now collected only
 // in the client portal, which makes two more helpers portal-eligibility
-// claims — and both must use the same boundary as the portal itself.
+// claims, and both must use the same boundary as the portal itself.
 //
 // `status = 'active'` alone is not portal visibility: migration 0072's CHECK
 // (NOT is_live OR status='active') still permits active + is_live=false, a

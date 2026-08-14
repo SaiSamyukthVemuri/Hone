@@ -99,13 +99,13 @@ describe("DB/RLS and types coverage acknowledged", () => {
     expect(OVERVIEW).not.toMatch(/browser E2E remains deferred/i);
     expect(OVERVIEW).not.toMatch(/[Nn]o browser E2E/);
     expect(OVERVIEW).not.toMatch(/browser E2E coverage all required first/i);
-    // AFFIRMATIVE pin — the test name promises a positive claim, so assert one.
+    // AFFIRMATIVE pin: the test name promises a positive claim, so assert one.
     // A bare /browser E2E/i substring would pass on almost any text and would
     // not catch drift; pin the actual sentence and the CI job name.
     expect(OVERVIEW).toMatch(/\*\*Browser E2E is shipped\*\*/);
     expect(OVERVIEW).toMatch(/`browser-e2e` CI job/);
     expect(OVERVIEW).toMatch(/`playwright\.config\.ts`/);
-    // Manual smoke stays complementary — synthetic E2E does not replace real
+    // Manual smoke stays complementary: synthetic E2E does not replace real
     // provider sends, real Stripe Elements, or real webhook delivery.
     expect(OVERVIEW).toMatch(
       /\*\*Manual smoke \(docs\/12\) remains\s+complementary and is not replaced by synthetic E2E\*\*/,
@@ -123,7 +123,7 @@ describe("DB/RLS and types coverage acknowledged", () => {
     const claimed = new RegExp(`${specs.length} specs under`);
     expect(OVERVIEW).toMatch(claimed);
     expect(SECURITY).toMatch(claimed);
-    // CI actually runs it — a config on disk is not coverage.
+    // CI actually runs it: a config on disk is not coverage.
     const ci = read(".github/workflows/ci.yml");
     expect(ci).toMatch(/^\s{2}browser-e2e:/m);
     expect(ci).toMatch(/npm run test:e2e/);

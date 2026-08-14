@@ -16,7 +16,7 @@ import type { ClaimedJob, JobResult } from "@/lib/google-calendar/sync/job-resul
 import type { ConnectionAuthRow, ConnectionStore, TokenManager } from "@/lib/google-calendar/sync/token-manager";
 import type { AppointmentState, LinkRow, OpsLinkStore, TransitionArgs, TransitionResult } from "@/lib/google-calendar/sync/link-transition-store";
 
-// Google Calendar — Phase B2.3-c2. LOCAL disposable Supabase ONLY (the harness
+// Google Calendar: Phase B2.3-c2. LOCAL disposable Supabase ONLY (the harness
 // enforces localhost; CI's db-integration lane). Proves, against the DEPLOYED
 // 0124/0125/0132 RPCs:
 //   §23 two concurrent authorized drains race the SAME claim RPC (no new route
@@ -52,7 +52,7 @@ async function seedConn(): Promise<string> {
 let slotSeq = 0;
 // Inserting a confirmed appointment with an eligible connection auto-enqueues (via
 // the deployed trigger) a placeholder calendar_event_links row + a pending
-// event.create outbox row — exactly the production create lifecycle.
+// event.create outbox row, exactly the production create lifecycle.
 async function insertAppt(): Promise<string> {
   const id = randomUUID();
   const base = Date.now() + 86_400_000 + slotSeq++ * 3_600_000;
@@ -111,7 +111,7 @@ function adminConnStore(): ConnectionStore {
   };
 }
 
-// Stub token manager (no real Google refresh — the refresh path + its Upstash
+// Stub token manager (no real Google refresh, the refresh path + its Upstash
 // mutex are covered by the coordinator unit tests + the token-refresh db test).
 function stubTokenManager(store: ConnectionStore): TokenManager {
   return {
@@ -295,7 +295,7 @@ describe("§23 concurrent invocations race the claim RPC (no new route lock)", (
     expect((await outboxRow(ob.id)).status).toBe("done");
   });
 
-  it("multiple rows: SKIP LOCKED partitions across two invocations — each row processed exactly once", async () => {
+  it("multiple rows: SKIP LOCKED partitions across two invocations, each row processed exactly once", async () => {
     const appts = [] as string[];
     for (let i = 0; i < 6; i++) appts.push(await insertAppt());
     const obIds = new Set<string>();

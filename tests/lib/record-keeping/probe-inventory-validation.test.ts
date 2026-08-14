@@ -17,7 +17,7 @@ const YESTERDAY = "2000-01-01";
 
 // A fake that MODELS PostgREST eq() filtering: the stored row is returned only
 // when EVERY applied .eq(col, val) matches it. This makes the studio-scoping
-// test non-tautological — dropping `.eq("studio_id", studioId)` from the
+// test non-tautological, dropping `.eq("studio_id", studioId)` from the
 // resolver would make the cross-studio row visible and fail the reject test.
 function fakeSupabase(row: Record<string, unknown> | null, error = false) {
   return {
@@ -76,7 +76,7 @@ describe("manual path (#11)", () => {
   });
 });
 
-describe("linked path — validation", () => {
+describe("linked path: validation", () => {
   it("(#10) valid same-studio matching-probe active item → derives snapshot from the DB row", async () => {
     const r = await resolveProbeInventorySelection(
       fakeSupabase({
@@ -107,7 +107,7 @@ describe("linked path — validation", () => {
     if (!r.ok) expect(r.error).toMatch(/invalid/i);
   });
 
-  it("(#8) a cross-studio id is rejected by studio scoping — never falls back to client text", async () => {
+  it("(#8) a cross-studio id is rejected by studio scoping, never falls back to client text", async () => {
     // The row EXISTS, but in ANOTHER studio. The resolver's .eq("studio_id")
     // must hide it (RLS + explicit scope) → no row → reject. The modelled fake
     // only returns the row when studio_id also matches, so this genuinely
@@ -166,7 +166,7 @@ describe("linked path — validation", () => {
   });
 });
 
-// A Supabase whose .from() THROWS — proves the preserve path never queries
+// A Supabase whose .from() THROWS, proves the preserve path never queries
 // inventory (so a later lot edit / expiry / reclassification cannot affect it).
 function throwingSupabase() {
   return {
@@ -198,7 +198,7 @@ describe("unchanged link preserves the FROZEN snapshot (#4/#7 historical immutab
 
   it("inventory RECLASSIFICATION (probe_key changed to another probe) does NOT block an unrelated edit when block probe + link are unchanged", async () => {
     // The live inventory row is now classified F2 AND its lot/expiry changed;
-    // the resolver must not even look — the stored F3 link is preserved as-is.
+    // the resolver must not even look, the stored F3 link is preserved as-is.
     const r = await resolveProbeInventorySelection(throwingSupabase(), STUDIO, {
       ...base,
       probeKey: F3,

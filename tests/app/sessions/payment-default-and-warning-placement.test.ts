@@ -140,7 +140,7 @@ describe("Session payment prepare form wiring", () => {
       CARD.indexOf('data-testid="authoritative-amount"') + 400,
     );
     expect(amountRegion).toMatch(/data-testid="authoritative-amount"/);
-    // No input at all — not editable, not merely disabled.
+    // No input at all: not editable, not merely disabled.
     expect(amountRegion).not.toMatch(/name="amount_dollars"/);
     expect(CARD).not.toMatch(/aria-label="Amount in Canadian dollars"/);
     // Submitted only as a stale-display check.
@@ -156,7 +156,7 @@ describe("Session payment prepare form wiring", () => {
     expect(CARD).not.toMatch(/You can adjust before preparing/);
   });
 
-  it("has NO historical session-price fallback — unresolved pricing BLOCKS", () => {
+  it("has NO historical session-price fallback, unresolved pricing BLOCKS", () => {
     const cardCode = CARD.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     expect(cardCode).not.toMatch(/Suggestion from session price/);
     expect(cardCode).not.toMatch(/pricePaidCents != null/);

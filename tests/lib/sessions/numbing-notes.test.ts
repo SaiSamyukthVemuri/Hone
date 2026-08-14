@@ -4,7 +4,7 @@ import {
   numbingDisplay,
 } from "@/lib/sessions/clinical-response";
 
-// 0156 conditional numbing notes — pure server normalization + shared display.
+// 0156 conditional numbing notes: pure server normalization + shared display.
 // The status/notes rules and the read-surface presenter both live in one module
 // so charting write, saved display, and any future summary can't drift.
 

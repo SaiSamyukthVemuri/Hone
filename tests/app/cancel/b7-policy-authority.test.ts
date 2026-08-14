@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// B7 / 0176 — the DATABASE is the policy authority, not the action.
+// B7 / 0176: the DATABASE is the policy authority, not the action.
 //
 // The action used to re-read the studio's current policy and refuse early when
 // it required an acknowledgement the form had not sent. That made the action a
@@ -47,7 +47,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       // A resolvable appointment row: the action looks this up BOTH to resolve
       // the token and to recover the stored hash it passes to the command. If
       // either returns null the action collapses before the RPC and the test
-      // would prove nothing — which is why the first test asserts that exactly
+      // would prove nothing, which is why the first test asserts that exactly
       // one RPC call actually happened.
       q.maybeSingle = async () => ({
         data: { id: "appt-1", cancellation_token_hash: "b".repeat(64), studio: { cancellation_policy_text: "P", no_show_policy_text: null } },
@@ -79,7 +79,7 @@ vi.mock("@/lib/rate-limit/public", () => ({
 
 // A resolvable token, so the action reaches the RPC rather than collapsing
 // earlier for an unrelated reason. Without this the test could pass while
-// proving nothing — see the guard assertion in the first test.
+// proving nothing, see the guard assertion in the first test.
 vi.mock("@/lib/booking/tokens", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
   return {
@@ -105,7 +105,7 @@ beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
-describe("B7 — the action defers to the database on policy", () => {
+describe("B7: the action defers to the database on policy", () => {
   it("a no-policy render + a policy added since => policy_changed reaches the caller", async () => {
     // The submission looks exactly like the frozen case D: the page saw no
     // policy, so it posts the EMPTY-snapshot hash and no acknowledgement.
@@ -122,7 +122,7 @@ describe("B7 — the action defers to the database on policy", () => {
     expect(rpcCalls[0].args.p_acknowledged_policy).toBe(false);
     expect(rpcCalls[0].args.p_presented_policy_hash).toBe("e".repeat(64));
 
-    // And it must surface policy_changed, not the ack-required copy — the
+    // And it must surface policy_changed, not the ack-required copy, the
     // client has to SEE the new policy before consenting to it.
     expect(res.ok).toBe(false);
     if (res.ok === false) {

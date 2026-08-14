@@ -124,7 +124,7 @@ test("core memory loop: booking to next-appointment memory", async ({
     // reaction chip. (Per-area caution inputs were deliberately
     // retired; the session-level "For next visit" note below is the
     // caution/watch mechanism.)
-    // Charting polish: the settings form no longer auto-opens — a zero-block
+    // Charting polish: the settings form no longer auto-opens, a zero-block
     // session starts on the compact CTA, so open it explicitly first.
     await page.getByTestId("add-settings-block-cta").click({ timeout: 20_000 });
     await expect(
@@ -205,7 +205,7 @@ test("core memory loop: booking to next-appointment memory", async ({
   });
 
   await test.step("the Today card surfaces the recorded next-visit memory", async () => {
-    // The rules-based prep derivation still pulls the same recorded facts — it
+    // The rules-based prep derivation still pulls the same recorded facts, it
     // now renders ONCE, inside the appointment's own Today card, instead of a
     // second time in a separate "Daily prep brief" list.
     await page.goto("/dashboard");
@@ -254,7 +254,7 @@ test("core memory loop: booking to next-appointment memory", async ({
     // product no longer routes practitioner feedback to the founder, so there
     // is no pilot-feedback affordance left on this page at all.
     //
-    // Asserted narrowly and by its own copy — deliberately NOT a bare absence
+    // Asserted narrowly and by its own copy, deliberately NOT a bare absence
     // of "Yes", which is a common word that a future unrelated control could
     // legitimately use.
     await expect(page.getByText("Was this useful?")).toHaveCount(0);

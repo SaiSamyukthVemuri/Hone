@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // PR: resolved-row stripe_livemode guard for payment_intent.payment_failed.
-// Behavioral proof (mock-based — the db harness is raw pg and cannot invoke a
+// Behavioral proof (mock-based, the db harness is raw pg and cannot invoke a
 // handler that uses the supabase-js admin client). Mocks the three module
 // deps (admin client, ops alerts, inferStripeLivemode) and drives the real
 // handler so we can prove: a WRONG-mode resolved row is NOT mutated, and a
@@ -110,7 +110,7 @@ beforeEach(() => {
   h.state.alerts = [];
 });
 
-describe("payment_intent.payment_failed — resolved-row livemode guard", () => {
+describe("payment_intent.payment_failed: resolved-row livemode guard", () => {
   it("WRONG-mode row: does NOT mutate, fires the critical mismatch alert, returns livemodeRowMismatch", async () => {
     // Deployment is LIVE; the resolved row is TEST-mode (same studio/client/reason).
     h.state.livemode = true;

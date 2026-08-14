@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // WHY THIS FILE EXISTS
 // The structural guard in card-persistence-truth.test.ts pins the shape of the
 // ownership query, and the DB lane proves the query PAIR returns the right
-// answer — but it re-implements that pair inside the test rather than calling
+// answer, but it re-implements that pair inside the test rather than calling
 // the action. Neither closes application-side drift: two negative controls
 // (deleting the client_id binding from the ownership query, and returning
 // `rejected` without the `if (owner)` proof) survived both lanes while
@@ -177,7 +177,7 @@ async function confirm(setupIntentId = SETI) {
 
 // ---------------------------------------------------------------------------
 
-describe("CASE A — the rightful client sees their own terminal rejection", () => {
+describe("CASE A: the rightful client sees their own terminal rejection", () => {
   it("returns rejected when the customer on the event resolves to this client", async () => {
     seedRejection();
     seedCustomerOwnership(CLIENT_A);
@@ -193,10 +193,10 @@ describe("CASE A — the rightful client sees their own terminal rejection", () 
   });
 });
 
-describe("CASE B — a SAME-STUDIO different client cannot observe it", () => {
+describe("CASE B: a SAME-STUDIO different client cannot observe it", () => {
   it("client B holding the exact SetupIntent id gets pending, not rejected", async () => {
     // One event, one customer, owned by A. B is in the SAME studio and knows
-    // the SetupIntent id — which is exactly the oracle this must refuse.
+    // the SetupIntent id, which is exactly the oracle this must refuse.
     seedRejection();
     seedCustomerOwnership(CLIENT_A);
 
@@ -226,7 +226,7 @@ describe("CASE B — a SAME-STUDIO different client cannot observe it", () => {
   });
 });
 
-describe("CASE C — an unbindable rejection never reads as rejected", () => {
+describe("CASE C: an unbindable rejection never reads as rejected", () => {
   it("no customer on the event → pending", async () => {
     seedRejection({ customerId: null });
     seedCustomerOwnership(CLIENT_A);
@@ -270,7 +270,7 @@ describe("the durable event is the authority", () => {
     expect(await confirm()).toEqual({ ok: true, state: "pending" });
   });
 
-  it("an active Hone card wins over everything — saved", async () => {
+  it("an active Hone card wins over everything, saved", async () => {
     tables.client_payment_methods.push({
       id: "cpm-1",
       studio_id: STUDIO,

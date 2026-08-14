@@ -17,7 +17,7 @@ const SQL = readFileSync(path.join(MIGRATIONS_DIR, FILE), "utf8");
 // never trips a negative assertion. Presence checks use the raw SQL.
 const SQL_CODE = SQL.replace(/--.*$/gm, "");
 
-describe("0115 — number", () => {
+describe("0115: number", () => {
   it("0115 exists; the repo-max tripwire now lives in the 0116 test", () => {
     const maxNum = Math.max(
       ...readdirSync(MIGRATIONS_DIR)
@@ -31,7 +31,7 @@ describe("0115 — number", () => {
   });
 });
 
-describe("0115 — entry hard-delete hardening", () => {
+describe("0115: entry hard-delete hardening", () => {
   it("drops the authenticated DELETE policy on BOTH pass tables", () => {
     expect(SQL).toMatch(
       /drop policy if exists "electrolysis_entries: members delete" on public\.electrolysis_entries;/,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// IMPORT-01 — the smoke doc must not describe a capability the server refuses.
+// IMPORT-01: the smoke doc must not describe a capability the server refuses.
 //
 // THE FAILURE THIS EXISTS TO PREVENT
 // The first pass at documenting the mitigation put a "self-service execution
@@ -12,8 +12,8 @@ import path from "node:path";
 // procedure finds the procedure. A contradiction inside one "current" section
 // is worse than stale documentation, because it reads as authoritative.
 //
-// So the section is now structural — ordinary owner / operator / root fix
-// pending — and this guard holds that shape. It is deliberately NOT a
+// So the section is now structural, ordinary owner / operator / root fix
+// pending, and this guard holds that shape. It is deliberately NOT a
 // word-count or a hash: it asserts the one property that matters, which is
 // that the ORDINARY-OWNER part never presents the executable flow as
 // something the owner performs.
@@ -107,7 +107,7 @@ describe("the ordinary-owner part never describes a self-service run", () => {
         const before = OWNER_PART.slice(Math.max(0, idx - 16), idx);
         expect(
           /\b(no|not|never|without|nor)\b[\s*_`(]*$/i.test(before),
-          `"${label}" appears in the ordinary-owner part WITHOUT a negation — ` +
+          `"${label}" appears in the ordinary-owner part WITHOUT a negation, ` +
             `context: ${JSON.stringify(OWNER_PART.slice(Math.max(0, idx - 40), idx + label.length))}`,
         ).toBe(true);
         idx = OWNER_PART.indexOf(label, idx + 1);
@@ -143,7 +143,7 @@ describe("the ordinary-owner part never describes a self-service run", () => {
 
   it("does not resurrect the retired 'Coming this week' promise", () => {
     // The section is allowed to say the Data card "no longer says 'Coming this
-    // week'" — that is a smoke instruction. What it may not do is state the
+    // week'", that is a smoke instruction. What it may not do is state the
     // promise. Same negation rule as the control labels above.
     let idx = SECTION.indexOf("Coming this week");
     let seen = 0;
@@ -152,7 +152,7 @@ describe("the ordinary-owner part never describes a self-service run", () => {
       const before = SECTION.slice(Math.max(0, idx - 24), idx);
       expect(
         /\bno longer\b[^.]*$/i.test(before),
-        `"Coming this week" is stated as a promise — context: ${JSON.stringify(
+        `"Coming this week" is stated as a promise, context: ${JSON.stringify(
           SECTION.slice(Math.max(0, idx - 40), idx + 16),
         )}`,
       ).toBe(true);

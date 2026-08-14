@@ -5,7 +5,7 @@ import { join } from "node:path";
 // PR #269. Visual treatment-area picker V1: the region-grouped AreaPicker (chips
 // over AREA_REGIONS) is framed in the charting form as a "Chart part" card with
 // a live "Area being charted" preview. Reuse-only (session_blocks
-// primary_area / side / custom_area_detail) — NO migration, NO new dependency,
+// primary_area / side / custom_area_detail), NO migration, NO new dependency,
 // NO image storage / upload / drawing / canvas / sketch / OCR / AI, and NO
 // copied Jane assets. Source-grep, no DB/network.
 

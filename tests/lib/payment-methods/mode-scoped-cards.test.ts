@@ -36,7 +36,7 @@ describe("2+3) Settings → Payments readiness copy", () => {
     expect(src).not.toMatch(/Card collection is not enabled yet\. No cards are being collected\./);
   });
 
-  it("the mode line is informational — never a grey unfinished task in live mode", () => {
+  it("the mode line is informational, never a grey unfinished task in live mode", () => {
     // ok is unconditional; the label flips by mode.
     expect(src).toMatch(/<ReadinessItem\s+ok\s+okLabel=\{/);
     expect(src).toMatch(
@@ -59,7 +59,7 @@ describe("4) getActiveCardForStudioClient is mode-scoped", () => {
 
 describe("5) card retire-on-replace is mode-scoped", () => {
   // OWNERSHIP MOVED IN 0180. The retire used to be a PostgREST .update() in the
-  // webhook, paired with a separate .insert() — two transactions, so a failed
+  // webhook, paired with a separate .insert(), two transactions, so a failed
   // insert left the client with zero active cards. Both writes now live inside
   // save_client_card_on_file. The PROPERTY is unchanged and still load-bearing:
   // saving a LIVE card must never retire the client's TEST card, or vice versa.

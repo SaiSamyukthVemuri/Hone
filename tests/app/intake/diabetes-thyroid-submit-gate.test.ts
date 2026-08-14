@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // THE SERVER-SIDE GATE for the diabetes / thyroid subtype, driven through the
-// real submitIntakeAction — never through the predicate in isolation.
+// real submitIntakeAction, never through the predicate in isolation.
 //
 // WHY THAT DISTINCTION MATTERS HERE. lib/intake tests prove
 // findMissingRequiredAnswers and findInvalidChoiceAnswers return the right
 // lists. That is NOT the same as proving the submit action calls them and
-// honours the refusal — the sibling live-consent file exists because exactly
+// honours the refusal, the sibling live-consent file exists because exactly
 // that gap once shipped. So the oracle in this file is always the STORED ROW:
 // "blocked" means the row is still in_progress and nothing about it moved.
 //
@@ -98,7 +98,7 @@ import { submitIntakeAction } from "@/app/intake/[token]/actions";
 import { getQuestionByKey, INTAKE_STEPS } from "@/lib/intake/questions";
 
 // Every required, UNCONDITIONAL answer. Conditional questions are skipped on
-// purpose — that is what lets each test below choose its own medical_conditions
+// purpose, that is what lets each test below choose its own medical_conditions
 // and have the subtype requirement be the only thing in play.
 function completeAnswers(
   overrides: Record<string, unknown> = {},
@@ -216,7 +216,7 @@ describe("1. a new intake reporting the condition must state the type", () => {
     }
   });
 
-  it("lets a gestational or unsure client through — the point of the change", async () => {
+  it("lets a gestational or unsure client through, the point of the change", async () => {
     // The first draft made this client choose between a wrong answer and an
     // unfinished intake. Both must now submit cleanly and store what they said.
     seedIntake();
@@ -297,7 +297,7 @@ describe("2. the browser does not decide what is a valid type", () => {
   });
 
   it("refuses a non-string value", async () => {
-    // Refused by the REQUIRED check rather than the choice check — a
+    // Refused by the REQUIRED check rather than the choice check, a
     // single_select answer that is not a string is not a provided answer at
     // all, so it never reaches the membership test. Verified by negative
     // control: disabling the choice gate leaves this case still refused.
@@ -318,7 +318,7 @@ describe("2. the browser does not decide what is a valid type", () => {
   it("catches a bad value planted by an earlier draft save", async () => {
     // Draft saves stay permissive by design. That is only safe because the
     // submit gate re-checks the MERGED map rather than just this request's
-    // payload — so a value smuggled in earlier is caught at the gate, not
+    // payload, so a value smuggled in earlier is caught at the gate, not
     // waved through because this particular request looks clean.
     seedIntake({
       responses: { medical_conditions: ["diabetes"], diabetes_type: "forged" },
@@ -351,7 +351,7 @@ describe("2. the browser does not decide what is a valid type", () => {
 });
 
 describe("3. intakes that predate the subtype are untouched", () => {
-  it("does not re-validate — or rewrite — an already-submitted intake", async () => {
+  it("does not re-validate: or rewrite, an already-submitted intake", async () => {
     // The legacy shape: submitted with a generic "diabetes" and no type. Under
     // today's rules that map would be refused; a submitted intake is terminal
     // and must never be re-judged by rules written after it.
@@ -373,7 +373,7 @@ describe("3. intakes that predate the subtype are untouched", () => {
     expect(storedResponses().diabetes_type).toBeUndefined();
   });
 
-  it("does not re-validate — or rewrite — a reviewed intake", async () => {
+  it("does not re-validate: or rewrite, a reviewed intake", async () => {
     const legacy = { medical_conditions: ["thyroid"] };
     seedIntake({
       status: "reviewed",
@@ -390,8 +390,8 @@ describe("3. intakes that predate the subtype are untouched", () => {
       }),
     });
 
-    // Accepted as a no-op, and — the part that matters — no type was grafted
-    // onto a record the client completed before the question existed.
+    // Accepted as a no-op. The part that matters: no type was grafted onto a
+    // record the client completed before the question existed.
     expect(res.ok).toBe(true);
     expect(storedRow()).toEqual(before);
     expect(storedResponses().thyroid_type).toBeUndefined();

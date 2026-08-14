@@ -7,7 +7,7 @@ const SQL = readFileSync(
   "utf8",
 );
 
-describe("0147 — old create_internal_appointment is a safe wrapper around v2", () => {
+describe("0147: old create_internal_appointment is a safe wrapper around v2", () => {
   it("delegates to v2 and never bypasses hours (outside=false)", () => {
     expect(SQL).toMatch(/create or replace function public\.create_internal_appointment\(/);
     expect(SQL).toMatch(/public\.create_internal_appointment_v2\(/);

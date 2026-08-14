@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 
-// PR B — per-practitioner slot generation. getAvailableSlots gains a trailing
+// PR B: per-practitioner slot generation. getAvailableSlots gains a trailing
 // practitionerId; per-practitioner behaviour activates ONLY when
 // studio.practitioner_capacity_enabled === true AND a practitionerId is passed.
 // When off, the engine never touches the 0134/0135 columns and is byte-for-byte
@@ -89,7 +89,7 @@ describe("OFF-safety: capacity off ignores practitionerId entirely", () => {
         defaults: [open(null, "10:00", "17:00"), open(P1, "08:00", "20:00")],
         // P1's timeline has a 10:00 booking; the studio-wide timeline is empty.
         // The OFF path must read the STUDIO timeline (studio_id), NOT P1's
-        // resource_key — so it must NOT see this booking.
+        // resource_key, so it must NOT see this booking.
         reservationsByKey: {
           [STUDIO]: [],
           [P1]: [{ starts_at: localISO("10:00"), ends_at: localISO("11:00") }],
@@ -147,7 +147,7 @@ describe("ON: per-practitioner hours win over the studio fallback", () => {
   });
 });
 
-describe("ON: parallelism — each practitioner sees only their own reservations", () => {
+describe("ON: parallelism, each practitioner sees only their own reservations", () => {
   it("P1's booked hour blocks P1 but not P2", async () => {
     const common = {
       defaults: [open(null, "10:00", "17:00")],

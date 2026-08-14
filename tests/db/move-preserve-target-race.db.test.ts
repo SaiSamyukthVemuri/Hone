@@ -4,7 +4,7 @@ import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
 import { dropSynthStudio, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B Part 4 (migration 0145) — the time-only move stale-target race is gone.
+// PR B Part 4 (migration 0145), the time-only move stale-target race is gone.
 // A NULL target = "preserve the CURRENT practitioner, resolved from the LOCKED
 // row", so the 0133 wrapper (and the app's time-only path) can NEVER become an
 // unintended reassignment under a concurrent reassign. Studio B, cap ON, book ON.
@@ -67,7 +67,7 @@ const wrapper = (id: string, actor: string, es: string, ee: string, ns: string) 
     [id, B.studioId, actor, es, ee, ns],
   ).then((r) => r.rows[0] as { result: string });
 
-describe("0145 — NULL target preserves the current practitioner (race-safe)", () => {
+describe("0145: NULL target preserves the current practitioner (race-safe)", () => {
   it("move_or_reassign with a NULL target is a time-only move that keeps the current practitioner", async () => {
     const a = await seedAppt(P(1), T("10:00"));
     const r = await moveMR(a.id, owner().practitionerId, null, a.exp, a.expEnd, T("11:00"));
@@ -84,9 +84,9 @@ describe("0145 — NULL target preserves the current practitioner (race-safe)", 
     await moveMR(a.id, owner().practitionerId, P(2), a.exp, a.expEnd, a.exp);
     expect((await pract(a.id)).practitioner_id).toBe(P(2));
     const r = await wrapper(a.id, owner().practitionerId, a.exp, a.expEnd, T("11:00"));
-    expect(r.result).toBe("moved"); // time-only — NOT "reassigned"
+    expect(r.result).toBe("moved"); // time-only, NOT "reassigned"
     const row = await pract(a.id);
-    expect(row.practitioner_id).toBe(P(2)); // still B — the wrapper never reassigned
+    expect(row.practitioner_id).toBe(P(2)); // still B, the wrapper never reassigned
     expect(row.s).toContain("11:00:00");
   });
 
@@ -115,7 +115,7 @@ describe("0145 — NULL target preserves the current practitioner (race-safe)", 
       await c2.query("commit");
       expect(res.result).toBe("moved"); // time-only, never a reassignment
       const row = await pract(a.id);
-      expect(row.practitioner_id).toBe(P(2)); // the reassignment winner — NOT reverted to P1
+      expect(row.practitioner_id).toBe(P(2)); // the reassignment winner, NOT reverted to P1
       expect(row.s).toContain("11:00:00");
     } finally {
       await c1.end();

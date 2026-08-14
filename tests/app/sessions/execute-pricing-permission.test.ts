@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// FREE-01 / review 3777447035 — the EXECUTION permission boundary, exercised
+// FREE-01 / review 3777447035: the EXECUTION permission boundary, exercised
 // for real.
 //
 // WHY THIS FILE IS BEHAVIOURAL AND NOT ANOTHER SOURCE PIN
@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 //     for a session that is not currently chargeable,
 //     runSessionPaymentCharge is called ZERO times.
 //
-// One of those pins was itself vacuous for a while — it sliced to a bare
+// One of those pins was itself vacuous for a while, it sliced to a bare
 // identifier that matched a doc comment and produced an empty string, which
 // matched nothing and passed. So this file invokes the REAL server action
 // against recording stubs and asserts on the calls it actually made.
@@ -230,7 +230,7 @@ describe("execution requires a currently authoritative CHARGEABLE price", () => 
   it("E9 a resolved price that DIFFERS from the prepared amount is not substituted", async () => {
     // The current authoritative price is $999.99; the prepared attempt is
     // whatever it was prepared at. Execution is a PERMISSION check, so the
-    // re-resolved amount must not travel to the runner in any form — the
+    // re-resolved amount must not travel to the runner in any form, the
     // runner receives only (attemptId, studioId, practitionerId) and reads the
     // stored row itself.
     repriced = {

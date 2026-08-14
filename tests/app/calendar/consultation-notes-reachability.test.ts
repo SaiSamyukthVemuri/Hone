@@ -5,7 +5,7 @@ import path from "node:path";
 // Consultation + skin/hair notes must be REACHABLE from the appointment.
 //
 // Both note kinds already existed and already worked; Chloe could not find
-// them. So these tests pin the reachability contract itself — the CTA, its
+// them. So these tests pin the reachability contract itself, the CTA, its
 // destination, the modality scoping, and the fact that nothing here became a
 // second writer. The rendered journey is proved in the browser
 // (e2e/clinical-notes.spec.ts); this file pins the wiring that browser test
@@ -19,7 +19,7 @@ const APPT = read("app/(app)/calendar/[id]/page.tsx");
 const TABS = read("components/profile-tab-bar.tsx");
 const TAB_MODEL = read("components/profile-tab.ts");
 
-describe("G1 — the appointment reaches the notes", () => {
+describe("G1: the appointment reaches the notes", () => {
   it("the card is mounted on the appointment page", () => {
     expect(APPT).toMatch(/import \{ ConsultationNotesCard \}/);
     expect(APPT).toMatch(/<ConsultationNotesCard/);
@@ -34,7 +34,7 @@ describe("G1 — the appointment reaches the notes", () => {
   });
 
   // SOURCE-STRUCTURE test, not a rendering test. The earlier name claimed the
-  // CTA "is scoped to consultation modality", which a regex cannot establish —
+  // CTA "is scoped to consultation modality", which a regex cannot establish,
   // and the old proximity pattern (/isConsultation[\s\S]{0,120}Record .../)
   // would still have matched if the ternary were INVERTED, i.e. the exact
   // regression it named. It now pins the TRUE branch of each ternary, so an
@@ -77,7 +77,7 @@ describe("G1 — the appointment reaches the notes", () => {
   });
 });
 
-describe("G2 — pre-visit note context reuses the existing authority", () => {
+describe("G2: pre-visit note context reuses the existing authority", () => {
   it("reads through the EXISTING summary helper, adding no new query shape", () => {
     expect(APPT).toMatch(
       /import \{ getClinicalNotesSummary \} from "@\/lib\/clinical-notes\/queries"/,
@@ -130,7 +130,7 @@ describe("G2 — pre-visit note context reuses the existing authority", () => {
   });
 });
 
-describe("G3 — the tab says what it holds, without changing its URL", () => {
+describe("G3: the tab says what it holds, without changing its URL", () => {
   it("the VISIBLE label names both kinds", () => {
     expect(TABS).toMatch(/label: "Consultation & Skin\/Hair"/);
   });
@@ -146,15 +146,15 @@ describe("G3 — the tab says what it holds, without changing its URL", () => {
 });
 
 // The independent review found this read awaited AFTER the page's six-way
-// Promise.all. It depends on nothing in that wave — only `clientId`, already in
-// hand — so it added a whole serial round-trip to EVERY appointment render,
+// Promise.all. It depends on nothing in that wave, only `clientId`, already in
+// hand, so it added a whole serial round-trip to EVERY appointment render,
 // including the electrolysis and laser visits where the card then renders
 // nothing at all.
 //
 // HONEST SCOPE: this is a source-structure guard, NOT a timing measurement. A
 // wall-clock concurrency assertion over a Next.js async server component would
 // need a full request harness and would be flaky under CI load. What it does
-// pin is the two shapes that actually regress — a standalone `await`, or a
+// pin is the two shapes that actually regress, a standalone `await`, or a
 // second call site drifting back out of the wave.
 describe("the clinical-note read stays inside the page's parallel wave (source structure)", () => {
   // The `] = await Promise.all([ … ]);` array, sliced out of the page source.

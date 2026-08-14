@@ -30,7 +30,7 @@ describe("practitioner query surfaces the stored agreed content", () => {
     expect(QUERIES).toMatch(/getPhotoConsentStateForClient/);
   });
 
-  it("never logs the body/response/answer — only error code + message", () => {
+  it("never logs the body/response/answer: only error code + message", () => {
     // The consent error log object must not carry the snapshot/answer fields.
     const logBlocks = QUERIES.match(/console\.error\(\s*\n?\s*JSON\.stringify\(\{[\s\S]*?\}\)/g) ?? [];
     for (const b of logBlocks) {
@@ -42,7 +42,7 @@ describe("practitioner query surfaces the stored agreed content", () => {
 });
 
 describe("signed-consent viewer renders the complete record, not a badge", () => {
-  it("shows the exact form copy, the signature, the signed time — no raw JSON", () => {
+  it("shows the exact form copy, the signature, the signed time, no raw JSON", () => {
     expect(VIEWER).toMatch(/template_body_snapshot/);
     expect(VIEWER).toMatch(/Form the client agreed to/i);
     expect(VIEWER).toMatch(/record\.signature_name/);

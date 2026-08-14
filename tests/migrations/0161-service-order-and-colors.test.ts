@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { SERVICE_COLOR_KEYS, SERVICE_COLOR_KEYS_0153 } from "@/lib/calendar/service-colors";
 
-// Migration 0161 — deterministic service ordering + a wider, separable colour set.
+// Migration 0161: deterministic service ordering + a wider, separable colour set.
 //
 // This test carries the REPO migration-max pin (it moved off the 0160 test when
 // 0161 landed). 0161 was APPLIED to production 2026-07-30T23:38:07Z→23:38:16Z:
@@ -34,7 +34,7 @@ const statements = CODE.split(";")
 // (it moved off 0160 when 0161 landed, and off 0161 when 0162 landed).
 // 0161 keeps its own ordinal + frozen-checksum protections, because it is
 // APPLIED in production and must never be edited.
-describe("0161 — service order + colours (applied, checksum frozen)", () => {
+describe("0161: service order + colours (applied, checksum frozen)", () => {
   it("is present, 0160 precedes it, and there is exactly one 0161", () => {
     expect(FILE).toMatch(/^0161_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -44,20 +44,20 @@ describe("0161 — service order + colours (applied, checksum frozen)", () => {
       .filter((f) => /^\d{4}_.*\.sql$/.test(f))
       .map((f) => parseInt(f.slice(0, 4), 10))
       .sort((a, b) => a - b);
-    // 0161 is no longer the max — 0162 is — but the chain must stay dense and
+    // 0161 is no longer the max, 0162 is, but the chain must stay dense and
     // duplicate-free, and 0161 must still be in it.
     expect(nums).toContain(161);
     expect(new Set(nums).size).toBe(nums.length);
   });
 
   it("is APPLIED in production, so its checksum is frozen", () => {
-    // An applied migration must never be edited — its recorded checksum has to
+    // An applied migration must never be edited, its recorded checksum has to
     // keep describing the file on disk. Behaviour changes need a new migration
     // (0162). This is the same protection 0159 and 0160 carry.
     expect(
       createHash("sha256").update(SQL).digest("hex"),
       "0161 is APPLIED in production with this checksum. Never edit an applied " +
-        "migration — write a new one (0162).",
+        "migration, write a new one (0162).",
     ).toBe("e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46");
     const ledger = readFileSync(join(process.cwd(), "docs/production/migration-ledger.md"), "utf8");
     expect(ledger, "the ledger must carry 0161's COMPLETE sha256").toContain("e2a3e4a770c79799042b542d9f2fcbdc13d2a9f1e30774221c1777ccbae33a46");
@@ -108,7 +108,7 @@ describe("transaction + lock safety (the 0159/0160 lesson)", () => {
 describe("no business-row rewrite at apply time", () => {
   it("contains no UPDATE or DELETE against services outside the RPC bodies", () => {
     // Every UPDATE in the file must be inside a function body ($$ … $$), i.e.
-    // executed only when an owner taps a move control — never at apply time.
+    // executed only when an owner taps a move control, never at apply time.
     const bodies = SQL.split("$$");
     // Odd indices are function bodies; even indices are top-level SQL.
     const topLevel = bodies.filter((_, i) => i % 2 === 0).join("\n");
@@ -140,7 +140,7 @@ describe("the atomic reorder RPC", () => {
     expect(body).toMatch(/errcode = '42501'/);
   });
 
-  it("orders by the TOTAL key (sort_order, name, id) — the fix for the tie", () => {
+  it("orders by the TOTAL key (sort_order, name, id), the fix for the tie", () => {
     expect(body).toMatch(/order by sort_order asc, name asc, id asc/);
   });
 
@@ -152,7 +152,7 @@ describe("the atomic reorder RPC", () => {
     expect(body).toMatch(/p_move not in \('top', 'up', 'down', 'bottom', 'none'\)/);
     expect(body).toMatch(/when 'top'\s+then 1/);
     expect(body).toMatch(/when 'bottom' then v_len/);
-    // 'none' normalizes WITHOUT moving — how show_studio_service stays
+    // 'none' normalizes WITHOUT moving: how show_studio_service stays
     // idempotent when the service was already visible.
     expect(body).toMatch(/when 'none'\s+then v_idx/);
   });
@@ -224,7 +224,7 @@ describe("the colour CHECK is WIDENED, never narrowed", () => {
     expect(inSql).toHaveLength(SERVICE_COLOR_KEYS.length);
   });
 
-  it("NEVER allows red, rose or pink — reserved for allergy / clinical cautions", () => {
+  it("NEVER allows red, rose or pink, reserved for allergy / clinical cautions", () => {
     const start = CODE_FLAT.indexOf("check (calendar_color in (");
     const check = CODE_FLAT.slice(start, CODE_FLAT.indexOf("))", start));
     for (const banned of ["'red'", "'rose'", "'pink'"]) {

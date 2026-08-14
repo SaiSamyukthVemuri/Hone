@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { utcInstantFromLocal, isAllDayInterval } from "@/lib/booking/tz";
 
-// PR B 3E defect #1 — a practitioner-scoped all-day block is built as the
+// PR B 3E defect #1, a practitioner-scoped all-day block is built as the
 // half-open range [local midnight, next local midnight) via utcInstantFromLocal
 // for BOTH endpoints (createTimedBlockAction / buildAllDayBlockUtcRange). This
 // pins the DST correctness of that primitive: because each midnight resolves its
-// own tz offset, a spring-forward day is 23h and a fall-back day is 25h — never
+// own tz offset, a spring-forward day is 23h and a fall-back day is 25h, never
 // a naive start+24h.
 
 const TZ = "America/Toronto";

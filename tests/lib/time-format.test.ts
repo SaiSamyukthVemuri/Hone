@@ -5,7 +5,7 @@ import { resolveTimeFormat, formatTimeForStudio } from "@/lib/booking/tz";
 const D = new Date("2026-06-03T18:30:00Z");
 const TZ = "America/Toronto";
 
-describe("resolveTimeFormat — default 12h; no studio hardcoded", () => {
+describe("resolveTimeFormat: default 12h; no studio hardcoded", () => {
   it("defaults to 12h when the preference is absent or null (pre-migration safe)", () => {
     expect(resolveTimeFormat(undefined)).toBe("12h");
     expect(resolveTimeFormat(null)).toBe("12h");
@@ -21,7 +21,7 @@ describe("resolveTimeFormat — default 12h; no studio hardcoded", () => {
   });
 });
 
-describe("formatTimeForStudio — format only; timezone preserved", () => {
+describe("formatTimeForStudio: format only; timezone preserved", () => {
   it("renders 12h as '2:30 PM'", () => {
     expect(formatTimeForStudio(D, TZ, "12h")).toBe("2:30 PM");
   });

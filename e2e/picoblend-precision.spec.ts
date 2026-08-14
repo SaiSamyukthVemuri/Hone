@@ -7,7 +7,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// PicoBlend precision round-trip — REAL browser, REAL local stack.
+// PicoBlend precision round-trip: REAL browser, REAL local stack.
 //
 // Proves Chloe's EXACT Blend + PicoBlend clinical values submit through the
 // ACTUAL charting forms (the one-page "Add settings block" form and the
@@ -16,7 +16,7 @@ import { loginAsOwner } from "./helpers/flows";
 // reload. Nothing here asserts against source strings: every value is typed into
 // a live input, submitted through the real server action, read back from the DB,
 // and re-rendered from the DB. Decimal fidelity (0.74 mA, 0.733 s) is the whole
-// point — the inputs use step="0.01" / step="0.001" and the numeric columns are
+// point, the inputs use step="0.01" / step="0.001" and the numeric columns are
 // unconstrained `numeric`, so the values must survive with no rounding.
 
 const T = 20_000;
@@ -59,7 +59,7 @@ function pulseCountInput(scope: Scope): Locator {
 
 // Drive the primary one-page "Add settings block" form to chart Chin (left) as
 // Blend / PicoBlend with the full fixture, verifying the decimal inputs are
-// accepted (value kept verbatim AND natively valid — no step mismatch) before
+// accepted (value kept verbatim AND natively valid, no step mismatch) before
 // saving. Assumes the compact "Add settings block" CTA is present.
 async function chartPicoBlendPrimary(page: Page): Promise<void> {
   await page
@@ -134,7 +134,7 @@ async function runPrimaryFormRoundTrip(page: Page): Promise<void> {
   expect(saved.apilus_modality).toBe("Picoblend");
   expect(Number(saved.energy_level)).toBe(144);
 
-  // (2) Entry-level readings — EXACT, decimals intact (numeric come back as
+  // (2) Entry-level readings: EXACT, decimals intact (numeric come back as
   // strings via node-pg, so coerce with Number()).
   expect(Number(entry.galvanic_ma)).toBe(0.74);
   expect(Number(entry.galvanic_duration_seconds)).toBe(9);
@@ -152,7 +152,7 @@ async function runPrimaryFormRoundTrip(page: Page): Promise<void> {
   // Settings summary line: mode + modality + energy re-render.
   await expect(page.getByText(/Blend · PicoBlend · EL 144/)).toBeVisible({ timeout: T });
 
-  // Galvanic reading line: "0.74 mA · 9s · 67 UL" and — critically — NO bare
+  // Galvanic reading line: "0.74 mA · 9s · 67 UL" and, critically, NO bare
   // percentage (the deprecated galvanic intensity % must never reappear here).
   const galvanicLine = page.getByText("Galvanic:", { exact: true }).locator("xpath=..");
   await expect(galvanicLine).toContainText("0.74 mA");
@@ -163,7 +163,7 @@ async function runPrimaryFormRoundTrip(page: Page): Promise<void> {
   // Thermolysis reading line: intensity %, duration, and pulse count.
   //
   // The practitioner-facing summary shows the EXACT stored duration: 0.733 is
-  // stored (asserted above) AND displayed as "0.733 seconds" — formatSeconds now
+  // stored (asserted above) AND displayed as "0.733 seconds", formatSeconds now
   // preserves 3-decimal thermolysis precision, so it must NOT render the lossy
   // "0.73 seconds". This is the clinical-truthfulness guarantee for PicoBlend.
   const thermoLine = page.getByText("Thermolysis:", { exact: true }).locator("xpath=..");
@@ -173,7 +173,7 @@ async function runPrimaryFormRoundTrip(page: Page): Promise<void> {
   await expect(thermoLine).toContainText("4 pulses");
 }
 
-test.describe("PicoBlend precision — primary form (desktop)", () => {
+test.describe("PicoBlend precision: primary form (desktop)", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
 
   test("Chloe's exact PicoBlend values submit, round-trip to the DB, and re-display (desktop)", async ({
@@ -183,7 +183,7 @@ test.describe("PicoBlend precision — primary form (desktop)", () => {
   });
 });
 
-test.describe("PicoBlend precision — primary form (390px mobile)", () => {
+test.describe("PicoBlend precision: primary form (390px mobile)", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test("Chloe's exact PicoBlend values submit, round-trip to the DB, and re-display (390px)", async ({
@@ -193,7 +193,7 @@ test.describe("PicoBlend precision — primary form (390px mobile)", () => {
   });
 });
 
-test.describe("PicoBlend precision — add another pass (390px mobile)", () => {
+test.describe("PicoBlend precision: add another pass (390px mobile)", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test("a second pass through the SimplifiedEntryForm round-trips the exact PicoBlend values (390px)", async ({
@@ -242,7 +242,7 @@ test.describe("PicoBlend precision — add another pass (390px mobile)", () => {
     await num(form, "Units of lye (UL)").fill(FIXTURE.unitsOfLye);
 
     // Decimals accepted verbatim + natively valid (this form IS a real <form>,
-    // so an invalid step would block the native submit — a real bug if so).
+    // so an invalid step would block the native submit, a real bug if so).
     await expect(num(form, "Galvanic mA")).toHaveValue("0.74");
     await expect(num(form, "Thermolysis duration (s)")).toHaveValue("0.733");
     await expect(pulseCountInput(form)).toHaveValue("4");

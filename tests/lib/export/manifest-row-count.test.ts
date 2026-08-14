@@ -10,7 +10,7 @@ import { rowsToCsv } from "@/lib/csv";
 // specifically: `csvCell` emits RFC-4180 quoted fields that PRESERVE embedded
 // CR/LF, so one multiline clinical note, session note or free-text comment is a
 // SINGLE record spanning several physical lines. Every file containing a
-// multiline note was over-reported — in the one artifact whose whole job is to
+// multiline note was over-reported, in the one artifact whose whole job is to
 // tell the owner how much data they actually have.
 //
 // THE FIX. The export now records `rows.length` from the exact collection handed
@@ -20,7 +20,7 @@ import { rowsToCsv } from "@/lib/csv";
 // WHAT THESE TESTS DO. They prove the serialized file AGREES with that number:
 // a correct RFC-4180 reader over the real `rowsToCsv` output must find exactly
 // `rows.length` records, for every nasty value the product can store. The
-// parser lives here, in the test — production does not need one.
+// parser lives here, in the test, production does not need one.
 
 const REPO = path.resolve(__dirname, "../../..");
 
@@ -61,7 +61,7 @@ function countCsvRecords(text: string): number {
   return records;
 }
 
-/** Records excluding the header — what the manifest reports. */
+/** Records excluding the header: what the manifest reports. */
 function countDataRecords(csv: string): number {
   return Math.max(0, countCsvRecords(csv) - 1);
 }

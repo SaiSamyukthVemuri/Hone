@@ -10,7 +10,7 @@ import {
 } from "./helpers/harness";
 
 // ===========================================================================
-// Appointment boundary B2 — T6.1..T6.7
+// Appointment boundary B2, T6.1..T6.7
 // Behavioural coverage for the three lifecycle commands
 // ===========================================================================
 //
@@ -39,7 +39,7 @@ import {
 // scripts/classify-changes.mjs, which would widen CI for a test-only PR.
 // ---------------------------------------------------------------------------
 
-// 64 lowercase hex chars — exactly what appointments_cancellation_token_hash_check
+// 64 lowercase hex chars: exactly what appointments_cancellation_token_hash_check
 // (`null or ~ '^[a-f0-9]{64}$'`) demands. The hash column also carries a partial
 // UNIQUE index, so this is called fresh per appointment and never hoisted.
 const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
@@ -47,7 +47,7 @@ const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
 // Every appointment this file creates gets a UNIQUE whole-day offset from
 // now(). `no_overlapping_appointments_studio_wide` is an EXCLUDE constraint
 // over (studio_id, tstzrange(starts_at, ends_at)) WHERE status='confirmed'
-// and capacity_enabled=false — which is exactly the posture here — so two
+// and capacity_enabled=false, which is exactly the posture here, so two
 // fixtures sharing a slot would fail the INSERT with 23P01 and a test would
 // then be measuring the constraint instead of the command. Unique day
 // offsets make that structurally impossible.
@@ -237,11 +237,11 @@ afterAll(async () => {
 });
 
 // ===========================================================================
-// T6.1 — mark_appointment_complete: the actor must be an ACTIVE member
+// T6.1, mark_appointment_complete: the actor must be an ACTIVE member
 //        of the studio the appointment belongs to (0032:4064-4069)
 // ===========================================================================
 
-describe("T6.1 mark_appointment_complete — unauthorized actor", () => {
+describe("T6.1 mark_appointment_complete: unauthorized actor", () => {
   it("refuses a practitioner belonging to a DIFFERENT studio (42501, documented message)", async () => {
     // Fully eligible appointment: past + confirmed. The only thing wrong with
     // this call is the actor, so a refusal can only be the membership gate.
@@ -286,10 +286,10 @@ describe("T6.1 mark_appointment_complete — unauthorized actor", () => {
 });
 
 // ===========================================================================
-// T6.2 — mark_appointment_complete: appointment scope (0032:4072-4078)
+// T6.2, mark_appointment_complete: appointment scope (0032:4072-4078)
 // ===========================================================================
 
-describe("T6.2 mark_appointment_complete — appointment scope", () => {
+describe("T6.2 mark_appointment_complete: appointment scope", () => {
   it("an unknown appointment id raises P0002 'appointment not found'", async () => {
     await expect(
       markComplete(randomUUID(), A.studioId, A.practitionerId),
@@ -314,7 +314,7 @@ describe("T6.2 mark_appointment_complete — appointment scope", () => {
       message: "appointment not found",
     });
 
-    // Studio B's row is untouched — the refusal did not reach any write.
+    // Studio B's row is untouched, the refusal did not reach any write.
     expectUnchanged(before, await snapshot(bId), "T6.2 cross-studio appointment");
   });
 
@@ -337,10 +337,10 @@ describe("T6.2 mark_appointment_complete — appointment scope", () => {
 });
 
 // ===========================================================================
-// T6.3 — mark_appointment_complete: status and time gates (0032:4079-4084)
+// T6.3, mark_appointment_complete: status and time gates (0032:4079-4084)
 // ===========================================================================
 
-describe("T6.3 mark_appointment_complete — status and time gates", () => {
+describe("T6.3 mark_appointment_complete: status and time gates", () => {
   // Each source status is seeded in the PAST, so ends_at > now() can never be
   // the reason for the refusal: the status gate at 0032:4079 is genuinely the
   // first control reached.
@@ -381,7 +381,7 @@ describe("T6.3 mark_appointment_complete — status and time gates", () => {
     // AND nothing on the row moves.
     //
     // `when: "future"` places starts_at in the future, so it is ineligible
-    // under either rule. The newly-legal middle case — started but not ended —
+    // under either rule. The newly-legal middle case, started but not ended,
     // is proven in tests/db/appointment-transition-integrity.db.test.ts (T3)
     // rather than duplicated here.
     const id = await mkAppt({ studio: A, when: "future" });
@@ -418,11 +418,11 @@ describe("T6.3 mark_appointment_complete — status and time gates", () => {
 });
 
 // ===========================================================================
-// T6.4 — practitioner_cancel_appointment: every documented sentinel
+// T6.4, practitioner_cancel_appointment: every documented sentinel
 //        (0033:241-311)
 // ===========================================================================
 
-describe("T6.4 practitioner_cancel_appointment — sentinels", () => {
+describe("T6.4 practitioner_cancel_appointment: sentinels", () => {
   it("'not_authorized' for a practitioner of another studio", async () => {
     const id = await mkAppt({ studio: A, when: "future" });
     const before = await snapshot(id);
@@ -563,7 +563,7 @@ describe("T6.4 practitioner_cancel_appointment — sentinels", () => {
     );
 
     // The short-circuit at 0033:273-275 must leave everything the first call
-    // wrote exactly as it was — including cancellation_reason, which a second
+    // wrote exactly as it was, including cancellation_reason, which a second
     // UPDATE would have overwritten with 'second'.
     expectUnchanged(
       afterFirst,
@@ -577,10 +577,10 @@ describe("T6.4 practitioner_cancel_appointment — sentinels", () => {
 });
 
 // ===========================================================================
-// T6.5 — mark_appointment_no_show: every documented sentinel (0033:334-389)
+// T6.5, mark_appointment_no_show: every documented sentinel (0033:334-389)
 // ===========================================================================
 
-describe("T6.5 mark_appointment_no_show — sentinels", () => {
+describe("T6.5 mark_appointment_no_show: sentinels", () => {
   it("'not_authorized' for a practitioner of another studio", async () => {
     const id = await mkAppt({ studio: A, when: "past" });
     const before = await snapshot(id);
@@ -634,7 +634,7 @@ describe("T6.5 mark_appointment_no_show — sentinels", () => {
 
   it("'wrong_status' for a REAL past confirmed appointment belonging to another studio", async () => {
     // Pins `and a.studio_id = p_studio_id` at 0033:359. The row is seeded PAST
-    // and CONFIRMED — i.e. fully eligible on every dimension except tenancy —
+    // and CONFIRMED, i.e. fully eligible on every dimension except tenancy,
     // so if the studio predicate were dropped this call would return 'marked'
     // and mutate another studio's appointment.
     const bId = await mkAppt({ studio: B, when: "past" });
@@ -678,7 +678,7 @@ describe("T6.5 mark_appointment_no_show — sentinels", () => {
     expect(rows[0].details).toMatchObject({ source: "manual" });
 
     // The actor named in the audit row really is an ACTIVE practitioner of the
-    // appointment's studio — actor_id is a bare uuid with no FK (0010:221), so
+    // appointment's studio, actor_id is a bare uuid with no FK (0010:221), so
     // nothing in the schema enforces this.
     const actor = await adminQuery(
       `select 1 from public.practitioners p
@@ -691,10 +691,10 @@ describe("T6.5 mark_appointment_no_show — sentinels", () => {
 });
 
 // ===========================================================================
-// T6.6 — EXECUTE grant matrix (0032:4099-4102, 0033:314-317, 0033:392-395)
+// T6.6, EXECUTE grant matrix (0032:4099-4102, 0033:314-317, 0033:392-395)
 // ===========================================================================
 
-describe("T6.6 EXECUTE grants — service_role only", () => {
+describe("T6.6 EXECUTE grants: service_role only", () => {
   // Resolved from the migrations' own revoke/grant statements, not guessed:
   // 0032:4099 + 0033:402, 0033:392, 0033:314.
   const SIGNATURES = [
@@ -718,7 +718,7 @@ describe("T6.6 EXECUTE grants — service_role only", () => {
     // A privilege probe is per-oid. An overload added by a later migration is
     // a DIFFERENT oid with its own ACL, and Supabase's ALTER DEFAULT PRIVILEGES
     // grants EXECUTE to anon, authenticated AND service_role at function-create
-    // time — so a new overload would arrive browser-callable while every probe
+    // time, so a new overload would arrive browser-callable while every probe
     // below, bound to the old signature, stayed green. CLAUDE.md §5 records
     // that exact miss happening twice (0129 for anon, 0164 for service_role).
     for (const name of [
@@ -755,7 +755,7 @@ describe("T6.6 EXECUTE grants — service_role only", () => {
     // has_function_privilege('public', ...) is the AUTHORITATIVE PUBLIC probe.
     // An aclexplode(grantee = 0) count on its own is NOT: when proacl is NULL
     // the function carries Postgres' DEFAULT privileges, under which PUBLIC
-    // HOLDS EXECUTE — and aclexplode(NULL) yields zero rows, so a grantee=0
+    // HOLDS EXECUTE, and aclexplode(NULL) yields zero rows, so a grantee=0
     // count of 0 would read as "revoked" for the one state in which PUBLIC is
     // most dangerous. Measured directly on this stack against a throwaway
     // default-privilege function: proacl null -> public_grants 0 but
@@ -775,7 +775,7 @@ describe("T6.6 EXECUTE grants — service_role only", () => {
   it("a real invocation as `authenticated` is refused at the PRIVILEGE layer, not by the command body", async () => {
     // This discriminator is mandatory. mark_appointment_complete raises 42501
     // ITSELF for a non-member actor (0032:4068), so SQLSTATE alone cannot tell
-    // "EXECUTE denied" apart from "the function ran and refused the actor" —
+    // "EXECUTE denied" apart from "the function ran and refused the actor",
     // which is exactly the false pass a granted EXECUTE would produce.
     //
     // asUser, NOT asRole. asRole ALWAYS rolls back, which would make the
@@ -831,12 +831,12 @@ describe("T6.6 EXECUTE grants — service_role only", () => {
 });
 
 // ===========================================================================
-// T6.7 — rollback / no-op invariant on EVERY refusal path
+// T6.7, rollback / no-op invariant on EVERY refusal path
 // ===========================================================================
 //
 // T6.1-T6.5 already assert the post-state inline. This block re-runs every
 // refusal path as one explicit, uniform sweep so the invariant is stated once,
-// in one place, over the complete set — and so a newly added refusal branch
+// in one place, over the complete set, and so a newly added refusal branch
 // has an obvious home.
 
 describe("T6.7 refusals are complete no-ops", () => {
@@ -1045,18 +1045,18 @@ describe("T6.7 refusals are complete no-ops", () => {
 
   it("the table covers every refusal branch that HAS a row to leave unchanged", () => {
     // Every refusal branch of the three commands, EXCEPT the three
-    // "appointment id exists nowhere" branches — those have no row to snapshot,
+    // "appointment id exists nowhere" branches, those have no row to snapshot,
     // so the no-op claim is meaningless for them and they are asserted inline
     // instead (T6.2, T6.4, T6.5).
     //
     // Enumerated against the command sources rather than counted loosely:
-    //   mark_appointment_complete (0032:4052) — foreign actor, inactive actor,
+    //   mark_appointment_complete (0032:4052), foreign actor, inactive actor,
     //     cancelled source, no_show source, completed source, not yet ended,
     //     row in another studio                                        = 7
-    //   practitioner_cancel_appointment (0033:241) — not_authorized (foreign),
+    //   practitioner_cancel_appointment (0033:241), not_authorized (foreign),
     //     not_authorized (inactive), already_cancelled, completed source,
     //     no_show source, already started, row in another studio       = 7
-    //   mark_appointment_no_show (0033:334) — not_authorized (foreign),
+    //   mark_appointment_no_show (0033:334), not_authorized (foreign),
     //     not_authorized (inactive), cancelled source, completed source,
     //     no_show source, too_early, row in another studio             = 7
     expect(CASES).toHaveLength(21);

@@ -128,14 +128,14 @@ describe("redactSafeDetails (PR #153)", () => {
   it("truncates very long non-credential string values to ~500 chars + sentinel", () => {
     // Long string made of short SPACE-separated words, so neither the
     // whole-value secret check NOR the PR #285 message scrubber's
-    // high-entropy sweep (>= 32 token chars) triggers — we want to
+    // high-entropy sweep (>= 32 token chars) triggers, we want to
     // exercise the pure truncation path. The implementation slices to
     // MAX_DETAIL_VALUE_LEN (500) and appends a 14-char sentinel.
     const long = "Stripe error: status was processing. " + "word ".repeat(500);
     const out = redactSafeDetails({ payload: long });
     const v = out.payload as string;
     // Bounded close to MAX_DETAIL_VALUE_LEN + sentinel length, not
-    // an unbounded paste-bomb. No "[redacted]" — the content is benign.
+    // an unbounded paste-bomb. No "[redacted]", the content is benign.
     expect(v.length).toBeLessThanOrEqual(520);
     expect(v.length).toBeGreaterThanOrEqual(500);
     expect(v.endsWith("...[truncated]")).toBe(true);

@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { SERVICE_ROLE_ALLOWLIST } from "../../security/service-role-allowlist";
 
 // ===========================================================================
-// APPOINTMENT BOUNDARY B4 — application wiring contract.
+// APPOINTMENT BOUNDARY B4, application wiring contract.
 //
 // The DB suites prove the commands behave. This file proves the APPLICATION
 // actually goes through them: that the actions call the right RPCs, that the
 // actor and studio are resolved server-side, that the repair UI is owner-gated,
-// and — the one that matters most — that no direct appointment UPDATE has been
+// and, the one that matters most, that no direct appointment UPDATE has been
 // reintroduced alongside the governed path.
 // ===========================================================================
 
@@ -35,7 +35,7 @@ const ACTIONS_CODE = strip(ACTIONS);
 
 // ---------------------------------------------------------------------------
 
-describe("B4 actions — the governed RPCs are the only write path", () => {
+describe("B4 actions: the governed RPCs are the only write path", () => {
   it("calls revert_appointment_outcome and set_appointment_notes", () => {
     expect(ACTIONS_CODE).toContain('admin.rpc("revert_appointment_outcome"');
     expect(ACTIONS_CODE).toContain('admin.rpc("set_appointment_notes"');
@@ -43,8 +43,8 @@ describe("B4 actions — the governed RPCs are the only write path", () => {
 
   it("performs NO direct appointments DML of its own", () => {
     // The whole boundary rests on this. A `.from("appointments").update(...)`
-    // here would route around every gate 0173 enforces. Reads are permitted —
-    // the repair-state loader needs one — so this forbids the WRITE verbs
+    // here would route around every gate 0173 enforces. Reads are permitted,
+    // the repair-state loader needs one, so this forbids the WRITE verbs
     // outright rather than forbidding the table.
     expect(ACTIONS_CODE).not.toMatch(/\.update\(/);
     expect(ACTIONS_CODE).not.toMatch(/\.insert\(/);
@@ -63,7 +63,7 @@ describe("B4 actions — the governed RPCs are the only write path", () => {
     // `appointment_audit` has no studio_id, so its lookup cannot scope itself.
     // Every export of a "use server" module is browser-callable, so without a
     // scoped appointment read first this loader would answer for ANOTHER
-    // studio's appointment — a cross-studio state oracle, and a surface that
+    // studio's appointment, a cross-studio state oracle, and a surface that
     // claims `repairable: true` for a row the command would refuse.
     const fn = ACTIONS_CODE.slice(
       ACTIONS_CODE.indexOf("export async function loadAppointmentRepairStateAction"),
@@ -99,7 +99,7 @@ describe("B4 actions — the governed RPCs are the only write path", () => {
   });
 });
 
-describe("B4 actions — actor and studio are resolved server-side", () => {
+describe("B4 actions: actor and studio are resolved server-side", () => {
   it("resolves both through getCurrentPractitionerWithStudio", () => {
     expect(ACTIONS_CODE).toContain("getCurrentPractitionerWithStudio");
     const calls =
@@ -126,7 +126,7 @@ describe("B4 actions — actor and studio are resolved server-side", () => {
     }
   });
 
-  it("sends the reason and notes RAW — SQL owns the trim", () => {
+  it("sends the reason and notes RAW, SQL owns the trim", () => {
     // Trimming in JS would let the browser satisfy the SQL floor with
     // whitespace only if the two ever disagreed. There is one authority.
     expect(ACTIONS_CODE).toMatch(/p_reason:\s*reason\b/);
@@ -136,7 +136,7 @@ describe("B4 actions — actor and studio are resolved server-side", () => {
   });
 });
 
-describe("B4 actions — sentinels are propagated truthfully", () => {
+describe("B4 actions: sentinels are propagated truthfully", () => {
   it("an unrecognised code is a failure, never a silent success", () => {
     const fn = ACTIONS_CODE.slice(ACTIONS_CODE.indexOf("function mapSentinel"));
     const body = fn.slice(0, fn.indexOf("\n}"));
@@ -197,7 +197,7 @@ describe("B4 actions — sentinels are propagated truthfully", () => {
   });
 });
 
-describe("B4 actions — constants agree with the migration", () => {
+describe("B4 actions: constants agree with the migration", () => {
   it("the reason floor matches the SQL constant", () => {
     const sqlMin = MIGRATION.match(
       /c_min_reason\s+constant\s+integer\s*:=\s*(\d+)/,
@@ -243,7 +243,7 @@ describe("B4 actions — constants agree with the migration", () => {
   });
 });
 
-describe("B4 UI — mounting and gating", () => {
+describe("B4 UI: mounting and gating", () => {
   it("the detail page mounts both repair surfaces", () => {
     expect(PAGE).toContain("<AppointmentOutcomeRepair");
     expect(PAGE).toContain("<AppointmentNotesEditor");
@@ -280,7 +280,7 @@ describe("B4 UI — mounting and gating", () => {
 
     // Only what the practitioner actually SEES. Scanning the whole file would
     // trip on identifiers like `revertAppointmentOutcomeAction`, which is code,
-    // not copy — so this extracts JSX text nodes and the ternary string
+    // not copy, so this extracts JSX text nodes and the ternary string
     // literals rendered inside them.
     const jsxText = [...strip(ui).matchAll(/>\s*([^<>{}]+?)\s*</g)].map((m) => m[1]);
     const rendered = [...strip(ui).matchAll(/\?\s*"([^"]+)"\s*:\s*"([^"]+)"/g)].flatMap(
@@ -315,7 +315,7 @@ describe("B4 UI — mounting and gating", () => {
   });
 });
 
-describe("B4 — service-role allowlist", () => {
+describe("B4: service-role allowlist", () => {
   it("the repair actions file is registered with a precise scope guard", () => {
     const entry = SERVICE_ROLE_ALLOWLIST.find((e) => e.path === ACTIONS_PATH);
     expect(entry, "the file must be on the allowlist").toBeDefined();

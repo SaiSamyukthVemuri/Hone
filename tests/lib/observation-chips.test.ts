@@ -11,13 +11,13 @@ const A = OBSERVATION_CHIPS[0]; // e.g. "Dehydrated follicles"
 const B = OBSERVATION_CHIPS[1];
 const C = OBSERVATION_CHIPS[2];
 
-describe("normalizeChips — safe read-side contract", () => {
+describe("normalizeChips: safe read-side contract", () => {
   it("keeps canonical chips, canonicalizes casing, dedups, drops unknown", () => {
     expect(normalizeChips([A, B])).toEqual([A, B]);
     expect(normalizeChips([A.toUpperCase(), A])).toEqual([A]); // dedup + canonical casing
     expect(normalizeChips([A, "not a real chip", B])).toEqual([A, B]);
   });
-  it("never throws on null/garbage — yields [] rather than losing the render", () => {
+  it("never throws on null/garbage: yields [] rather than losing the render", () => {
     expect(normalizeChips(null)).toEqual([]);
     expect(normalizeChips(undefined)).toEqual([]);
     expect(normalizeChips("Dehydrated follicles")).toEqual([]); // not an array
@@ -26,7 +26,7 @@ describe("normalizeChips — safe read-side contract", () => {
   });
 });
 
-describe("toggleChip / isChipSelected — explicit structured state", () => {
+describe("toggleChip / isChipSelected: explicit structured state", () => {
   it("selecting is idempotent (no duplicates); deselect removes", () => {
     let chips: string[] = [];
     chips = toggleChip(chips, A);
@@ -45,7 +45,7 @@ describe("toggleChip / isChipSelected — explicit structured state", () => {
   });
 });
 
-describe("hydrateLegacyChips — non-destructive per-record migration", () => {
+describe("hydrateLegacyChips: non-destructive per-record migration", () => {
   it("splits a legacy comments string into chips + remaining free-text", () => {
     const { chips, freeText } = hydrateLegacyChips(`${A}, ${B}, client was chatty`);
     expect(chips).toEqual([A, B]);

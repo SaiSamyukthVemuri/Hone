@@ -2,19 +2,19 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// B8 / 0177 — the auto-send actor must be a REAL, server-resolved practitioner.
+// B8 / 0177: the auto-send actor must be a REAL, server-resolved practitioner.
 //
 // claim_postcare_send authenticates the business actor in the database, so
 // auto-send needs an identity that a human is accountable for. The tempting
 // shortcuts are all wrong in the same way: they put a value in the boundary
 // that nobody authorised.
 //
-//   * "system" / a hard-coded UUID — an identity no one is accountable for;
-//   * service_role — the transport identity, not a business actor;
-//   * appointment.practitioner_id read at the CALL SITE — the appointment's
+//   * "system" / a hard-coded UUID, an identity no one is accountable for;
+//   * service_role, the transport identity, not a business actor;
+//   * appointment.practitioner_id read at the CALL SITE, the appointment's
 //     assigned practitioner is not necessarily the person who completed it,
 //     and reading it here would attribute the send to the wrong human;
-//   * anything from client input — trivially forgeable.
+//   * anything from client input, trivially forgeable.
 //
 // This is asserted at the SOURCE of both call sites rather than through a mock,
 // because the property is about which value is passed, and a mock would happily
@@ -37,7 +37,7 @@ const CALL_SITES = [
   },
 ] as const;
 
-describe("B8 — auto-send receives a server-resolved practitioner at every call site", () => {
+describe("B8: auto-send receives a server-resolved practitioner at every call site", () => {
   it.each(CALL_SITES)(
     "$file forwards $expected",
     ({ file, expected }) => {
@@ -77,7 +77,7 @@ describe("B8 — auto-send receives a server-resolved practitioner at every call
     }
   });
 
-  it("the helper still REQUIRES the actor — it cannot be quietly dropped", () => {
+  it("the helper still REQUIRES the actor, it cannot be quietly dropped", () => {
     // If the parameter became optional, a call site could stop passing it and
     // every assertion above would keep passing while the database received
     // undefined.

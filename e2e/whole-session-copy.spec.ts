@@ -11,7 +11,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Whole-session "Copy areas and settings" draft model (0157) — real browser,
+// Whole-session "Copy areas and settings" draft model (0157), real browser,
 // real stack, 390px iPhone. Proves the amended safety boundary: the preview
 // creates ZERO blocks; only the explicit commit writes; the committed copy
 // reproduces the reviewed area(s) with machine settings but BLANK minutes; a
@@ -48,7 +48,7 @@ test("preview creates zero blocks; commit copies areas+settings with BLANK minut
     await expect(page.getByTestId("copy-previous-preview-panel")).toBeVisible({ timeout: T });
     // Scoped to the copy PANEL. The page-wide lookup this replaces became
     // ambiguous once the charting screen gained its own "Last treatment"
-    // memory card, which names the same area — and it was always the panel's
+    // memory card, which names the same area, and it was always the panel's
     // own row that this step is about.
     await expect(
       page
@@ -74,7 +74,7 @@ test("preview creates zero blocks; commit copies areas+settings with BLANK minut
     await expect
       .poll(async () => (await getSessionBlockAreas(todaySessionId)).join(","), { timeout: T })
       .toBe("Chin|left");
-    // P1-5: minutes are NOT copied — today's block minutes start blank.
+    // P1-5: minutes are NOT copied, today's block minutes start blank.
     expect(await getFirstBlockMinutes(todaySessionId)).toBeNull();
   });
 });
@@ -167,7 +167,7 @@ test("a STALE preview fails closed with a safe message and zero writes @390px", 
   // Scope to the panel's alert (Next's global route-announcer also has role=alert).
   const alert = page.getByTestId("copy-previous-preview-panel").getByRole("alert");
   await expect(alert).toBeVisible({ timeout: T });
-  // Safe, human message — never raw DB text (SQLSTATE / constraint / relation).
+  // Safe, human message: never raw DB text (SQLSTATE / constraint / relation).
   await expect(alert).toContainText(/previous visit changed|reload the preview/i);
   const alertText = (await alert.textContent()) ?? "";
   expect(alertText).not.toMatch(/HN0\d\d|SQLSTATE|constraint|relation|session_copy_operations|null value/i);

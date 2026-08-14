@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Phase B2.4 — DUAL-DESTINATION setup server actions (behavioral, all deps
+// Phase B2.4: DUAL-DESTINATION setup server actions (behavioral, all deps
 // mocked; NO db, NO network). Every destination action is OWNER-gated and
 // re-authorizes server-side; the browser only ever submits a candidate id/mode
 // which the server re-validates against Google's own list. NOTHING here syncs an
-// event or turns on the outbound flag — this is destination SETUP only.
+// event or turns on the outbound flag, this is destination SETUP only.
 
 const jar = { set: vi.fn(), get: vi.fn(), delete: vi.fn() };
 vi.mock("next/headers", () => ({ cookies: vi.fn(async () => jar) }));
@@ -197,7 +197,7 @@ describe("chooseDestinationModeAction", () => {
 // provisionDedicatedCalendarAction
 // ---------------------------------------------------------------------------
 describe("provisionDedicatedCalendarAction", () => {
-  it("is idempotent when already provisioned — converges without creating", async () => {
+  it("is idempotent when already provisioned, converges without creating", async () => {
     vi.mocked(getOwnConnectionMetadata).mockResolvedValue(
       dedicatedConn({ appCreatedCalendarId: "existing-app-cal", selectedCalendarDisplayName: "Hone Appointments" }),
     );
@@ -213,7 +213,7 @@ describe("provisionDedicatedCalendarAction", () => {
     expect(findCalendarsByDescriptionToken).not.toHaveBeenCalled();
   });
 
-  it("is blocked (needs attention) when provisioning was flagged ambiguous — never creates", async () => {
+  it("is blocked (needs attention) when provisioning was flagged ambiguous, never creates", async () => {
     vi.mocked(getOwnConnectionMetadata).mockResolvedValue(
       dedicatedConn({ provisioningAmbiguousAt: "2026-07-13T01:00:00Z" }),
     );
@@ -273,7 +273,7 @@ describe("provisionDedicatedCalendarAction", () => {
     );
   });
 
-  it("marks ambiguous (fail-closed) on a multi-match reconcile — no create, no adopt", async () => {
+  it("marks ambiguous (fail-closed) on a multi-match reconcile, no create, no adopt", async () => {
     vi.mocked(getOwnConnectionMetadata).mockResolvedValue(dedicatedConn());
     vi.mocked(findCalendarsByDescriptionToken).mockResolvedValue({
       ok: true,
@@ -325,7 +325,7 @@ describe("selectOwnedCalendarAction", () => {
   });
 
   it.each(["writer", "reader", "freeBusyReader", "unknown"])(
-    "rejects a calendar whose accessRole is %s (not owner) — nothing stored",
+    "rejects a calendar whose accessRole is %s (not owner), nothing stored",
     async (role) => {
       vi.mocked(fetchCalendarList).mockResolvedValue({
         ok: true,
@@ -348,7 +348,7 @@ describe("selectOwnedCalendarAction", () => {
     expect(setOwnedCalendarDestination).not.toHaveBeenCalled();
   });
 
-  it("only trusts fetchCalendarList's accessRole — a non-owner listed id is still rejected", async () => {
+  it("only trusts fetchCalendarList's accessRole: a non-owner listed id is still rejected", async () => {
     // The browser cannot submit a role; even a real calendar the account can see
     // as writer must not become a destination.
     vi.mocked(fetchCalendarList).mockResolvedValue({
@@ -403,9 +403,9 @@ describe("listOwnedCalendarsAction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Authorization — owner gate + connection flag + active, across the actions
+// Authorization, owner gate + connection flag + active, across the actions
 // ---------------------------------------------------------------------------
-describe("authorization — destination actions are owner-gated + flag-gated", () => {
+describe("authorization: destination actions are owner-gated + flag-gated", () => {
   it("chooseDestinationModeAction: owner + connected + flag on succeeds", async () => {
     const r = await chooseDestinationModeAction("existing_owned");
     expect(r.ok).toBe(true);
@@ -434,7 +434,7 @@ describe("authorization — destination actions are owner-gated + flag-gated", (
     expect(setDestinationMode).not.toHaveBeenCalled();
   });
 
-  it("provisionDedicatedCalendarAction: non-owner is rejected — never creates a calendar", async () => {
+  it("provisionDedicatedCalendarAction: non-owner is rejected, never creates a calendar", async () => {
     setActor({ role: "member" });
     vi.mocked(getOwnConnectionMetadata).mockResolvedValue(dedicatedConn());
     const r = await provisionDedicatedCalendarAction();
@@ -443,7 +443,7 @@ describe("authorization — destination actions are owner-gated + flag-gated", (
     expect(createSecondaryCalendar).not.toHaveBeenCalled();
   });
 
-  it("selectOwnedCalendarAction: non-owner is rejected — never stores a destination", async () => {
+  it("selectOwnedCalendarAction: non-owner is rejected, never stores a destination", async () => {
     setActor({ role: "member" });
     vi.mocked(fetchCalendarList).mockResolvedValue({
       ok: true,

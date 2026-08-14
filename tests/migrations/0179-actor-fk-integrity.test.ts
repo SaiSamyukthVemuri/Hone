@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
-// 0179 — actor FK integrity. STATIC contract.
+// 0179: actor FK integrity. STATIC contract.
 //
 // Behaviour is proved against a real database in
 // tests/db/actor-fk-integrity.db.test.ts. This file pins what a behavioural
@@ -14,13 +14,13 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 // WHEN A SUCCESSOR IS AUTHORED (0180+), ONLY THE CURRENT-STATE BLOCK GOES RED.
 // The fix is NOT to delete assertions. This file separates two owners:
 //   * PERMANENT 0179 apply facts read the FROZEN 0179 ledger entry and the
-//     FROZEN migration bytes — leave them completely untouched forever;
+//     FROZEN migration bytes, leave them completely untouched forever;
 //   * CURRENT-STATE claims read migration-state.json and the ledger's Current
-//     block — convert "is the current repository maximum" to "is no longer the
+//     block, convert "is the current repository maximum" to "is no longer the
 //     repository maximum" plus versionsAbove(...).toContain("0180"), keep
 //     countVersion("0179") === 1, and let 0180's own test become the single
 //     current-state tripwire (CLAUDE.md §2).
-// NEVER point a permanent 0179 assertion at migration-state.json.hosted_note —
+// NEVER point a permanent 0179 assertion at migration-state.json.hosted_note,
 // that field is CURRENT STATE and will describe 0180. The full hand-off list is
 // in the block comment above the current-state describe.
 // ---------------------------------------------------------------------------
@@ -28,19 +28,19 @@ import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-stat
 const FILE = "supabase/migrations/0179_actor_fk_integrity.sql";
 const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 
-// EXECUTABLE SQL ONLY — line comments stripped. The header deliberately NAMES
+// EXECUTABLE SQL ONLY: line comments stripped. The header deliberately NAMES
 // every relationship it does not touch, so a scope assertion over raw text
 // would match the very prose documenting the discipline.
 const EXEC = SQL.split("\n")
   .map((l) => l.replace(/--.*$/, ""))
   .join("\n");
 
-describe("0179 — migration state", () => {
+describe("0179: migration state", () => {
   // THE HAND-OFF HAPPENED, exactly as this file's header instructed. 0180 was
   // authored above 0179, so the current-state tripwire moves to 0180's own
-  // test (CLAUDE.md §2). The PERMANENT apply block below is untouched — it
+  // test (CLAUDE.md §2). The PERMANENT apply block below is untouched, it
   // reads the frozen ledger entry and frozen bytes, so it stays true forever.
-  it("is no longer the repository maximum — 0180 was authored above it", () => {
+  it("is no longer the repository maximum, 0180 was authored above it", () => {
     expect(isRepoMax("0179")).toBe(false);
     expect(versionsAbove("0179")).toContain("0180");
   });
@@ -64,7 +64,7 @@ describe("0179 — migration state", () => {
 //
 // WHY: `migration-state.json`'s `hosted_note` is a CURRENT-STATE field. When
 // 0180 applies, it will describe 0180. An earlier revision of this file read
-// 0179's permanent apply facts from it — the exact defect this same PR fixed
+// 0179's permanent apply facts from it, the exact defect this same PR fixed
 // for 0178, where one such assertion was passing only by coincidence of a
 // successor's wording. Permanent evidence must never read a moving field.
 // ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ const REC = JSON.parse(
   readFileSync(join(__dirname, "..", "..", "docs/production/migration-state.json"), "utf8"),
 );
 
-/** The FROZEN 0179 rollout entry — 0179's permanent apply record. */
+/** The FROZEN 0179 rollout entry, 0179's permanent apply record. */
 const ENTRY_0179 = (() => {
   const HEAD = "## 0179 — ACTOR FK INTEGRITY";
   const i = LEDGER.indexOf(HEAD);
@@ -95,7 +95,7 @@ const ENTRY_0179 = (() => {
 
 const RAW_SHA_0179 = "ce9993d86f67d4f5d82c908980f44baf11e404b371cc0611862e0c253cef059a";
 
-describe("0179 — the frozen evidence slice is really the 0179 entry", () => {
+describe("0179: the frozen evidence slice is really the 0179 entry", () => {
   it("is the 0179 rollout entry and nothing else", () => {
     expect(ENTRY_0179.startsWith("## 0179 — ACTOR FK INTEGRITY")).toBe(true);
     // The entry identifies its migration by heading + checksum, the same way
@@ -110,9 +110,9 @@ describe("0179 — the frozen evidence slice is really the 0179 entry", () => {
   });
 });
 
-describe("0179 — PERMANENT apply facts (frozen; must survive 0180+)", () => {
+describe("0179: PERMANENT apply facts (frozen; must survive 0180+)", () => {
   it("the applied migration bytes are frozen", async () => {
-    // Computed from the migration file itself — independent of any document.
+    // Computed from the migration file itself, independent of any document.
     const { createHash } = await import("node:crypto");
     const bytes = readFileSync(join(__dirname, "..", "..", FILE));
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(RAW_SHA_0179);
@@ -120,7 +120,7 @@ describe("0179 — PERMANENT apply facts (frozen; must survive 0180+)", () => {
     expect(ENTRY_0179).toContain(RAW_SHA_0179);
   });
 
-  it("records the apply itself — source, window, duration, captured exit code", () => {
+  it("records the apply itself: source, window, duration, captured exit code", () => {
     expect(ENTRY_0179).toContain("91b81cd35abfbab6686a5dbe7560124fa56c3fea");
     expect(ENTRY_0179).toContain("273dbc69881a199f6f25ba409f49bf7412ce1512");
     expect(ENTRY_0179).toMatch(/applied 2026-08-12T01:40:39Z–01:40:52Z/);
@@ -163,7 +163,7 @@ describe("0179 — PERMANENT apply facts (frozen; must survive 0180+)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CURRENT-STATE OWNERSHIP — these are the assertions that hand forward.
+// CURRENT-STATE OWNERSHIP, these are the assertions that hand forward.
 //
 // WHEN 0180 IS AUTHORED / APPLIED:
 //   1. Leave the PERMANENT block above completely untouched. It reads the
@@ -172,22 +172,22 @@ describe("0179 — PERMANENT apply facts (frozen; must survive 0180+)", () => {
 //   2. In THIS block only, convert the repository-max and hosted-equality
 //      assertions to a floor (`hosted >= 179`) plus "no longer the repository
 //      maximum", as the Engineering OS requires.
-//   3. Transfer current-state ownership to 0180's own test — only the current
+//   3. Transfer current-state ownership to 0180's own test, only the current
 //      maximum may assert isRepoMax.
 //   4. Do NOT redirect any permanent 0179 evidence back to
 //      `migration-state.json.hosted_note`. That field will describe 0180.
 //   5. The checksum-chain assertion below is a CURRENT-NOTE invariant, not a
 //      0179 fact: whichever record is current must never drop earlier history.
 //      Hand it to 0180's test (0180's note must carry 0179's sha too), or
-//      delete it here — never leave it asserting 0179-specific wording against
+//      delete it here, never leave it asserting 0179-specific wording against
 //      a successor's note.
 // ---------------------------------------------------------------------------
-describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
+describe("0179: CURRENT-STATE ownership (hands forward to 0180)", () => {
   it("0179 is APPLIED in production and remains a floor under the hosted max", () => {
     // CONVERTED TO A FLOOR when 0180 was authored. 0179's durable claim is that
     // production REACHED it, not that production has stopped there. 0180 is
     // authored but NOT yet applied, so hosted legitimately still reads 0179
-    // while repo max is 0180 — an equality-to-repo-max assertion here would be
+    // while repo max is 0180, an equality-to-repo-max assertion here would be
     // false-red on a correct tree.
     expect(Number.parseInt(REC.hosted_migration_max, 10)).toBeGreaterThanOrEqual(179);
     expect(countVersion("0179")).toBe(1);
@@ -197,17 +197,17 @@ describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
   it("HANDED OFF: the current record now points at 0180, not 0179", () => {
     // 0180 was APPLIED to production, so current-state ownership moves to
     // 0180's own test (CLAUDE.md §2). 0179's durable claim is the FLOOR
-    // asserted above — that production reached it — not that it is still live.
+    // asserted above, that production reached it, not that it is still live.
     expect(Number.parseInt(REC.hosted_migration_max, 10)).toBeGreaterThanOrEqual(180);
     expect(REC.hosted_note).toContain("0180_card_payment_method_replacement_integrity.sql");
   });
 
   it("CURRENT-NOTE INVARIANT: the live record carries the full superseded checksum chain", () => {
-    // Not a 0179 fact — a standing rule about whatever record is current:
+    // Not a 0179 fact: a standing rule about whatever record is current:
     // recording an apply must never drop an earlier frozen apply record.
     // Hands to 0180 (whose note must carry 0179's sha as well).
     for (const sha of [
-      RAW_SHA_0179, // 0179 — now itself superseded, and must still be carried
+      RAW_SHA_0179, // 0179, now itself superseded, and must still be carried
       "6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f", // 0178
       "a9c15f1c92a7deb24c8e04dbf123e82806fe35f28be814b84222c1c13ae82744", // 0177
       "4ed5ad84168d6c6f9a8372709b737990af57a5dde08a4e56a7a983308951af20", // 0176
@@ -243,7 +243,7 @@ describe("0179 — CURRENT-STATE ownership (hands forward to 0180)", () => {
 });
 
 
-describe("0179 — transaction envelope", () => {
+describe("0179: transaction envelope", () => {
   it("opens its own transaction and arms lock_timeout INSIDE it", () => {
     const lines = SQL.split("\n").map((l) => l.trim()).filter(Boolean);
     const b = lines.findIndex((l) => l === "begin;");
@@ -254,10 +254,10 @@ describe("0179 — transaction envelope", () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE SEMANTIC BOUNDARY — the load-bearing claim of this migration.
+// THE SEMANTIC BOUNDARY, the load-bearing claim of this migration.
 // ---------------------------------------------------------------------------
 
-describe("0179 — ACTOR relationships are made same-studio", () => {
+describe("0179: ACTOR relationships are made same-studio", () => {
   // Every column 0179 upgrades to a composite (col, studio_id) FK.
   const COMPOSITE = [
     ["audit_logs", "actor_id"],
@@ -314,7 +314,7 @@ describe("0179 — ACTOR relationships are made same-studio", () => {
     },
   );
 
-  it("upgrades exactly 39 relationships — no silent widening", () => {
+  it("upgrades exactly 39 relationships: no silent widening", () => {
     const added = EXEC.match(/add constraint [a-z0-9_]+\s+foreign key \(/g) ?? [];
     expect(added.length).toBe(COMPOSITE.length);
     expect(added.length).toBe(39);
@@ -327,7 +327,7 @@ describe("0179 — ACTOR relationships are made same-studio", () => {
   });
 });
 
-describe("0179 — DURABLE actor attribution is delete-safe", () => {
+describe("0179: DURABLE actor attribution is delete-safe", () => {
   // 0174's distinction: durable actor/creator attribution RESTRICTs; only
   // current operational assignment may SET NULL.
   const RESTRICT = [
@@ -381,7 +381,7 @@ describe("0179 — DURABLE actor attribution is delete-safe", () => {
 
   // The four deliberate exceptions. Each sits on current operational state, not
   // durable evidence. If one of these ever moves, it must be a decision, not a
-  // drift — so the list is pinned exactly.
+  // drift, so the list is pinned exactly.
   const KEEP_SET_NULL = [
     "pending_invitations_invited_by_same_studio_fk",
     "studio_timed_blocks_created_by_same_studio_fk",
@@ -397,7 +397,7 @@ describe("0179 — DURABLE actor attribution is delete-safe", () => {
     expect(stmt).toMatch(/on delete set null/);
   });
 
-  it("emits no ON DELETE CASCADE anywhere — 0179 never widens destruction", () => {
+  it("emits no ON DELETE CASCADE anywhere, 0179 never widens destruction", () => {
     expect(EXEC).not.toMatch(/on delete cascade/);
   });
 
@@ -406,7 +406,7 @@ describe("0179 — DURABLE actor attribution is delete-safe", () => {
   });
 });
 
-describe("0179 — OUT OF SCOPE relationships are not touched", () => {
+describe("0179: OUT OF SCOPE relationships are not touched", () => {
   // Non-actor practitioner relationships. 0179 is actor-only: an assignment, a
   // resource, a recipient, a domain subject, a clinical performer and an
   // auth-user provenance column must each survive byte-for-byte.
@@ -418,7 +418,7 @@ describe("0179 — OUT OF SCOPE relationships are not touched", () => {
     // CLINICAL PERFORMER PROVENANCE
     "sessions_performed_by_practitioner_id_fkey",
     "sessions_aftercare_and_risks_explained_by_fkey",
-    // DOMAIN SUBJECT / OPERATOR — a dropdown-picked staff member, not the actor
+    // DOMAIN SUBJECT / OPERATOR: a dropdown-picked staff member, not the actor
     "record_keeping_disinfectants_operator_practitioner_id_fkey",
     // PARENT-SCOPED ACTORS WITHOUT LOCAL STUDIO LINEAGE (recorded residual)
     "electrolysis_entries_deleted_by_fkey",
@@ -445,7 +445,7 @@ describe("0179 — OUT OF SCOPE relationships are not touched", () => {
     // import_batches.created_by / voided_by and
     // imported_treatment_memories.imported_by / voided_by reference auth.users,
     // NOT practitioners. Retargeting them at practitioners would be a
-    // different — and wrong — migration.
+    // different, and wrong, migration.
     expect(EXEC).not.toMatch(/auth\.users/);
     expect(EXEC).not.toMatch(/alter table public\.import_batches/);
     expect(EXEC).not.toMatch(/alter table public\.imported_treatment_memories\b/);
@@ -463,7 +463,7 @@ describe("0179 — OUT OF SCOPE relationships are not touched", () => {
   });
 });
 
-describe("0179 — no business-row mutation, no backfill", () => {
+describe("0179: no business-row mutation, no backfill", () => {
   it("contains no INSERT, UPDATE or DELETE against a business table", () => {
     expect(EXEC).not.toMatch(/\binsert\s+into\b/i);
     expect(EXEC).not.toMatch(/\bupdate\s+public\./i);
@@ -492,7 +492,7 @@ describe("0179 — no business-row mutation, no backfill", () => {
 //
 // THE BINDING RULE:  0179 committing successfully IMPLIES all 39 constraints
 // are validated. NOT VALID is the ADD-CONSTRAINT lock strategy, never an
-// acceptable terminal state — a migration named ACTOR FK INTEGRITY must not be
+// acceptable terminal state, a migration named ACTOR FK INTEGRITY must not be
 // recorded as applied while some of its in-scope historical actor relationships
 // are structurally unverified.
 //
@@ -500,14 +500,14 @@ describe("0179 — no business-row mutation, no backfill", () => {
 // failed VALIDATE to a WARNING and committed anyway. These assertions exist so
 // that fail-open behaviour cannot return unnoticed.
 // ---------------------------------------------------------------------------
-describe("0179 — validation is mandatory and fails closed", () => {
+describe("0179: validation is mandatory and fails closed", () => {
   const VALIDATION_BLOCK = EXEC.match(/owned constant text\[\]\[\][\s\S]*?end \$\$;/)?.[0] ?? "";
 
   it("pins its owned constraint list inside the migration", () => {
     expect(VALIDATION_BLOCK).not.toBe("");
   });
 
-  it("adds every constraint NOT VALID — the lock strategy, not the terminal state", () => {
+  it("adds every constraint NOT VALID, the lock strategy, not the terminal state", () => {
     const added = EXEC.match(/add constraint [a-z0-9_]+\s+foreign key[\s\S]*?;/g) ?? [];
     expect(added.length).toBe(39);
     for (const a of added) expect(a).toMatch(/not valid;$/);
@@ -528,7 +528,7 @@ describe("0179 — validation is mandatory and fails closed", () => {
     expect(VALIDATION_BLOCK).toMatch(/n_owned\s*<>\s*39/);
   });
 
-  it("cannot swallow a validation failure — no `exception when others`, no warning downgrade", () => {
+  it("cannot swallow a validation failure, no `exception when others`, no warning downgrade", () => {
     expect(EXEC).not.toMatch(/exception\s+when\s+others/i);
     expect(EXEC).not.toMatch(/raise\s+warning/i);
   });
@@ -569,7 +569,7 @@ describe("0179 — validation is mandatory and fails closed", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LOCK FOOTPRINT — validation must finish before any superseded constraint is
+// LOCK FOOTPRINT, validation must finish before any superseded constraint is
 // dropped.
 //
 // Postgres holds every table lock until the transaction ends, so a strong lock
@@ -580,7 +580,7 @@ describe("0179 — validation is mandatory and fails closed", () => {
 // ADD (not valid) -> VALIDATE 39 -> DROP superseded, so the scans happen before
 // the strongest locks are taken. These assertions pin that order.
 // ---------------------------------------------------------------------------
-describe("0179 — validation precedes superseded-constraint cleanup", () => {
+describe("0179: validation precedes superseded-constraint cleanup", () => {
   const idxValidate = EXEC.indexOf("validate constraint");
   const idxFirstDrop = EXEC.indexOf("drop constraint");
   const idxAdd = EXEC.indexOf("add constraint");
@@ -598,7 +598,7 @@ describe("0179 — validation precedes superseded-constraint cleanup", () => {
     for (const d of drops) expect(d.index!).toBeGreaterThan(idxValidate);
   });
 
-  it("aborts before cleanup — the raise is between validation and the first drop", () => {
+  it("aborts before cleanup: the raise is between validation and the first drop", () => {
     const idxAbort = EXEC.indexOf("0179 ABORTED");
     expect(idxAbort).toBeGreaterThan(idxValidate);
     expect(idxAbort).toBeLessThan(idxFirstDrop);
@@ -651,7 +651,7 @@ describe("0179 — validation precedes superseded-constraint cleanup", () => {
 
   it("proves the final catalog shape inside the migration itself", () => {
     // 58 composite + 9 simple practitioner FKs, none NOT VALID, no candidate
-    // name surviving — asserted from pg_constraint, not assumed.
+    // name surviving, asserted from pg_constraint, not assumed.
     expect(EXEC).toMatch(/n_composite\s*<>\s*58/);
     expect(EXEC).toMatch(/n_simple\s*<>\s*9/);
     expect(EXEC).toMatch(/n_invalid\s*<>\s*0/);
@@ -674,7 +674,7 @@ describe("0179 — validation precedes superseded-constraint cleanup", () => {
 // EXCLUSIVE on the referencing table and on practitioners, and Postgres holds
 // it until COMMIT. SHARE ROW EXCLUSIVE conflicts with the ROW EXCLUSIVE lock
 // ordinary INSERT/UPDATE/DELETE take, so writes to a touched table are blocked
-// from that table's ADD onward — including throughout validation. VALIDATE's
+// from that table's ADD onward, including throughout validation. VALIDATE's
 // own weaker lock does NOT release the locks already held.
 //
 // Verified locally against PostgreSQL 17: with an ADD-FK transaction held open
@@ -685,7 +685,7 @@ describe("0179 — validation precedes superseded-constraint cleanup", () => {
 // and writes". That is false inside this transaction. These assertions keep the
 // documentation honest.
 // ---------------------------------------------------------------------------
-describe("0179 — deployment-safety claims are truthful", () => {
+describe("0179: deployment-safety claims are truthful", () => {
   it("never claims validation runs concurrently with writes", () => {
     // The specific retracted wording, and any close variant, must not return.
     expect(SQL).not.toMatch(/allows concurrent reads and writes/i);
@@ -729,12 +729,12 @@ describe("0179 — deployment-safety claims are truthful", () => {
     expect(SQL).toMatch(/PRODUCTION APPLY PREFLIGHT/);
     expect(SQL).toMatch(/read-only historical cross-studio violation census/i);
     expect(SQL).toMatch(/active\/long-running transactions/i);
-    // Recorded as documentation only — no executable statement may reach out.
+    // Recorded as documentation only: no executable statement may reach out.
     expect(EXEC).not.toMatch(/dblink|postgres_fdw|copy\s+.*from\s+program/i);
   });
 });
 
-describe("0179 — recorded residual limitation", () => {
+describe("0179: recorded residual limitation", () => {
   it("names the parent-scoped actor limitation in the migration itself", () => {
     expect(SQL).toContain(
       "ACTOR FK INTEGRITY — PARENT-SCOPED ACTOR COLUMNS WITHOUT LOCAL STUDIO LINEAGE",

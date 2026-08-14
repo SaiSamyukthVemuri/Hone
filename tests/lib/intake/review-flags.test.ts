@@ -7,7 +7,7 @@ import {
 
 // PR #266. Pure derivation of practitioner-only intake review flags from a
 // single intake's `responses` map. No I/O. Hone surfaces intake answers for
-// review only — these tests pin which existing answers surface, the allowed
+// review only, these tests pin which existing answers surface, the allowed
 // wording, and that NO forbidden clinical-decision language ever appears in
 // the derived output.
 
@@ -18,7 +18,7 @@ function texts(flags: IntakeReviewFlag[]): string {
   return flags.map((f) => `${f.wording} ${f.category} ${f.basis}`).join("\n");
 }
 
-describe("deriveIntakeReviewFlags — empty / legacy", () => {
+describe("deriveIntakeReviewFlags: empty / legacy", () => {
   it("returns [] for null/undefined/empty/non-object and never throws", () => {
     expect(deriveIntakeReviewFlags(null)).toEqual([]);
     expect(deriveIntakeReviewFlags(undefined)).toEqual([]);
@@ -39,7 +39,7 @@ describe("deriveIntakeReviewFlags — empty / legacy", () => {
   });
 });
 
-describe("deriveIntakeReviewFlags — mapping + levels", () => {
+describe("deriveIntakeReviewFlags: mapping + levels", () => {
   it("maps a high-stakes condition to 'Medical authorization may be required'", () => {
     const flags = deriveIntakeReviewFlags({ medical_conditions: ["pacemaker"] });
     expect(flags).toHaveLength(1);
@@ -105,7 +105,7 @@ describe("deriveIntakeReviewFlags — mapping + levels", () => {
   });
 });
 
-describe("deriveIntakeReviewFlags — wording safety", () => {
+describe("deriveIntakeReviewFlags: wording safety", () => {
   it("uses only the allowed level wording", () => {
     expect(Object.values(LEVEL_WORDING)).toEqual([
       "Medical authorization may be required",

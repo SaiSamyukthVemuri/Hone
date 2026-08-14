@@ -11,7 +11,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Inventory-backed probe-lot linkage (Chloe item #9, migration 0155) — real
+// Inventory-backed probe-lot linkage (Chloe item #9, migration 0155), real
 // browser, real stack, 390px iPhone width. Proves the practitioner journey:
 //   * charting offers ACTIVE inventory lots for the EXACT selected probe;
 //   * a sole active lot auto-fills but is never auto-confirmed;
@@ -57,7 +57,7 @@ test("inventory-backed probe lot: auto-fill active, confirm, save, edit+reload p
 
   // Plain navigation. The Add form only auto-opens on the FIRST load (no blocks
   // yet); after a block is saved, a reload shows the saved block and the edit
-  // control instead — so callers assert the right surface for their step.
+  // control instead, so callers assert the right surface for their step.
   const openCharting = async () => {
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
   };

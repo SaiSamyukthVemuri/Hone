@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR #272. "Treatment Photos" gallery UI polish — navigation + upload card +
+// PR #272. "Treatment Photos" gallery UI polish, navigation + upload card +
 // gallery list + empty state. UI/nav only: no storage / signed-URL / RLS /
 // validation change, no annotation/drawing/OCR/AI, no public/client exposure.
 

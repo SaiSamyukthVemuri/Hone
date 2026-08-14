@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, seedSession, seedStudio } from "./helpers/harness";
 
-// Emergency chip-loading fix — DB persistence for electrolysis_entries.observation_chips
+// Emergency chip-loading fix: DB persistence for electrolysis_entries.observation_chips
 // (LOCAL disposable Supabase only). Proves the structured column round-trips, the
 // jsonb-array guard (0108) holds, and a legacy comments-only row keeps its data.
 
@@ -36,7 +36,7 @@ describe("observation_chips column persistence", () => {
     expect(r.rows[0].observation_chips).toEqual(["Coarse hair", "Slight edema", "Lots of anagen"]);
   });
 
-  it("defaults to [] (0108) when not provided — legacy rows stay valid", async () => {
+  it("defaults to [] (0108) when not provided, legacy rows stay valid", async () => {
     const studio = await seedStudio("chipsDefault");
     const { sessionId, blockId } = await seedSession(studio);
     const id = await insertEntry(studio.studioId, sessionId, blockId, { comments: "Coarse hair, tender near jaw" });

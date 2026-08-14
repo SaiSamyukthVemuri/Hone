@@ -11,18 +11,18 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Galvanic-intensity retirement — REAL browser, REAL local stack.
+// Galvanic-intensity retirement: REAL browser, REAL local stack.
 //
 // galvanic_intensity_percent is a RETIRED reading. This spec proves the
 // server-authoritative write policy end-to-end against the actual charting forms
 // and Postgres (read back via node-pg):
 //   * in-form "Copy settings" copies valid reusable settings but NEVER galvanic
 //     intensity, even from a source that still carries a legacy value;
-//   * a NEW entry always stores NULL — even a forged request carrying 42;
+//   * a NEW entry always stores NULL, even a forged request carrying 42;
 //   * the "first entry absent" update branch stores NULL for the brand-new row;
 //   * an unrelated edit of a historical entry PRESERVES its stored value exactly.
 // 42 is a CHECK-valid value (0..100), so a NULL result unambiguously proves the
-// server-authoritative NULL — not a constraint bounce.
+// server-authoritative NULL, not a constraint bounce.
 
 const T = 20_000;
 
@@ -155,7 +155,7 @@ test.describe("galvanic intensity is retired from every current write path", () 
     // literally carries galvanic_intensity_percent=42 (a value the DB CHECK would
     // accept). The form itself never sets this field; the injection fires once when
     // the form sets units_of_lye. If the server were not authoritative, 42 would
-    // land — so a NULL read-back is a real security guarantee, not a no-op.
+    // land, so a NULL read-back is a real security guarantee, not a no-op.
     await page.evaluate(() => {
       // Cast to a string-only signature so we don't resolve FormData.set's Blob
       // overload; the charting forms only ever set string values.
@@ -194,7 +194,7 @@ test.describe("galvanic intensity is retired from every current write path", () 
   }) => {
     const seed = await seedE2eStudio();
     const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
-    // A bare blend block with NO entry — editing it INSERTS the first entry.
+    // A bare blend block with NO entry, editing it INSERTS the first entry.
     const { blockId } = await seedE2eBareBlock(seed, sessionId, { mode: "blend" });
     expect(await getBlockEntryCount(blockId)).toBe(0);
 
@@ -234,7 +234,7 @@ test.describe("galvanic intensity is retired from every current write path", () 
 
     // Change an UNRELATED field (Additional notes) and save.
     const notes = page.getByTestId("additional-notes");
-    await notes.fill("Unrelated edit — checking galvanic intensity is preserved.");
+    await notes.fill("Unrelated edit, checking galvanic intensity is preserved.");
     await page.getByTestId("save-treatment-area").click();
 
     // The unrelated change persisted...

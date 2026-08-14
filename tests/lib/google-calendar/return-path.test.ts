@@ -7,7 +7,7 @@ import {
 // The owner Integrations connection flow passes a return path to the OAuth start /
 // disconnect actions. It must be open-redirect-safe: only exact allow-listed
 // in-app settings paths are honored; anything else falls back to the default.
-describe("safeReturnPath — open-redirect allowlist", () => {
+describe("safeReturnPath: open-redirect allowlist", () => {
   it("honors the two allow-listed settings paths", () => {
     expect(safeReturnPath("/settings/profile")).toBe("/settings/profile");
     expect(safeReturnPath("/settings/integrations")).toBe("/settings/integrations");

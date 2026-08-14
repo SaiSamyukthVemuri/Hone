@@ -5,9 +5,9 @@ import { join } from "node:path";
 // Source-guard: the in-form "Copy settings" control uses the SHARED
 // treatment-setup snapshot contract (so it carries the primary-entry machine
 // readings, not just block fields), preserves destination areas, laterality and
-// every OUTCOME field, and copies the probe SETUP — including the probe-lot
+// every OUTCOME field, and copies the probe SETUP, including the probe-lot
 // number and, conditionally, its inventory link. It is a CLIENT-SIDE draft
-// prefill — nothing is persisted until the practitioner saves the area — so it
+// prefill, nothing is persisted until the practitioner saves the area, so it
 // cannot fabricate performed treatment.
 //
 // An earlier version of this header claimed a "manually entered probe lot" is
@@ -45,7 +45,7 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     const start = FORM.indexOf("function copySettings()");
     const body = FORM.slice(start, FORM.indexOf("\n  }", start));
     // NOTE ON THE PROBE LOT. `probeLotNumber:` / `probeLotConfirmed:` are listed
-    // here because copySettings must not hand-roll them — but that is NOT a
+    // here because copySettings must not hand-roll them, but that is NOT a
     // claim that the lot is never copied. The shared PATCH owns all three lot
     // keys and does copy the number and (conditionally) the inventory link; see
     // the dedicated truthfulness suite below. This assertion is only that the
@@ -90,7 +90,7 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     expect(body).not.toContain("patch.minutes");
     expect(body).not.toContain("minutes:");
     expect(body).not.toContain("minutes_performed");
-    // The application mechanism is still a spread — which is exactly why
+    // The application mechanism is still a spread, which is exactly why
     // omitting the key preserves the destination's own value.
     expect(body).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.patch \}\)\)/);
   });
@@ -98,7 +98,7 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
   // -------------------------------------------------------------------------
   // Session 1C integration: the probe-lot prose must match runtime behaviour.
   // The old wording claimed a manually typed destination lot was preserved. It
-  // is not — the patch owns the lot keys and replaces it. Truthful docs matter
+  // is not, the patch owns the lot keys and replaces it. Truthful docs matter
   // here because the practitioner is being asked to trust a traceability value.
   // -------------------------------------------------------------------------
   it("the form comment no longer claims a manual destination lot is preserved", () => {
@@ -141,7 +141,7 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
 
 describe("the shared contract itself excludes outcomes + gates by mode", () => {
   it("names only reusable setup fields (block + entry), no outcome columns", () => {
-    // Strip comments — the header intentionally NAMES the never-copy fields as
+    // Strip comments: the header intentionally NAMES the never-copy fields as
     // documentation; the guarantee is that no outcome column appears in code.
     const code = CONTRACT.split("\n")
       .map((l) => l.replace(/\/\/.*$/, ""))
@@ -153,7 +153,7 @@ describe("the shared contract itself excludes outcomes + gates by mode", () => {
       "reaction_type",
       "caution_note",
       "numbing_status",
-      // probe_lot_confirmed stays forbidden — a copy is never confirmed. But
+      // probe_lot_confirmed stays forbidden: a copy is never confirmed. But
       // probe_lot_number + probe_inventory_item_id are now DELIBERATELY part of
       // the contract: the lot travels with the probe.
       "probe_lot_confirmed",
@@ -174,13 +174,13 @@ describe("the shared contract itself excludes outcomes + gates by mode", () => {
     const code = CONTRACT.split("\n")
       .map((l) => l.replace(/\/\/.*$/, ""))
       .join("\n");
-    // No patch key, no source read, and gone from the field allow-list too —
+    // No patch key, no source read, and gone from the field allow-list too,
     // all three, because removing any one alone leaves the defect reachable.
     expect(code).not.toMatch(/\bminutes:/);
     expect(code).not.toContain("block.minutes_performed");
     expect(code).not.toContain("minutes_performed");
     // The rest of the block-level allow-list is untouched, so this fails
-    // because minutes left — not because the contract was gutted.
+    // because minutes left, not because the contract was gutted.
     expect(code).toContain('"machine_frequency"');
     expect(code).toContain('"probe_key"');
     expect(code).toContain('"probe_lot_number"');

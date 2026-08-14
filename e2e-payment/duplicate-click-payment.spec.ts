@@ -29,7 +29,7 @@ import { openCheckout, prepareInModal, closeModal, armReady } from "./helpers/ch
 // A genuine rapid double-click on the final charge control must move money at
 // most ONCE. The financial guarantee (exactly one processor EFFECT, one succeeded
 // attempt) is enforced server-side by the claim RPC + the deterministic
-// idempotency key + the active-attempt unique constraint — never by the fake.
+// idempotency key + the active-attempt unique constraint, never by the fake.
 //
 // INVOCATION vs EFFECT: the fake records every adapter call, so a duplicate
 // app-level request cannot hide behind one synthetic result. We assert the
@@ -45,7 +45,7 @@ test.beforeAll(async () => {
   // F-PAY-001: this is a SUCCESSFUL payment journey, so it must start from
   // resolvable authoritative pricing. It previously had no booked service at
   // all and leaned on sessions.price_paid_cents to populate an editable amount
-  // field — the historical fallback this PR retires. Without a priced service
+  // field, the historical fallback this PR retires. Without a priced service
   // the card now (correctly) renders its blocked state and withdraws the
   // prepare form, which is why this spec failed before ever reaching Prepare.
   seed = await seedEligiblePaymentWithLogin({
@@ -100,7 +100,7 @@ test("rapid duplicate-click charges exactly once (one attempt, one effect)", asy
   // Reopen to the Ready panel and arm the explicit confirmation.
   const { modal: armed, confirm } = await armReady(page);
 
-  // DUPLICATE INTERACTION — a genuine rapid double-click on the final charge
+  // DUPLICATE INTERACTION: a genuine rapid double-click on the final charge
   // control (Playwright locator.dblclick(): two real click events in quick
   // succession on the rendered "Confirm: run charge" button). No server action is
   // called directly; no React handler is invoked directly.
@@ -131,7 +131,7 @@ test("rapid duplicate-click charges exactly once (one attempt, one effect)", asy
   expect(effects).toBe(1);
   // The fake never hides a duplicate app call. A rapid double-click yields 1 (the
   // UI pending-disable caught the 2nd) or 2 (the 2nd raced through and collapsed
-  // to one effect via the idempotency key) — both financially safe. Exact count
+  // to one effect via the idempotency key), both financially safe. Exact count
   // is reported above.
   expect(invocations).toBeGreaterThanOrEqual(1);
   expect(invocations).toBeLessThanOrEqual(2);

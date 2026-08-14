@@ -266,7 +266,7 @@ describe("sendPaymentChargeReceipt: card last-4 lookup is display-only + tenant-
     expect(HELPER).not.toMatch(/\.select\([^)]*card_number/);
   });
 
-  it("scopes the lookup by (payment method id, studio, client, livemode) — tenant isolation", () => {
+  it("scopes the lookup by (payment method id, studio, client, livemode), tenant isolation", () => {
     const block = HELPER.slice(
       HELPER.indexOf('.from("client_payment_methods")'),
     ).slice(0, 400);
@@ -278,11 +278,11 @@ describe("sendPaymentChargeReceipt: card last-4 lookup is display-only + tenant-
 
   it("passes the fetched last4 to the receipt template (display-only)", () => {
     expect(HELPER).toMatch(/last4: cardLast4/);
-    // The read is display-only — it must NOT gate/branch the charge or refund.
+    // The read is display-only: it must NOT gate/branch the charge or refund.
     expect(HELPER).not.toMatch(/paymentIntents\.|refunds\.create/);
   });
 
-  it("is only a READ — no update/insert/delete on client_payment_methods", () => {
+  it("is only a READ: no update/insert/delete on client_payment_methods", () => {
     const block = HELPER.slice(
       HELPER.indexOf('.from("client_payment_methods")'),
     ).slice(0, 400);

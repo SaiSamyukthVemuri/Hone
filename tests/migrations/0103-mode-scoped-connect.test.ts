@@ -43,7 +43,7 @@ describe("0103: migration number + scope", () => {
   });
 });
 
-describe("0103: schema — one settings row per (studio, mode)", () => {
+describe("0103: schema, one settings row per (studio, mode)", () => {
   it("adds the surrogate id PK and swaps the PK off studio_id (guarded, re-runnable)", () => {
     expect(CODE).toMatch(/add column if not exists id uuid not null default gen_random_uuid\(\)/);
     expect(CODE).toMatch(/drop constraint studio_payment_settings_pkey/);
@@ -77,7 +77,7 @@ describe("0103: schema — one settings row per (studio, mode)", () => {
     expect(CODE).not.toMatch(/drop constraint\s+(if exists\s+)?studio_payment_settings_account_mode_unique/);
     expect(CODE).not.toMatch(/drop constraint\s+(if exists\s+)?studio_payment_settings_account_mode_pair_check/);
     // No destructive statements against existing rows. (UPDATEs inside the
-    // replaced RPC bodies are the RPCs' normal write paths, not a backfill —
+    // replaced RPC bodies are the RPCs' normal write paths, not a backfill,
     // the migration itself runs no standalone UPDATE/DELETE.)
     expect(CODE).not.toMatch(/delete from public\.studio_payment_settings/i);
     expect(CODE).not.toMatch(/drop column/i);
@@ -85,7 +85,7 @@ describe("0103: schema — one settings row per (studio, mode)", () => {
   });
 });
 
-describe("0103: RPCs — mode-scoped", () => {
+describe("0103: RPCs, mode-scoped", () => {
   it("create_or_claim: the cross-mode refusal is GONE; lookups are mode-scoped", () => {
     // The exact production failure string must no longer be raisable.
     expect(CODE).not.toMatch(/already bound to mode/);

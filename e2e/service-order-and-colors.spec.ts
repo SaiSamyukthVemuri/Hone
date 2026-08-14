@@ -9,11 +9,11 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Service menu order + colour hierarchy (Chloe production feedback) — real
+// Service menu order + colour hierarchy (Chloe production feedback), real
 // browser, real local stack, DB rows as ground truth.
 //
 // REPRODUCED DEFECT. Every seeded service starts at the legacy
-// `sort_order = 100` — the real production shape, because 0021's default is 100
+// `sort_order = 100`, the real production shape, because 0021's default is 100
 // and the "next" allocator is scoped per modality. Against the old two-update
 // swap the arrows moved the wrong row or silently did nothing. Here one tap must
 // equal exactly one position, and "Move to top" must reach the top in one tap.
@@ -48,7 +48,7 @@ test.describe("service reorder", () => {
       CONSULT,
     ]);
     // The public booking menu only offers services a practitioner is eligible
-    // for, so make all four bookable — otherwise the parity step would compare
+    // for, so make all four bookable, otherwise the parity step would compare
     // a one-item list and prove nothing.
     const ownerPractitionerId = await getOwnerPractitionerId(seed.studioId);
     for (const serviceId of Object.values(ids)) {
@@ -58,20 +58,20 @@ test.describe("service reorder", () => {
     await openServices(page);
 
     // seedE2eStudio already creates the studio's booking service, so the list is
-    // the four seeded here PLUS that one — deliberately not hardcoded.
+    // the four seeded here PLUS that one, deliberately not hardcoded.
     const total = (await getStudioServiceOrder(seed.studioId)).length;
     const expectedPositions = Array.from({ length: total }, (_, i) => (i + 1) * 10);
 
     await test.step("the seeded studio really is tied at the legacy default", async () => {
       const rows = await getStudioServiceOrder(seed.studioId);
-      // Every service this spec seeded sits on the legacy 100 — the shape that
+      // Every service this spec seeded sits on the legacy 100, the shape that
       // made the old arrows resolve ties in heap order.
       expect(rows.filter((r) => r.sort_order === 100).length).toBeGreaterThanOrEqual(4);
     });
 
     const consultId = ids[CONSULT];
 
-    await test.step("Move to top puts Client Consultation first — in one tap", async () => {
+    await test.step("Move to top puts Client Consultation first, in one tap", async () => {
       await page.getByTestId(`move-top-${consultId}`).click();
       await expect
         .poll(async () => (await getStudioServiceOrder(seed.studioId))[0]?.name, { timeout: T })
@@ -88,7 +88,7 @@ test.describe("service reorder", () => {
     const positionOf = async (name: string) =>
       (await getStudioServiceOrder(seed.studioId)).findIndex((r) => r.name === name);
 
-    await test.step("Move down moves exactly ONE position — not two, not zero", async () => {
+    await test.step("Move down moves exactly ONE position, not two, not zero", async () => {
       const before = (await getStudioServiceOrder(seed.studioId)).map((r) => r.name);
       const from = before.indexOf(CONSULT);
       await page.getByTestId(`move-down-${consultId}`).click();

@@ -4,13 +4,13 @@ import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./help
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
-// PR B 3E remaining defects — migration 0139:
+// PR B 3E remaining defects, migration 0139:
 //  #2  the recurring-rule guard blocks re-enabling / saving an ACTIVE scoped
 //      rule whose practitioner is inactive, and blocks assigning any source to
 //      an inactive practitioner, while allowing toggle-off / edit-disabled /
 //      delete / reassign-to-active / change-to-studio-wide.
-//  3E-7 find_scoped_calendar_conflict — resource-aware, deterministic, PII-free.
-//  §10  find_recurring_break_conflict — pattern projection, excludes the edited
+//  3E-7 find_scoped_calendar_conflict, resource-aware, deterministic, PII-free.
+//  §10  find_recurring_break_conflict, pattern projection, excludes the edited
 //      rule's own future occurrences.
 //  #1  a practitioner-scoped ALL-DAY block reserves only that practitioner.
 // Synthetic Studio B (owner P0 + members P1, P2), timezone pinned to UTC so
@@ -141,7 +141,7 @@ describe("0139 defect #2, inactive-practitioner recurring-rule guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("0139 3E-7 — find_scoped_calendar_conflict is resource-aware + PII-free", () => {
+describe("0139 3E-7: find_scoped_calendar_conflict is resource-aware + PII-free", () => {
   const S = "2031-06-10T10:00:00Z";
   const E = "2031-06-10T11:00:00Z";
 
@@ -157,11 +157,11 @@ describe("0139 3E-7 — find_scoped_calendar_conflict is resource-aware + PII-fr
     expect(wide[0].source_kind).toBe("appointment");
     // excluding the appointment yields no conflict
     expect(await conflict(P(1), S, E, "appointment", appt)).toHaveLength(0);
-    // returned columns are metadata only — no client/service/note fields exist on the row
+    // returned columns are metadata only, no client/service/note fields exist on the row
     expect(Object.keys(p1[0]).sort()).toEqual(["ends_at", "resource_key", "source_kind", "starts_at"]);
   });
 
-  it("returns only source kind/interval/resource_key — never client identity", async () => {
+  it("returns only source kind/interval/resource_key: never client identity", async () => {
     await insAppointment(P(1), S, E);
     const rows = await conflict(P(1), S, E);
     const row = rows[0] as Record<string, unknown>;
@@ -201,7 +201,7 @@ describe("0139 3E-7 — find_scoped_calendar_conflict is resource-aware + PII-fr
 });
 
 // ---------------------------------------------------------------------------
-describe("0139 §10 — find_recurring_break_conflict projects the pattern + excludes the edited rule", () => {
+describe("0139 §10: find_recurring_break_conflict projects the pattern + excludes the edited rule", () => {
   // A concrete future weekday within the horizon (UTC studio => local == UTC).
   const soon = new Date(Date.now() + 21 * 86_400_000);
   const dateStr = soon.toISOString().slice(0, 10);
@@ -243,7 +243,7 @@ describe("0139 §10 — find_recurring_break_conflict projects the pattern + exc
 });
 
 // ---------------------------------------------------------------------------
-describe("0139 defect #1 — practitioner-scoped ALL-DAY block reserves only that practitioner", () => {
+describe("0139 defect #1: practitioner-scoped ALL-DAY block reserves only that practitioner", () => {
   const DAY_START = "2031-07-14T00:00:00Z"; // UTC studio => local midnight
   const DAY_END = "2031-07-15T00:00:00Z";
   const resKeys = (sourceId: string) =>
@@ -267,11 +267,11 @@ describe("0139 defect #1 — practitioner-scoped ALL-DAY block reserves only tha
 });
 
 // ---------------------------------------------------------------------------
-describe("0139 §6 — full privilege matrix; the readers are no cross-tenant surface", () => {
+describe("0139 §6: full privilege matrix; the readers are no cross-tenant surface", () => {
   const S = "2031-06-10T10:00:00Z";
   const E = "2031-06-10T11:00:00Z";
   // Denied calls pass a DIFFERENT (foreign / random) studio id, proving the
-  // denial is at the EXECUTE-privilege layer — a browser role can never use the
+  // denial is at the EXECUTE-privilege layer, a browser role can never use the
   // reader to enumerate ANY studio, not just its own.
   const FOREIGN = randomUUID();
   const callAs = (
@@ -290,7 +290,7 @@ describe("0139 §6 — full privilege matrix; the readers are no cross-tenant su
   });
   it("an authenticated OWNER is denied (42501)", async () => {
     expect(await code(asUser(owner().userId, (q) => callAs(q, FOREIGN)))).toBe("42501");
-    // ...and denied for their OWN studio too — the browser path never reaches it.
+    // ...and denied for their OWN studio too, the browser path never reaches it.
     expect(await code(asUser(owner().userId, (q) => callAs(q, B.studioId)))).toBe("42501");
   });
   it("an authenticated MEMBER is denied (42501)", async () => {
@@ -315,7 +315,7 @@ describe("0139 §6 — full privilege matrix; the readers are no cross-tenant su
 });
 
 // ---------------------------------------------------------------------------
-describe("0139 item #1 — the migration's transaction is atomic (no partial apply)", () => {
+describe("0139 item #1: the migration's transaction is atomic (no partial apply)", () => {
   it("after apply, both readers exist and are NOT executable by public/anon/authenticated", async () => {
     const fns = await adminQuery(
       `select proname from pg_proc
@@ -342,7 +342,7 @@ describe("0139 item #1 — the migration's transaction is atomic (no partial app
     try {
       // Model the migration shape: define a SECURITY DEFINER reader + revoke, then
       // FAIL before completion. Postgres DDL is transactional, so the rollback must
-      // leave neither the function nor any privilege change — exactly why 0139
+      // leave neither the function nor any privilege change, exactly why 0139
       // wraps create+revoke in one begin/commit.
       await c.query("begin");
       await c.query(

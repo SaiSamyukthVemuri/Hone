@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
 
 // ===========================================================================
-// Appointment boundary B2 — T5.1..T5.6
+// Appointment boundary B2, T5.1..T5.6
 // The audit invariant, measured across ALL eight appointment commands
 // ===========================================================================
 //
@@ -14,7 +14,7 @@ import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
 //
 // One precision on the audit's wording. It groups eight commands under
 // "every status change writes an audit row", but `move_or_reassign_appointment`
-// is an audited lifecycle mutation that does NOT normally change `status` —
+// is an audited lifecycle mutation that does NOT normally change `status`,
 // a move keeps the appointment 'confirmed'. Requiring a status change from it
 // would be wrong. So the invariant is split in two:
 //
@@ -23,7 +23,7 @@ import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
 //          appointment's audit-row count.
 //
 // `actor_id` is a bare uuid with no foreign key and no correlation to
-// `actor_type` (0010:220-221) — only `actor_type` is CHECKed. T5.3 is the only
+// `actor_type` (0010:220-221), only `actor_type` is CHECKed. T5.3 is the only
 // place in the repository where that correlation is asserted at all.
 //
 // This file adds no migration and changes no application code.
@@ -34,7 +34,7 @@ import { adminQuery, asRole, asUser, closePool } from "./helpers/harness";
 // scripts/classify-changes.mjs, which would widen CI for a test-only PR.
 // ---------------------------------------------------------------------------
 
-// 64 lowercase hex — appointments_cancellation_token_hash_check demands
+// 64 lowercase hex: appointments_cancellation_token_hash_check demands
 // `^[a-f0-9]{64}$`, and the column carries a GLOBAL partial unique index, so
 // this is called fresh per appointment and never hoisted into a const.
 const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
@@ -45,10 +45,10 @@ const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
 //   * `create_public_appointment` rejects sub-millisecond input outright
 //     (`p_starts_at is distinct from date_trunc('milliseconds', p_starts_at)`)
 //     rather than truncating it, and only accepts exact members of
-//     public_booking_slot_candidates() — hourly anchors from the 00:00 open;
+//     public_booking_slot_candidates(), hourly anchors from the 00:00 open;
 //   * both enforce a booking horizon of public_booking_horizon_months * 31
 //     days, which is why nothing here uses the repo's usual fixed far-future
-//     date (2031-…) — that would return 'outside_horizon'.
+//     date (2031-…), that would return 'outside_horizon'.
 //
 // The Node clock only SELECTS a slot here; no assertion is made against it.
 // Every temporal assertion in this file reads the database clock (T5.4).
@@ -85,7 +85,7 @@ async function seedFixture(label: string): Promise<Fixture> {
   const ownerEmail = `${tag}-owner@harness.local`;
   const memberEmail = `${tag}-member@harness.local`;
 
-  // auth.users FIRST — practitioners.user_id is an FK.
+  // auth.users FIRST: practitioners.user_id is an FK.
   await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [
     ownerUserId,
     ownerEmail,
@@ -247,12 +247,12 @@ afterAll(async () => {
 });
 
 // ===========================================================================
-// The denominator — which installed functions can write appointment_audit
+// The denominator, which installed functions can write appointment_audit
 // ===========================================================================
 
 describe("the set of installed appointment_audit writers is pinned", () => {
   // Everything else in this file is closed over the EIGHT commands the
-  // boundary audit scopes. That is a scope, not a census — and an invariant
+  // boundary audit scopes. That is a scope, not a census, and an invariant
   // asserted over a scope silently stops covering the domain the moment a new
   // writer is installed. This test is the tripwire that makes that visible.
   //
@@ -273,7 +273,7 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     "public_cancel_appointment_with_token",
     // B6 / 0175: `reschedule_appointment` (legacy v1) left this list when the
     // three caller-less legacy RPCs were dropped. It is a REMOVAL from the
-    // writer census, never a relaxation — the surviving writers are unchanged
+    // writer census, never a relaxation, the surviving writers are unchanged
     // and the set is still asserted exactly.
     "reschedule_appointment_v2",
     // B4 / 0173. The repair commands write audit rows through the shared
@@ -281,7 +281,7 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     // census grows by exactly ONE even though TWO commands landed:
     // `revert_appointment_outcome` and `set_appointment_notes` both `perform`
     // this helper, and neither one's prosrc contains the insert text. That is
-    // the centralisation working as intended — a future B5 audit change has one
+    // the centralisation working as intended, a future B5 audit change has one
     // insertion point to migrate, and this list stays legible.
     "write_appointment_audit",
   ];
@@ -297,20 +297,20 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     expect(r.rows.map((x) => x.proname as string)).toEqual(EXPECTED_WRITERS);
   });
 
-  it("no TRIGGER writes appointment_audit — every ROW is still written explicitly by a command", async () => {
+  it("no TRIGGER writes appointment_audit: every ROW is still written explicitly by a command", async () => {
     // RESTATED AT B5/0174, because the old form ("appointment_audit has zero
     // triggers") is now false while the property it was protecting is
     // untouched.
     //
     // The property is: no trigger INVENTS AN AUDIT EVENT. 0174 added two
-    // triggers to appointment_audit, and neither inserts a row — one derives
+    // triggers to appointment_audit, and neither inserts a row, one derives
     // trusted FIELDS on a row a command is already inserting, the other refuses
     // mutation. So the assertion moves from "no triggers exist" to the thing
     // that actually matters: nothing on either table INSERTS into
     // appointment_audit.
     //
     // This is also the guard against the architecture 0174's header explicitly
-    // rejected — a generic `appointments` UPDATE trigger that infers a business
+    // rejected, a generic `appointments` UPDATE trigger that infers a business
     // action from an arbitrary row change and writes an audit event from it.
     const t = await adminQuery(
       `select g.tgname, p.prosrc
@@ -347,7 +347,7 @@ describe("the set of installed appointment_audit writers is pinned", () => {
         n !== "reschedule_appointment" &&
         // B4 / 0173. `write_appointment_audit` is a shared INSERT helper, not a
         // lifecycle command: it takes an already-decided action + details and
-        // has no gates of its own, so B2 does not — and should not — drive it.
+        // has no gates of its own, so B2 does not, and should not, drive it.
         // Its callers (revert_appointment_outcome, set_appointment_notes) are
         // B4 commands with their own suite,
         // tests/db/appointment-repair-commands.db.test.ts.
@@ -359,15 +359,15 @@ describe("the set of installed appointment_audit writers is pinned", () => {
 });
 
 // ===========================================================================
-// T5.1a — every successful lifecycle mutation writes its expected audit row
+// T5.1a, every successful lifecycle mutation writes its expected audit row
 // ===========================================================================
 //
 // Each block: snapshot state + audit count, run the REAL command, assert the
 // intended mutation happened, then assert the exact audit delta. Multiplicity
-// is asserted with array lengths, never with a Set — a duplicate insert must
+// is asserted with array lengths, never with a Set, a duplicate insert must
 // not be able to hide.
 
-describe("T5.1a create_internal_appointment_v2 — one appointment, one 'created' row", () => {
+describe("T5.1a create_internal_appointment_v2: one appointment, one 'created' row", () => {
   it("creates the appointment and exactly one audit row naming the ACTOR practitioner", async () => {
     const f = await seedFixture("t51-internal");
     const before = await adminQuery(
@@ -403,7 +403,7 @@ describe("T5.1a create_internal_appointment_v2 — one appointment, one 'created
     expect(rows).toHaveLength(1);
     expect(rows[0].action).toBe("created");
     expect(rows[0].actor_type).toBe("practitioner");
-    // The ACTOR, never the target — the target lands only inside details.
+    // The ACTOR, never the target, the target lands only inside details.
     expect(rows[0].actor_id).toBe(f.ownerId);
     expect(rows[0].details).toMatchObject({
       source: "internal_booking_command_v2",
@@ -412,7 +412,7 @@ describe("T5.1a create_internal_appointment_v2 — one appointment, one 'created
   });
 });
 
-describe("T5.1a create_public_appointment — one appointment, one 'created' row", () => {
+describe("T5.1a create_public_appointment: one appointment, one 'created' row", () => {
   it("creates the appointment and exactly one audit row with a CLIENT actor", async () => {
     const f = await seedFixture("t51-public");
     const r = await adminQuery(
@@ -433,8 +433,8 @@ describe("T5.1a create_public_appointment — one appointment, one 'created' row
   });
 });
 
-describe("T5.1a reschedule_appointment_v2 — cancel the original, create the successor", () => {
-  it("writes 'cancelled' on the original and 'created' on the successor — two rows total", async () => {
+describe("T5.1a reschedule_appointment_v2: cancel the original, create the successor", () => {
+  it("writes 'cancelled' on the original and 'created' on the successor, two rows total", async () => {
     const f = await seedFixture("t51-resched");
     const original = await mkAppt(f, { startsAt: at(10, 14) });
     expect(await auditCount(original.id)).toBe(0);
@@ -452,7 +452,7 @@ describe("T5.1a reschedule_appointment_v2 — cancel the original, create the su
     expect(await statusOf(original.id)).toBe("cancelled");
     expect(await statusOf(successorId)).toBe("confirmed");
 
-    // The audit delta, per appointment id — exactly one row each.
+    // The audit delta, per appointment id, exactly one row each.
     const originalRows = await auditRows(original.id);
     expect(originalRows).toHaveLength(1);
     expect(originalRows[0].action).toBe("cancelled");
@@ -472,7 +472,7 @@ describe("T5.1a reschedule_appointment_v2 — cancel the original, create the su
   });
 });
 
-describe("T5.1a move_or_reassign_appointment — audited, but NOT a status change", () => {
+describe("T5.1a move_or_reassign_appointment: audited, but NOT a status change", () => {
   it("move-only: the appointment stays confirmed, the time changes, one 'moved' row", async () => {
     const f = await seedFixture("t51-move");
     const appt = await mkAppt(f, { startsAt: at(12, 9) });
@@ -558,13 +558,13 @@ describe("T5.1a move_or_reassign_appointment — audited, but NOT a status chang
   });
 });
 
-describe("T5.1a public_cancel_appointment_with_token — one 'cancelled' row", () => {
+describe("T5.1a public_cancel_appointment_with_token: one 'cancelled' row", () => {
   it("cancels the appointment and writes exactly one client-actor audit row", async () => {
     const f = await seedFixture("t51-tokencancel");
     const appt = await mkAppt(f, { startsAt: at(9, 13) });
     expect(await auditCount(appt.id)).toBe(0);
 
-    // p_token IS the stored hash — the lookup is
+    // p_token IS the stored hash, the lookup is
     // `where a.cancellation_token_hash = p_token`, not a hash of a raw token.
     const r = await adminQuery(
       `select * from public.public_cancel_appointment_with_token($1,$2,$3,$4,$5)`,
@@ -635,7 +635,7 @@ describe("T5.1a practitioner_cancel_appointment / mark_appointment_complete / ma
 });
 
 // ===========================================================================
-// T5.1b — every successful STATUS TRANSITION strictly increases the audit count
+// T5.1b, every successful STATUS TRANSITION strictly increases the audit count
 // ===========================================================================
 
 describe("T5.1b status transition implies a strictly greater audit count", () => {
@@ -765,13 +765,13 @@ describe("T5.1b status transition implies a strictly greater audit count", () =>
 });
 
 // ===========================================================================
-// T5.2 — exact action vocabulary
+// T5.2, exact action vocabulary
 // ===========================================================================
 
 describe("T5.2 the action vocabulary is pinned to exact literals", () => {
   // Load-bearing: app/(app)/calendar/[id]/page.tsx filters the audit table on
   // `.eq("action", "cancelled")` to render cancellation context. A rename that
-  // looked harmless — 'appointment_cancelled', 'cancel' — would silently blank
+  // looked harmless, 'appointment_cancelled', 'cancel', would silently blank
   // that surface with no error anywhere.
   const EXPECTED = [
     "cancelled",
@@ -902,10 +902,10 @@ describe("T5.2 the action vocabulary is pinned to exact literals", () => {
 });
 
 // ===========================================================================
-// T5.3 — the actor model, NOT generalised across the public/internal split
+// T5.3, the actor model, NOT generalised across the public/internal split
 // ===========================================================================
 
-describe("T5.3 actor model — internal practitioner commands", () => {
+describe("T5.3 actor model: internal practitioner commands", () => {
   type InternalCase = {
     name: string;
     run: (f: Fixture) => Promise<{ apptId: string; expectedActor: string }>;
@@ -1022,7 +1022,7 @@ describe("T5.3 actor model — internal practitioner commands", () => {
   );
 });
 
-describe("T5.3 actor model — public / token commands (current schema truth)", () => {
+describe("T5.3 actor model: public / token commands (current schema truth)", () => {
   // Pinned as-is, deliberately. PR #520's D6 would change this; implementing
   // that future model is NOT B2's job, and changing public audit rows to carry
   // client_id belongs to later implementation work.
@@ -1094,14 +1094,14 @@ describe("T5.3 actor model — public / token commands (current schema truth)", 
 });
 
 // ===========================================================================
-// T5.4 — created_at is server-generated at command execution time
+// T5.4, created_at is server-generated at command execution time
 // ===========================================================================
 
 describe("T5.4 audit created_at is a server transaction timestamp", () => {
   // `created_at` is a plain writable column with only a default (0010:224),
   // so nothing in the schema stops a caller supplying a historical value.
-  // The bracket below is measured with the DATABASE clock on both sides —
-  // never the Node process clock — and it is deliberately TIGHT: a wide
+  // The bracket below is measured with the DATABASE clock on both sides,
+  // never the Node process clock, and it is deliberately TIGHT: a wide
   // tolerance would let a back-dated timestamp pass.
   async function dbClock(): Promise<Date> {
     const r = await adminQuery(`select clock_timestamp() as t`);
@@ -1166,7 +1166,7 @@ describe("T5.4 audit created_at is a server transaction timestamp", () => {
       expect(rows.length, name).toBeGreaterThanOrEqual(1);
       for (const row of rows) {
         // The command and its audit INSERT share one transaction, so created_at
-        // is that transaction's now() — necessarily at or after the bracket's
+        // is that transaction's now(), necessarily at or after the bracket's
         // opening read and at or before its closing read.
         expect(
           row.created_at.getTime(),
@@ -1180,12 +1180,12 @@ describe("T5.4 audit created_at is a server transaction timestamp", () => {
     },
   );
 
-  it("B5/0174: a back-dated INSERT is SILENTLY OVERWRITTEN — both rows land inside the bracket", async () => {
+  it("B5/0174: a back-dated INSERT is SILENTLY OVERWRITTEN, both rows land inside the bracket", async () => {
     // THE PREMISE OF THIS TEST INVERTED AT B5/0174, and the inversion is the
     // assertion.
     //
     // Before 0174, `created_at` was a plain writable column with only a default
-    // (0010:224), so a forged INSERT kept its chosen timestamp — and PR #521
+    // (0010:224), so a forged INSERT kept its chosen timestamp, and PR #521
     // §16.8 row 7 showed that a forged row therefore WINS the
     // `order by created_at desc limit 1` that drives the cancellation-insight
     // card, making this UI-reachable content control rather than mere
@@ -1236,18 +1236,18 @@ describe("T5.4 audit created_at is a server transaction timestamp", () => {
 });
 
 // ===========================================================================
-// T5.5 — KNOWN OPEN INVARIANT: a direct service_role write is UNAUDITED
+// T5.5, KNOWN OPEN INVARIANT: a direct service_role write is UNAUDITED
 // ===========================================================================
 
 describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed command audits once", () => {
   // ---------------------------------------------------------------------
   // B5 / 0174 REPLACED THIS BLOCK'S PREMISE. It is not an `it.fails` that
-  // was flipped to `it` — the old body could not be reused at all, and
+  // was flipped to `it`, the old body could not be reused at all, and
   // leaving it would have been worse than deleting it.
   //
   // WHAT THE OLD CONTRACT SAID (B2, migration 0173 and earlier):
   //   "a direct service_role status UPDATE succeeds but writes no audit
-  //    row"  — shipped as an it.fails() expected failure whose stated goal
+  //    row", shipped as an it.fails() expected failure whose stated goal
   //    was that such a write SHOULD write an audit row.
   //
   // WHY THAT GOAL WAS WRONG, and was never going to be met:
@@ -1257,11 +1257,11 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
   //   duplicated, low-quality events with no reason, no source and a guessed
   //   action, and it makes the semantic command layer non-authoritative.
   //
-  // WHAT B5 DID INSTEAD — close the write rather than audit it:
+  // WHAT B5 DID INSTEAD, close the write rather than audit it:
   //   0174 GROUP 10 revokes service_role's table-level INSERT/UPDATE/DELETE
   //   on public.appointments. The premise of the old test ("the direct write
   //   really does succeed") is therefore FALSE on this schema, which is why
-  //   the old PASSING CONTROL had to go too — it asserted the bypass exists.
+  //   the old PASSING CONTROL had to go too, it asserted the bypass exists.
   //
   // The eight assertions below are the replacement contract, in order.
   // ---------------------------------------------------------------------
@@ -1289,7 +1289,7 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
       }
     });
 
-    // (1) refused, and (2) it is a genuine PRIVILEGE denial — not an RLS
+    // (1) refused, and (2) it is a genuine PRIVILEGE denial, not an RLS
     // refusal wearing the same 42501, and not a trigger raising it.
     expect(failure, "the raw service_role status UPDATE must be refused").not.toBeNull();
     expect(failure!.code).toBe("42501");
@@ -1316,7 +1316,7 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
     const a = await mkAppt(f, { startsAt: at(-14, 9) });
     expect(await auditCount(a.id)).toBe(0);
 
-    // mark_appointment_complete RETURNS void — success is proven by the row
+    // mark_appointment_complete RETURNS void: success is proven by the row
     // and the audit delta below, never by a return code.
     await adminQuery(`select public.mark_appointment_complete($1,$2,$3)`, [
       a.id,
@@ -1331,7 +1331,7 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
     expect(status.rows[0].status).toBe("completed");
 
     // EXACTLY one, asserted as an array length so a duplicate cannot hide, and
-    // the action is the SEMANTIC one — not a generic "status changed".
+    // the action is the SEMANTIC one, not a generic "status changed".
     const rows = await auditRows(a.id);
     expect(rows).toHaveLength(1);
     expect(rows[0].action).toBe("marked_complete");
@@ -1339,7 +1339,7 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
     expect(rows[0].actor_id).toBe(f.ownerId);
   });
 
-  it("7: the temporary B8 postcare exception is now CLOSED — no column is writable", async () => {
+  it("7: the temporary B8 postcare exception is now CLOSED, no column is writable", async () => {
     // 0174 GROUP 10.2 granted service_role column-level UPDATE on the six
     // postcare columns so the seven direct writers could keep working while the
     // boundary was built. This block used to assert that grant still WORKED.
@@ -1352,7 +1352,7 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
     const a = await mkAppt(f, { startsAt: at(-15, 9) });
 
     // Each former column individually, using a type-correct value so the
-    // statement fails on PRIVILEGE rather than on a type error — otherwise the
+    // statement fails on PRIVILEGE rather than on a type error, otherwise the
     // test would pass without proving anything about the grant.
     for (const [col, value] of [
       ["postcare_email_claimed_at", "now()"],
@@ -1398,7 +1398,7 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
 });
 
 // ===========================================================================
-// T5.6 — an existing audit row cannot be UPDATEd or DELETEd by a member
+// T5.6, an existing audit row cannot be UPDATEd or DELETEd by a member
 // ===========================================================================
 //
 // SCOPE, stated precisely, because the shorthand "audit rows are
@@ -1410,7 +1410,7 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
 //   `appointment_audit_member_insert` (0010:291-299) had a WITH CHECK that
 //   constrained only `appointment_id`. Nothing constrained `actor_type`,
 //   `actor_id`, `action`, `details` or `created_at`, and `actor_id` has no FK.
-//   So a member could APPEND a forged row — that is P1-3 in the boundary audit.
+//   So a member could APPEND a forged row, that is P1-3 in the boundary audit.
 //
 // B2 SHIPPED BEFORE THAT WAS CLOSED. It is closed now: B3 / migration 0172
 // revoked INSERT, UPDATE and DELETE from `anon` and `authenticated` on this
@@ -1418,7 +1418,7 @@ describe("T5.5 raw service_role lifecycle DML is DENIED, and the governed comman
 // is proven refused in tests/db/appointment-boundary-revocation.db.test.ts.
 //
 // WHAT CHANGED FOR THE BLOCK BELOW. The UPDATE/DELETE refusal used to be RLS
-// default-deny — `authenticated` held those verbs, 0010 created only SELECT and
+// default-deny, `authenticated` held those verbs, 0010 created only SELECT and
 // INSERT policies, so the statements matched no rows and returned rowCount 0
 // without erroring. After 0172 they are refused at the PRIVILEGE layer and
 // RAISE. The assertions therefore move from "zero rows affected" to "42501",
@@ -1447,7 +1447,7 @@ describe("T5.6 appointment_audit rows cannot be UPDATEd or DELETEd by a member",
     // so it would make this test measure nothing. This is the authenticated
     // member path.
     //
-    // Positive control FIRST, in its own transaction — the row IS readable, so
+    // Positive control FIRST, in its own transaction, the row IS readable, so
     // a refusal below is about the write verb and not about the query shape or
     // a broken identity.
     const read = await asUser(f.ownerUserId, (q) =>

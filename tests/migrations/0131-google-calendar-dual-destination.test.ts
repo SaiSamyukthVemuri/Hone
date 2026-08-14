@@ -12,9 +12,9 @@ const SQL = readFileSync(
   "utf8",
 );
 
-describe("0131 — repo migration-max tripwire", () => {
+describe("0131: repo migration-max tripwire", () => {
   // INTEGRATION RESOLUTION (RC branch): the integrated release candidate carries
-  // the FULL union of both stacks — capacity 0135-0139 (PR B) + 0142-0150 (Part 4)
+  // the FULL union of both stacks, capacity 0135-0139 (PR B) + 0142-0150 (Part 4)
   // AND onboarding 0140-0141 (PR #459). Unlike either source branch, 0140 IS
   // present here. Neither source side was correct for the combined repo: #460
   // asserted 0140 absent; #459 asserted 0135-0139/0142+ absent. This union asserts
@@ -35,7 +35,7 @@ describe("0131 — repo migration-max tripwire", () => {
     expect(files.some((f) => f.startsWith("0137_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0138_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0139_"))).toBe(true);
-    // Onboarding v2 (0140 foundation + 0141 invitation reconciliation) — PRESENT
+    // Onboarding v2 (0140 foundation + 0141 invitation reconciliation), PRESENT
     // in the integrated RC (this is the union that neither source branch had).
     expect(files.some((f) => f.startsWith("0140_"))).toBe(true);
     expect(files.some((f) => f.startsWith("0141_"))).toBe(true);
@@ -58,7 +58,7 @@ describe("0131 — repo migration-max tripwire", () => {
   });
 });
 
-describe("0131 — additive + dormant", () => {
+describe("0131: additive + dormant", () => {
   it("only ADDs nullable columns to calendar_connections (no destructive DDL)", () => {
     expect(SQL).toMatch(/add column if not exists destination_mode text/);
     expect(SQL).toMatch(/add column if not exists selected_calendar_display_name text/);
@@ -90,7 +90,7 @@ describe("0131 — additive + dormant", () => {
   });
 });
 
-describe("0131 — destination constraints", () => {
+describe("0131: destination constraints", () => {
   it("constrains destination_mode to the two known modes or NULL", () => {
     expect(SQL).toMatch(/destination_mode is null[\s\S]*?in \('dedicated_app_created', 'existing_owned'\)/);
   });
@@ -104,7 +104,7 @@ describe("0131 — destination constraints", () => {
   });
 });
 
-describe("0131 — destination-aware scope contract", () => {
+describe("0131: destination-aware scope contract", () => {
   it("adds the 1-arg destination-aware function with exact maps", () => {
     expect(SQL).toMatch(/calendar_required_event_scopes\(p_destination_mode text\)/);
     expect(SQL).toMatch(/when 'dedicated_app_created' then[\s\S]*?calendar\.app\.created/);
@@ -127,7 +127,7 @@ describe("0131 — destination-aware scope contract", () => {
   });
 });
 
-describe("0131 — readiness predicate is destination-aware + empty-array fail-closed", () => {
+describe("0131: readiness predicate is destination-aware + empty-array fail-closed", () => {
   it("rewrites calendar_connection_outbound_ready to use the destination mode", () => {
     expect(SQL).toMatch(/calendar_connection_outbound_ready/);
     expect(SQL).toMatch(/c\.destination_mode is not null/);
@@ -143,7 +143,7 @@ describe("0131 — readiness predicate is destination-aware + empty-array fail-c
   });
 });
 
-describe("0131 — Stage 2 amendment: dedicated provisioning-state (additive + dormant)", () => {
+describe("0131, Stage 2 amendment: dedicated provisioning-state (additive + dormant)", () => {
   it("adds the three nullable provisioning-state columns to calendar_connections", () => {
     expect(SQL).toMatch(/add column if not exists destination_provisioning_attempt_token text/);
     expect(SQL).toMatch(/add column if not exists destination_provisioning_started_at timestamptz/);
@@ -153,9 +153,9 @@ describe("0131 — Stage 2 amendment: dedicated provisioning-state (additive + d
     expect(SQL).toMatch(/calendar_connections_provisioning_mode_chk/);
     expect(SQL).toMatch(/destination_provisioning_attempt_token is null[\s\S]*?coalesce\(destination_mode, ''\) = 'dedicated_app_created'/);
   });
-  it("stores NO token/secret/PHI — the attempt token is a random NON-SENSITIVE reconciliation marker", () => {
+  it("stores NO token/secret/PHI: the attempt token is a random NON-SENSITIVE reconciliation marker", () => {
     // Scope to the provisioning-state section only (section 4's readiness predicate
-    // legitimately READS sec.encrypted_refresh_token existence — not a stored secret).
+    // legitimately READS sec.encrypted_refresh_token existence, not a stored secret).
     const provBlock = SQL.slice(
       SQL.indexOf("5) DEDICATED-destination provisioning-state"),
       SQL.indexOf("6) Destination-BOUND OAuth state"),
@@ -165,7 +165,7 @@ describe("0131 — Stage 2 amendment: dedicated provisioning-state (additive + d
   });
 });
 
-describe("0131 — Stage 2 amendment: destination-bound OAuth state (additive + dormant)", () => {
+describe("0131, Stage 2 amendment: destination-bound OAuth state (additive + dormant)", () => {
   it("adds the destination binding columns to google_oauth_states", () => {
     expect(SQL).toMatch(/alter table public\.google_oauth_states[\s\S]*?add column if not exists destination_mode text/);
     expect(SQL).toMatch(/add column if not exists required_event_scope text/);

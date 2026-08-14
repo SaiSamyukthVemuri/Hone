@@ -45,7 +45,7 @@ describe("server-side, studio-ownership-gated access", () => {
   it("re-checks the row's studio before signing (never signs a client path)", () => {
     expect(ACTIONS).toMatch(/\.eq\("studio_id", studio\.id\)/);
     // the signed-url action signs the bucket/path FROM the verified row it
-    // loaded by id + studio — never a client-supplied path.
+    // loaded by id + studio, never a client-supplied path.
     expect(ACTIONS).toMatch(/getTreatmentImageSignedUrlAction/);
     expect(ACTIONS).toMatch(/\.from\(row\.storage_bucket\)/);
     expect(ACTIONS).toMatch(/createSignedUrl\(row\.storage_path/);

@@ -9,7 +9,7 @@ const FILE = readdirSync(DIR).find((f) => f.startsWith("0137_"));
 const SQL = FILE ? readFileSync(join(DIR, FILE), "utf8") : "";
 const CODE = SQL.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
 
-describe("0137 — file + scoped columns", () => {
+describe("0137: file + scoped columns", () => {
   it("exists and adds practitioner_id to the three sources", () => {
     expect(FILE).toBe("0137_scoped_blocks_and_breaks.sql");
     for (const t of ["studio_timed_blocks", "studio_recurring_break_rules", "studio_recurring_break_occurrences"]) {
@@ -24,7 +24,7 @@ describe("0137 — file + scoped columns", () => {
   });
 });
 
-describe("0137 — canonical scope-aware synchronizer", () => {
+describe("0137: canonical scope-aware synchronizer", () => {
   it("defines sync_scoped_calendar_reservation with the four-way state behaviour", () => {
     const fn = CODE.match(/function public\.sync_scoped_calendar_reservation[\s\S]*?\$\$;/i)?.[0];
     expect(fn).toBeTruthy();
@@ -41,7 +41,7 @@ describe("0137 — canonical scope-aware synchronizer", () => {
   });
 });
 
-describe("0137 — scope guard takes the lock first + capacity/active", () => {
+describe("0137: scope guard takes the lock first + capacity/active", () => {
   it("guard_scoped_source_capacity acquires the studio lock before validating", () => {
     const fn = CODE.match(/function public\.guard_scoped_source_capacity[\s\S]*?\$\$;/i)?.[0];
     expect(fn).toMatch(/acquire_studio_capacity_lock\(new\.studio_id\)[\s\S]*if new\.practitioner_id is not null/i);
@@ -53,7 +53,7 @@ describe("0137 — scope guard takes the lock first + capacity/active", () => {
   });
 });
 
-describe("0137 — recurring RPCs are scope-aware + operator-only", () => {
+describe("0137: recurring RPCs are scope-aware + operator-only", () => {
   it("occurrences copy the rule practitioner_id; create/update gain an optional scope param", () => {
     expect(CODE).toMatch(/insert into public\.studio_recurring_break_occurrences\s*\(rule_id, studio_id, practitioner_id/i);
     expect(CODE).toMatch(/create or replace function public\.create_recurring_break_rule_and_materialize\([\s\S]*?p_practitioner_id\s+uuid default null/i);

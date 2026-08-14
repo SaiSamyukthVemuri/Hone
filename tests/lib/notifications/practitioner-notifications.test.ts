@@ -6,12 +6,12 @@ import path from "node:path";
 // helper's fire-and-forget paths, which spawn an UNAWAITED async chain
 // (`void (async () => { await import("@/lib/ops/alerts"); await recordOpsAlert(...) })()`
 // for the invalid-event guard, and a `createAdminClient()` insert for the valid
-// path). Left un-mocked, that background work — a dynamic import of the ops-
-// alert module + the admin client — outlives the synchronous assertion and was
+// path). Left un-mocked, that background work, a dynamic import of the ops-
+// alert module + the admin client, outlives the synchronous assertion and was
 // the suspected source of a prior full-suite timeout flake (it passed when run
 // alone). Mocking these targets makes the background work a controlled no-op,
 // and flushing microtasks settles it WITHIN the test so nothing leaks past the
-// test boundary. Production behavior is unchanged — this is test isolation only.
+// test boundary. Production behavior is unchanged, this is test isolation only.
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: vi.fn(() => Promise.resolve()),
 }));
@@ -175,7 +175,7 @@ describe("runtime: invalid event type is swallowed deterministically", () => {
     const mod = await import("@/lib/notifications/practitioner-notifications");
     mod.recordPractitionerNotification(invalidInput);
     // The fire-and-forget ops-alert chain is unawaited by the helper (by
-    // design). Flushing here proves it settles INSIDE the test — no open
+    // design). Flushing here proves it settles INSIDE the test, no open
     // handle survives past the test boundary.
     await flushAsync();
     expect(vi.mocked(recordOpsAlert)).toHaveBeenCalledTimes(1);
@@ -204,7 +204,7 @@ describe("runtime: invalid event type is swallowed deterministically", () => {
     expect(threw).toBe(false);
     await flushAsync();
     // The IIFE calls createAdminClient (mocked to throw); the throw is caught
-    // and reported via the ops-alert path — never surfaced to the caller.
+    // and reported via the ops-alert path, never surfaced to the caller.
     expect(vi.mocked(createAdminClient)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(recordOpsAlert)).toHaveBeenCalled();
     const events = vi
@@ -243,7 +243,7 @@ describe("public booking action calls the helper after appointment insert", () =
   it("the call appears AFTER the appointment is created (createdId is in scope)", () => {
     // Migration 0170: the appointment is created by the
     // create_public_appointment command rather than a direct INSERT, so the RPC
-    // call is the anchor. The invariant is unchanged — the notification is a
+    // call is the anchor. The invariant is unchanged, the notification is a
     // post-commit side effect.
     const insertIdx = ACTIONS.indexOf('"create_public_appointment"');
     const helperIdx = ACTIONS.indexOf("recordPractitionerNotification({");

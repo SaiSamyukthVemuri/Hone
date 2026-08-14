@@ -9,7 +9,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Multi-area + per-area laterality charting (migration 0128) — real browser,
+// Multi-area + per-area laterality charting (migration 0128), real browser,
 // real stack, iPad width. One settings block treats multiple areas, each with
 // its own laterality; the DB rows + the reload are ground truth.
 
@@ -24,7 +24,7 @@ test("one settings block treats multiple areas with independent laterality", asy
 
   const openForm = async () => {
     await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
-    // Charting polish: the form no longer auto-opens — a zero-block session
+    // Charting polish: the form no longer auto-opens, a zero-block session
     // shows the compact CTA, and opening is an explicit tap.
     await page.getByTestId("add-settings-block-cta").click({ timeout: T });
     await expect(page.getByText(/Areas treated with these settings/i)).toBeVisible({ timeout: T });
@@ -62,7 +62,7 @@ test("one settings block treats multiple areas with independent laterality", asy
   // Session 1C: the block just charted is the exact defect shape. Its legacy
   // `primary_area` is "Cheeks" (the FIRST area); the sideburns exist only as a
   // structured child row. Global Search used to match parent columns only, so
-  // searching "Sideburns" found nothing — while a result, once found by other
+  // searching "Sideburns" found nothing, while a result, once found by other
   // means, displayed the sideburns perfectly. Recall gap, not a display gap.
   // -------------------------------------------------------------------------
   await test.step("Global Search finds the treatment by its SECONDARY area", async () => {
@@ -78,7 +78,7 @@ test("one settings block treats multiple areas with independent laterality", asy
     // The subtitle carries the COMPLETE treated-area set, not just the match...
     await expect(memoryResults.first()).toContainText("Left Cheeks · Right Sideburns");
     // ...the result is attributed to the right client (the session's own client,
-    // seeded by seedE2eDraftElectrolysisSession — NOT seed.clientName, which
+    // seeded by seedE2eDraftElectrolysisSession, NOT seed.clientName, which
     // belongs to a different client in the same studio)...
     await expect(memoryResults.first()).toContainText(`Area Client ${seed.runId}`);
     await expect(memoryResults.first()).toHaveAttribute(
@@ -146,7 +146,7 @@ test("one settings block treats multiple areas with independent laterality", asy
   });
 
   await test.step("a foreign studio's area value returns nothing", async () => {
-    // Studio B genuinely HAS this treatment — and can find it — so an empty
+    // Studio B genuinely HAS this treatment, and can find it, so an empty
     // result for studio A is tenant isolation, not an empty database.
     const other = await seedE2eStudio();
     const otherSession = await seedE2eDraftElectrolysisSession(other);

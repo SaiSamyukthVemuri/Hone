@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, purgeAppointmentAudit, asRole, seedStudio, closePool, type SeededStudio } from "./helpers/harness";
 
-// Google Calendar — Phase B2.3-c1 (migration 0132). DB behavioural proof of:
+// Google Calendar: Phase B2.3-c1 (migration 0132). DB behavioural proof of:
 //  * the corrected enqueue placeholder version semantics (last_hone_version=0);
 //  * the reschedule rebind reset (pending/0, provider coordinates preserved);
 //  * the transactional calendar_event_link_transition RPC (bind_confirmed /
@@ -59,7 +59,7 @@ async function outbox(apptId: string) {
 }
 
 // Insert a `processing` outbox row with a known claim token (bypasses the worker
-// gate — this suite exercises the RPC fences directly, not the drain adapter).
+// gate, this suite exercises the RPC fences directly, not the drain adapter).
 async function procOutbox(opType: string, entityId: string | null, syncVersion: number, claimToken: string): Promise<string> {
   const id = randomUUID();
   await adminQuery(

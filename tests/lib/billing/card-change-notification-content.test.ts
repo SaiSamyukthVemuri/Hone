@@ -7,7 +7,7 @@ import { buildCardChangeNotification } from "@/lib/billing/card-change-notificat
 
 const CLIENT_ID = "11111111-1111-1111-1111-111111111111";
 
-describe("buildCardChangeNotification — first add (card_added)", () => {
+describe("buildCardChangeNotification: first add (card_added)", () => {
   const out = buildCardChangeNotification({
     clientName: "Jane Doe",
     brand: "visa",
@@ -30,7 +30,7 @@ describe("buildCardChangeNotification — first add (card_added)", () => {
   });
 });
 
-describe("buildCardChangeNotification — replacement (card_replaced)", () => {
+describe("buildCardChangeNotification: replacement (card_replaced)", () => {
   const out = buildCardChangeNotification({
     clientName: "Jane Doe",
     brand: "mastercard",
@@ -55,7 +55,7 @@ describe("buildCardChangeNotification — replacement (card_replaced)", () => {
   });
 });
 
-describe("privacy — body/title/href carry only name + brand + last4", () => {
+describe("privacy: body/title/href carry only name + brand + last4", () => {
   // Simulate a rich card context and assert none of the forbidden fields can
   // leak into the rendered notification. The builder only receives name/brand/
   // last4/clientId, so this is a structural guarantee, verified here.
@@ -86,7 +86,7 @@ describe("privacy — body/title/href carry only name + brand + last4", () => {
       for (const f of FORBIDDEN) {
         expect(blob).not.toContain(f);
       }
-      // last4 IS allowed; the full PAN is not — assert the body shows only 4242
+      // last4 IS allowed; the full PAN is not, assert the body shows only 4242
       // and never a longer digit run.
       expect(out.body).toMatch(/\b4242\b/);
       expect(out.body).not.toMatch(/\d{5,}/);

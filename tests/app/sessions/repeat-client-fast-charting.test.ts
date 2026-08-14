@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Repeat-client fast charting — "Start from last session".
+// Repeat-client fast charting: "Start from last session".
 //
 // Chloe's complaint: for a repeat client the chart made her preview what she
 // already knew she did, confirm it, watch the panel close, wait for a refresh,
@@ -19,7 +19,7 @@ import { join } from "node:path";
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
-// Executable source only — line and block comments removed. Guards about what
+// Executable source only: line and block comments removed. Guards about what
 // the UI SAYS must not be satisfied (or broken) by prose in a comment.
 function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -75,7 +75,7 @@ describe("(1) an eligible repeat client is offered the fast path as the PRIMARY 
   });
 });
 
-describe("the idle card is HYDRATION-SAFE — it renders no runtime-locale date", () => {
+describe("the idle card is HYDRATION-SAFE, it renders no runtime-locale date", () => {
   // Regression guard. Naming the source visit on the IDLE card put a date into
   // the SERVER-rendered pass for the first time: `toLocaleDateString(undefined,
   // …)` resolves to Node's locale on the server and the viewer's in the browser,
@@ -91,7 +91,7 @@ describe("the idle card is HYDRATION-SAFE — it renders no runtime-locale date"
   it("visit dates go through the shared instant renderer", () => {
     expect(PANEL).toMatch(/import \{ FormattedDateTime \} from "@\/components\/formatted-date-time"/);
     expect(PANEL).toMatch(/<FormattedDateTime iso=\{iso \?\? ""\} format="date" \/>/);
-    // Both surfaces — the idle card and the preview header — use it.
+    // Both surfaces: the idle card and the preview header, use it.
     expect((PANEL.match(/<VisitDate iso=/g) ?? []).length).toBe(2);
   });
 
@@ -104,7 +104,7 @@ describe("the idle card is HYDRATION-SAFE — it renders no runtime-locale date"
   });
 });
 
-describe("(2) the fast path uses the AUTHORITATIVE previous session — never a browser choice", () => {
+describe("(2) the fast path uses the AUTHORITATIVE previous session, never a browser choice", () => {
   it("it reads the source through the shared loader, which uses the server descriptor", () => {
     expect(FAST).toMatch(/await loadSource\(\)/);
     expect(PANEL).toMatch(
@@ -113,7 +113,7 @@ describe("(2) the fast path uses the AUTHORITATIVE previous session — never a 
     expect(ACTIONS).toMatch(/whole_session_copy_source_descriptor/);
   });
 
-  it("the panel accepts NO source session id from anywhere — not a prop, not a param", () => {
+  it("the panel accepts NO source session id from anywhere, not a prop, not a param", () => {
     expect(PANEL).not.toMatch(/previousSessionId/);
     expect(PANEL).not.toMatch(/sourceSessionId\?:/); // never an inbound prop
     // The only props are the destination identity + a display-only date.
@@ -133,10 +133,10 @@ describe("(2) the fast path uses the AUTHORITATIVE previous session — never a 
 describe("(3/4/5/6/7/8/9) reusable setup copies; today's clinical facts are NEVER manufactured", () => {
   it("the fast path sends the SAME canonical setup-only payload as the reviewed path", () => {
     // One commit helper, one mapper. The fast path passes drafts straight from
-    // buildCopyDrafts — it constructs no payload of its own.
+    // buildCopyDrafts, it constructs no payload of its own.
     expect(FAST).toMatch(/drafts: loaded\.drafts,/);
     expect(PANEL).toMatch(/drafts: env\.drafts\.map\(draftToCopyInput\)/);
-    // Exactly ONE mapping call site — both routes share it.
+    // Exactly ONE mapping call site, both routes share it.
     expect((PANEL.match(/\.map\(draftToCopyInput\)/g) ?? []).length).toBe(1);
     // The fast path does not map the payload itself.
     expect(FAST).not.toMatch(/draftToCopyInput/);
@@ -184,7 +184,7 @@ describe("(3/4/5/6/7/8/9) reusable setup copies; today's clinical facts are NEVE
     }
   });
 
-  it("the RPC's INSERT allow-lists are the backstop — outcome columns are not writable by a copy", () => {
+  it("the RPC's INSERT allow-lists are the backstop, outcome columns are not writable by a copy", () => {
     const blockInsert = MIGRATION.slice(
       MIGRATION.indexOf("insert into public.session_blocks ("),
       MIGRATION.indexOf("returning id into v_block_id"),
@@ -219,12 +219,12 @@ describe("(3/4/5/6/7/8/9) reusable setup copies; today's clinical facts are NEVE
   });
 });
 
-describe("(10) source freshness is preserved — the fast path never silently copies stale setup", () => {
+describe("(10) source freshness is preserved, the fast path never silently copies stale setup", () => {
   it("a DEFINITIVE failure surfaces the mapped error and performs NO fallback write", () => {
     expect(FAST).toMatch(
       /if \(outcome\.kind === "failed"\) \{[\s\S]{0,400}?setError\(outcome\.error\);[\s\S]{0,80}?return;/,
     );
-    // One submission per press — no automatic second attempt, no "force" flag.
+    // One submission per press: no automatic second attempt, no "force" flag.
     expect((FAST.match(/submitCommit\(/g) ?? []).length).toBe(1);
     expect(FAST).not.toMatch(/force|ignoreFingerprint/i);
   });
@@ -256,7 +256,7 @@ describe("(11) double submit cannot duplicate the copied setup", () => {
   });
 
   // NOTE ON SCOPE: these are STRUCTURAL guards on the orchestration. They do not
-  // by themselves prove that a lost response replays — that claim is only as good
+  // by themselves prove that a lost response replays, that claim is only as good
   // as a run in which the write lands and the answer does not, which is
   // e2e/repeat-client-fast-charting.spec.ts, "a LOST COMMIT RESPONSE replays the
   // same governed request instead of re-reading the target".
@@ -264,7 +264,7 @@ describe("(11) double submit cannot duplicate the copied setup", () => {
     expect(PANEL).toMatch(/\| \{ kind: "unknown" \}/);
     expect(PANEL).toMatch(/\| \{ kind: "failed"; error: string \}/);
     expect(PANEL).toMatch(/kind: "committed"; createdBlockIds: string\[\]/);
-    // A throw is UNKNOWN, never "failed" — the mapped result objects are the
+    // A throw is UNKNOWN, never "failed", the mapped result objects are the
     // only source of a definitive refusal.
     expect(PANEL).toMatch(/\} catch \{[\s\S]{0,240}?return \{ kind: "unknown" \};/);
   });
@@ -293,14 +293,14 @@ describe("(11) double submit cannot duplicate the copied setup", () => {
 
   it("any DEFINITIVE outcome clears the envelope, so there is no retry loop", () => {
     expect(FAST).toMatch(/pendingRetryRef\.current = null;\s*\n\s*setAmbiguous\(false\);/);
-    // Nothing retries on its own — recovery is always a practitioner action.
+    // Nothing retries on its own, recovery is always a practitioner action.
     expect(FAST).not.toMatch(/setTimeout|setInterval|while \(|for \(/);
   });
 
   it("both success shapes land the same way, so a replay is as actionable as a first commit", () => {
     expect(PANEL).toMatch(/function landIn\(createdBlockIds: string\[\]\)/);
     expect(FAST).toMatch(/landIn\(outcome\.createdBlockIds\)/);
-    // The landing does not branch on idempotentReplay — the ids are authoritative
+    // The landing does not branch on idempotentReplay, the ids are authoritative
     // either way.
     expect(FAST).not.toMatch(/idempotentReplay/);
   });
@@ -312,7 +312,7 @@ describe("(11) double submit cannot duplicate the copied setup", () => {
     expect(PANEL).toMatch(/disabled=\{loading \|\| committing \|\| ambiguous\}/);
   });
 
-  it("the ambiguous copy is TRUTHFUL — it never claims nothing was written", () => {
+  it("the ambiguous copy is TRUTHFUL, it never claims nothing was written", () => {
     expect(PANEL).toMatch(
       /const AMBIGUOUS_MESSAGE =\s*\n\s*"We couldn't confirm whether the setup was added\. Try again to check safely\.";/,
     );
@@ -334,7 +334,7 @@ describe("(11) double submit cannot duplicate the copied setup", () => {
     expect(preview).not.toMatch(/fastStartKey/);
   });
 
-  it("it reuses the EXISTING 0157 ledger — no new persistence mechanism", () => {
+  it("it reuses the EXISTING 0157 ledger, no new persistence mechanism", () => {
     expect(MIGRATION).toMatch(
       /constraint session_copy_operations_idem_uniq unique \(target_session_id, idempotency_key\)/,
     );
@@ -352,7 +352,7 @@ describe("(13) today's chart is never destructively replaced", () => {
 
   it("the fast path calls no removal/deletion surface at all", () => {
     // Named against the real destructive surfaces this screen has, rather than
-    // the bare word "replace" — `router.replace` is a NAVIGATION, not a write.
+    // the bare word "replace", `router.replace` is a NAVIGATION, not a write.
     for (const destructive of [
       "removeSessionAreaAction",
       "deleteElectrolysisEntryAction",
@@ -363,12 +363,12 @@ describe("(13) today's chart is never destructively replaced", () => {
     ]) {
       expect(FAST).not.toContain(destructive);
     }
-    // It performs no navigation of its own — landing is delegated to landIn().
+    // It performs no navigation of its own, landing is delegated to landIn().
     expect(FAST).not.toMatch(/router\./);
   });
 });
 
-describe("(19) after the copy she lands in TODAY'S editor — no close/refresh/scroll/reopen", () => {
+describe("(19) after the copy she lands in TODAY'S editor, no close/refresh/scroll/reopen", () => {
   it("the fast path routes using the ids the RPC already returned (no schema change needed)", () => {
     expect(PANEL).toMatch(/const landing = landingBlockId\(createdBlockIds\)/);
     expect(PANEL).toMatch(/router\.replace\(fastChartUrl\(clientId, sessionId, landing\)\)/);
@@ -403,7 +403,7 @@ describe("(19) after the copy she lands in TODAY'S editor — no close/refresh/s
 
   it("the editor she lands in is the one-page form that owns TODAY'S facts", () => {
     // Editing an existing block renders BlockSetupForm with the block + its
-    // first entry — the form that carries minutes, hairs, chips, tolerance and
+    // first entry, the form that carries minutes, hairs, chips, tolerance and
     // notes. That is what makes the landing immediately actionable.
     expect(VIEW).toMatch(
       /\{editing \? \(\s*\n\s*<BlockSetupForm[\s\S]{0,400}?block=\{block\}[\s\S]{0,200}?firstEntry=\{entriesSorted\[0\] \?\? null\}/,
@@ -413,7 +413,7 @@ describe("(19) after the copy she lands in TODAY'S editor — no close/refresh/s
   it("the landing param is ONE-SHOT: consumed and cleared without a refetch", () => {
     expect(VIEW).toMatch(/url\.searchParams\.delete\(FAST_CHART_PARAM\)/);
     expect(VIEW).toMatch(/window\.history\.replaceState\(null, ""/);
-    // Cleared shallowly — never via the router, which would re-render the tree.
+    // Cleared shallowly: never via the router, which would re-render the tree.
     const effect = VIEW.slice(
       VIEW.indexOf("if (!autoEditBlockId || typeof window === \"undefined\") return;"),
       VIEW.indexOf("return (\n    <div className=\"flex flex-col gap-6\">"),
@@ -423,7 +423,7 @@ describe("(19) after the copy she lands in TODAY'S editor — no close/refresh/s
 });
 
 describe("(16/17) no new write surface, no migration", () => {
-  it("the landing model is PURE — no I/O, no DB, no server action", () => {
+  it("the landing model is PURE, no I/O, no DB, no server action", () => {
     expect(LANDING).not.toMatch(/createClient|createAdminClient|\.rpc\(|\.from\(|use server|fetch\(/);
   });
 

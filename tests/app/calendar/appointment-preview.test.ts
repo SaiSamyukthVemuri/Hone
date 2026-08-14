@@ -58,7 +58,7 @@ describe("preview is READ-ONLY (no mutation / payment / portal / intake)", () =>
     expect(PREVIEW).not.toMatch(
       /refund|charge|payment|portal|intake|consent|cancelAppointment|markComplete|noShow|deleteAppointment|updateAppointment/i,
     );
-    // no form-submit / mutation buttons — only the read-only deep link + close
+    // no form-submit / mutation buttons, only the read-only deep link + close
     expect(PREVIEW).not.toMatch(/<form|startTransition|\baction=\{/);
   });
 });

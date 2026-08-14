@@ -5,7 +5,7 @@ import path from "node:path";
 // Permanent source guard: the Supabase CLI's local workspace state under
 // supabase/.temp/ must NEVER be tracked in Git.
 //
-// These files carry the LINKED project reference — supabase/.temp/project-ref,
+// These files carry the LINKED project reference, supabase/.temp/project-ref,
 // linked-project.json, and pooler-url all embed the project ref. They were once
 // tracked with the PRODUCTION ref, so checking the repo out in a staging
 // workspace silently overwrote the staging link with production. A pre-command

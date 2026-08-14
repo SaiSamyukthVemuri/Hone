@@ -16,7 +16,7 @@ const LIST = read("app/(app)/dashboard/todo-list.tsx");
 const LIST_CODE = codeOnly(LIST);
 const SNAPSHOT = codeOnly(read("app/(app)/dashboard/practice-snapshot.tsx"));
 
-// DASH-TRUTH-02 — hidden work is expandable in place, never dead text.
+// DASH-TRUTH-02: hidden work is expandable in place, never dead text.
 describe("DASH-TRUTH-02 disclosure", () => {
   it("M5 the dead '+ N more not shown' text is gone", () => {
     // codeOnly: the comment above the new control deliberately quotes the old
@@ -60,7 +60,7 @@ describe("DASH-TRUTH-02 disclosure", () => {
   });
 });
 
-// DASH-TRUTH-03 — plumbing is not a KPI.
+// DASH-TRUTH-03: plumbing is not a KPI.
 describe("DASH-TRUTH-03 practice snapshot", () => {
   it("S1/S2 neither prepared label renders", () => {
     expect(SNAPSHOT).not.toMatch(/Payments prepared/);
@@ -79,7 +79,7 @@ describe("DASH-TRUTH-03 practice snapshot", () => {
   });
 });
 
-// DASH-TRUTH-04 — the daily product does not email the founder.
+// DASH-TRUTH-04: the daily product does not email the founder.
 describe("DASH-TRUTH-04 pilot feedback is off the Dashboard", () => {
   it("B1/B2 no PilotFeedbackPrompt renders anywhere on the Dashboard", () => {
     expect(PAGE).not.toMatch(/<PilotFeedbackPrompt/);

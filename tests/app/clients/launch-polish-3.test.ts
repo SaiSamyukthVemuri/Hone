@@ -38,7 +38,7 @@ describe("3. Last session shows per-area settings (shared component)", () => {
 describe("4. one free-text box in charting", () => {
   it("Treatment observations & skin response box appears once; tolerance remains (PR #199: per-area for-next-visit is gone)", () => {
     // Charting unification: the two former groups are ONE merged box, whose single
-    // heading (from the shared constant) renders exactly once — no duplicate
+    // heading (from the shared constant) renders exactly once, no duplicate
     // observation section.
     expect(FORM.match(/\{OBSERVATIONS_RESPONSE_HEADING\}/g)?.length).toBe(1);
     // The old two-group headings are gone from this form.

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Emergency chip-loading fix — source pins for the write + display wiring across
+// Emergency chip-loading fix: source pins for the write + display wiring across
 // the electrolysis charting surfaces (the parts a mocked-action test can't cheaply
 // exercise). The behavior is proven by the pure-function tests
 // (observation-chips-loading) + DB persistence + browser E2E.

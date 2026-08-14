@@ -9,7 +9,7 @@ import {
 import { randomUUID } from "node:crypto";
 
 // ===========================================================================
-// Integration RELEASE CANDIDATE — combined onboarding-v2 + multi-practitioner
+// Integration RELEASE CANDIDATE, combined onboarding-v2 + multi-practitioner
 // capacity journey in ONE studio, against the real migrated 0150 DB.
 // ===========================================================================
 //
@@ -32,13 +32,13 @@ import { randomUUID } from "node:crypto";
 // the live local stack. Never Willow, never production.
 
 let S: SynthStudio;
-let abService = ""; // service "AB" — eligible for A + B
-let aService = ""; // service "A"  — eligible for A only
+let abService = ""; // service "AB", eligible for A + B
+let aService = ""; // service "A", eligible for A only
 
 // Journey state carried across the ordered `it` blocks.
 let apptA = ""; // appointment created for practitioner A
 let apptB = ""; // appointment created for practitioner B
-let sA = ""; // apptA current starts_at (::text) — the stale-check snapshot
+let sA = ""; // apptA current starts_at (::text), the stale-check snapshot
 let eA = ""; // apptA current ends_at   (::text)
 let completedAt = ""; // onboarding completed_at snapshot (must never move once set)
 
@@ -160,7 +160,7 @@ beforeAll(async () => {
   );
 
   // Service "AB": the 0134 AFTER-INSERT default-eligibility trigger already made
-  // every ACTIVE practitioner (O, A, B — not inactive C) eligible; keep ONLY A + B.
+  // every ACTIVE practitioner (O, A, B, not inactive C) eligible; keep ONLY A + B.
   const ab = await adminQuery(
     `insert into public.services (id, studio_id, name, default_duration_minutes, price_cents, active)
      values ($1,$2,'AB',30,0,true) returning id`,
@@ -192,7 +192,7 @@ afterAll(async () => {
 
 describe("RC combined onboarding-v2 + capacity journey (single studio, all flags ON)", () => {
   it("1) onboarding completion is browser-guarded: an owner direct write to the lifecycle fields is REJECTED (42501)", async () => {
-    // Owner seeds an in-progress wizard row — allowed by owner-write RLS (no lifecycle field set).
+    // Owner seeds an in-progress wizard row, allowed by owner-write RLS (no lifecycle field set).
     await asUser(owner().userId, (q) =>
       q(
         `insert into public.studio_onboarding (studio_id, current_step, status)
@@ -261,7 +261,7 @@ describe("RC combined onboarding-v2 + capacity journey (single studio, all flags
     expect(await availRows(Bp().practitionerId)).toHaveLength(7);
   });
 
-  it("4) A and B are booked at the SAME clock time — BOTH succeed (distinct practitioners, no double-booking)", async () => {
+  it("4) A and B are booked at the SAME clock time, BOTH succeed (distinct practitioners, no double-booking)", async () => {
     const ra = await bookV2(owner().practitionerId, A().practitionerId, T("10:00"), abService);
     expect(ra).toMatchObject({ ok: true, result: "created" });
     const rb = await bookV2(owner().practitionerId, Bp().practitionerId, T("10:00"), abService);
@@ -288,10 +288,10 @@ describe("RC combined onboarding-v2 + capacity journey (single studio, all flags
     ).toMatchObject({ ok: true, result: "not_eligible" });
   });
 
-  it("5) booking A AGAIN at A's existing time collides (23P01) and rolls back — A's original appt + reservation preserved", async () => {
+  it("5) booking A AGAIN at A's existing time collides (23P01) and rolls back, A's original appt + reservation preserved", async () => {
     const dup = await bookV2(owner().practitionerId, A().practitionerId, T("10:00"), abService);
     expect(dup).toMatchObject({ ok: false, code: "23P01" }); // per-resource GiST exclusion
-    // Original is intact — nothing partial committed.
+    // Original is intact: nothing partial committed.
     const ta = await apptTimes(apptA);
     expect(ta.practitioner_id).toBe(A().practitionerId);
     expect(ta.s).toContain("10:00:00");
@@ -339,7 +339,7 @@ describe("RC combined onboarding-v2 + capacity journey (single studio, all flags
   });
 
   it("9) integrity: no duplicate membership / onboarding / appointment / reservation; audit is exactly the expected set", async () => {
-    // One row per practitioner (O, A, B, C) — no duplicate membership.
+    // One row per practitioner (O, A, B, C), no duplicate membership.
     const members = await adminQuery(
       `select count(*)::int c, count(distinct id)::int d from public.practitioners where studio_id=$1`,
       [S.studioId],
@@ -368,7 +368,7 @@ describe("RC combined onboarding-v2 + capacity journey (single studio, all flags
       expect(res.rows[0].c).toBe(1);
     }
 
-    // Audit is EXACTLY the expected set — no phantom rows from the rolled-back collision.
+    // Audit is EXACTLY the expected set, no phantom rows from the rolled-back collision.
     expect(await auditActions(apptA)).toEqual(["created", "moved", "reassigned", "moved_and_reassigned"]);
     expect(await auditActions(apptB)).toEqual(["created"]);
   });

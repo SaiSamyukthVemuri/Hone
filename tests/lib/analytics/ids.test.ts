@@ -6,7 +6,7 @@ import {
 } from "@/lib/analytics/ids";
 
 // The opaque analytics identifier boundary (Correction 2). Proves it rejects
-// emails, phones, tokens, token paths, free text, names and malformed IDs —
+// emails, phones, tokens, token paths, free text, names and malformed IDs,
 // fail closed, never throwing, never surfacing the rejected value. Synthetic
 // data only.
 

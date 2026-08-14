@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-// Static (SQL-text) proof of migration 0125 — the Google Calendar B2.3-a
+// Static (SQL-text) proof of migration 0125, the Google Calendar B2.3-a
 // activation-boundary foundation. The behavioural proof (triggers, reaper,
 // eligibility, repair, dormancy) is in tests/db/google-calendar-b2-3a-*.db.test.ts;
 // this pins the deliberate contract + the three mandatory conditions in the SQL.
@@ -11,7 +11,7 @@ const MIG_DIR = path.resolve(__dirname, "../../supabase/migrations");
 const FILE = readdirSync(MIG_DIR).find((f) => f.startsWith("0125_"));
 const SQL = FILE ? readFileSync(path.join(MIG_DIR, FILE), "utf8") : "";
 
-describe("0125 — file + scope boundary", () => {
+describe("0125: file + scope boundary", () => {
   it("is the single 0125 migration; the repo-max tripwire now lives in the newest migration test", () => {
     expect(FILE).toBeTruthy();
     expect(FILE).toMatch(/^0125_.*\.sql$/);
@@ -31,7 +31,7 @@ describe("0125 — file + scope boundary", () => {
   });
 });
 
-describe("0125 — appointment fields + version bump", () => {
+describe("0125: appointment fields + version bump", () => {
   it("adds sync_version NOT NULL DEFAULT 1 + reschedule lineage + cancellation_kind CHECK", () => {
     expect(SQL).toMatch(/add column if not exists sync_version integer not null default 1/);
     expect(SQL).toMatch(/rescheduled_from_appointment_id uuid[\s\S]{0,80}references public\.appointments\(id\) on delete set null/);
@@ -44,7 +44,7 @@ describe("0125 — appointment fields + version bump", () => {
   });
 });
 
-describe("0125 — trigger names + firing order", () => {
+describe("0125: trigger names + firing order", () => {
   it("BEFORE bump trigger is named so it sorts after the existing snapshot trigger", () => {
     expect(SQL).toMatch(/create trigger appointments_sync_version_bump_trg\s*\n?\s*before insert or update on public\.appointments/);
     // 'appointments_snapshot_buffer_trg' < 'appointments_sync_version_bump_trg' alphabetically.
@@ -57,7 +57,7 @@ describe("0125 — trigger names + firing order", () => {
   });
 });
 
-describe("0125 — intent-gated enqueue + genuine never-raise", () => {
+describe("0125: intent-gated enqueue + genuine never-raise", () => {
   it("intent gate checks the studio flag + owner + write_calendar, NOT connection health", () => {
     expect(SQL).toMatch(/s\.google_calendar_outbound_sync_enabled/);
     expect(SQL).toMatch(/c\.is_studio_calendar_owner/);
@@ -80,7 +80,7 @@ describe("0125 — intent-gated enqueue + genuine never-raise", () => {
     expect((SQL.match(guardedMarker) ?? []).length).toBe(2);
   });
   it("neither enqueue trigger function is declared STRICT (no arg-less NULL protection to rely on)", () => {
-    // Both trigger functions declare exactly this header — no STRICT.
+    // Both trigger functions declare exactly this header, no STRICT.
     expect(SQL).toMatch(/create or replace function public\.enqueue_calendar_outbound\(\)\s*\n?\s*returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as \$\$/);
     expect(SQL).toMatch(/create or replace function public\.enqueue_calendar_outbound_on_delete\(\)\s*\n?\s*returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as \$\$/);
     // Belt-and-suspenders: the migration declares no STRICT function at all.
@@ -96,7 +96,7 @@ describe("0125 — intent-gated enqueue + genuine never-raise", () => {
   });
 });
 
-describe("0125 — condition 1: append-only suppression telemetry (no contended counter)", () => {
+describe("0125, condition 1: append-only suppression telemetry (no contended counter)", () => {
   it("has an append-only calendar_sync_metric_events table (no daily-counter upsert)", () => {
     expect(SQL).toMatch(/create table if not exists public\.calendar_sync_metric_events/);
     expect(SQL).not.toMatch(/on conflict \(studio_id, metric, day\)/i);
@@ -106,7 +106,7 @@ describe("0125 — condition 1: append-only suppression telemetry (no contended 
   });
 });
 
-describe("0125 — condition 2: health-aware reaper + global control in claim", () => {
+describe("0125, condition 2: health-aware reaper + global control in claim", () => {
   it("claim early-returns when the global worker control is OFF/absent (no reap, no claim)", () => {
     // Table-aliased (a bare `id` would collide with the RETURNS TABLE (id …) column).
     expect(SQL).toMatch(/select ctl\.worker_enabled into v_enabled\s*\n?\s*from public\.calendar_sync_control ctl where ctl\.id = true/);
@@ -136,13 +136,13 @@ describe("0125 — condition 2: health-aware reaper + global control in claim", 
   });
 });
 
-describe("0125 — condition 3: no eager write-calendar link repoint", () => {
+describe("0125, condition 3: no eager write-calendar link repoint", () => {
   it("never bulk-updates an existing link's google_calendar_id", () => {
     expect(SQL).not.toMatch(/update public\.calendar_event_links[\s\S]{0,200}set[\s\S]{0,200}google_calendar_id/i);
   });
 });
 
-describe("0125 — entity CHECK relaxation (narrow, tombstone delete only)", () => {
+describe("0125: entity CHECK relaxation (narrow, tombstone delete only)", () => {
   it("event.delete is entity-optional; create/update require an entity; full.resync none", () => {
     const chk = SQL.slice(SQL.indexOf("add constraint calendar_sync_outbox_entity_chk"));
     expect(chk).toMatch(/op_type in \('event\.create','event\.update'\)\s*\n?\s*and hone_entity_type is not null and hone_entity_id is not null/);
@@ -151,7 +151,7 @@ describe("0125 — entity CHECK relaxation (narrow, tombstone delete only)", () 
   });
 });
 
-describe("0125 — control table + generations + repair primitives", () => {
+describe("0125: control table + generations + repair primitives", () => {
   it("calendar_sync_control singleton defaults worker_enabled false and is seeded", () => {
     expect(SQL).toMatch(/worker_enabled boolean not null default false/);
     expect(SQL).toMatch(/id\s+boolean primary key default true check \(id\)/);
@@ -171,7 +171,7 @@ describe("0125 — control table + generations + repair primitives", () => {
   });
 });
 
-describe("0125 — hardening: search_path, grants, no destructive/parallel structures", () => {
+describe("0125, hardening: search_path, grants, no destructive/parallel structures", () => {
   it("every SECURITY DEFINER function pins search_path and is service-role only", () => {
     const definers = SQL.match(/security definer/g) ?? [];
     expect(definers.length).toBeGreaterThanOrEqual(4);
@@ -182,7 +182,7 @@ describe("0125 — hardening: search_path, grants, no destructive/parallel struc
     expect(SQL).not.toMatch(/grant[\s\S]{0,80}calendar_sync_outbox to (anon|authenticated)/i);
     expect(SQL).not.toMatch(/create table[^;]*job_outbox/i);
     expect(SQL).not.toMatch(/drop table/i);
-    // No renamed transport RPCs — reuses the deployed ones.
+    // No renamed transport RPCs: reuses the deployed ones.
     expect(SQL).not.toMatch(/create or replace function public\.(claim_sync|drain_|dequeue_)/i);
   });
   it("the health view exposes skip markers + suppression and is union-anchored", () => {

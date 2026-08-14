@@ -7,7 +7,7 @@ import {
 import { loginAsOwner } from "./helpers/flows";
 
 // Explicit per-service calendar color at iPhone width (390px): the genuinely
-// browser-only parts — Settings loads, the six swatches don't overflow, and
+// browser-only parts, Settings loads, the six swatches don't overflow, and
 // choosing violet + saving PERSISTS the key. The persisted-key -> violet CSS
 // mapping (and week/month/mobile parity) is proven by the unit/source tests.
 
@@ -53,7 +53,7 @@ test("owner sets a service's calendar color to violet on iPhone; it persists + r
     await violet.click();
     await page.getByRole("button", { name: /^Save changes$|^Save$/ }).first().click();
 
-    // 3) Persisted as the violet KEY (the canonical map turns it into violet CSS —
+    // 3) Persisted as the violet KEY (the canonical map turns it into violet CSS,
     //    unit-proven in tests/lib/calendar/service-colors.test.ts).
     await expect
       .poll(async () => getServiceCalendarColor(serviceId), { timeout: 15_000 })

@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// B8 / 0177 — the postcare surface is completed-only.
+// B8 / 0177: the postcare surface is completed-only.
 //
 // The DATABASE is the authority: claim_postcare_send refuses any status other
 // than 'completed', proved behaviourally in
 // tests/db/postcare-write-boundary.db.test.ts (T5/T6/T7). These assertions are
-// about the SURFACE — offering an enabled Send that the command will refuse is
+// about the SURFACE, offering an enabled Send that the command will refuse is
 // a worse experience than not offering it, and a UI that contradicts the
 // boundary is how the next reader concludes the boundary is optional.
 //
@@ -22,10 +22,10 @@ const SECTION = "components/appointment/postcare-section.tsx";
 const CALENDAR = "app/(app)/calendar/[id]/page.tsx";
 const SESSION = "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx";
 
-describe("B8 — PostcareSection gates the send control on completion", () => {
+describe("B8: PostcareSection gates the send control on completion", () => {
   const src = read(SECTION);
   // CODE ONLY. The component deliberately DOCUMENTS the old `!= null` bug so
-  // the next reader knows why the branch looks the way it does — and a naive
+  // the next reader knows why the branch looks the way it does, and a naive
   // grep cannot tell that prose from a live condition. Asserting the absence of
   // a pattern must therefore read code, not comments.
   const code = src
@@ -36,7 +36,7 @@ describe("B8 — PostcareSection gates the send control on completion", () => {
   it("REQUIRES a server-derived appointmentStatus", () => {
     // Required, not optional. An optional prop makes `undefined` mean "no
     // opinion", so a future mount that simply omits it would silently restore
-    // the pre-B8 behaviour — and TypeScript would not complain.
+    // the pre-B8 behaviour, and TypeScript would not complain.
     expect(src).toMatch(/appointmentStatus: string \| null;/);
     expect(src, "the prop must not be optional").not.toMatch(/appointmentStatus\?:/);
   });
@@ -58,12 +58,12 @@ describe("B8 — PostcareSection gates the send control on completion", () => {
     );
   });
 
-  it("only 'completed' reaches the send control — and NULL does not escape", () => {
+  it("only 'completed' reaches the send control, and NULL does not escape", () => {
     // THE GAP THIS TEST MISSED ONCE. An earlier branch read
     // `appointmentStatus != null && appointmentStatus !== "completed"`, which
     // let a NULL status fall through to an enabled Send. The old assertion
     // still passed, because it merely checked that the substring
-    // `!== "completed"` appeared somewhere — it never examined what else
+    // `!== "completed"` appeared somewhere, it never examined what else
     // guarded the branch. Checking for a fragment is not checking a condition.
     expect(src).toMatch(/props\.appointmentStatus !== "completed"/);
     expect(
@@ -92,7 +92,7 @@ describe("B8 — PostcareSection gates the send control on completion", () => {
 
   it("configuration and no-email states still take precedence", () => {
     // A studio that has not configured postcare, or a client with no email,
-    // should be told THAT — not told to come back after completing the visit
+    // should be told THAT, not told to come back after completing the visit
     // and only then discover the real problem.
     const noEmail = src.indexOf('data-testid="postcare-no-client-email"');
     const gate = src.indexOf('data-testid="postcare-not-completed"');
@@ -104,7 +104,7 @@ describe("B8 — PostcareSection gates the send control on completion", () => {
   });
 });
 
-describe("B8 — both mount points pass the authoritative status", () => {
+describe("B8: both mount points pass the authoritative status", () => {
   it.each([
     [CALENDAR, /appointmentStatus=\{typedStatus\}/],
     [SESSION, /appointmentStatus=\{apptContext\?\.status \?\? null\}/],

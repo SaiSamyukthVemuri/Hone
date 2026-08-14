@@ -17,7 +17,7 @@ import {
 } from "./helpers/seed";
 import { loginByMagicLink } from "./helpers/flows";
 
-// PR B Part 4 Item 7 — owner-only practitioner reassignment on the SHARED Move
+// PR B Part 4 Item 7, owner-only practitioner reassignment on the SHARED Move
 // workflow, driven through the REAL appointment-detail UI and verified against the
 // DB. Owner O; active A + B; inactive C (absent); one client. Never Willow.
 

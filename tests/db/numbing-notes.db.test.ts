@@ -8,7 +8,7 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// Migration 0156 — conditional numbing notes, proven on the REAL migrated local
+// Migration 0156: conditional numbing notes, proven on the REAL migrated local
 // database. The column is additive/nullable; the two atomic RPCs carry it; OLD
 // app payloads that omit the key resolve it to NULL (DB-first safe). App-level
 // "only when status = used" normalization is unit-tested separately.

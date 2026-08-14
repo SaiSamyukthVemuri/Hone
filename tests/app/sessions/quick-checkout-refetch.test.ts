@@ -2,19 +2,19 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Chloe workflow fix — Quick Checkout CTA discoverability.
+// Chloe workflow fix: Quick Checkout CTA discoverability.
 //
 // The modal holds eligibility in client state fetched once per open;
 // router.refresh() (called by the card after Prepare) refreshes the underlying
 // route's server components but NOT this client-held context, so the persisted
-// "ready" attempt never surfaced and the "Run charge" button never mounted —
+// "ready" attempt never surfaced and the "Run charge" button never mounted,
 // the practitioner had to close and reopen to find the CTA. The fix wraps the
 // four payment actions so a SUCCESSFUL result silently re-resolves the trusted
 // server context here, advancing the card to the persisted next state in place.
 //
 // These pins lock (a) the wrapper exists and is applied to all four actions,
 // (b) it re-resolves ONLY on success and only refreshes THIS modal's view, and
-// (c) the fix is isolated to the modal — the shared card and the session detail
+// (c) the fix is isolated to the modal, the shared card and the session detail
 // page are NOT rewritten. The end-to-end in-place advance is exercised by the
 // WebKit iPhone + Chromium payment E2E.
 
@@ -38,7 +38,7 @@ describe("quick checkout: in-place advance after a successful action", () => {
   });
 
   it("re-resolves trusted context ONLY on a successful result", () => {
-    // The wrapper must gate the refetch on result.ok — a failed action must
+    // The wrapper must gate the refetch on result.ok, a failed action must
     // not silently reshuffle the card out from under the practitioner.
     expect(MODAL).toMatch(
       /const result = await action\(fd\);\s*\n\s*if \(result\.ok\) void fetchContext\(\{ silent: true \}\)/,

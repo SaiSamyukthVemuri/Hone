@@ -3,8 +3,8 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
 // PR #255: Admin Console V1. Source-pins the operator console surface, the
-// discoverable New Studio Wizard CTA, the cheap setup-health counts, and —
-// critically — that NO client-level clinical data is read into the console.
+// discoverable New Studio Wizard CTA, the cheap setup-health counts, and
+// critically, that NO client-level clinical data is read into the console.
 // Access control is the existing /admin layout isAdmin gate (pinned below);
 // end-to-end behaviour is proven by e2e/new-studio-wizard.spec.ts.
 
@@ -103,7 +103,7 @@ describe("data privacy: NO client-level clinical data in the console", () => {
       /treatment_area_text|tolerance_text|reaction_text|caution_note|exposed_person|probe_lot/i,
     );
     expect(PAGE_CODE).not.toMatch(/stripe_|payment_intent|client_secret|livemode/i);
-    // No audit/token CONTENT is selected here. A nav link to /admin/audit is fine —
+    // No audit/token CONTENT is selected here. A nav link to /admin/audit is fine,
     // the audit log lives on its own isAdmin-gated page, not the console home.
     expect(PAGE_CODE).not.toMatch(/\btoken\b|audit_event|\.from\("[^"]*audit/i);
   });

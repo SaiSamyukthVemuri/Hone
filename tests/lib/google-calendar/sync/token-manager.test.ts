@@ -12,7 +12,7 @@ import type { GoogleFailure, GoogleRestClient, RefreshTokenSuccess } from "@/lib
 
 type RefreshFn = (rt: string) => Promise<RefreshTokenSuccess | GoogleFailure>;
 
-// Phase B2.1 — token refresh lifecycle: rotation persistence (the live-defect
+// Phase B2.1: token refresh lifecycle: rotation persistence (the live-defect
 // fix), fail-closed encryption, invalid_grant, single-flight, and caching.
 
 const CONN = "conn-1";

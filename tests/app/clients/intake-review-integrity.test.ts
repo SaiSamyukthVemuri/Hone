@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// F-CLIN-004 — behavioural proof that markIntakeReviewedAction's conditional
+// F-CLIN-004: behavioural proof that markIntakeReviewedAction's conditional
 // UPDATE is the single authority for an intake review transition.
 //
 // These are NOT source greps. The real server action is invoked against an
@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // .not("col","is",null)) over real rows, applies the patch only to rows that
 // match EVERY filter, and returns the affected rows from .select(). So a test
 // that says "blocked" is asserting that the row genuinely did not change and
-// that zero rows came back — not that some string appears in a file.
+// that zero rows came back, not that some string appears in a file.
 //
 // Scope reminder: this proves the APPLICATION path. The database boundary for
 // F-CLIN-004 is still open (migration 0118 does not guard an incoming
@@ -235,7 +235,7 @@ describe("F-CLIN-004 / 2. in-progress is blocked", () => {
     expect(r.submitted_at).toBeNull();
     expect(r.reviewed_at).toBeNull();
     expect(r.reviewed_by).toBeNull();
-    // The notes were not written either — a blocked review writes nothing.
+    // The notes were not written either, a blocked review writes nothing.
     expect(r.practitioner_notes).toBeNull();
     expect(state.updates[0].matched).toBe(0);
   });
@@ -328,7 +328,7 @@ describe("F-CLIN-004 / 5. same studio, different client is blocked", () => {
     // Target intake untouched.
     expect(row(OTHER_INTAKE).status).toBe("submitted");
     expect(row(OTHER_INTAKE).reviewed_by).toBeNull();
-    // Displayed intake untouched too — the action did not fall back to it.
+    // Displayed intake untouched too: the action did not fall back to it.
     expect(row(INTAKE).status).toBe("submitted");
     expect(row(INTAKE).reviewed_by).toBeNull();
   });
@@ -448,7 +448,7 @@ describe("F-CLIN-004 / 12. zero returned rows never reports success", () => {
     }
   });
 
-  it("all six blocked reasons are byte-identical — no existence/ownership oracle", async () => {
+  it("all six blocked reasons are byte-identical, no existence/ownership oracle", async () => {
     const messages = new Set<string>();
     const cases = [
       submittedRow({ status: "in_progress", submitted_at: null }),
@@ -517,7 +517,7 @@ describe("F-CLIN-004 / 13. database errors are sanitized", () => {
   });
 });
 
-describe("F-CLIN-004 / 14. concurrency — exactly one transition", () => {
+describe("F-CLIN-004 / 14. concurrency: exactly one transition", () => {
   it("two concurrent requests produce one success and one safe failure", async () => {
     state.rows = [submittedRow()];
     const [a, b] = await Promise.all([

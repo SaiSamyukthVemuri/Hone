@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// SOURCE GUARDS — appointment preparation memory (Chloe Session 1D).
+// SOURCE GUARDS: appointment preparation memory (Chloe Session 1D).
 //
 // The behavioural rules live in tests/lib/sessions/appointment-prep-memory.test.ts
 // and the real-database proof in tests/db/appointment-prep-memory.db.test.ts.
@@ -17,7 +17,7 @@ import path from "node:path";
 const ROOT = path.resolve(__dirname, "../..");
 
 // The body of a top-level function, bounded by the NEXT top-level declaration
-// rather than by a character count — a fixed window overruns into neighbouring
+// rather than by a character count, a fixed window overruns into neighbouring
 // code and makes a "must not contain" assertion match something unrelated.
 function functionBody(src: string, name: string): string {
   const at = src.indexOf(`function ${name}(`);
@@ -57,8 +57,8 @@ describe("the appointment page uses the SHARED last-treatment authority", () => 
   });
 
   it("passes the appointment's own start as the strict upper bound", () => {
-    // Not now() — that would let a session charted after the appointment began
-    // win. Not omitted — that would let a future booking's session win.
+    // Not now(): that would let a session charted after the appointment began
+    // win. Not omitted, that would let a future booking's session win.
     expect(PAGE_CODE).toMatch(/before: data\.starts_at/);
   });
 
@@ -72,7 +72,7 @@ describe("the appointment page uses the SHARED last-treatment authority", () => 
     );
     // The literal input object moved into the SHARED mapper
     // (prepMemoryInputFromTreatment) when the dashboard became a second
-    // consumer — two hand-written copies of that mapping is how two surfaces
+    // consumer, two hand-written copies of that mapping is how two surfaces
     // start disagreeing about what a visit looked like. The page must still
     // call the builder, and must do it through that mapper.
     expect(PAGE_CODE).toMatch(
@@ -90,7 +90,7 @@ describe("the appointment page uses the SHARED last-treatment authority", () => 
 
 describe("the duplicate legacy previous-treatment path is GONE, not parallel", () => {
   it("no newest-row previous-treatment query survives", () => {
-    // The removed query is identified by its time bound and its column set —
+    // The removed query is identified by its time bound and its column set,
     // NOT by `order started_at desc limit 1` alone, which the linked-session
     // read legitimately still uses (and must keep using: it asks a different
     // question, scoped by appointment_id).
@@ -99,19 +99,19 @@ describe("the duplicate legacy previous-treatment path is GONE, not parallel", (
     expect((PAGE_CODE.match(/\.from\("sessions"\)/g) ?? []).length).toBe(1);
     const only = PAGE_CODE.slice(PAGE_CODE.indexOf('.from("sessions")'));
     expect(only).toMatch(/\.eq\("appointment_id", id\)/);
-    // And it selects only the three columns the View-session affordance needs —
+    // And it selects only the three columns the View-session affordance needs,
     // no clinical column, no note column.
     expect(only).toMatch(/\.select\("id, started_at, modality"\)/);
     expect(only.slice(0, 400)).not.toMatch(/session_notes|next_session_note/);
   });
 
-  it("the legacy session_notes column is still surfaced — it has no writer left", () => {
+  it("the legacy session_notes column is still surfaced, it has no writer left", () => {
     // sessions.session_notes has no surviving write path anywhere in the
     // product, so a refactor that quietly drops it destroys text that can never
     // be recreated.
     //
     // The passthrough now lives in the SHARED mapper rather than inline in this
-    // page — which is strictly better, because it protects the dashboard's copy
+    // page, which is strictly better, because it protects the dashboard's copy
     // of the same surface too. Pinned where it actually is.
     const MODEL = read("lib/sessions/appointment-prep-memory.ts");
     expect(MODEL).toMatch(
@@ -134,7 +134,7 @@ describe("the duplicate legacy previous-treatment path is GONE, not parallel", (
     expect(PAGE).not.toMatch(/import[\s\S]{0,80}attachStructuredAreas/);
   });
 
-  it("the companion loader DELEGATES selection — it does not pick a row itself", () => {
+  it("the companion loader DELEGATES selection, it does not pick a row itself", () => {
     // Caught by negative control #2: the DB lane mirrors the loader's SQL
     // rather than calling it (the loader needs a Next request context), so
     // nothing in that lane notices if the loader stops asking the shared
@@ -151,7 +151,7 @@ describe("the duplicate legacy previous-treatment path is GONE, not parallel", (
     ).toBe(2);
     // TWO call sites now: the per-client path (via selectFromCandidates) and
     // the BATCHED companion the dashboard uses. Both go through the shared
-    // selector — which is the property this test exists to protect. What must
+    // selector, which is the property this test exists to protect. What must
     // never appear is a hand-rolled pick.
     expect(
       (LOADER_CODE.match(/pickNewestChartedSession\(/g) ?? []).length,
@@ -254,7 +254,7 @@ describe("full narrative is rendered WHOLE", () => {
     expect(CARD_CODE).not.toMatch(/\bw-\[/);
   });
 
-  it("the notes section is never suppressed — the empty state is explicit", () => {
+  it("the notes section is never suppressed, the empty state is explicit", () => {
     expect(MODEL).toMatch(/NO_LAST_SESSION_NOTES_COPY/);
     expect(CARD).toMatch(/NO_LAST_SESSION_NOTES_COPY/);
     expect(CARD).toMatch(/data-testid="prep-notes-empty"/);
@@ -291,7 +291,7 @@ describe("read-only, RLS-scoped, no service role", () => {
     expect(LOADER).toMatch(/\.eq\("client_id", input\.clientId\)/);
   });
 
-  it("the candidate read is BOUNDED — no unbounded client history", () => {
+  it("the candidate read is BOUNDED, no unbounded client history", () => {
     expect(LOADER).toMatch(/DEFAULT_CHARTED_SESSION_LIMIT/);
     expect(codeOnly(LOADER)).toMatch(/\.limit\(limit\)/);
   });
@@ -302,14 +302,14 @@ describe("read-only, RLS-scoped, no service role", () => {
     );
   });
 
-  it("the blocks read stays batched — no N+1 per session, block, area or CLIENT", () => {
+  it("the blocks read stays batched, no N+1 per session, block, area or CLIENT", () => {
     expect(LOADER).toMatch(/\.in\(\s*"session_id",/);
-    // TWO entry points now — the per-client loader and the batched companion
-    // the dashboard uses — so the count is two, not one. Counting alone was
+    // TWO entry points now: the per-client loader and the batched companion
+    // the dashboard uses, so the count is two, not one. Counting alone was
     // never the real guarantee anyway; what follows is.
     expect((LOADER_CODE.match(/from\("session_blocks"\)/g) ?? []).length).toBe(2);
     expect((LOADER_CODE.match(/from\("sessions"\)/g) ?? []).length).toBe(2);
-    // EVERY block read is keyed by an `.in(...)` list, never by a single id —
+    // EVERY block read is keyed by an `.in(...)` list, never by a single id,
     // that is what makes each one a batch rather than a per-row round-trip.
     for (const seg of LOADER_CODE.split('from("session_blocks")').slice(1)) {
       const head = seg.slice(0, 500);
@@ -323,7 +323,7 @@ describe("read-only, RLS-scoped, no service role", () => {
       const body = LOADER_CODE.slice(m.index!, LOADER_CODE.indexOf("\n  }", m.index!));
       expect(body, "no query inside a loop").not.toMatch(/await supabase|\.from\(/);
     }
-    // Structured areas ride along INSIDE the block select — never a separate
+    // Structured areas ride along INSIDE the block select, never a separate
     // per-block round-trip.
     expect(LOADER_CODE).not.toMatch(/from\("session_block_areas"\)/);
     expect(LOADER).toMatch(/structured_areas:session_block_areas\(/);
@@ -340,7 +340,7 @@ describe("read-only, RLS-scoped, no service role", () => {
     }
   });
 
-  it("the card is presentation only — no client state, no form, no action", () => {
+  it("the card is presentation only, no client state, no form, no action", () => {
     expect(CARD).not.toMatch(/"use client"/);
     expect(CARD).not.toMatch(/<form/);
     expect(CARD).not.toMatch(/useState|useTransition|action=/);
@@ -353,7 +353,7 @@ describe("read-only, RLS-scoped, no service role", () => {
     const code = codeOnly(MODEL);
     expect(code).not.toMatch(/console\./);
     expect(code).not.toMatch(/^import .*server-only|createClient|fetch\(/m);
-    // Positive anchor — prove we are reading the real module, not an empty
+    // Positive anchor: prove we are reading the real module, not an empty
     // string, so the three negatives above cannot pass vacuously.
     expect(code).toMatch(/export function buildAppointmentPrepMemory/);
   });
@@ -440,7 +440,7 @@ describe("Sessions 1A / 1B / 1C vocabulary is reused, never forked", () => {
     ]) {
       expect(
         MODEL,
-        `${banned} belongs to a shared helper — do not fork it here`,
+        `${banned} belongs to a shared helper, do not fork it here`,
       ).not.toContain(banned);
     }
   });
@@ -453,7 +453,7 @@ describe("Sessions 1A / 1B / 1C vocabulary is reused, never forked", () => {
   it("the entry narrative is the WHOLE stored column, not the chip-hydration remainder", () => {
     // REGRESSION GUARD (adversarial review, P1). resolveDisplayChips promotes
     // canonical tokens out of `comments` into a chip list, but only when
-    // observation_chips is EMPTY — which is exactly when this card's response
+    // observation_chips is EMPTY, which is exactly when this card's response
     // line (built from that same raw column) is empty too. Taking the remainder
     // therefore deleted text that nothing else here renders, and the card then
     // printed "No notes recorded at the last session." over it.
@@ -473,7 +473,7 @@ describe("the plan source is decoupled from the treatment source", () => {
     expect(LOADER_CODE).toMatch(/function newestPlanOf/);
     expect(LOADER_CODE).toMatch(/const text = c\.next_session_note\?\.trim\(\);/);
     expect(LOADER_CODE).toMatch(/plan: newestPlanOf\(candidates\)/);
-    // Charted-ness is deliberately NOT required — the scan runs over the raw
+    // Charted-ness is deliberately NOT required, the scan runs over the raw
     // candidate window, not over the selected treatment.
     expect(LOADER_CODE).not.toMatch(
       /newestPlanOf\((selected|\[selected\])\)/,
@@ -524,7 +524,7 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
     // Nesting is what made it impossible to return when no treatment exists.
     //
     // POSITIVE ANCHORS FIRST. slice() with a missing anchor returns "", and
-    // `expect("").not.toMatch(...)` passes — so without these the guard would
+    // `expect("").not.toMatch(...)` passes, so without these the guard would
     // go green the moment the type were renamed.
     const start = LOADER_CODE.indexOf("export type LastChartedTreatment");
     const end = LOADER_CODE.indexOf("export type { PrepNarrativeItem }");
@@ -567,7 +567,7 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
 
   it("ownership is decided by the pure helper, not by JSX position", () => {
     // The old guard compared render ORDER and a render COUNT. Both are
-    // satisfiable by the duplication they claimed to exclude — moving a render
+    // satisfiable by the duplication they claimed to exclude, moving a render
     // above the card keeps the count at 2 and the ordering true. Position is
     // not the property that matters; OWNERSHIP is, and it is decided in one
     // pure function whose behaviour is pinned in
@@ -601,14 +601,14 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
     expect(PAGE_CODE).toMatch(/before_selected_treatment/);
     expect(PAGE_CODE).toMatch(/, after the treatment above/);
     expect(PAGE_CODE).toMatch(/, before the treatment above/);
-    // Never an inference the data cannot support — scoped to the narrative
+    // Never an inference the data cannot support, scoped to the narrative
     // renderer, since "completed" is also an appointment STATUS elsewhere.
     const block = functionBody(PAGE_CODE, "PriorNarrative");
     expect(block).toMatch(/item\.chronology/); // proves we sliced the renderer
     expect(block).not.toMatch(/still applies|supersedes|resolved|completed/i);
   });
 
-  it("every fallback item is dated — provenance, never a session id", () => {
+  it("every fallback item is dated, provenance, never a session id", () => {
     expect(PAGE_CODE).toMatch(/data-testid="prep-prior-date"/);
     expect(PAGE_CODE).toMatch(/<FormattedDateTime iso=\{item\.startedAt\}/);
     // A raw session id must never reach the UI.
@@ -621,7 +621,7 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
     expect(PAGE_CODE).toMatch(/From another visit/);
   });
 
-  it("fallback narrative is full text — pre-wrap, break-words, no clamp", () => {
+  it("fallback narrative is full text, pre-wrap, break-words, no clamp", () => {
     const block = functionBody(PAGE_CODE, "PriorNarrative");
     expect(block).toMatch(/item\.text/); // proves we sliced the renderer
     expect((block.match(/whitespace-pre-wrap break-words/g) ?? []).length).toBeGreaterThanOrEqual(2);

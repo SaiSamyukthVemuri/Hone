@@ -18,7 +18,7 @@ describe("0105: migration number + scope", () => {
     expect(FILE).toMatch(/^0105_/);
   });
 
-  it("touches ONLY the two indexes — no tables, RPCs, policies, data, or env", () => {
+  it("touches ONLY the two indexes, no tables, RPCs, policies, data, or env", () => {
     expect(CODE).not.toMatch(/alter table|create table|create policy|drop policy|function|insert into|update |delete from|truncate/i);
     expect(CODE).not.toMatch(/STRIPE_ALLOW_LIVE_MODE/);
     // Untouched: Stripe-id-keyed uniques + the legacy manual-fee table.

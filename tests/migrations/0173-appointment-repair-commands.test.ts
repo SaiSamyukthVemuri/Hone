@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
-// 0173 — APPOINTMENT BOUNDARY B4 source contract.
+// 0173, APPOINTMENT BOUNDARY B4 source contract.
 //
 // Behaviour lives in tests/db/appointment-repair-commands.db.test.ts. This file
 // pins byte-level properties of the migration that behaviour cannot reach:
@@ -12,7 +12,7 @@ import { countVersion } from "./helpers/migration-state";
 // prohibitions B4 inherits from 0172.
 //
 // Cloned from tests/migrations/0172-appointment-dml-revocation.test.ts, which is
-// the repository's template for a boundary migration test — including its
+// the repository's template for a boundary migration test, including its
 // hard-won lesson about anchored regexes (see EXECUTABLE below).
 // ===========================================================================
 
@@ -21,8 +21,8 @@ const SQL = readFileSync(join(__dirname, "..", "..", FILE), "utf8");
 
 /**
  * The migration with `--` comment lines stripped. The header discusses every
- * forbidden pattern at length — `snapshot_appointment_buffer`, `revoke all`,
- * trigger functions — so prose describing a prohibition must never satisfy a
+ * forbidden pattern at length, `snapshot_appointment_buffer`, `revoke all`,
+ * trigger functions, so prose describing a prohibition must never satisfy a
  * guard looking for it.
  */
 const CODE = SQL.split("\n")
@@ -34,7 +34,7 @@ const PROSE = SQL.split("\n")
   .join(" ");
 
 /**
- * Executable statements. NOT `^create` — anchoring at column 0 makes a
+ * Executable statements. NOT `^create`, anchoring at column 0 makes a
  * statement indented by a single space INVISIBLE to every guard built on it.
  * The 0172 adversarial pass demonstrated four mutants that survived a full
  * suite exactly that way. Leading whitespace is consumed everywhere below.
@@ -54,7 +54,7 @@ const FUNCTIONS = [
 
 // ---------------------------------------------------------------------------
 
-describe("0173 — migration state", () => {
+describe("0173: migration state", () => {
   // The CENTRAL tripwire, moved here from
   // tests/migrations/0172-appointment-dml-revocation.test.ts when B4 landed.
   // Only the current maximum migration's own test carries it (CLAUDE.md §2);
@@ -82,7 +82,7 @@ describe("0173 — migration state", () => {
   });
 });
 
-describe("0173 — production truth (applied 2026-08-09)", () => {
+describe("0173: production truth (applied 2026-08-09)", () => {
   // The CURRENT hosted-state pins live with the current maximum migration
   // (CLAUDE.md §2). 0172's test keeps only its own frozen historical facts.
   //
@@ -123,7 +123,7 @@ describe("0173 — production truth (applied 2026-08-09)", () => {
     expect(rec.hosted_note).toContain(sha);
   });
 
-  it("earlier applies stay recorded — 0172 and 0171 checksums are not dropped", () => {
+  it("earlier applies stay recorded: 0172 and 0171 checksums are not dropped", () => {
     expect(rec.hosted_note).toContain(
       "b89b0d47a70ea2d4a7574bcc4223081cfe1d527394b3ef8b6d4c82bb090f42f1",
     );
@@ -134,7 +134,7 @@ describe("0173 — production truth (applied 2026-08-09)", () => {
 
   it("the LEDGER records the 0173 apply as non-mutating, service_role-only and database-first", () => {
     // These claims moved from the current-state note to the ledger when 0174
-    // superseded it. They are asserted at their new home rather than dropped —
+    // superseded it. They are asserted at their new home rather than dropped,
     // losing them would have quietly deleted evidence about a production apply.
     expect(LEDGER).toMatch(/max\(appointments\.updated_at\) unchanged/i);
     expect(LEDGER).toMatch(/service_role ONLY/);
@@ -164,7 +164,7 @@ describe("0173 — production truth (applied 2026-08-09)", () => {
   });
 });
 
-describe("0173 — declares exactly the intended functions", () => {
+describe("0173: declares exactly the intended functions", () => {
   it("creates the four helpers and the two commands, and nothing else", () => {
     const declared = [
       ...CODE.matchAll(/create or replace function public\.(\w+)\(/g),
@@ -176,7 +176,7 @@ describe("0173 — declares exactly the intended functions", () => {
     expect(CODE).toContain(`comment on function public.${fn}(`);
   });
 
-  it("every helper has a B4 consumer — no generic abstractions", () => {
+  it("every helper has a B4 consumer, no generic abstractions", () => {
     // The brief forbids helpers without a consumer in this migration. Each
     // helper name must appear at least twice: its definition and a call.
     for (const fn of [
@@ -191,7 +191,7 @@ describe("0173 — declares exactly the intended functions", () => {
   });
 });
 
-describe("0173 — transaction and lock discipline", () => {
+describe("0173: transaction and lock discipline", () => {
   it("opens its own transaction (db push does not wrap the file)", () => {
     expect(CODE).toMatch(/^\s*begin\s*;/m);
     expect(CODE).toMatch(/^\s*commit\s*;/m);
@@ -224,7 +224,7 @@ describe("0173 — transaction and lock discipline", () => {
   });
 });
 
-describe("0173 — the standing prohibitions", () => {
+describe("0173: the standing prohibitions", () => {
   it("does NOT touch snapshot_appointment_buffer", () => {
     // Production carries an out-of-band GUC behaviour in that function which
     // exists in NO migration here; emitting it from repo source would silently
@@ -286,7 +286,7 @@ describe("0173 — the standing prohibitions", () => {
   });
 });
 
-describe("0173 — EXECUTE posture", () => {
+describe("0173: EXECUTE posture", () => {
   it("revokes EXECUTE from public, anon and authenticated for every function", () => {
     // The grant loop is a DO block, so assert the loop body's four statements
     // and that every function name appears in the array literal.
@@ -308,7 +308,7 @@ describe("0173 — EXECUTE posture", () => {
   });
 });
 
-describe("0173 — the command contracts", () => {
+describe("0173: the command contracts", () => {
   it("revert_appointment_outcome is owner-gated in SQL", () => {
     const fn = CODE.slice(
       CODE.indexOf("function public.revert_appointment_outcome"),
@@ -348,7 +348,7 @@ describe("0173 — the command contracts", () => {
       CODE.indexOf("comment on function public.revert_appointment_outcome"),
     );
     // Optimistic concurrency must be enforced by the UPDATE, not only by the
-    // earlier gate — otherwise a concurrent change between the two wins.
+    // earlier gate, otherwise a concurrent change between the two wins.
     expect(fn).toMatch(/update public\.appointments[\s\S]*?a\.status\s*=\s*p_expected_status/);
   });
 
@@ -424,14 +424,14 @@ describe("0173 — the command contracts", () => {
   });
 });
 
-describe("0173 — scope: B5-B8 are not absorbed", () => {
+describe("0173, scope: B5-B8 are not absorbed", () => {
   it("does not create the audit studio_id column, an actor FK or a transition trigger", () => {
     const s = CODE.toLowerCase();
     expect(s).not.toContain("alter table public.appointment_audit");
     expect(s).not.toContain("add column");
   });
 
-  it("GROUPS 1-4 touch ONLY the repair commands — services/practitioners are confined to GROUP 5", () => {
+  it("GROUPS 1-4 touch ONLY the repair commands, services/practitioners are confined to GROUP 5", () => {
     // 0173 does close L23, but that work is confined to GROUP 5 so it stays
     // independently auditable. The repair-command groups must not reach the
     // parent tables or touch a policy at all; if they ever do, the two subjects
@@ -450,7 +450,7 @@ describe("0173 — scope: B5-B8 are not absorbed", () => {
     }
   });
 
-  it("does not absorb B5's 0174 — no such migration is created here", () => {
+  it("does not absorb B5's 0174, no such migration is created here", () => {
     // The L23 closure was briefly drafted as a companion 0174. 0174 belongs to
     // B5 (attribution + audit integrity); the full ownership assertion lives in
     // tests/migrations/0173-parent-delete-l23-closure.test.ts.

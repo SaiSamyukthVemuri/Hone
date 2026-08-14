@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Behavioral proof of the REAL durable orchestration (ensureCardChangeNotification
-// -> ensurePractitionerNotification) against the migrated local database — nothing
+// -> ensurePractitionerNotification) against the migrated local database, nothing
 // is mocked. The card rows are written the way the webhook writes them (service-
 // role INSERT), then the real orchestration reads them, decides added vs replaced
 // from persisted history, and writes the notification through the durable writer

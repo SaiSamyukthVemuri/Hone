@@ -165,13 +165,13 @@ describe("read-only and RLS-scoped", () => {
     }
   });
 
-  it("the card is a presentation component — no form, no action, no state", () => {
+  it("the card is a presentation component, no form, no action, no state", () => {
     expect(CARD).not.toMatch(/"use client"/);
     expect(CARD).not.toMatch(/<form/);
     expect(CARD).not.toMatch(/useState|useTransition|action=/);
   });
 
-  it("the loader logs CLASSIFICATION ONLY on failure — never the raw DB message", () => {
+  it("the loader logs CLASSIFICATION ONLY on failure, never the raw DB message", () => {
     const code = codeOnly(LOADER);
     // The raw PostgREST/Postgres message echoes the failing statement, and this
     // statement embeds candidate session ids and every clinical column name.
@@ -211,23 +211,23 @@ describe("read-only and RLS-scoped", () => {
     }
     // Session 1D added the appointment-prep candidate read, which is a second
     // query and therefore a second failure to classify. Both sites, and ONLY
-    // these two, may log — and both are held to the redaction contract above.
+    // these two, may log, and both are held to the redaction contract above.
     const code = codeOnly(LOADER);
     // FOUR sites now: the per-client loader's candidate + block reads, and the
-    // batched companion's. The count is not the contract — the REDACTION is,
+    // batched companion's. The count is not the contract, the REDACTION is,
     // and it is asserted for every one of them below.
     expect((code.match(/console\./g) ?? []).length).toBe(4);
-    // Every one of them is console.error(JSON.stringify({...})) — never a bare
+    // Every one of them is console.error(JSON.stringify({...})), never a bare
     // string, never the raw PostgREST message.
     expect((code.match(/console\.error\(\s*JSON\.stringify\(\{/g) ?? []).length).toBe(
       4,
     );
     // The redaction contract is asserted for EVERY log site, not just the one
-    // Session 1D happened to add — that is what actually protects the pipeline
+    // Session 1D happened to add, that is what actually protects the pipeline
     // when a new read (and so a new failure to classify) appears.
     // Bounded to the LOG OBJECT itself. A fixed-width slice runs past the
     // closing brace into ordinary code and flags identifiers that were never
-    // logged — which is a false positive, not a redaction failure.
+    // logged, which is a false positive, not a redaction failure.
     const logSites = [...code.matchAll(/console\.error\(\s*JSON\.stringify\(\{/g)].map(
       (m) => {
         const rest = code.slice(m.index!);
@@ -239,7 +239,7 @@ describe("read-only and RLS-scoped", () => {
     for (const site of logSites) {
       expect(site).toMatch(/code:/);
       // Either the companion's `input.studioId` or selectFromCandidates' bare
-      // `studioId` param — what matters is that the studio is named and that
+      // `studioId` param, what matters is that the studio is named and that
       // it is an identifier, never an interpolated payload.
       expect(site).toMatch(/studio_id: (input\.)?studioId,/);
       for (const banned of ["client_id", "clientId", "session_id", "sessionId"]) {
@@ -270,7 +270,7 @@ describe("read-only and RLS-scoped", () => {
     }
   });
 
-  it("the blocks read is batched and studio-scoped — no N+1, no unbounded IN", () => {
+  it("the blocks read is batched and studio-scoped, no N+1, no unbounded IN", () => {
     expect(LOADER).toMatch(/\.eq\("studio_id", input\.studioId\)/);
     expect(LOADER).toMatch(/\.in\(\s*"session_id",/);
     expect(LOADER).toMatch(/\.is\("deleted_at", null\)/);
@@ -341,7 +341,7 @@ describe("multi-area treatment-time attribution", () => {
     expect(code).not.toMatch(/const structured = block\.primary_area\?\.trim\(\)/);
   });
 
-  it("it loads the structured areas in the SAME embed — no extra round-trip", () => {
+  it("it loads the structured areas in the SAME embed, no extra round-trip", () => {
     expect(TREATMENT_TIME).toMatch(
       /structured_areas:session_block_areas\(id, area, display_order, created_at\)/,
     );

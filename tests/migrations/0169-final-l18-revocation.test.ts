@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 
 // ===========================================================================
-// L18 FINAL — migration 0169 source contract.
+// L18 FINAL, migration 0169 source contract.
 //
 // This is a privilege CUTOVER, so the contract is mostly about what the file
 // must NOT contain. Everything asserted here is a byte-level property of the
@@ -31,7 +31,7 @@ const TABLES = [
 // is the repository convention: only the current max asserts isRepoMax, so a new
 // migration does not require a sweep of every older per-migration test.
 
-describe("0169 — exactly six authenticated table revocations", () => {
+describe("0169: exactly six authenticated table revocations", () => {
   it("revokes INSERT, UPDATE and DELETE on each of the six tables, by name", () => {
     for (const t of TABLES) {
       expect(SQL, `${t} must be revoked`).toContain(
@@ -72,9 +72,9 @@ describe("0169 — exactly six authenticated table revocations", () => {
   });
 });
 
-describe("0169 — touches nothing else", () => {
+describe("0169: touches nothing else", () => {
   it("mutates no other role's privileges", () => {
-    // Match the GRANTEE position only — `public.` in `on table public.x` is a
+    // Match the GRANTEE position only, `public.` in `on table public.x` is a
     // schema qualifier, not a role, and must not be mistaken for one.
     for (const role of ["service_role", "anon", "public"]) {
       expect(CODE_FLAT, `${role} must not be a grantee`).not.toMatch(
@@ -137,7 +137,7 @@ describe("0169 — touches nothing else", () => {
   });
 });
 
-describe("0169 — the writer census it depends on is still zero", () => {
+describe("0169: the writer census it depends on is still zero", () => {
   // The revocation is only safe because no runtime code writes these tables.
   // If a writer ever comes back, this fails BEFORE the privilege change ships.
   const ROOTS = ["app", "lib", "components"];

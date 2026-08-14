@@ -32,7 +32,7 @@ const GATE_CODE = codeOnly(GATE);
 // when the slice they examine is ONE function. Slicing to end-of-file lets a
 // later function's inserts answer an earlier function's question.
 //
-// Boundaries are the file's TOP-LEVEL function declarations — column 0, `^`
+// Boundaries are the file's TOP-LEVEL function declarations, column 0, `^`
 // under the `m` flag. Nested helpers (`const softVoidBatch = async …`) are
 // indented and are therefore correctly kept INSIDE their parent's body rather
 // than treated as a boundary. Each slice runs to the next boundary, or to EOF
@@ -154,7 +154,7 @@ describe("no AI / OCR / external / file storage / raw-text logging", () => {
 
 describe("honest failure handling + safe matching", () => {
   it("never interpolates a raw DB error message into a user-facing string", () => {
-    // Generic messages only — a raw DB error could carry a pasted email/phone.
+    // Generic messages only: a raw DB error could carry a pasted email/phone.
     expect(ACTIONS_CODE).not.toMatch(/\.message\}/);
   });
 
@@ -168,12 +168,12 @@ describe("honest failure handling + safe matching", () => {
 });
 
 // ---------------------------------------------------------------------------
-// IMPORT-01 — operator-assisted only, until the staged rebuild exists
+// IMPORT-01, operator-assisted only, until the staged rebuild exists
 // ---------------------------------------------------------------------------
 //
 // The behavioural proof (real actions, recording stub, zero writes on denial)
 // lives in ./operator-assisted-gate.test.ts. These are the structural pins:
-// they catch the shapes a behavioural test cannot see — a gate quietly moved
+// they catch the shapes a behavioural test cannot see, a gate quietly moved
 // after a write, a second executable island appearing on the page, the page
 // and the server drifting into two different stories.
 
@@ -192,7 +192,7 @@ describe("IMPORT-01: execution is gated on the server, before any write", () => 
     expect(firstUpdate).toBeGreaterThan(gateIdx);
   });
 
-  it("BOTH actions route through the one gated helper — no second entry point", () => {
+  it("BOTH actions route through the one gated helper, no second entry point", () => {
     const exported = Array.from(
       ACTIONS_CODE.matchAll(/export async function (\w+)/g),
     ).map((m) => m[1]);
@@ -205,7 +205,7 @@ describe("IMPORT-01: execution is gated on the server, before any write", () => 
   // Per-function, not per-file. The earlier version of this pin sliced from a
   // function's declaration to END OF FILE, so previewImportAction's
   // "ownerContext() comes before .insert(" could be satisfied by
-  // confirmImportAction's inserts further down — true, but proving nothing
+  // confirmImportAction's inserts further down, true, but proving nothing
   // about preview. Each body is now bounded, and a decoy write dropped into
   // confirm cannot reach preview's assertions.
   // -------------------------------------------------------------------------
@@ -234,7 +234,7 @@ describe("IMPORT-01: execution is gated on the server, before any write", () => 
     expect(gate).toContain("isImportOperator()");
     expect(gate).not.toContain("buildImportPlan(parsed");
 
-    // Sizes are sane — an empty or whole-file slice would pass the negatives.
+    // Sizes are sane: an empty or whole-file slice would pass the negatives.
     expect(preview.length).toBeGreaterThan(200);
     expect(preview.length).toBeLessThan(ACTIONS_CODE.length / 2);
     expect(confirm.length).toBeGreaterThan(1000);
@@ -251,7 +251,7 @@ describe("IMPORT-01: execution is gated on the server, before any write", () => 
     expect(beforeGate).not.toMatch(/\bawait\b/);
     expect(beforeGate).not.toMatch(/supabase|createClient/);
 
-    // Preview's actual contract is zero writes — not "no writes before the
+    // Preview's actual contract is zero writes, not "no writes before the
     // gate". Assert the stronger thing, scoped to THIS function.
     for (const verb of WRITE_VERBS) {
       expect(
@@ -277,7 +277,7 @@ describe("IMPORT-01: execution is gated on the server, before any write", () => 
     );
     expect(
       writeIdxs.length,
-      "confirmImportAction has no writes at all — this pin would be vacuous",
+      "confirmImportAction has no writes at all, this pin would be vacuous",
     ).toBeGreaterThanOrEqual(2);
 
     for (const verb of WRITE_VERBS) {

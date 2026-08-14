@@ -84,7 +84,7 @@ describe("login page: consent-checkbox copy is invitation confirmation, not lega
   // The login checkbox does NOT record Terms/Privacy acceptance (that happens at
   // accept-invitation, against the CURRENT versions). It only confirms the person
   // is using their invited email. The un-ticked-box error and the label must say
-  // exactly that — never "agree to the Terms of Service and Privacy Policy", which
+  // exactly that, never "agree to the Terms of Service and Privacy Policy", which
   // would be a false claim that ticking it is legal acceptance.
   it("the stale legal-acceptance error string is gone", () => {
     // PAGE_CODE strips // comments (which reference the old phrase as a negative

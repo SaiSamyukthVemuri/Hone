@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 // sterile items that are expired OR expiring within a horizon, studio-scoped.
 // The TS function runs through the RLS `createClient()` (a request-context
 // client we can't build here), so this exercises the EXACT filter it issues
-// against the REAL migrated DB, as the studio's authenticated member — proving
+// against the REAL migrated DB, as the studio's authenticated member, proving
 // the RLS + `expiry_date is not null` + `<= horizon` + studio-scope semantics
 // the function depends on. Deterministic: `today`/`horizon` are fixed here.
 
@@ -105,7 +105,7 @@ describe("getExpiringSterileItems filter on the real migrated DB (RLS-scoped)", 
     expect(res.rows.map((r) => r.id)).not.toContain(bId);
 
     // And RLS itself denies A's member any visibility of B's row, even without
-    // the studio_id filter — a member cannot read across studios.
+    // the studio_id filter, a member cannot read across studios.
     const rls = await asUser(a.userId, (q) =>
       q(
         "select id from public.record_keeping_sterile_items where id = $1",

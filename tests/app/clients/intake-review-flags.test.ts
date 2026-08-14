@@ -6,7 +6,7 @@ import { join } from "node:path";
 //   * the deriver is pure (no DB / supabase client);
 //   * the flags module + the review page use ONLY allowed wording and never
 //     the forbidden clinical-decision language (scoped to the new code, not
-//     the whole repo — older intake comments legitimately contain some terms);
+//     the whole repo, older intake comments legitimately contain some terms);
 //   * the card is mounted on the practitioner intake review page and is NOT on
 //     the public client-facing /intake/[token] route.
 

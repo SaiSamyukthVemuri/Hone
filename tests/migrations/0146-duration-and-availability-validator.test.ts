@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR B Part 4 (migration 0146) — Item 2 authoritative duration + Item 3 the shared
+// PR B Part 4 (migration 0146), Item 2 authoritative duration + Item 3 the shared
 // availability validator. Structure invariants the db lane is slow to catch.
 
 const SQL = readFileSync(
@@ -10,7 +10,7 @@ const SQL = readFileSync(
   "utf8",
 );
 
-describe("0146 — availability validator", () => {
+describe("0146: availability validator", () => {
   it("is SECURITY DEFINER with a pinned search_path and service_role-only grants", () => {
     expect(SQL).toMatch(/create or replace function public\.validate_appointment_availability/);
     expect(SQL).toMatch(/security definer/);
@@ -34,7 +34,7 @@ describe("0146 — availability validator", () => {
   });
 });
 
-describe("0146 — v2 booking command", () => {
+describe("0146: v2 booking command", () => {
   it("derives duration from the LOCKED service row, never a caller length", () => {
     expect(SQL).toMatch(/create or replace function public\.create_internal_appointment_v2/);
     // The v2 signature has no p_duration_minutes parameter (only the owner-only
@@ -49,7 +49,7 @@ describe("0146 — v2 booking command", () => {
   });
   it("routes every booking through the shared validator and does NOT catch the GiST 23P01", () => {
     expect(SQL).toMatch(/v_avail := public\.validate_appointment_availability\(/);
-    // No EXCEPTION handler — an interval collision (23P01) must roll the whole
+    // No EXCEPTION handler: an interval collision (23P01) must roll the whole
     // transaction back and reach the adapter, not be swallowed here.
     expect(SQL).not.toMatch(/exception\s+when/i);
   });

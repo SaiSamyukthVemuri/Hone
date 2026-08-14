@@ -409,7 +409,7 @@ export async function getSessionPaymentAttempts(sessionId: string): Promise<
 // the client/settings deletes, so the studio cascade alone can't remove them).
 // The final `delete studios` cascades clients + practitioners. Never truncates.
 export async function cleanupPaymentScenario(studioId: string): Promise<void> {
-  // B5/0174: the audit trail must go before its appointments and its studio —
+  // B5/0174: the audit trail must go before its appointments and its studio,
   // appointment_audit is append-only (no runtime DELETE) and its studio FK is
   // RESTRICT. Owner-only harness fixture; ships in no migration.
   await purgeAppointmentAudit(studioId);

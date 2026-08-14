@@ -42,7 +42,7 @@ describe("operator-only access (reuses the existing isAdmin gate)", () => {
     expect(adminIdx).toBeGreaterThan(gateIdx);
   });
 
-  it("reuses isAdmin from @/lib/admin — no new operator allowlist is introduced", () => {
+  it("reuses isAdmin from @/lib/admin: no new operator allowlist is introduced", () => {
     expect(ACTION).toMatch(/from "@\/lib\/admin"/);
     expect(ACTION).not.toMatch(/HONE_OPERATOR_EMAILS|OPERATOR_EMAILS/);
   });
@@ -100,7 +100,7 @@ describe("the wizard page is a safe internal surface", () => {
   it("success state shows the booking URL and the setup checklist incl. live payments disabled", () => {
     expect(PAGE).toMatch(/\/book\/\$\{studio\.slug\}/);
     expect(PAGE).toMatch(/Next setup steps/);
-    // PR B: accurate onboarding copy — payments are per-studio, not
+    // PR B: accurate onboarding copy, payments are per-studio, not
     // globally disabled.
     expect(PAGE).not.toMatch(/Live payments remain disabled/);
     expect(PAGE).toMatch(/Payments are not connected until the studio completes Stripe/);

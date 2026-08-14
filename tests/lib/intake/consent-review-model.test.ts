@@ -6,7 +6,7 @@ import type { PortalPhotoConsentView } from "@/lib/consent/queries";
 // Chloe, minutes after #545 shipped: "consent was both accepted and denied",
 // "this should not be possible".
 //
-// Both records were real — an intake photo answer of Accepted at 3:56 PM and a
+// Both records were real, an intake photo answer of Accepted at 3:56 PM and a
 // portal answer of Consent denied at 3:57 PM. The defect was that the screen
 // gave them equal authority. This suite pins the rule that fixes it: exactly
 // one CURRENT answer per consent question, everything else history, and a
@@ -65,7 +65,7 @@ function portalPhoto(
   } as PortalPhotoConsentView;
 }
 
-describe("consent review model — the partition", () => {
+describe("consent review model: the partition", () => {
   it("treatment consent is CURRENT and never history: the intake still owns it", () => {
     const m = buildConsentReviewModel({
       intakeForms: [TREATMENT],
@@ -91,7 +91,7 @@ describe("consent review model — the partition", () => {
     expect(m.history[0].form.response).toBe("accepted");
   });
 
-  it("the current photo answer is the PORTAL one — Chloe's 3:56 Accept / 3:57 Deny case", () => {
+  it("the current photo answer is the PORTAL one, Chloe's 3:56 Accept / 3:57 Deny case", () => {
     const m = buildConsentReviewModel({
       intakeForms: [photoIntake({ response: "accepted" })],
       portalPhotos: [portalPhoto({ state: "denied" })],
@@ -104,7 +104,7 @@ describe("consent review model — the partition", () => {
   });
 });
 
-describe("consent review model — supersession is PROVEN, never assumed", () => {
+describe("consent review model: supersession is PROVEN, never assumed", () => {
   it("same template_id + a demonstrably newer portal answer = superseded", () => {
     const m = buildConsentReviewModel({
       intakeForms: [photoIntake()],
@@ -113,7 +113,7 @@ describe("consent review model — supersession is PROVEN, never assumed", () =>
     expect(m.history[0].provenance).toBe("superseded_by_portal");
   });
 
-  it("a DIFFERENT template_id never supersedes — that would be a fabricated claim", () => {
+  it("a DIFFERENT template_id never supersedes, that would be a fabricated claim", () => {
     // A different template id is a different consent question. Editing a
     // template versions it IN PLACE (update ... set version = version + 1
     // where id = $id), so a new id is genuinely a new form, not a new version.
@@ -132,7 +132,7 @@ describe("consent review model — supersession is PROVEN, never assumed", () =>
     expect(m.history[0].provenance).toBe("no_longer_collected");
   });
 
-  it("when the intake record has no timestamp, order is NOT provable — weaker claim", () => {
+  it("when the intake record has no timestamp, order is NOT provable, weaker claim", () => {
     const m = buildConsentReviewModel({
       intakeForms: [photoIntake({ respondedAtIso: null })],
       portalPhotos: [portalPhoto()],
@@ -156,7 +156,7 @@ describe("consent review model — supersession is PROVEN, never assumed", () =>
   });
 });
 
-describe("consent review model — multiple live photo templates (#545, preserved)", () => {
+describe("consent review model: multiple live photo templates (#545, preserved)", () => {
   it("two live templates stay two independent current answers", () => {
     const a = portalPhoto({ templateId: "tmpl-doc", state: "denied" });
     const b = portalPhoto({ templateId: "tmpl-mkt", state: "granted" });
@@ -185,7 +185,7 @@ describe("consent review model — multiple live photo templates (#545, preserve
   });
 });
 
-describe("consent review model — nothing is ever destroyed", () => {
+describe("consent review model: nothing is ever destroyed", () => {
   it("every stored intake form appears exactly once, in exactly one section", () => {
     const forms = [
       TREATMENT,

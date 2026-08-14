@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Quick checkout — contract + security + reuse guards. The behaviour of the
+// Quick checkout: contract + security + reuse guards. The behaviour of the
 // underlying payment path is already covered by the session-payment action/UI
 // tests; these lock that quick checkout is a THIN caller that (a) reuses the
 // existing eligibility + actions unchanged, (b) trusts no client-supplied
@@ -21,7 +21,7 @@ describe("resolver reuses the existing eligibility + amount path (no duplicated 
   it("delegates to getSessionPaymentEligibility + the SHARED authoritative loader", () => {
     expect(RESOLVER).toMatch(/getSessionPaymentEligibility\(\{/);
     // Parity by construction: quick checkout calls the SAME trusted loader the
-    // session-detail page and the prepare action use — no second algorithm.
+    // session-detail page and the prepare action use, no second algorithm.
     expect(RESOLVER).toMatch(/getAuthoritativeSessionPaymentAmount\(/);
     expect(RESOLVER).not.toMatch(/resolveSessionPaymentDefault/);
     expect(RESOLVER).not.toMatch(/resolveAuthoritativeSessionPaymentAmount\(/);
@@ -35,7 +35,7 @@ describe("resolver reuses the existing eligibility + amount path (no duplicated 
     expect(RESOLVER).toMatch(/\.eq\("id", args\.appointmentId\)/);
     expect(RESOLVER).toMatch(/Appointment not found in this studio/);
   });
-  it("never charges, writes, or mutates — read-only resolution", () => {
+  it("never charges, writes, or mutates, read-only resolution", () => {
     expect(RESOLVER).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
     expect(RESOLVER).not.toMatch(/@stripe\/|paymentIntents\.|charges\.|refunds\./);
   });

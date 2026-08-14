@@ -11,7 +11,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// F-CLIN-004 — intake review integrity, proven in a real browser against the
+// F-CLIN-004: intake review integrity, proven in a real browser against the
 // real local database.
 //
 // DATABASE STATE IS THE ORACLE. Every assertion that matters reads the
@@ -21,7 +21,7 @@ import { loginAsOwner } from "./helpers/flows";
 //
 // SCOPE. This proves the APPLICATION and UI path. On THIS branch the local lane
 // runs with migration 0162 in the chain, so the database boundary is also
-// closed for the database these tests execute against — proven directly by
+// closed for the database these tests execute against, proven directly by
 // tests/db/intake-review-db-boundary.db.test.ts, not here.
 //
 // What remains open is PRODUCTION: hosted migration max is still 0161, so 0162
@@ -121,7 +121,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
   });
 
   // -------------------------------------------------------------------------
-  // B. Submitted intake — confirmation required, Cancel writes nothing
+  // B. Submitted intake, confirmation required, Cancel writes nothing
   // -------------------------------------------------------------------------
   test("B. submitted: confirmation required, Cancel/Esc write nothing, Confirm transitions once and is reload-durable", async ({
     page,
@@ -194,7 +194,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     expect(reviewed?.reviewed_at).not.toBeNull();
     expect(reviewed?.submitted_at).not.toBeNull();
 
-    // Reload: still Reviewed, still no second review button — not a toast.
+    // Reload: still Reviewed, still no second review button, not a toast.
     await page.reload();
     await expect(page.getByTestId("intake-reviewed-state")).toBeVisible();
     await expect(page.getByTestId("intake-mark-reviewed")).toHaveCount(0);
@@ -250,7 +250,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     // THE FORGERY. Rewrite the intake id inside the in-flight server-action
     // request body, so the action receives intake_id = the VICTIM's row while
     // client_id remains the DISPLAYED client. This is a genuine forged request
-    // carrying the practitioner's real session — not a simulated one.
+    // carrying the practitioner's real session, not a simulated one.
     let forged = false;
     await page.route("**/*", async (route) => {
       const req = route.request();
@@ -273,7 +273,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     await page.getByTestId("intake-mark-reviewed").click();
     await page.getByTestId("confirm-dialog-confirm").click();
 
-    // The forged request must produce the SAFE, generic failure — never a
+    // The forged request must produce the SAFE, generic failure, never a
     // misleading success.
     await expect(page.getByTestId("intake-review-error")).toHaveText(SAFE_FAILURE);
     await page.unroute("**/*");
@@ -289,7 +289,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     expect(victimRow?.reviewed_at).toBeNull();
     expect(victimRow?.reviewed_by).toBeNull();
 
-    // ORACLE: the DISPLAYED intake is untouched too — the action did not fall
+    // ORACLE: the DISPLAYED intake is untouched too, the action did not fall
     // back to the route's own row.
     const displayedRow = await getIntakeRow(displayedIntake);
     expect(displayedRow?.status).toBe("submitted");
@@ -318,7 +318,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     expect(stamped?.status).toBe("reviewed");
 
     // The stale tab still shows the CTA. Confirming must fail safely.
-    // NOTE: we do not assert the pre-refresh wording here — the failure path
+    // NOTE: we do not assert the pre-refresh wording here, the failure path
     // immediately calls router.refresh(), so the copy legitimately settles to
     // ALREADY_REVIEWED below. Asserting the transient string would be a race.
     await page.getByTestId("intake-mark-reviewed").click();
@@ -355,7 +355,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     await loginAsOwner(page, seed);
 
     // Two tabs in the SAME authenticated context, both rendered while the row
-    // is still submitted — the real "two devices, one intake" race.
+    // is still submitted, the real "two devices, one intake" race.
     const tabA = page;
     const tabB = await context.newPage();
     await tabA.setViewportSize(MOBILE);
@@ -383,7 +383,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     //
     // CLASSIFY BY THE ERROR MARKER, NOT THE REVIEWED MARKER. The losing tab
     // calls router.refresh() after its safe failure, so it settles onto the
-    // durable Reviewed state too — within a moment BOTH tabs carry
+    // durable Reviewed state too, within a moment BOTH tabs carry
     // `intake-reviewed-state`, and classifying on that marker is a race that
     // would intermittently score the loser as a second "success". The error
     // marker is the only true discriminator: the winner never sets it, and on
@@ -399,7 +399,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     expect(outcomes.filter((o) => o === "success")).toHaveLength(1);
     expect(outcomes.filter((o) => o === "failure")).toHaveLength(1);
 
-    // The failing tab shows one of the two SAFE strings — never a provider or
+    // The failing tab shows one of the two SAFE strings, never a provider or
     // Postgres error. Which one depends on whether its router.refresh() has
     // already settled the status to reviewed, so accept either and assert the
     // absence of provider detail explicitly.
@@ -418,7 +418,7 @@ test.describe("F-CLIN-004 intake review integrity", () => {
     expect(row?.reviewed_at).not.toBeNull();
     expect(row?.reviewed_by).not.toBeNull();
 
-    // Attribution is stable — the loser did not rewrite the winner's stamp.
+    // Attribution is stable: the loser did not rewrite the winner's stamp.
     const firstAt = row?.reviewed_at;
     const firstBy = row?.reviewed_by;
     await tabA.reload();

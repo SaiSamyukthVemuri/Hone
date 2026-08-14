@@ -1,20 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ===========================================================================
-// 0171 AMENDMENT — behavioural proof of the two invariants that protect the
+// 0171 AMENDMENT, behavioural proof of the two invariants that protect the
 // client's replacement management credential.
 // ===========================================================================
 //
-// INVARIANT 1 — HONE DOES NOT COMMIT A RESCHEDULE IT CANNOT DELIVER THE
+// INVARIANT 1, HONE DOES NOT COMMIT A RESCHEDULE IT CANNOT DELIVER THE
 // CREDENTIAL FOR. The successor's raw token is a one-time in-memory secret:
 // only its SHA-256 is persisted, the old token is never reused, and nothing can
 // regenerate it after the commit. The command re-verifies the client itself, so
-// a failed application-side client lookup would NOT stop the mutation — it
+// a failed application-side client lookup would NOT stop the mutation, it
 // would commit, skip the email (gated on the client's address) and drop the
 // token when the action returned. So the action refuses BEFORE minting the
 // token or calling the command.
 //
-// INVARIANT 2 — ONCE COMMITTED, NOTHING MAY REPORT FAILURE. Every post-commit
+// INVARIANT 2, ONCE COMMITTED, NOTHING MAY REPORT FAILURE. Every post-commit
 // read, provider call and bookkeeping write lives inside one fail-soft
 // boundary. An exception escaping to the framework would surface a successful
 // reschedule as a failure.
@@ -254,7 +254,7 @@ beforeEach(() => {
 
 // ===========================================================================
 
-describe("0171 — the reschedule does not commit without a deliverable credential", () => {
+describe("0171: the reschedule does not commit without a deliverable credential", () => {
   it("REFUSES before the command when the client lookup errors", async () => {
     scenario.clientLookupError = { code: "57014", message: "canceling statement" };
     const r = await rescheduleAppointmentViaTokenAction(form());
@@ -322,7 +322,7 @@ describe("0171 — the reschedule does not commit without a deliverable credenti
 
 // ===========================================================================
 
-describe("0171 — once committed, no post-commit failure may report failure", () => {
+describe("0171: once committed, no post-commit failure may report failure", () => {
   it.each([
     ["practitioner metadata lookup throws", "practitionerThrows"],
     ["service metadata lookup throws", "serviceThrows"],
@@ -369,7 +369,7 @@ describe("0171 — once committed, no post-commit failure may report failure", (
 
 // ===========================================================================
 
-describe("0171 — malformed command success rows", () => {
+describe("0171: malformed command success rows", () => {
   it.each([
     "new_appointment_id",
     "studio_id",
@@ -411,7 +411,7 @@ describe("0171 — malformed command success rows", () => {
 
 // ===========================================================================
 
-describe("0171 — refusal codes still map before any side effect", () => {
+describe("0171: refusal codes still map before any side effect", () => {
   it.each([
     ["appointment_not_found", "This reschedule link can't be used right now."],
     ["appointment_not_reschedulable", "This reschedule link can't be used right now."],
@@ -435,7 +435,7 @@ describe("0171 — refusal codes still map before any side effect", () => {
 });
 
 // ===========================================================================
-// 0171 AMENDMENT — the successful result must carry a usable management path.
+// 0171 AMENDMENT, the successful result must carry a usable management path.
 // ===========================================================================
 //
 // The email is not a reliable carrier: it can be switched off, it can be
@@ -444,7 +444,7 @@ describe("0171 — refusal codes still map before any side effect", () => {
 // authorised by the ORIGINAL token, so the success response itself carries the
 // URL.
 
-describe("0171 — the success result always carries a management path", () => {
+describe("0171: the success result always carries a management path", () => {
   it("provider succeeds: status 'sent', manage URL returned, email uses the same token", async () => {
     const r = await rescheduleAppointmentViaTokenAction(form());
     expect(r.ok).toBe(true);
@@ -501,10 +501,10 @@ describe("0171 — the success result always carries a management path", () => {
   });
 });
 
-describe("0171 — optional failures cannot suppress the confirmation", () => {
+describe("0171: optional failures cannot suppress the confirmation", () => {
   // The regression these close: ONE shared try meant an optional practitioner
-  // lookup jumped straight to the catch and the client's email — the carrier of
-  // their management credential — was never attempted at all.
+  // lookup jumped straight to the catch and the client's email, the carrier of
+  // their management credential, was never attempted at all.
   it.each([
     ["practitioner lookup", "practitionerThrows"],
     ["service lookup", "serviceThrows"],
@@ -515,7 +515,7 @@ describe("0171 — optional failures cannot suppress the confirmation", () => {
     (scenario as Record<string, unknown>)[flag] = true;
     const r = await rescheduleAppointmentViaTokenAction(form());
     expect(r.ok).toBe(true);
-    // Not merely ok:true with zero email attempts — the email really ran.
+    // Not merely ok:true with zero email attempts, the email really ran.
     expect(sentEmails).toHaveLength(1);
     if (!r.ok) return;
     expect(r.confirmationEmailStatus).toBe("sent");
@@ -546,13 +546,13 @@ describe("0171 — optional failures cannot suppress the confirmation", () => {
   });
 });
 
-describe("0171 — SMS is independent of the email toggle", () => {
+describe("0171: SMS is independent of the email toggle", () => {
   it("SMS is still attempted when confirmation emails are DISABLED", async () => {
     scenario.studioRow = { ...scenario.studioRow, send_confirmation_emails: false };
     await rescheduleAppointmentViaTokenAction(form());
     expect(sentEmails).toHaveLength(0);
     // The SMS helper owns its own toggle/consent/opt-out gates, so it must be
-    // CALLED and allowed to decide — it used to be nested under the email
+    // CALLED and allowed to decide, it used to be nested under the email
     // block and skipped entirely.
     expect(smsCalls).toHaveLength(1);
     expect(smsCalls[0].manageUrl).toBe("https://hone.test/manage/RAW-SUCCESSOR-TOKEN");
@@ -565,7 +565,7 @@ describe("0171 — SMS is independent of the email toggle", () => {
   });
 });
 
-describe("0171 — origin resolution is a PRE-command gate", () => {
+describe("0171: origin resolution is a PRE-command gate", () => {
   it("refuses before the RPC when the app origin cannot be resolved", async () => {
     scenario.originThrows = true;
     const r = await rescheduleAppointmentViaTokenAction(form());
@@ -578,7 +578,7 @@ describe("0171 — origin resolution is a PRE-command gate", () => {
   });
 });
 
-describe("0171 — the raw token never reaches a log", () => {
+describe("0171: the raw token never reaches a log", () => {
   it("no logged line contains the raw successor token, in any failure mode", async () => {
     const logged: string[] = [];
     const spy = vi.spyOn(console, "error").mockImplementation((...args) => {

@@ -38,7 +38,7 @@ const FEE_ACTION = readFileSync(FEE_ACTION_PATH, "utf8");
 
 // PR #296: refund initiation is studio-owner-only. Both action callers
 // gate on role === "owner", AND the shared helper re-checks it (defense in
-// depth) before any claim/refund — so a future helper caller cannot bypass
+// depth) before any claim/refund, so a future helper caller cannot bypass
 // owner-only. Denial logging carries safe IDs only (no client PII).
 describe("refund owner-only gate (PR #296)", () => {
   it("both action callers gate on role === 'owner' before calling the helper", () => {
@@ -83,7 +83,7 @@ describe("refund owner-only gate (PR #296)", () => {
     expect(count).toBe(1);
   });
 
-  it("non-owner denial logging carries safe IDs only — no client PII", () => {
+  it("non-owner denial logging carries safe IDs only, no client PII", () => {
     for (const [src, event] of [
       [HELPER, "payment_refund_helper_not_owner"],
       [ACTION, "payment_refund_denied_not_owner"],

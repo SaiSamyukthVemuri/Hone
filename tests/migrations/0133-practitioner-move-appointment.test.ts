@@ -11,7 +11,7 @@ const SQL = readFileSync(
 );
 const ARGS = "\\(uuid, uuid, uuid, timestamptz, timestamptz, timestamptz\\)";
 
-describe("0133 — practitioner_move_appointment RPC", () => {
+describe("0133: practitioner_move_appointment RPC", () => {
   it("is a SECURITY DEFINER function with a pinned search_path", () => {
     expect(SQL).toMatch(/create or replace function public\.practitioner_move_appointment/);
     expect(SQL).toMatch(/language plpgsql/);
@@ -74,7 +74,7 @@ describe("0133 — practitioner_move_appointment RPC", () => {
     expect(SQL).toMatch(/'new_starts_at', p_new_starts_at/);
   });
 
-  it("does NOT catch 23P01 (no exception handler — exclusion violations roll back to the server adapter)", () => {
+  it("does NOT catch 23P01 (no exception handler, exclusion violations roll back to the server adapter)", () => {
     // The RPC body must contain no exception handler at all; comments may reference
     // 23P01 for documentation, so only the actual `exception when` clause is forbidden.
     expect(SQL).not.toMatch(/\bexception\s+when\b/i);

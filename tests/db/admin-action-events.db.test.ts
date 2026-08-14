@@ -28,7 +28,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("admin_action_events — service-role-only, append-only", () => {
+describe("admin_action_events: service-role-only, append-only", () => {
   it("service-role insert persisted the event", async () => {
     const { rows } = await adminQuery(
       `select action, outcome from public.admin_action_events where studio_id = $1`,

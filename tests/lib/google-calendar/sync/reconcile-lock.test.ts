@@ -7,7 +7,7 @@ import {
   type LockRedis,
 } from "@/lib/google-calendar/sync/reconcile-lock";
 
-// Phase B2.3-b — the per-studio reconciliation lock + the route coordinator. The
+// Phase B2.3-b: the per-studio reconciliation lock + the route coordinator. The
 // critical property is FAIL-CLOSED: with no backend (or a throwing one) acquire must
 // report 'unavailable' so the caller never sweeps unlocked. Release/renew/cursor are
 // ownership-token guarded (compare-token).
@@ -91,7 +91,7 @@ describe("renew (compare-token PEXPIRE)", () => {
   });
 });
 
-describe("coordinator — global lock + durable studio cursor", () => {
+describe("coordinator: global lock + durable studio cursor", () => {
   it("acquire: OK -> token; already held -> 'held'; no backend -> 'unavailable'", async () => {
     expect(await createReconcileCoordinator(okRedis(), { newToken: () => "ct" }).acquire()).toEqual({ ok: true, token: "ct" });
     expect(await createReconcileCoordinator(okRedis({ set: vi.fn(async () => null) })).acquire()).toEqual({ ok: false, reason: "held" });
@@ -126,7 +126,7 @@ describe("coordinator — global lock + durable studio cursor", () => {
     await dead.writeCursor("dt", "studio-7");
     const cursorCall = (redis.eval as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(cursorCall[1]).toEqual([RECONCILE_DEAD_ALERT_LOCK_KEY, RECONCILE_DEAD_ALERT_CURSOR_KEY]);
-    // The two namespaces are distinct — no collision with the main coordinator.
+    // The two namespaces are distinct, no collision with the main coordinator.
     expect(RECONCILE_DEAD_ALERT_LOCK_KEY).not.toBe("gcal_reconcile:coordinator:lock");
     expect(RECONCILE_DEAD_ALERT_CURSOR_KEY).not.toBe("gcal_reconcile:studio_cursor");
   });

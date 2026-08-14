@@ -1,11 +1,11 @@
-// START_SESSION — REAL TWO-CONNECTION CONCURRENCY (0181).
+// START_SESSION: REAL TWO-CONNECTION CONCURRENCY (0181).
 //
 // 0167 asserted, in a comment carried into 0181, that
 // "FOR UPDATE closes the read-then-insert race that could produce two sessions
 // for one visit". That is only true when the coalesce window ALREADY CONTAINS a
 // row: `for update` locks rows, and an EMPTY result set locks nothing. Two
 // overlapping FIRST taps therefore both observed an empty window and both
-// inserted, and no unique constraint stops them — the guarantee failed in
+// inserted, and no unique constraint stops them, the guarantee failed in
 // exactly the double-tap case coalescing exists to prevent.
 //
 // Raised by Codex on PR #573, which also correctly noted that the sequential
@@ -89,7 +89,7 @@ async function purge(clientId: string): Promise<void> {
   await adminQuery(`delete from public.sessions where client_id=$1`, [clientId]);
 }
 
-describe("start_session — overlapping first taps (empty coalesce window)", () => {
+describe("start_session: overlapping first taps (empty coalesce window)", () => {
   it("two RACING starts for one visit produce exactly ONE session, no deadlock", async () => {
     await purge(B.clientId);
     const { settled, count } = await withTwoUserClients(sharedUser, async (ca, cb) => {
@@ -110,7 +110,7 @@ describe("start_session — overlapping first taps (empty coalesce window)", () 
     // THE ASSERTION. Before the advisory lock this was 2.
     expect(count).toBe(1);
 
-    // Both callers must have been handed the SAME session id — one visit.
+    // Both callers must have been handed the SAME session id, one visit.
     const ids = (settled as PromiseFulfilledResult<{ rows: { session_id: string }[] }>[]).map(
       (r) => r.value.rows[0].session_id,
     );
@@ -141,7 +141,7 @@ describe("start_session — overlapping first taps (empty coalesce window)", () 
     );
     expect(settled.every((r) => r.status === "fulfilled")).toBe(true);
     // The lock is keyed on the coalesce identity, so two different visits are
-    // independent — one session each, never merged, never serialized away.
+    // independent, one session each, never merged, never serialized away.
     expect(aCount).toBe(1);
     expect(bCount).toBe(1);
 

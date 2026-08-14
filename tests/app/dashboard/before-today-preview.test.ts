@@ -116,7 +116,7 @@ describe("placement + reuse", () => {
     expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.client_id\)/);
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
     expect(PAGE).toMatch(/Before today/);
-    // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
+    // Chloe dashboard-memory fix: the Remember note is rendered WHOLE, the
     // 70-char cap is gone. Full-visibility is pinned in its own suite
     // (tests/app/dashboard/dashboard-memory-visibility.test.ts).
     expect(PAGE).toMatch(/Remember: \{workflow\.remember\}/);
@@ -148,8 +148,8 @@ describe("placement + reuse", () => {
   });
 
   it("batched: four bounded reads for the roster, never per-appointment", () => {
-    // sessions, session_blocks, clients, and (migration 0128) session_block_areas
-    // — each ONE bounded query over the whole roster, never a per-appointment or
+    // sessions, session_blocks, clients, and (migration 0128) session_block_areas,
+    // each ONE bounded query over the whole roster, never a per-appointment or
     // per-session read (no N+1). The areas read is keyed by the loaded block ids.
     expect(PREVIEWS.match(/\.from\(/g)?.length).toBe(4);
     expect(PREVIEWS).toMatch(/\.in\("client_id", ids\)/);

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR B Part 4 — the internal booking action routes through the canonical
+// PR B Part 4: the internal booking action routes through the canonical
 // command and never self-assigns or leaks raw DB text.
 
 const ACTIONS = readFileSync(
@@ -10,10 +10,10 @@ const ACTIONS = readFileSync(
   "utf8",
 );
 
-describe("bookAppointmentForClientAction — canonical command wiring", () => {
+describe("bookAppointmentForClientAction: canonical command wiring", () => {
   it("calls the v2 command via the admin (service_role) client with authoritative duration", () => {
     expect(ACTIONS).toMatch(/createAdminClient\(\)/);
-    // Item 2: v2 derives the duration from the locked service row — no caller
+    // Item 2: v2 derives the duration from the locked service row, no caller
     // p_duration_minutes; an owner-only override + availability bypass instead.
     expect(ACTIONS).toMatch(/\.rpc\(\s*"create_internal_appointment_v2"/);
     expect(ACTIONS).not.toMatch(/p_duration_minutes:/);

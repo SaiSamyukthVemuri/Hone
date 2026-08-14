@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-// Migration 0163 — remove the `authenticated` INSERT capability on
+// Migration 0163: remove the `authenticated` INSERT capability on
 // client_intake_forms, closing the residual 0162 explicitly did NOT close:
 // 0162's guard is a BEFORE UPDATE trigger, so a member could skip the
 // transition entirely and INSERT a row already `status='reviewed'`.
@@ -9,7 +9,7 @@ import { join } from "node:path";
 // This file carries the REPO migration-max pin (it moved off the 0162 test when
 // 0163 landed, exactly as it moved 0161 -> 0162 before that). 0163 is NOT
 // applied, so unlike 0159/0160/0161/0162 it is deliberately NOT
-// checksum-frozen — it may still be revised until it is applied.
+// checksum-frozen, it may still be revised until it is applied.
 //
 // Behavioural proof lives in tests/db/intake-insert-boundary.db.test.ts, which
 // runs against a real migrated database.
@@ -27,7 +27,7 @@ const CODE = SQL.split("\n")
   .join("\n");
 const FLAT_CODE = CODE.replace(/\s+/g, " ");
 
-describe("0163 — intake INSERT boundary (repo migration-max tripwire)", () => {
+describe("0163: intake INSERT boundary (repo migration-max tripwire)", () => {
   it("is present, 0162 precedes it, exactly one 0163, and it is the repo max", () => {
     expect(FILE).toMatch(/^0163_.*\.sql$/);
     const files = readdirSync(MIG_DIR);
@@ -49,7 +49,7 @@ describe("0163 — intake INSERT boundary (repo migration-max tripwire)", () => 
   });
 });
 
-describe("0163 — transactional with an armed lock_timeout", () => {
+describe("0163: transactional with an armed lock_timeout", () => {
   it("opens its own transaction and commits exactly once", () => {
     expect(FLAT_CODE).toMatch(/\bbegin\s*;/i);
     expect(FLAT_CODE).toMatch(/\bcommit\s*;/i);
@@ -74,7 +74,7 @@ describe("0163 — transactional with an armed lock_timeout", () => {
   });
 });
 
-describe("0163 — removes the INSERT capability on both halves", () => {
+describe("0163: removes the INSERT capability on both halves", () => {
   it("drops the dedicated member INSERT policy", () => {
     expect(FLAT_CODE).toMatch(
       /drop policy if exists client_intake_forms_member_insert on public\.client_intake_forms/i,
@@ -102,7 +102,7 @@ describe("0163 — removes the INSERT capability on both halves", () => {
   });
 });
 
-describe("0163 — preserves everything it must not touch", () => {
+describe("0163: preserves everything it must not touch", () => {
   it("does NOT drop or alter the SELECT or UPDATE policies", () => {
     expect(FLAT_CODE).not.toMatch(/drop policy[^;]*client_intake_forms_member_select/i);
     expect(FLAT_CODE).not.toMatch(/drop policy[^;]*client_intake_forms_member_update/i);
@@ -137,7 +137,7 @@ describe("0163 — preserves everything it must not touch", () => {
   });
 });
 
-describe("0163 — states its scope honestly", () => {
+describe("0163: states its scope honestly", () => {
   it("names both legitimate service-role INSERT writers", () => {
     expect(PROSE).toMatch(/ensureIntakeForClient/);
     expect(PROSE).toMatch(/createIntakeRequestForClient/);

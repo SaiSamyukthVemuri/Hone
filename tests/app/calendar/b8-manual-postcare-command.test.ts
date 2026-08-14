@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-// B8 / 0177 — sendPostcareEmailAction, BEHAVIOURALLY.
+// B8 / 0177: sendPostcareEmailAction, BEHAVIOURALLY.
 //
 // tests/app/calendar/postcare-send-state.test.ts is a SOURCE-CONTRACT suite: it
 // reads the action's text. This one runs the real exported action against a
@@ -9,7 +9,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 // TWO FAKES, DELIBERATELY. The default admin THROWS on any direct
 // `.update()/.insert()/.delete()` of appointments, so a reintroduced writer
 // fails loudly. The deployment-skew fake instead lets a direct UPDATE SUCCEED
-// and counts it — because a fake that always throws cannot distinguish "the
+// and counts it, because a fake that always throws cannot distinguish "the
 // application never attempted a fallback" from "it attempted one and the fake
 // killed it", and that distinction is the entire point of the skew proof.
 
@@ -23,7 +23,7 @@ type RpcCall = { fn: string; args: Record<string, unknown> };
 const state: {
   // ONE ORDERED TRANSCRIPT. The per-kind arrays below prove WHAT was called and
   // with which arguments; they cannot prove the provider ran BETWEEN the claim
-  // and the settlement — two separate arrays each in order are consistent with
+  // and the settlement, two separate arrays each in order are consistent with
   // provider-then-claim-then-settle. This records every orchestration step in a
   // single sequence so the ordering itself is assertable.
   events: string[];
@@ -175,8 +175,8 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-describe("B8 manual — the governed happy path", () => {
-  it("B — claim, provider, settle, in that order, exactly once each", async () => {
+describe("B8 manual: the governed happy path", () => {
+  it("B: claim, provider, settle, in that order, exactly once each", async () => {
     const res = await sendPostcareEmailAction(fd());
 
     expect(res.ok, JSON.stringify(res)).toBe(true);
@@ -197,16 +197,16 @@ describe("B8 manual — the governed happy path", () => {
     });
   });
 
-  it("TOKEN IDENTITY — settle receives the claim's value with strict equality", async () => {
+  it("TOKEN IDENTITY: settle receives the claim's value with strict equality", async () => {
     await sendPostcareEmailAction(fd());
-    // Not "a date equal to it" — the SAME string. A Date round trip here would
+    // Not "a date equal to it", the SAME string. A Date round trip here would
     // round microseconds away and settlement would miss its own claim.
     expect(settles()[0].args.p_claimed_at).toBe(CLAIM_TOKEN);
     expect(typeof settles()[0].args.p_claimed_at).toBe("string");
     expect(settles()[0].args.p_success).toBe(true);
   });
 
-  it("G — a resend claims with p_is_resend true", async () => {
+  it("G: a resend claims with p_is_resend true", async () => {
     state.row = appointmentRow({ postcare_email_sent_at: "2026-08-01T10:00:00.000Z" });
     await sendPostcareEmailAction(fd({ is_resend: "true" }));
     expect(claims()[0].args.p_is_resend).toBe(true);
@@ -214,13 +214,13 @@ describe("B8 manual — the governed happy path", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("B8 manual — refusals never reach the provider", () => {
+describe("B8 manual: refusals never reach the provider", () => {
   it.each([
     ["A already_claimed", "already_claimed"],
     ["J2 not_completed", "not_completed"],
     ["not_authorized", "not_authorized"],
     ["already_sent", "already_sent"],
-  ])("%s — provider and settle are never called", async (_label, result) => {
+  ])("%s: provider and settle are never called", async (_label, result) => {
     state.claim = { data: [{ result, claimed_at: null }], error: null };
 
     const res = await sendPostcareEmailAction(fd());
@@ -232,7 +232,7 @@ describe("B8 manual — refusals never reach the provider", () => {
     expect(state.directDml).toEqual([]);
   });
 
-  it("J2 — the not-completed copy tells the practitioner what to do", async () => {
+  it("J2: the not-completed copy tells the practitioner what to do", async () => {
     state.claim = { data: [{ result: "not_completed", claimed_at: null }], error: null };
     const res = await sendPostcareEmailAction(fd());
     expect(res.ok).toBe(false);
@@ -241,8 +241,8 @@ describe("B8 manual — refusals never reach the provider", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("B8 manual — provider failure settles honestly", () => {
-  it.each([true, false])("C — retryable=%s is forwarded exactly", async (retryable) => {
+describe("B8 manual: provider failure settles honestly", () => {
+  it.each([true, false])("C: retryable=%s is forwarded exactly", async (retryable) => {
     state.providerResult = { ok: false, retryable, error: "smtp said no: user@host" };
 
     const res = await sendPostcareEmailAction(fd());
@@ -256,7 +256,7 @@ describe("B8 manual — provider failure settles honestly", () => {
       p_success: false,
       p_retryable: retryable,
     });
-    // No provider payload crosses the boundary — the safe copy is derived in
+    // No provider payload crosses the boundary, the safe copy is derived in
     // SQL from the boolean alone.
     const serialized = JSON.stringify(settles()[0].args);
     expect(serialized).not.toMatch(/smtp said no|user@host/);
@@ -264,11 +264,11 @@ describe("B8 manual — provider failure settles honestly", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("B8 manual — provider truth is not persisted truth", () => {
+describe("B8 manual: provider truth is not persisted truth", () => {
   it.each([
     ["D settle RPC error", { data: null, error: { code: "57014", message: "canceled" } }],
     ["E stale_claim", { data: [{ result: "stale_claim" }], error: null }],
-  ])("%s — never ordinary success", async (_label, settle) => {
+  ])("%s: never ordinary success", async (_label, settle) => {
     state.settle = settle as never;
 
     const res = await sendPostcareEmailAction(fd());
@@ -279,10 +279,10 @@ describe("B8 manual — provider truth is not persisted truth", () => {
     if (res.ok === false) {
       expect(res.code).toBe("provider_sent_status_unrecorded");
       expect(res.error).toMatch(/accepted the message/i);
-      // Must not invite an immediate retry — that would duplicate a real email.
+      // Must not invite an immediate retry, that would duplicate a real email.
       expect(res.error).not.toMatch(/try again now|resend now/i);
     }
-    // Exactly one send, one settlement attempt, and NOTHING after it — no
+    // Exactly one send, one settlement attempt, and NOTHING after it, no
     // retry, no second settlement under a new token, no direct repair.
     expect(state.events).toEqual(["claim", "provider", "settle"]);
     expect(state.provider).toHaveLength(1);
@@ -290,7 +290,7 @@ describe("B8 manual — provider truth is not persisted truth", () => {
     expect(state.directDml).toEqual([]);
   });
 
-  it("F — provider failure whose settlement also fails fabricates nothing", async () => {
+  it("F: provider failure whose settlement also fails fabricates nothing", async () => {
     state.providerResult = { ok: false, retryable: true, error: "boom" };
     state.settle = { data: null, error: { code: "57014" } };
 
@@ -305,8 +305,8 @@ describe("B8 manual — provider truth is not persisted truth", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("B8 manual — eligibility gates run BEFORE any claim", () => {
-  it("H — a consultation without treatment attestation never claims", async () => {
+describe("B8 manual: eligibility gates run BEFORE any claim", () => {
+  it("H: a consultation without treatment attestation never claims", async () => {
     state.row = appointmentRow({
       service: { id: "svc-1", name: "Consultation", modality: "consultation" },
     });
@@ -317,7 +317,7 @@ describe("B8 manual — eligibility gates run BEFORE any claim", () => {
     expect(state.provider).toHaveLength(0);
   });
 
-  it("H — the same consultation WITH attestation proceeds", async () => {
+  it("H: the same consultation WITH attestation proceeds", async () => {
     // Non-vacuity: proves the previous case failed for the attestation and not
     // for some unrelated reason in the fixture.
     state.row = appointmentRow({
@@ -330,7 +330,7 @@ describe("B8 manual — eligibility gates run BEFORE any claim", () => {
     expect(claims()).toHaveLength(1);
   });
 
-  it("I — a client with no email never claims", async () => {
+  it("I: a client with no email never claims", async () => {
     state.row = appointmentRow({
       client: { id: "client-1", name: "Client", email: null },
     });
@@ -341,7 +341,7 @@ describe("B8 manual — eligibility gates run BEFORE any claim", () => {
     expect(state.provider).toHaveLength(0);
   });
 
-  it("J — unconfigured postcare never claims", async () => {
+  it("J: unconfigured postcare never claims", async () => {
     const row = appointmentRow();
     (row.studio as Record<string, unknown>).postcare_aftercare_text = "   ";
     state.row = row;
@@ -354,7 +354,7 @@ describe("B8 manual — eligibility gates run BEFORE any claim", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("B8 deployment skew — STATE A: new app, old (0176) database", () => {
+describe("B8 deployment skew, STATE A: new app, old (0176) database", () => {
   it("a missing command fails closed and attempts NO direct-DML fallback", async () => {
     // THE LOAD-BEARING SETUP: direct DML is allowed to SUCCEED here. If the
     // fake threw instead, "never attempted a fallback" and "attempted one that

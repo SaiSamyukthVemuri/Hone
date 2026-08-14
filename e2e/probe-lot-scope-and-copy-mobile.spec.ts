@@ -20,7 +20,7 @@ import { loginAsOwner } from "./helpers/flows";
 //
 //  2. "Copy settings from another area" copied the probe but NOT its lot, so
 //     the auto-fill resolver immediately filled the copied probe's lot from
-//     unrelated charting history — silently swapping a traceability value the
+//     unrelated charting history, silently swapping a traceability value the
 //     practitioner believed she had copied.
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -180,7 +180,7 @@ test("copy settings carries the EXACT lot + link, and never lets history overwri
 }) => {
   const seed = await seedE2eStudio();
   // Charted history for F4 that would WIN the resolver if the copy left the lot
-  // blank — this is what used to silently replace the copied value.
+  // blank, this is what used to silently replace the copied value.
   const prior = await seedE2eDraftElectrolysisSession(seed);
   await seedE2eChartedProbeLot(seed, prior.sessionId, {
     lotNumber: "HISTORY-SHOULD-NOT-WIN",
@@ -217,7 +217,7 @@ test("copy settings carries the EXACT lot + link, and never lets history overwri
     await expect(page.getByTestId("probe-lot-input")).toHaveValue("INV-F4", {
       timeout: T,
     });
-    // NOT the history lot — that is the exact swap this fixes.
+    // NOT the history lot: that is the exact swap this fixes.
     await expect(page.getByTestId("probe-lot-input")).not.toHaveValue(
       "HISTORY-SHOULD-NOT-WIN",
     );

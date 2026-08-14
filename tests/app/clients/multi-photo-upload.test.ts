@@ -4,7 +4,7 @@ import path from "node:path";
 import { validateTreatmentImageUpload } from "@/lib/images/treatment-images";
 
 // Multi-file treatment-photo upload. The security-critical SERVER action is
-// UNCHANGED — the UI calls it once per file, so every file is independently
+// UNCHANGED, the UI calls it once per file, so every file is independently
 // validated, EXIF-stripped, and studio/client/context scoped. vitest env is
 // "node" (no DOM) → the UI loop is verified by source pins; the per-file
 // validation is unit-tested against the reused validator.
@@ -71,7 +71,7 @@ describe("security invariants preserved (server action UNCHANGED)", () => {
     expect(ACTION).toMatch(/treatment_images/);
     expect(ACTION).toMatch(/insert/);
   });
-  it("the action is single-file (get, not getAll) — the UI loops it per file", () => {
+  it("the action is single-file (get, not getAll), the UI loops it per file", () => {
     expect(ACTION).toMatch(/formData\.get\("file"\)/);
     expect(ACTION).not.toMatch(/formData\.getAll\("file"\)/);
   });

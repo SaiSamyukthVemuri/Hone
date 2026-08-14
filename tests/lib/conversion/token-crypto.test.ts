@@ -14,7 +14,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("token-crypto — encrypt/decrypt roundtrip", () => {
+describe("token-crypto: encrypt/decrypt roundtrip", () => {
   it("encrypts (ciphertext ≠ raw) and decrypts back to the original", () => {
     const raw = "EAAG_super_secret_meta_capi_token_1234";
     const enc = encryptTrackingProviderToken(raw);
@@ -36,7 +36,7 @@ describe("token-crypto — encrypt/decrypt roundtrip", () => {
   });
 });
 
-describe("token-crypto — failure handling (safe reasons, no token leak)", () => {
+describe("token-crypto: failure handling (safe reasons, no token leak)", () => {
   it("missing key → encryption_key_unavailable (no throw)", () => {
     vi.stubEnv("TRACKING_TOKEN_ENCRYPTION_KEY", "");
     expect(encryptTrackingProviderToken("x")).toEqual({ ok: false, reason: "encryption_key_unavailable" });

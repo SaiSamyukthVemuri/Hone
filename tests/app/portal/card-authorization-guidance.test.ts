@@ -170,7 +170,7 @@ describe("practitioner PaymentMethodCard renders one of four explicit branches",
       "Ask the client to open\n        their portal and complete Card authorization under Needs you.",
     );
     expect(CARD_SOURCE).toContain(
-      // PR C: honest phrasing — signing alone does not guarantee the Add
+      // PR C: honest phrasing, signing alone does not guarantee the Add
       // card option (the studio's payment setup must also be complete).
       "Once signed, the Add card option appears in their portal once the studio's payment setup is complete.",
     );

@@ -1,12 +1,12 @@
-// TREATMENT-IMAGE ACTOR ACROSS MULTI-STUDIO MEMBERSHIP — 0178.
+// TREATMENT-IMAGE ACTOR ACROSS MULTI-STUDIO MEMBERSHIP, 0178.
 //
 // 0168 resolved the actor with `where user_id = auth.uid() and active limit 1`,
 // with no studio scope and no ORDER BY. For a human who is an active
 // practitioner in TWO studios that is a planner-dependent choice: the same call
 // could resolve to either membership, and the commands then validated the
 // resource against whichever studio came back. The consequence was
-// NONDETERMINISM AND INTERMITTENT REFUSAL — the resource check meant a wrong
-// pick failed closed rather than attributing across tenants — but "usually
+// NONDETERMINISM AND INTERMITTENT REFUSAL, the resource check meant a wrong
+// pick failed closed rather than attributing across tenants, but "usually
 // right" is not an authorization model.
 //
 // 0178 inverts the order:  RESOURCE -> STUDIO -> ACTIVE PRACTITIONER THERE.
@@ -80,7 +80,7 @@ const readImage = async (id: string) =>
     )
   ).rows[0];
 
-describe("0178 — treatment-image actor is resolved PER RESOURCE STUDIO", () => {
+describe("0178: treatment-image actor is resolved PER RESOURCE STUDIO", () => {
   it("uploading for studio A's client attributes studio A's practitioner", async () => {
     const id = randomUUID();
     const r = await userQuery(sharedUser, CREATE, createArgs(id, A.studioId, A.clientId));
@@ -92,7 +92,7 @@ describe("0178 — treatment-image actor is resolved PER RESOURCE STUDIO", () =>
 
   it("uploading for studio B's client attributes studio B's practitioner", async () => {
     // THE CASE THE OLD HELPER COULD NOT ANSWER. Same human, same session, other
-    // studio — the attribution must follow the RESOURCE, not the planner.
+    // studio, the attribution must follow the RESOURCE, not the planner.
     const id = randomUUID();
     const r = await userQuery(sharedUser, CREATE, createArgs(id, B.studioId, B.clientId));
     expect(r.rows[0].id).toBe(id);
@@ -130,7 +130,7 @@ describe("0178 — treatment-image actor is resolved PER RESOURCE STUDIO", () =>
   });
 });
 
-describe("0178 — a non-member cannot be attributed, and learns nothing", () => {
+describe("0178: a non-member cannot be attributed, and learns nothing", () => {
   it("CREATE for another studio's client is refused with the SAME message as a nonexistent client", async () => {
     // NON-DISCLOSURE. `C`'s owner is a member of neither A nor B. "That client
     // is not available." must cover both "no such client" and "not your studio",
@@ -148,7 +148,7 @@ describe("0178 — a non-member cannot be attributed, and learns nothing", () =>
     expect(codes).toEqual([CHECK_VIOLATION, CHECK_VIOLATION]);
   });
 
-  it("NOTE and ARCHIVE return the generic NULL for a non-member — no leak", async () => {
+  it("NOTE and ARCHIVE return the generic NULL for a non-member, no leak", async () => {
     const C = await seedStudio("mstudio-c2");
     const id = randomUUID();
     await userQuery(sharedUser, CREATE, createArgs(id, A.studioId, A.clientId));
@@ -185,7 +185,7 @@ describe("0178 — a non-member cannot be attributed, and learns nothing", () =>
   });
 });
 
-describe("0178 — the actor helper itself", () => {
+describe("0178: the actor helper itself", () => {
   it("is studio-scoped, returns zero rows off-studio, and is granted to nobody", async () => {
     const r = await adminQuery(
       `select (select count(*)::int from public.treatment_image_actor($1)) in_a,
@@ -195,7 +195,7 @@ describe("0178 — the actor helper itself", () => {
               has_function_privilege('service_role',  'public.treatment_image_actor(uuid)', 'EXECUTE') svc_x`,
       [A.studioId, randomUUID()],
     );
-    // Run as the table owner, so the auth.uid() predicate matches nothing —
+    // Run as the table owner, so the auth.uid() predicate matches nothing,
     // what matters here is the SHAPE and the grant posture.
     expect(r.rows[0].in_c).toBe(0);
     expect(r.rows[0].auth_x).toBe(false);
