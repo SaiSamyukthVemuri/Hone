@@ -132,6 +132,59 @@ describe("errorDigest — reading a digest off a non-Error throw", () => {
       expect(safeErrorReference(errorDigest(thrown)), String(thrown)).toBeNull();
     }
   });
+
+  // Codex review round 2, PR #580: guarding the TYPE is not enough, the READ
+  // itself can throw. `typeof` does not trap, so a revoked Proxy still reports
+  // "object" and it is the property access that raises.
+  it("survives a digest accessor that throws", () => {
+    const hostile = {
+      get digest(): string {
+        throw new Error("accessor exploded");
+      },
+    };
+    expect(() => errorDigest(hostile)).not.toThrow();
+    expect(errorDigest(hostile)).toBeUndefined();
+    expect(safeErrorReference(errorDigest(hostile))).toBeNull();
+  });
+
+  it("survives a revoked Proxy", () => {
+    const { proxy, revoke } = Proxy.revocable({ digest: "42" }, {});
+    revoke();
+    expect(typeof proxy, "typeof does not trap, so the guard cannot rely on it").toBe(
+      "object",
+    );
+    expect(() => errorDigest(proxy)).not.toThrow();
+    expect(errorDigest(proxy)).toBeUndefined();
+  });
+
+  it("survives a Proxy whose get trap throws", () => {
+    const trap = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error("trap exploded");
+        },
+      },
+    );
+    expect(() => errorDigest(trap)).not.toThrow();
+    expect(errorDigest(trap)).toBeUndefined();
+  });
+
+  it("the reporting decision uses the SAME guarded read, so it cannot throw either", () => {
+    const hostile = {
+      get digest(): string {
+        throw new Error("accessor exploded");
+      },
+    };
+    const { proxy, revoke } = Proxy.revocable({ digest: "42" }, {});
+    revoke();
+    for (const value of [hostile, proxy]) {
+      expect(() => shouldReportRouteErrorFromClient(value)).not.toThrow();
+      // An unreadable digest is treated as absent, which errs toward
+      // REPORTING: a duplicate event is recoverable, a dropped one is not.
+      expect(shouldReportRouteErrorFromClient(value)).toBe(true);
+    }
+  });
 });
 
 describe("shouldReportRouteErrorFromClient — no double reporting, no lost reports", () => {

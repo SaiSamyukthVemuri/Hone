@@ -43,7 +43,13 @@ export default function GlobalError({
   const reference = safeErrorReference(errorDigest(error));
 
   useEffect(() => {
-    Sentry.captureException(error);
+    // Guarded for the same reason the digest read is: this is the LAST
+    // boundary, so nothing it does may be allowed to throw.
+    try {
+      Sentry.captureException(error);
+    } catch {
+      // Intentionally swallowed. See app/(app)/error.tsx.
+    }
   }, [error]);
 
   return (

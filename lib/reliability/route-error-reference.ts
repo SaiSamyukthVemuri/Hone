@@ -92,7 +92,18 @@ export function safeErrorReference(digest: unknown): string | null {
  */
 export function errorDigest(error: unknown): unknown {
   if (typeof error !== "object" || error === null) return undefined;
-  return (error as { digest?: unknown }).digest;
+  // The READ itself is guarded, not just the type. `digest` may be an accessor
+  // that throws, or the value may be a revoked Proxy (`typeof` does not trap,
+  // so it still reports "object" and the property access is what raises). Any
+  // such throw would happen inside the boundary's own render, escalating a
+  // contained failure into the global fallback, or breaking the global fallback
+  // outright. There is no digest worth that, so an unreadable one is simply
+  // absent.
+  try {
+    return (error as { digest?: unknown }).digest;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -116,8 +127,11 @@ export function errorDigest(error: unknown): unknown {
  * whole authenticated app.
  */
 export function shouldReportRouteErrorFromClient(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return true;
-  const digest = (error as { digest?: unknown }).digest;
+  // Reuses errorDigest rather than repeating the read, so the guarded
+  // extraction cannot drift away from this decision path. An unreadable digest
+  // is treated as absent, which errs toward REPORTING: a duplicate event is
+  // recoverable, a silently dropped one is not.
+  const digest = errorDigest(error);
   if (typeof digest !== "string") return true;
   return digest.trim().length === 0;
 }

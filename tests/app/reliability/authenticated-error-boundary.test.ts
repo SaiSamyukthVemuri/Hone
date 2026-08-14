@@ -176,6 +176,12 @@ describe("the support reference is shown only when it is safe", () => {
 // component made the boundary itself raise a TypeError mid-render. That escaped
 // to global-error.tsx, which dereferenced identically and also failed, leaving a
 // blank document. These render the RAW thrown value, not an Error.
+function revokedProxy(): unknown {
+  const { proxy, revoke } = Proxy.revocable({ digest: "42" }, {});
+  revoke();
+  return proxy;
+}
+
 describe("a non-Error throw does not break the boundary", () => {
   const THROWN: Array<[string, unknown]> = [
     ["null", null],
@@ -184,6 +190,27 @@ describe("a non-Error throw does not break the boundary", () => {
     ["a number", 42],
     ["a plain object", { message: "boom" }],
     ["an object with a hostile digest", { digest: { toString: () => "x" } }],
+    // Codex review round 2: the property READ itself can throw.
+    [
+      "a digest accessor that throws",
+      {
+        get digest(): string {
+          throw new Error("accessor exploded");
+        },
+      },
+    ],
+    ["a revoked Proxy", revokedProxy()],
+    [
+      "a Proxy whose get trap throws",
+      new Proxy(
+        {},
+        {
+          get() {
+            throw new Error("trap exploded");
+          },
+        },
+      ),
+    ],
   ];
 
   for (const [label, thrown] of THROWN) {

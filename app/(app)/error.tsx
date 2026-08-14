@@ -61,8 +61,14 @@ export default function AuthenticatedAreaError({
     // Server-side failures are already captured by onRequestError in
     // instrumentation.ts. Only browser-raised errors are reported from here.
     // See shouldReportRouteErrorFromClient for the full reasoning.
-    if (shouldReportRouteErrorFromClient(error)) {
+    if (!shouldReportRouteErrorFromClient(error)) return;
+    try {
       Sentry.captureException(error);
+    } catch {
+      // Reporting must never be able to break the screen that is already
+      // handling a failure. A hostile or exotic thrown value can make
+      // serialization throw; losing that one report is strictly better than
+      // losing the recovery UI.
     }
   }, [error]);
 
