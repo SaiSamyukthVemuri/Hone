@@ -1,0 +1,242 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import path from "node:path";
+
+// SOURCE GUARDS - self-hosted Inter + Fraunces.
+//
+// `next build` used to fetch Inter and Fraunces from fonts.googleapis.com at
+// BUILD time. When that host was unreachable the build failed outright, so
+// deterministic commits went red for reasons that had nothing to do with the
+// commit. The fonts are now self-hosted through `next/font/local`.
+//
+// The failure this file exists to catch is a REGRESSION: someone adds a
+// `next/font/google` import back (it is the path of least resistance - one line,
+// no binary to vendor) and the build silently becomes network-dependent again.
+// Nothing else in the suite would notice, because a machine WITH network access
+// builds and renders identically either way. That is exactly why this has to be
+// a static contract rather than a behavioural test.
+//
+// The second thing pinned here is the FACE CONTRACT: which weights and styles
+// each surface declares. Those are easy to "tidy" into a variable weight range,
+// which looks equivalent and is not - see the assertions below.
+
+const ROOT = path.resolve(__dirname, "../..");
+
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+const IGNORED_DIRECTORIES = new Set([
+  "node_modules",
+  ".next",
+  ".git",
+  "playwright-report",
+  "test-results",
+  "coverage",
+]);
+
+function sourceFiles(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (IGNORED_DIRECTORIES.has(entry)) continue;
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      sourceFiles(full, acc);
+    } else if (SOURCE_EXTENSIONS.has(path.extname(entry))) {
+      acc.push(full);
+    }
+  }
+  return acc;
+}
+
+// Comments legitimately NAME next/font/google - this file does it repeatedly,
+// and so do app/_fonts/*.ts and lib/security/headers.ts when they explain why
+// the dependency is gone. Every "this is absent" assertion therefore runs
+// against code lines only, or a comment would satisfy the guard it is meant to
+// trip. Block-comment bodies conventionally start with `*` in this codebase.
+function codeOnly(src: string): string {
+  return src
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\/\*|\*|\{\/\*)/.test(line))
+    .join("\n");
+}
+
+const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
+
+const APP_FONTS_PATH = "app/_fonts/app-fonts.ts";
+const MARKETING_FONTS_PATH = "app/_fonts/marketing-fonts.ts";
+const APP_FONTS = read(APP_FONTS_PATH);
+const MARKETING_FONTS = read(MARKETING_FONTS_PATH);
+const LAYOUT = read("app/layout.tsx");
+const MARKETING_ENTRY = read("app/_components/marketing/fonts.ts");
+
+const ALL_SOURCE = sourceFiles(ROOT).map((file) => ({
+  rel: path.relative(ROOT, file),
+  code: codeOnly(readFileSync(file, "utf8")),
+}));
+
+// The host-name scan runs against APPLICATION source only. Test files
+// legitimately name the Google hosts in order to assert their ABSENCE -
+// tests/lib/security/headers.test.ts pins that the CSP does not allow them -
+// and a guard that cannot tell "asserts absence" from "reintroduces it" would
+// punish exactly the tests protecting the same property.
+const APP_ROOTS = ["app", "components", "lib", "hooks", "middleware.ts"];
+const APP_SOURCE = ALL_SOURCE.filter(({ rel }) =>
+  APP_ROOTS.some((root) => rel === root || rel.startsWith(root + path.sep)),
+);
+
+describe("the build never depends on Google Fonts", () => {
+  it("no source file imports next/font/google", () => {
+    const offenders = ALL_SOURCE.filter(({ code }) =>
+      /from\s*["']next\/font\/google["']|require\(\s*["']next\/font\/google["']\s*\)/.test(
+        code,
+      ),
+    ).map(({ rel }) => rel);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("no application source file references the Google Fonts hosts", () => {
+    const offenders = APP_SOURCE.filter(({ code }) =>
+      /fonts\.(googleapis|gstatic)\.com/.test(code),
+    ).map(({ rel }) => rel);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("guards against a scan that silently walks nothing", () => {
+    // A walker that returned [] would make every assertion above pass
+    // vacuously. Pin that both scans really did reach real source.
+    expect(ALL_SOURCE.length).toBeGreaterThan(200);
+    expect(APP_SOURCE.length).toBeGreaterThan(100);
+    expect(ALL_SOURCE.map(({ rel }) => rel)).toContain("app/layout.tsx");
+    expect(APP_SOURCE.map(({ rel }) => rel)).toContain("app/layout.tsx");
+    expect(APP_SOURCE.map(({ rel }) => rel)).toContain(APP_FONTS_PATH);
+  });
+});
+
+describe("the faces are loaded from local files", () => {
+  it("both font modules use next/font/local", () => {
+    expect(APP_FONTS).toMatch(/import localFont from "next\/font\/local"/);
+    expect(MARKETING_FONTS).toMatch(/import localFont from "next\/font\/local"/);
+  });
+
+  it("every referenced .woff2 exists in the repository", () => {
+    const referenced = new Set<string>();
+    for (const src of [APP_FONTS, MARKETING_FONTS]) {
+      for (const m of src.matchAll(/path:\s*"\.\/([^"]+\.woff2)"/g)) {
+        referenced.add(m[1]);
+      }
+    }
+    // A renamed or dropped binary is a build failure, not a visual bug, so it
+    // is worth catching here rather than in a browser lane.
+    expect(referenced.size).toBeGreaterThan(0);
+    const missing = [...referenced].filter(
+      (file) => !existsSync(path.join(ROOT, "app/_fonts", file)),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it("the vendored files are real WOFF2 binaries, not placeholders", () => {
+    const fonts = readdirSync(path.join(ROOT, "app/_fonts")).filter((f) =>
+      f.endsWith(".woff2"),
+    );
+    expect(fonts.length).toBeGreaterThan(0);
+    for (const file of fonts) {
+      const buf = readFileSync(path.join(ROOT, "app/_fonts", file));
+      // wOF2 magic. Catches an LFS pointer or a truncated download landing
+      // here and rendering the whole surface in a fallback face.
+      expect(buf.subarray(0, 4).toString("ascii")).toBe("wOF2");
+    }
+  });
+});
+
+describe("the CSS variable contract is unchanged", () => {
+  it("still exposes --font-inter, --font-fraunces and --font-marketing-sans", () => {
+    expect(APP_FONTS).toMatch(/variable:\s*"--font-inter"/);
+    expect(APP_FONTS).toMatch(/variable:\s*"--font-fraunces"/);
+    expect(MARKETING_FONTS).toMatch(/variable:\s*"--font-marketing-sans"/);
+  });
+
+  it("the root layout applies both variables to <html>", () => {
+    expect(LAYOUT).toMatch(
+      /import \{ fraunces, inter \} from "\.\/_fonts\/app-fonts"/,
+    );
+    expect(codeOnly(LAYOUT)).toMatch(
+      /className=\{`\$\{fraunces\.variable\} \$\{inter\.variable\}`\}/,
+    );
+  });
+
+  it("the marketing surface still gets its face from the marketing entry point", () => {
+    expect(MARKETING_ENTRY).toMatch(
+      /export \{ marketingSans \} from "@\/app\/_fonts\/marketing-fonts"/,
+    );
+  });
+});
+
+describe("the declared faces match what production rendered", () => {
+  // Weights are declared one per `src` entry rather than as a variable range.
+  // A range is the tempting simplification and it is NOT equivalent: the root
+  // layout deliberately loads Inter 400/500 only, so an authenticated-app
+  // element asking for 700 matches the 500 face and the browser SYNTHESISES
+  // bold. Declaring "400 700" would start rendering a true 700 there.
+  function weightsFor(src: string, file: string): string[] {
+    const found = new Set<string>();
+    const pattern = new RegExp(
+      `path:\\s*"\\./${file.replace(/[.*+?^$()|[\]\\]/g, "\\$&")}",\\s*weight:\\s*"([^"]+)"`,
+      "g",
+    );
+    for (const m of src.matchAll(pattern)) found.add(m[1]);
+    return [...found].sort();
+  }
+
+  it("root Inter declares 400 and 500 only", () => {
+    expect(weightsFor(APP_FONTS, "inter-latin.woff2")).toEqual(["400", "500"]);
+  });
+
+  it("marketing Inter declares 400, 500, 600 and 700", () => {
+    expect(weightsFor(MARKETING_FONTS, "inter-latin.woff2")).toEqual([
+      "400",
+      "500",
+      "600",
+      "700",
+    ]);
+  });
+
+  it("Fraunces declares 400 and 700 in both normal and italic", () => {
+    expect(weightsFor(APP_FONTS, "fraunces-latin.woff2")).toEqual(["400", "700"]);
+    expect(weightsFor(APP_FONTS, "fraunces-italic-latin.woff2")).toEqual([
+      "400",
+      "700",
+    ]);
+    expect(APP_FONTS).toMatch(/"\.\/fraunces-italic-latin\.woff2", weight: "400", style: "italic"/);
+  });
+
+  it("no face is declared as a variable weight RANGE", () => {
+    // "400 700" rather than "400" - the space is the tell.
+    expect(codeOnly(APP_FONTS)).not.toMatch(/weight:\s*"\d+\s+\d+"/);
+    expect(codeOnly(MARKETING_FONTS)).not.toMatch(/weight:\s*"\d+\s+\d+"/);
+  });
+
+  it("keeps display:swap on every face", () => {
+    const calls = (APP_FONTS + MARKETING_FONTS).match(/localFont\(\{/g) ?? [];
+    const swaps = (APP_FONTS + MARKETING_FONTS).match(/display:\s*"swap"/g) ?? [];
+    expect(calls.length).toBeGreaterThan(0);
+    expect(swaps.length).toBe(calls.length);
+  });
+});
+
+describe("the marketing faces stay out of the authenticated app", () => {
+  it("app-fonts.ts does not declare Inter 600 or 700", () => {
+    // Merging the two modules would put real 600/700 on every authenticated
+    // route, where bold is currently synthesised from the 500 face.
+    const interWeights = new Set<string>();
+    for (const m of APP_FONTS.matchAll(
+      /path:\s*"\.\/inter-[^"]+\.woff2",\s*weight:\s*"([^"]+)"/g,
+    )) {
+      interWeights.add(m[1]);
+    }
+    expect([...interWeights].sort()).toEqual(["400", "500"]);
+  });
+
+  it("the root layout does not import the marketing font module", () => {
+    expect(codeOnly(LAYOUT)).not.toMatch(/marketing-fonts/);
+    expect(codeOnly(APP_FONTS)).not.toMatch(/marketing-fonts/);
+  });
+});
