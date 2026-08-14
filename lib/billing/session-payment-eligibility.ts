@@ -309,7 +309,7 @@ export async function getSessionPaymentEligibility(
     // after the sendPaymentChargeReceipt helper claims and
     // updates the row.
     // Mode-scoped (0105): existing attempts are read for the CURRENT
-    // deployment mode only — a test attempt must never masquerade as (or
+    // deployment mode only: a test attempt must never masquerade as (or
     // block) a live one, and vice versa. The 0105 partial unique enforces
     // the same per-mode invariant structurally.
     const { data: attemptRows } = await admin

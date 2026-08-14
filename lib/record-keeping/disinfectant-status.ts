@@ -1,11 +1,11 @@
 // PR #280 (Chloe record-keeping feedback): read-time due/overdue status for a
 // disinfectant batch's "discard / replace by" date. Pure + deterministic (the
 // caller passes "today" as a studio-timezone YYYY-MM-DD string), so it is fully
-// unit-testable and naturally idempotent — it is a computed display, never a
+// unit-testable and naturally idempotent. It is a computed display, never a
 // stored or sent reminder. NO cron / notification / email here (deferred).
 
 export type DisinfectantDueStatus =
-  | "replaced" // an actual date_discarded exists — no alert, the batch is done
+  | "replaced" // an actual date_discarded exists, no alert, the batch is done
   | "overdue" // discard_due_date is before today and not yet discarded
   | "due_today" // discard_due_date is today
   | "due_soon" // discard_due_date is within DUE_SOON_DAYS
@@ -31,7 +31,7 @@ export function disinfectantDueStatus(
   todayYmd: string,
   dueSoonDays: number = DUE_SOON_DAYS,
 ): DisinfectantDueStatus {
-  // An actually-discarded batch is finished — never alert on it, even if a due
+  // An actually-discarded batch is finished, never alert on it, even if a due
   // date had been set.
   if (record.date_discarded) return "replaced";
   // Defensive: a Postgres `date` serializes as bare YYYY-MM-DD, but slice in
@@ -54,7 +54,7 @@ export function isDisinfectantAlert(status: DisinfectantDueStatus): boolean {
 export function disinfectantStatusLabel(status: DisinfectantDueStatus): string {
   switch (status) {
     case "overdue":
-      return "Overdue — replace now";
+      return "Overdue: replace now";
     case "due_today":
       return "Due today";
     case "due_soon":

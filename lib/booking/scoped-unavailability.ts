@@ -12,9 +12,9 @@ import type {
 //
 //   legacy          (capacity OFF): study-wide rows ONLY (practitioner_id IS
 //                   NULL). Retained scoped rows created before rollback stay in
-//                   the table but MUST NOT surface — they are dormant.
+//                   the table but MUST NOT surface. They are dormant.
 //   studio-default  (capacity ON, "All practitioners" view): every row for the
-//                   studio — studio-wide PLUS all practitioner-scoped rows,
+//                   studio: studio-wide PLUS all practitioner-scoped rows,
 //                   INCLUDING rows scoped to now-inactive practitioners (so the
 //                   owner can see and clean them up).
 //   practitioner    (capacity ON, one practitioner selected): studio-wide rows
@@ -23,10 +23,10 @@ import type {
 // All three are ONE query (no N+1). Cross-tenant is impossible: every query is
 // pinned to studio_id and RLS additionally scopes to the caller's studio.
 //
-// The legacy path queries practitioner_id IS NULL. If — and ONLY if — the
+// The legacy path queries practitioner_id IS NULL. If (and ONLY if) the
 // column is genuinely absent (code running before 0137 is applied) it fails
 // over to the exact pre-0137 query. Any OTHER error FAILS CLOSED. We never log
-// query contents or row data — only a bounded operational marker.
+// query contents or row data, only a bounded operational marker.
 
 type PgErr = { code?: string | null } | null | undefined;
 
@@ -43,7 +43,7 @@ function isUndefinedColumn(error: PgErr): boolean {
 }
 
 function failClosed(error: PgErr, what: string): never {
-  // Safe operational code only — never the raw message (which can echo data).
+  // Safe operational code only, never the raw message (which can echo data).
   throw new Error(`scoped_unavailability_read_failed:${what}:${error?.code ?? "unknown"}`);
 }
 
@@ -86,11 +86,11 @@ export async function getScopedUpcomingTimedBlocksSafe(
   } else if (scope.mode === "practitioner") {
     query = query.or(scopedOrFilter(scope.practitionerId));
   }
-  // studio-default: no practitioner filter — all studio-wide + all scoped rows.
+  // studio-default: no practitioner filter: all studio-wide + all scoped rows.
   const res = await query.order("starts_at");
   if (!res.error) return (res.data ?? []) as StudioTimedBlock[];
   if (!isUndefinedColumn(res.error)) failClosed(res.error, "timed_blocks");
-  // Column absent — only reachable for a Legacy (pre-0137) studio, where the
+  // Column absent, only reachable for a Legacy (pre-0137) studio, where the
   // only rows that exist are studio-wide. Fall back to the exact legacy query.
   warnColumnAbsent("timed_blocks");
   const legacy = await supabase
@@ -134,11 +134,11 @@ export async function getScopedRecurringBreakRulesSafe(
 }
 
 // -------------------------------------------------------------------------
-// Practitioner directory — TWO distinct concepts:
-//   selectablePractitioners — ACTIVE, same-studio; the only valid targets for a
+// Practitioner directory: TWO distinct concepts:
+//   selectablePractitioners, ACTIVE, same-studio; the only valid targets for a
 //     NEW or CHANGED scope. An inactive practitioner is never selectable.
-//   practitionerDirectory   — ALL same-studio (active + inactive); used ONLY to
-//     LABEL an existing scoped source (e.g. "Only Dana — inactive"). An inactive
+//   practitionerDirectory  , ALL same-studio (active + inactive); used ONLY to
+//     LABEL an existing scoped source (e.g. "Only Dana, inactive"). An inactive
 //     practitioner's existing sources stay visible so the owner can reassign or
 //     delete them; they simply cannot be chosen for a new target.
 // `byId` is a lookup for O(1) labelling with no N+1.
@@ -187,5 +187,5 @@ export function scopeLabel(
   if (!practitionerId) return "All practitioners";
   const p = directory.byId.get(practitionerId);
   if (!p) return "A former practitioner";
-  return p.active ? `Only ${p.display_name}` : `Only ${p.display_name} — inactive`;
+  return p.active ? `Only ${p.display_name}` : `Only ${p.display_name}, inactive`;
 }

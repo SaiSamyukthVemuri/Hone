@@ -1,4 +1,4 @@
-// BOOK-01 Tranche 1 — public booking confirmation copy, as a pure function.
+// BOOK-01 Tranche 1, public booking confirmation copy, as a pure function.
 //
 // WHY THIS IS A MODULE AND NOT TERNARIES INSIDE THE JSX.
 //
@@ -6,8 +6,8 @@
 // (vitest.config.ts), so no test in this repository can render a `.tsx`
 // component. Copy decisions embedded in JSX are therefore only reachable by
 // source-regex assertions, which prove text and not behaviour. Lifting the
-// decision into a pure function makes the ACTUAL rule — "never claim a
-// delivery that did not happen, and always offer the management link" —
+// decision into a pure function makes the ACTUAL rule: "never claim a
+// delivery that did not happen, and always offer the management link",
 // executable, and gives the negative controls something real to turn red.
 //
 // The three-state vocabulary deliberately mirrors the reschedule surface
@@ -21,7 +21,7 @@ export type ConfirmationEmailStatus = "sent" | "failed" | "disabled";
 export type BookingConfirmationCopy = {
   /**
    * Ordered "what happens next" lines. Every line must be true for the given
-   * status — this is the whole point of the type.
+   * status. This is the whole point of the type.
    */
   steps: string[];
   /** Label for the primary management action. Present in every status. */
@@ -82,7 +82,7 @@ export function buildBookingConfirmationCopy(input: {
     return {
       steps: [
         `We couldn’t confirm that our confirmation email to ${email} went through.`,
-        "Use Manage booking below to cancel or reschedule — save or bookmark that link.",
+        "Use Manage booking below to cancel or reschedule. Save or bookmark that link.",
         "If your studio asks for a health intake, they’ll follow up with you about it.",
       ],
       manageLabel,
@@ -97,7 +97,7 @@ export function buildBookingConfirmationCopy(input: {
   // no email to mention at all.
   return {
     steps: [
-      "Use Manage booking below to cancel or reschedule — save or bookmark that link.",
+      "Use Manage booking below to cancel or reschedule. Save or bookmark that link.",
       "If your studio asks for a health intake, they’ll follow up with you about it.",
     ],
     manageLabel,

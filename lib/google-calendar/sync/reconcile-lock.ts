@@ -3,13 +3,13 @@ import { randomUUID } from "node:crypto";
 import { Redis } from "@upstash/redis";
 import type { LockAcquire, ReconcileCoordinator, ReconcileLock } from "./reconcile";
 
-// Google Calendar — Phase B2.3-b: a REAL cross-process, per-studio reconciliation
+// Google Calendar: Phase B2.3-b: a REAL cross-process, per-studio reconciliation
 // lock backed by the Upstash Redis that already powers public rate limiting and
 // the reminder heartbeat (no new infrastructure, no migration).
 //
 // WHY A DISTRIBUTED LOCK (and not pg advisory / an in-memory guard):
 //   * The reconcile route runs on serverless Vercel functions through the
-//     service-role PostgREST client — there is NO pooled Postgres connection held
+//     service-role PostgREST client. There is NO pooled Postgres connection held
 //     across the sweep, so `pg_advisory_xact_lock` cannot span the protected work.
 //     An in-memory mutex only guards a single process and two concurrent
 //     invocations would both sweep. A Redis ownership-token lock is the correct
@@ -26,7 +26,7 @@ import type { LockAcquire, ReconcileCoordinator, ReconcileLock } from "./reconci
 // FAIL-CLOSED (the critical distinction from the fail-OPEN heartbeat/metrics):
 //   * If Upstash is unconfigured, unreachable, or throws on acquire, `acquire`
 //     returns { ok:false, reason:'unavailable' }. The caller then SKIPS that
-//     studio — it NEVER runs an unlocked sweep. A missing lock backend degrades to
+//     studio: it NEVER runs an unlocked sweep. A missing lock backend degrades to
 //     "did not reconcile", never to "reconciled without mutual exclusion".
 //   * A booking / appointment mutation is NEVER affected: the lock lives entirely
 //     inside the reconcile cron path, not on any write path.
@@ -35,7 +35,7 @@ import type { LockAcquire, ReconcileCoordinator, ReconcileLock } from "./reconci
 // random token. No client identity, appointment content, Google id, or secret is
 // ever stored.
 
-// The redis commands the lock + coordinator + continuation need — a tiny seam,
+// The redis commands the lock + coordinator + continuation need: a tiny seam,
 // trivially mockable. `get` supports the coordinator cursor read + the continuation
 // read; `eval` runs the ownership-token Lua scripts (release/renew/atomic write).
 export type LockRedis = {
@@ -84,7 +84,7 @@ export function createReconcileLock(
         if (r === "OK") return { ok: true, token };
         return { ok: false, reason: "held" }; // null -> another sweep owns it
       } catch {
-        // A backend error is NOT "free to proceed" — it is fail-closed.
+        // A backend error is NOT "free to proceed". It is fail-closed.
         return { ok: false, reason: "unavailable" };
       }
     },
@@ -111,7 +111,7 @@ export function createReconcileLock(
 }
 
 // ---------------------------------------------------------------------------
-// §2 — the ROUTE COORDINATOR: a single global ownership-token lock + a durable
+// §2, the ROUTE COORDINATOR: a single global ownership-token lock + a durable
 // global studio cursor. It serializes route invocations (so two invocations can
 // never race the studio cursor) and remembers which studio was last attempted, so
 // the sweep resumes AFTER it next time and every eligible studio eventually gets a
@@ -172,7 +172,7 @@ export function createReconcileCoordinator(
       }
     },
     async readCursor() {
-      // Plain read — the coordinator lock was just acquired.
+      // Plain read: the coordinator lock was just acquired.
       if (!redis) return { ok: false as const };
       try {
         const raw = await redis.get(C);
@@ -212,7 +212,7 @@ function getLockRedis(): LockRedis | null {
 
 // Production factory: binds the lock to the deployed Upstash. When Upstash is
 // absent (e.g. local/dev without creds), the lock is fail-CLOSED and every studio
-// is skipped — the reconcile route then reports "unavailable" and does no work.
+// is skipped: the reconcile route then reports "unavailable" and does no work.
 export function createUpstashReconcileLock(): ReconcileLock {
   return createReconcileLock(getLockRedis());
 }

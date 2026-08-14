@@ -33,7 +33,7 @@ import { buildConsentTemplateSnapshot } from "./template-snapshot";
 // tests/security/service-role-allowlist.ts inventory, so the allowlist keeps
 // naming the surfaces that actually resolve identity rather than a shared
 // helper that cannot. (Do not write the admin factory's name with parentheses
-// anywhere in this file — the allowlist detector is a literal grep for that
+// anywhere in this file: the allowlist detector is a literal grep for that
 // token and would flag this module as an unallowlisted call site.)
 //
 // THE RENDER-TIME INTEGRITY COMPARISON (the reason this PR exists)
@@ -52,7 +52,7 @@ import { buildConsentTemplateSnapshot } from "./template-snapshot";
 //
 // `renderedTemplateHash` is the ONLY browser-supplied value that touches the
 // snapshot decision, and it is never stored, never trusted as data, and
-// never echoed into the row — it is discarded after the comparison. Every
+// never echoed into the row. It is discarded after the comparison. Every
 // stored field is still re-derived server-side from the resolved template.
 
 export type ConsentSignatureIdentity = {
@@ -133,7 +133,7 @@ export const PHOTO_CONSENT_ACCEPT_LABEL =
 export const PHOTO_CONSENT_DENY_LABEL = "I do not consent to photo use.";
 
 // Product-approved refusal copy for the stale-render race. Product wording
-// only — this is NOT legal language and must never be described as such. It
+// only. This is NOT legal language and must never be described as such. It
 // is deliberately calm and actionable: the client did nothing wrong.
 export const STALE_CONSENT_FORM_MESSAGE =
   "This form changed while you were reviewing it. Please refresh and review the current version before signing.";

@@ -1,4 +1,4 @@
-// Whole-session "Copy areas and settings" — CANONICAL server-side normalizer
+// Whole-session "Copy areas and settings", CANONICAL server-side normalizer
 // (migration 0157). This is the single place a browser-supplied copy draft is
 // turned into the SQL spec the RPC inserts. It is PURE (no I/O) so it is unit
 // tested directly, and it is the authority the commit server action runs before
@@ -65,7 +65,7 @@ export type WholeSessionCopyDraftInput = {
 };
 
 // The validated RPC payload for ONE reviewed draft. Setup + area + entry setup
-// readings only — never an outcome, never minutes.
+// readings only, never an outcome, never minutes.
 export type WholeSessionCopySpec = {
   block: Record<string, unknown>;
   areas: { area: string; laterality: string; display_order: number }[];

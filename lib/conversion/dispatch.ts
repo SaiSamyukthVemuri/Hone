@@ -22,12 +22,12 @@ import type {
 //   3. claim_conversion_delivery wins the atomic (studio, provider, event_id)
 //      dedup claim
 //   4. THIS studio's own token decrypts (AES-256-GCM from encrypted_server_token,
-//      passed to the adapter via ctx) — no global shared token, no env ref
+//      passed to the adapter via ctx), no global shared token, no env ref
 //
 // Reliability: NEVER throws (the booking is already committed). Provider
 // failures record a `failed` delivery row + a WARNING ops alert (not critical),
 // with redacted, PII-free/token-free details. No clinical data, no raw
-// email/phone, no service name — only a hashed identity + generic category.
+// email/phone, no service name, only a hashed identity + generic category.
 //
 // Production stays INERT after merge: no studio_tracking_providers rows exist,
 // so gate 2 short-circuits every time; and no per-studio secret env is set.
@@ -115,7 +115,7 @@ export async function dispatchBookingConversion(
       if (won !== true) continue;
 
       // Gate 4: decrypt THIS studio's own token (AES-256-GCM). If it can't be
-      // decrypted (no key, absent, tampered), skip safely — never send.
+      // decrypted (no key, absent, tampered), skip safely, never send.
       const decrypted = decrypt(
         (row.encrypted_server_token as string | null) ?? null,
       );
@@ -147,7 +147,7 @@ export async function dispatchBookingConversion(
           status: "failed",
           last_error_safe: res.errorSafe,
         });
-        // WARNING (not critical) — normal provider failures shouldn't page.
+        // WARNING (not critical), normal provider failures shouldn't page.
         await recordOpsAlert({
           severity: "warning",
           event: "conversion_delivery_failed",

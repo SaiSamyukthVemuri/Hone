@@ -8,7 +8,7 @@ import {
 // Minimal, server-only FAKE Stripe processor for the disposable E2E stack. It
 // implements ONLY the methods the session-payment charge/refund path calls, makes
 // NO network request, and returns obviously-synthetic identifiers. It is reached
-// only after the activation guard (lib/stripe/e2e-fake-guard.ts) passes — it can
+// only after the activation guard (lib/stripe/e2e-fake-guard.ts) passes. It can
 // never construct in a deployed environment.
 //
 // Recorded call metadata is TEST-SAFE ONLY: method, idempotency key,
@@ -41,7 +41,7 @@ export type FakeStripeCall = {
   // recorded (an "invocation"); replay=false marks the calls that actually
   // created a NEW synthetic processor result for a previously-unseen idempotency
   // key (an "effect"). A replay (same key seen before) returns the same result
-  // id and records replay=true — so a concurrency test can see TWO app-level
+  // id and records replay=true, so a concurrency test can see TWO app-level
   // invocations even though only ONE processor effect occurred. The fake's
   // idempotency can therefore never HIDE a duplicate server call.
   replay: boolean;
@@ -79,7 +79,7 @@ function record(run: string, call: FakeStripeCall): void {
 
 // The configured outcome for this attempt (keyed by its idempotency key). Default
 // success. Read from the guarded ledger so the Playwright process selects the
-// behaviour server-side — never the browser.
+// behaviour server-side, never the browser.
 function outcomeFor(run: string, idempotencyKey: string | null): "success" | "decline" | "processing" {
   if (!idempotencyKey) return "success";
   try {
@@ -124,7 +124,7 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
   const existing = idempotentResult(run, key);
   // A replay is a create whose idempotency key already produced an effect. It
   // returns the SAME synthetic result (Stripe's 24h idempotency window) and
-  // creates NO new processor effect — but it IS still an app-level invocation.
+  // creates NO new processor effect, but it IS still an app-level invocation.
   const replay = existing !== null;
   const seq = existing ? null : nextSeq(run);
   const id = existing ?? `pi_test_e2e_${run}_${seq}`;
@@ -204,7 +204,7 @@ export function createFakeStripe(): Stripe {
         if (!existing) {
           rememberIdempotent(run, key, id);
         }
-        // Record every refund invocation (replay flag) — same invocation/effect
+        // Record every refund invocation (replay flag), same invocation/effect
         // model as create, so a duplicate refund request can't be concealed.
         record(run, {
           method: "refund_create",

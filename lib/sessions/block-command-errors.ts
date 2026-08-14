@@ -3,7 +3,7 @@ import "server-only";
 // Safe error mapping for the L18 Phase 2 block/entry commands (migration 0166).
 //
 // A PostgREST RPC failure carries the raw exception message, which for these
-// commands is a deliberately non-sensitive sentence — but it can also carry a
+// commands is a deliberately non-sensitive sentence, but it can also carry a
 // constraint name, a function body fragment or an internal id when something
 // unexpected fails. Nothing raw is ever returned to a practitioner: known
 // outcomes map to the existing user-facing wording, and everything else becomes
@@ -25,8 +25,8 @@ export const GENERIC_BLOCK_COMMAND_ERROR =
  * Stable outcomes raised by the 0166 commands (and the 0129 boundary they
  * delegate to), mapped to the wording the application already showed.
  *
- * Matching is on the exact sentence each command raises — not a fuzzy search of
- * a full PostgreSQL message — so an unrelated error can never be mistaken for a
+ * Matching is on the exact sentence each command raises, not a fuzzy search of
+ * a full PostgreSQL message, so an unrelated error can never be mistaken for a
  * known one.
  */
 const KNOWN: ReadonlyArray<{ raised: string; safe: string }> = [
@@ -91,7 +91,7 @@ export function mapBlockCommandError(
     if (raw.includes(k.raised)) return k.safe;
   }
 
-  // Anything else — a constraint violation, a type error, a Postgres internal —
+  // Anything else: a constraint violation, a type error, a Postgres internal,
   // is logged and generalised. Never surfaced.
   logUnknown(raw);
   return GENERIC_BLOCK_COMMAND_ERROR;

@@ -211,7 +211,7 @@ export async function sendPaymentChargeReceipt(args: {
       message: NOT_SUCCEEDED_MESSAGE,
     };
   }
-  // PR #323: mode-consistency guard. The receipt is now live-CAPABLE — it refuses
+  // PR #323: mode-consistency guard. The receipt is now live-CAPABLE. It refuses
   // only rows whose mode does not match the deployment mode (in test env this is
   // `!== false`, unchanged). NOTE (docs/16): #324 must NOT proceed until the live
   // receipt wording (lib/email/templates/payment-receipt.ts live branch) has
@@ -357,7 +357,7 @@ export async function sendPaymentChargeReceipt(args: {
   //    method: Card ending in {last4}" line (lawyer-approved copy). Scoped to
   //    the attempt's (studio, client, payment method, livemode) tuple so tenant
   //    isolation holds; selects ONLY last4 (never a full card number or other
-  //    card data). This changes no charge/refund/webhook behavior — it only
+  //    card data). This changes no charge/refund/webhook behavior. It only
   //    enriches the receipt display. If the card row is missing, last4 stays
   //    null and the template renders the neutral "Card on file" fallback (the
   //    receipt is never blocked over a missing display detail).

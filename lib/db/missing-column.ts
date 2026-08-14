@@ -1,6 +1,6 @@
 // Explicit "this specific column does not exist yet" detector for migration-order
 // safety. Used to fall back to a legacy select/write ONLY when the named column
-// is genuinely absent (i.e. the app is running before its migration applied) — it
+// is genuinely absent (i.e. the app is running before its migration applied), it
 // is column-scoped, so unrelated database errors are NEVER swallowed.
 //
 // Covers both surfaces:

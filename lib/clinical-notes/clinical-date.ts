@@ -8,8 +8,8 @@
 // it back as `2026-07-21T00:00:00+00:00`.
 //
 // Rendering that through `new Date(iso).toLocaleDateString()` converts an
-// instant into the VIEWER's timezone. In every negative UTC offset — which is
-// every Canadian and US studio, Willow included — midnight UTC on the 21st is
+// instant into the VIEWER's timezone. In every negative UTC offset, which is
+// every Canadian and US studio, Willow included: midnight UTC on the 21st is
 // 8pm on the 20th, so a consultation dated July 21 displayed as July 20. The
 // note's own date input would then disagree with the date shown beside it.
 //
@@ -17,11 +17,11 @@
 // civil-date portion of the stored value and format it as that date, never as
 // an instant.
 //
-// SCOPE — this module is ONLY for dates that are calendar dates:
+// SCOPE: this module is ONLY for dates that are calendar dates:
 //     clinical note occurred_at
 // It must NEVER be used for real instants (session started_at, appointment
 // times, created_at). Those are moments in time and SHOULD render in the
-// viewer's zone — use <FormattedDateTime> for them.
+// viewer's zone: use <FormattedDateTime> for them.
 //
 // Pure. No I/O. Client-safe (imported by a "use client" component).
 
@@ -73,7 +73,7 @@ const DEFAULT_OPTIONS: Intl.DateTimeFormatOptions = {
 // defaults to", and a Client Component is rendered twice: once by Node on the
 // server, once by the browser during hydration. Those two runtimes do not agree.
 // A Vercel Node runtime defaults to en-US and emits "Jul 21, 2026"; a browser
-// whose preference is fr-CA emits "21 juill. 2026". Same day, different text —
+// whose preference is fr-CA emits "21 juill. 2026". Same day, different text,
 // a React hydration mismatch on a clinical screen.
 //
 // `timeZone: "UTC"` pins the DAY. It does not pin the locale-dependent TEXT.
@@ -86,13 +86,13 @@ export const HONE_CLINICAL_DATE_LOCALE = "en-CA";
 // Format a clinical event's calendar date.
 //
 // DETERMINISTIC BY CONTRACT: the same `iso` produces the same string in every
-// runtime, because BOTH axes are explicit — the locale defaults to Hone's
+// runtime, because BOTH axes are explicit: the locale defaults to Hone's
 // declared presentation locale, and the zone is pinned to UTC and cannot be
 // overridden. Nothing here reads the server's locale, the browser's preference,
 // the client timezone, or the document language.
 //
 // `opts.locale` exists for deliberate, explicit callers (and for pure formatter
-// tests). It is never derived from the environment — a component must not pass
+// tests). It is never derived from the environment: a component must not pass
 // `navigator.language`, or the determinism this contract provides is gone.
 //
 // Returns "" for an absent or unparseable value rather than throwing, so a
@@ -107,7 +107,7 @@ export function formatClinicalDate(
   const instant = new Date(
     Date.UTC(parts.year, parts.month - 1, parts.day),
   );
-  // Explicit, never `undefined` — `undefined` is the runtime-dependent default
+  // Explicit, never `undefined`, `undefined` is the runtime-dependent default
   // that makes server and browser output diverge.
   const locale = opts.locale ?? HONE_CLINICAL_DATE_LOCALE;
   try {
@@ -118,7 +118,7 @@ export function formatClinicalDate(
       timeZone: "UTC",
     });
   } catch {
-    // An invalid EXPLICIT locale tag must not break a clinical screen — and the
+    // An invalid EXPLICIT locale tag must not break a clinical screen, and the
     // fallback must still be deterministic, so it uses the app locale rather
     // than the runtime's.
     return instant.toLocaleDateString(HONE_CLINICAL_DATE_LOCALE, {
@@ -128,7 +128,7 @@ export function formatClinicalDate(
   }
 }
 
-// The stored value reduced to its `YYYY-MM-DD` form — the shape
+// The stored value reduced to its `YYYY-MM-DD` form: the shape
 // `<input type="date">` expects, and a stable, locale-free test handle.
 export function clinicalDateInputValue(
   iso: string | null | undefined,

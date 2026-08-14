@@ -6,7 +6,7 @@ import { cookies } from "next/headers";
 // A user may be an active practitioner in more than one studio. When they have
 // 2+ active memberships they must CHOOSE which studio they are working in; the
 // choice is persisted in this httpOnly cookie. The cookie holds ONLY a studio_id
-// (a uuid, not a secret) and is NEVER trusted on its own — every resolver
+// (a uuid, not a secret) and is NEVER trusted on its own: every resolver
 // re-queries the user's active memberships (RLS-scoped) and honors the cookie
 // only if it matches an active membership. A forged/stale value simply resolves
 // to "no valid selection" and falls back to the chooser, so the cookie can never

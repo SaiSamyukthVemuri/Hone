@@ -1,12 +1,12 @@
 // Pure, client-safe presentation helpers for the compact session-payment card
 // (Chloe feedback: the payment panel showed too many Stripe internals and took
-// too much charting space). NO server-only, NO queries, NO Stripe SDK — pure
+// too much charting space). NO server-only, NO queries, NO Stripe SDK: pure
 // derivation over data the card already holds, so it is unit-testable without a
 // database and safe to import into a client component.
 //
 // This module NEVER writes anything back to storage; masked/derived values are
 // display-only. It deliberately keeps raw processor identifiers, raw failure
-// codes, and full email addresses OUT of the practitioner-facing strings — those
+// codes, and full email addresses OUT of the practitioner-facing strings: those
 // stay in storage and are surfaced only through the owner-only technical
 // disclosure and the existing admin surfaces.
 
@@ -23,7 +23,7 @@ export function formatCadFromCents(cents: number | null | undefined): string {
 // character + the full domain, replace the rest of the local part with bullets
 // (minimum three, so a one-character local part is not revealed as one char).
 // Returns "" for a missing/implausible value so the caller falls back to the
-// plain "Receipt sent" copy — never a malformed address, never the full email.
+// plain "Receipt sent" copy, never a malformed address, never the full email.
 // Display-only; never written back to storage.
 export function maskReceiptEmail(email: string | null | undefined): string {
   const e = (email ?? "").trim();
@@ -146,7 +146,7 @@ export function derivePaymentSummary(
   return { kind: "not_charged", headline: "Not charged", tone: "neutral", amountCents };
 }
 
-// The technical rows for the owner-only disclosure — raw identifiers/codes that
+// The technical rows for the owner-only disclosure: raw identifiers/codes that
 // must NOT appear in the practitioner face. Null/blank entries are dropped by the
 // component. This is the ONE place that enumerates the hidden fields so no panel
 // reintroduces a raw id inline.

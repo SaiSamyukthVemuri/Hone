@@ -3,8 +3,8 @@
 // WHY THIS MODULE EXISTS
 // ----------------------
 // The review grid iterates the CURRENT question catalogue (INTAKE_STEPS) and
-// looks up each key in the stored responses. That is the right shape — it keeps
-// labels and option wording in one place — but it means the grid asks a
+// looks up each key in the stored responses. That is the right shape. It keeps
+// labels and option wording in one place, but it means the grid asks a
 // question of every record, including records written before that question
 // existed. Until now it answered with a single string, "Not answered", for four
 // genuinely different situations:
@@ -17,7 +17,7 @@
 //
 // Collapsing those is not a cosmetic problem on a clinical surface. "Not
 // answered" against a question the client was never asked attributes an
-// omission to them, and — the case this module was written for — a stale child
+// omission to them, and (the case this module was written for) a stale child
 // answer left behind when its parent was unselected would be rendered as if it
 // were still the client's answer. A practitioner reading "Which type of
 // diabetes? Type 1" has no way to see that this client unchecked diabetes.
@@ -29,7 +29,7 @@
 //
 // WHAT MAKES "never collected" TRUTHFUL RATHER THAN A GUESS
 // --------------------------------------------------------
-// Hone stores no questionnaire version or question snapshot on an intake row —
+// Hone stores no questionnaire version or question snapshot on an intake row,
 // there is no field that records which form a client answered. So we cannot
 // read the answer off the record. What we CAN do is reason from an invariant
 // the system enforces:
@@ -39,7 +39,7 @@
 //   never re-validated or rewritten.
 //
 // Therefore a TERMINAL record that is missing a REQUIRED, APPLICABLE answer
-// cannot be a client who skipped it — the submit gate would have refused. It
+// cannot be a client who skipped it: the submit gate would have refused. It
 // can only be a record completed under an earlier version of the form. That is
 // a fact about our own gate, not an inference about the client, and it is the
 // narrowest truthful claim available without a version snapshot.
@@ -55,10 +55,10 @@ export type ReviewAnswerState =
   | "answered"
   // The question's parent condition is not satisfied by this record, so the
   // client was never shown it. Any value still stored under this key is stale
-  // and is NOT the client's answer — callers must not render it.
+  // and is NOT the client's answer: callers must not render it.
   | "not_applicable"
   // Applicable and required, but absent from a terminal record: this intake
-  // predates the question. Never collected — do not imply the client declined.
+  // predates the question. Never collected: do not imply the client declined.
   | "not_collected"
   // Applicable and absent, and the record can still change (or the question is
   // optional and was skipped).
@@ -80,7 +80,7 @@ export const REVIEW_ANSWER_COPY: Record<
 //
 // Deliberately NOT isAnswerProvided: that function answers "does this satisfy
 // the required rule?", which is a different question. A checkbox storing
-// `false` fails that test but IS an answer — the client left it unticked — and
+// `false` fails that test but IS an answer (the client left it unticked) and
 // the grid has always rendered it as "Not confirmed". Treating it as missing
 // here would relabel a real answer as never collected.
 function hasStoredAnswer(q: Question, value: unknown): boolean {

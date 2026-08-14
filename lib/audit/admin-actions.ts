@@ -17,7 +17,7 @@ export const ADMIN_ACTION_OUTCOMES = [
 export type AdminActionOutcome = (typeof ADMIN_ACTION_OUTCOMES)[number];
 
 // Metadata KEY blocklist (substring, case-insensitive). Any key that looks
-// credential- or PII-shaped is dropped entirely — a caller can never leak a
+// credential- or PII-shaped is dropped entirely: a caller can never leak a
 // token/secret/url/card/email/phone into the audit metadata even by accident.
 const SENSITIVE_KEY_RE =
   /token|secret|password|passwd|\bkey\b|api[_-]?key|url|href|card|cvc|cvv|stripe_secret|authorization|cookie|bearer|jwt|magic|email|phone|ssn|dob|address|note_text|body|payload/i;
@@ -64,7 +64,7 @@ export type LogAdminActionInput = {
 // records. For the highest-risk write (studio creation) callers additionally
 // log a 'started' event before the write so a trail exists even if the terminal
 // event fails; audit-before-write BLOCKING is intentionally NOT enforced in PR 1
-// (a legitimate operator action must not be blocked by an audit-infra hiccup —
+// (a legitimate operator action must not be blocked by an audit-infra hiccup,
 // a miss is console-logged and can be alerted). See docs/security/admin-audit-log.md.
 export async function logAdminAction(input: LogAdminActionInput): Promise<void> {
   try {

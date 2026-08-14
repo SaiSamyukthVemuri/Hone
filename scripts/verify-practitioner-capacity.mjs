@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * scripts/verify-practitioner-capacity.mjs — PR A (practitioner-capacity foundation)
+ * scripts/verify-practitioner-capacity.mjs, PR A (practitioner-capacity foundation)
  *
  * Operator-run, READ-ONLY, NO-PII health check for the practitioner-capacity
  * layer (migration 0134). It proves the layer is present and, above all, that
@@ -13,16 +13,16 @@
  * Run (from the production-linked Mac):
  *   node --env-file=.env.local scripts/verify-practitioner-capacity.mjs
  *
- * SAFETY (hard rules — enforced by tests/scripts/verify-practitioner-capacity.test.ts):
+ * SAFETY (hard rules: enforced by tests/scripts/verify-practitioner-capacity.test.ts):
  *   - READ-ONLY. Uses `supabase db query --linked` for every DB read. It NEVER
  *     runs `supabase db push` / `supabase db execute`, never applies a
  *     migration, never INSERT/UPDATE/DELETE/UPSERT, never toggles a flag.
  *   - NO SECRETS / NO PII. Every query returns SCALARS only (counts, booleans,
- *     and studio UUIDs — which are not personal data). It never selects or
+ *     and studio UUIDs, which are not personal data). It never selects or
  *     prints client/practitioner names, emails, phones, notes, tokens, or any
  *     health/treatment data. No `select *`.
- *   - FAIL-CLOSED. A required check that cannot run is FAIL/INCOMPLETE — never a
- *     silent PASS — and the script exits non-zero.
+ *   - FAIL-CLOSED. A required check that cannot run is FAIL/INCOMPLETE, never a
+ *     silent PASS, and the script exits non-zero.
  *
  * This is NOT a CI gate (CI has no production link) and NOT an activation
  * script. It never enables the flag for any studio.
@@ -31,22 +31,22 @@
 import { spawnSync } from "node:child_process";
 
 // ---------------------------------------------------------------------------
-// Output helpers — PASS / FAIL / INCOMPLETE / INFO, scalars only.
+// Output helpers: PASS / FAIL / INCOMPLETE / INFO, scalars only.
 // ---------------------------------------------------------------------------
 const results = [];
 function record(status, name, detail) {
   results.push({ status, name });
   const tag =
     status === "PASS" ? "PASS " : status === "FAIL" ? "FAIL " : "INCOMPLETE";
-  console.log(`  ${tag}  ${name}${detail ? ` — ${detail}` : ""}`);
+  console.log(`  ${tag}  ${name}${detail ? `: ${detail}` : ""}`);
 }
 const pass = (n, d) => record("PASS", n, d);
 const fail = (n, d) => record("FAIL", n, d);
 const incomplete = (n, d) => record("INCOMPLETE", n, d);
-// Informational report line — NOT a pass/fail gate (never pushed to results, so
+// Informational report line, NOT a pass/fail gate (never pushed to results, so
 // it never affects the summary or exit code). Scalars / booleans / studio ids.
 function report(name, detail) {
-  console.log(`  INFO   ${name}${detail ? ` — ${detail}` : ""}`);
+  console.log(`  INFO   ${name}${detail ? `: ${detail}` : ""}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ function scalar(sql) {
 const n = (v) => Number(v ?? 0);
 
 // ---------------------------------------------------------------------------
-// 1. Schema present — the 0134 objects exist.
+// 1. Schema present: the 0134 objects exist.
 // ---------------------------------------------------------------------------
 function checkSchemaPresent() {
   try {
@@ -135,7 +135,7 @@ function checkSchemaPresent() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Dormancy — no studio has the flag on (the PR A / Willow invariant). Reports
+// 2. Dormancy, no studio has the flag on (the PR A / Willow invariant). Reports
 //    the enabled studio ids (UUIDs, not PII) if any so an operator can confirm
 //    intent post-activation. PASS at zero.
 // ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ function checkDormant() {
       report("Capacity ENABLED studios (review intent)", `${enabled}: ${ids}`);
       fail(
         "Capacity dormant",
-        `${enabled} studio(s) have the flag ON — expected 0 for the dormant PR A state`,
+        `${enabled} studio(s) have the flag ON: expected 0 for the dormant PR A state`,
       );
     }
   } catch (e) {
@@ -169,7 +169,7 @@ function checkDormant() {
 // ---------------------------------------------------------------------------
 // 2b. Two-flag state model (0136). Reports the derived Legacy/Configuring/Live/
 //     Draining state, proves the invalid state (capacity OFF + booking ON) is
-//     absent, and — for any enabled studio — the structural-deactivation
+//     absent, and (for any enabled studio) the structural-deactivation
 //     blockers (booking still on, overlapping appointments). No PII.
 // ---------------------------------------------------------------------------
 function checkStateModel() {
@@ -222,7 +222,7 @@ function checkStateModel() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. OFF-studio reservation parity — the core Willow-safety invariant. Every
+// 3. OFF-studio reservation parity: the core Willow-safety invariant. Every
 //    shadow row belonging to a flag-OFF studio must be keyed studio-wide
 //    (resource_key = studio_id), i.e. identical to pre-0134 behaviour.
 // ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ function checkOffParity() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Structural integrity — resource_key NOT NULL; capacity_enabled mirror
+// 4. Structural integrity: resource_key NOT NULL; capacity_enabled mirror
 //    matches each appointment's studio flag; no ON appointment lacks a
 //    practitioner (the CHECK invariant, verified independently).
 // ---------------------------------------------------------------------------
@@ -296,7 +296,7 @@ function checkIntegrity() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Orphan reservations — every shadow row's source must still exist.
+// 5. Orphan reservations: every shadow row's source must still exist.
 // ---------------------------------------------------------------------------
 function checkOrphans() {
   try {
@@ -318,7 +318,7 @@ function checkOrphans() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Eligibility coverage — every service with at least one active practitioner
+// 6. Eligibility coverage: every service with at least one active practitioner
 //    in its studio has at least one eligible practitioner mapping (the backfill
 //    invariant). Reports the eligible-mapping total for visibility.
 // ---------------------------------------------------------------------------
@@ -359,7 +359,7 @@ function checkEligibility() {
 }
 
 // ---------------------------------------------------------------------------
-// 7. No per-practitioner overlaps — belt-and-suspenders read of the invariant
+// 7. No per-practitioner overlaps: belt-and-suspenders read of the invariant
 //    the GiST exclusions enforce: no two confirmed ON appointments for the same
 //    practitioner overlap, and no two shadow rows share a resource_key with
 //    overlapping ranges. Both must be zero.
@@ -395,7 +395,7 @@ function checkOverlaps() {
 }
 
 // ---------------------------------------------------------------------------
-// 8. Report — active-practitioner distribution (aggregate, no PII).
+// 8. Report: active-practitioner distribution (aggregate, no PII).
 // ---------------------------------------------------------------------------
 function reportPractitionerCounts() {
   try {
@@ -407,7 +407,7 @@ function reportPractitionerCounts() {
     );
     report("Studios with >1 active practitioner", String(multi));
   } catch (e) {
-    report("Studios with >1 active practitioner", `unavailable — ${e.message}`);
+    report("Studios with >1 active practitioner", `unavailable: ${e.message}`);
   }
 }
 

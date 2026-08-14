@@ -13,7 +13,7 @@
 // V2-A extends the "page" category from six hard-coded shortcuts to the
 // permission-aware navigation/settings registry in
 // lib/search/navigation-registry.ts. The registry is static product metadata
-// with no database access, so the posture above is unchanged — a nav result
+// with no database access, so the posture above is unchanged: a nav result
 // can only ever point at a page the practitioner was already authorized to
 // open.
 
@@ -53,12 +53,12 @@ export const SEARCH_TOTAL_CAP = 12;
  *
  * Six, not four: the pre-typing state of the dropdown is the six default
  * shortcuts inherited from V1, and this cap is applied by groupResults on the
- * way to the screen. A cap below six would silently trim that state — the
+ * way to the screen. A cap below six would silently trim that state: the
  * component would render four of the six rows the action returned. Pinned by
  * tests/lib/search/navigation-registry.test.ts.
  *
  * Lives here rather than in navigation-registry.ts so the client component can
- * import it without pulling the registry — which is server-only precisely so a
+ * import it without pulling the registry, which is server-only precisely so a
  * non-owner's browser bundle never carries the titles of owner-only surfaces.
  */
 export const NAV_RESULT_CAP = 6;
@@ -68,7 +68,7 @@ export const NAV_RESULT_CAP = 6;
  *
  * Navigation results are capped SEPARATELY (NAV_RESULT_CAP) and sit on top of
  * the data cap rather than competing for the same twelve slots. Two reasons:
- *   * a data-rich query must never lose a client result to a settings row —
+ *   * a data-rich query must never lose a client result to a settings row,
  *     V1's categories are not allowed to degrade;
  *   * a settings-only query ("buffer", "photo consent") must never lose its
  *     answer to a wall of unrelated clients, which is exactly what happens
@@ -86,7 +86,7 @@ export const GROUP_ORDER: ReadonlyArray<{
   { type: "appointment", label: "Appointments" },
   { type: "memory", label: "Treatment Memory" },
   { type: "record", label: "Records" },
-  // V2-A: the group is no longer "six page shortcuts" — it is every settings
+  // V2-A: the group is no longer "six page shortcuts". It is every settings
   // and navigation destination the practitioner is allowed to reach.
   { type: "page", label: "Settings & Pages" },
 ];
@@ -107,7 +107,7 @@ export function sanitizeQuery(raw: string): string {
 // which is what makes the capped output deterministic.
 //
 // Called by the server action (before returning) and again by groupResults
-// (before rendering) — capping is idempotent, and defining it once means the
+// (before rendering), capping is idempotent, and defining it once means the
 // two can never disagree about what "capped" means.
 export function capResults(results: SearchResult[]): SearchResult[] {
   const data: SearchResult[] = [];

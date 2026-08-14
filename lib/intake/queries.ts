@@ -241,11 +241,11 @@ export function generateIntakeLinkUrl(
 // resend status. It refreshes intake_link_expires_at (= now + TTL, matching
 // the freshly minted token) and increments intake_link_send_count on every
 // mint; it sets intake_link_last_sent_at ONLY when the link was actually
-// emailed (`emailed: true`) — copy-link refreshes expiry + count but must NOT
+// emailed (`emailed: true`), copy-link refreshes expiry + count but must NOT
 // claim it was emailed. Uses the admin client so no RLS UPDATE policy change
 // is needed (callers gate ownership before minting). Saved answers
 // (`responses`) are never touched. Stamping failure is non-fatal and logged
-// WITHOUT any token or PII — the link was already minted/sent.
+// WITHOUT any token or PII: the link was already minted/sent.
 export async function stampIntakeLinkIssued(
   admin: SupabaseClient,
   intakeId: string,

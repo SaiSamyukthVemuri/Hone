@@ -4,7 +4,7 @@ import "server-only";
 //
 // Same posture as lib/sessions/block-command-errors.ts: a PostgREST RPC failure
 // carries the raw exception message, which for these commands is a deliberately
-// non-sensitive sentence — but it can also carry a constraint name, a function
+// non-sensitive sentence, but it can also carry a constraint name, a function
 // body fragment or an internal id when something unexpected fails. Nothing raw
 // reaches a practitioner: known outcomes map to the wording the application
 // already showed, and everything else becomes one generic message with the
@@ -137,7 +137,7 @@ export function mapSessionCommandError(
     if (raw.includes(k.raised)) return k.safe;
   }
 
-  // Anything else — a constraint violation, a type error, a Postgres internal —
+  // Anything else: a constraint violation, a type error, a Postgres internal,
   // is logged and generalised. Never surfaced.
   logUnknown(raw);
   return GENERIC_SESSION_COMMAND_ERROR;

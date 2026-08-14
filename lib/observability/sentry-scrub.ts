@@ -6,7 +6,7 @@
 // already stops Sentry attaching IPs, cookies, headers and request bodies by
 // default. This module is the belt-and-suspenders layer on top: every event
 // and every breadcrumb is walked before it leaves the process and anything
-// matching a sensitive key OR a sensitive value pattern is redacted — from
+// matching a sensitive key OR a sensitive value pattern is redacted: from
 // `extra`, `contexts`, `tags`, `breadcrumbs`, request data, span data and the
 // user object, not just top-level fields.
 //
@@ -103,7 +103,7 @@ const PHONE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g;
  *  F-PRIV-001. Token-route canonicalization runs FIRST, before any value
  *  pattern. Those patterns key off credential SYNTAX (JWT segments, a `Bearer `
  *  prefix, Supabase shapes) and are structurally blind to an opaque credential
- *  sitting in a URL path — /intake/9f3a... looks like an ordinary path segment
+ *  sitting in a URL path, /intake/9f3a... looks like an ordinary path segment
  *  to every one of them. Canonicalization keys off the ROUTE instead, so the
  *  credential is removed no matter what it looks like.
  *
@@ -194,7 +194,7 @@ function scrubContexts(
 
 /** Sanitize a field KNOWN to be a URL. Order matters and is deliberate:
  *
- *   1. canonicalize token-route credentials — this also consumes the query and
+ *   1. canonicalize token-route credentials: this also consumes the query and
  *      fragment of a token URL, so a credential cannot escape by hiding behind
  *      an encoded `?` or a malformed separator that step 2 fails to split on;
  *   2. drop the query string and fragment (identifiers leak through both);
@@ -267,7 +267,7 @@ function scrubEventCommon<T extends Event>(event: T): T {
     event.message = redactString(event.message);
   }
 
-  // F-PRIV-001. The transaction NAME was previously never scrubbed at all — it
+  // F-PRIV-001. The transaction NAME was previously never scrubbed at all: it
   // is the event's grouping key and reads as structural metadata, but on a
   // dynamic route it is built from the resolved path, so it carried the raw
   // credential ("GET /intake/<token>"). It is a plain string, not a URL field,
@@ -358,8 +358,8 @@ export function scrubTransactionEvent<T extends Event>(event: T): T {
 }
 
 /** Production traces at 0.1 (10%); development at 1.0 for full local
- *  visibility. Note: error events are NOT sampled by this rate — only
- *  performance transactions — so error capture is unaffected in production. */
+ *  visibility. Note: error events are NOT sampled by this rate, only
+ *  performance transactions, so error capture is unaffected in production. */
 export function tracesSampleRate(): number {
   return process.env.NODE_ENV === "production" ? 0.1 : 1;
 }

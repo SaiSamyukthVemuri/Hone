@@ -4,7 +4,7 @@
 // booking_tracking_consents row (migration 0106). This consent is separate from
 // clinical / payment / card consent, and declining it never blocks a booking.
 //
-// The row stores ONLY consent bookkeeping — no email/phone, no clinical data,
+// The row stores ONLY consent bookkeeping, no email/phone, no clinical data,
 // no provider tokens.
 
 export const MARKETING_CONSENT_FIELD = "marketing_analytics_consent";

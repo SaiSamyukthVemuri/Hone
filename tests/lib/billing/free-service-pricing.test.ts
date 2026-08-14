@@ -307,7 +307,7 @@ describe("FREE-01 no money-moving path", () => {
     }
     // and free says so specifically
     const free = blocked.find(([l]) => l === "free")![1];
-    expect(!free.allow && free.error).toMatch(/is free — no payment is required/);
+    expect(!free.allow && free.error).toMatch(/is free\. No payment is required/);
   });
 
   it("F11b the permission module is exhaustive and is NOT an amount source", () => {

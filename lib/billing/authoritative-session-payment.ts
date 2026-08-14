@@ -11,13 +11,13 @@ import {
 //
 // F-PAY-001. Every surface that shows or prepares a session payment goes
 // through here, so the price is decided in ONE place from CURRENT records:
-// the session-detail card, the quick-checkout modal, and — crucially — the
+// the session-detail card, the quick-checkout modal, and (crucially) the
 // prepare action itself, which re-loads independently rather than trusting
 // anything the page rendered earlier or the browser sent back.
 //
 // LINEAGE IS ENFORCED HERE, not assumed:
 //   * the session must be live (not soft-deleted) and in THIS studio;
-//   * the appointment comes from sessions.appointment_id — never recovered by
+//   * the appointment comes from sessions.appointment_id, never recovered by
 //     client id, because a client can have several appointments and pricing the
 //     wrong one would charge the wrong amount;
 //   * the appointment must belong to the same studio AND the session's client;
@@ -157,7 +157,7 @@ export async function getAuthoritativeSessionPaymentAmount(args: {
 
 // Practitioner-facing copy for a context that could not be established. Kept
 // beside the states so copy and branch cannot drift, and deliberately vague
-// about internals — a mismatch is not something to explain in detail.
+// about internals: a mismatch is not something to explain in detail.
 export function loadFailureMessage(f: AuthoritativeAmountLoadFailure): string {
   switch (f.kind) {
     case "session_not_found":

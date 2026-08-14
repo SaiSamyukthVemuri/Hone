@@ -103,7 +103,7 @@ export async function getRefreshTokenCiphertext(
 }
 
 // The server-verified Google account id (sub) of the existing connection, if
-// any. Used by the B2.2 scope-upgrade callback to REJECT account switching — a
+// any. Used by the B2.2 scope-upgrade callback to REJECT account switching: a
 // returned identity that differs must never overwrite the stored credentials.
 export async function getConnectionAccountId(
   studioId: string,
@@ -207,7 +207,7 @@ export async function persistConnectedFromCallback(input: {
     return { ok: true, connectionId };
   }
 
-  // No new refresh token — preserve an existing one, else fail closed.
+  // No new refresh token: preserve an existing one, else fail closed.
   const { data: existing } = await admin
     .from("calendar_connection_secrets")
     .select("encrypted_refresh_token")
@@ -314,9 +314,9 @@ export async function setWriteCalendar(
     .eq("practitioner_id", practitionerId);
 }
 
-// B2.4 — record the owner's chosen appointment DESTINATION mode. NO-SWITCH: once a
+// B2.4, record the owner's chosen appointment DESTINATION mode. NO-SWITCH: once a
 // mode is set, B2.4 does not support changing to the other mode (destination
-// switching is a separate future product/data-lifecycle decision — see
+// switching is a separate future product/data-lifecycle decision. See
 // docs/integrations/google-calendar-sync.md). A re-select of the SAME mode is an
 // idempotent no-op (recovery from a pending state stays on the same mode).
 // Choosing a mode for the first time (currently NULL) is allowed. Readiness stays
@@ -362,7 +362,7 @@ export async function setDestinationMode(
   return { ok: true, connectionId };
 }
 
-// B2.4 dedicated provisioning — record a NEW attempt token + start time BEFORE the
+// B2.4 dedicated provisioning: record a NEW attempt token + start time BEFORE the
 // Google calendars.insert, so an ambiguous provider response can be reconciled by
 // EXACT token match. Guarded to the dedicated mode + only when NOT yet provisioned
 // (app_created_calendar_id null) and NOT flagged ambiguous. Returns the token to
@@ -392,7 +392,7 @@ export async function beginDedicatedProvisioningAttempt(
     .is("destination_provisioning_ambiguous_at", null)
     // CAS: only the FIRST caller mints the STABLE attempt token. A later retry
     // (token already present) or a concurrent caller matches 0 rows and re-reads
-    // the claimed token — so every retry reconciles under ONE stable token and a
+    // the claimed token, so every retry reconciles under ONE stable token and a
     // concurrent double-create is detected as ambiguous (never silently adopted).
     .is("destination_provisioning_attempt_token", null)
     .select("id")
@@ -401,7 +401,7 @@ export async function beginDedicatedProvisioningAttempt(
   return { ok: true, connectionId: conn.id as string, attemptToken };
 }
 
-// B2.4 dedicated_app_created — record the Hone-CREATED (or reconciled) secondary
+// B2.4 dedicated_app_created, record the Hone-CREATED (or reconciled) secondary
 // calendar as the destination. Sets the idempotency anchor (app_created_calendar_id)
 // + write target + safe display name + configured timestamp, clears the ambiguity
 // marker + the mutually-exclusive owned-validation fact. Guarded to the dedicated
@@ -433,7 +433,7 @@ export async function setDedicatedCalendarDestination(
   return { ok: true, connectionId: conn.id as string };
 }
 
-// B2.4 dedicated — mark the connection AMBIGUOUS (reconciliation found multiple
+// B2.4 dedicated: mark the connection AMBIGUOUS (reconciliation found multiple
 // token matches). Readiness derives "needs_attention"; no calendar is auto-created
 // while this is set. Guarded to the dedicated mode + only when not yet provisioned.
 export async function markDedicatedProvisioningAmbiguous(
@@ -460,7 +460,7 @@ export async function markDedicatedProvisioningAmbiguous(
   return { ok: true, connectionId: conn.id as string };
 }
 
-// B2.4 existing_owned — record a server-VALIDATED owned calendar as the destination
+// B2.4 existing_owned, record a server-VALIDATED owned calendar as the destination
 // (the caller has already confirmed accessRole === "owner" against Google's own
 // calendar list for this connection). Sets the write target + safe display name +
 // ownership-validated timestamp + configured timestamp, clears the mutually-

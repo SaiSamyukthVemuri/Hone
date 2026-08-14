@@ -12,14 +12,14 @@ const KIND_META: Record<
   consultation: {
     label: "Consultation notes",
     description:
-      "Dated consultation record — goals, history, expectations, plan discussed.",
+      "Dated consultation record: goals, history, expectations, plan discussed.",
     placeholder:
       "What the client wants, relevant history, expectations set, plan discussed, next steps…",
   },
   skin_hair_analysis: {
     label: "Skin & hair analysis",
     description:
-      "Dated skin and hair assessment — type, condition, growth, and treatment-area findings.",
+      "Dated skin and hair assessment: type, condition, growth, and treatment-area findings.",
     placeholder:
       "Skin type/condition, hair type/colour/density, growth pattern, area-specific findings…",
   },

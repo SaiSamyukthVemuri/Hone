@@ -9,7 +9,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 // the client bundle, or logs. A future KMS/vault can replace this module without
 // changing the stored shape (still an opaque `encrypted` string).
 //
-// Ciphertext format: base64(iv):base64(authTag):base64(ciphertext) — the GCM
+// Ciphertext format: base64(iv):base64(authTag):base64(ciphertext), the GCM
 // auth tag makes tampering detectable (decrypt fails safely).
 
 const ALGO = "aes-256-gcm";
@@ -73,7 +73,7 @@ export function decryptTrackingProviderToken(
     ]);
     return { ok: true, token: dec.toString("utf8") };
   } catch {
-    // Wrong key / tampered / corrupt — never surface the raw error or token.
+    // Wrong key / tampered / corrupt, never surface the raw error or token.
     return { ok: false, reason: "decrypt_failed" };
   }
 }

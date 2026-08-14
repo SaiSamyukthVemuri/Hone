@@ -1,15 +1,15 @@
 import "server-only";
 import { Redis } from "@upstash/redis";
 
-// Google Calendar — Phase B2.3-c2: the worker-drain route heartbeat.
+// Google Calendar: Phase B2.3-c2: the worker-drain route heartbeat.
 //
 // SEPARATE from the reconciliation heartbeat (different key + different type): a
 // single overwritten Upstash KV key recording the last worker-route run so an
 // operator can see healthy / stale / missing without polling the queue. Reuses the
-// Upstash Redis that already backs rate limiting + the reconcile route — no
+// Upstash Redis that already backs rate limiting + the reconcile route, no
 // migration, no new dependency, no new scheduler.
 //
-// POSTURE: FAIL-OPEN. The write is best-effort and NEVER throws — a heartbeat
+// POSTURE: FAIL-OPEN. The write is best-effort and NEVER throws: a heartbeat
 // failure must never alter claim/handle/record behaviour, change a JobResult,
 // cause a retry or a second provider call, make a completed job look incomplete,
 // hide a record failure, or change the HTTP response's core execution truth. The
@@ -44,7 +44,7 @@ export type WorkerHeartbeat = {
   timed_out?: boolean;
   // Coarse safe error class (never a raw message); present only on a failed run.
   error_class?: string | null;
-  // Aggregate handler-result-code counts (closed enum codes only — never PHI).
+  // Aggregate handler-result-code counts (closed enum codes only, never PHI).
   by_code?: Record<string, number>;
 };
 

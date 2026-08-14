@@ -1,11 +1,11 @@
-// Global Search — treatment-memory candidate merge (pure).
+// Global Search: treatment-memory candidate merge (pure).
 //
 // A treatment-memory block becomes findable down TWO independent paths:
 //
-//   DIRECT — the block's own text columns match (primary_area, block_name,
+//   DIRECT: the block's own text columns match (primary_area, block_name,
 //            caution_note, reaction_notes, probe_label, probe_lot_number).
 //
-//   CHILD  — one of the block's STRUCTURED treatment areas matches
+//   CHILD , one of the block's STRUCTURED treatment areas matches
 //            (session_block_areas.area). This is the only way a SECONDARY area
 //            is reachable: a block charted as "Left Cheek · Right Sideburn"
 //            carries the legacy primary_area "Cheek", so searching "Sideburn"
@@ -13,8 +13,8 @@
 //            the sideburn perfectly well. That was a RECALL gap, not a display
 //            gap, and this module is the half that closes it.
 //
-// The two paths deliberately OVERLAP — a query like "Cheek" matches both the
-// legacy primary_area and the structured child row for the very same block — so
+// The two paths deliberately OVERLAP: a query like "Cheek" matches both the
+// legacy primary_area and the structured child row for the very same block, so
 // merging is what keeps one treatment showing up as one result.
 //
 // PURE: no I/O, no server-only import, no Supabase client. The caller supplies
@@ -49,7 +49,7 @@ function usableId(row: unknown): string | null {
 
 // Newest-first is the existing clinical-memory order (session_blocks ordered by
 // created_at descending). An unparseable or absent timestamp sorts LAST rather
-// than throwing or being treated as "now" — an undated row must never displace a
+// than throwing or being treated as "now", an undated row must never displace a
 // dated one at the top of a practitioner's results.
 function createdAtRank(row: MergeableBlockRow): number {
   const raw = row.created_at;
@@ -66,7 +66,7 @@ function createdAtRank(row: MergeableBlockRow): number {
 }
 
 // How much of the row is actually populated. When the same block arrives down
-// both paths the two selects are identical today, so this is a tie in practice —
+// both paths the two selects are identical today, so this is a tie in practice,
 // but if a future caller ever fetches a narrower shape on one path, the merge
 // keeps the row that can actually render a subtitle instead of silently keeping
 // whichever path happened to be listed first.
@@ -83,7 +83,7 @@ function populatedFieldCount(row: MergeableBlockRow): number {
  * capped treatment-memory block list.
  *
  * Guarantees, each pinned by a test:
- *   * deduplicated by block id — one treatment is one result, however many
+ *   * deduplicated by block id, one treatment is one result, however many
  *     paths or matching child areas found it;
  *   * the RICHEST row survives a duplicate (ties keep the direct-path row, so
  *     the order of the arguments is the documented tiebreak, not an accident);

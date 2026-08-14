@@ -1,4 +1,4 @@
-// PR #257: Quick Import V1 — the PURE parse → normalize → group → plan →
+// PR #257: Quick Import V1, the PURE parse → normalize → group → plan →
 // map pipeline for CSV/TSV client + treatment-history import. No I/O, no
 // Supabase, no dates-from-now, no randomness: everything here is a
 // deterministic data transform so the rules are unit-tested directly. The
@@ -262,7 +262,7 @@ export function normalizeEmail(raw: string | undefined | null): string {
 }
 
 // Digits only, for MATCHING (we keep the raw phone for storage). Strips a
-// leading country-code differences only loosely — exact-match dedupe within a
+// leading country-code differences only loosely: exact-match dedupe within a
 // studio is the goal, not canonical E.164.
 export function normalizePhone(raw: string | undefined | null): string {
   return (raw ?? "").replace(/\D+/g, "");
@@ -520,7 +520,7 @@ export function groupRows(rows: ParsedRow[]): {
       warnings.push("Rows for this client have different dates of birth.");
     }
     // A shared email/phone with DIFFERENT names may be two people on one
-    // contact detail (e.g. a shared landline). Flag for review — never block.
+    // contact detail (e.g. a shared landline). Flag for review, never block.
     const names = new Set(
       groupRowsList
         .map((r) => normalizeName(rowFullName(r.fields)))
@@ -528,7 +528,7 @@ export function groupRows(rows: ParsedRow[]): {
     );
     if (names.size > 1) {
       warnings.push(
-        "Different names share this contact detail — review before importing.",
+        "Different names share this contact detail. Review before importing.",
       );
     }
 
@@ -703,7 +703,7 @@ function orNull(v: string | undefined): string | null {
 }
 
 // Map a group to the safe client-insert fields. date_of_birth is the cleanly
-// parsed value (null if it could not be parsed — we never store a bad date).
+// parsed value (null if it could not be parsed. We never store a bad date).
 export function toClientInsertFields(group: ClientGroup): ClientInsertFields {
   const f = group.clientFields;
   return {

@@ -1,4 +1,4 @@
-// POINT-OF-CARE TREATMENT MEMORY — the "Last treatment" view model rendered on
+// POINT-OF-CARE TREATMENT MEMORY: the "Last treatment" view model rendered on
 // the live charting screen.
 //
 // WHY THIS EXISTS
@@ -11,12 +11,12 @@
 // reproduce, which that summary does not carry: the machine frequency, the
 // probe LOT she must match, whether numbing was used, how many hairs came out,
 // and the mode-valid machine readings. This module builds that fuller memory
-// WITHOUT forking the display vocabulary — every label comes from the existing
+// WITHOUT forking the display vocabulary: every label comes from the existing
 // shared helpers:
 //
 //   area + laterality      lib/sessions/block-areas.ts   (resolveBlockAreas / formatAreaLabel)
 //   mode-valid readings    lib/sessions/reading-field-order.ts (readingFieldOrder)
-//   thermolysis seconds    lib/sessions/format-seconds.ts (3dp — 0.733 stays 0.733)
+//   thermolysis seconds    lib/sessions/format-seconds.ts (3dp, 0.733 stays 0.733)
 //   tolerance              lib/sessions/clinical-response.ts (toleranceLabel)
 //   numbing                lib/sessions/clinical-response.ts (numbingDisplay)
 //   unified response       lib/sessions/reaction-unified.ts (unifiedReactionLabels)
@@ -30,13 +30,13 @@
 //     non-null" (which is what components/entry-row.tsx does).
 //   * RETIRED INPUT. galvanic_intensity_percent is never read, never displayed.
 //   * NO SILENT PASS PICKING. Block-level setup comes from the block row.
-//     Entry-level setup comes from the CANONICAL pass (firstLiveEntry — the
+//     Entry-level setup comes from the CANONICAL pass (firstLiveEntry, the
 //     earliest live entry, the same rule the in-form Copy settings control
 //     uses). Hairs are SUMMED across every live pass, which is how the product
 //     already totals them (lib/sessions/treatment-intelligence.ts). Pass count
 //     is surfaced whenever there is more than one, so an aggregate is never
 //     mistaken for a single reading.
-//   * SOFT-DELETED PASSES ARE EXCLUDED everywhere — from the canonical pass,
+//   * SOFT-DELETED PASSES ARE EXCLUDED everywhere: from the canonical pass,
 //     from the hair total, from the pass count and from the response chips.
 //   * NO TRUNCATION OF CLINICAL TEXT. buildLastSessionSummary drops a
 //     reaction note longer than 140 characters; here the note is a separate
@@ -98,7 +98,7 @@ export type PointOfCareEntry = {
   mode: string | null;
   hairs_treated?: number | string | null;
   observation_chips?: unknown;
-  // The entry's practitioner-authored free text — the charting form's
+  // The entry's practitioner-authored free text: the charting form's
   // "Additional notes" (lib/sessions/charting-labels.ts). DELIBERATELY not read
   // by this module: the point-of-care card is an at-a-glance surface and shows
   // an excerpt model, not narrative. It is declared here so the ONE entry shape
@@ -156,7 +156,7 @@ export type PointOfCareNote = {
 
 export type PointOfCareReading = {
   field: ReadingField;
-  // "Thermolysis duration (s)" — the capture-form label, so the card can be
+  // "Thermolysis duration (s)", the capture-form label, so the card can be
   // read against the machine.
   label: string;
   // Self-describing display value: "0.733 seconds", "3 UL", "40%", "2 pulses".
@@ -164,7 +164,7 @@ export type PointOfCareReading = {
 };
 
 export type PointOfCareArea = {
-  // The block id — a stable React key and a stable test handle.
+  // The block id: a stable React key and a stable test handle.
   key: string;
   // "Left Cheeks · Right Sideburns", the legacy block name, or a positional
   // fallback. Never a bare first area.
@@ -185,20 +185,20 @@ export type PointOfCareArea = {
   toleranceLine: string | null;
   // Unified across the legacy reaction_type AND every live pass's chips.
   responseLine: string | null;
-  // Kept whole — never truncated at 140 characters.
+  // Kept whole, never truncated at 140 characters.
   responseNote: string | null;
   cautionNote: string | null;
   // caution_for_next_session on its own. A block can be flagged to watch with
   // NO note; without this the area object looks unflagged and only the
   // memory-level watchLines prose ("<area>: flagged to watch.") carries it.
   cautionFlag: boolean;
-  // The practitioner's own free text per LIVE pass, oldest first — the charting
+  // The practitioner's own free text per LIVE pass, oldest first: the charting
   // form's "Additional notes" (electrolysis_entries.comments).
   //
   // THE WHOLE STORED COLUMN, deliberately.
   //
-  // The obvious-looking alternative — resolveDisplayChips(...).note, the
-  // remainder after legacy chip hydration — LOSES TEXT on this surface, and the
+  // The obvious-looking alternative: resolveDisplayChips(...).note, the
+  // remainder after legacy chip hydration: LOSES TEXT on this surface, and the
   // loss is silent. resolveDisplayChips promotes canonical tokens out of
   // `comments` into a chip list, but it only does so when observation_chips is
   // EMPTY, and the response line here is built from that same empty raw column
@@ -246,8 +246,8 @@ const DEFAULT_EXCERPT_CHARS = 180;
 // A genuinely charted visit can carry NO settings blocks:
 //   * a LASER visit charts into laser_entries and never creates a block;
 //   * pre-0019 electrolysis charted straight into electrolysis_entries.
-// Both correctly qualify as "the last treatment" — a laser visit IS the last
-// treatment for a client mid-transition — but every block-shaped summary is
+// Both correctly qualify as "the last treatment", a laser visit IS the last
+// treatment for a client mid-transition, but every block-shaped summary is
 // empty for them, and an empty summary reads as "nothing was recorded" about a
 // visit that plainly happened.
 //
@@ -261,7 +261,7 @@ export const BLOCKLESS_LEGACY_ENTRIES_COPY =
 
 // The truthful line for a charted visit that has no settings blocks, or null
 // when the visit does have blocks (so the caller renders the normal summary).
-// Deliberately says what the record IS, never that an area was unrecorded — a
+// Deliberately says what the record IS, never that an area was unrecorded: a
 // laser zone or a legacy entry area exists, it simply is not in the
 // block-shaped model these compact surfaces render.
 export function blocklessTreatmentCopy(input: {
@@ -344,8 +344,8 @@ function buildReadings(
   mode: string,
 ): PointOfCareReading[] {
   // No early return for an unknown mode. readingFieldOrder("") already yields
-  // exactly ["energyLevel"] — the one BLOCK-level reading that is valid in
-  // every non-galvanic mode — and excludes every entry-level reading. Short-
+  // exactly ["energyLevel"], the one BLOCK-level reading that is valid in
+  // every non-galvanic mode, and excludes every entry-level reading. Short-
   // circuiting here instead dropped a recorded energy level from a block saved
   // without a mode (reachable: the form's mode chip toggles back off and the
   // action coerces the empty value to null), which then rendered "Setup not
@@ -381,7 +381,7 @@ function buildReadings(
         break;
       }
       case "thermolysisDurationSeconds": {
-        // 3dp exact — a stored 0.733 must never render as 0.73 or 0.
+        // 3dp exact: a stored 0.733 must never render as 0.73 or 0.
         push(field, formatSeconds(num(canonical?.thermolysis_duration_seconds)));
         break;
       }
@@ -418,7 +418,7 @@ function buildReadings(
 function buildArea(block: PointOfCareBlock, index: number): PointOfCareArea {
   const allEntries = block.entries ?? [];
   const live = allEntries.filter((e) => e.deleted_at == null);
-  // THE canonical pass — the earliest live entry, the same rule the in-form
+  // THE canonical pass: the earliest live entry, the same rule the in-form
   // "Copy settings" control uses, so the memory card and a copied draft can
   // never disagree about which pass carried the settings. firstLiveEntry reads
   // only created_at + deleted_at; the cast is because its parameter is typed
@@ -441,7 +441,7 @@ function buildArea(block: PointOfCareBlock, index: number): PointOfCareArea {
   );
 
   // Oldest pass first, so the notes read in the order they were written. The
-  // WHOLE stored column — see PointOfCareArea.notes for why the chip-hydration
+  // WHOLE stored column. See PointOfCareArea.notes for why the chip-hydration
   // remainder is the wrong choice on a surface that renders no pills.
   const notes: string[] = [];
   for (const e of [...live].sort((a, b) =>
@@ -484,7 +484,7 @@ function buildArea(block: PointOfCareBlock, index: number): PointOfCareArea {
 }
 
 // Every structured area treated in the session, deduped on (area, laterality)
-// and rendered with laterality — "Left Cheeks · Right Sideburns". This is the
+// and rendered with laterality: "Left Cheeks · Right Sideburns". This is the
 // clinical headline, where the side is part of the clinical fact. (The
 // treatment-TIME breakdown deliberately buckets on the bare area instead; see
 // lib/treatment-time/area-bucket.ts.)
@@ -590,7 +590,7 @@ export function toClinicalSummaryBlocks(
     caution_note: b.caution_note ?? null,
     structured_areas: (b.structured_areas ??
       null) as ClinicalSummaryBlock["structured_areas"],
-    // Live passes only — a removed pass must not resurrect its reaction chips.
+    // Live passes only: a removed pass must not resurrect its reaction chips.
     observation_chips_list: (b.entries ?? [])
       .filter((e) => e.deleted_at == null)
       .map((e) => e.observation_chips),

@@ -12,7 +12,7 @@ import { createHash, randomBytes } from "crypto";
 // the appointment is still eligible. Replay AFTER a successful
 // cancel/reschedule is blocked by the appointment status transitions, the
 // SELECT ... FOR UPDATE row locks in the mutation RPCs, and reschedule token
-// rotation — so there is intentionally no explicit single-use (used_at /
+// rotation, so there is intentionally no explicit single-use (used_at /
 // token-uses) schema; mutation replay is handled by the appointment state
 // machine.
 //

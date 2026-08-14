@@ -31,7 +31,7 @@ export const AREAS: ReadonlyArray<string> = [
 
 // Region-grouped area taxonomy used by the treatment plan area picker
 // (Body Chart v1 Phase A). Same canonical strings as AREAS minus
-// "Full face" (which is a composite — practitioners should pick a
+// "Full face" (which is a composite: practitioners should pick a
 // specific area for a treatment plan), grouped for picker navigation.
 // "Other" is a catch-all that unlocks a custom free-text value in the
 // UI; the DB column accepts any 1..60 char string.
@@ -128,7 +128,7 @@ export const FITZPATRICK_TYPES: ReadonlyArray<{ value: number; label: string }> 
 // ("Redness (erythema)", "Slight swelling (edema)") instead of jargon Chloe read
 // as redundant with plain wording. These are DISPLAY/canonical LABEL changes;
 // legacy stored values ("Erythema", "Slight edema") keep resolving via the alias
-// map in lib/observation-chips.ts — no production row is rewritten, no backfill.
+// map in lib/observation-chips.ts, no production row is rewritten, no backfill.
 export const COMMON_COMMENTS: ReadonlyArray<string> = [
   "Dehydrated follicles",
   "Hyperpigmentation",
@@ -182,7 +182,7 @@ export const ALL_APILUS_MODALITIES: ReadonlyArray<string> = [
 // Display-only labels for Apilus modalities. The stored/canonical values
 // (the ApilusModality union and existing electrolysis_entries /
 // session_blocks rows) keep their original casing for backward
-// compatibility — this map only changes what practitioners see. Unknown or
+// compatibility: this map only changes what practitioners see. Unknown or
 // legacy values fall through to the raw value so historical entries always
 // render. No data migration.
 export const APILUS_MODALITY_LABELS: Readonly<Record<string, string>> = {

@@ -7,7 +7,7 @@ import {
 } from "@/lib/onboarding/state";
 import type { createAdminClient } from "@/lib/supabase/admin-server";
 
-// Truthful application result — never claims success unless THIS invocation sent.
+// Truthful application result, never claims success unless THIS invocation sent.
 export type WelcomeEmailResult =
   | "sent"
   | "failed"

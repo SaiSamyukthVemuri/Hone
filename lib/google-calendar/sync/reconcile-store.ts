@@ -10,7 +10,7 @@ import type {
   StudioReconcileResult,
 } from "./reconcile";
 
-// Google Calendar — Phase B2.3-b: the PRODUCTION ReconcileStore over the
+// Google Calendar: Phase B2.3-b: the PRODUCTION ReconcileStore over the
 // service-role Supabase (PostgREST) client. The admin client exposes NO raw SQL,
 // so every read is a query-builder chain and every actuation is an .rpc() to the
 // EXISTING repair functions. There is NO new DB function and NO migration.
@@ -227,7 +227,7 @@ export function createSupabaseReconcileStore(admin: Admin): ReconcileStore {
 
     async pageStudiosWithDeadOutbox(afterStudioId, limit) {
       // Bounded, cursor-paginated read from the pre-aggregated queue-health view
-      // (per-studio `dead` count) — NOT a raw 10k-row scan. PHI-free: studio_id + count.
+      // (per-studio `dead` count), NOT a raw 10k-row scan. PHI-free: studio_id + count.
       let q = admin
         .from("calendar_sync_queue_health")
         .select("studio_id, dead")

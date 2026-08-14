@@ -14,14 +14,14 @@ export type TreatmentPlanWithCount = TreatmentPlan & {
 
 // Phase C: plan + count + ordered list of treatment schedule stages.
 // Stages come from the child table treatment_plan_stages (migration 0034).
-// Legacy plans created before Phase C have an empty stages array — the UI
+// Legacy plans created before Phase C have an empty stages array: the UI
 // renders a calm empty state and the plan still works as a simple
 // suggested_visit_count target.
 //
 // Phase D additions:
-//   actual_logged_minutes — Σ session_blocks.minutes_performed for the
+//   actual_logged_minutes, Σ session_blocks.minutes_performed for the
 //     plan's attached electrolysis sessions (non-deleted at both levels).
-//   actual_session_count  — count of those electrolysis sessions. Note
+//   actual_session_count , count of those electrolysis sessions. Note
 //     this is electrolysis-only; the existing `attached_count` counts
 //     attached sessions of any modality and continues to power the
 //     legacy "X of Y visits" progress bar.

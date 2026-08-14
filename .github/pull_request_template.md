@@ -5,7 +5,7 @@
 ## Risk
 
 <!-- Tiers and expected validation depth: ENGINEERING_STANDARDS.md
-     Baseline from `npm run ci:plan -- --json` — a baseline, never semantic proof. -->
+     Baseline from `npm run ci:plan -- --json`, a baseline, never semantic proof. -->
 
 Baseline risk tier: T0 / T1 / T2 / T3
 

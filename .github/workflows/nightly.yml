@@ -2,7 +2,7 @@ name: nightly full matrix
 
 # The complete matrix. PR CI is risk-based (see ci.yml + scripts/classify-changes.mjs)
 # and runs only the lanes a diff can affect; this workflow is where the FULL
-# coverage lives so nothing is lost — it is moved, not weakened.
+# coverage lives so nothing is lost. It is moved, not weakened.
 #
 # Runs:
 #   * nightly on a schedule
@@ -11,7 +11,7 @@ name: nightly full matrix
 
 on:
   schedule:
-    # 07:00 UTC daily — after the existing 09:00/09:30 UTC calendar crons would
+    # 07:00 UTC daily: after the existing 09:00/09:30 UTC calendar crons would
     # otherwise contend, and before a working day starts in North America.
     - cron: "0 7 * * *"
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
-      # One lane failing must not hide the others — the nightly's job is to tell
+      # One lane failing must not hide the others: the nightly's job is to tell
       # you everything that is broken, not the first thing.
       fail-fast: false
       matrix:

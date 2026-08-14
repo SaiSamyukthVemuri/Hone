@@ -31,9 +31,9 @@ describe("photoConsentSummary — the four required outcomes", () => {
     expect(photoConsentSummary("not_signed").label).toBe("Photo consent not completed");
   });
   it("outdated / null / unexpected → needs review (never an implied grant)", () => {
-    expect(photoConsentSummary("outdated").label).toBe("Consent response unavailable — needs review");
-    expect(photoConsentSummary(null).label).toBe("Consent response unavailable — needs review");
-    expect(photoConsentSummary("signed").label).toBe("Consent response unavailable — needs review");
+    expect(photoConsentSummary("outdated").label).toBe("Consent response unavailable: needs review");
+    expect(photoConsentSummary(null).label).toBe("Consent response unavailable: needs review");
+    expect(photoConsentSummary("signed").label).toBe("Consent response unavailable: needs review");
   });
 });
 

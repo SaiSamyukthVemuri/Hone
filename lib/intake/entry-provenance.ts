@@ -1,11 +1,11 @@
-// Practitioner-assisted intake entry — the ONE authoritative provenance model.
+// Practitioner-assisted intake entry: the ONE authoritative provenance model.
 //
 // WHAT THIS RECORDS
 // -----------------
 // That a named, authenticated practitioner recorded the client's questionnaire
 // answers while the client was with them, and when. It is stored under a
 // single reserved key inside the existing `client_intake_forms.responses`
-// jsonb — no column, no table, no migration.
+// jsonb, no column, no table, no migration.
 //
 // WHAT THIS DOES NOT RECORD, AND MUST NEVER BE READ AS
 // ---------------------------------------------------
@@ -18,7 +18,7 @@
 //   1. the authenticated assisted editor CANNOT author the client's
 //      acknowledgements (lib/intake/responses.ts strips them server-side);
 //   2. assisted questionnaire entry is attributed to a specific practitioner,
-//      derived from the session — never from the browser;
+//      derived from the session, never from the browser;
 //   3. the public token path cannot create, replace or erase this record,
 //      because the public sanitizer admits no key outside the questionnaire
 //      set plus the one acknowledgement carve-out.
@@ -28,14 +28,14 @@
 // `display_name` is frozen into the record at write time rather than resolved
 // at read time. getPractitionersForStudio filters `.eq("active", true)`, so a
 // later deactivation makes read-time resolution return null and attribution
-// silently disappears — exactly what already happens to `reviewed_by` on this
+// silently disappears, exactly what already happens to `reviewed_by` on this
 // same page. A historical fact must not depend on a current lookup.
 //
 // WHY THIS IS NOT AN EVENT LEDGER
 // -------------------------------
 // Three timestamps and three actors, not an append-only list. It answers "who
-// started, who last recorded, who handed over" — which is what the review
-// surface can truthfully narrate — without pretending a full audit history
+// started, who last recorded, who handed over", which is what the review
+// surface can truthfully narrate: without pretending a full audit history
 // exists that the storage model cannot actually guarantee.
 
 // The reserved response key. Deliberately outside ALL_QUESTION_KEYS; the
@@ -134,8 +134,8 @@ function parseStoredRecord(value: unknown): AssistedEntryRecord | null {
 // overwritten.
 //
 // An existing value that does not parse is treated as absent and replaced. It
-// cannot arise from any application path — the public sanitizer cannot write
-// this key and the assisted action always writes a well-formed record — so the
+// cannot arise from any application path: the public sanitizer cannot write
+// this key and the assisted action always writes a well-formed record, so the
 // only way to reach it is a direct database edit, and carrying arbitrary
 // unparsed content forward inside a typed field would be worse than
 // re-establishing a truthful one from this write.
@@ -147,7 +147,7 @@ export function recordAssistedEntry(
   const existing = parseStoredRecord(existingValue);
   // Bound the actor on the WRITE side too. Previously only the read side
   // applied MAX_FIELD_CHARS, so a display_name over the cap could be stored
-  // and then be refused by this module's own parser — the record would read
+  // and then be refused by this module's own parser: the record would read
   // back as "unreadable" and attribution would vanish.
   const safeActor = boundActor(actor);
   const base: AssistedEntryRecord = {
@@ -167,7 +167,7 @@ export function recordAssistedEntry(
 
 // Stamp the handoff to the client.
 //
-// Returns null when there is no existing assisted record — a practitioner who
+// Returns null when there is no existing assisted record: a practitioner who
 // opened the assisted editor and recorded nothing has not performed assisted
 // entry, and inventing a provenance record for them would be a small lie. The
 // caller treats null as "nothing to stamp" and proceeds with the handoff.
@@ -207,8 +207,8 @@ export type AssistedEntryView =
       handoffBy: AssistedActorSnapshot | null;
       // True when the "last recorded" line would add nothing: the same
       // practitioner AND the same instant. Comparing only the actor concealed
-      // a later edit by the same practitioner — including one made AFTER the
-      // handover — and implied a false chronology.
+      // a later edit by the same practitioner, including one made AFTER the
+      // handover, and implied a false chronology.
       showLastUpdated: boolean;
     }
   | { state: "unreadable" };
@@ -218,7 +218,7 @@ export type AssistedEntryView =
 // the read-path posture of readElectrolysisAcknowledgement.
 //
 // `none` is the ordinary, self-completed intake. It is the overwhelming
-// majority of rows and must render nothing at all on the review page — an
+// majority of rows and must render nothing at all on the review page: an
 // intake the client filled in themselves carries no assisted badge.
 export function readAssistedEntry(
   responses: Record<string, unknown> | null | undefined,
@@ -261,7 +261,7 @@ export const ASSISTED_ENTRY_REVIEW_COPY = {
   // Rendered with the practitioner name and date interpolated by the caller.
   assistedLead: "Questionnaire answers were recorded with the client by",
   // HEDGED DELIBERATELY. The record proves only that an authenticated
-  // practitioner pressed "Hand to client" — it does not observe the client
+  // practitioner pressed "Hand to client". It does not observe the client
   // receiving anything, and the practitioner's own device is what navigates to
   // the client's link. Asserting the physical act here would be exactly the
   // overstatement this module's header forbids, in the one place a

@@ -4,7 +4,7 @@ import "server-only";
 // proven fake-Stripe guard (lib/stripe/e2e-fake-guard.ts) exactly.
 //
 // This module decides NOTHING about OAuth/calendar business logic. It answers one
-// question — "may the fake Google provider activate in THIS runtime?" — and is
+// question ("may the fake Google provider activate in THIS runtime?") and is
 // FAIL-CLOSED: fake mode is OFF unless an explicit server-only marker is present
 // AND no deployed-environment signal is present.
 //
@@ -12,13 +12,13 @@ import "server-only";
 //   * They are server-only env vars (HONE_E2E_*), NEVER NEXT_PUBLIC_*, so the
 //     browser can never read or set them.
 //   * They are not derived from any request input (no header/cookie/query/form).
-//   * Any Vercel/AWS/K8s runtime is rejected outright — those signals are always
+//   * Any Vercel/AWS/K8s runtime is rejected outright: those signals are always
 //     present in a deployed environment and never on the local E2E server.
 //
 // Why NODE_ENV is intentionally NOT the gate: the local E2E web server runs
 // `next start` (NODE_ENV=production), so rejecting on NODE_ENV=production would
 // break the ONLY environment fake mode is meant for. The real boundary is the
-// positive HONE_E2E_* markers plus the deployment rejection — a combination that
+// positive HONE_E2E_* markers plus the deployment rejection: a combination that
 // cannot exist in any deployed environment.
 
 // A run id must be an explicit, well-formed, per-run token (the E2E harness
@@ -71,7 +71,7 @@ export function isE2eFakeGoogleEnabled(
 }
 
 // FAIL-LOUD deployment guard. If the fake flag is REQUESTED in a deployed
-// environment, throw rather than silently ignoring it — a misconfiguration or
+// environment, throw rather than silently ignoring it: a misconfiguration or
 // attempted bypass must surface immediately, never fall back quietly to the real
 // Google path. A no-op when the flag is absent (i.e. always, in production).
 export function assertFakeGoogleNotRequestedInDeployment(

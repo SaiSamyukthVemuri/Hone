@@ -9,7 +9,7 @@ import {
 // PR #208: Practice Dashboard V1 metrics. Read-only aggregation over
 // EXISTING tables (appointments + services price join, sessions /
 // session_blocks via the record-keeping procedure read, and
-// CURRENT-mode payment_charge_attempts counts — the card labels flip
+// CURRENT-mode payment_charge_attempts counts: the card labels flip
 // between test and live with inferStripeLivemode()). No payment
 // calculation, executor, or gate is touched; live payments remain
 // disabled, so nothing here is "revenue": the UI labels everything
@@ -39,17 +39,17 @@ export function resolvePeriodRange(
     // SUNDAY -> SATURDAY, delegated to the SAME helper the practitioner
     // calendar uses (lib/booking/tz.startOfWeek: "the Sunday on or before").
     //
-    // This used to roll its own Monday anchor —
+    // This used to roll its own Monday anchor,
     //   const dow = new Date(`${todayLocal}T12:00:00Z`).getUTCDay();
     //   const sinceMonday = (dow + 6) % 7;
-    // — which made the dashboard's "this week" and the calendar's week differ
+    // which made the dashboard's "this week" and the calendar's week differ
     // by a FULL WEEK every Sunday: Sunday was day 7 of the metrics week and
     // day 1 of the calendar week. Chloe reported this. The two are now one
     // boundary, and deliberately ONE algorithm: a second copy is how they
     // drifted apart in the first place.
     //
     // startOfWeek() takes the same noon-UTC anchoring this code used, so the
-    // studio-local date string semantics are unchanged — only the anchor day
+    // studio-local date string semantics are unchanged, only the anchor day
     // moves. Ranges stay [startLocal, endLocalExclusive) over local date
     // STRINGS, never "start + 168 hours", so DST is handled by the existing
     // utcInstantFromLocal() conversion exactly as before.
@@ -144,7 +144,7 @@ export type ProcedureActionMetrics = {
   // different windows. This is the same-loop, no-new-query complement:
   // everything `incompleteRecords` counts EXCEPT the two itemized gaps.
   //
-  // `incompleteRecords` itself is unchanged — it remains the honest
+  // `incompleteRecords` itself is unchanged: it remains the honest
   // completeness figure for any reporting surface that wants the union.
   recordsMissingDetails: number;
 };
@@ -288,7 +288,7 @@ export async function getPracticeDashboardMetrics(
       // CURRENT-mode ledger counts for the period. (The pre-0101
       // all-rows-are-test-mode invariant is defunct: 0101 dropped that
       // CHECK, prepare stamps inferStripeLivemode(), and 0105 allows one
-      // test AND one live attempt per slot — an unscoped count would mix
+      // test AND one live attempt per slot: an unscoped count would mix
       // modes and could double-count a single real-world payment. The
       // card labels flip with the mode.)
       supabase

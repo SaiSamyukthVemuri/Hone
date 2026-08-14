@@ -11,15 +11,15 @@ import type {
 //
 // Contract (all enforced + unit-tested here):
 //   * Gates on per-studio provider config (enabled) AND marketing consent.
-//   * Only ever iterates the CALLER-SUPPLIED configs — the caller passes ONE
+//   * Only ever iterates the CALLER-SUPPLIED configs: the caller passes ONE
 //     studio's configs, so there is no cross-studio mixing at this layer.
 //   * Dedupes by (eventId, provider) via a caller-supplied delivered-set
 //     (backed by conversion_event_deliveries once the migration lands).
-//   * NEVER throws — a provider failure must not break a booking.
+//   * NEVER throws: a provider failure must not break a booking.
 //   * Emits only DeliveryRecord status (no email/phone/token/clinical data).
 //
 // It performs no network itself; adapters do. In this PR no real adapter's
-// send() is implemented, and nothing calls this service from the booking flow —
+// send() is implemented, and nothing calls this service from the booking flow,
 // it is wired only in tests (with fake adapters) until the sender-wiring PR.
 
 export type DeliverContext = {
@@ -28,7 +28,7 @@ export type DeliverContext = {
   consent: MarketingConsent;
   // Provider adapters available to attempt delivery (dependency-injected).
   adapters: Partial<Record<string, ConversionProviderAdapter>>;
-  // (eventId:provider) keys already delivered — dedup / retry-safety.
+  // (eventId:provider) keys already delivered: dedup / retry-safety.
   delivered?: Set<string>;
   // Safe status sink. MUST only receive DeliveryRecord (never raw PII).
   onRecord?: (record: DeliveryRecord) => void;
@@ -84,7 +84,7 @@ export async function deliverConversionEvent(
               record.lastErrorSafe = res.errorSafe;
             }
           } catch {
-            // A thrown adapter must NEVER propagate — the booking is already
+            // A thrown adapter must NEVER propagate: the booking is already
             // committed and must not fail because ad tracking failed.
             record.status = "failed";
             record.lastErrorSafe = "adapter_threw";

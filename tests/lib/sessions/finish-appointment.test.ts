@@ -211,7 +211,7 @@ describe("15-17. postcare unavailability and consultation", () => {
     for (const email of [null, "", "   "]) {
       const s = resolveFinishAppointmentState(input({ clientEmail: email }));
       expect(s.postcare.kind).toBe("no_client_email");
-      expect(postcareLabel(s.postcare)).toBe("Postcare unavailable — no client email");
+      expect(postcareLabel(s.postcare)).toBe("Postcare unavailable: no client email");
     }
   });
 

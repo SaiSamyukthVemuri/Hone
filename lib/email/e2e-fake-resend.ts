@@ -3,7 +3,7 @@ import "server-only";
 // Fake Resend transport for E2E / unit tests ONLY. Same fail-closed posture as
 // the fake-Stripe/fake-Google guards: OFF unless the explicit server-only marker
 // HONE_E2E_FAKE_RESEND=1 is present, and REFUSED outright in any deployed
-// runtime. It sends nothing over the network — it returns a controlled outcome
+// runtime. It sends nothing over the network. It returns a controlled outcome
 // so the send-success / provider-rejection / provider-exception paths can be
 // exercised without a real Resend key.
 

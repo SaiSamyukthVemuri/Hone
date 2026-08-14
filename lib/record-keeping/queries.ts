@@ -45,7 +45,7 @@ export async function getSterileItemRecords(
 // PR #316: sterile items expired OR expiring within N days, for the dashboard
 // "Supplies expiring" attention card. Studio-scoped (RLS + explicit .eq);
 // `today` is passed in so callers stay deterministic. Returns only safe display
-// fields (no lot_number — the card never needs it).
+// fields (no lot_number, the card never needs it).
 export async function getExpiringSterileItems(
   studioId: string,
   todayIso: string,
@@ -158,7 +158,7 @@ export async function getProbeLotInventory(
 //     (probe_lot_confirmed desc, created_at desc) puts the preferred row first
 //     per probe_key, and the first row per key wins.
 //
-// The suggestion is a hint only — the form auto-populates it UNCONFIRMED; the
+// The suggestion is a hint only: the form auto-populates it UNCONFIRMED; the
 // practitioner must confirm or override.
 export async function getLatestProbeLotByProbeKey(
   studioId: string,
@@ -187,7 +187,7 @@ export async function getLatestProbeLotByProbeKey(
 }
 
 // Feature A (reliability): richer lot suggestions for the charting form.
-//   * Studio-scoped (.eq("studio_id") + RLS) — never cross-studio.
+//   * Studio-scoped (.eq("studio_id") + RLS), never cross-studio.
 //   * Prefer CONFIRMED over unconfirmed, then newest, within EACH of byKey /
 //     byLabel (ordering probe_lot_confirmed desc, created_at desc; first row
 //     per key/label wins). The unconfirmed fallback is retained deliberately
@@ -214,9 +214,9 @@ export async function getProbeLotSuggestions(
   const byKey: Record<string, ProbeLotSuggestion> = {};
   const byLabel: Record<string, ProbeLotSuggestion> = {};
   // Two things are tracked per key/label, INDEPENDENTLY:
-  //   * the DISPLAY winner — the first row (confirmed-first, then newest) of any
+  //   * the DISPLAY winner: the first row (confirmed-first, then newest) of any
   //     source; its `inventoryItemId` may be null (a manual lot).
-  //   * lastConfirmedInventoryItemId — the newest row satisfying BOTH
+  //   * lastConfirmedInventoryItemId, the newest row satisfying BOTH
   //     probe_lot_confirmed = true AND probe_inventory_item_id IS NOT NULL. Since
   //     confirmed rows sort first (newest-first), the FIRST confirmed+linked row
   //     seen per key/label is the newest such row. This is what auto-fill uses,
@@ -397,7 +397,7 @@ export function utcInstantsForLocalDayRange(
 // inspection/transfer artifact, still bounded.
 export const FILTERED_PROCEDURE_RECORD_LIMIT = 200;
 
-// PR #318: cap for an UNFILTERED (studio-wide) pull — deliberately small since
+// PR #318: cap for an UNFILTERED (studio-wide) pull, deliberately small since
 // the unfiltered view is a browse, not a complete log. Named so the print view
 // can show an honest "showing most recent N" notice when the cap is hit.
 export const UNFILTERED_PROCEDURE_RECORD_LIMIT = 30;

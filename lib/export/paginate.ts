@@ -2,7 +2,7 @@
 //
 // WHY THIS EXISTS. PostgREST caps every response at `max_rows`
 // (supabase/config.toml: 1000). The export issued plain unbounded selects, so
-// any studio table past 1000 visible rows was silently truncated — the ZIP
+// any studio table past 1000 visible rows was silently truncated: the ZIP
 // still built, still looked complete, and still said "export everything". A
 // truncated-but-plausible backup is worse than a failed one, because nobody
 // goes looking for the missing half.
@@ -10,7 +10,7 @@
 // It was also AMPLIFYING: `electrolysis_entries` and `laser_entries` are
 // filtered against the set of session ids that came back from the sessions
 // read. Truncate sessions at 1000 and every child row belonging to session
-// 1001+ is dropped from the export as well — a parent-page boundary silently
+// 1001+ is dropped from the export as well: a parent-page boundary silently
 // deleting child clinical rows.
 //
 // WHAT THIS IS NOT. Even complete, the ZIP is a portable copy of supported
@@ -53,7 +53,7 @@ export type PageFactory<T> = (from: number, to: number) => PromiseLike<PageResul
  * Read every row a query can see, one `EXPORT_PAGE_SIZE` page at a time.
  *
  * Returns the SAME shape as a single Supabase result so call sites keep their
- * existing `{ data, error }` handling — including the export's all-or-nothing
+ * existing `{ data, error }` handling, including the export's all-or-nothing
  * error check. A failure on page 7 fails the whole read; it never returns the
  * first six pages as if they were the table.
  */
@@ -73,12 +73,12 @@ export async function fetchAllRows<T>(
     const rows = data ?? [];
     all.push(...rows);
     // A short page is the end of the table. An exactly-full page is ambiguous,
-    // so we ask again and stop on the empty page — one extra cheap request in
+    // so we ask again and stop on the empty page, one extra cheap request in
     // the exact-multiple case, never a dropped row.
     if (rows.length < pageSize) return { data: all, error: null };
   }
 
-  // Refuse rather than return a silently capped set — the entire point.
+  // Refuse rather than return a silently capped set: the entire point.
   return {
     data: null,
     error: {
@@ -90,7 +90,7 @@ export async function fetchAllRows<T>(
 /**
  * Contract check for the ordering a paginated read depends on.
  *
- * Pagination over a non-unique sort is not "slightly wrong" — it can duplicate
+ * Pagination over a non-unique sort is not "slightly wrong". It can duplicate
  * a row onto two pages and drop another entirely. Callers pass the ordered
  * column list; the last one must be the unique tiebreak.
  */

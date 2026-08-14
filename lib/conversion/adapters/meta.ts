@@ -19,7 +19,7 @@ import type {
 const META_GRAPH_VERSION = "v21.0";
 const DEFAULT_TIMEOUT_MS = 12_000;
 
-// Meta Conversions API adapter — the first provider adapter. buildPayload is
+// Meta Conversions API adapter: the first provider adapter. buildPayload is
 // pure and reuses the inert, tested primitives from lib/conversion/meta-capi.ts
 // (PR #345). send() is intentionally NOT wired (returns a not-wired skip); the
 // real POST to the Graph API lands in the approved sender-wiring PR.
@@ -56,7 +56,7 @@ export const metaAdapter: ConversionProviderAdapter = {
     };
     if (event.eventSourceUrl) metaEvent.event_source_url = event.eventSourceUrl;
     if (event.serviceCategory != null) {
-      // Generic category ONLY — a free-text service name collapses to "other".
+      // Generic category ONLY: a free-text service name collapses to "other".
       metaEvent.custom_data = {
         service_category: safeServiceCategory(event.serviceCategory),
       };
@@ -73,7 +73,7 @@ export const metaAdapter: ConversionProviderAdapter = {
   // Graph API events endpoint for the studio's pixel. The access token is
   // passed in the request BODY (never the URL, so it can't leak into request
   // logs) and comes from ctx (server-resolved). Timed out, and every failure
-  // returns a REDACTED, PII-free/token-free errorSafe — the raw provider
+  // returns a REDACTED, PII-free/token-free errorSafe, the raw provider
   // response is never surfaced.
   async send(
     payload: ProviderPayload,
@@ -81,7 +81,7 @@ export const metaAdapter: ConversionProviderAdapter = {
     ctx?: SendContext,
   ): Promise<SendResult> {
     // Token is the studio's OWN token, decrypted server-side by the dispatcher
-    // and passed via ctx — never a global env token, never on the config.
+    // and passed via ctx, never a global env token, never on the config.
     const token = ctx?.token;
     if (!token) return { ok: false, retryable: false, errorSafe: "missing_token" };
     const pixelId = config.browserTagId;
@@ -110,7 +110,7 @@ export const metaAdapter: ConversionProviderAdapter = {
       const retryable = res.status === 429 || res.status >= 500;
       return { ok: false, retryable, errorSafe: `meta_http_${res.status}` };
     } catch {
-      // Timeout / network — never include the raw error object.
+      // Timeout / network, never include the raw error object.
       return { ok: false, retryable: true, errorSafe: "meta_network_or_timeout" };
     } finally {
       clearTimeout(timer);

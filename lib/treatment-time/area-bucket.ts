@@ -1,4 +1,4 @@
-// TREATMENT-TIME AREA ATTRIBUTION — which bucket a settings block's minutes
+// TREATMENT-TIME AREA ATTRIBUTION, which bucket a settings block's minutes
 // land in.
 //
 // THE DEFECT THIS FIXES
@@ -8,7 +8,7 @@
 // The previous resolver read only the LEGACY `primary_area` projection, which
 // migration 0128's write contract defines as "the FIRST area". So a block
 // treating Left cheek + Right sideburn credited its entire duration to Cheek
-// and the sideburn vanished from the breakdown entirely — the client had time
+// and the sideburn vanished from the breakdown entirely: the client had time
 // on an area the report said she had never been treated on.
 //
 // THE PRODUCT RULE
@@ -24,7 +24,7 @@
 // The duration is never credited to every area, never divided evenly, never
 // attributed to the first area alone, and no area is ever dropped. Because each
 // block still contributes to exactly one bucket, the client's global total is
-// arithmetically unchanged — only the label moves.
+// arithmetically unchanged, only the label moves.
 //
 // WHY BARE AREAS AND NOT "Left cheek · Right sideburn"
 // ---------------------------------------------------
@@ -93,7 +93,7 @@ function orderedAreas(rows: ReadonlyArray<AreaBucketRow>): AreaBucketRow[] {
 // The whole attribution, as a pure function.
 //
 // It lives here rather than inline in getTreatmentTimeByArea so the invariant
-// that matters — the sum of the breakdown equals the client's global total —
+// that matters: the sum of the breakdown equals the client's global total,
 // is provable without a database, against the SAME code the query runs.
 export type MinutesBucketBlock = AreaBucketBlock & {
   minutes_performed?: number | null;
@@ -138,7 +138,7 @@ export function buildAreaMinutesBreakdown(
 //
 // Structured rows win. They are deduped case-insensitively with the first
 // spelling kept, so a block charted as [Cheek/left, Cheek/right] is one real
-// area and buckets as "Cheek" — not as two areas and not as a combined label
+// area and buckets as "Cheek", not as two areas and not as a combined label
 // repeating itself.
 //
 // The names are then sorted, because this label is an AGGREGATION KEY, not a
@@ -146,11 +146,11 @@ export function buildAreaMinutesBreakdown(
 // (multi-area-editor appends each committed area to the end of the list, and
 // the writer stores the index verbatim), so charting Cheek-then-Sideburn one
 // visit and Sideburn-then-Cheek the next would otherwise produce two different
-// keys for one anatomical combination — the client's time on that pair would
+// keys for one anatomical combination: the client's time on that pair would
 // split across two breakdown rows and the true total would appear nowhere.
 // Sorting makes the key depend on the SET of areas, which is what the question
 // "how long has this client spent on these areas" actually means. The CLINICAL
-// label keeps charting order (lib/sessions/block-areas.ts) — that one does
+// label keeps charting order (lib/sessions/block-areas.ts), that one does
 // describe a single block.
 export function resolveAreaBucketLabel(block: AreaBucketBlock): string {
   const rows = block.structured_areas ?? [];

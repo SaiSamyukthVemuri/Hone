@@ -127,7 +127,7 @@ export type TimeFormat = "12h" | "24h";
 
 // Resolve a studio's preference, DEFAULTING TO 12h when unset. This covers
 // pre-migration studios (loaded via `select *`, so the column is simply absent)
-// and any null — so nothing breaks before 0109 is applied, and the app default
+// and any null, so nothing breaks before 0109 is applied, and the app default
 // is 12h with no studio special-cased.
 export function resolveTimeFormat(
   studio: { time_format_preference?: string | null } | null | undefined,
@@ -136,9 +136,9 @@ export function resolveTimeFormat(
 }
 
 // Format an instant in `tz` using a studio's chosen DISPLAY format. Timezone
-// handling is unchanged — this only selects 12h vs 24h. Use on PRACTITIONER-
+// handling is unchanged. This only selects 12h vs 24h. Use on PRACTITIONER-
 // FACING surfaces (calendar/dashboard/availability). Do NOT use for machine
-// values (grid positioning math, <input type="time"> values) — those stay 24h.
+// values (grid positioning math, <input type="time"> values), those stay 24h.
 export function formatTimeForStudio(
   d: Date,
   tz: string,
@@ -151,7 +151,7 @@ export function formatTimeForStudio(
 // midnight, ends at local midnight, and spans exactly one local calendar day.
 // This is the ONLY correct all-day test: it reads the local wall-clock
 // boundaries, so it is right for a normal 24h day, a spring-forward 23h day,
-// AND a fall-back 25h day. Never infer all-day from a 24h duration — that
+// AND a fall-back 25h day. Never infer all-day from a 24h duration: that
 // mislabels a 24h timed block and misses a 23h/25h all-day block.
 export function isAllDayInterval(
   startsAtIso: string,
@@ -165,7 +165,7 @@ export function isAllDayInterval(
   return addDays(localDateString(start, tz), 1) === localDateString(end, tz);
 }
 
-// Format a naive local wall-clock "HH:MM" (24h machine value — e.g. from a
+// Format a naive local wall-clock "HH:MM" (24h machine value: e.g. from a
 // calendar drag / minutesToHHMM) into a DISPLAY label per the studio
 // preference: "1:00 PM" (12h) or "13:00" (24h). No timezone is applied because
 // the value is already local wall-clock; the underlying machine value is never
@@ -214,7 +214,7 @@ export function localLongDate(d: Date, tz: string): string {
   }).format(d);
 }
 
-// 0 = Sunday, 6 = Saturday — matches JS Date getDay() in UTC, but evaluated
+// 0 = Sunday, 6 = Saturday: matches JS Date getDay() in UTC, but evaluated
 // against the studio's local clock.
 export function localDayOfWeek(d: Date, tz: string): number {
   const dateStr = localDateString(d, tz);

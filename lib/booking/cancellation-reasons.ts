@@ -14,9 +14,9 @@
 //            what a historical client saw.
 //
 // Two consumers MUST share this constant:
-//   1. app/cancel/[token]/CancelForm.tsx — renders the <option> list
+//   1. app/cancel/[token]/CancelForm.tsx, renders the <option> list
 //      and decides whether to show the reschedule nudge.
-//   2. app/cancel/[token]/actions.ts — validates the submitted machine
+//   2. app/cancel/[token]/actions.ts, validates the submitted machine
 //      value against this allowed set and derives the label snapshot
 //      server-side. The label is NEVER trusted from client form input.
 //

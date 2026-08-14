@@ -15,14 +15,14 @@ type PortalAdmin = { from: (table: string) => any }; // eslint-disable-line @typ
 export type IssuePortalMagicLinkResult = { ok: true } | { ok: false; error: string };
 
 // Issue a secure portal magic link and email it. Security guarantees:
-//   * 256-bit random token, SHA-256 HASHED at rest — only the hash is stored;
+//   * 256-bit random token, SHA-256 HASHED at rest, only the hash is stored;
 //   * single-use (the verify route stamps consumed_at atomically);
 //   * 60-minute TTL (expires_at);
-//   * STUDIO-SCOPED — studio_id + client_id are written on the row, so a link
+//   * STUDIO-SCOPED, studio_id + client_id are written on the row, so a link
 //     is bound to one studio's one client;
-//   * the RAW token appears ONLY in the emailed URL — never logged, never
+//   * the RAW token appears ONLY in the emailed URL, never logged, never
 //     returned;
-//   * reuses the existing SAFE portal email (studio name + link only — no client
+//   * reuses the existing SAFE portal email (studio name + link only, no client
 //     name, no clinical/intake/payment data).
 export async function issuePortalMagicLink(
   admin: PortalAdmin,
@@ -54,7 +54,7 @@ export async function issuePortalMagicLink(
       user_agent_hash: input.userAgentHash ?? null,
     });
   if (insertErr) {
-    // Safe log only — never the raw token.
+    // Safe log only, never the raw token.
     console.error(
       JSON.stringify({
         event: "portal_magic_link_insert_failed",

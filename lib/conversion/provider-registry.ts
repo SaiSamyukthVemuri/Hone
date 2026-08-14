@@ -1,6 +1,6 @@
 import type { TrackingProvider } from "@/lib/conversion/types";
 
-// Provider onboarding registry (pure, client-safe copy — no server-only, no I/O,
+// Provider onboarding registry (pure, client-safe copy, no server-only, no I/O,
 // no secrets). Drives the Settings → Marketing & analytics provider selector.
 // Meta is the only "available" (editable) provider; the rest are "coming_soon"
 // with onboarding overviews but NO editable token fields and NO save action.
@@ -38,7 +38,7 @@ const COMING_SOON_ARCHITECTURE_NOTE =
 
 const META: ProviderRegistryEntry = {
   provider: "meta",
-  displayName: "Meta — Facebook & Instagram (Conversions API)",
+  displayName: "Meta: Facebook & Instagram (Conversions API)",
   status: "available",
   editable: true,
   description:
@@ -55,7 +55,7 @@ const META: ProviderRegistryEntry = {
     {
       title: "Before you start",
       steps: [
-        "Use the studio's OWN Meta Business account — do not use Hone's Meta account.",
+        "Use the studio's OWN Meta Business account. Do not use Hone's Meta account.",
         "You need admin access to the studio's Meta Business portfolio / Events Manager.",
         "Hone stores the token encrypted and only ever shows the last 4 characters later.",
       ],
@@ -104,7 +104,7 @@ const META: ProviderRegistryEntry = {
   helpLinks: [
     { label: "Meta Business Help Center", href: "https://www.facebook.com/business/help" },
     {
-      label: "Conversions API — developer docs",
+      label: "Conversions API: developer docs",
       href: "https://developers.facebook.com/docs/marketing-api/conversions-api",
     },
     {

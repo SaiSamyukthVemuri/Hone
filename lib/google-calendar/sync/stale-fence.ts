@@ -2,7 +2,7 @@ import "server-only";
 import type { ClaimedJob } from "./job-result";
 import type { AppointmentState, LinkRow } from "./link-transition-store";
 
-// Google Calendar — Phase B2.3-c1: the execution-time stale fence (Decision G).
+// Google Calendar: Phase B2.3-c1: the execution-time stale fence (Decision G).
 //
 // A PURE decision over a read snapshot (job + current appointment + current
 // active link) taken immediately before any Google call. It yields either a
@@ -13,7 +13,7 @@ import type { AppointmentState, LinkRow } from "./link-transition-store";
 // COMPLETION PROOF (§6): a create/update is "already applied" ONLY when the link
 // has a confirmed google_event_id AND last_hone_version >= the job version. A
 // placeholder (google_event_id null, last_hone_version 0) NEVER satisfies
-// completion proof by merely existing — it always resolves to create-and-bind.
+// completion proof by merely existing: it always resolves to create-and-bind.
 
 export type FenceDecision =
   | { kind: "noop"; code: "ok_noop_superseded" | "ok_noop_no_active_link" | "ok_noop_tombstone_deleted" }
@@ -47,7 +47,7 @@ export function evaluateStaleFence(input: {
   if (job.opType === "event.delete") {
     if (!link) return { kind: "noop", code: "ok_noop_no_active_link" };
     // A newer op brought the appointment back to confirmed (un-cancel / reschedule
-    // rebind) — the stale delete must not fire.
+    // rebind), the stale delete must not fire.
     if (appointment && appointment.status === "confirmed" && appointment.syncVersion > jobVersion) {
       return { kind: "noop", code: "ok_noop_superseded" };
     }
@@ -61,7 +61,7 @@ export function evaluateStaleFence(input: {
   if (!link) return { kind: "noop", code: "ok_noop_no_active_link" };
 
   // Already applied? (crash-recovery: link bound at >= this version but the outbox
-  // result was never recorded). Requires a CONFIRMED provider id — a placeholder
+  // result was never recorded). Requires a CONFIRMED provider id: a placeholder
   // never proves completion.
   if (link.googleEventId !== null && link.lastHoneVersion >= jobVersion) {
     return { kind: "noop", code: "ok_noop_superseded" };

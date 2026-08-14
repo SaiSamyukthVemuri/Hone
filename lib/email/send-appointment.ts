@@ -20,7 +20,7 @@ import type { Appointment, Service, Studio } from "@/lib/types/database";
 
 // Token-FREE studio portal login URL for the "secure client portal" CTA in
 // transactional emails. Returns null when the studio has no slug so the CTA is
-// simply omitted. NOT a magic link — the client enters their email at this page
+// simply omitted. NOT a magic link: the client enters their email at this page
 // to receive a secure sign-in link.
 function portalLoginUrlForStudio(studio: Pick<Studio, "slug">): string | null {
   const slug = studio.slug?.trim();
@@ -594,7 +594,7 @@ export async function sendNoShowFollowupToClient(params: {
 }
 
 
-// Postcare email sender — RENDER + PROVIDER ONLY, for both the manual and the
+// Postcare email sender: RENDER + PROVIDER ONLY, for both the manual and the
 // automatic path. Pure renderer-around-template: takes already-loaded studio +
 // appointment + service context and dispatches via Resend. It reports whether
 // the provider accepted, and whether a failure is retryable. That is all.
@@ -604,7 +604,7 @@ export async function sendNoShowFollowupToClient(params: {
 // `settle_postcare_send`, which the CALLERS invoke around this function:
 // claim, then this call, then settle under the claim's exact token. Nothing
 // here may write a postcare column, and no caller may derive one from this
-// return value — the DB clock stamps sent_at, and the safe last_error is
+// return value: the DB clock stamps sent_at, and the safe last_error is
 // derived in SQL from the retryable boolean so no provider payload (which can
 // carry recipient addresses and vendor internals) reaches a field
 // practitioners read. record_email_attempt is still NOT used for postcare.

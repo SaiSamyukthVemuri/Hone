@@ -5,8 +5,8 @@
 // The multi-area settings-block editor used to treat every `AreaPicker`
 // `onChange` as a COMMITTED area. Because the picker's free-text ("Other")
 // input called `onChange` on every keystroke, typing "Glabella" appended eight
-// selected rows — "G", "Gl", "Gla", "Glab", "Glabe", "Glabel", "Glabell", "Glabella"
-// — and all eight were persisted as canonical `session_block_areas` rows. That is a charting-
+// selected rows: "G", "Gl", "Gla", "Glab", "Glabe", "Glabel", "Glabell", "Glabella"
+// and all eight were persisted as canonical `session_block_areas` rows. That is a charting-
 // integrity defect, not a cosmetic one.
 //
 // The fix separates DRAFT text from a COMMIT. This module is the pure,
@@ -15,7 +15,7 @@
 // protection. The components own only the wiring.
 //
 // It deliberately does NOT canonicalize casing or validate against the
-// `AREAS` catalog — `lib/sessions/area-validation.ts` owns that, and custom
+// `AREAS` catalog: `lib/sessions/area-validation.ts` owns that, and custom
 // practitioner text is stored verbatim by design.
 
 import type { BlockArea, Laterality } from "@/lib/sessions/block-areas";
@@ -32,7 +32,7 @@ export const CUSTOM_AREA_MAX = 60;
 //   * trim the surrounding whitespace;
 //   * cap at CUSTOM_AREA_MAX, then trim again so a cut mid-space cannot leave
 //     a trailing space.
-// Returns "" for blank / whitespace-only input — the caller MUST treat "" as
+// Returns "" for blank / whitespace-only input: the caller MUST treat "" as
 // "nothing to commit".
 export function normalizeCustomArea(raw: string | null | undefined): string {
   const collapsed = (raw ?? "").replace(/\s+/g, " ").trim();
@@ -61,7 +61,7 @@ export function areaAlreadySelected(
 export type AreaCommit =
   // Nothing to add: blank/whitespace-only input.
   | { status: "blank"; value: ReadonlyArray<BlockArea> }
-  // The area is already selected — the set is returned UNCHANGED (one
+  // The area is already selected: the set is returned UNCHANGED (one
   // submission never adds a second row for the same area).
   | { status: "duplicate"; value: ReadonlyArray<BlockArea>; area: string }
   // Exactly one row appended, at the end, with the default N/A laterality.

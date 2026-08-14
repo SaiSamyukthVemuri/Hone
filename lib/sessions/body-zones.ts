@@ -2,7 +2,7 @@ import { AREA_REGIONS, OTHER_AREA } from "@/lib/constants";
 
 // PR #270. Broad body zones for the built-in body-map treatment-area picker.
 // Each zone maps onto the EXISTING canonical area keys (lib/constants
-// AREA_REGIONS) — no new area strings are invented, so the body map and the
+// AREA_REGIONS), no new area strings are invented, so the body map and the
 // list-below AreaPicker stay in sync and save identically into
 // session_blocks.primary_area. This is a SCHEMATIC body map (built-in vector
 // shapes), NOT an anatomical image, upload, drawing/canvas, or annotation.

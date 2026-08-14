@@ -116,9 +116,9 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     // which contradicted the code directly beneath it.
     expect(CONTRACT).not.toMatch(/NEVER:[\s\S]{0,400}probe_lot_number\/confirmed\/id/);
     // It must instead distinguish the three rules.
-    expect(CONTRACT).toMatch(/probe_lot_number\s+— COPIED verbatim/);
-    expect(CONTRACT).toMatch(/probe_inventory_item_id\s+— copied ONLY while/);
-    expect(CONTRACT).toMatch(/probe_lot_confirmed\s+— NEVER copied/);
+    expect(CONTRACT).toMatch(/probe_lot_number\s+: COPIED verbatim/);
+    expect(CONTRACT).toMatch(/probe_inventory_item_id\s*: copied ONLY while/);
+    expect(CONTRACT).toMatch(/probe_lot_confirmed\s+: NEVER copied/);
   });
 
   it("the UI still tells the practitioner to confirm a copied lot", () => {

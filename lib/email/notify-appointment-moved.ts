@@ -4,7 +4,7 @@ import { sendEmailSafely } from "./send-appointment";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 
-// Practitioner Move appointment — the NARROW client "appointment updated" notification.
+// Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
 // Sent AFTER (and only after) a successful move commit. It reuses the existing safe
 // send primitive (sendEmailSafely) + the stateless HMAC manage/reschedule link
@@ -19,7 +19,7 @@ import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 // the move notification; SMS delivery for moves is a later, separately-scoped decision.
 //
 // Fail-open + PHI-free: a provider failure returns "degraded" (the appointment stays
-// moved) and records only a safe category signal — never a client identity, appointment
+// moved) and records only a safe category signal, never a client identity, appointment
 // content, or raw provider body.
 
 export type MoveNotificationStatus = "sent" | "skipped" | "degraded";
@@ -38,7 +38,7 @@ async function safeMoveAlert(studioId: string, appointmentId: string, category: 
       studioId,
       appointmentId,
       route: "lib/email/notify-appointment-moved",
-      // Safe category/code only — no client PII, appointment content, or raw provider body.
+      // Safe category/code only, no client PII, appointment content, or raw provider body.
       safeDetails: { channel: "email", reason: category },
     });
   } catch {
@@ -47,7 +47,7 @@ async function safeMoveAlert(studioId: string, appointmentId: string, category: 
 }
 
 // Item 7: the move can be a time move, a same-time practitioner reassignment, or
-// both. The email must be TRUTHFUL for each — a reassignment does not claim the
+// both. The email must be TRUTHFUL for each: a reassignment does not claim the
 // time changed. Defaults to "moved" for the pre-Item-7 callers.
 export type MoveNotificationKind = "moved" | "reassigned" | "moved_and_reassigned";
 
@@ -104,7 +104,7 @@ export async function notifyAppointmentMoved(
     let bodyHtml: string;
     let bodyText: string;
     if (kind === "reassigned") {
-      // Practitioner changed, TIME UNCHANGED — never claim the time moved.
+      // Practitioner changed, TIME UNCHANGED, never claim the time moved.
       const who = practitionerName ? `<strong>${esc(practitionerName)}</strong>` : "a different practitioner";
       const whoText = practitionerName ? practitionerName : "a different practitioner";
       subject = `Appointment updated: ${serviceName} on ${dateStr}`;
@@ -114,12 +114,12 @@ export async function notifyAppointmentMoved(
     } else if (kind === "moved_and_reassigned") {
       const who = practitionerName ? ` with <strong>${esc(practitionerName)}</strong>` : "";
       const whoText = practitionerName ? ` with ${practitionerName}` : "";
-      subject = `Appointment updated: ${serviceName} — now ${dateStr} at ${timeStr}`;
+      subject = `Appointment updated: ${serviceName} is now ${dateStr} at ${timeStr}`;
       headline = "Your appointment time and practitioner have changed.";
       bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> has been moved to <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>${who}.`;
       bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}${whoText}.`;
     } else {
-      subject = `Appointment updated: ${serviceName} — now ${dateStr} at ${timeStr}`;
+      subject = `Appointment updated: ${serviceName} is now ${dateStr} at ${timeStr}`;
       headline = "Your appointment time has changed.";
       bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> has been moved to <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>. Everything else stays the same.`;
       bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}. Everything else stays the same.`;

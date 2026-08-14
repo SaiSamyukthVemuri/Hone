@@ -303,7 +303,7 @@ export function buildGettingStarted(
           null,
         ),
         // Live runtime: a done auto item. Test runtime: an informational
-        // review item (an environment fact, not a completable task — it
+        // review item (an environment fact, not a completable task: it
         // must not sit as an eternal todo or skew auto progress).
         s.runtimeLivemode
           ? auto(

@@ -65,7 +65,7 @@ const RECONCILIATION_WINDOW_MINUTES = 60;
 const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
 // Mode-mismatch refusal (row stripe_livemode vs deployment mode); the
-// historical constant/outcome name is kept — renaming is an API change.
+// historical constant/outcome name is kept: renaming is an API change.
 const LIVE_MODE_BLOCKED_MESSAGE =
   "This payment's mode does not match the current deployment mode.";
 const NEEDS_MANUAL_REVIEW_MESSAGE =
@@ -202,7 +202,7 @@ async function loadCardAndVerifyLineage(args: {
   // deployment mode (inferStripeLivemode()), not a hardcoded false. In test env
   // this is false (identical to before); in live env every lineage row
   // (card / settings / customer) must be live too. These are SECURITY checks
-  // (account == customer == PM == attempt share one mode) — preserved, only the
+  // (account == customer == PM == attempt share one mode), preserved, only the
   // compared constant changes.
   const livemode = inferStripeLivemode();
 
@@ -437,7 +437,7 @@ async function writeFailedOutcome(args: {
   if (error) {
     // PR #310: a DB error on the FAILED-outcome write previously logged to
     // stderr only, leaving it invisible to ops_alerts / the manual-review
-    // queue — weaker than the succeeded-outcome path (PR #281). No charge was
+    // queue: weaker than the succeeded-outcome path (PR #281). No charge was
     // captured (Stripe did NOT succeed), but the reported outcome ('failed')
     // now diverges from a row that may stay 'pending_stripe'. Raise a CRITICAL
     // ops alert, symmetric with writeSucceededOutcome, so failure-persistence
@@ -497,14 +497,14 @@ async function writeFailedOutcome(args: {
 }
 
 // PR #320: safely finalize a PaymentIntent that resolved to `requires_action`
-// (off-session SCA). A `requires_action` PI is NOT terminal on Stripe — the
+// (off-session SCA). A `requires_action` PI is NOT terminal on Stripe: the
 // cardholder could complete authentication out-of-band and the PI could later
 // succeed. But webhook reconciliation only flips rows from ready/pending_stripe
 // (payment-webhook-reconciliation.ts), so writing terminal 'failed' here would
-// leave Hone permanently 'failed' while Stripe succeeded — a real-money
+// leave Hone permanently 'failed' while Stripe succeeded: a real-money
 // divergence. So we CANCEL the PI first (voiding it so Stripe can never succeed
 // it), then record terminal 'failed'. If the cancel FAILS, the Stripe outcome is
-// unresolved: we do NOT claim terminal certainty — we leave the row
+// unresolved: we do NOT claim terminal certainty: we leave the row
 // pending_stripe (a valid reconciliation source) and route to manual review.
 // The single paymentIntents.cancel call site in the codebase (pinned in
 // scripts/check-stripe-gates.mjs). Runs only in test mode today (the live-mode
@@ -526,7 +526,7 @@ async function finalizeRequiresActionPaymentIntent(args: {
       undefined,
       { stripeAccount: args.stripeAccountId },
     );
-    // PI is now 'canceled' on Stripe and can never succeed — terminal 'failed'
+    // PI is now 'canceled' on Stripe and can never succeed: terminal 'failed'
     // is now truthful and cannot diverge.
     await writeFailedOutcome({
       attemptId: args.attemptId,
@@ -560,7 +560,7 @@ async function finalizeRequiresActionPaymentIntent(args: {
       failureCode: "requires_action_canceled",
     };
   } catch (cancelErr) {
-    // Cancel FAILED — Stripe outcome is UNRESOLVED (the PI may still complete).
+    // Cancel FAILED: Stripe outcome is UNRESOLVED (the PI may still complete).
     // Do NOT write terminal 'failed'. Leave the row pending_stripe so a later
     // success can still reconcile, and route to manual review. Never silently
     // claim terminal certainty when the Stripe outcome is unknown.
@@ -673,7 +673,7 @@ async function reconcileExistingPaymentIntent(args: {
       stripeChargeId: latestCharge,
     };
   }
-  // PR #320: requires_action is not terminal on Stripe — cancel before failing.
+  // PR #320: requires_action is not terminal on Stripe: cancel before failing.
   if (pi.status === "requires_action") {
     return finalizeRequiresActionPaymentIntent({
       stripe,
@@ -732,8 +732,8 @@ export async function runSessionPaymentCharge(args: {
 }): Promise<SessionPaymentChargeResult> {
   // PR #323: the hard `inferStripeLivemode() === true` dormancy early-return was
   // removed to make the executor live-CAPABLE. Live charging stays gated by the
-  // env/key layer — getStripe() (assertStripeKeyAllowed) throws on an sk_live_
-  // key unless STRIPE_ALLOW_LIVE_MODE === "true" — so with the current test key
+  // env/key layer: getStripe() (assertStripeKeyAllowed) throws on an sk_live_
+  // key unless STRIPE_ALLOW_LIVE_MODE === "true", so with the current test key
   // this path is unreached in live and every row below stays test-mode.
   const livemode = inferStripeLivemode();
 
@@ -1153,7 +1153,7 @@ export async function runSessionPaymentCharge(args: {
     };
   }
 
-  // PR #320: requires_action (off-session SCA) is NOT terminal on Stripe —
+  // PR #320: requires_action (off-session SCA) is NOT terminal on Stripe,
   // cancel the PI before recording failure so a later out-of-band authentication
   // success cannot leave Hone 'failed' while Stripe succeeded.
   if (pi.status === "requires_action") {
@@ -1170,7 +1170,7 @@ export async function runSessionPaymentCharge(args: {
     });
   }
 
-  // Other non-success status (e.g. requires_payment_method) — genuinely terminal
+  // Other non-success status (e.g. requires_payment_method), genuinely terminal
   // for an off-session charge (Stripe will not auto-succeed it), so record failed.
   await writeFailedOutcome({
     attemptId: attemptRow.id,

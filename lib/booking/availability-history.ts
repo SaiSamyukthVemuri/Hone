@@ -1,7 +1,7 @@
 // Pure client-side history for the public-booking "Next available" navigation
 // (PR A). The stack holds the dates the visitor JUMPED AWAY FROM via "Next
 // available", so they can step back to a prior suggested day. Dates are the
-// studio-timezone "YYYY-MM-DD" strings the booking form already uses — this
+// studio-timezone "YYYY-MM-DD" strings the booking form already uses: this
 // helper never parses or shifts them, so timezone correctness is unaffected.
 // No DB, no server round-trip: stepping back just re-selects a prior date and
 // the form's normal slot fetch re-validates that day.

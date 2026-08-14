@@ -2,7 +2,7 @@ import type { BirthdayReminderColor } from "@/lib/types/database";
 
 // Birthday reminder accent palette (migration 0040).
 //
-// Five safe presets only — this is an accent preference, not a theming
+// Five safe presets only. This is an accent preference, not a theming
 // system, and deliberately excludes red/rose (reserved for allergies /
 // cautions per the dashboard color convention). Class strings are written
 // out in full literal form so Tailwind's content scanner keeps them; never
@@ -96,7 +96,7 @@ function isBirthdayReminderColor(
   );
 }
 
-// Total resolver — falls back to purple for any unknown/missing value.
+// Total resolver: falls back to purple for any unknown/missing value.
 export function resolveBirthdayColor(
   value: string | null | undefined,
 ): BirthdayColorClasses {

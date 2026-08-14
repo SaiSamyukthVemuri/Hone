@@ -1,9 +1,9 @@
 import "server-only";
 
-// Google Calendar — Phase B2.3-b: the transport-neutral reconciliation SWEEP core.
+// Google Calendar: Phase B2.3-b: the transport-neutral reconciliation SWEEP core.
 //
 // The single orchestration seam the reconcile cron route calls. Depends on NO
-// Next.js/Vercel/Supabase/host type — only on injected seams (a `ReconcileStore`
+// Next.js/Vercel/Supabase/host type, only on injected seams (a `ReconcileStore`
 // for data, a per-studio `ReconcileLock` for mutation safety, a `ReconcileCoordinator`
 // for global studio ordering, a `ReconcileContinuationStore` for resumable position)
 // and a `now()` clock. The SAME logic runs against the real service-role Supabase
@@ -16,13 +16,13 @@ import "server-only";
 // swallowed never-raise enqueue) + first activation, within intent-eligible studios.
 //
 // CORRECTNESS POSTURE (two independent guarantees):
-//   * MUTATION SAFETY is FAIL-CLOSED — the per-studio lock, the coordinator lock, and
+//   * MUTATION SAFETY is FAIL-CLOSED, the per-studio lock, the coordinator lock, and
 //     the durable continuation/cursor are correctness state. Ownership is confirmed
 //     immediately before every actuator; if it cannot be confirmed the sweep stops
 //     mutating, preserves its cursor before the unprocessed item, and reports degraded
-//     — never swept unlocked, never past a lost lease, never from an unknown position,
+//     never swept unlocked, never past a lost lease, never from an unknown position,
 //     never reported complete when work was left unrepresented.
-//   * OBSERVABILITY (heartbeat / metrics / dead-row alert) is FAIL-OPEN — a failed
+//   * OBSERVABILITY (heartbeat / metrics / dead-row alert) is FAIL-OPEN, a failed
 //     write never aborts the sweep or a booking.
 //
 // STALE-JOB MODEL: a pending/processing outbox row is "current work" ONLY when its op
@@ -31,7 +31,7 @@ import "server-only";
 // worker op returning `ok_noop_superseded`) is deferred to the worker phase.
 
 // ---------------------------------------------------------------------------
-// Data shapes (operational-only — never client content / PHI).
+// Data shapes (operational-only, never client content / PHI).
 // ---------------------------------------------------------------------------
 export type ReconcileApptRow = { id: string; syncVersion: number };
 export type ReconcileApptState = { id: string; status: string; syncVersion: number; cancellationKind: string | null };
@@ -132,7 +132,7 @@ export type ReconcileDeps = {
 };
 
 // ---------------------------------------------------------------------------
-// Result shapes — aggregate, non-sensitive counts ONLY.
+// Result shapes: aggregate, non-sensitive counts ONLY.
 // ---------------------------------------------------------------------------
 export type StudioOutcome = "ok" | "degraded" | "error" | "skipped_held";
 
@@ -208,7 +208,7 @@ function hasDeadJob(jobs: OpenJob[], ops: string[]): boolean {
 
 // Appointment pass. NOTE (§5): a bump for a PLACEHOLDER link re-drives a CURRENT
 // UPSERT intent; the deployed trigger emits `event.update` (an active link exists),
-// NOT `event.create`. No real provider update can happen (no google_event_id) — the
+// NOT `event.create`. No real provider update can happen (no google_event_id), the
 // future B2.3-c worker op must treat `event.update` + a placeholder link as
 // create-and-bind. `missing_link_job` is the internal drift class, not the wire op.
 export function classifyConfirmedAppointment(appt: ReconcileApptRow, link: ReconcileLinkRow | undefined, jobs: OpenJob[]): ReconcileDecision {
@@ -237,7 +237,7 @@ export function classifyActiveLink(link: ReconcileLinkRow, appt: ReconcileApptSt
 }
 
 // ---------------------------------------------------------------------------
-// Lock guard — time-based ownership maintenance.
+// Lock guard: time-based ownership maintenance.
 // ---------------------------------------------------------------------------
 const DEFAULT_RENEW_INTERVAL_MS = 40_000;
 function renewIntervalMs(deps: ReconcileDeps): number {
@@ -262,7 +262,7 @@ class LockGuard {
     if (t - this.lastRenewMs < this.intervalMs) return true;
     return this.renew(t);
   }
-  // Force an ownership-token renewal/check regardless of the timer — used immediately
+  // Force an ownership-token renewal/check regardless of the timer: used immediately
   // before every actuator and at each pass boundary.
   async ensureOwnedNow(): Promise<boolean> {
     if (this.lost) return false;
@@ -525,12 +525,12 @@ async function applyDecision(studioId: string, deps: ReconcileDeps, decision: Re
       res.superseded++;
       return "skipped";
     }
-    // §6 — intent-eligibility re-check immediately before mutation.
+    // §6, intent-eligibility re-check immediately before mutation.
     if (!(await deps.store.isStudioIntentEligible(studioId))) {
       res.intentLost = true;
       return "intent_lost";
     }
-    // §4 — force an ownership-token check immediately before the repair RPC.
+    // §4, force an ownership-token check immediately before the repair RPC.
     if (!(await guard.ensureOwnedNow())) return "ownership_lost";
 
     if (fresh.act === "bump") {
@@ -539,7 +539,7 @@ async function applyDecision(studioId: string, deps: ReconcileDeps, decision: Re
         res.skipped++; // vanished between revalidation and bump
         return "acted";
       }
-      // §6 — a returned version does not prove durable intent. Confirm a current
+      // §6, a returned version does not prove durable intent. Confirm a current
       // matching pending/processing op now exists for the resulting version + op class.
       const ops = fresh.class === "surplus_event_delete" ? DELETE_OPS : CREATE_UPDATE_OPS;
       const jobs = (await deps.store.getOpenJobsForEntities(studioId, [fresh.appointmentId])).get(fresh.appointmentId) ?? [];
@@ -547,7 +547,7 @@ async function applyDecision(studioId: string, deps: ReconcileDeps, decision: Re
         res.enqueued++;
         res.byClass[fresh.class]++;
       } else {
-        // Trigger enqueue was swallowed or intent was lost between the checks — do NOT
+        // Trigger enqueue was swallowed or intent was lost between the checks: do NOT
         // claim converged. Degraded; the drift persists so the next run retries.
         res.intentVerifyFailed++;
       }
@@ -573,7 +573,7 @@ async function applyDecision(studioId: string, deps: ReconcileDeps, decision: Re
   }
 }
 
-// FULL pre-actuation revalidation — re-read current state + RE-CLASSIFY.
+// FULL pre-actuation revalidation: re-read current state + RE-CLASSIFY.
 async function revalidate(studioId: string, deps: ReconcileDeps, decision: ReconcileDecision): Promise<ReconcileDecision> {
   if (decision.act === "orphan_delete") {
     const link = await deps.store.getActiveLinkById(studioId, decision.linkId);

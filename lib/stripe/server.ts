@@ -89,7 +89,7 @@ export function getStripe(): Stripe {
   const secret = readSecretOrThrow();
   // appInfo.url is informational (sent in User-Agent). We never want
   // to silently send "https://hone.care" from a Preview/Dev/misconfigured
-  // production deployment — that would mis-attribute the origin in
+  // production deployment: that would mis-attribute the origin in
   // Stripe's logs. We therefore call getAppOrigin() and OMIT
   // appInfo.url if it cannot be resolved without falling back.
   let appOrigin: string | undefined;

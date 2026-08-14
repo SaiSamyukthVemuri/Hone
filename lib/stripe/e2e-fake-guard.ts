@@ -3,7 +3,7 @@ import "server-only";
 // Server-only activation guard for the (future) E2E fake Stripe processor.
 //
 // This module decides NOTHING about payment business logic. It answers exactly
-// one question — "may a fake Stripe processor activate in THIS runtime?" — and
+// one question ("may a fake Stripe processor activate in THIS runtime?") and
 // is FAIL-CLOSED: fake mode is OFF unless an explicit server-only marker is
 // present AND no deployed-environment signal is present.
 //
@@ -11,7 +11,7 @@ import "server-only";
 //   * They are server-only env vars (HONE_E2E_*), NEVER NEXT_PUBLIC_*, so the
 //     browser can never read or set them.
 //   * They are not derived from any request input (no header/cookie/query/form).
-//   * Any Vercel runtime (production/preview/development) is rejected outright —
+//   * Any Vercel runtime (production/preview/development) is rejected outright,
 //     VERCEL === "1" and VERCEL_ENV are always present on Vercel and never on the
 //     local E2E server.
 //
@@ -19,7 +19,7 @@ import "server-only";
 //   The local E2E web server runs `next start` (NODE_ENV=production), so rejecting
 //   on NODE_ENV=production would break the ONLY environment fake mode is meant
 //   for. The real boundary is the positive HONE_E2E_* markers plus the Vercel
-//   rejection — a combination that cannot exist in any deployed environment.
+//   rejection: a combination that cannot exist in any deployed environment.
 
 // A run id must be an explicit, well-formed, per-run token (the E2E harness
 // generates one). Its presence is a second positive marker that cannot exist in
@@ -70,7 +70,7 @@ export function isE2eFakeStripeEnabled(
 }
 
 // FAIL-LOUD deployment guard. If the fake flag is REQUESTED in a deployed
-// environment, throw at construction rather than silently ignoring it — a
+// environment, throw at construction rather than silently ignoring it: a
 // misconfiguration or attempted bypass must surface immediately, never fall back
 // quietly to the real client. A no-op when the flag is absent (i.e. always, in
 // production), so the real Stripe path is behaviourally unchanged.

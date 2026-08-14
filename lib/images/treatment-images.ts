@@ -1,5 +1,5 @@
 // PR #271. Pure helpers for secure treatment image storage. NO I/O, NO secrets,
-// NO server-only import — safe to unit test. The server-side storage plane
+// NO server-only import: safe to unit test. The server-side storage plane
 // (service-role upload + signed URLs) lives in the route's server actions; this
 // module only validates uploads and builds SERVER-DERIVED storage paths.
 
@@ -75,7 +75,7 @@ export function buildTreatmentImagePath(input: {
   return `${input.studioId}/${input.clientId}/${input.id}.${ext}`;
 }
 
-// Lowercase extensions only — matches the (case-sensitive) DB CHECK in 0093 and
+// Lowercase extensions only: matches the (case-sensitive) DB CHECK in 0093 and
 // the server-generated path (EXT_BY_TYPE is always lowercase).
 const ALLOWED_FILENAME = /^[A-Za-z0-9._-]+\.(jpg|jpeg|png|webp)$/;
 

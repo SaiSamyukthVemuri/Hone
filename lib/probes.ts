@@ -11,7 +11,7 @@
 // v1 is a hardcoded TypeScript catalog (no DB probe_options table). The
 // server actions validate the chosen option key against this catalog and
 // store the decomposed fields on session_blocks. Adding a brand later is
-// a code change here — no migration, because the new probe columns carry
+// a code change here, no migration, because the new probe columns carry
 // no DB enum/CHECK on their values.
 //
 // Display convention: "Stainless steel", never "SS".
@@ -52,7 +52,7 @@ export type ProbeOption = {
 // ---------------------------------------------------------------------------
 // Brand specs. Each spec is expanded into ProbeOption rows below. Only
 // listed (material, pieceType, shank, size, length) tuples become valid
-// options — anything not listed cannot be selected.
+// options: anything not listed cannot be selected.
 // ---------------------------------------------------------------------------
 
 type SizeSpec = { size: string; lengths: ReadonlyArray<ProbeLength | null> };

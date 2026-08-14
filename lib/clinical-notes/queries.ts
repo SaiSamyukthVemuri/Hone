@@ -54,7 +54,7 @@ export async function getLatestClinicalNote(
   kind: ClinicalNoteKind,
 ): Promise<{ latest: ClinicalNoteWithAuthor | null; total: number }> {
   const supabase = await createClient();
-  // Order by (occurred_at desc, created_at desc) — the head definition itself,
+  // Order by (occurred_at desc, created_at desc), the head definition itself,
   // and the exact key of client_clinical_notes_latest_idx. The head (newest
   // non-superseded row) is therefore the first non-superseded row in this
   // window: any row on/after the head's date sorts within the window, so the
@@ -92,7 +92,7 @@ export async function getLatestClinicalNote(
   };
 }
 
-// The latest entry for BOTH kinds — the compact summary used on the client
+// The latest entry for BOTH kinds: the compact summary used on the client
 // profile cards, appointment prep, and the charting screen.
 export async function getClinicalNotesSummary(clientId: string): Promise<
   Record<ClinicalNoteKind, { latest: ClinicalNoteWithAuthor | null; total: number }>
@@ -104,7 +104,7 @@ export async function getClinicalNotesSummary(clientId: string): Promise<
   return { consultation, skin_hair_analysis: skin };
 }
 
-// Complete dated history for one kind for the print/export view — pages through
+// Complete dated history for one kind for the print/export view: pages through
 // until exhausted, hard-capped so a pathological row count can never run away.
 export async function getClinicalNotesForExport(
   clientId: string,

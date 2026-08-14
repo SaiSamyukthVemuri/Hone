@@ -2,8 +2,8 @@
 //
 // WHAT THIS IS
 // ------------
-// The client reads the studio's OWN consent text — the same
-// `consent_form_templates` rows the portal renders — and completes each form
+// The client reads the studio's OWN consent text: the same
+// `consent_form_templates` rows the portal renders, and completes each form
 // with a control appropriate to its type:
 //
 //   treatment_consent : a required checkbox, "I have read and agree to this
@@ -12,8 +12,8 @@
 //                       checked.
 //
 // PHOTO CONSENT IS NO LONGER COLLECTED HERE (Chloe, 2026-08-09). It was, from
-// #529 until this change. It moved to the client portal — its Accept/Deny
-// ceremony is unchanged there, and both answers still complete the form — for
+// #529 until this change. It moved to the client portal: its Accept/Deny
+// ceremony is unchanged there, and both answers still complete the form: for
 // a product reason, not a technical one: no photographs are taken at the
 // consultation, and asking on the intake made clients fear otherwise.
 //
@@ -28,11 +28,11 @@
 // lib/consent/sign-consent-form.ts) continues to exist as a SEPARATE system
 // that this module never writes to. That table's `signature_name` column is
 // NOT NULL with a 1..200 length CHECK, so routing an intake checkbox through
-// it would require fabricating a name — which is exactly why intake responses
+// it would require fabricating a name, which is exactly why intake responses
 // live in the intake's own record instead.
 //
-// This module is deliberately ISOMORPHIC — no `server-only`, no `node:crypto`
-// — because the public wizard is a client component and imports the claim
+// This module is deliberately ISOMORPHIC, no `server-only`, no `node:crypto`
+// because the public wizard is a client component and imports the claim
 // builder and the response constants from here. Everything that needs the
 // canonical hash or the database lives in lib/intake/consent-gate.ts, which IS
 // server-only. Keep it that way: importing the hash helper here would drag
@@ -42,7 +42,7 @@
 //
 // These started as one constant doing two jobs: deciding what the intake
 // COLLECTS, and deciding what a stored record may be READ BACK as. That is
-// safe only while the two never diverge — and they diverged the moment photo
+// safe only while the two never diverge, and they diverged the moment photo
 // consent moved to the portal. Narrowing the single constant would have
 // silently deleted every historical photo answer from the practitioner's
 // review, because the read-back parser rejects an unknown form_type.
@@ -53,7 +53,7 @@
 //
 // Photo consent was removed here (Chloe, 2026-08-09): photos are not taken at
 // the consultation, and asking for photo consent on the intake implied to
-// clients that they might be. It is NOT retired — it lives in the client
+// clients that they might be. It is NOT retired. It lives in the client
 // portal, which is now its only collection surface, with explicit Accept/Deny.
 //
 // Deliberately NOT every type in the `consent_form_templates` CHECK
@@ -65,7 +65,7 @@ export const INTAKE_CONSENT_COLLECTED_FORM_TYPES = [
 ] as const;
 
 // Every form type an intake record may LEGITIMATELY contain, including types
-// the intake has stopped collecting. Read-back only — never used to decide
+// the intake has stopped collecting. Read-back only, never used to decide
 // what to show a client.
 //
 // `photo_consent` stays here forever: intakes submitted while photo consent
@@ -114,7 +114,7 @@ export const INTAKE_CONSENT_RESPONSES = {
 
 // A completed response. `accepted` is the only valid answer for a treatment
 // consent; a photo consent may be either. There is deliberately no third
-// "skipped" state — an unanswered form is an ABSENT entry, not a stored one.
+// "skipped" state: an unanswered form is an ABSENT entry, not a stored one.
 export type IntakeConsentResponse = "accepted" | "denied";
 
 // What the SERVER stores per form. Every field except `response` is derived
@@ -147,7 +147,7 @@ export type IntakeConsentResponsesRecord = {
 // longer collects them.
 //
 // Both consent writers REBUILD the stored record by iterating the studio's
-// currently-live intake forms. That is what keeps the snapshot server-owned —
+// currently-live intake forms. That is what keeps the snapshot server-owned,
 // and it also means anything no longer resolved simply stops being written.
 // Without this, the first draft save or submit after photo consent moved to
 // the portal would silently erase a photo answer the client had already given,
@@ -155,7 +155,7 @@ export type IntakeConsentResponsesRecord = {
 // is supposed to prevent.
 //
 // So: any well-formed stored form whose type is no longer COLLECTED is
-// returned verbatim and re-attached by the writer. Verbatim matters — the
+// returned verbatim and re-attached by the writer. Verbatim matters: the
 // snapshot is the text the client actually read, and re-deriving it from
 // today's template would rewrite history. Nothing here validates against a
 // live template, because there deliberately is no longer one to validate
@@ -181,7 +181,7 @@ export function retainedHistoricalConsentForms(
   for (const entry of formsRaw) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const r = entry as Record<string, unknown>;
-    // Readable but no longer collected — that is precisely the carry-forward
+    // Readable but no longer collected: that is precisely the carry-forward
     // set. A record the intake still collects is rebuilt normally.
     if (!isIntakeConsentFormType(r.form_type)) continue;
     if (isIntakeConsentCollectedFormType(r.form_type)) continue;
@@ -216,14 +216,14 @@ export function retainedHistoricalConsentForms(
 
 // What the BROWSER sends. Four fields, all of them claims or comparands:
 //
-//   template_id            — which form this answers
-//   form_type              — what the browser believes it rendered
-//   rendered_template_hash — the canonical hash of the EXACT (title, body,
+//   template_id           , which form this answers
+//   form_type             , what the browser believes it rendered
+//   rendered_template_hash, the canonical hash of the EXACT (title, body,
 //                            version) the browser displayed
-//   response               — the client's checkbox / radio choice
+//   response              : the client's checkbox / radio choice
 //
 // None of these is authority. The server re-resolves the template, recomputes
-// the hash from its own row, and refuses when they disagree — which is what
+// the hash from its own row, and refuses when they disagree, which is what
 // stops a studio edit between render and submit from recording agreement to
 // text the client never read.
 export type IntakeConsentFormClaim = {
@@ -298,7 +298,7 @@ export function normalizeIntakeConsentClaims(
 // ---------------------------------------------------------------------------
 
 // A stored form as the practitioner review surface should render it. Always
-// built from the SNAPSHOT the client actually read — never from today's
+// built from the SNAPSHOT the client actually read, never from today's
 // template row, which the studio may have edited since.
 export type IntakeConsentFormView = {
   // The template this answer was given against. Carried through to the review
@@ -389,7 +389,7 @@ export function readIntakeConsentResponses(
   }
   const formsRaw = (raw as Record<string, unknown>).forms;
   if (!Array.isArray(formsRaw)) return { state: "unreadable" };
-  // An EMPTY forms array is not malformed — it is the honest record of an
+  // An EMPTY forms array is not malformed. It is the honest record of an
   // intake in which nothing was completed here, which is exactly what happens
   // when every live form was already completed in the portal. Reporting it as
   // "unreadable" told the practitioner the entry "could not be read" and to
@@ -403,7 +403,7 @@ export function readIntakeConsentResponses(
   const forms: IntakeConsentFormView[] = [];
   for (const entry of formsRaw) {
     const view = readFormRecord(entry);
-    // One malformed entry does not discard the rest — but it must not be
+    // One malformed entry does not discard the rest, but it must not be
     // silently counted as a completion either, so it is simply not rendered.
     if (view) forms.push(view);
   }
@@ -432,7 +432,7 @@ export const INTAKE_CONSENT_REVIEW_COPY = {
     "No consent forms were recorded with this intake. The studio may have had no live forms at the time.",
   unreadable:
     "A consent entry is present but could not be read. Treat these forms as not completed.",
-  // States plainly what these records are — and are not.
+  // States plainly what these records are, and are not.
   caveat:
     "Recorded inside the intake as the client's response to the studio's forms. This is not a signature; the portal's signed records are separate.",
   // Shown against the stored version so a practitioner reading history knows
@@ -450,7 +450,7 @@ export const INTAKE_CONSENT_REVIEW_COPY = {
   // #545 put the historical intake answer FIRST, with its full legal body
   // expanded inline, and the current portal status underneath. A client who
   // accepted photos at intake and then denied them in the portal therefore read
-  // as "Photo Consent — Accepted ... <legal text> ... Photo Consent — Consent
+  // as "Photo Consent (Accepted ... <legal text> ... Photo Consent) Consent
   // denied": two answers with equal visual authority. Chloe: "consent was both
   // accepted and denied", "this should not be possible".
   //
@@ -471,12 +471,12 @@ export const INTAKE_CONSENT_REVIEW_COPY = {
   // two (the intake record carries no responded_at). Truthful and weaker.
   alsoAnsweredInPortal: "Also answered in the client portal",
   // A prior answer to a form the portal does not currently run, or to a
-  // different template entirely. Not superseded — just no longer collected here.
+  // different template entirely. Not superseded, just no longer collected here.
   noLongerCollected: "Photo consent is no longer collected in the intake",
   // Disclosure labels. The review page is a scan surface, not a document
   // viewer, so every full body sits behind one of these.
   // Native <details>/<summary> supplies the open/closed affordance, so one
-  // static label each — no second "Hide …" string to keep in sync.
+  // static label each, no second "Hide …" string to keep in sync.
   viewRecordedForm: "View recorded form",
   viewPreviousForm: "View previous form",
 } as const;

@@ -152,7 +152,7 @@ export type PractitionerSignatureSummary = Pick<
   | "signed_at"
   | "response"
   // P1-A (signed-consent visibility): the columns that hold the ACTUAL agreed
-  // content — the exact form copy the client saw + the human-readable photo
+  // content: the exact form copy the client saw + the human-readable photo
   // response label + the integrity hash + created_at. Stored immutably at sign
   // time (0057/0060) but previously never surfaced to the practitioner, so the
   // practitioner could not open the complete signed record.
@@ -257,13 +257,13 @@ export async function getPhotoConsentStateForClient(
 //
 // Photo consent left the intake (Chloe, 2026-08-09) and lives only in the
 // portal. Without this, "View intake" could show a historical intake photo
-// answer and nothing else — so a client who later changed their mind in the
+// answer and nothing else, so a client who later changed their mind in the
 // portal would be represented by a stale answer with no sign that a newer one
 // existed. Chloe's actual report was the blunter version of the same gap: her
 // route never read `client_consent_signatures` at all, so portal-completed
 // consent was invisible there.
 //
-// Returns null when the studio has no active photo_consent template — photo
+// Returns null when the studio has no active photo_consent template: photo
 // consent is not in use, so the review shows nothing rather than an empty
 // "not completed" row that reads like a missing task.
 //
@@ -272,12 +272,12 @@ export async function getPhotoConsentStateForClient(
 // about what "granted" means. It builds no second signed-consent engine.
 export type PortalPhotoConsentView = {
   // The template this status is about. A distinct template id is a distinct
-  // consent record — never merged with another.
+  // consent record, never merged with another.
   templateId: string;
   state: ConsentRowState;
   templateTitle: string;
   currentVersion: number;
-  // The latest signature FOR THIS TEMPLATE, when one exists — the full
+  // The latest signature FOR THIS TEMPLATE, when one exists: the full
   // immutable record, so the existing SignedConsentViewer opens it unchanged.
   record: PractitionerSignatureSummary | null;
 };
@@ -294,10 +294,10 @@ export async function getPortalPhotoConsentsForPractitionerView(
   // is_live precisely because activating a template for the studio's own
   // workflow used to drop it into the client portal; migration 0072's CHECK
   // (NOT is_live OR status='active') makes is_live imply active, but it
-  // deliberately still permits active + is_live=false — a form the owner has
+  // deliberately still permits active + is_live=false, a form the owner has
   // activated and deliberately hidden.
   //
-  // Claiming "Current portal consent status — Not completed" for such a form
+  // Claiming "Current portal consent status, Not completed" for such a form
   // would blame the client for not completing something they cannot see. So
   // this reads exactly what getActiveConsentTemplatesForPortal reads, with the
   // same created_at ordering, and never defines portal visibility on its own.
@@ -330,8 +330,8 @@ export async function getPortalPhotoConsentsForPractitionerView(
   // like an outstanding task.
   if (rows.length === 0) return [];
 
-  // ALL of them. A studio may run more than one live photo form — the portal
-  // resolver returns every live form of a type — and each is a separate
+  // ALL of them. A studio may run more than one live photo form: the portal
+  // resolver returns every live form of a type, and each is a separate
   // question the client answers separately. Picking the highest `version`
   // across DIFFERENT template ids would be a category error: version is a
   // template's own history, not a ranking between templates, so it would
@@ -365,7 +365,7 @@ export async function getPortalPhotoConsentsForPractitionerView(
 
   // Latest per template_id: first-write-wins over a signed_at-desc list. Keyed
   // STRICTLY by template_id, so one template's signature can never stand in
-  // for another's — the outdated/granted/denied calculation below is per
+  // for another's, the outdated/granted/denied calculation below is per
   // template and must stay that way.
   const latestByTemplate = new Map<string, PractitionerSignatureSummary>();
   for (const row of sigs ?? []) {

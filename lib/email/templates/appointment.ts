@@ -60,7 +60,7 @@ type ConfirmationToClient = {
   rescheduleUrl: string | null;
   intakeUrl: string | null;
   // Token-FREE studio portal login URL (/portal/login?studio=slug). NOT a
-  // one-time magic link — the client enters their email to receive a secure
+  // one-time magic link: the client enters their email to receive a secure
   // sign-in link. Optional so non-sender callers can omit it.
   portalLoginUrl?: string | null;
   preCareInstructions: string | null;
@@ -284,7 +284,7 @@ export function cancellationActorRoleLabel(role: CancellationActorRole): string 
   }
 }
 
-// "Cancelled by" value for the email. With a display name → "<name> — <Role>";
+// "Cancelled by" value for the email. With a display name → "<name>, <Role>";
 // with no usable name → just the role label (safe fallback per the spec, e.g.
 // "Cancelled by: Client"). No IDs/tokens/emails are ever placed here.
 export function cancellationActorSummary(
@@ -293,7 +293,7 @@ export function cancellationActorSummary(
 ): string {
   const label = cancellationActorRoleLabel(role);
   const name = actorName?.trim();
-  return name ? `${name} — ${label}` : label;
+  return name ? `${name} (${label})` : label;
 }
 
 // Month + day only (e.g. "July 21"), studio-timezone aware, for the subject line.
@@ -315,7 +315,7 @@ type CancellationEmail = {
   durationMinutes: number;
   startsAt: Date;
   timezone: string;
-  // Who cancelled — server-derived. actorName is the display name (or null for the
+  // Who cancelled: server-derived. actorName is the display name (or null for the
   // role-only fallback); actorRole drives the label + the client-facing "by the
   // studio" wording.
   actorName: string | null;
@@ -402,13 +402,20 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
     : `Appointment cancelled by the ${cancellationActorRoleLabel(p.actorRole).toLowerCase()}: ${p.serviceName} on ${monthDay}`;
 
   // Ordered, labelled rows. Every value is a display field (name/label/time/
-  // service/duration/reason label) — never an id, token, raw audit JSON, or note.
+  // service/duration/reason label), never an id, token, raw audit JSON, or note.
   const rows: Array<[string, string]> = [];
   if (p.clientName && p.clientName.trim()) rows.push(["Client", p.clientName.trim()]);
   rows.push(["Cancelled by", cancelledBy]);
   rows.push(["Original time", `${dayStr} at ${timeStr}`]);
   rows.push(["Service", `${p.serviceName} (${p.durationMinutes} min)`]);
-  rows.push(["Reason", p.reason && p.reason.trim() ? p.reason.trim() : "—"]);
+  // The cancellation reason is OPTIONAL free text supplied by whoever
+  // cancelled. Null or blank means they did not give one, so the row says
+  // exactly that. "None" would imply there was no reason for the cancellation,
+  // and "Not available" would imply Hone holds one it cannot show.
+  rows.push([
+    "Reason",
+    p.reason && p.reason.trim() ? p.reason.trim() : "Not provided",
+  ]);
 
   const rowsHtml = rows
     .map(

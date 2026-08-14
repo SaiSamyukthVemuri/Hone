@@ -3,15 +3,15 @@
 // F-PRIV-001. These six route families carry a REPLAYABLE BEARER CREDENTIAL as
 // a dynamic path segment: possession of the URL is possession of the
 // authorization. That makes the path itself secret material, which is a
-// different problem from the query string — and one that `sendDefaultPii:false`
+// different problem from the query string, and one that `sendDefaultPii:false`
 // does not touch, because the URL is not PII, it is a credential.
 //
 // Two independent consumers need this list and MUST NOT drift apart:
 //
-//   1. next.config.ts — applies stricter privacy headers (Referrer-Policy:
+//   1. next.config.ts, applies stricter privacy headers (Referrer-Policy:
 //      no-referrer, X-Robots-Tag) so the credential is not handed to a third
 //      party in a Referer header or indexed by a crawler.
-//   2. lib/observability/sentry-scrub.ts — canonicalizes the credential out of
+//   2. lib/observability/sentry-scrub.ts, canonicalizes the credential out of
 //      every telemetry string before an event leaves the process.
 //
 // A route protected by only one of those is still leaking. Rather than two
@@ -42,7 +42,7 @@ export const TOKEN_ROUTE_PATTERNS: string[] = TOKEN_ROUTE_PREFIXES.map(
   (prefix) => `${prefix}/:token*`,
 );
 
-/** What replaces the credential. A FIXED string — deliberately not a hash, not
+/** What replaces the credential. A FIXED string, deliberately not a hash, not
  *  a fingerprint, not a truncation. A stable hash of a bearer token is still a
  *  correlatable identifier for that token, and a prefix/suffix is a brute-force
  *  head start; neither is acceptable here. Matches the scrubber's placeholder
@@ -77,16 +77,16 @@ const TOKEN_PATH_RE = new RegExp(
  *   /intake/[token]                        ->  /intake/[Redacted]
  *
  * Properties this function guarantees, all covered by tests:
- *   * IDEMPOTENT — sanitize(sanitize(x)) === sanitize(x).
- *   * CREDENTIAL-SHAPE INDEPENDENT — it keys off the ROUTE, never off JWT
+ *   * IDEMPOTENT: sanitize(sanitize(x)) === sanitize(x).
+ *   * CREDENTIAL-SHAPE INDEPENDENT: it keys off the ROUTE, never off JWT
  *     syntax, length, alphabet or prefix, so an opaque random string is caught
  *     exactly like a structured one. This is the whole point: the existing
  *     JWT/Bearer patterns cannot see an arbitrary opaque credential.
- *   * SUFFIX-COMPLETE — consumes trailing path segments, query and fragment,
+ *   * SUFFIX-COMPLETE, consumes trailing path segments, query and fragment,
  *     mirroring the `:token*` catch-all the header registry uses.
- *   * ROUTE-SCOPED — unrelated identifiers (/clients/<id>, /calendar/<id>) are
+ *   * ROUTE-SCOPED, unrelated identifiers (/clients/<id>, /calendar/<id>) are
  *     left intact, so diagnostics stay useful.
- *   * NON-THROWING — pure regex replacement; it never parses a URL, so a
+ *   * NON-THROWING, pure regex replacement; it never parses a URL, so a
  *     malformed one cannot throw, and it never decodes percent-encoding, so it
  *     cannot re-emit a decoded secret.
  *

@@ -1,4 +1,4 @@
-// Repeat-client fast charting — "Start from last session".
+// Repeat-client fast charting: "Start from last session".
 //
 // This module owns the ONE extra concept the fast path adds on top of the
 // existing whole-session copy authority (migration 0157): after the governed,
@@ -23,14 +23,14 @@
 // it, so re-opening the URL later does not silently reopen an editor.
 
 // Search param the charting page reads to decide which treatment area opens in
-// TODAY'S editor. Deliberately short and stable — it appears in the URL bar of a
+// TODAY'S editor. Deliberately short and stable: it appears in the URL bar of a
 // clinical screen.
 export const FAST_CHART_PARAM = "chart";
 
 // Where the practitioner lands after a successful copy: the FIRST area created
 // by the batch. copy_session_setup builds `created_block_ids` by iterating the
 // spec array in order and assigning sort_order 1..N, so element 0 is always the
-// area with sort_order 1 — the same area the source listed first. An idempotent
+// area with sort_order 1, the same area the source listed first. An idempotent
 // replay returns the identical array from the provenance ledger, so a retried
 // fast start lands on the same area rather than a different one.
 //
@@ -66,7 +66,7 @@ export function fastChartUrl(
 // already rendered on THIS session. A stale id (the area was removed), a
 // repeated param, or a hand-crafted id for another session/studio resolves to
 // null and changes nothing. The param can therefore never widen what is
-// visible — it can only pre-open an editor the practitioner could already open
+// visible. It can only pre-open an editor the practitioner could already open
 // by tapping "Edit" on an area she is already looking at.
 export function resolveAutoEditBlockId(
   raw: string | string[] | undefined | null,

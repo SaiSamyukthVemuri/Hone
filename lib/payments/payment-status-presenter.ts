@@ -8,18 +8,18 @@ import { resolveStripePublishableKey } from "@/lib/stripe/publishable-key";
 // coming-later claims that drift from reality.
 //
 // Design rules:
-//   * Pure derivation over data the caller already holds — this module runs
+//   * Pure derivation over data the caller already holds: this module runs
 //     NO queries, calls NO Stripe SDK, and never writes. Unit-testable
 //     without a database.
 //   * Runtime mode comes from the DEPLOYMENT (inferStripeLivemode()), never
 //     from a nullable row (a not-yet-connected studio has no row; deriving
-//     mode from the row rendered "Test mode" on a live deployment — the
+//     mode from the row rendered "Test mode" on a live deployment: the
 //     row-null bug this PR fixes).
 //   * A studio is never called "ready" for charging unless charges_enabled
 //     AND payouts_enabled are BOTH true for the current mode. Charges
 //     without payouts is a WARNING, not ready.
 //   * Per-ROW artifacts (cards, attempts, refunds, receipts) must badge
-//     from the row's own stripe_livemode — see modeBadgeForRow — never from
+//     from the row's own stripe_livemode (see modeBadgeForRow) never from
 //     the runtime.
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ export type ConnectStatusInput = {
 export function deriveConnectCapability(
   input: ConnectStatusInput | undefined,
 ): ConnectCapability {
-  if (input === undefined) return "unknown"; // read error — never all-clear
+  if (input === undefined) return "unknown"; // read error, never all-clear
   if (input === null) return "not_connected";
   const status = input.accountStatus;
   if (status === null) return "not_connected";
@@ -153,7 +153,7 @@ export function derivePortalCardCapability(args: {
 export function portalCardCopy(capability: PortalCardCapability): string {
   switch (capability) {
     case "available":
-      // Available means AVAILABLE — never "when card-on-file becomes
+      // Available means AVAILABLE, never "when card-on-file becomes
       // available".
       return "Portal card-on-file is available. Clients can sign the card authorization and save a card in the client portal.";
     case "needs_connect":
@@ -174,7 +174,7 @@ export function publishableKeyOk(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Public booking card collection — OFF today; single source of truth so
+// 4. Public booking card collection: OFF today; single source of truth so
 //    every surface flips together the day a real setting ships.
 // ---------------------------------------------------------------------------
 export type BookingCardCollection = "off" | "on";
@@ -191,7 +191,7 @@ export function bookingCardCopy(state: BookingCardCollection): string {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Manual fee capability — configuration vs charging, made explicit.
+// 5. Manual fee capability: configuration vs charging, made explicit.
 // ---------------------------------------------------------------------------
 export type ManualFeeCapability = "not_configured" | "configured_but_hold";
 
@@ -208,12 +208,12 @@ export function manualFeeCopy(capability: ManualFeeCapability): string {
   // Fees are never automatic and settings never charge; amounts are
   // configuration only. "Money is not charged here" stays on the fee card.
   return capability === "configured_but_hold"
-    ? "Manual fee amounts are configured. Fees are never charged automatically — a practitioner runs each fee explicitly, and only against a saved, authorized card."
+    ? "Manual fee amounts are configured. Fees are never charged automatically. A practitioner runs each fee explicitly, and only against a saved, authorized card."
     : "Manual fee amounts are not configured. Setting an amount is configuration only; saving it does not charge anyone.";
 }
 
 // ---------------------------------------------------------------------------
-// 7. Per-row payment record mode — ALWAYS the row's own stripe_livemode.
+// 7. Per-row payment record mode, ALWAYS the row's own stripe_livemode.
 // ---------------------------------------------------------------------------
 export type PaymentRecordBadge = "Live" | "Test" | "Unknown";
 

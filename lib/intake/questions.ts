@@ -136,7 +136,7 @@ const CONDITIONS: ReadonlyArray<Option> = [
 // Diabetes / thyroid subtype answer sets.
 //
 // These are the CHILD questions of two `medical_conditions` options. The parent
-// question and its option values are deliberately untouched — "diabetes" and
+// question and its option values are deliberately untouched: "diabetes" and
 // "thyroid" mean exactly what they meant before, and every historical answer
 // keeps its meaning. What is new is that a client who selects one is now asked
 // which type, because "diabetes" alone was not clinically useful.
@@ -148,8 +148,8 @@ const CONDITIONS: ReadonlyArray<Option> = [
 // EVERY SET ENDS IN A TRUTHFUL CATCH-ALL, and that is the point.
 //
 // The first draft offered only the two named types each. Because the question is
-// REQUIRED, that forced a client with gestational diabetes — or one who simply
-// does not know which type they have — either to pick a type that is not theirs
+// REQUIRED, that forced a client with gestational diabetes, or one who simply
+// does not know which type they have: either to pick a type that is not theirs
 // or to abandon the intake. A required field with no honest answer does not
 // collect better data; it manufactures wrong data and makes the record less
 // trustworthy than the generic "Diabetes" it replaced.
@@ -466,7 +466,7 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
       // Labels are deliberately SELF-CONTAINED rather than the bare "Type" of
       // the original sketch. The practitioner review grid renders a question's
       // label without the parent question above it, so a lone "Type" reads as
-      // nothing at all there — the same reason `active_cold_sore` was rewritten
+      // nothing at all there: the same reason `active_cold_sore` was rewritten
       // from "Are you currently experiencing one?".
       {
         key: "diabetes_type",
@@ -753,7 +753,7 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
     questions: [
       // RETIRED: the versioned electrolysis acknowledgement (#518) used to sit
       // here, first on this step. It was a temporary stand-in for the studio's
-      // own consent documents, and #529 replaced it with the real thing — the
+      // own consent documents, and #529 replaced it with the real thing: the
       // studio's live treatment/photo consent forms, completed after this step.
       // It is no longer collected, so it is no longer a question.
       //
@@ -899,8 +899,8 @@ export function findMissingRequiredAnswers(
 // answers we offered?".
 //
 // It exists because the response sanitizer (lib/intake/responses.ts) is a KEY
-// whitelist that copies values through untouched — by design and by long
-// standing — so nothing before this point stops a crafted payload writing
+// whitelist that copies values through untouched: by design and by long
+// standing, so nothing before this point stops a crafted payload writing
 // `diabetes_type: "whatever I like"` into a clinical record. Hiding the control
 // in the browser is not a validation.
 //
@@ -909,18 +909,18 @@ export function findMissingRequiredAnswers(
 // lib/intake/questions.ts exactly ONE option value has ever been removed from an
 // option set: "keloid", from the multi_select CONDITIONS list. So a strict
 // membership rule over multi_select answers could permanently wedge the submit
-// of an in-progress intake saved before that removal — a real client, unable to
+// of an in-progress intake saved before that removal: a real client, unable to
 // finish, with no way to clear a value the wizard no longer renders. No
 // single_select has ever lost a value, so the same rule over single_select
 // cannot strand anyone. Widening this to multi_select needs that legacy value
 // dealt with first; it is not a free change.
 //
-// Unanswered is NOT invalid here — absence is findMissingRequiredAnswers' job,
+// Unanswered is NOT invalid here: absence is findMissingRequiredAnswers' job,
 // and an optional question left blank must stay legal. Conditionally-hidden
 // questions are skipped for the same reason they are skipped there.
 //
 // Pure compute; no I/O. Like findMissingRequiredAnswers it must only ever run
-// on a WRITE path — an already-submitted intake is never re-validated, which is
+// on a WRITE path: an already-submitted intake is never re-validated, which is
 // what keeps a historical record valid when today's option set has moved on.
 export function findInvalidChoiceAnswers(
   responses: Record<string, unknown>,
@@ -932,7 +932,7 @@ export function findInvalidChoiceAnswers(
       if (!isConditionalSatisfied(responses, q.conditional)) continue;
       const value = responses[q.key];
       // Absent / cleared: not this function's concern. "Absent" is defined
-      // EXACTLY as isAnswerProvided defines it — a trimmed empty string —
+      // EXACTLY as isAnswerProvided defines it: a trimmed empty string,
       // so a whitespace-only value is reported as missing by that gate rather
       // than as invalid by this one. Two gates disagreeing about what counts
       // as an answer is how a value ends up rejected by both and fixable by
@@ -1001,7 +1001,7 @@ export const CLIENT_OWNED_RESPONSE_KEYS: ReadonlySet<string> = new Set([
   // Retiring the acknowledgement removed its question from INTAKE_STEPS, which
   // silently removed `ack_electrolysis_nature` from the derivation above. That
   // would have made a historical client-owned answer practitioner-WRITABLE for
-  // the first time — the exact opposite of what retirement should do. Both keys
+  // the first time: the exact opposite of what retirement should do. Both keys
   // are therefore named here so the loud refusal keeps covering them for as
   // long as any intake still carries them.
   //
@@ -1012,7 +1012,7 @@ export const CLIENT_OWNED_RESPONSE_KEYS: ReadonlySet<string> = new Set([
   ELECTROLYSIS_ACKNOWLEDGEMENT.id,
   // The client's responses to the studio's live consent forms, for exactly
   // the same reason. Reading the studio's consent text and choosing to agree
-  // — or to deny photo use — is the client's own act. A practitioner sitting
+  // or to deny photo use, is the client's own act. A practitioner sitting
   // with the client may record the health questionnaire; they may not answer
   // this on the client's behalf, and an attempt to is refused rather than
   // quietly dropped.
@@ -1023,7 +1023,7 @@ export function isClientOwnedResponseKey(key: string): boolean {
   return CLIENT_OWNED_RESPONSE_KEYS.has(key);
 }
 
-// The visible questions of one step for a given response map — the derivation
+// The visible questions of one step for a given response map: the derivation
 // that used to be a `useMemo` inside the wizard and had no shared export.
 export function visibleQuestionsForStep(
   stepId: number,
@@ -1036,7 +1036,7 @@ export function visibleQuestionsForStep(
   );
 }
 
-// Email shape check. Deliberately permissive — it rejects obvious typos, not
+// Email shape check. Deliberately permissive: it rejects obvious typos, not
 // undeliverable addresses. Transcribed verbatim from IntakeWizard's EMAIL_RE.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

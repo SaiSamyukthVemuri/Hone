@@ -2,7 +2,7 @@ import "server-only";
 import { CALENDAR_DISCOVERY_SCOPE } from "./config";
 import { hasRequiredEventScopes } from "./destination-scopes";
 
-// Google Calendar — Phase B2.2: connection READINESS is a DERIVED, server-side
+// Google Calendar: Phase B2.2: connection READINESS is a DERIVED, server-side
 // value. It is NOT a stored column and NOT a connection_status expansion.
 //
 // Why derived, not stored: a stored readiness flag goes stale the instant scopes
@@ -12,7 +12,7 @@ import { hasRequiredEventScopes } from "./destination-scopes";
 //
 // This single function is the ONE source of truth that the settings UI (now) and
 // the future B2.3 enable-gate + the worker eligibility filter (later) all consume
-// — so "ready" means the same thing everywhere. A browser role never supplies or
+// so "ready" means the same thing everywhere. A browser role never supplies or
 // stores readiness; it can only be computed from trusted server-side rows.
 //
 // Readiness NEVER flips the outbound flag. It only GATES whether the flag may be
@@ -27,7 +27,7 @@ export type ConnectionReadiness =
   | "dedicated_provisioning_pending" // dedicated scope granted, the Hone calendar not yet provisioned
   | "existing_permission_required" // existing-owned mode chosen, calendar.events.owned NOT yet granted
   | "existing_selection_pending" // existing-owned scope granted, an owned calendar not yet validated/selected
-  | "needs_attention" // provisioning reconciliation was ambiguous (multiple token matches) — fail closed
+  | "needs_attention" // provisioning reconciliation was ambiguous (multiple token matches), fail closed
   | "outbound_scope_ready"; // destination fully configured + exact scope + studio write target
 
 export type ReadinessInput = {

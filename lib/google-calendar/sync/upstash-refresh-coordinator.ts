@@ -3,21 +3,21 @@ import { randomUUID } from "node:crypto";
 import { Redis } from "@upstash/redis";
 import type { RefreshCoordinator } from "./token-manager";
 
-// Google Calendar — Phase B2.3-c2: the PRODUCTION cross-process token-refresh
+// Google Calendar: Phase B2.3-c2: the PRODUCTION cross-process token-refresh
 // mutex, backed by the Upstash Redis that already powers public rate limiting,
 // the reminder heartbeat, and the B2.3-b reconciliation lock.
 //
 // WHY UPSTASH (architecture amendment, not a workaround):
 //   The worker-drain route runs on serverless Vercel functions through the
-//   service-role PostgREST client — there is NO pooled raw-Postgres connection
+//   service-role PostgREST client. There is NO pooled raw-Postgres connection
 //   held across the refresh, so `pg_advisory_xact_lock` (createPgRefreshCoordinator)
 //   cannot span the protected critical section without adding `pg` to the
 //   production bundle, a raw-DB connection secret, and a new environment variable
-//   — none of which exist and none of which this phase is authorized to add. A
+//   none of which exist and none of which this phase is authorized to add. A
 //   Redis ownership-token lock is the correct, already-deployed cross-process
 //   primitive. This is the established production runtime, not a temporary hack.
 //
-// NARROW SCOPE: this is the existing RefreshCoordinator interface — a per-connection
+// NARROW SCOPE: this is the existing RefreshCoordinator interface: a per-connection
 // TOKEN-LIFECYCLE mutex, NOT a worker-route/queue/studio coordinator. Worker
 // concurrency is owned entirely by claim_calendar_sync_op + FOR UPDATE SKIP LOCKED
 // + claim tokens + lease expiry + the reaper. The only two Google Calendar
@@ -39,7 +39,7 @@ import type { RefreshCoordinator } from "./token-manager";
 // appointment/Google/calendar data, or CRON_SECRET is ever stored in Redis, and
 // the connection id / raw Redis error is never logged or surfaced.
 
-// The tiny redis seam the coordinator needs — trivially mockable in tests.
+// The tiny redis seam the coordinator needs: trivially mockable in tests.
 export type RefreshLockRedis = {
   set(key: string, value: string, opts: { nx: true; ex: number }): Promise<unknown>;
   eval(script: string, keys: string[], args: (string | number)[]): Promise<unknown>;

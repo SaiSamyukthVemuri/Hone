@@ -20,7 +20,7 @@
 // * Not a report-only path. A future PR may add
 //   Content-Security-Policy-Report-Only with a report endpoint to
 //   collect violations before tightening further.
-// * No Sentry ingest host in any source list — and there must not be.
+// * No Sentry ingest host in any source list, and there must not be.
 //   Sentry IS installed (@sentry/nextjs), but the browser SDK sends
 //   events through a SAME-ORIGIN tunnel (tunnelRoute: "/monitoring" in
 //   next.config.ts), so connect-src 'self' already covers it. Do NOT

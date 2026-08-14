@@ -12,11 +12,11 @@ import {
 } from "@/lib/observability/sentry-scrub";
 
 // --- Sentry ---
-//   * sendDefaultPii: false  — no IPs, cookies, headers, request bodies or
+//   * sendDefaultPii: false , no IPs, cookies, headers, request bodies or
 //     user identity are attached by default.
-//   * Session Replay: DISABLED — it records the live DOM (client names,
+//   * Session Replay: DISABLED: it records the live DOM (client names,
 //     treatment notes on screen). Do NOT re-enable without a privacy review.
-//   * Sentry Logs: DISABLED — console output routinely contains PII.
+//   * Sentry Logs: DISABLED: console output routinely contains PII.
 //   * beforeSend / beforeSendTransaction / beforeBreadcrumb run the
 //     deny-by-default scrubbers in lib/observability/sentry-scrub.ts.
 //   * Events reach Sentry via the same-origin tunnel (/monitoring, configured
@@ -40,12 +40,12 @@ export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 // Clinical-data browser-event boundary (P1-ANALYTICS-01/-02). Full rationale +
 // pure, tested logic in lib/analytics/client-boundary.ts. Fail closed by
 // (event, surface): the ONLY browser events that leave are $pageview,
-// $pageleave, autocapture-family, and marketing:* — and ONLY on the exact
+// $pageleave, autocapture-family, and marketing:*, and ONLY on the exact
 // canonical marketing routes. The authenticated app, /book/*, portal, all
 // token routes, login/auth and payment send NOTHING (browser $pageview/
 // $pageleave/autocapture all dropped). Authenticated product measurement runs
 // through the server taxonomy (lib/analytics/server.ts); identify is
-// server-side only. Config is explicit — never rely on an SDK default that a
+// server-side only. Config is explicit, never rely on an SDK default that a
 // future release could flip; `before_send` is the default-independent
 // guarantee.
 import {

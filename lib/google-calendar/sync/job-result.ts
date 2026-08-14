@@ -1,10 +1,10 @@
 import "server-only";
 
-// Google Calendar — Phase B2.1: the transport-neutral worker-core result model.
+// Google Calendar: Phase B2.1: the transport-neutral worker-core result model.
 //
 // A ClaimedJob is exactly the row shape returned by the deployed
 // claim_calendar_sync_op RPC (migration 0124). handleCalendarSyncJob consumes a
-// ClaimedJob and returns a JobResult — a CLOSED, machine-readable union. The
+// ClaimedJob and returns a JobResult: a CLOSED, machine-readable union. The
 // reason code is a stable enum (never free text) so B2.3 reconciliation queries
 // and the B2.3-c worker/health surfaces can key off structured state.
 //
@@ -44,8 +44,8 @@ export type JobResultCode =
   | "retry_rate_limited" // 429 / rateLimitExceeded (carries retryAfterSeconds)
   | "retry_ineligible" // claimed, then eligibility flipped before execution (modest backoff; Option A holds it thereafter)
   // Terminal failures (records `dead`)
-  | "terminal_reconnect_required" // invalid_grant — connection needs re-auth
-  | "terminal_insufficient_scope" // 403 insufficient scope — needs the calendar.events grant
+  | "terminal_reconnect_required" // invalid_grant, connection needs re-auth
+  | "terminal_insufficient_scope" // 403 insufficient scope: needs the calendar.events grant
   | "terminal_conflict" // 409 whose event carries a foreign honeLink (id collision)
   | "terminal_dead"; // exhausted / unrecoverable per the handler
 

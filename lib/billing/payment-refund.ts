@@ -22,7 +22,7 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 // What this helper DOES
 // ---------------------
 //   1. Refuses a row whose stripe_livemode differs from the deployment
-//      mode (outcome 'live_mode_blocked' — the historical enum name for
+//      mode (outcome 'live_mode_blocked', the historical enum name for
 //      the mode-mismatch refusal; renaming it is an API change). The
 //      Stripe key/env gate remains the platform-level brace.
 //   2. Loads the attempt row. Verifies studio scope (the action
@@ -251,14 +251,14 @@ export async function refundPaymentChargeAttempt(args: {
   }
 
   // ============================================================
-  // 2b. Owner-only re-check — defense in depth (PR #296). Refund
+  // 2b. Owner-only re-check, defense in depth (PR #296). Refund
   //     INITIATION is owner-only and is already gated in BOTH action
   //     callers (refundPaymentChargeAttemptAction, refundFeeAttemptAction).
   //     Re-verify it HERE so a FUTURE caller that reaches this helper
   //     without the action-layer gate still cannot move money out as a
   //     non-owner. The actor is scoped to the same studio as the resolved
   //     studioId; this runs BEFORE the claim UPDATE and the Stripe refund.
-  //     Reads only the existing practitioners.role column — no schema change.
+  //     Reads only the existing practitioners.role column, no schema change.
   // ============================================================
   const { data: actorRow, error: actorErr } = await admin
     .from("practitioners")
@@ -268,7 +268,7 @@ export async function refundPaymentChargeAttempt(args: {
     .eq("active", true)
     .maybeSingle();
   if (actorErr || !actorRow || actorRow.role !== "owner") {
-    // Safe IDs + event name only — no client name/email/phone, no health/
+    // Safe IDs + event name only, no client name/email/phone, no health/
     // treatment data, no Stripe secret or raw payload.
     logInternal("payment_refund_helper_not_owner", {
       attemptId: args.attemptId,
@@ -598,7 +598,7 @@ export async function refundPaymentChargeAttempt(args: {
     .select("id");
   // PR #263: a zero-row update (no matching pending_stripe row) means
   // the refund is real on Stripe but nothing was persisted locally.
-  // Treat it identically to a write error — never report success
+  // Treat it identically to a write error, never report success
   // without proving the row was stamped.
   const okWriteZeroRows = !writeOkErr && (!okRows || okRows.length === 0);
   if (writeOkErr || okWriteZeroRows) {

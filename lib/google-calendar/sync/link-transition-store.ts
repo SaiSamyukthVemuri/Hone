@@ -1,10 +1,10 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 
-// Google Calendar — Phase B2.3-c1: the store the event operations use to read
+// Google Calendar: Phase B2.3-c1: the store the event operations use to read
 // link/appointment state and to invoke the transactional link-transition RPC
 // (calendar_event_link_transition, migration 0132). It NEVER transitions the
-// outbox row — the existing claim -> handle -> record_calendar_sync_result
+// outbox row: the existing claim -> handle -> record_calendar_sync_result
 // adapter remains the sole authority over outbox state. Injected so the
 // operations are testable against a mock without the admin client.
 
@@ -56,7 +56,7 @@ export type TransitionArgs = {
 
 export type TransitionResult = { status: "ok" | "rejected"; code: string; linkId?: string };
 
-// A store read that FAILED (I/O / query error) — distinct from a genuine absent
+// A store read that FAILED (I/O / query error), distinct from a genuine absent
 // row (null). The operation layer maps this to `retry_transient` and NEVER to a
 // success no-op, so an uncertain DB read can never mark a job done or skip a
 // Google mutation as converged.

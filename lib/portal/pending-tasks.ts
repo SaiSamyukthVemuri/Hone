@@ -1,7 +1,7 @@
 // Pure computation of a client's outstanding PORTAL tasks for the practitioner
 // status card (Portal Access PR 3). Derived entirely from data the client
-// profile already loads — intake status, active consent templates + latest
-// signatures, and portal messages — so it adds NO queries and NO clinical
+// profile already loads: intake status, active consent templates + latest
+// signatures, and portal messages, so it adds NO queries and NO clinical
 // content (only counts + one boolean). Kept intentionally small: quick status,
 // not an audit timeline.
 

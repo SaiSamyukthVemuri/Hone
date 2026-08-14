@@ -1,6 +1,6 @@
 import "server-only";
 
-// Google Calendar — Phase B2.1: in-memory access-token cache for the worker
+// Google Calendar: Phase B2.1: in-memory access-token cache for the worker
 // runtime process. Access tokens are NEVER persisted (Phase A stores only the
 // encrypted refresh token) and NEVER returned to browser roles or logged.
 //
@@ -28,7 +28,7 @@ export function createAccessTokenCache(): AccessTokenCache {
       const e = store.get(connectionId);
       if (!e) return null;
       if (nowMs >= e.expiresAtMs - skewMs) {
-        // Expiring/expired within skew — treat as a miss (and drop it).
+        // Expiring/expired within skew: treat as a miss (and drop it).
         store.delete(connectionId);
         return null;
       }

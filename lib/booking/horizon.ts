@@ -2,7 +2,7 @@ import { addDays, localDateString } from "./tz";
 
 // Public booking horizon. Applies to the public booking page and the
 // public reschedule flow. Practitioner internal booking (the calendar-
-// first drawer in /calendar) is NOT subject to this limit — owners can
+// first drawer in /calendar) is NOT subject to this limit: owners can
 // book farther out administratively.
 //
 // Migration 0036 (Booking Horizon v1) made this per-studio; migration 0112
@@ -23,7 +23,7 @@ export const DEFAULT_PUBLIC_BOOKING_HORIZON_MONTHS: PublicBookingHorizonMonths =
 
 // Conservative "month" length in days. We use 31 so an "N months" choice
 // always covers at least N calendar months even when a span contains a 31-day
-// month. This matches the spirit of the previous hardcoded 90 — slightly more
+// month. This matches the spirit of the previous hardcoded 90, slightly more
 // generous, never less.
 const DAYS_PER_HORIZON_MONTH = 31;
 
@@ -34,7 +34,7 @@ export function horizonDaysForMonths(
 }
 
 // The longest horizon any studio can configure, in days (largest preset * 31 =
-// 12 * 31 = 372). Single source of truth for the downstream safety bounds — the
+// 12 * 31 = 372). Single source of truth for the downstream safety bounds: the
 // next-available scan cap and the recurring-break materialization window both
 // derive from this, so widening the preset list automatically extends them and
 // they can never fall below the maximum bookable horizon.

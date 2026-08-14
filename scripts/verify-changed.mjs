@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// `npm run verify:changed` — run the focused local checks this diff warrants.
+// `npm run verify:changed`, run the focused local checks this diff warrants.
 //
 // Consumes the SAME classifier and browser-group selector as CI (via
 // scripts/ci-plan.mjs), so local scope and CI scope cannot drift apart. There
@@ -46,7 +46,7 @@ if (c.docs_only) {
     addSuggested(
       "focused DB integration (needs one fresh pinned reset)",
       "npx --yes supabase@2.102.0 db reset --local && npm run test:db",
-      "database change — one fresh reset per migration head",
+      "database change, one fresh reset per migration head",
     );
   }
   if (c.security) {
@@ -71,7 +71,7 @@ if (c.docs_only) {
   if (plan.browser.groups.length > 0) {
     if (plan.browser.extended) {
       addSuggested(
-        "EXTENDED browser suite (all specs — CI shards this in two)",
+        "EXTENDED browser suite (all specs: CI shards this in two)",
         "npm run test:e2e",
         plan.browser.reason,
       );
@@ -86,14 +86,14 @@ if (c.docs_only) {
   }
   if (c.full_matrix_required) {
     addSuggested(
-      "FULL local matrix — usually unnecessary; prefer the nightly workflow",
+      "FULL local matrix: usually unnecessary; prefer the nightly workflow",
       "npm run ci",
       "shared infrastructure or CI configuration changed",
     );
   }
 }
 
-console.log(`\nverify:changed — ${files.length} changed file(s)`);
+console.log(`\nverify:changed, ${files.length} changed file(s)`);
 console.log(`${DIM}scope comes from the same classifier CI uses (npm run ci:plan)${RESET}\n`);
 
 if (auto.length === 0 && suggested.length === 0) {
@@ -104,7 +104,7 @@ if (auto.length === 0 && suggested.length === 0) {
 console.log("Automatic (cheap, safe):");
 for (const a of auto) console.log(`  ${a.label.padEnd(46)} ${DIM}${a.why}${RESET}`);
 if (suggested.length) {
-  console.log("\nSuggested (expensive — run deliberately):");
+  console.log("\nSuggested (expensive, run deliberately):");
   for (const s of suggested) {
     console.log(`  ${YELLOW}${s.label}${RESET}`);
     console.log(`    ${DIM}${s.why}${RESET}`);

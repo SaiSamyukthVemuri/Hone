@@ -158,7 +158,7 @@ function blockReactionLabels(b: IntelligenceBlockInput): string[] {
 
 // Most frequent reaction LABEL across blocks; ties prefer the most RECENT
 // occurrence (inputs must be ordered oldest -> newest). Each block may carry
-// several reaction labels — ALL are counted (retain all), never collapsed.
+// several reaction labels: ALL are counted (retain all), never collapsed.
 function commonReaction(
   perBlockLabelsOldestFirst: ReadonlyArray<ReadonlyArray<string>>,
 ): string | null {
@@ -276,7 +276,7 @@ export function buildTreatmentIntelligence(input: {
     // Migration 0128: a block contributes to EVERY structured area it treated
     // (grouped by area name, laterality aggregated out of the memory card), so a
     // "Cheeks + Sideburns" block appears under both. Legacy single-area blocks
-    // resolve to their primary_area, then block_name — unchanged grouping.
+    // resolve to their primary_area, then block_name, unchanged grouping.
     for (const rawName of blockAreaNames(b)) {
       const key = rawName.toLowerCase();
       const acc = areasByKey.get(key) ?? {

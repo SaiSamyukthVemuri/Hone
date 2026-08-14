@@ -35,7 +35,7 @@ import { notableReactionLabel } from "@/lib/sessions/reaction-unified";
 // memory; never one query per client.
 
 // DERIVED from the central clinical-response contract, never re-declared here.
-// This used to be a hard-coded copy of the four notable enum members — a second
+// This used to be a hard-coded copy of the four notable enum members: a second
 // source of truth that would silently miss any future change to the notable set
 // (and did not know about the safety-relevant response LABELS at all). The
 // runtime path below goes through `notableReactionLabel`, which reads the same
@@ -68,7 +68,7 @@ export type ClientNeedingAttention = {
   clientId: string;
   clientName: string;
   // Review 3779063515. The timestamp of the SIGNAL THAT PUT THIS ROW ON THE
-  // LIST — a caution or a notable reaction — never the client's newest
+  // LIST (a caution or a notable reaction) never the client's newest
   // session.
   //
   // This deliberately REPLACES the old `latestDate` rather than sitting beside
@@ -169,15 +169,15 @@ export function buildClientsNeedingAttention(
     // to be "newest session with watch OR plan content wins", which was
     // coherent while a plan was itself an inclusion reason: a plan-only newest
     // session set sourceFound, hid any older caution, and the client still
-    // appeared — for the plan. Once DASH-TRUTH-01 removed plan as an inclusion
+    // appeared: for the plan. Once DASH-TRUTH-01 removed plan as an inclusion
     // signal, that same path dropped the client entirely and a genuine
     // clinical watch note disappeared from To do.
     //
     // "Plan is not To-do content in ANY position" has to include this one:
     // not inclusion, not ranking, not reason, not detail, not preview, and not
     // supersession. So the watch search is now driven by cautions alone. A
-    // caution is superseded only by a newer caution — which surfaces the
-    // client anyway — so the failure direction is a watch note persisting,
+    // caution is superseded only by a newer caution, which surfaces the
+    // client anyway, so the failure direction is a watch note persisting,
     // never one silently vanishing.
     if (!acc.watchSourceFound) {
       const cautionBlock = sessionBlocks.find(
@@ -193,7 +193,7 @@ export function buildClientsNeedingAttention(
     }
 
     // Whether a plan EXISTS, tracked INDEPENDENTLY of the watch search so the
-    // two cannot suppress one another. Context only — a boolean, never the
+    // two cannot suppress one another. Context only: a boolean, never the
     // note. The text stays where it belongs: Treatment Memory, appointment
     // prep, history and Today → Remember all read sessions.next_session_note
     // directly and are untouched.
@@ -204,7 +204,7 @@ export function buildClientsNeedingAttention(
   }
 
   // DASH-TRUTH-01 / review 3777045539. A plan for the next visit is clinical
-  // memory, not work — so it must stop being an INCLUSION signal HERE, at the
+  // memory, not work, so it must stop being an INCLUSION signal HERE, at the
   // source, not later at presentation.
   //
   // Filtering it downstream was wrong in a way that loses real clinical
@@ -234,7 +234,7 @@ export function buildClientsNeedingAttention(
       notableReactionLabel: a.notableReactionLabel,
       latestToleranceRating: a.latestToleranceRating,
       // DASH-TRUTH-01 / P2. A plan for the next visit is not To-do content in
-      // ANY position — not inclusion, ranking, reason, detail or preview. It
+      // ANY position, not inclusion, ranking, reason, detail or preview. It
       // used to sit here as the second fallback, so a client included for a
       // notable REACTION could still have their plan text rendered as the
       // row's detail. The row is included because of a watch note or a
@@ -253,7 +253,7 @@ export function buildClientsNeedingAttention(
       // set. Review 3780005405 closed the last route by which one could still
       // reach the order: this comparator returned -1 in BOTH directions for
       // equal attention dates, which is not a total order, so Array#sort fell
-      // back to input order — and input order is `byClient` insertion order,
+      // back to input order, and input order is `byClient` insertion order,
       // established by each client's newest scanned session. A plan-only
       // session could therefore still decide which of two equal-dated clients
       // survived the disclosure limit.

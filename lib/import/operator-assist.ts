@@ -2,14 +2,14 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { isAdmin } from "@/lib/admin";
 
-// IMPORT-01 — immediate launch-safety mitigation for Quick Import.
+// IMPORT-01, immediate launch-safety mitigation for Quick Import.
 //
 // WHY THIS EXISTS
 // confirmImportAction performs three independent statements with no
 // transaction and no RPC: insert import_batches, bulk-insert clients,
 // bulk-insert imported_treatment_memories. If the third fails, the second has
 // already committed. The batch is soft-voided and the failure is reported
-// honestly, but the CLIENT ROWS STAY — 0087 forbids hard-deleting a client, so
+// honestly, but the CLIENT ROWS STAY, 0087 forbids hard-deleting a client, so
 // there is nothing to roll back to. Worse, a second attempt at the identical
 // paste re-reads existing clients (archived rows included), matches those very
 // rows as confident duplicates, and SKIPS them: the same file can no longer
@@ -23,14 +23,14 @@ import { isAdmin } from "@/lib/admin";
 //
 // THE BOUNDARY IS THE SERVER, NOT THE UI
 // The page hides the paste-and-confirm island from a non-operator, but hiding
-// is not a control — a server action is an HTTP endpoint and can be POSTed
+// is not a control: a server action is an HTTP endpoint and can be POSTed
 // directly. `ownerContext()` in app/(app)/settings/import/actions.ts calls
 // requireImportOperator() BEFORE the first write, so a direct invocation is
 // refused at the same boundary as a UI click.
 //
 // WHO COUNTS AS AN OPERATOR
-// The existing Hone platform-operator allowlist — `isAdmin` / ADMIN_EMAILS
-// (lib/admin.ts) — deliberately NOT a new env var (the same call PR #254 made
+// The existing Hone platform-operator allowlist: `isAdmin` / ADMIN_EMAILS
+// (lib/admin.ts), deliberately NOT a new env var (the same call PR #254 made
 // for the New Studio Wizard). It is fail-closed in production: with
 // ADMIN_EMAILS unset or empty, `isAdmin` returns false for EVERYONE, so the
 // unsafe path is simply unreachable rather than defaulting open.
@@ -61,7 +61,7 @@ export async function isImportOperator(): Promise<boolean> {
 
 /**
  * The single denial string. The page copy and the action denial have to say
- * the same thing — a truthful page in front of a differently-worded server
+ * the same thing: a truthful page in front of a differently-worded server
  * refusal is how a UI starts lying about what the server did.
  */
 export const IMPORT_OPERATOR_ASSISTED_DENIAL =

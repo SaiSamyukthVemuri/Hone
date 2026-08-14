@@ -1,5 +1,5 @@
 // PR #320: the Stripe PaymentIntent `description` shown on the connected
-// account's dashboard + client receipt. It MUST be accurate per charge_reason —
+// account's dashboard + client receipt. It MUST be accurate per charge_reason,
 // fee rows have session_id = null, so the old `Session payment for session
 // ${session_id}` produced "…for session null" for no-show / late-cancellation
 // fees. Only the charge reason + an internal id (session/appointment UUID) is

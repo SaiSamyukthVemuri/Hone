@@ -306,7 +306,7 @@ export async function findCalendarsByDescriptionToken(
   accessToken: string,
   attemptToken: string,
 ): Promise<ReconcileResult> {
-  // A blank/short token must never match everything — fail closed.
+  // A blank/short token must never match everything: fail closed.
   if (!attemptToken || attemptToken.length < 16) {
     return { ok: false, reason: "reconcile_token_invalid" };
   }

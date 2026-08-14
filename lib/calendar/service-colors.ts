@@ -21,7 +21,7 @@
 //
 // Two rules make them separable, not just different:
 //   1. HUE SPACING. The set walks the wheel and deliberately SKIPS the crowded
-//      blue band (no `blue`, no `cyan`) — adding a hue between sky and indigo
+//      blue band (no `blue`, no `cyan`), adding a hue between sky and indigo
 //      would make the exact reported problem worse.
 //   2. LIGHTNESS ALTERNATION. Where two families are hue-adjacent, one is a
 //      LIGHT tone (-100 bg / -500 accent) and the other a DEEP tone
@@ -33,30 +33,30 @@
 //
 // RESERVED, PERMANENTLY: red and rose. Hone uses them for allergies, EpiPen and
 // clinical cautions across the app; a service card must never compete with that
-// signal. `pink` is excluded too — at a glance on a phone it reads as rose.
+// signal. `pink` is excluded too: at a glance on a phone it reads as rose.
 //
 // Colour is never the only identifier: every surface that tints by service also
 // prints the service NAME (calendar cards, settings rows, booking list).
 const SERVICE_PALETTE: ReadonlyArray<string> = [
-  // amber — light warm
+  // amber: light warm
   "bg-amber-100 text-amber-900 border-l-amber-500 dark:bg-amber-950/50 dark:text-amber-100 dark:border-l-amber-500",
-  // emerald — DEEP green (separates from teal by lightness as well as hue)
+  // emerald: DEEP green (separates from teal by lightness as well as hue)
   "bg-emerald-200 text-emerald-900 border-l-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-100 dark:border-l-emerald-400",
-  // teal — light blue-green
+  // teal: light blue-green
   "bg-teal-100 text-teal-900 border-l-teal-500 dark:bg-teal-950/50 dark:text-teal-100 dark:border-l-teal-500",
-  // sky — light blue
+  // sky: light blue
   "bg-sky-100 text-sky-900 border-l-sky-500 dark:bg-sky-950/50 dark:text-sky-100 dark:border-l-sky-500",
-  // indigo — DEEP blue-violet (separates from sky and violet by lightness)
+  // indigo: DEEP blue-violet (separates from sky and violet by lightness)
   "bg-indigo-200 text-indigo-900 border-l-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-100 dark:border-l-indigo-400",
-  // violet — light purple
+  // violet: light purple
   "bg-violet-100 text-violet-900 border-l-violet-500 dark:bg-violet-950/50 dark:text-violet-100 dark:border-l-violet-500",
-  // orange — DEEP warm (0161)
+  // orange: DEEP warm (0161)
   "bg-orange-200 text-orange-900 border-l-orange-600 dark:bg-orange-950/60 dark:text-orange-100 dark:border-l-orange-400",
-  // lime — yellow-green (0161)
+  // lime: yellow-green (0161)
   "bg-lime-100 text-lime-900 border-l-lime-600 dark:bg-lime-950/50 dark:text-lime-100 dark:border-l-lime-400",
-  // fuchsia — DEEP magenta (0161); a distinct hue from violet, never red
+  // fuchsia: DEEP magenta (0161); a distinct hue from violet, never red
   "bg-fuchsia-200 text-fuchsia-900 border-l-fuchsia-600 dark:bg-fuchsia-950/60 dark:text-fuchsia-100 dark:border-l-fuchsia-400",
-  // slate — neutral (0161); for admin/consultation services
+  // slate: neutral (0161); for admin/consultation services
   "bg-slate-200 text-slate-900 border-l-slate-600 dark:bg-slate-800/70 dark:text-slate-100 dark:border-l-slate-400",
 ];
 
@@ -66,13 +66,13 @@ const SERVICE_PALETTE: ReadonlyArray<string> = [
 const NEUTRAL_FALLBACK =
   "bg-neutral-100 text-neutral-800 border-l-neutral-400 dark:bg-neutral-800/60 dark:text-neutral-100 dark:border-l-neutral-500";
 
-// The TEN allowed service color keys — must match the migration-0161 DB CHECK
+// The TEN allowed service color keys: must match the migration-0161 DB CHECK
 // constraint EXACTLY (which is 0153's six, widened by four; every previously
 // persisted key is preserved). Rose/red/pink are intentionally absent (reserved
 // for allergy / clinical warnings). This is the trusted allowlist for
 // server-side validation too. ORDER IS LOAD-BEARING: it indexes SERVICE_PALETTE.
 export const SERVICE_COLOR_KEYS = [
-  // 0153 originals — order unchanged so no stored key changes meaning.
+  // 0153 originals: order unchanged so no stored key changes meaning.
   "amber",
   "emerald",
   "teal",
@@ -128,7 +128,7 @@ export function serviceColorClasses(
 // The single entry point the calendar views use. Persisted calendar_color is the
 // authority: present + valid -> its bundle; present + invalid (legacy) -> neutral;
 // a missing / deleted service -> neutral. ONLY when calendar_color is absent
-// (undefined/null — the pre-0153 embed) does it TEMPORARILY fall back to the
+// (undefined/null, the pre-0153 embed) does it TEMPORARILY fall back to the
 // legacy id hash so cards keep their look during the migration window; that path
 // disappears the moment the persisted value is available.
 export function appointmentCardClasses(

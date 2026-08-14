@@ -10,7 +10,7 @@ export type ProbeLotSuggestion = {
   confirmed: boolean;
   // Migration 0155: the linked inventory item id of the DISPLAY-winning prior
   // selection (the confirmed-then-newest row of ANY source). Null when that
-  // winning row was manual/free-text — which is exactly why it must NOT drive
+  // winning row was manual/free-text, which is exactly why it must NOT drive
   // auto-fill on its own (a newer confirmed MANUAL row would otherwise mask an
   // older confirmed LINKED one). Kept for display/debugging only.
   inventoryItemId: string | null;
@@ -22,7 +22,7 @@ export type ProbeLotSuggestion = {
   // confirmed LINKED selection exists (e.g. only confirmed manual rows, or only
   // unconfirmed linked rows).
   lastConfirmedInventoryItemId: string | null;
-  // The most recently CHARTED lot for this probe, by created_at alone —
+  // The most recently CHARTED lot for this probe, by created_at alone,
   // confirmation is deliberately ignored. This is the only field the charting
   // auto-fill history fallback may use: "what lot am I using right now" is a
   // question about RECENCY, and `lot` above is confirmed-first, so a single old
@@ -34,7 +34,7 @@ export type ProbeLotSuggestion = {
 export type ProbeLotSuggestions = {
   // Keyed by session_blocks.probe_key.
   byKey: Record<string, ProbeLotSuggestion>;
-  // Keyed by normalizeProbeLabel(probe_label) — the safe free-text fallback
+  // Keyed by normalizeProbeLabel(probe_label), the safe free-text fallback
   // (covers rows with a null probe_key, and lets a catalog selection match a
   // prior free-text entry with the same label).
   byLabel: Record<string, ProbeLotSuggestion>;
@@ -47,8 +47,8 @@ export function normalizeProbeLabel(label: string | null | undefined): string {
 }
 
 // Resolve the lot suggestion for the selected probe: keyed match first, then a
-// normalized-display-label fallback (covers a prior free-text entry — probe_key
-// null — with the SAME label). Keyed match always beats the label fallback.
+// normalized-display-label fallback (covers a prior free-text entry: probe_key
+// null: with the SAME label). Keyed match always beats the label fallback.
 export function resolveProbeLotSuggestion(
   probeKey: string,
   suggestions: ProbeLotSuggestions,

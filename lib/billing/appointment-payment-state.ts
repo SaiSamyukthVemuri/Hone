@@ -5,8 +5,8 @@ import { todayInTz } from "@/lib/booking/tz";
 
 // Bounded, tenant-scoped batch loader for the dashboard/calendar checkout cell:
 // given the visible appointment ids, return each appointment's coarse
-// session_payment state WITHOUT an N+1. Two bounded queries total — sessions by
-// appointment id, then attempts by session id — never a per-row lookup and never
+// session_payment state WITHOUT an N+1. Two bounded queries total: sessions by
+// appointment id, then attempts by session id, never a per-row lookup and never
 // the full payment history. Read-only; no Stripe, no writes.
 
 export type AppointmentPaymentState =
@@ -56,7 +56,7 @@ export function deriveAppointmentPaymentState(
 // Bounded and batched, never per-row: appointments -> services -> client
 // pricing is three queries regardless of how many appointments are visible.
 // It reuses the SAME pure resolver the payment surface uses, so a free visit
-// on the Dashboard and a free visit on the session page can never disagree —
+// on the Dashboard and a free visit on the session page can never disagree,
 // and so custom-pricing precedence is honoured here too (a $0 menu service with
 // a current positive client price is chargeable, not free).
 // The free lookup must be able to say "I could not find out". Returning a bare
@@ -75,7 +75,7 @@ async function getFreeAppointmentIds(
   if (appointmentIds.length === 0) return { ok: true, freeAppointmentIds: free };
   const supabase = await createClient();
 
-  // Review 3778160194 — same class as the authoritative loader (3777890267),
+  // Review 3778160194, same class as the authoritative loader (3777890267),
   // in the batched DISPLAY path. Every read here used to discard `error`, so a
   // failed query became "no rows". For client_pricing that inverts a price: a
   // $0 menu service overridden by a POSITIVE custom price resolves to `free`
@@ -83,8 +83,8 @@ async function getFreeAppointmentIds(
   // required" and suppresses Checkout for a visit that is genuinely chargeable.
   //
   // Freeness is a POSITIVE claim, so it must never be inferred from a read we
-  // cannot vouch for. On any read failure this returns an empty set — nothing
-  // is asserted to be free — and each appointment falls back to its ordinary
+  // cannot vouch for. On any read failure this returns an empty set, nothing
+  // is asserted to be free, and each appointment falls back to its ordinary
   // state. That is the safe direction: it shows Checkout rather than hiding it,
   // and it moves no money, because preparation and execution re-resolve
   // authoritatively and fail closed on their own.
@@ -179,12 +179,12 @@ export async function getAppointmentPaymentStates(
   const supabase = await createClient();
 
   // 1) Sessions for these appointments (studio-scoped + RLS). One bounded query.
-  // Review 3778292139 — transaction state must be TRUSTWORTHY before freeness
+  // Review 3778292139, transaction state must be TRUSTWORTHY before freeness
   // may be applied. `deriveAppointmentPaymentState` returns
   // `isFree ? "free" : "no_session"` when hasSession is false, so a failed
   // sessions or attempts read (which collapses to an empty row set) combined
   // with a SUCCESSFUL pricing read renders "No payment required" over a real
-  // pending_stripe or succeeded charge — inverting the precedence that ranks
+  // pending_stripe or succeeded charge: inverting the precedence that ranks
   // processing/paid/refunded above free.
   const { data: sessionRows, error: sessionError } = await supabase
     .from("sessions")
@@ -235,14 +235,14 @@ export async function getAppointmentPaymentStates(
   // ever combined. Query-error awareness lives HERE, at the I/O boundary; the
   // pure reducer below stays free of Supabase concepts.
   //
-  //   1. transaction truth  — if either read failed we cannot know whether a
+  //   1. transaction truth , if either read failed we cannot know whether a
   //      pending / succeeded / refunded attempt exists, so every appointment is
   //      unavailable. Never assume absence.
-  //   2. terminal states win — money that has actually moved outranks pricing,
+  //   2. terminal states win: money that has actually moved outranks pricing,
   //      so a known Processing / Paid / Refunded is preserved even when the
   //      price cannot be loaded. The unavailable state is only for facts that
   //      genuinely depend on the failed read.
-  //   3. pricing truth      — for the remaining appointments the answer depends
+  //   3. pricing truth     : for the remaining appointments the answer depends
   //      on the price, so a failed pricing read is unavailable rather than a
   //      confident "chargeable".
   if (!transactionStateTrusted) {

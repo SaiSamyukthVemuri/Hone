@@ -12,11 +12,11 @@ import type { FakeStripeCall } from "@/lib/stripe/e2e-fake-stripe";
 // recorder lives in the Next.js server process; the Playwright runner is a
 // SEPARATE process and cannot read it. This module persists fake-call records
 // and reads test-configured behaviour through run-id-keyed temp files so the two
-// processes can coordinate — WITHOUT any browser-readable endpoint.
+// processes can coordinate: WITHOUT any browser-readable endpoint.
 //
 // Every read/write is gated by the fake-Stripe activation guard (fail-closed,
 // Vercel-impossible). Paths are constructed ONLY from os.tmpdir() + the validated
-// run id + a fixed prefix — never from user/browser input, so the browser cannot
+// run id + a fixed prefix, never from user/browser input, so the browser cannot
 // select behaviour or read the ledger, and no path can escape the temp dir.
 //
 // Stored fields are test-safe only (method / idempotency key / synthetic
@@ -127,7 +127,7 @@ export function cleanupFakeStripeFiles(runId: string): void {
   }
 }
 
-// Deterministic tmp-suffix seed from the (already validated) run id — no Math.random.
+// Deterministic tmp-suffix seed from the (already validated) run id, no Math.random.
 function hashRun(runId: string): number {
   let h = 0;
   for (let i = 0; i < runId.length; i++) h = (h * 31 + runId.charCodeAt(i)) | 0;

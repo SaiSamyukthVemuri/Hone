@@ -1,6 +1,6 @@
 import "server-only";
 
-// Google Calendar — Phase B2.1 worker core (transport-neutral). Barrel export.
+// Google Calendar: Phase B2.1 worker core (transport-neutral). Barrel export.
 // Nothing here enqueues appointments, calls Google against real data, or runs a
 // production cron; it is the reusable core the B2.3-c worker consumes.
 //

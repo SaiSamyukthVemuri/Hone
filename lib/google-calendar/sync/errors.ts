@@ -1,11 +1,11 @@
 import "server-only";
 
-// Google Calendar — Phase B2.1: explicit, closed error taxonomy for the worker.
+// Google Calendar: Phase B2.1: explicit, closed error taxonomy for the worker.
 //
 // Every Google HTTP outcome (or thrown transport error) is normalized into ONE
 // GoogleErrorKind. The kinds map deterministically to JobResultCodes in the
 // handler. NO token, event body, client name, or clinical detail ever enters a
-// GoogleError — only the HTTP status, a short safe code, and (for rate limits)
+// GoogleError, only the HTTP status, a short safe code, and (for rate limits)
 // a parsed Retry-After. The 409/404/410 CONVERGENCE behavior (GET-and-verify,
 // rotate-on-missing) lives in the B2.3-c1 operations layer; this module only
 // classifies and marks WHERE those sub-cases attach (see `GoogleErrorKind`
@@ -13,14 +13,14 @@ import "server-only";
 
 export type GoogleErrorKind =
   | "success" // 2xx
-  | "token_expired" // 401 — refresh under lock, then retry once
-  | "invalid_grant" // refresh 400 invalid_grant — reconnect_required
+  | "token_expired" // 401, refresh under lock, then retry once
+  | "invalid_grant" // refresh 400 invalid_grant, reconnect_required
   | "insufficient_scope" // 403 with insufficientPermissions / scope reason
   | "rate_limited" // 403 rateLimitExceeded / userRateLimitExceeded, or 429
-  | "not_found" // 404/410 (calendar or event) — B2.3-c decides rotate-or-noop
-  | "conflict" // 409 — B2.3-c does GET + marker match / rotate
-  | "precondition_failed" // 412 — etag mismatch; refetch + reapply (B2.3-c)
-  | "permanent_error" // unrecoverable request error (400 invalid, 405 method, etc.) — terminal
+  | "not_found" // 404/410 (calendar or event), B2.3-c decides rotate-or-noop
+  | "conflict" // 409, B2.3-c does GET + marker match / rotate
+  | "precondition_failed" // 412, etag mismatch; refetch + reapply (B2.3-c)
+  | "permanent_error" // unrecoverable request error (400 invalid, 405 method, etc.), terminal
   | "transient" // 5xx / 408 / network / timeout / malformed body
   | "config_error"; // calendar/connection not found, oauth client unavailable
 
@@ -88,7 +88,7 @@ export function parseRetryAfter(
 
 // Classify a Google API HTTP RESPONSE. `parsedBody` may be null when the body
 // was empty or unparseable (malformed JSON => transient). Reads only the status,
-// coarse reason, and Retry-After — never the body content.
+// coarse reason, and Retry-After, never the body content.
 export function classifyGoogleResponse(input: {
   status: number;
   parsedBody: unknown;
@@ -127,7 +127,7 @@ export function classifyGoogleResponse(input: {
   }
   if (status === 410) {
     // Gone (deleted / already-removed). For our purposes a 410 is "the event is
-    // not there" — the same disposition as 404 (delete converges, update rotates).
+    // not there", the same disposition as 404 (delete converges, update rotates).
     return { kind: "not_found", status, code: "google_http_410", retryAfterSeconds: null };
   }
   if (status === 409) {
@@ -140,7 +140,7 @@ export function classifyGoogleResponse(input: {
     return { kind: "rate_limited", status, code: "google_http_429", retryAfterSeconds };
   }
   if (status === 408) {
-    // Request Timeout is transient — retry with backoff.
+    // Request Timeout is transient: retry with backoff.
     return { kind: "transient", status, code: "google_http_408", retryAfterSeconds };
   }
   if (status >= 500) {
@@ -148,7 +148,7 @@ export function classifyGoogleResponse(input: {
   }
   if (status >= 400) {
     // Any other 4xx (400 invalid request, 405 method, 411/413/415/422, …) is an
-    // UNRECOVERABLE request error — retrying the identical request cannot help.
+    // UNRECOVERABLE request error: retrying the identical request cannot help.
     return { kind: "permanent_error", status, code: `google_http_${status}`, retryAfterSeconds: null };
   }
   // 1xx/3xx or anything unexpected: treat as transient (safe default; never surface the body).
@@ -177,7 +177,7 @@ export function classifyRefreshResponse(input: {
     }
   }
   // Everything else on refresh (400 non-invalid_grant / 429 / 5xx / network) is
-  // transient — a refresh is always safe to retry a bounded number of times, so a
+  // transient: a refresh is always safe to retry a bounded number of times, so a
   // permanent_error from the shared classifier is downgraded to transient here.
   const e = classifyGoogleResponse(input);
   return e.kind === "permanent_error" ? { ...e, kind: "transient" } : e;

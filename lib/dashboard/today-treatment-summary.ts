@@ -14,7 +14,7 @@ import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memo
  * not carry it. Absent values are OMITTED; they are never rendered as "0 min",
  * "0 hairs" or an empty area. A legacy visit with no recorded minutes did not
  * take zero minutes. The model already distinguishes "not recorded" from
- * "recorded as zero" — totalMinutes is `null` vs `0` — and this preserves that
+ * "recorded as zero" (totalMinutes is `null` vs `0`) and this preserves that
  * distinction rather than flattening it with a falsy check.
  */
 export function compactSummary(memory: AppointmentPrepMemory): string {

@@ -1,4 +1,4 @@
-// Google Calendar — Phase B2.4 destination-aware event-scope contract (app side).
+// Google Calendar: Phase B2.4 destination-aware event-scope contract (app side).
 //
 // This is the application mirror of the DB seam
 // `public.calendar_required_event_scopes(p_destination_mode text)` (migration
@@ -8,11 +8,11 @@
 //                            Hone created)
 //   existing_owned        -> calendar.events.owned (manage events on a calendar
 //                            the connected user owns)
-// Broad `calendar.events` is NOT part of this contract — it satisfies nothing.
+// Broad `calendar.events` is NOT part of this contract: it satisfies nothing.
 //
 // EXACT SET MEMBERSHIP ONLY. `calendar.events` is a literal PREFIX of
 // `calendar.events.owned`, so membership is checked by exact, normalized string
-// equality in a Set — never substring / prefix / startsWith / one-string
+// equality in a Set, never substring / prefix / startsWith / one-string
 // `includes`. An unset/unknown destination yields NULL required scopes and is
 // FAIL-CLOSED (mirrors the DB returning NULL, never an empty array).
 
@@ -36,7 +36,7 @@ export function isCalendarDestinationMode(
 }
 
 // The EXACT required event scope(s) for a destination mode. Returns null (never
-// an empty array) for null/unknown/malformed — the caller must treat null as
+// an empty array) for null/unknown/malformed, the caller must treat null as
 // NOT-ready (fail-closed), exactly like the DB function.
 export function requiredEventScopesForDestination(
   mode: string | null | undefined,
@@ -52,7 +52,7 @@ export function requiredEventScopesForDestination(
 }
 
 // The SINGLE exact required event scope for a destination mode, as a string (each
-// mode maps to exactly one scope). Returns null for null/unknown/malformed — the
+// mode maps to exactly one scope). Returns null for null/unknown/malformed, the
 // caller treats null as "no destination bound / fail-closed". Used to BIND the
 // exact scope onto the OAuth state at upgrade-start and to re-derive+compare it in
 // the callback (a tampered single-column state value cannot pass).

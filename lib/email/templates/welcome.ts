@@ -1,6 +1,6 @@
 // Studio-owner invitation email. ONE truthful message for BOTH a brand-new and
 // an existing Hone account: at studio-creation time the owner has been INVITED,
-// not yet added — membership + the authoritative acceptance happen when they
+// not yet added: membership + the authoritative acceptance happen when they
 // sign in and confirm the current policies. So we never infer account existence
 // and never claim "has been added". Matches the transactional style of
 // invitation.ts (warm off-white, Georgia serif headline, sharp black CTA).
@@ -36,7 +36,7 @@ export function buildWelcomeEmail(params: WelcomeEmailParams): WelcomeEmail {
 
   const subject = `You've been invited to ${params.studioName} on Hone`;
   const headline = `You've been invited to ${params.studioName}.`;
-  const lede = `${greetingName}, you've been invited to join ${params.studioName} on Hone. Sign in to join — if you already have a Hone account, use it. You'll confirm the current Terms of Service and Privacy Policy when you join, and then a short guided setup helps you get the studio ready for its first booking.`;
+  const lede = `${greetingName}, you've been invited to join ${params.studioName} on Hone. Sign in to join. If you already have a Hone account, use it. You'll confirm the current Terms of Service and Privacy Policy when you join, and then a short guided setup helps you get the studio ready for its first booking.`;
   const helper = "Sign in with this email address to join your studio.";
 
   const safeHeadline = escapeHtml(headline);

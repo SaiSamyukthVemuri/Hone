@@ -3,10 +3,10 @@ import { Redis } from "@upstash/redis";
 import { reconcileLockKey } from "./reconcile-lock";
 import type { ReconcileContinuation, ReconcileContinuationStore } from "./reconcile";
 
-// Google Calendar — Phase B2.3-b: durable, resumable pagination continuation for
+// Google Calendar: Phase B2.3-b: durable, resumable pagination continuation for
 // the reconciliation sweep, backed by the deployed Upstash. A truncated run (page
 // budget, route deadline, or lost lease) persists WHERE it stopped so the next
-// invocation resumes AFTER that immutable cursor — later appointments never starve.
+// invocation resumes AFTER that immutable cursor: later appointments never starve.
 //
 // OWNERSHIP-ATOMIC (§3). Continuation write/clear are NOT plain SET/DEL. Each is a
 // Lua script that verifies the per-studio LOCK key still holds the caller's exact
@@ -17,11 +17,11 @@ import type { ReconcileContinuation, ReconcileContinuationStore } from "./reconc
 // DURABLE, NO ARBITRARY EXPIRY. The continuation is CORRECTNESS state: it is written
 // WITHOUT a TTL and removed only by an explicit ownership-atomic clear on completion.
 // (A short TTL would let the record expire BETWEEN normal scheduled invocations and
-// silently restart a large studio from the beginning — starvation.) A `schemaVersion`
-// guards forward-compatibility; a mismatched/corrupt record reads as absent (safe —
+// silently restart a large studio from the beginning: starvation.) A `schemaVersion`
+// guards forward-compatibility; a mismatched/corrupt record reads as absent (safe,
 // restarting under a fresh snapshot never false-completes, convergence is idempotent).
 //
-// FAIL-CLOSED read: { ok:false } is an I/O error (the caller must NOT sweep — position
+// FAIL-CLOSED read: { ok:false } is an I/O error (the caller must NOT sweep: position
 // unknown); { ok:true, value:null } means "no continuation" (start fresh).
 //
 // The record holds ONLY non-sensitive position state (snapshot + activation + pass +

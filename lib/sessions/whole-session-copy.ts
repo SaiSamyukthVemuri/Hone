@@ -1,4 +1,4 @@
-// Whole-session "Copy areas and settings from last session" — pure preview +
+// Whole-session "Copy areas and settings from last session", pure preview +
 // commit-spec logic (migration 0157). This module is client-safe and performs NO
 // I/O: it turns the PREVIOUS session's blocks into ephemeral preview cards, and
 // a reviewed card into the RPC payload. All persistence happens only when the
@@ -49,7 +49,7 @@ export type CopySourceBlock = {
   areas: CopySourceArea[];
 };
 
-// A preview card the practitioner reviews (EPHEMERAL — lives only in component
+// A preview card the practitioner reviews (EPHEMERAL, lives only in component
 // state; editing/removing it performs no write).
 export type CopyAreaDraft = {
   key: string;
@@ -69,7 +69,7 @@ export type CopyAreaDraft = {
 //     copies like any other;
 //   * a block with no resolvable area, or no valid electrolysis mode, has no
 //     reusable setup to copy and is skipped.
-// Pure — no I/O.
+// Pure, no I/O.
 export function buildCopyDrafts(
   source: readonly CopySourceBlock[],
 ): CopyAreaDraft[] {
@@ -102,7 +102,7 @@ export function buildCopyDrafts(
 
 // Turn a reviewed (possibly edited) draft card into the NARROW input the server
 // normalizer validates. This carries ONLY editable areas + machine/probe setup
-// strings — never the decomposed probe columns (the server re-derives those from
+// strings, never the decomposed probe columns (the server re-derives those from
 // the probe_key), never minutes_performed (not copied), and never an outcome.
 // All authority (probe decomposition, primary_area/side, numeric ranges, mode
 // gating) lives server-side in normalizeWholeSessionCopy.

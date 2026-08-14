@@ -28,15 +28,15 @@ export type Studio = {
   slug: string;
   address: string | null;
   booking_description: string | null;
-  // Migration 0119 (Clinical Record — Phase 1): studio-scoped feature flag for
+  // Migration 0119 (Clinical Record: Phase 1): studio-scoped feature flag for
   // the "Finalize & sign" clinical-record boundary. Default OFF; opt-in per
   // studio during supervised rollout. Optional at the type level for rows loaded
   // via `select *` before 0119 is applied.
   clinical_finalization_enabled?: boolean;
-  // Migration 0120 (Clinical Record — Phase 2): studio-scoped flag for corrections
+  // Migration 0120 (Clinical Record: Phase 2): studio-scoped flag for corrections
   // & amendments. Separate from Phase 1; default OFF. Optional for pre-0120 rows.
   clinical_corrections_enabled?: boolean;
-  // Migration 0121 (Google Calendar — Phase A): studio-scoped feature flags, all
+  // Migration 0121 (Google Calendar: Phase A): studio-scoped feature flags, all
   // default OFF. Only `google_calendar_connection_enabled` is used in Phase A
   // (gates the Connect UI + OAuth start). The other three name future phases
   // (outbound push / inbound busy / two-way edits) and remain OFF + unused.
@@ -87,7 +87,7 @@ export type Studio = {
     | 12;
   // Migration 0040: practitioner-chosen accent color for birthday
   // reminders (dashboard + client profile). Default 'purple'. Red/rose
-  // is intentionally NOT an option — it's reserved for allergies/cautions.
+  // is intentionally NOT an option: it's reserved for allergies/cautions.
   birthday_reminder_color: BirthdayReminderColor;
   // Migration 0043: per-studio postcare email content. All nullable.
   // The send action requires postcare_aftercare_text to be non-empty
@@ -143,7 +143,7 @@ export type Studio = {
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
-// ONE row per studio (studio_id primary key). Pure UI/progress state — step
+// ONE row per studio (studio_id primary key). Pure UI/progress state: step
 // "done" for data-backed steps stays DERIVED from real data; this table records
 // the resume pointer, explicit advanced/skipped steps, dismissed/completed/
 // celebrated stamps (celebrate-once), and the welcome-email send outcome.
@@ -256,7 +256,7 @@ export type StudioTimedBlock = {
   updated_at: string;
   // PR B (migration 0137): NULL = studio-wide (every practitioner), a UUID =
   // scoped to that one practitioner. NULL on Legacy studios (column absent
-  // before 0135/0137 is applied — the safe loaders treat it as studio-wide).
+  // before 0135/0137 is applied: the safe loaders treat it as studio-wide).
   practitioner_id: string | null;
 };
 
@@ -393,7 +393,7 @@ export type Appointment = {
   // Actual-interval overlap remains a hard constraint regardless. Optional for
   // pre-0152 rows.
   booked_outside_availability?: boolean;
-  // Migration 0174 (appointment boundary B5 — attribution + audit integrity):
+  // Migration 0174 (appointment boundary B5, attribution + audit integrity):
   // WHO acted, recorded on the row itself. Before 0174 this existed only inside
   // an appointment_audit row that was CASCADE-deleted with its parent.
   //
@@ -439,7 +439,7 @@ export type Appointment = {
   postcare_email_last_error: string | null;
   postcare_email_last_attempt_at: string | null;
   // PR #260 (migration 0090): SHA-256 hex hash of the raw
-  // cancel/reschedule/manage token — the ONLY token value stored at rest.
+  // cancel/reschedule/manage token: the ONLY token value stored at rest.
   // PR #264 (migration 0091): the legacy raw `cancellation_token` column
   // was dropped; public lookups hash the incoming URL token and match this
   // column, and already-emailed raw links resolve via the backfilled hash.
@@ -705,12 +705,12 @@ export type AppointmentAudit = {
   appointment_id: string | null;
   // Migration 0174: the tenant, derived from the parent appointment at INSERT
   // and never accepted from the caller. This is what keeps a detached row
-  // tenant-authorizable — appointment_audit_member_read now reads it directly.
+  // tenant-authorizable, appointment_audit_member_read now reads it directly.
   studio_id: string;
   actor_type: "practitioner" | "client" | "system";
   actor_id: string | null;
   // Migration 0174: durable, same-studio-validated practitioner correlation.
-  // NULL for client and system actors — never invented for a non-practitioner.
+  // NULL for client and system actors, never invented for a non-practitioner.
   // Complements, and does not replace, the historical bare actor_id above.
   actor_practitioner_id: string | null;
   action: string;
@@ -740,7 +740,7 @@ export type Practitioner = {
   terms_version: string | null;
   privacy_accepted_at: string | null;
   privacy_version: string | null;
-  // Migration 0079/0116: SHA-256 hash of the calendar feed token — the ONLY
+  // Migration 0079/0116: SHA-256 hash of the calendar feed token: the ONLY
   // at-rest form of the credential. The raw calendar_feed_token column (0046)
   // was dropped in 0116; the raw token is surfaced only once at generate/rotate.
   // The feed route authenticates by hashing the URL's token and matching this.
@@ -853,7 +853,7 @@ export type SessionLegacyClassification =
   | "clearly_incomplete"
   | "ambiguous";
 
-// Migration 0120 (Clinical Record — Phase 2): corrections & amendments.
+// Migration 0120 (Clinical Record: Phase 2): corrections & amendments.
 export type SnapshotVersionType = "original" | "correction";
 export type ClinicalAmendmentType =
   | "late_note"
@@ -932,7 +932,7 @@ export type Session = {
   session_notes: string | null;
   price_paid_cents: number | null;
   created_at: string;
-  // Migration 0119 (Clinical Record — Phase 1): finalization lifecycle. New +
+  // Migration 0119 (Clinical Record: Phase 1): finalization lifecycle. New +
   // existing sessions default to 'draft' (editable). 'finalized' locks the
   // clinical content (DB-enforced) and points at the immutable snapshot.
   record_status: SessionRecordStatus;
@@ -973,7 +973,7 @@ export type TreatmentPlanStatus = "active" | "closed";
 // visit count. Sessions opt in via sessions.treatment_plan_id.
 //
 // Migration 0034 (Treatment Plan v2 schema, Phase B): adds three nullable
-// columns — budget_notes, practitioner_notes, treatment_goal_minutes_override.
+// columns: budget_notes, practitioner_notes, treatment_goal_minutes_override.
 // suggested_visit_count is retained as NOT NULL; the legacy
 // "Estimated visits" UI keeps writing it. Stage data (cadence + visit
 // length + duration) lives on the child treatment_plan_stages table.
@@ -1111,7 +1111,7 @@ export type SessionMode = ElectrolysisMode;
 // Body Chart v1 Phase B (migration 0039): structured anatomical area
 // metadata for analytics. `side` is a small closed enum enforced by a DB
 // CHECK; the other two columns are length-bounded free text. All three
-// are nullable and additive — legacy blocks are unaffected.
+// are nullable and additive: legacy blocks are unaffected.
 export type SessionBlockSide =
   | "center"
   | "left"
@@ -1304,7 +1304,7 @@ export type ClientPinnedNote = {
 // warnings. One row per client (UNIQUE on client_id). studio_id is
 // derived from the parent client by trigger; the row is created lazily
 // on first save. These fields are NEVER exposed to client/public/email
-// surfaces — see the privacy contract in the migration comment and the
+// surfaces. See the privacy contract in the migration comment and the
 // import audit in PR #27.
 export type ClientPersonalNotes = {
   id: string;
@@ -1350,7 +1350,7 @@ export type ClientIntakeForm = {
   requested_at: string | null;
   requested_by: string | null;
   // Intake link send/expiry display metadata (migration 0097). A display
-  // mirror of the most recently issued link — the signed token remains the
+  // mirror of the most recently issued link: the signed token remains the
   // authoritative expiry. last_sent_at/expires_at are null on legacy rows and
   // until the next mint; send_count defaults to 0.
   intake_link_last_sent_at: string | null;
@@ -1579,7 +1579,7 @@ export type ImportedTreatmentMemoryAuditEvent = {
   created_at: string;
 };
 
-// Google Calendar — Phase B, PR B1 (migration 0124). SCHEMA-ONLY types; NO
+// Google Calendar: Phase B, PR B1 (migration 0124). SCHEMA-ONLY types; NO
 // runtime code reads or writes these tables in B1 (they document the dormant
 // outbound-sync foundation for B2/B3).
 export type CalendarEventLinkSyncStatus =
@@ -1626,7 +1626,7 @@ export type CalendarSyncOutbox = {
   op_type: CalendarSyncOutboxOpType;
   hone_entity_type: "appointment" | "timed_block" | null;
   hone_entity_id: string | null;
-  // Operational metadata ONLY — never PHI/tokens/raw Google content. B2 builds
+  // Operational metadata ONLY, never PHI/tokens/raw Google content. B2 builds
   // this server-side via a fixed allow-listed serializer from typed params.
   payload: Record<string, unknown>;
   idempotency_key: string; // deterministic; {type}:{id}:{op}:{source_version}

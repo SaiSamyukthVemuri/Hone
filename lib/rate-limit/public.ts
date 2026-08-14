@@ -3,9 +3,9 @@ import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 
 // Rate limiter for unauthenticated public surfaces. Covers:
-//   * public booking — fetchPublicSlotsAction + publicBookAppointmentAction
+//   * public booking: fetchPublicSlotsAction + publicBookAppointmentAction
 //     (heaviest read; appointment/client/audit writes + emails)
-//   * public token routes — cancel / reschedule / intake server actions
+//   * public token routes: cancel / reschedule / intake server actions
 //     (see limitTokenRoute below)
 //
 // Design contract:
@@ -155,7 +155,7 @@ const BACKEND_LOG_THROTTLE_MS = 60_000;
 const lastBackendLogAt = new Map<string, number>();
 
 // Structured fail-open alarm. Records only the route class, environment, and
-// the error class/message (network-level) — never the IP, email, token, key,
+// the error class/message (network-level), never the IP, email, token, key,
 // hash, or secret. Throttled per route class. Caller always proceeds
 // (allowed) after this fires.
 function logBackendUnavailable(routeClass: string, err: unknown): void {
@@ -179,7 +179,7 @@ function logBackendUnavailable(routeClass: string, err: unknown): void {
 }
 
 // Structured metric/search log (NOT an alarm): the limiter is working and
-// blocked a request. Only non-identifying fields — route class, optional
+// blocked a request. Only non-identifying fields: route class, optional
 // limit dimension, retry-after, environment. Never logs the IP/email/token,
 // the hash, a hash prefix, or the Redis key.
 function logRateLimitExceeded(
@@ -199,7 +199,7 @@ function logRateLimitExceeded(
   );
 }
 
-// Public slot fetch: 60 req / 60 s per (IP, slug). Generous — normal
+// Public slot fetch: 60 req / 60 s per (IP, slug). Generous: normal
 // date-switching is bursty and must not be throttled.
 export async function limitPublicSlots(args: {
   headers: Headers;
@@ -222,7 +222,7 @@ export async function limitPublicSlots(args: {
 
 // Public booking submit: stricter, two independent windows.
 //   * 5 / 10 min per (IP, slug)
-//   * 3 / hour  per (email, slug) — only when an email is present
+//   * 3 / hour  per (email, slug), only when an email is present
 // IP is checked first; if it's already over the limit we return without
 // consuming the email budget. Both keys are hashed.
 export async function limitPublicBooking(args: {
@@ -264,7 +264,7 @@ export async function limitPublicBooking(args: {
 // Each token-route action is keyed on hash(token):hash(IP) so abuse is
 // bounded per link + source without ever storing the raw token or IP. The
 // limiter runs BEFORE token verification, so a 429 is returned independent
-// of whether the token is valid — it never reveals token/appointment state.
+// of whether the token is valid. It never reveals token/appointment state.
 // View limits are looser than mutation limits. intake page-load (RSC) view
 // limiting is deferred (no action to wrap).
 // ---------------------------------------------------------------------------
@@ -301,7 +301,7 @@ function tokenLimiter(routeClass: TokenRouteClass): Ratelimit | null {
 
 // Rate-limit one public token-route action. Key = hash(token):hash(IP).
 // Fails open when Upstash is unconfigured or errors. Token semantics are
-// untouched — this only decides whether the action runs at all.
+// untouched. This only decides whether the action runs at all.
 export async function limitTokenRoute(args: {
   routeClass: TokenRouteClass;
   token: string;

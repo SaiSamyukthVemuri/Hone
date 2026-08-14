@@ -1,5 +1,5 @@
 // Plain-text bullet helpers for the Personal Notes textarea. NO HTML, no
-// Markdown, no rich text — the value stays exactly the plain text the practitioner
+// Markdown, no rich text: the value stays exactly the plain text the practitioner
 // sees and the existing action stores. Pure functions (no DOM) so the keyboard
 // contract is unit-testable; the editor applies the result to an UNCONTROLLED
 // textarea via a ref, so existing saved notes are never auto-converted.
@@ -36,8 +36,8 @@ export function insertBullet(
   };
 }
 
-// Enter inside a bulleted line: continue with a new "• ", OR — on an EMPTY bullet
-// (the whole line is just "• ") — exit bullet mode by removing the marker. Returns
+// Enter inside a bulleted line: continue with a new "• ", OR: on an EMPTY bullet
+// (the whole line is just "• "), exit bullet mode by removing the marker. Returns
 // null to let the browser insert a normal newline (non-bullet line, or overflow).
 export function bulletEnter(
   value: string,
