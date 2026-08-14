@@ -144,6 +144,17 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // REL-001: the authenticated app-shell error boundary, including the
+      // auth-gate invariants (anonymous still bounces to /login, redirect() and
+      // notFound() are not converted into a generic retry screen). It sits with
+      // invite-only.spec.ts because this group is where the shell/auth-gate
+      // family already lives. Deliberately NOT in `smoke`: that group runs on
+      // every targeted PR, and the count pinned in
+      // tests/ci/browser-selection.test.ts tracks that lane's cost. Any diff
+      // that can reach this boundary is unattributable application code, which
+      // already fails safe to EXTENDED coverage, so the spec runs whenever it
+      // matters.
+      "authenticated-route-error-containment.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
