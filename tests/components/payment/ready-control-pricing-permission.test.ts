@@ -80,7 +80,6 @@ function view(status: string | null, kind: Kind | null) {
 describe("a persisted attempt stays visible; only the control is withdrawn", () => {
   it("1 READY + resolved => prepared summary visible, Run charge visible", () => {
     const v = view("ready", "resolved");
-    expect(v.panelVisible).toBe(true);
     expect(v.runChargeVisible).toBe(true);
     expect(v.unresolvedExplanation).toBeNull();
     expect(v.unavailableExplanationVisible).toBe(false);
@@ -88,36 +87,30 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
 
   it("2 READY + free => summary visible, no Run charge, No payment required", () => {
     const v = view("ready", "free");
-    expect(v.panelVisible).toBe(true);
     expect(v.runChargeVisible).toBe(false);
-    expect(v.freeNoticeVisible).toBe(true);
-    expect(v.freeServiceName).toBe("Consultation");
+    expect(v.freeNoticeServiceName).toBe("Consultation");
   });
 
   it("3 READY + missing_price => summary visible, no Run charge, pricing explanation", () => {
     const v = view("ready", "missing_price");
-    expect(v.panelVisible).toBe(true);
     expect(v.runChargeVisible).toBe(false);
     expect(v.unresolvedExplanation).toMatch(/No price is configured/i);
   });
 
   it("4 READY + missing_service => summary visible, no Run charge, pricing explanation", () => {
     const v = view("ready", "missing_service");
-    expect(v.panelVisible).toBe(true);
     expect(v.runChargeVisible).toBe(false);
     expect(v.unresolvedExplanation).toMatch(/no booked service/i);
   });
 
   it("5 READY + ambiguous_custom_pricing => summary visible, no Run charge, ambiguity explained", () => {
     const v = view("ready", "ambiguous_custom_pricing");
-    expect(v.panelVisible).toBe(true);
     expect(v.runChargeVisible).toBe(false);
     expect(v.unresolvedExplanation).toMatch(/more than one current client-specific price/i);
   });
 
   it("6 READY + pricing read failure => summary visible, no Run charge, unavailable explained", () => {
     const v = view("ready", null);
-    expect(v.panelVisible).toBe(true);
     expect(v.runChargeVisible).toBe(false);
     expect(v.unavailableExplanationVisible).toBe(true);
   });
@@ -125,17 +118,15 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
   it("7 PENDING_STRIPE + pricing failure => Processing panel preserved", () => {
     for (const k of [null, "missing_price", "ambiguous_custom_pricing", "free"] as const) {
       const v = view("pending_stripe", k as Kind | null);
-      expect(v.panelVisible, String(k)).toBe(true);
       expect(v.runChargeVisible, String(k)).toBe(false); // ready-only control
-      expect(v.freeNoticeVisible, String(k)).toBe(false); // never claims free
+      expect(v.freeNoticeServiceName, String(k)).toBeNull(); // never claims free
     }
   });
 
   it("8 SUCCEEDED + pricing failure => Paid / receipt / refund preserved", () => {
     for (const k of [null, "missing_price", "ambiguous_custom_pricing", "free"] as const) {
       const v = view("succeeded", k as Kind | null);
-      expect(v.panelVisible, String(k)).toBe(true);
-      expect(v.freeNoticeVisible, String(k)).toBe(false);
+      expect(v.freeNoticeServiceName, String(k)).toBeNull();
     }
   });
 
@@ -145,10 +136,10 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
     // blocked preparation.
     for (const k of ["free", "missing_price", "missing_service", "ambiguous_custom_pricing", null] as const) {
       const v = view("ready", k as Kind | null);
-      expect(v.panelVisible, `${String(k)} must keep the prepared summary`).toBe(true);
+
       expect(v.runChargeVisible, `${String(k)} must withdraw the control`).toBe(false);
       expect(
-        v.freeNoticeVisible ||
+        v.freeNoticeServiceName !== null ||
           v.unresolvedExplanation !== null ||
           v.unavailableExplanationVisible,
         `${String(k)} must explain itself`,
@@ -158,18 +149,18 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
   });
 
   it("no attempt: the prepare-side behaviour is unchanged", () => {
-    expect(view(null, "resolved").panelVisible).toBe(false);
+
     expect(view(null, "missing_price").unresolvedExplanation).not.toBeNull();
     expect(view(null, null).unavailableExplanationVisible).toBe(true);
-    expect(view(null, "free").freeNoticeVisible).toBe(true);
+    expect(view(null, "free").freeNoticeServiceName).not.toBeNull();
   });
 });
 
 describe("source wiring", () => {
   it("the card reads the decision and holds no branch of its own", () => {
     expect(CARD).toMatch(/decideSessionPaymentPresentation\(/);
-    expect(CARD).toMatch(/\{presentation\.panelVisible && activeAttempt && \(/);
-    expect(CARD).toMatch(/\{presentation\.freeNoticeVisible && \(/);
+    expect(CARD).toMatch(/\{activeAttempt && \(/);
+    expect(CARD).toMatch(/\{presentation\.freeNoticeServiceName !== null && \(/);
     expect(CARD).toMatch(/\{presentation\.unavailableExplanationVisible && \(/);
     expect(CARD).toMatch(/\{presentation\.unresolvedExplanation !== null && \(/);
     // the old reconstructed locals are gone
@@ -211,6 +202,51 @@ describe("exactly ONE ready-control authority", () => {
     join(process.cwd(), "lib/billing/ready-control-permission.ts"),
     "utf8",
   );
+
+  it("the panel CANNOT be gated on pricing — there is no field to do it with", () => {
+    // Census outcome A. "A persisted active attempt is always visible" needs no
+    // presentation field: it is exactly "an attempt exists". A `panelVisible`
+    // boolean restating that was a second representation the card had to
+    // combine with `activeAttempt` anyway, so the two could drift. Removing it
+    // makes suppression-by-pricing unrepresentable rather than merely absent.
+    expect(codeOnly(PERM)).not.toMatch(/panelVisible/);
+    expect(codeOnly(CARD)).not.toMatch(/panelVisible/);
+    expect(CARD).toMatch(/\{activeAttempt && \(\s*\n?\s*<AttemptStatusPanel/);
+  });
+
+  it("the free notice is ONE value, so presence cannot disagree with content", () => {
+    // Census outcome B. `freeNoticeVisible` + `freeServiceName` already
+    // disagreed: the name was set for any $0 service while visibility also
+    // required !settledOrInFlight, so a succeeded attempt on a now-free
+    // service carried a name with the notice correctly hidden.
+    expect(codeOnly(PERM)).not.toMatch(/freeNoticeVisible/);
+    expect(codeOnly(PERM)).not.toMatch(/freeServiceName\b/);
+    expect(codeOnly(CARD)).not.toMatch(/freeNoticeVisible/);
+    expect(PERM).toMatch(/freeNoticeServiceName:\s*\n?\s*amountResult\?\.kind === "free" && !settledOrInFlight/);
+    expect(CARD).toMatch(/presentation\.freeNoticeServiceName !== null/);
+    // the SAME value supplies the rendered name
+    expect(CARD).toMatch(/\{presentation\.freeNoticeServiceName\} is free/);
+  });
+
+  it("every presentation field is consumed by the card", () => {
+    // No field may exist that nothing reads: an unconsumed value is a second
+    // authority waiting to happen.
+    // Scope extraction to the PRESENTATION type. A bare /^  (\w+):/ also swept
+    // the input object's fields (attemptStatus, amountResult, showPrepareForm),
+    // which the card supplies rather than consumes.
+    const typeBlock = PERM.slice(
+      PERM.indexOf("export type SessionPaymentPresentation = {"),
+      PERM.indexOf("export function decideSessionPaymentPresentation"),
+    );
+    expect(typeBlock.length).toBeGreaterThan(100);
+    const fields = [...typeBlock.matchAll(/^  (\w+):/gm)].map((m) => m[1]);
+    expect(fields.length).toBeGreaterThan(0);
+    for (const f of fields) {
+      expect(codeOnly(CARD), `${f} must be consumed`).toMatch(
+        new RegExp(`presentation\\.${f}`),
+      );
+    }
+  });
 
   it("the presentation model exposes no second ready-control representation", () => {
     expect(codeOnly(PERM)).not.toMatch(/readyControl/);

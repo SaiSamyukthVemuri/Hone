@@ -153,10 +153,11 @@ describe("FREE-01 no money-moving path", () => {
     // sets showPrepareForm false. Review 3780456783 moved these conditions
     // into the shared presentation decision, so the card reads fields instead
     // of recomputing them and cannot drift from the rule.
-    expect(CARD).toMatch(/\{presentation\.freeNoticeVisible && \(/);
+    expect(CARD).toMatch(/\{presentation\.freeNoticeServiceName !== null && \(/);
     const PERM_F7 = read("lib/billing/ready-control-permission.ts");
+    // One nullable value now carries both presence and the rendered name.
     expect(PERM_F7).toMatch(
-      /freeNoticeVisible: amountResult\?\.kind === "free" && !settledOrInFlight/,
+      /freeNoticeServiceName:\s*\n?\s*amountResult\?\.kind === "free" && !settledOrInFlight/,
     );
     // PrepareForm is gated on a strictly `resolved` amount, so free cannot reach it.
     expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
@@ -217,13 +218,15 @@ describe("FREE-01 no money-moving path", () => {
     expect(PERM).toMatch(
       /const runChargeVisible = isReady && amountResult\?\.kind === "resolved"/,
     );
-    expect(PERM).toMatch(/panelVisible: attemptStatus !== null,/);
+    // Panel visibility is no longer a presentation field at all: an attempt
+    // exists, so it renders. There is nothing pricing could gate it with.
+    expect(codeOnly(PERM)).not.toMatch(/panelVisible/);
     expect(PERM).toMatch(/const settledOrInFlight = attemptStatus !== null && !isReady/);
     // the panel must NOT be gated on any pricing state
     expect(codeOnly(CARD)).not.toMatch(/\{activeAttempt && !isFreeNow && \(/);
     expect(codeOnly(CARD)).not.toMatch(/\{activeAttempt && !readyAttemptBlocked && \(/);
     // and "No payment required" still yields to money that has actually moved
-    expect(CARD).toMatch(/\{presentation\.freeNoticeVisible && \(/);
+    expect(CARD).toMatch(/\{presentation\.freeNoticeServiceName !== null && \(/);
   });
 
   it("F11 permission is granted ONLY by a currently resolved price", () => {

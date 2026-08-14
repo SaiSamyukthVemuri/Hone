@@ -296,7 +296,7 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
-      {presentation.panelVisible && activeAttempt && (
+      {activeAttempt && (
         <AttemptStatusPanel
           attempt={activeAttempt}
           runChargeVisible={presentation.runChargeVisible}
@@ -362,12 +362,12 @@ export function SessionPaymentPrepareCard({
           Prepare, never Run charge, and never the amber "pricing blocked"
           warning, because nothing is wrong. Defense in depth: even if a route
           reaches this card directly, there is no money-moving control here. */}
-      {presentation.freeNoticeVisible && (
+      {presentation.freeNoticeServiceName !== null && (
         <p
           data-testid="payment-not-required"
           className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
         >
-          {presentation.freeServiceName} is free · No payment required.
+          {presentation.freeNoticeServiceName} is free · No payment required.
         </p>
       )}
 

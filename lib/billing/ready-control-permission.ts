@@ -48,17 +48,30 @@ import {
 // the prepared attempt remains the sole execution amount.
 
 export type SessionPaymentPresentation = {
-  // The persisted attempt's status panel. Visible whenever an attempt exists,
-  // regardless of what current pricing says.
-  panelVisible: boolean;
+  // NOTE ON WHAT IS *NOT* HERE — panel visibility.
+  //
+  // "A persisted active attempt is always visible" needs no presentation
+  // field: it is exactly "an attempt exists", which the card already knows.
+  // A `panelVisible` boolean restating `attemptStatus !== null` was a second
+  // representation of one fact, and the card had to write
+  // `presentation.panelVisible && activeAttempt` anyway for narrowing — so the
+  // two could drift apart. The card now renders on `activeAttempt` alone.
+
   // THE READY money-control decision. The single authority: tested here,
   // consumed by the card, threaded unchanged into ReadyPanel's render gate.
   runChargeVisible: boolean;
-  // "<service> is free · No payment required." The service name comes back
-  // narrowed so the card renders copy without re-testing `kind` — a narrowing
-  // guard beside the decision is one more branch that could drift.
-  freeNoticeVisible: boolean;
-  freeServiceName: string | null;
+  // The free notice, as ONE value: the service name when the notice should
+  // render, null when it should not.
+  //
+  // This was `freeNoticeVisible` + `freeServiceName`, and those two ALREADY
+  // disagreed: the name was populated for any $0 service, while visibility
+  // additionally required !settledOrInFlight — so a succeeded attempt on a
+  // now-free service had a name with the notice correctly hidden. Nothing
+  // rendered wrongly, because the card only read the name inside the
+  // visibility branch, but that is the same "two values, one question" shape
+  // that produced review 3780573779. One nullable value cannot disagree with
+  // itself.
+  freeNoticeServiceName: string | null;
   // "The payment amount could not be confirmed. Refresh and try again."
   unavailableExplanationVisible: boolean;
   // Practitioner copy for missing/ambiguous pricing, already resolved here.
@@ -92,13 +105,13 @@ export function decideSessionPaymentPresentation(input: {
     amountResult.kind !== "free";
 
   return {
-    panelVisible: attemptStatus !== null,
     runChargeVisible,
     // A settled or in-flight attempt is money that moved; never overwrite it
     // with "No payment required".
-    freeNoticeVisible: amountResult?.kind === "free" && !settledOrInFlight,
-    freeServiceName:
-      amountResult?.kind === "free" ? amountResult.serviceName : null,
+    freeNoticeServiceName:
+      amountResult?.kind === "free" && !settledOrInFlight
+        ? amountResult.serviceName
+        : null,
     unavailableExplanationVisible: explain && amountResult === null,
     unresolvedExplanation:
       explain && isUnresolved ? unresolvedAmountMessage(amountResult) : null,
