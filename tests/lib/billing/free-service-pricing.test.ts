@@ -156,7 +156,7 @@ describe("FREE-01 no money-moving path", () => {
     expect(CARD).toMatch(/\{presentation\.freeNoticeVisible && \(/);
     const PERM_F7 = read("lib/billing/ready-control-permission.ts");
     expect(PERM_F7).toMatch(
-      /freeNoticeVisible =\s*\n?\s*amountResult\?\.kind === "free" && !settledOrInFlight/,
+      /freeNoticeVisible: amountResult\?\.kind === "free" && !settledOrInFlight/,
     );
     // PrepareForm is gated on a strictly `resolved` amount, so free cannot reach it.
     expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
@@ -208,10 +208,17 @@ describe("FREE-01 no money-moving path", () => {
     // charge section is. Both live in the shared decision now.
     expect(CARD).toMatch(/decideSessionPaymentPresentation\(/);
     const PERM = read("lib/billing/ready-control-permission.ts");
-    expect(PERM).toMatch(/if \(attemptStatus !== "ready"\)/);
-    expect(PERM).toMatch(/return \{ canRun: false, blocked: false \}/);
+    // Review 3780573779 collapsed the duplicate authority: there is no
+    // separate decideReadyControlPermission helper any more. The invariant it
+    // carried — only `ready` has a money-moving control, so pending_stripe and
+    // succeeded are never withdrawn — is now expressed once, in the single
+    // runChargeVisible computation.
+    expect(PERM).toMatch(/const isReady = attemptStatus === "ready"/);
+    expect(PERM).toMatch(
+      /const runChargeVisible = isReady && amountResult\?\.kind === "resolved"/,
+    );
     expect(PERM).toMatch(/panelVisible: attemptStatus !== null,/);
-    expect(PERM).toMatch(/const settledOrInFlight = attemptStatus !== null && attemptStatus !== "ready"/);
+    expect(PERM).toMatch(/const settledOrInFlight = attemptStatus !== null && !isReady/);
     // the panel must NOT be gated on any pricing state
     expect(codeOnly(CARD)).not.toMatch(/\{activeAttempt && !isFreeNow && \(/);
     expect(codeOnly(CARD)).not.toMatch(/\{activeAttempt && !readyAttemptBlocked && \(/);

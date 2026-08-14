@@ -11,10 +11,7 @@ import type {
   SessionPaymentAmountResult,
 } from "@/lib/billing/session-payment-amount";
 import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
-import {
-  decideSessionPaymentPresentation,
-  type ReadyControlPermission,
-} from "@/lib/billing/ready-control-permission";
+import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-permission";
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -267,7 +264,6 @@ export function SessionPaymentPrepareCard({
     amountResult: amountResult ?? null,
     showPrepareForm,
   });
-  const readyControl = presentation.readyControl;
   // Current pricing governs whether a READY attempt may still act. It never
   // erases money that has already moved: pending_stripe and succeeded keep
   // their panel, receipt and refund controls regardless of today's price.
@@ -303,7 +299,7 @@ export function SessionPaymentPrepareCard({
       {presentation.panelVisible && activeAttempt && (
         <AttemptStatusPanel
           attempt={activeAttempt}
-          readyControl={readyControl}
+          runChargeVisible={presentation.runChargeVisible}
           sessionId={sessionId}
           clientId={clientId}
           isOwner={isOwner}
@@ -484,7 +480,7 @@ function AttemptStatusPanel({
   executeAction,
   sendReceiptAction,
   refundAction,
-  readyControl,
+  runChargeVisible,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
@@ -493,10 +489,12 @@ function AttemptStatusPanel({
   executeAction: ExecuteAction;
   sendReceiptAction: SendReceiptAction;
   refundAction: RefundAction;
-  // Review 3780371682. Whether the READY branch may offer its money-moving
-  // control. Only `ready` consults it: pending_stripe and succeeded are
-  // transaction state and are never affected by current pricing.
-  readyControl: ReadyControlPermission;
+  // Reviews 3780371682 / 3780573779. THE ready money-control decision, passed
+  // through under its own name from decideSessionPaymentPresentation to
+  // ReadyPanel's render gate. Only the `ready` branch consults it:
+  // pending_stripe and succeeded are transaction state and are never affected
+  // by current pricing.
+  runChargeVisible: boolean;
 }) {
   switch (attempt.status) {
     case "ready":
@@ -507,7 +505,7 @@ function AttemptStatusPanel({
           clientId={clientId}
           isOwner={isOwner}
           executeAction={executeAction}
-          canRun={readyControl.canRun}
+          runChargeVisible={runChargeVisible}
         />
       );
     case "pending_stripe":
@@ -545,18 +543,20 @@ function ReadyPanel({
   clientId,
   isOwner,
   executeAction,
-  canRun,
+  runChargeVisible,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
   isOwner: boolean;
   executeAction: ExecuteAction;
-  // Review 3780371682. The prepared attempt is TRANSACTION HISTORY and is
-  // always rendered. Only the money-moving section below is withdrawn when
-  // current authoritative pricing is not `resolved` — otherwise a single
-  // prepared payment appeared to vanish while still blocking preparation.
-  canRun: boolean;
+  // Reviews 3780371682 / 3780573779. The prepared attempt is TRANSACTION
+  // HISTORY and is always rendered. Only the money-moving section below is
+  // withdrawn when current authoritative pricing is not `resolved` — otherwise
+  // a single prepared payment appeared to vanish while still blocking
+  // preparation. This is the SAME value the presentation decision exposes and
+  // the tests assert, under the same name the whole way down.
+  runChargeVisible: boolean;
 }) {
   const [confirmExecute, setConfirmExecute] = useState(false);
   const [executePending, startExecuteTransition] = useTransition();
@@ -606,7 +606,7 @@ function ReadyPanel({
         }
       />
 
-      {canRun && (
+      {runChargeVisible && (
       <div
         data-testid="ready-charge-section"
         className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30"

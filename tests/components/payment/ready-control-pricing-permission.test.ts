@@ -82,7 +82,7 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
     const v = view("ready", "resolved");
     expect(v.panelVisible).toBe(true);
     expect(v.runChargeVisible).toBe(true);
-    expect(v.unresolvedExplanationVisible).toBe(false);
+    expect(v.unresolvedExplanation).toBeNull();
     expect(v.unavailableExplanationVisible).toBe(false);
   });
 
@@ -149,7 +149,7 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
       expect(v.runChargeVisible, `${String(k)} must withdraw the control`).toBe(false);
       expect(
         v.freeNoticeVisible ||
-          v.unresolvedExplanationVisible ||
+          v.unresolvedExplanation !== null ||
           v.unavailableExplanationVisible,
         `${String(k)} must explain itself`,
       ).toBe(true);
@@ -159,7 +159,7 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
 
   it("no attempt: the prepare-side behaviour is unchanged", () => {
     expect(view(null, "resolved").panelVisible).toBe(false);
-    expect(view(null, "missing_price").unresolvedExplanationVisible).toBe(true);
+    expect(view(null, "missing_price").unresolvedExplanation).not.toBeNull();
     expect(view(null, null).unavailableExplanationVisible).toBe(true);
     expect(view(null, "free").freeNoticeVisible).toBe(true);
   });
@@ -182,13 +182,14 @@ describe("source wiring", () => {
   });
 
   it("the READY charge section is the only thing pricing withdraws", () => {
-    expect(CARD).toMatch(/canRun=\{readyControl\.canRun\}/);
-    expect(CARD).toMatch(/\{canRun && \(/);
+    expect(CARD).toMatch(/runChargeVisible=\{presentation\.runChargeVisible\}/);
+    expect(CARD).toMatch(/runChargeVisible=\{runChargeVisible\}/);
+    expect(CARD).toMatch(/\{runChargeVisible && \(/);
     expect(CARD).toMatch(/data-testid="ready-charge-section"/);
     // PaymentSummaryCard for the prepared attempt sits OUTSIDE that gate
     const ready = CARD.slice(CARD.indexOf("function ReadyPanel("));
     const summaryIdx = ready.indexOf("<PaymentSummaryCard");
-    const gateIdx = ready.indexOf("{canRun && (");
+    const gateIdx = ready.indexOf("{runChargeVisible && (");
     expect(summaryIdx).toBeGreaterThan(-1);
     expect(gateIdx).toBeGreaterThan(summaryIdx);
   });
@@ -197,5 +198,59 @@ describe("source wiring", () => {
     expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
     const amountRefs = codeOnly(CARD).match(/\w*amount_cents/g) ?? [];
     expect(new Set(amountRefs)).toEqual(new Set(["expected_amount_cents"]));
+  });
+});
+
+describe("exactly ONE ready-control authority", () => {
+  // Review 3780573779. The module used to export the ready decision twice —
+  // as `runChargeVisible` and again as `readyControl.canRun`. The tests
+  // asserted the first, the card consumed the second, and they agreed only
+  // because one was derived from the other. A later edit could have made them
+  // diverge with this matrix still green and the UI doing the opposite.
+  const PERM = readFileSync(
+    join(process.cwd(), "lib/billing/ready-control-permission.ts"),
+    "utf8",
+  );
+
+  it("the presentation model exposes no second ready-control representation", () => {
+    expect(codeOnly(PERM)).not.toMatch(/readyControl/);
+    expect(codeOnly(PERM)).not.toMatch(/ReadyControlPermission/);
+    expect(codeOnly(PERM)).not.toMatch(/decideReadyControlPermission/);
+    expect(codeOnly(PERM)).not.toMatch(/canRun/);
+    // exactly one place computes it
+    expect((codeOnly(PERM).match(/runChargeVisible/g) ?? []).length).toBeGreaterThan(0);
+    expect(codeOnly(PERM)).toMatch(
+      /const runChargeVisible = isReady && amountResult\?\.kind === "resolved"/,
+    );
+  });
+
+  it("the card reads that one field and never a second decision path", () => {
+    const code = codeOnly(CARD);
+    expect(code).not.toMatch(/readyControl/);
+    expect(code).not.toMatch(/decideReadyControlPermission/);
+    expect(code).not.toMatch(/canRun/);
+    expect(code).toMatch(/runChargeVisible=\{presentation\.runChargeVisible\}/);
+  });
+
+  it("the SAME name travels from the decision to the render gate", () => {
+    // presentation -> AttemptStatusPanel -> ReadyPanel -> {runChargeVisible && (
+    const card = codeOnly(CARD);
+    const fromPresentation = card.indexOf("runChargeVisible={presentation.runChargeVisible}");
+    const forwarded = card.indexOf("runChargeVisible={runChargeVisible}");
+    const gate = card.indexOf("{runChargeVisible && (");
+    expect(fromPresentation).toBeGreaterThan(-1);
+    expect(forwarded).toBeGreaterThan(fromPresentation);
+    expect(gate).toBeGreaterThan(forwarded);
+    // and the charge section is what that gate controls
+    const gated = card.slice(gate, gate + 400);
+    expect(gated).toMatch(/data-testid="ready-charge-section"/);
+  });
+
+  it("the persisted summary is NOT inside that gate", () => {
+    const ready = CARD.slice(CARD.indexOf("function ReadyPanel("));
+    const summaryIdx = ready.indexOf("<PaymentSummaryCard");
+    const gateIdx = ready.indexOf("{runChargeVisible && (");
+    expect(summaryIdx).toBeGreaterThan(-1);
+    expect(gateIdx).toBeGreaterThan(summaryIdx);
   });
 });
