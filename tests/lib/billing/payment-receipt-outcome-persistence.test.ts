@@ -304,9 +304,41 @@ describe("provider RETRYABLE failure", () => {
     const r = await run();
     // The row is stuck at 'sending'; the claim admits only (null,'failed'),
     // so telling the practitioner to "try again in a moment" would be a lie.
-    expect(r).toMatchObject({ ok: false, reason: "send_failed_state_not_recorded" });
+    // Codex P2: retryable covers TIMEOUT/NETWORK, so DELIVERY IS UNKNOWN --
+    // this must be the ambiguous outcome, never the definitive one.
+    expect(r).toMatchObject({ ok: false, reason: "send_ambiguous_state_not_recorded" });
     expect(r).not.toMatchObject({ reason: "send_failed_retryable" });
+    expect(r).not.toMatchObject({ reason: "send_failed_state_not_recorded" });
     if (!r.ok) expect(r.message).not.toMatch(/try again in a moment/i);
+  });
+
+  it("R2b the ambiguous message must NOT claim the receipt did not send", async () => {
+    // Codex P2 on 0b808c10. Asserting non-delivery after a timeout is a
+    // claim Hone cannot support, and an operator acting on it can clear the
+    // row and duplicate a receipt the client already received.
+    h.responses["payment_charge_attempts:update:null"] = {
+      data: null,
+      error: { code: "08006", message: "connection failure" },
+    };
+    const r = await run();
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.message).not.toMatch(/did not send/i);
+    expect(r.message).not.toMatch(/was not sent/i);
+    // It must say delivery is unconfirmed AND require provider
+    // reconciliation before clearing or resending.
+    expect(r.message).toMatch(/could not confirm|unknown|may already/i);
+    expect(r.message).toMatch(/provider/i);
+  });
+
+  it("R2c the ambiguous alert records delivery as unknown, not not_delivered", async () => {
+    h.responses["payment_charge_attempts:update:null"] = {
+      data: null,
+      error: { code: "08006", message: "connection failure" },
+    };
+    await run();
+    const alert = h.alerts.find((a) => a.event === "payment_receipt_release_failed");
+    expect((alert?.safeDetails as Record<string, unknown>)?.delivery).toBe("unknown");
   });
 
   it("R3 a failed release raises the PERSISTENCE failure to the operator", async () => {
@@ -348,8 +380,26 @@ describe("provider TERMINAL failure", () => {
       error: { code: "08006", message: "connection failure" },
     };
     const r = await run();
+    // Terminal means sendEmailSafely never reached delivery, so definitive
+    // wording IS supportable here -- the ambiguous outcome would understate
+    // what we know.
     expect(r).toMatchObject({ ok: false, reason: "send_failed_state_not_recorded" });
     expect(r).not.toMatchObject({ reason: "send_failed_terminal" });
+    expect(r).not.toMatchObject({ reason: "send_ambiguous_state_not_recorded" });
+  });
+
+  it("T2b the terminal alert records delivery as not_delivered", async () => {
+    h.responses["payment_charge_attempts:update:failed"] = {
+      data: null,
+      error: { code: "08006", message: "connection failure" },
+    };
+    await run();
+    const alert = h.alerts.find(
+      (a) => a.event === "payment_receipt_terminal_record_failed",
+    );
+    expect((alert?.safeDetails as Record<string, unknown>)?.delivery).toBe(
+      "not_delivered",
+    );
   });
 
   it("T3 a failed terminal write raises the persistence failure to the operator", async () => {
@@ -392,9 +442,41 @@ describe("the two persistence-failure families stay distinct", () => {
     const failure = await run();
 
     expect(success).toMatchObject({ reason: "sent_but_record_update_failed" });
-    expect(failure).toMatchObject({ reason: "send_failed_state_not_recorded" });
+    expect(failure).toMatchObject({ reason: "send_ambiguous_state_not_recorded" });
     expect((success as { reason: string }).reason).not.toBe(
       (failure as { reason: string }).reason,
+    );
+  });
+
+  it("D3 ambiguous and definitive settlement failures are different outcomes", async () => {
+    // Codex P2. A timeout and an invalid-recipient failure both strand the
+    // row, but only one of them licenses an operator to clear and resend.
+    h.sendResult = { ok: false, retryable: true, error: "Resend timeout" };
+    h.responses["payment_charge_attempts:update:null"] = {
+      data: null,
+      error: { code: "08006", message: "x" },
+    };
+    const ambiguous = await run();
+
+    baseline();
+    h.sendResult = { ok: false, retryable: false, error: "Invalid recipient" };
+    h.responses["payment_charge_attempts:update:failed"] = {
+      data: null,
+      error: { code: "08006", message: "x" },
+    };
+    const definitive = await run();
+
+    expect((ambiguous as { reason: string }).reason).toBe(
+      "send_ambiguous_state_not_recorded",
+    );
+    expect((definitive as { reason: string }).reason).toBe(
+      "send_failed_state_not_recorded",
+    );
+    expect((ambiguous as { reason: string }).reason).not.toBe(
+      (definitive as { reason: string }).reason,
+    );
+    expect((ambiguous as { message: string }).message).not.toBe(
+      (definitive as { message: string }).message,
     );
   });
 

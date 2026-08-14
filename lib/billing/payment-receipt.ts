@@ -91,6 +91,13 @@ export type SendPaymentChargeReceiptResult =
         // Distinct from send_failed_retryable precisely because "try
         // again in a moment" is advice that can never succeed here.
         | "send_failed_state_not_recorded"
+        // Codex P2 on 0b808c10. Same stuck-'sending' shape, but the
+        // provider result was RETRYABLE (timeout / network), so delivery
+        // is UNKNOWN rather than definitively failed. Separate from
+        // send_failed_state_not_recorded because the operator
+        // instruction differs: reconcile with the provider before
+        // clearing, or risk a duplicate receipt.
+        | "send_ambiguous_state_not_recorded"
         // PR #175 patch. The Resend call returned ok:true but the
         // follow-up UPDATE to stamp receipt_status='sent' failed.
         // Returning ok:true here would lose the truthful state:
@@ -121,11 +128,23 @@ const SEND_FAILED_RETRYABLE_MESSAGE =
   "Receipt email failed temporarily. Try again in a moment.";
 const SEND_FAILED_TERMINAL_MESSAGE =
   "Receipt email failed and cannot be retried automatically.";
-// Deliberately does NOT say "try again": the row is stuck in 'sending',
-// so a retry cannot get past the claim. It also does not say the receipt
-// was sent -- in this branch the provider reported failure.
+// TERMINAL provider failure + settlement write failure. Definitive
+// wording is correct here: sendEmailSafely only classifies a failure as
+// non-retryable when it never reached delivery (missing API key, invalid
+// recipient, a classified terminal Resend error), so "did not send" is a
+// claim we can support. Deliberately does NOT say "try again": the row is
+// stuck in 'sending', so a retry cannot get past the claim.
 const SEND_FAILED_STATE_NOT_RECORDED_MESSAGE =
   "The receipt did not send, and Hone could not record that. This charge needs an operator to clear it before another attempt.";
+// RETRYABLE provider failure + settlement write failure. Codex review of
+// 0b808c10 (P2): retryable covers TIMEOUT and NETWORK errors, where Resend
+// may already have accepted the email. Saying "the receipt did not send"
+// here asserts something we cannot know, and telling an operator that
+// clearing the row is the prerequisite to another attempt invites a
+// DUPLICATE receipt to a real client. Delivery is reported as UNKNOWN and
+// provider reconciliation is required before clearing or resending.
+const SEND_AMBIGUOUS_STATE_NOT_RECORDED_MESSAGE =
+  "Hone could not confirm whether this receipt was delivered, and could not record the outcome. Check the email provider before clearing this charge or sending again -- the client may already have received it.";
 const GENERIC_DB_MESSAGE =
   "We could not record the receipt send. Please try again.";
 
@@ -168,6 +187,15 @@ async function reportSettlementFailure(args: {
   studioId: string;
   dbError: { code?: string | null; message?: string | null };
   providerError: string;
+  // Whether DELIVERY is unknown (retryable: timeout / network, where the
+  // provider may have accepted the email) or definitively did not happen
+  // (terminal). Drives both the practitioner copy and the operator
+  // instruction, because clearing a stuck row is only safe when we know
+  // no email went out.
+  deliveryUnknown: boolean;
+  reason:
+    | "send_failed_state_not_recorded"
+    | "send_ambiguous_state_not_recorded";
 }): Promise<SendPaymentChargeReceiptResult> {
   logInternal(args.event, {
     code: args.dbError.code ?? null,
@@ -185,14 +213,20 @@ async function reportSettlementFailure(args: {
       attempt_id: args.attempt.id,
       charge_reason: args.attempt.charge_reason,
       stuck_receipt_status: "sending",
+      // The operator's first question is "did the client get an email?".
+      // Answering it in the alert is what keeps a reconciliation from
+      // becoming a duplicate send.
+      delivery: args.deliveryUnknown ? "unknown" : "not_delivered",
       provider_error: args.providerError,
       db_code: args.dbError.code ?? null,
     },
   });
   return {
     ok: false,
-    reason: "send_failed_state_not_recorded",
-    message: SEND_FAILED_STATE_NOT_RECORDED_MESSAGE,
+    reason: args.reason,
+    message: args.deliveryUnknown
+      ? SEND_AMBIGUOUS_STATE_NOT_RECORDED_MESSAGE
+      : SEND_FAILED_STATE_NOT_RECORDED_MESSAGE,
   };
 }
 
@@ -542,9 +576,15 @@ export async function sendPaymentChargeReceipt(args: {
       // outcome and raises the persistence failure (not the provider
       // failure) to the operator.
       return await reportSettlementFailure({
+        // Retryable covers TIMEOUT and NETWORK errors, so DELIVERY IS
+        // UNKNOWN: Resend may have accepted the email. Clearing this row
+        // without checking the provider first can duplicate a real
+        // client receipt.
+        deliveryUnknown: true,
+        reason: "send_ambiguous_state_not_recorded",
         event: "payment_receipt_release_failed",
         message:
-          "Receipt send failed retryably, but Hone could not release receipt_status back to null. The row is stuck in 'sending' and the receipt cannot be retried until an operator clears it.",
+          "Receipt delivery is UNKNOWN (retryable provider failure: the email may have been accepted) and Hone could not release receipt_status back to null. The row is stuck in 'sending'. Reconcile with the email provider BEFORE clearing this row or sending again.",
         attempt,
         studioId: args.studioId,
         dbError: releaseErr,
@@ -594,6 +634,11 @@ export async function sendPaymentChargeReceipt(args: {
     // what makes a terminal failure operator-visible AND retryable
     // after investigation; without it the row is neither.
     return await reportSettlementFailure({
+      // Terminal means sendEmailSafely never reached delivery (missing
+      // API key, invalid recipient, classified terminal error), so
+      // "not delivered" is a claim we can support.
+      deliveryUnknown: false,
+      reason: "send_failed_state_not_recorded",
       event: "payment_receipt_terminal_record_failed",
       message:
         "Receipt send failed terminally, but Hone could not persist receipt_status='failed'. The row is stuck in 'sending' and the receipt cannot be retried until an operator clears it.",
