@@ -161,7 +161,17 @@ describe("Session payment prepare form wiring", () => {
     expect(cardCode).not.toMatch(/Suggestion from session price/);
     expect(cardCode).not.toMatch(/pricePaidCents != null/);
     expect(CARD).toMatch(/data-testid="pricing-blocked"/);
-    expect(CARD).toMatch(/unresolvedAmountMessage\(amountResult\)/);
+    // Review 3780456783 moved this call into the shared presentation decision
+    // (lib/billing/ready-control-permission), so the card renders the returned
+    // copy instead of recomputing it. The invariant is unchanged: unresolved
+    // pricing yields a calm practitioner reason, never a blank box and never a
+    // historical-price fallback.
+    expect(CARD).toMatch(/presentation\.unresolvedExplanation/);
+    const PERM_MSG = readFileSync(
+      join(process.cwd(), "lib/billing/ready-control-permission.ts"),
+      "utf8",
+    );
+    expect(PERM_MSG).toMatch(/unresolvedAmountMessage\(amountResult\)/);
   });
 
   it("prepare copy is neutral (charge happens on run) and nothing implies the client paid", () => {

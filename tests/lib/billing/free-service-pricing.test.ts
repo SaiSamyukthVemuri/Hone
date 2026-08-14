@@ -148,19 +148,32 @@ describe("FREE-01 no money-moving path", () => {
   });
 
   it("F7 the session prepare card shows a calm free state, never Prepare", () => {
-    expect(CARD).toMatch(/const isFreeNow = amountResult\?\.kind === "free"/);
     expect(CARD).toMatch(/data-testid="payment-not-required"/);
     // Free must not depend on a prepare form being shown: a `ready` attempt
-    // sets showPrepareForm false, and the status panel would still offer
-    // Run charge.
-    expect(CARD).toMatch(/\{isFreeNow && !settledOrInFlightAttempt && \(/);
-    expect(CARD).toMatch(/\{activeAttempt && !readyAttemptIsNowFree && \(/);
+    // sets showPrepareForm false. Review 3780456783 moved these conditions
+    // into the shared presentation decision, so the card reads fields instead
+    // of recomputing them and cannot drift from the rule.
+    expect(CARD).toMatch(/\{presentation\.freeNoticeServiceName !== null && \(/);
+    const PERM_F7 = read("lib/billing/ready-control-permission.ts");
+    // One nullable value now carries both presence and the rendered name.
+    expect(PERM_F7).toMatch(
+      /freeNoticeServiceName:\s*\n?\s*amountResult\?\.kind === "free" && !settledOrInFlight/,
+    );
     // PrepareForm is gated on a strictly `resolved` amount, so free cannot reach it.
-    expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
+    // PrepareForm is gated on a strictly `resolved` amount, so free cannot
+    // reach it. That rule now lives in the shared presentation decision.
+    const PERM_F7b = read("lib/billing/ready-control-permission.ts");
+    expect(PERM_F7b).toMatch(
+      /showPrepareForm && amountResult\?\.kind === "resolved" \? amountResult : null/,
+    );
   });
 
   it("F8 free is not shown as a pricing error", () => {
-    expect(CARD).toMatch(/amountResult\.kind !== "free"/);
+    // The unresolved-explanation branch excludes `free`, so a $0 service never
+    // renders the amber pricing warning. That condition now lives in the
+    // shared decision.
+    const PERM_F8 = read("lib/billing/ready-control-permission.ts");
+    expect(PERM_F8).toMatch(/amountResult\.kind !== "free"/);
   });
 
   it("F9 the prepare action returns before any payment attempt is written", () => {
@@ -191,17 +204,34 @@ describe("FREE-01 no money-moving path", () => {
     // money-moving control, so only `ready` may be hidden. Hiding the others
     // concealed an in-flight charge and removed receipt/refund from a
     // succeeded one.
-    expect(CARD).toMatch(
-      /const readyAttemptIsNowFree =\s*\n?\s*isFreeNow && activeAttempt !== null && activeAttempt\.status === "ready"/,
+    // Review 3780286321 generalised this: freeness is no longer a special
+    // case, it is one of the non-resolved pricing results that withdraw the
+    // ready control. The invariant F10 protects — only `ready` is suppressed,
+    // in-flight and settled survive — is unchanged and now lives in the shared
+    // decision module.
+    // Review 3780371682 corrected the shape: the PANEL is never suppressed by
+    // pricing (a prepared attempt is transaction history), only the READY
+    // charge section is. Both live in the shared decision now.
+    expect(CARD).toMatch(/decideSessionPaymentPresentation\(/);
+    const PERM = read("lib/billing/ready-control-permission.ts");
+    // Review 3780573779 collapsed the duplicate authority: there is no
+    // separate decideReadyControlPermission helper any more. The invariant it
+    // carried — only `ready` has a money-moving control, so pending_stripe and
+    // succeeded are never withdrawn — is now expressed once, in the single
+    // runChargeVisible computation.
+    expect(PERM).toMatch(/const isReady = attemptStatus === "ready"/);
+    expect(PERM).toMatch(
+      /const runChargeVisible = isReady && amountResult\?\.kind === "resolved"/,
     );
-    expect(CARD).toMatch(
-      /const settledOrInFlightAttempt =\s*\n?\s*activeAttempt !== null && activeAttempt\.status !== "ready"/,
-    );
-    // the panel gate must NOT be the blunt one that hid every active status
-    expect(CARD).not.toMatch(/\{activeAttempt && !isFreeNow && \(/);
-    // and "No payment required" must yield to money that has actually moved,
-    // matching the reducer's processing/paid/refunded > free ranking
-    expect(CARD).toMatch(/\{isFreeNow && !settledOrInFlightAttempt && \(/);
+    // Panel visibility is no longer a presentation field at all: an attempt
+    // exists, so it renders. There is nothing pricing could gate it with.
+    expect(codeOnly(PERM)).not.toMatch(/panelVisible/);
+    expect(PERM).toMatch(/const settledOrInFlight = attemptStatus !== null && !isReady/);
+    // the panel must NOT be gated on any pricing state
+    expect(codeOnly(CARD)).not.toMatch(/\{activeAttempt && !isFreeNow && \(/);
+    expect(codeOnly(CARD)).not.toMatch(/\{activeAttempt && !readyAttemptBlocked && \(/);
+    // and "No payment required" still yields to money that has actually moved
+    expect(CARD).toMatch(/\{presentation\.freeNoticeServiceName !== null && \(/);
   });
 
   it("F11 permission is granted ONLY by a currently resolved price", () => {

@@ -10,7 +10,7 @@ import type {
   ResolvedSessionPaymentAmount,
   SessionPaymentAmountResult,
 } from "@/lib/billing/session-payment-amount";
-import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
+import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-permission";
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -254,26 +254,32 @@ export function SessionPaymentPrepareCard({
   // attempt already in `ready` sets showPrepareForm false, so gating the free
   // notice on it left the AttemptStatusPanel still offering Run charge for a
   // visit every other surface now calls "No payment required".
-  const isFreeNow = amountResult?.kind === "free";
-  // Review 3777045537. ACTIVE_STATUSES is {ready, pending_stripe, succeeded},
-  // so suppressing the whole panel whenever the price is now free hid an
-  // IN-FLIGHT charge behind "No payment required" and stripped the receipt and
-  // refund controls off a SUCCEEDED one. Only `ready` carries a money-moving
-  // control, so only `ready` may be suppressed. pending_stripe and succeeded
-  // are transaction state — money that has actually moved — and the
-  // appointment-state reducer deliberately ranks processing/paid/refunded
-  // ABOVE free for exactly this reason. Mirror that ranking here: what the
-  // price says today never overrides what has already happened.
-  const readyAttemptIsNowFree =
-    isFreeNow && activeAttempt !== null && activeAttempt.status === "ready";
-  const settledOrInFlightAttempt =
-    activeAttempt !== null && activeAttempt.status !== "ready";
+  // Reviews 3780456783 / 3780746701. The complete PRICING-DEPENDENT
+  // presentation decision lives in lib/billing/ready-control-permission, and
+  // this component reads its fields rather than interpreting any price itself.
+  // That is the precise claim: the card still owns branches of its own —
+  // attempt existence, status panel dispatch, the previous-terminal callout,
+  // prepareJustSucceeded, the eligibility BlockedPanel and local
+  // submit/pending/error state — none of which interpret a price.
+  // Card-local NARROWING, not a decision. PrepareForm needs the eligible
+  // variant of the eligibility union, and the old
+  // `showPrepareForm && resolvedAmount` gate happened to supply that narrowing
+  // as a side effect. Eligibility is not pricing, so it stays here; whether the
+  // form renders at all is decided by presentation.prepareFormAmount.
+  const eligibleDetails = eligibility.eligible ? eligibility : null;
+
+  const presentation = decideSessionPaymentPresentation({
+    attemptStatus: activeAttempt?.status ?? null,
+    amountResult: amountResult ?? null,
+    showPrepareForm,
+  });
+  // Current pricing governs whether a READY attempt may still act. It never
+  // erases money that has already moved: pending_stripe and succeeded keep
+  // their panel, receipt and refund controls regardless of today's price.
   // F-PAY-001: there is no "suggested" amount any more. Either the server
   // resolved ONE authoritative amount, or preparation is blocked with a reason.
   // The historical session price is NOT a pricing authority and is no longer
   // consulted here.
-  const resolvedAmount =
-    amountResult && amountResult.kind === "resolved" ? amountResult : null;
 
   return (
     <section
@@ -297,9 +303,10 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
-      {activeAttempt && !readyAttemptIsNowFree && (
+      {activeAttempt && (
         <AttemptStatusPanel
           attempt={activeAttempt}
+          runChargeVisible={presentation.runChargeVisible}
           sessionId={sessionId}
           clientId={clientId}
           isOwner={isOwner}
@@ -349,7 +356,7 @@ export function SessionPaymentPrepareCard({
           Preparation is withdrawn entirely — there is no amount to confirm. */}
       {/* A null result means the pricing context itself could not be loaded.
           Never render nothing: say so, and offer no prepare action. */}
-      {showPrepareForm && !amountResult && (
+      {presentation.unavailableExplanationVisible && (
         <p
           data-testid="pricing-blocked"
           className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
@@ -362,32 +369,29 @@ export function SessionPaymentPrepareCard({
           Prepare, never Run charge, and never the amber "pricing blocked"
           warning, because nothing is wrong. Defense in depth: even if a route
           reaches this card directly, there is no money-moving control here. */}
-      {isFreeNow && !settledOrInFlightAttempt && (
+      {presentation.freeNoticeServiceName !== null && (
         <p
           data-testid="payment-not-required"
           className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
         >
-          {amountResult.serviceName} is free · No payment required.
+          {presentation.freeNoticeServiceName} is free · No payment required.
         </p>
       )}
 
-      {showPrepareForm &&
-        amountResult &&
-        amountResult.kind !== "resolved" &&
-        amountResult.kind !== "free" && (
+      {presentation.unresolvedExplanation !== null && (
         <p
           data-testid="pricing-blocked"
           className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
         >
-          {unresolvedAmountMessage(amountResult)}
+          {presentation.unresolvedExplanation}
         </p>
       )}
 
-      {showPrepareForm && resolvedAmount && (
+      {presentation.prepareFormAmount !== null && eligibleDetails && (
         <PrepareForm
           sessionId={sessionId}
-          eligibility={eligibility}
-          amount={resolvedAmount}
+          eligibility={eligibleDetails}
+          amount={presentation.prepareFormAmount}
           pending={preparePending}
           error={prepareError}
           blockingReasons={prepareBlockingReasons}
@@ -483,6 +487,7 @@ function AttemptStatusPanel({
   executeAction,
   sendReceiptAction,
   refundAction,
+  runChargeVisible,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
@@ -491,6 +496,12 @@ function AttemptStatusPanel({
   executeAction: ExecuteAction;
   sendReceiptAction: SendReceiptAction;
   refundAction: RefundAction;
+  // Reviews 3780371682 / 3780573779. THE ready money-control decision, passed
+  // through under its own name from decideSessionPaymentPresentation to
+  // ReadyPanel's render gate. Only the `ready` branch consults it:
+  // pending_stripe and succeeded are transaction state and are never affected
+  // by current pricing.
+  runChargeVisible: boolean;
 }) {
   switch (attempt.status) {
     case "ready":
@@ -501,6 +512,7 @@ function AttemptStatusPanel({
           clientId={clientId}
           isOwner={isOwner}
           executeAction={executeAction}
+          runChargeVisible={runChargeVisible}
         />
       );
     case "pending_stripe":
@@ -538,12 +550,20 @@ function ReadyPanel({
   clientId,
   isOwner,
   executeAction,
+  runChargeVisible,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
   isOwner: boolean;
   executeAction: ExecuteAction;
+  // Reviews 3780371682 / 3780573779. The prepared attempt is TRANSACTION
+  // HISTORY and is always rendered. Only the money-moving section below is
+  // withdrawn when current authoritative pricing is not `resolved` — otherwise
+  // a single prepared payment appeared to vanish while still blocking
+  // preparation. This is the SAME value the presentation decision exposes and
+  // the tests assert, under the same name the whole way down.
+  runChargeVisible: boolean;
 }) {
   const [confirmExecute, setConfirmExecute] = useState(false);
   const [executePending, startExecuteTransition] = useTransition();
@@ -593,7 +613,11 @@ function ReadyPanel({
         }
       />
 
-      <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+      {runChargeVisible && (
+      <div
+        data-testid="ready-charge-section"
+        className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30"
+      >
         <p className="text-[11px] font-medium uppercase tracking-wider text-amber-900 dark:text-amber-200">
           Charge client
         </p>
@@ -663,6 +687,7 @@ function ReadyPanel({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
