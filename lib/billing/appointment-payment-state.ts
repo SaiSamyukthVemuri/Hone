@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
 import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 import { todayInTz } from "@/lib/booking/tz";
 
@@ -205,6 +206,24 @@ export async function getAppointmentPaymentStates(
   }
 
   // 2) session_payment attempts for those sessions. One bounded query.
+  //
+  // R-05 / REL-005. Mode-scoped, for the same reason every other payment read
+  // is (0103 settings, 0104 cards, 0105 attempts). Migration 0105 deliberately
+  // rescoped payment_charge_attempts_active_session_payment_uniq to
+  // (session_id, stripe_livemode), so one TEST and one LIVE attempt may
+  // legitimately coexist for the same session. This read had no mode
+  // predicate, so `deriveAppointmentPaymentState` -- which returns on the FIRST
+  // succeeded row and never looks at mode -- let pre-launch TEST history decide
+  // a LIVE badge: a refunded test-mode attempt rendered "Refunded", a succeeded
+  // one "Paid", an abandoned pending_stripe one a permanent "Processing", and
+  // each of those suppressed Checkout on a chargeable appointment. The
+  // session-detail surface has always read this ledger mode-scoped, so the two
+  // surfaces could contradict each other.
+  //
+  // Scoped to the DEPLOYMENT mode (not the row's) because this loader answers
+  // "what should this deployment show?", matching lib/dashboard/practice-metrics
+  // and lib/billing/session-payment-eligibility. Read-only: prepare and execute
+  // remain the authoritative money path and are untouched.
   let attemptsUntrusted = false;
   const attemptsByAppt = new Map<string, AttemptRow[]>();
   const sessionIds = [...sessionToAppt.keys()];
@@ -214,6 +233,7 @@ export async function getAppointmentPaymentStates(
       .select("session_id, status, refund_status")
       .eq("studio_id", studioId)
       .eq("charge_reason", "session_payment")
+      .eq("stripe_livemode", inferStripeLivemode())
       .in("session_id", sessionIds);
     if (attemptError) attemptsUntrusted = true;
     for (const a of (attemptRows ?? []) as Array<{
