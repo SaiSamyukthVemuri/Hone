@@ -26,6 +26,17 @@ import path from "node:path";
 //   gate; tests added here are spot checks, not a comprehensive
 //   harness.
 export default defineConfig({
+  // The repo tsconfig sets `jsx: "preserve"` because the NEXT compiler owns the
+  // JSX transform. Vitest reads that too, so importing a .tsx component into a
+  // test fails to parse. Declaring the transform here (test harness only; the
+  // Next build is untouched) lets a test render a component through
+  // react-dom/server and assert on real OUTPUT instead of grepping its source.
+  // Used by tests/app/reliability/authenticated-error-boundary.test.ts.
+  //
+  // `oxc`, not `esbuild`: Vite 8 transforms with oxc and IGNORES esbuild
+  // options when both are present (it warns, then proceeds, so an esbuild entry
+  // here would look configured while doing nothing).
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
