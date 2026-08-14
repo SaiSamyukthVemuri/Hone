@@ -232,7 +232,9 @@ describe("service value wording (live payments disabled)", () => {
     expect(SNAPSHOT).toMatch(/label="Live payments" value=\{livemode \? "On" : "Off"\}/);
     expect(SNAPSHOT).toMatch(/label="Test payments" value="Available"/);
     expect(SNAPSHOT).toMatch(/Test mode only/);
-    expect(SNAPSHOT).toMatch(/Test payments prepared/);
+    // DASH-TRUTH-03: the prepared row is gone — preparing a payment is
+    // plumbing, not a practice KPI. The outcome rows stay.
+    expect(SNAPSHOT).not.toMatch(/Test payments prepared/);
     expect(SNAPSHOT).toMatch(/Test payments charged/);
     expect(SNAPSHOT).toMatch(/Test refunds/);
   });
@@ -241,7 +243,8 @@ describe("service value wording (live payments disabled)", () => {
     // The heading and all three metric labels are ternaries on livemode —
     // live counts are never displayed under "Test mode only" copy.
     expect(SNAPSHOT).toMatch(/\{livemode \? "Live payments" : "Test mode only"\}/);
-    expect(SNAPSHOT).toMatch(/livemode \? "Payments prepared" : "Test payments prepared"/);
+    // DASH-TRUTH-03: no prepared label in either mode.
+    expect(SNAPSHOT).not.toMatch(/Payments prepared/);
     expect(SNAPSHOT).toMatch(/livemode \? "Payments charged" : "Test payments charged"/);
     expect(SNAPSHOT).toMatch(/livemode \? "Refunds" : "Test refunds"/);
     // The test-only status/revenue claims are hidden in live.

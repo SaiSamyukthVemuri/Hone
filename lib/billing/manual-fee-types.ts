@@ -8,6 +8,35 @@
 
 export type ManualFeeChargeType = "late_cancel" | "no_show";
 
+// Review 3777890257. The charge_reason values a MANUAL-FEE endpoint is
+// authorized to execute.
+//
+// This is deliberately NOT the same question as the global live-mode
+// allowlist. That module answers "which charge reasons may be charged in this
+// deployment mode?" and correctly permits `session_payment`, because ordinary
+// live session payments are allowed. It does not answer "which charge reasons
+// is THIS server action allowed to execute", and conflating the two let an
+// authenticated caller post a ready `session_payment` attempt id to the
+// manual-fee action and reach the shared runner without the current-price
+// permission gate — reopening the stale prepared-amount bypass.
+//
+// Endpoint authority is per-endpoint. `session_payment` belongs exclusively to
+// the session-payment execution action, where pricing permission is enforced.
+export const MANUAL_FEE_CHARGE_REASONS = [
+  "no_show_fee",
+  "late_cancellation_fee",
+] as const;
+
+export type ManualFeeChargeReason = (typeof MANUAL_FEE_CHARGE_REASONS)[number];
+
+export function isManualFeeChargeReason(
+  reason: string | null | undefined,
+): reason is ManualFeeChargeReason {
+  return (
+    reason === "no_show_fee" || reason === "late_cancellation_fee"
+  );
+}
+
 // Launch ceiling for any single manual fee. Enforced by the column
 // CHECK on studios.late_cancel_fee_cents / studios.no_show_fee_cents
 // and again by the column CHECK on manual_fee_charge_attempts. The

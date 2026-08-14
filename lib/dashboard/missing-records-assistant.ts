@@ -1,3 +1,4 @@
+import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
 import { createClient } from "@/lib/supabase/server";
 
 // Missing Records / Follow-up Assistant V1 (PR #249). The SECOND
@@ -31,8 +32,7 @@ export type MissingRecordType =
   | "charting"
   | "aftercare"
   | "probe_lot"
-  | "intake"
-  | "follow_up";
+  | "intake";
 
 // 1 = most worth finishing first. Matches the spec ordering.
 export type MissingRecordPriority = 1 | 2 | 3 | 4 | 5;
@@ -76,8 +76,6 @@ export type RecordedSession = {
   hasTreatmentArea: boolean;
   aftercareMarked: boolean;
   probeLotMissing: boolean;
-  nextVisitNote: string | null;
-  hasUpcomingAppointment: boolean;
 };
 
 export type IncompleteIntake = {
@@ -100,7 +98,9 @@ export type MissingRecordsAssistant = {
   totalFound: number;
 };
 
-const DEFAULT_LIMIT = 6;
+// DASH-TRUTH-02: return enough rows for the Dashboard disclosure to be real.
+// Bounded; the SESSION_SCAN_CAP / COMPLETED_APPT_CAP scans are unchanged.
+const DEFAULT_LIMIT = TODO_DISCLOSURE_LIMIT;
 
 function clientHref(clientId: string): string {
   return `/clients/${clientId}`;
@@ -169,20 +169,13 @@ export function buildMissingRecordsAssistant(
         chip: "Probe lot missing",
       });
     }
-    if (s.nextVisitNote?.trim() && !s.hasUpcomingAppointment) {
-      candidates.push({
-        id: `follow_up:${s.sessionId}`,
-        type: "follow_up",
-        priority: 5,
-        clientId: s.clientId,
-        clientName: s.clientName,
-        reason: "For-next-visit note recorded, but no upcoming appointment.",
-        date: s.startedAt,
-        href: clientHref(s.clientId),
-        actionLabel: "Open client",
-        chip: "Follow-up",
-      });
-    }
+    // DASH-TRUTH-01: a recorded for-next-visit note with no upcoming
+    // appointment is NOT a missing record. It is clinical memory the
+    // practitioner wrote deliberately, and whether to rebook is their call, not
+    // an outstanding task this assistant should manufacture. The note itself is
+    // untouched (sessions.next_session_note) and still surfaces in Today →
+    // Before today → Remember, Treatment Memory, appointment prep and history.
+    // The `follow_up` candidate that used to be pushed here is gone.
   }
 
   for (const i of input.incompleteIntakes) {
@@ -246,7 +239,6 @@ type SessionScanRow = {
   id: string;
   client_id: string;
   started_at: string;
-  next_session_note: string | null;
   aftercare_and_risks_explained_at: string | null;
   client:
     | { id: string; name: string; archived_at: string | null }
@@ -281,7 +273,7 @@ export async function getMissingRecordsAssistant(
   const { data: sessRows } = await supabase
     .from("sessions")
     .select(
-      "id, client_id, started_at, next_session_note, aftercare_and_risks_explained_at, client:clients(id, name, archived_at)",
+      "id, client_id, started_at, aftercare_and_risks_explained_at, client:clients(id, name, archived_at)",
     )
     .eq("studio_id", studioId)
     .is("deleted_at", null)
@@ -353,28 +345,19 @@ export async function getMissingRecordsAssistant(
     }
   }
 
-  // 4) Upcoming appointments for clients that have a for-next-visit note,
-  //    so the follow-up gap only fires when nothing is on the calendar.
-  const followUpClientIds = [
-    ...new Set(
-      sessions
-        .filter((s) => s.row.next_session_note?.trim())
-        .map((s) => s.row.client_id),
-    ),
-  ];
-  const upcomingClientIds = new Set<string>();
-  if (followUpClientIds.length > 0) {
-    const { data: futureRows } = await supabase
-      .from("appointments")
-      .select("client_id")
-      .eq("studio_id", studioId)
-      .in("client_id", followUpClientIds)
-      .gte("starts_at", nowUtcIso)
-      .neq("status", "cancelled");
-    for (const r of (futureRows ?? []) as Array<{ client_id: string }>) {
-      upcomingClientIds.add(r.client_id);
-    }
-  }
+  // Review 3779063526. The follow-up gap ("a plan exists but nothing is on the
+  // calendar") was retired with the `follow_up` To-do kind: a plan for the next
+  // visit is clinical memory, not unresolved work, so not having rebooked yet
+  // is not a task. Its plumbing outlived it — this loader still selected
+  // next_session_note, derived follow-up client ids and ran an extra
+  // appointments query, then carried nextVisitNote and hasUpcomingAppointment
+  // into RecordedSession that nothing read. That cost a database round trip on
+  // every dashboard whose recent sessions contain plans, and kept transporting
+  // plan TEXT through the To-do loader. All of it is removed here.
+  //
+  // The column and the note itself are untouched: Today → Remember, Treatment
+  // Memory, appointment prep, session/client history and the clinical-summary
+  // loaders all read sessions.next_session_note directly and are unaffected.
 
   // 5) Intake status for clients in the session scan: flag in_progress
   //    only ("intake incomplete"). Submitted is "awaiting review", already
@@ -424,8 +407,6 @@ export async function getMissingRecordsAssistant(
       hasTreatmentArea: blocks.length > 0,
       aftercareMarked: s.row.aftercare_and_risks_explained_at != null,
       probeLotMissing: blocks.length > 0 && lotsMissing > 0,
-      nextVisitNote: s.row.next_session_note,
-      hasUpcomingAppointment: upcomingClientIds.has(s.row.client_id),
     };
   });
 

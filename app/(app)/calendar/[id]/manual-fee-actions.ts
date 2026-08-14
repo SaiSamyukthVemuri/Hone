@@ -9,6 +9,7 @@ import {
   MANUAL_FEE_INTERNAL_NOTE_MAX_LENGTH,
   type ManualFeeChargeType,
 } from "@/lib/billing/manual-fee-eligibility";
+import { isManualFeeChargeReason } from "@/lib/billing/manual-fee-types";
 import { runSessionPaymentCharge } from "@/lib/billing/session-payment-charge";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 
@@ -289,25 +290,57 @@ export async function chargeManualFeeAttemptAction(
     };
   }
 
-  // Launch hard hold (defense-in-depth): in LIVE mode, manual no-show /
-  // late-cancellation fee execution is on hold. Prepare already refuses via
-  // eligibility, but re-check at execute so a pre-existing `ready` row can
-  // never be charged live. Read-only reason lookup, scoped to this studio.
+  // ENDPOINT AUTHORITY (review 3777890257). This is a MANUAL-FEE endpoint, so
+  // it may execute manual-fee attempts and nothing else.
+  //
+  // The global live-mode allowlist deliberately permits `session_payment`,
+  // because ordinary live session payments are allowed — it answers "which
+  // reasons may be charged in this deployment mode", not "which reasons may
+  // THIS action execute". Relying on it here meant an authenticated caller
+  // could post a ready `session_payment` attempt id to this action and reach
+  // the shared runner with no current-price permission check, reopening the
+  // stale prepared-amount bypass. That held in TEST mode too.
+  //
+  // The reason is read from the ROW, never from FormData: the browser does not
+  // get to declare which execution flow it wants.
+  //
+  // The read is FAIL-CLOSED. The previous `if (attemptForHold?.charge_reason)`
+  // skipped the whole hold check whenever the read failed or the row was
+  // missing, which is the same fail-open shape this PR has already closed
+  // twice elsewhere. Copy stays generic so a foreign or non-existent attempt
+  // is indistinguishable to the caller.
   const admin = createAdminClient();
-  const { data: attemptForHold } = await admin
+  const { data: attemptRow, error: attemptRowError } = await admin
     .from("payment_charge_attempts")
     .select("charge_reason")
     .eq("id", attemptId)
     .eq("studio_id", studioId)
     .maybeSingle();
-  if (attemptForHold?.charge_reason) {
-    const hold = liveChargeReasonBlockMessage(
-      attemptForHold.charge_reason,
-      inferStripeLivemode(),
-    );
-    if (hold) {
-      return { ok: false, outcome: "blocked", error: hold };
-    }
+  if (attemptRowError || !attemptRow) {
+    return {
+      ok: false,
+      outcome: "not_found",
+      error: GENERIC_PRACTITIONER_ERROR,
+    };
+  }
+  if (!isManualFeeChargeReason(attemptRow.charge_reason)) {
+    return {
+      ok: false,
+      outcome: "not_found",
+      error: GENERIC_PRACTITIONER_ERROR,
+    };
+  }
+
+  // Launch hard hold (defense-in-depth): in LIVE mode, manual no-show /
+  // late-cancellation fee execution is on hold. Prepare already refuses via
+  // eligibility, but re-check at execute so a pre-existing `ready` row can
+  // never be charged live.
+  const hold = liveChargeReasonBlockMessage(
+    attemptRow.charge_reason,
+    inferStripeLivemode(),
+  );
+  if (hold) {
+    return { ok: false, outcome: "blocked", error: hold };
   }
 
   // PR #196: fee attempts execute through the unified canonical

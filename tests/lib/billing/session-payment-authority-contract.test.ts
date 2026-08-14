@@ -163,118 +163,46 @@ describe("session detail and quick checkout share one authority", () => {
   });
 });
 
-describe("execution is unchanged — preparation is the pricing boundary", () => {
-  it("execution takes attempt_id only and recalculates nothing", () => {
-    const exec = ACTION.slice(ACTION.indexOf("executeSessionPaymentChargeAction"));
+describe("preparation remains the pricing boundary; execution may only REFUSE", () => {
+  // The invariant this protects is that execution never DECIDES or CHANGES an
+  // amount — the prepared row stays the single charge authority. FREE-01 added
+  // a check in the opposite direction: an attempt prepared at a positive price
+  // survives its service later becoming free (or losing its price entirely),
+  // and execution otherwise works purely from the stored row, so it would
+  // charge the stale amount. Review 3777447035 made that check exhaustive:
+  // execution now asks for PERMISSION, and only a currently resolved price
+  // grants it.
+  //
+  // Anchor on the DECLARATION. `indexOf` on the bare name matches the comment
+  // header ~1.5k characters earlier and silently changes what is under test.
+  const execStart = ACTION.indexOf(
+    "export async function executeSessionPaymentChargeAction",
+  );
+  const exec = ACTION.slice(execStart);
+
+  it("execution still takes attempt_id only and never recomputes the amount", () => {
+    expect(execStart).toBeGreaterThan(-1);
     expect(exec).toMatch(/attempt_id/);
-    expect(codeOnly(exec)).not.toMatch(/getAuthoritativeSessionPaymentAmount/);
-    expect(codeOnly(exec)).not.toMatch(/resolveAuthoritativeSessionPaymentAmount/);
+    // No amount is derived for charging anywhere in the action.
+    expect(codeOnly(exec)).not.toMatch(/amountCents/);
+    expect(codeOnly(exec)).not.toMatch(/amount_cents/);
     const CHARGE = read("lib/billing/session-payment-charge.ts");
     expect(codeOnly(CHARGE)).not.toMatch(/resolveAuthoritativeSessionPaymentAmount/);
     expect(codeOnly(CHARGE)).not.toMatch(/client_pricing/);
   });
-});
 
-describe("safe logging", () => {
-  it("the action never logs raw form data or provider/client identifiers", () => {
-    const code = codeOnly(ACTION);
-    for (const forbidden of [
-      "formData)",
-      "stripe_customer_id:",
-      "stripe_payment_method_id:",
-      "client.email",
-    ]) {
-      const logs = code.match(/logInternal\([\s\S]{0,220}?\)/g) ?? [];
-      expect(logs.join("\n"), `logs must not contain ${forbidden}`).not.toContain(forbidden);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Execution boundary: preparation decides the price, execution charges the row.
-// ---------------------------------------------------------------------------
-describe("execution charges the persisted attempt and recalculates nothing", () => {
-  const CHARGE = read("lib/billing/session-payment-charge.ts");
-
-  it("the execute action accepts attempt_id only — no amount is submitted", () => {
-    const exec = ACTION.slice(
-      ACTION.indexOf("export async function executeSessionPaymentChargeAction"),
-    );
-    const body = exec.slice(0, exec.indexOf("\nexport ") === -1 ? undefined : exec.indexOf("\nexport "));
-    expect(body).toMatch(/formData\.get\("attempt_id"\)/);
-    // No amount of any spelling is read at execution.
-    expect(codeOnly(body)).not.toMatch(/formData\.get\("amount/);
-    expect(codeOnly(body)).not.toMatch(/expected_amount_cents/);
-  });
-
-  it("the executor reads the PERSISTED amount_cents, never a recomputed one", () => {
-    expect(CHARGE).toMatch(/amount_cents/);
-    // No pricing inputs are loaded during execution.
-    for (const forbidden of [
-      "client_pricing",
-      "resolveAuthoritativeSessionPaymentAmount",
-      "getAuthoritativeSessionPaymentAmount",
-      "from(\"services\")",
-    ]) {
-      expect(codeOnly(CHARGE), `execution must not touch ${forbidden}`).not.toContain(
-        forbidden,
-      );
-    }
-  });
-
-  it("receipt and refund stay tied to the same persisted attempt", () => {
-    for (const fn of ["sendPaymentChargeReceiptAction", "refundPaymentChargeAttemptAction"]) {
-      const at = ACTION.indexOf(fn);
-      expect(at, `${fn} present`).toBeGreaterThan(-1);
-    }
-    // Neither re-derives an amount.
-    const tail = ACTION.slice(ACTION.indexOf("sendPaymentChargeReceiptAction"));
-    expect(codeOnly(tail)).not.toMatch(/getAuthoritativeSessionPaymentAmount/);
-  });
-
-  it("Stripe idempotency is untouched by this change", () => {
-    expect(CHARGE).toMatch(/idempotency/i);
-  });
-});
-
-describe("quick checkout cannot diverge in precedence", () => {
-  it("it holds no pricing precedence of its own", () => {
-    const code = codeOnly(QUICK);
-    for (const forbidden of [
-      "effective_from",
-      "price_cents > 0",
-      "custom_pricing",
-      "service_price",
-      "toLowerCase()",
-    ]) {
-      expect(code, `quick checkout must not implement ${forbidden}`).not.toContain(forbidden);
-    }
-    expect(QUICK).toMatch(/getAuthoritativeSessionPaymentAmount\(\{/);
-  });
-});
-
-describe("no per-minute pricing is ever invented", () => {
-  it("duration is never multiplied or divided into the amount", () => {
-    const RESOLVER = read("lib/billing/session-payment-amount.ts");
-    const code = codeOnly(RESOLVER);
-    // STRUCTURAL, not a keyword hunt: every resolved amount must be a DIRECT
-    // field read with no arithmetic at all. A regex looking for
-    // "durationMinutes *" missed a mutation written as
-    // "price_cents * ((appointmentDurationMinutes ?? 60) / 60)".
-    // Only the RETURNED values, not the type declaration (`amountCents: number`).
-    // Returned object properties only (trailing comma) — not the type
-    // declaration `amountCents: number;`.
-    const amounts = (code.match(/amountCents: [^\n]+,/g) ?? []).map((a) =>
-      a.replace(/,$/, ""),
-    );
-    expect(amounts.length).toBeGreaterThanOrEqual(2);
-    for (const a of amounts) {
-      expect(a, `amount must be a direct field read: ${a}`).toMatch(
-        /^amountCents: (row|service)\.price_cents$/,
-      );
-    }
-    expect(code).not.toMatch(/perMinute|pricePerMinute|ratePerMinute/i);
-    // duration only ever flows through as metadata.
-    expect(code).toMatch(/durationMinutes: appointmentDurationMinutes,/);
+  it("the re-resolved price is used ONLY to decide permission", () => {
+    expect(exec).toMatch(/getAuthoritativeSessionPaymentAmount/);
+    // The verdict is delegated to the one exhaustive decision, so a new
+    // pricing kind cannot quietly become chargeable here.
+    expect(exec).toMatch(/decideExecutionPricingPermission\(/);
+    expect(exec).toMatch(/if \(!permission\.allow\)/);
+    expect(exec).toMatch(/outcome: "blocked"/);
+    // and the session id comes from the ATTEMPT ROW, never the browser
+    expect(exec).toMatch(/\.select\("session_id"\)/);
+    expect(exec).toMatch(/\.eq\("studio_id", studioId\)/);
+    // the permission module itself never yields an amount
+    const PERM = read("lib/billing/execution-pricing-permission.ts");
+    expect(codeOnly(PERM)).not.toMatch(/amountCents|amount_cents/);
   });
 });

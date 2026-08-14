@@ -37,7 +37,23 @@ export type AuthoritativeAmountContext = {
 export type AuthoritativeAmountLoadFailure =
   | { kind: "session_not_found" }
   | { kind: "no_linked_appointment" }
-  | { kind: "appointment_lineage_mismatch" };
+  | { kind: "appointment_lineage_mismatch" }
+  // Review 3777890267. A database READ FAILURE is not an empty result.
+  //
+  // Every read below used to destructure `data` only, so a failed query was
+  // indistinguishable from "no rows". For client_pricing that was money-moving
+  // and fail-OPEN: a client with two conflicting current custom prices should
+  // resolve to `ambiguous_custom_pricing` and BLOCK, but if that SELECT failed,
+  // `pricingRows ?? []` became an empty pricing set, the resolver fell back to
+  // the positive menu price, and the result was a confident `resolved` that
+  // authorized charging a stale prepared attempt.
+  //
+  // `stage` is for logs and tests only; it never reaches the practitioner and
+  // never carries a Postgres/PostgREST payload.
+  | {
+      kind: "read_failed";
+      stage: "session" | "appointment" | "client_pricing";
+    };
 
 export type AuthoritativeAmountLoad =
   | ({ ok: true } & AuthoritativeAmountContext)
@@ -51,13 +67,16 @@ export async function getAuthoritativeSessionPaymentAmount(args: {
   const supabase = await createClient();
 
   // 1. The session, scoped to the studio and required to be live.
-  const { data: sessionRow } = await supabase
+  const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
     .select("id, client_id, appointment_id, deleted_at")
     .eq("id", args.sessionId)
     .eq("studio_id", args.studioId)
     .is("deleted_at", null)
     .maybeSingle();
+  if (sessionError) {
+    return { ok: false, failure: { kind: "read_failed", stage: "session" } };
+  }
   if (!sessionRow) return { ok: false, failure: { kind: "session_not_found" } };
 
   const appointmentId = (sessionRow.appointment_id as string | null) ?? null;
@@ -68,7 +87,7 @@ export async function getAuthoritativeSessionPaymentAmount(args: {
   // 2. The appointment, by sessions.appointment_id, with FULL lineage in the
   //    predicate: same studio AND the session's own client. A mismatch yields
   //    no row rather than a price for somebody else's booking.
-  const { data: apptRow } = await supabase
+  const { data: apptRow, error: apptError } = await supabase
     .from("appointments")
     // BARE-TABLE embed WITHOUT selecting the service's studio_id. Migration
     // 0151 replaced the single-column appointments.service_id FK with a
@@ -81,6 +100,9 @@ export async function getAuthoritativeSessionPaymentAmount(args: {
     .eq("studio_id", args.studioId)
     .eq("client_id", sessionRow.client_id as string)
     .maybeSingle();
+  if (apptError) {
+    return { ok: false, failure: { kind: "read_failed", stage: "appointment" } };
+  }
   if (!apptRow) {
     return { ok: false, failure: { kind: "appointment_lineage_mismatch" } };
   }
@@ -101,11 +123,20 @@ export async function getAuthoritativeSessionPaymentAmount(args: {
     svc && svc.name ? { name: svc.name, price_cents: svc.price_cents ?? null } : null;
 
   // 4. Current client-specific pricing for this client, studio-scoped.
-  const { data: pricingRows } = await supabase
+  const { data: pricingRows, error: pricingError } = await supabase
     .from("client_pricing")
     .select("service_name, price_cents, notes, effective_from")
     .eq("studio_id", args.studioId)
     .eq("client_id", sessionRow.client_id as string);
+  // The resolver must never be called with a pricing set we are not sure is
+  // complete. Zero rows is a valid answer (no custom pricing); a failed read
+  // is not an answer at all.
+  if (pricingError) {
+    return {
+      ok: false,
+      failure: { kind: "read_failed", stage: "client_pricing" },
+    };
+  }
 
   // 5. ONE call into the pure resolver, with the studio-local date injected.
   const result = resolveAuthoritativeSessionPaymentAmount({
@@ -135,5 +166,9 @@ export function loadFailureMessage(f: AuthoritativeAmountLoadFailure): string {
       return "This session is not linked to a booked appointment, so there is no service price to charge.";
     case "appointment_lineage_mismatch":
       return "This session's appointment could not be verified. Refresh and try again.";
+    case "read_failed":
+      // Deliberately generic and identical for every stage: the practitioner
+      // needs to know it is unconfirmed and retryable, not which query failed.
+      return "The current payment amount could not be confirmed. Refresh and try again.";
   }
 }

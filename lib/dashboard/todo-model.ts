@@ -50,7 +50,6 @@ export type TodoKind =
   | "aftercare"
   | "probe_lot"
   | "intake_incomplete"
-  | "follow_up"
   // Clinical treatment memory (previously the "Action needed" attention list).
   | "treatment_memory"
   // Record-keeping completeness roll-up (previously the "Action needed" tiles).
@@ -134,7 +133,6 @@ export const TODO_PRIORITY: Record<TodoKind, number> = {
   aftercare: 21,
   probe_lot: 22,
   intake_incomplete: 23,
-  follow_up: 24,
   treatment_memory: 30,
   records_details: 32,
   payment_setup: 40,
@@ -194,6 +192,20 @@ export type BuildDashboardTodoInput = {
   todayLocal: string;
 };
 
+// DASH-TRUTH-02: how many normalized To-do rows the loaders hand to the model.
+//
+// The list shows a compact page and discloses the rest with a real "Show N
+// more" control, so those rows must ACTUALLY be loaded — a toggle over rows
+// that were never fetched would be a lie. This is a bounded ceiling on rows
+// RETURNED, not on rows scanned: the underlying safety scan caps
+// (SCAN_CAP / SESSION_SCAN_CAP / COMPLETED_APPT_CAP) are untouched, so no query
+// becomes unbounded. Rows a scan cap genuinely never saw were never counted,
+// which is why the disclosure count can only ever name rows it can render.
+export const TODO_DISCLOSURE_LIMIT = 50;
+
+// How many rows are visible before the practitioner expands the list.
+export const TODO_COMPACT_COUNT = 8;
+
 export type DashboardTodo = {
   items: DashboardTodoItem[];
   hasItems: boolean;
@@ -212,7 +224,6 @@ const ASSISTANT_KIND: Record<string, TodoKind> = {
   aftercare: "aftercare",
   probe_lot: "probe_lot",
   intake: "intake_incomplete",
-  follow_up: "follow_up",
 };
 
 /**
@@ -235,18 +246,13 @@ const ASSISTANT_KIND: Record<string, TodoKind> = {
  *    for the same client's unresolved aftercare no matter how many sources
  *    later learn to report it.
  *
- * 2. One cross-kind rule, for the one genuine cross-source overlap:
- *    `treatment_memory` vs `follow_up`. "Clients needing attention" includes a
- *    client because their newest session carries a watch note, a
- *    plan-for-next-visit, or a notable reaction. The assistant's `follow_up`
- *    fires on the SAME plan note, additionally knowing nothing is booked. When
- *    a client's treatment-memory row rests on the plan note ALONE, the two rows
- *    are the same unresolved fact and `follow_up` — which is strictly more
- *    informed — is kept.
- *
- *    If the treatment-memory row ALSO carries a watch note or a notable
- *    reaction, both rows survive: those are genuinely separate unresolved
- *    facts and collapsing them would hide clinical information.
+ * 2. No cross-kind rule is needed any more. It used to reconcile
+ *    `treatment_memory` against `follow_up`, because both fired on the same
+ *    plan-for-next-visit note. DASH-TRUTH-01 established that a plan is
+ *    clinical memory rather than unresolved work, so neither the `follow_up`
+ *    row nor the plan-derived reason is produced at all. "Clients needing
+ *    attention" now contributes a row only for a watch note or a notable
+ *    reaction — genuinely separate unresolved facts.
  *
  * WHAT IS DELIBERATELY *NOT* COLLAPSED:
  *   - `intake_incomplete` (intake started, never submitted) and
@@ -358,7 +364,14 @@ export function buildDashboardTodo(
   for (const c of input.attention.clients) {
     const reasons: string[] = [];
     if (c.hasWatch) reasons.push("Watch note");
-    if (c.hasPlan) reasons.push("Plan for next visit");
+    // DASH-TRUTH-01: a stored plan for the next visit is CLINICAL MEMORY, not
+    // unresolved work. It is not a task merely because no follow-up appointment
+    // has been booked yet — the practitioner decides when to rebook, and the
+    // plan is already surfaced where it is useful (Today → Before today →
+    // Remember, Treatment Memory, appointment prep, session/client history).
+    // `c.hasPlan` is deliberately NOT a reason here. The client can still
+    // appear below on a Watch note or a notable reaction, and the plan text
+    // must not ride along in that reason line.
     if (c.notableReactionLabel) {
       reasons.push(`Latest recorded reaction: ${c.notableReactionLabel}`);
     }
@@ -382,7 +395,10 @@ export function buildDashboardTodo(
       detail: detail || null,
       action: { href: `/clients/${c.clientId}`, label: "Open client" },
       priority: TODO_PRIORITY.treatment_memory,
-      occurredAt: c.latestDate,
+      // Review 3779063515. The To-do sort also orders by occurredAt, so this
+      // must be the attention SIGNAL's date, not the client's newest session —
+      // otherwise a plan-only session reorders the To-do list too.
+      occurredAt: c.attentionDate,
       tone: "normal",
     });
   }
@@ -449,22 +465,11 @@ export function buildDashboardTodo(
     deduped.push(item);
   }
 
-  // Cross-kind rule: drop a treatment-memory row that rests on the plan note
-  // ALONE when the better-informed follow_up row for the same client survived.
-  const followUpClientIds = new Set(
-    deduped
-      .filter((i) => i.kind === "follow_up")
-      .map((i) => i.subject.id),
-  );
-  const planOnlyReason = "Plan for next visit";
-  const final = deduped.filter(
-    (i) =>
-      !(
-        i.kind === "treatment_memory" &&
-        i.reason === planOnlyReason &&
-        followUpClientIds.has(i.subject.id)
-      ),
-  );
+  // DASH-TRUTH-01: the old cross-kind rule dropped a treatment-memory row that
+  // rested on the plan note ALONE when a `follow_up` row for the same client
+  // survived. Both halves are gone — a plan is never a reason for inclusion, and
+  // `follow_up` is no longer generated — so there is nothing left to reconcile.
+  const final = deduped;
 
   // What the sources capped away. Never negative, even if a source ever
   // reports a total smaller than the page it returned.

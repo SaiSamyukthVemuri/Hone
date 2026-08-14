@@ -137,9 +137,18 @@ describe("PR #174 patch: activeAttempt vs latestHistoricalAttempt", () => {
   });
 
   it("AttemptStatusPanel is only rendered for activeAttempt (not for terminal-non-success rows)", () => {
+    // PR #174's invariant — the panel keys off `activeAttempt`, never
+    // `latestAttempt`, so a terminal-non-success row cannot resurrect it — is
+    // unchanged. FREE-01 (review 3777045531) added ONE further suppression in
+    // the same direction: an attempt prepared at a positive price whose service
+    // has since become $0 must not keep offering Run charge. That narrows the
+    // condition; it can never widen it, because the `activeAttempt` conjunct
+    // still has to hold.
     expect(CARD).toMatch(
-      /\{activeAttempt && \(\s*\n?\s*<AttemptStatusPanel/,
+      /\{activeAttempt && !readyAttemptIsNowFree && \(\s*\n?\s*<AttemptStatusPanel/,
     );
+    // the gate is still activeAttempt-based, not latestAttempt-based
+    expect(CARD).not.toMatch(/\{latestAttempt && [\s\S]{0,80}<AttemptStatusPanel/);
   });
 
   it("renders a PreviousTerminalCallout for failed / cancelled / blocked latest rows when no active attempt", () => {

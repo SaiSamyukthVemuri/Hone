@@ -249,18 +249,18 @@ test("core memory loop: booking to next-appointment memory", async ({
     ).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Send feedback" })).toHaveCount(0);
 
-    // The quiet "Was this useful?" prompts SURVIVE — they are the reason the
-    // shared buildPilotFeedbackMailto helper was kept rather than deleted with
-    // the card. Still manual mailto: links only, and the href still carries no
-    // client/treatment/system-sensitive data.
-    await expect(page.getByText("Was this useful?").first()).toBeVisible();
-    const feedbackYes = page.getByRole("link", { name: "Yes", exact: true }).first();
-    await expect(feedbackYes).toBeVisible();
-    const href = (await feedbackYes.getAttribute("href")) ?? "";
-    expect(href.startsWith("mailto:hello@hone.care?")).toBe(true);
-    expect(href).not.toMatch(
-      /client|phone|address|tolerance|probe|aftercare|exposure|stripe|payment|token|audit/i,
-    );
+    // DASH-TRUTH-04 finished the cleanup the card removal started: the quiet
+    // "Was this useful?" footers are gone from the Dashboard too. The daily
+    // product no longer routes practitioner feedback to the founder, so there
+    // is no pilot-feedback affordance left on this page at all.
+    //
+    // Asserted narrowly and by its own copy — deliberately NOT a bare absence
+    // of "Yes", which is a common word that a future unrelated control could
+    // legitimately use.
+    await expect(page.getByText("Was this useful?")).toHaveCount(0);
+    await expect(
+      page.locator('a[href^="mailto:hello@hone.care"]'),
+    ).toHaveCount(0);
   });
 
   await test.step("Record Keeping shows the procedure record, filtered print works", async () => {

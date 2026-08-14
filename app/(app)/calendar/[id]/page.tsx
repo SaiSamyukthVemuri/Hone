@@ -205,8 +205,10 @@ export default async function AppointmentDetailPage({
   // bounded loader + cell the dashboard uses (one flow, not two).
   const checkoutPaymentState =
     typedStatus === "completed"
-      ? (await getAppointmentPaymentStates(studio.id, [id])).get(id) ??
-        "no_session"
+      ? (await getAppointmentPaymentStates(studio.id, [id], studio.timezone)).get(id) ??
+        // A missing entry means the loader could not speak for this
+        // appointment; that is not the same as "no session".
+        "unavailable"
       : "no_session";
 
   // Workflow fix 3 (preserved): cancel surface only for confirmed +

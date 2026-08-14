@@ -10,6 +10,7 @@ import {
   loadFailureMessage,
 } from "@/lib/billing/authoritative-session-payment";
 import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
+import { decideExecutionPricingPermission } from "@/lib/billing/execution-pricing-permission";
 import {
   getSessionPaymentEligibility,
 } from "@/lib/billing/session-payment-eligibility";
@@ -229,6 +230,16 @@ export async function prepareSessionPaymentChargeAction(
   if (!priced.ok) {
     return { ok: false, error: loadFailureMessage(priced.failure) };
   }
+  // FREE-01. A deliberately $0 service is not a pricing failure — it is a
+  // decided price of nothing. It stops here with a calm explanation rather than
+  // a warning, and critically it returns BEFORE any payment_charge_attempt is
+  // written, so a free visit can never become a chargeable row.
+  if (priced.result.kind === "free") {
+    return {
+      ok: false,
+      error: `${priced.result.serviceName} is free — no payment is required, so there is nothing to prepare.`,
+    };
+  }
   if (priced.result.kind !== "resolved") {
     return { ok: false, error: unresolvedAmountMessage(priced.result) };
   }
@@ -402,6 +413,42 @@ export async function executeSessionPaymentChargeAction(
         ? "Confirm the charge before running it."
         : "Confirm the test charge before running it.",
     };
+  }
+
+  // FREE-01. An already-prepared attempt may be executed ONLY while its
+  // session is still in a currently authoritative, currently CHARGEABLE state.
+  // The whole rule lives in decideExecutionPricingPermission; see that module
+  // for why it is one exhaustive decision rather than a chain of refusals.
+  //
+  // The session id is read from the attempt ROW, never from the browser — the
+  // form's session_id is used only for revalidatePath and is untrusted here.
+  // The lookup is studio-scoped, so it cannot reach another tenant's attempt.
+  //
+  // This is a PERMISSION check, not a pricing one: nothing below reads an
+  // amount from the re-resolved result. The prepared attempt remains the sole
+  // execution amount, so the stale-price-at-prepare protections are untouched.
+  {
+    const admin = createAdminClient();
+    const { data: attemptRow, error: attemptRowError } = await admin
+      .from("payment_charge_attempts")
+      .select("session_id")
+      .eq("id", attemptId)
+      .eq("studio_id", studioId)
+      .maybeSingle();
+    const attemptSessionId = (attemptRow as { session_id?: string | null } | null)
+      ?.session_id;
+    const permission = decideExecutionPricingPermission(
+      attemptRowError || !attemptSessionId
+        ? null
+        : await getAuthoritativeSessionPaymentAmount({
+            studioId,
+            sessionId: attemptSessionId,
+            studioTimezone,
+          }),
+    );
+    if (!permission.allow) {
+      return { ok: false, outcome: "blocked", error: permission.error };
+    }
   }
 
   const result: SessionPaymentChargeResult = await runSessionPaymentCharge({

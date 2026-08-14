@@ -239,10 +239,29 @@ test.describe("D2/D3/D4 — finished setup and pilot tooling are off the Dashboa
       ).toHaveCount(0);
     });
 
-    await test.step("D4 control: the quiet feedback footers SURVIVE", async () => {
-      // The shared mailto helper was kept precisely because these still use it;
-      // removing them would be the over-deletion the census exists to prevent.
-      await expect(page.getByText("Was this useful?").first()).toBeVisible();
+    await test.step("D4: the quiet feedback footers are gone TOO", async () => {
+      // DASH-TRUTH-04. The earlier cleanup removed the large "Pilot learning"
+      // card but left two quiet <PilotFeedbackPrompt> footers under Today and
+      // To do. Chloe does not want the daily product sending feedback directly
+      // to Sam, so ALL Dashboard pilot-feedback UI is now absent — the card and
+      // the footers.
+      //
+      // Narrow, stable assertions: the prompt's own copy, and the mailto link
+      // it renders. Deliberately not a bare absence of "Yes", which is a common
+      // word an unrelated future control could legitimately use.
+      await expect(page.getByText("Was this useful?")).toHaveCount(0);
+      await expect(
+        page.locator('a[href^="mailto:hello@hone.care"]'),
+      ).toHaveCount(0);
+    });
+
+    await test.step("D4 control: the SHARED helper was not over-deleted", async () => {
+      // The requirement was Dashboard-specific. The shared mailto helper and
+      // the PilotFeedbackPrompt component are deliberately retained, so this
+      // proves the removal was scoped to Dashboard rendering rather than a
+      // blanket deletion of the capability.
+      const res = await page.request.get("/getting-started");
+      expect(res.status()).toBeLessThan(400);
     });
 
     await test.step("regression: the operational hierarchy is unchanged", async () => {
