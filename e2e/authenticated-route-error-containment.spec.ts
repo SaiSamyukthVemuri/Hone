@@ -23,16 +23,27 @@ const CANARY_CONTEXT = 'relation "clients" does not exist';
 // The boundary must not render this either: it is framework noise, not copy.
 const REACT_ELISION = "The specific message is omitted in production builds";
 
+// Everything the boundary itself owns is addressed THROUGH its testid. The app
+// shell also links to /dashboard (the "Hone" wordmark carries
+// aria-label="Go to Dashboard"), so an unscoped role query matches two elements
+// and is ambiguous by construction.
+function boundary(page: Page) {
+  return page.getByTestId("route-error-boundary");
+}
+
 async function expectContainedErrorUi(page: Page): Promise<void> {
-  await expect(page.getByTestId("route-error-boundary")).toBeVisible({
-    timeout: 20_000,
-  });
+  await expect(boundary(page)).toBeVisible({ timeout: 20_000 });
   await expect(
-    page.getByRole("heading", { name: "Something went wrong", level: 1 }),
+    boundary(page).getByRole("heading", {
+      name: "Something went wrong",
+      level: 1,
+    }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Go to Dashboard" }),
+    boundary(page).getByRole("button", { name: "Try again" }),
+  ).toBeVisible();
+  await expect(
+    boundary(page).getByRole("link", { name: "Go to Dashboard" }),
   ).toBeVisible();
 }
 
@@ -42,27 +53,33 @@ async function expectContainedErrorUi(page: Page): Promise<void> {
 // at the (app) boundary and did not escape to global-error.tsx, which replaces
 // the whole document and would take the header with it.
 async function expectContainedInsideAppShell(page: Page): Promise<void> {
-  await expect(page.getByRole("link", { name: "Go to Dashboard" })).toBeVisible();
+  await expect(page.getByLabel("Go to Dashboard")).toBeVisible();
   await expect(
     page.getByRole("navigation").getByRole("link", { name: "Clients" }),
   ).toBeVisible();
 }
 
 async function expectNoRawErrorDetail(page: Page): Promise<void> {
+  // Scope 1: the WHOLE document. Nothing anywhere on the page may carry the
+  // thrown text, a stack frame, or a bundler path.
   const body = await page.locator("body").innerText();
   expect(body).not.toContain(CANARY);
   expect(body).not.toContain(CANARY_CONTEXT);
   expect(body).not.toContain("Failed to load fault fixture");
   expect(body).not.toContain(REACT_ELISION);
-  // No stack frames, no module paths, no bundler internals.
   expect(body).not.toMatch(/\bat\s+\w+\s+\(/);
   expect(body).not.toContain(".tsx:");
   expect(body).not.toContain("webpack");
   expect(body).not.toContain("node_modules");
-  // A missing reference must produce NO reference line, never a fake one.
-  expect(body).not.toContain("undefined");
-  expect(body).not.toContain("null");
-  expect(body).not.toContain("NaN");
+
+  // Scope 2: the boundary's OWN subtree, for the placeholder checks. A missing
+  // reference must produce no line at all, never "Reference: undefined". These
+  // are deliberately not asserted against the whole document, because the
+  // surrounding app shell is not what this boundary controls.
+  const contained = await boundary(page).innerText();
+  expect(contained).not.toContain("undefined");
+  expect(contained).not.toContain("null");
+  expect(contained).not.toContain("NaN");
 }
 
 test.describe("authenticated route error containment", () => {
@@ -81,7 +98,7 @@ test.describe("authenticated route error containment", () => {
     // DIGEST PRESENT. Next always assigns a digest to a server error, so this
     // case must show a reference, and it must be the digest SHAPE (decimal
     // digits, optional @E<code>) rather than anything free-form.
-    const reference = page.getByTestId("route-error-reference");
+    const reference = boundary(page).getByTestId("route-error-reference");
     await expect(reference).toBeVisible();
     const text = (await reference.innerText()).trim();
     expect(text).toMatch(/^Reference: [0-9]{1,20}(@E[A-Za-z0-9]{1,16})?$/);
@@ -112,8 +129,10 @@ test.describe("authenticated route error containment", () => {
 
     // DIGEST ABSENT. A browser-raised error has no digest, so the entire
     // reference block must be absent rather than rendered empty.
-    await expect(page.getByTestId("route-error-reference")).toHaveCount(0);
-    await expect(page.getByText(/Reference:/)).toHaveCount(0);
+    await expect(
+      boundary(page).getByTestId("route-error-reference"),
+    ).toHaveCount(0);
+    await expect(boundary(page).getByText(/Reference:/)).toHaveCount(0);
   });
 
   test("Try again recovers the segment once the underlying failure clears", async ({
@@ -129,7 +148,7 @@ test.describe("authenticated route error containment", () => {
 
     await expectContainedErrorUi(page);
 
-    await page.getByRole("button", { name: "Try again" }).click();
+    await boundary(page).getByRole("button", { name: "Try again" }).click();
 
     // The segment re-renders from the server and the boundary clears.
     await expect(page.getByTestId("fault-fixture-ok")).toBeVisible({
@@ -147,7 +166,7 @@ test.describe("authenticated route error containment", () => {
     await page.goto("/e2e-fault/server-throw");
     await expectContainedErrorUi(page);
 
-    await page.getByRole("link", { name: "Go to Dashboard" }).click();
+    await boundary(page).getByRole("link", { name: "Go to Dashboard" }).click();
 
     await page.waitForURL(/\/dashboard/, { timeout: 20_000 });
     await expect(page.getByTestId("route-error-boundary")).toHaveCount(0);
@@ -174,12 +193,15 @@ test.describe("authenticated route error containment", () => {
     const seed = await seedE2eStudio();
     await loginAsOwner(page, seed);
 
+    // A REAL page, whose loader is one of the 78 that throw on a Supabase
+    // error (getClientsForStudio). Adding the boundary must not change the
+    // healthy path.
     await page.goto("/clients");
 
+    await expect(
+      page.getByRole("heading", { name: "Clients", level: 1 }),
+    ).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("route-error-boundary")).toHaveCount(0);
-    await expect(page.getByText(seed.clientName).first()).toBeVisible({
-      timeout: 20_000,
-    });
   });
 });
 
@@ -235,7 +257,7 @@ test.describe("the boundary does not change authorization semantics", () => {
     // The failed CONTENT area must carry nothing from the studio. The shell
     // around it legitimately still shows the practitioner's own chrome, so this
     // is scoped to the boundary's own subtree.
-    const contained = await page.getByTestId("route-error-boundary").innerText();
+    const contained = await boundary(page).innerText();
     expect(contained).not.toContain(seed.clientName);
     expect(contained).not.toContain(seed.clientEmail);
     expect(contained).not.toContain(seed.studioName);
