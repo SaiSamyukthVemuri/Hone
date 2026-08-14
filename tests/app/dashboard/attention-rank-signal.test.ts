@@ -177,6 +177,57 @@ describe("attention rank comes from the signal, never from a plan", () => {
     expect(all.clients.find((c) => c.clientId === "A")!.attentionDate).toBe(d(1));
   });
 
+  it("ordering is a TOTAL ORDER: identical for every input permutation", () => {
+    // Review 3780005405. The comparator returned -1 in both directions for
+    // equal attention dates, so Array#sort fell back to input order — which is
+    // byClient insertion order, set by each client's newest scanned session. A
+    // plan-only session could therefore still decide which equal-dated client
+    // survived the limit. Order must depend only on the rows' own fields.
+    const mk = (id: string, day: number, planDay: number | null) => {
+      const ses: AttentionSessionInput[] = [session(`${id}c`, id, d(day))];
+      if (planDay !== null) ses.push(session(`${id}p`, id, d(planDay), PLAN));
+      return ses;
+    };
+    // Three clients, all with the SAME caution date, differing only in the
+    // date of an unrelated plan-only session.
+    const sessions = [
+      ...mk("A", 5, 28),
+      ...mk("B", 5, 3),
+      ...mk("C", 5, null),
+    ];
+    const blocks = [
+      block("Ac", { caution_note: "A" }),
+      block("Bc", { caution_note: "B" }),
+      block("Cc", { caution_note: "C" }),
+    ];
+
+    const orderFor = (perm: AttentionSessionInput[]) =>
+      buildClientsNeedingAttention(perm, blocks, { limit: 10 }).clients.map(
+        (c) => c.clientId,
+      );
+
+    // newest-first (as the loader supplies) and several permutations
+    const newestFirst = [...sessions].sort((x, y) =>
+      x.started_at < y.started_at ? 1 : -1,
+    );
+    const oldestFirst = [...newestFirst].reverse();
+    const rotated = [...newestFirst.slice(2), ...newestFirst.slice(0, 2)];
+
+    const base = orderFor(newestFirst);
+    expect(orderFor(oldestFirst)).toEqual(base);
+    expect(orderFor(rotated)).toEqual(base);
+    // and the tiebreak is the deterministic client id, not a plan date
+    expect(base).toEqual(["A", "B", "C"]);
+
+    // A truncating limit must select the same clients regardless of order.
+    const cut = (perm: AttentionSessionInput[]) =>
+      buildClientsNeedingAttention(perm, blocks, { limit: 2 }).clients.map(
+        (c) => c.clientId,
+      );
+    expect(cut(oldestFirst)).toEqual(cut(newestFirst));
+    expect(cut(rotated)).toEqual(cut(newestFirst));
+  });
+
   it("no field on the row carries the client's newest unrelated session date", () => {
     // Structural: the alias is gone, not merely unused.
     const out = buildClientsNeedingAttention(

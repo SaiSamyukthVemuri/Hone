@@ -246,11 +246,27 @@ export function buildClientsNeedingAttention(
           : ""),
     }))
     .sort((x, y) => {
-      // hasPlan is no longer a ranking signal either: ordering by it would
-      // still push reaction-only clients down the list for a reason that is
-      // not work. Watch note first, then most recent.
+      // Watch note first, then most recent attention signal, then a
+      // deterministic tiebreak.
+      //
+      // hasPlan is not a ranking signal, and neither is any date a plan can
+      // set. Review 3780005405 closed the last route by which one could still
+      // reach the order: this comparator returned -1 in BOTH directions for
+      // equal attention dates, which is not a total order, so Array#sort fell
+      // back to input order — and input order is `byClient` insertion order,
+      // established by each client's newest scanned session. A plan-only
+      // session could therefore still decide which of two equal-dated clients
+      // survived the disclosure limit.
+      //
+      // Ordering must be a function of the row's own fields alone. The
+      // clientId tiebreak makes the comparator antisymmetric and transitive,
+      // so the result is identical for any input permutation. This mirrors
+      // compareTodoItems, which has always ended in an id tiebreak.
       if (x.hasWatch !== y.hasWatch) return x.hasWatch ? -1 : 1;
-      return x.attentionDate < y.attentionDate ? 1 : -1;
+      if (x.attentionDate !== y.attentionDate) {
+        return x.attentionDate < y.attentionDate ? 1 : -1;
+      }
+      return x.clientId < y.clientId ? -1 : x.clientId > y.clientId ? 1 : 0;
     });
 
   return {
