@@ -10,7 +10,6 @@ import type {
   ResolvedSessionPaymentAmount,
   SessionPaymentAmountResult,
 } from "@/lib/billing/session-payment-amount";
-import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
 import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-permission";
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -255,10 +254,13 @@ export function SessionPaymentPrepareCard({
   // attempt already in `ready` sets showPrepareForm false, so gating the free
   // notice on it left the AttemptStatusPanel still offering Run charge for a
   // visit every other surface now calls "No payment required".
-  // Review 3780456783. The COMPLETE render decision lives in
-  // lib/billing/ready-control-permission and this component only reads its
-  // fields. Nothing here recomputes a branch, so there is nothing for a test
-  // to duplicate and no way for this card to drift from the rule.
+  // Reviews 3780456783 / 3780746701. The complete PRICING-DEPENDENT
+  // presentation decision lives in lib/billing/ready-control-permission, and
+  // this component reads its fields rather than interpreting any price itself.
+  // That is the precise claim: the card still owns branches of its own —
+  // attempt existence, status panel dispatch, the previous-terminal callout,
+  // prepareJustSucceeded, the eligibility BlockedPanel and local
+  // submit/pending/error state — none of which interpret a price.
   // Card-local NARROWING, not a decision. PrepareForm needs the eligible
   // variant of the eligibility union, and the old
   // `showPrepareForm && resolvedAmount` gate happened to supply that narrowing
