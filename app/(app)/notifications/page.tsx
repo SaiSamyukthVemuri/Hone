@@ -19,7 +19,7 @@ import type { PractitionerNotification } from "@/lib/types/database";
 //
 // Willow follow-up: overdue disinfectant "Replace now" records also surface here
 // as COMPUTED operational safety alerts (lib/notifications/disinfectant-alerts.ts)
-// — derived from the same read-time source of truth as the Records page, so they
+// derived from the same read-time source of truth as the Records page, so they
 // auto-resolve when a replacement is recorded. They are not persisted rows and do
 // not participate in per-row read state: a still-overdue safety item must stay
 // visible, so "Mark all read" (which clears the persisted event rows) never hides
@@ -78,7 +78,7 @@ export default async function NotificationsPage() {
         )}
       </header>
 
-      {/* Operational safety alerts (computed, always visible while unresolved) —
+      {/* Operational safety alerts (computed, always visible while unresolved),
           sorted ahead of routine notifications. */}
       {overdueAlerts.length > 0 && (
         <section aria-label="Operational alerts" className="flex flex-col gap-2">

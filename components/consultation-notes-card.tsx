@@ -5,7 +5,7 @@ import type { ClinicalNoteWithAuthor } from "@/lib/types/database";
 // Consultation + skin/hair notes, surfaced ON THE APPOINTMENT.
 //
 // WHY THIS EXISTS. Both note kinds already existed, already append-only,
-// already revisable, already rendered on the client's Consultation tab — and
+// already revisable, already rendered on the client's Consultation tab, and
 // Chloe could not find them. Nothing on the appointment she was about to work
 // from mentioned them, and the tab that held them was named only
 // "Consultation", so the skin/hair analysis was invisible twice over. This is a
@@ -14,7 +14,7 @@ import type { ClinicalNoteWithAuthor } from "@/lib/types/database";
 //
 // Storage authority is unchanged: `client_clinical_notes`, kinds
 // `consultation` and `skin_hair_analysis`, read through the existing
-// getClinicalNotesSummary. Writing still happens only where it always did —
+// getClinicalNotesSummary. Writing still happens only where it always did,
 // the Consultation tab, through the existing clinical-note action. Recording a
 // note from here would mean a second writer, so the CTA deliberately NAVIGATES
 // rather than opening a form.
@@ -127,7 +127,7 @@ export function ConsultationNotesCard({
         </p>
       )}
 
-      {/* Consultation appointments get the PRIMARY action — this is the visit
+      {/* Consultation appointments get the PRIMARY action. This is the visit
           where the note gets written, and having to know a tab exists was the
           whole problem. Other appointments get a quiet link so the same
           material is one tap away without competing with Chart session. */}

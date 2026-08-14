@@ -184,7 +184,7 @@ describe("FREE-01 no money-moving path", () => {
     expect(freeIdx).toBeGreaterThan(-1);
     expect(writeIdx).toBeGreaterThan(-1);
     expect(writeIdx).toBeGreaterThan(freeIdx);
-    expect(ACTIONS).toMatch(/is free — no payment is required/);
+    expect(ACTIONS).toMatch(/is free\. No payment is required/);
   });
 
   it("F9b there is exactly one write in the prepare action, and free returns first", () => {

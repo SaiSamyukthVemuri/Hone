@@ -1,6 +1,6 @@
 "use client";
 
-// THE completion control for an appointment — one implementation, two mounts.
+// THE completion control for an appointment, one implementation, two mounts.
 //
 // Extracted from AppointmentLifecycleActions so the calendar appointment page
 // and the charting page's "Finish appointment" workflow use the SAME control
@@ -16,8 +16,8 @@
 //
 // CONFIRMATION HISTORY (kept from the original). The confirmation used to be a
 // native window.confirm(). On iOS Safari WebKit can suppress that dialog and
-// return false WITHOUT showing anything — indistinguishable from a real Cancel
-// — so "Mark completed" silently did nothing and the appointment never became
+// return false WITHOUT showing anything: indistinguishable from a real Cancel
+// so "Mark completed" silently did nothing and the appointment never became
 // chargeable. It is now an in-DOM accessible dialog: focus-trapped,
 // keyboard/screen-reader reachable, Escape and Cancel send NO request.
 //
@@ -69,7 +69,7 @@ export function MarkAppointmentCompleteControl({
 
   // Tick when the START time is reached so the button enables itself without
   // the practitioner refreshing. One timeout aimed at starts_at; none if past.
-  // Called unconditionally — no early return may precede a hook.
+  // Called unconditionally, no early return may precede a hook.
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   useEffect(() => {
     if (!Number.isFinite(startsAtMs)) return;
@@ -81,7 +81,7 @@ export function MarkAppointmentCompleteControl({
 
   // Truthful name: this is 'the visit has begun', not 'the visit has ended'.
   // Inclusive boundary, matching mark_appointment_complete's `starts_at > now()`
-  // refusal — exactly starts_at is eligible.
+  // refusal, exactly starts_at is eligible.
   const canComplete = Number.isFinite(startsAtMs) && startsAtMs <= nowTick;
 
   // Opens the dialog. NO request is sent here.

@@ -83,7 +83,7 @@ describe("Settings → Payments is presenter-driven", () => {
     expect(component).toMatch(/const isTestMode = runtimeMode !== "live"/);
     expect(component).not.toMatch(/const isTestMode = livemode !== true/);
     // Test-branch copy stays available for test runtime.
-    expect(component).toMatch(/Test mode — no live charges/);
+    expect(component).toMatch(/Test mode: no live charges/);
   });
 
   it("live-ready / test-ready / payouts-warning copy is exactly the approved wording (presenter source)", () => {

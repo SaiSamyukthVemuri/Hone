@@ -8,7 +8,7 @@ type Props = {
   clientHasEmail: boolean;
 };
 
-// "Send a new intake form" card (PR #293 relabel — was the
+// "Send a new intake form" card (PR #293 relabel: was the
 // "Request intake update" card). Secondary to the prominent
 // "Resend intake link" CTA: this one starts a brand-new BLANK intake
 // (createIntakeRequestForClient), so it is for a fresh form, not for

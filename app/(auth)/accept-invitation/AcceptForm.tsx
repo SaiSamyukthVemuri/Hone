@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import { acceptInvitationAction } from "./actions";
 
 // Explicit current-policy acceptance. The checkbox is unchecked by default and
-// the submit stays disabled until it is checked — access is never granted
+// the submit stays disabled until it is checked: access is never granted
 // without an affirmative confirmation.
 export function AcceptForm({
   studioName,

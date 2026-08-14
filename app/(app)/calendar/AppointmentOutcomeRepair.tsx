@@ -1,6 +1,6 @@
 "use client";
 
-// APPOINTMENT BOUNDARY B4 — owner-only outcome repair surface.
+// APPOINTMENT BOUNDARY B4, owner-only outcome repair surface.
 //
 // Before B4 a terminal outcome was final from the UI's point of view:
 // AppointmentLifecycleActions tells the practitioner "cannot be undone from
@@ -12,8 +12,8 @@
 //  1. It never presents a control that is guaranteed to fail. The page resolves
 //     repair eligibility SERVER-SIDE (loadAppointmentRepairStateAction, which
 //     calls the same 0173 helper the command uses) and passes the verdict in.
-//     When a repair is blocked the component EXPLAINS why — a linked treatment
-//     record, a processed payment, aftercare already emailed — instead of
+//     When a repair is blocked the component EXPLAINS why: a linked treatment
+//     record, a processed payment, aftercare already emailed: instead of
 //     rendering a button that would bounce off the command.
 //  2. The wording is practitioner wording, not developer wording. Nothing here
 //     says "revert", "sentinel", "DML" or "audit row". It says what happened

@@ -181,7 +181,7 @@ export async function getWholeSessionCopySourceAction(input: {
             galvanic_ma: (fe.galvanic_ma as number | null) ?? null,
             galvanic_duration_seconds:
               (fe.galvanic_duration_seconds as number | null) ?? null,
-            // galvanic_intensity_percent retired — not part of the copy source.
+            // galvanic_intensity_percent retired, not part of the copy source.
             units_of_lye: (fe.units_of_lye as number | null) ?? null,
             pulse_count: (fe.pulse_count as number | null) ?? null,
             pulse_delay_seconds: (fe.pulse_delay_seconds as number | null) ?? null,
@@ -235,7 +235,7 @@ function safeCommitError(code: string | undefined): string {
     case "HN001":
       return "You don't have permission to do that.";
     case "HN002":
-      return "This chart can't be prefilled — it isn't an editable electrolysis session.";
+      return "This chart can't be prefilled: it isn't an editable electrolysis session.";
     case "HN003":
       return "Today's chart is no longer empty. Reload the page and try again.";
     case "HN004":
@@ -273,7 +273,7 @@ export async function commitWholeSessionCopyAction(input: {
   if (!input.idempotencyKey || input.idempotencyKey.trim() === "") {
     return { ok: false, error: "Reload the preview and try again." };
   }
-  // Source identity + fingerprint are REQUIRED — reject before any write.
+  // Source identity + fingerprint are REQUIRED: reject before any write.
   if (!input.sourceSessionId || !input.sourceFingerprint) {
     return { ok: false, error: "Reload the preview and try again." };
   }

@@ -80,7 +80,7 @@ export async function editClientPinnedNoteAction(
   // EXPLICITLY: the update is scoped to (id, studio_id = the authed studio,
   // client_id), plus an OPTIMISTIC-CONCURRENCY guard on the note's current text.
   // A foreign-studio / foreign-client / deleted / concurrently-edited note (its
-  // text no longer equals originalText) matches ZERO rows and is rejected — the
+  // text no longer equals originalText) matches ZERO rows and is rejected: the
   // later save never silently overwrites the earlier one. `text` is the ONLY
   // mutated column; id, pinned state (row existence), studio_id, client_id,
   // created_by_practitioner_id, and created_at are all preserved.

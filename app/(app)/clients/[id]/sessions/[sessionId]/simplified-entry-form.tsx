@@ -49,7 +49,7 @@ type Draft = {
   thermolysisDurationSeconds: string;
   galvanicMa: string;
   galvanicDurationSeconds: string;
-  // galvanic_intensity_percent is a retired reading — this create-only form does
+  // galvanic_intensity_percent is a retired reading: this create-only form does
   // not capture or send it; the server always stores NULL on new entries.
   unitsOfLye: string;
   pulse_count: string;
@@ -57,7 +57,7 @@ type Draft = {
   hairs_treated: string;
   comments: string;
   // Chip-loading fix: structured observation chips (canonical labels), stored in
-  // electrolysis_entries.observation_chips — NOT appended into `comments`. Toggle
+  // electrolysis_entries.observation_chips, NOT appended into `comments`. Toggle
   // state so a chip can be selected AND deselected, and persists after refresh.
   observationChips: string[];
 };
@@ -110,7 +110,7 @@ export function SimplifiedEntryForm({
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    // In the persisted-but-unverified recovery state, refuse to resubmit — the
+    // In the persisted-but-unverified recovery state, refuse to resubmit: the
     // row may already exist and a second insert would duplicate it.
     if (recovery) return;
     setError(null);
@@ -400,7 +400,7 @@ export function SimplifiedEntryForm({
           </p>
         </div>
         {/* Chip-loading fix: observation chips are STRUCTURED multi-select
-            TOGGLES — tap to select (shows pressed), tap again to deselect. They
+            TOGGLES: tap to select (shows pressed), tap again to deselect. They
             persist to observation_chips (not the notes), so they render as pills
             and reload after refresh. Free-text notes are the separate box below. */}
         <div className="flex flex-wrap gap-2">

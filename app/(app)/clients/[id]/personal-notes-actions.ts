@@ -32,7 +32,7 @@ export type PersonalNotesActionResult =
   | { ok: false; error: string };
 
 function readText(value: FormDataEntryValue | null): string {
-  // Do NOT trim — practitioners may use leading whitespace to structure
+  // Do NOT trim: practitioners may use leading whitespace to structure
   // their notes (sections, indented sub-points). The length cap is the
   // safeguard against runaway input.
   return typeof value === "string" ? value : "";

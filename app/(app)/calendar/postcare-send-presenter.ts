@@ -3,7 +3,7 @@
 import { createElement, type ReactElement } from "react";
 import type { AppointmentStateActionResult } from "./actions";
 
-// B8 / 0177 — the postcare send OUTCOME, separated from the modal that hosts it.
+// B8 / 0177, the postcare send OUTCOME, separated from the modal that hosts it.
 //
 // WHY THIS FILE EXISTS.
 //
@@ -16,14 +16,14 @@ import type { AppointmentStateActionResult } from "./actions";
 // five-minute claim goes stale and becomes reclaimable.
 //
 // So the outcome is a closed union rather than a boolean pair, and the mapping,
-// the copy and the control affordances live HERE — in a module with no state,
-// no hooks and no router — so a test can DRIVE them instead of inferring them
+// the copy and the control affordances live HERE: in a module with no state,
+// no hooks and no router, so a test can DRIVE them instead of inferring them
 // from the component's source text.
 //
 // WHY createElement AND NOT JSX. This module is imported by the unit lane so
 // its markup can be rendered and asserted. That lane transforms with esbuild
 // under the repository's `jsx: "preserve"` tsconfig, which cannot parse JSX,
-// and the only alternative was editing vitest.config.ts — a file the CI
+// and the only alternative was editing vitest.config.ts, a file the CI
 // classifier treats as full-matrix shared infrastructure. Authoring the two
 // small presentational components with createElement keeps this change inside
 // the lanes the diff actually affects. They are ordinary React components.
@@ -46,8 +46,8 @@ export type PostcareSendOutcome =
   // An ordinary refusal or provider failure. Nothing was emailed.
   | { kind: "error"; message: string };
 
-// Provider HANDOFF, not delivery. The previous copy — "The client will receive
-// it within a minute" — asserted a delivery outcome Hone cannot observe.
+// Provider HANDOFF, not delivery. The previous copy: "The client will receive
+// it within a minute", asserted a delivery outcome Hone cannot observe.
 export const POSTCARE_SENT_NOTICE =
   "Postcare was sent to the email provider. This window will close automatically.";
 
@@ -57,7 +57,7 @@ export const POSTCARE_SENT_NOTICE =
 // contain "Could not send" or "Try again", which would invite the duplicate.
 export const POSTCARE_UNRECORDED_NOTICE =
   "The email provider accepted this postcare email, but Hone could not confirm and record its send status. " +
-  "Do not send it again right now — that could deliver a second copy to the client. " +
+  "Do not send it again right now. That could deliver a second copy to the client. " +
   "Refresh this page to see the current state before taking any further action.";
 
 export const POSTCARE_ERROR_PREFIX = "Could not send.";
@@ -102,11 +102,11 @@ export function postcareAutoCloses(outcome: PostcareSendOutcome): boolean {
  * Run one manual postcare send and report the outcome.
  *
  * The action and the router refresh are INJECTED so this is drivable by a test
- * with a mocked action — which is what makes "exactly one provider send, and no
+ * with a mocked action, which is what makes "exactly one provider send, and no
  * automatic retry" a demonstrated property rather than a source-grep claim.
  *
  * `send` is called EXACTLY ONCE. There is no retry loop, no second settlement,
- * and no browser-side repair of `postcare_email_sent_at` — the six postcare
+ * and no browser-side repair of `postcare_email_sent_at`, the six postcare
  * columns are writable only by the 0177 commands and only from the server.
  *
  * `refresh` runs for BOTH `sent` and `provider_unrecorded`. The second is the
@@ -148,7 +148,7 @@ export function PostcareSendOutcomeNotice({
     );
   }
   if (outcome.kind === "provider_unrecorded") {
-    // Amber, not green and not red — the visual has to carry the same "neither
+    // Amber, not green and not red: the visual has to carry the same "neither
     // sent nor failed" meaning the copy does. `role="alert"` rather than
     // "status": this is the one outcome that asks the practitioner to act.
     return createElement(

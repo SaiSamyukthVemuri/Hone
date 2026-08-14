@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 // Non-blocking aftercare prompt at the "Done charting" boundary (Charting
 // Validation PR 1). If the session has no aftercare_and_risks_explained_at stamp,
-// clicking "Done charting" opens a warning with two choices — mark it, or
+// clicking "Done charting" opens a warning with two choices: mark it, or
 // continue anyway. It NEVER blocks (emergency-safe): "Continue without marking"
 // always proceeds, and marking is only ever done by an explicit click (never
 // auto). If the stamp is already present, this behaves exactly like the old
@@ -20,7 +20,7 @@ type Props = {
   aftercareExplained: boolean;
   markAction: (formData: FormData) => Promise<MarkResult>;
   // The exit now sits at the foot of the Finish appointment workflow, so it
-  // reads "Done — back to client" there. The safe-exit semantics are unchanged:
+  // reads "Done, back to client" there. The safe-exit semantics are unchanged:
   // an unmarked aftercare stamp still raises the explicit warning, and
   // "Continue without marking" still proceeds without writing anything.
   label?: string;

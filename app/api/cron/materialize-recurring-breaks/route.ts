@@ -27,7 +27,7 @@ import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 // regardless of each studio's choice so a studio that increases
 // their horizon does not get a coverage gap during the days between
 // the increase and the next cron run. Excess rows for studios on
-// shorter horizons are harmless — they sit in
+// shorter horizons are harmless: they sit in
 // studio_calendar_reservations and are simply never read by the
 // public booking page beyond that studio's selected window.
 
@@ -186,12 +186,12 @@ export async function GET(req: Request) {
     // Why: this daily Vercel cron is one of the independent detectors for a
     // dead external reminder scheduler. Previously the call sat after the rule
     // loop, so the early `return 500` on a rule-lookup failure above skipped it
-    // entirely — an unrelated recurring-break problem silently disabled that
+    // entirely: an unrelated recurring-break problem silently disabled that
     // day's reminder-scheduler monitoring. `finally` runs on every exit path:
     // success, the early 500, and the catch.
     //
     // Control-flow safety: this block contains NO `return` and NO `throw`, so
-    // it CANNOT override or mask the route's real result — a `finally` only
+    // it CANNOT override or mask the route's real result: a `finally` only
     // changes the completion value if it completes abruptly, and this one never
     // does. The inner try/catch guarantees that: a health-check failure can
     // never turn a successful materialization into a cron_route_failed, and

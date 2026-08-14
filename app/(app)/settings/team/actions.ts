@@ -208,7 +208,7 @@ export async function removePractitionerAction(formData: FormData): Promise<void
 
   // Part 4 Item 2: deactivation goes through the locked command (studios row →
   // capacity advisory lock), which validates the target (same-studio, not the
-  // owner) and sets active=false atomically — no raw active=false browser write,
+  // owner) and sets active=false atomically, no raw active=false browser write,
   // no leaked DB text. This is per-practitioner deactivation, NOT studio
   // structural retirement; the target's appointments are preserved.
   const admin = createAdminClient();

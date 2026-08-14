@@ -121,7 +121,7 @@ export async function publicCancelAppointmentAction(
   // truth; the page hint just keeps the UI honest.
   const acknowledged = strOrEmpty(formData.get("acknowledged_policy"));
   // B7 / 0176. Server-generated on the page, posted back unchanged. Never
-  // trusted as TEXT — only compared, inside the command, against a hash the
+  // trusted as TEXT, only compared, inside the command, against a hash the
   // database re-derives from the policy it has locked.
   const presentedPolicyHash = strOrEmpty(formData.get("presented_policy_hash"));
   if (!token) {
@@ -169,7 +169,7 @@ export async function publicCancelAppointmentAction(
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
     // Public collapse rule (Blocker 2): ALL token-resolution failures
-    // — malformed / unknown / expired — return the same generic
+    // malformed / unknown / expired: return the same generic
     // message. The previous distinct "This cancellation link has
     // expired." string was itself a bearer-token validity signal
     // (an attacker who saw it learned that the token was a
@@ -179,7 +179,7 @@ export async function publicCancelAppointmentAction(
 
   const admin = createAdminClient();
 
-  // B7 / 0176 — THE PRE-RPC POLICY LOOKUP AND ack GATE USED TO LIVE HERE.
+  // B7 / 0176, THE PRE-RPC POLICY LOOKUP AND ack GATE USED TO LIVE HERE.
   //
   // They re-read the studio's CURRENT policy and refused early when it required
   // an acknowledgement the form had not sent. That made the ACTION a second
@@ -192,7 +192,7 @@ export async function publicCancelAppointmentAction(
   //
   // The lookup had no other remaining purpose once the detached acknowledgement
   // writer was deleted, so it is gone rather than merely bypassed. The PAGE
-  // still uses hasAnyPolicy() for presentation — whether to draw the checkbox —
+  // still uses hasAnyPolicy() for presentation: whether to draw the checkbox,
   // but presentation is not authorisation. The database decides between
   // cancelled / ack_required / policy_changed, under the studio row lock, from
   // the policy it has locked.
@@ -230,7 +230,7 @@ export async function publicCancelAppointmentAction(
   // the deploy window and is no longer called from this action.
   // B7 / 0176. The atomic command: token check, policy presentation proof,
   // status flip, audit row and the policy acknowledgement all commit together.
-  // The acknowledgement is NO LONGER written by this route — see the deleted
+  // The acknowledgement is NO LONGER written by this route. See the deleted
   // post-commit block below `apptStudio` for what used to happen and why it was
   // wrong (its failure was logged and swallowed, so a cancellation could exist
   // with no evidence).
@@ -247,7 +247,7 @@ export async function publicCancelAppointmentAction(
     },
   );
 
-  // DEPLOYMENT-SKEW — FAIL CLOSED, NEVER FALL BACK.
+  // DEPLOYMENT-SKEW, FAIL CLOSED, NEVER FALL BACK.
   //
   // B7 is MIGRATION-FIRST: 0176 is applied, the hardened five-argument shim is
   // verified live, and only then does this application deploy. If that order is
@@ -259,7 +259,7 @@ export async function publicCancelAppointmentAction(
   // command. That was the B7 defect wearing a fallback's clothes: this route no
   // longer writes the acknowledgement, so an old-DB cancellation would have
   // committed the status flip and the audit row with NO acknowledgement and NO
-  // presentation-hash comparison — exactly the evidence hole B7 exists to
+  // presentation-hash comparison, exactly the evidence hole B7 exists to
   // close, reintroduced for the duration of a deploy window.
   //
   // So there is no fallback. PGRST202 produces ZERO mutation and the generic
@@ -378,11 +378,11 @@ export async function publicCancelAppointmentAction(
     // policy text on file. A studio with no policy never produced
     // an acknowledgement on the UI side either; we mirror that
     // here so the table only carries meaningful rows.
-    // B7 / 0176 — THE ACKNOWLEDGEMENT WRITE USED TO LIVE HERE.
+    // B7 / 0176, THE ACKNOWLEDGEMENT WRITE USED TO LIVE HERE.
     //
     // It ran AFTER the RPC had already committed the cancellation, and its
     // error was logged and swallowed, so a cancelled appointment could exist
-    // with no acknowledgement row — precisely the evidence a late-cancellation
+    // with no acknowledgement row, precisely the evidence a late-cancellation
     // fee dispute turns on. It also re-read the CURRENT policy, so a studio
     // edit between render and submit produced signed evidence for text the
     // client never saw.
@@ -407,7 +407,7 @@ export async function publicCancelAppointmentAction(
           // Actor + client are one and the same here: a public token
           // cancellation is ALWAYS performed by the appointment's own
           // client. Both names are the server-resolved client record
-          // (apptClient.name) — never anything from the request body.
+          // (apptClient.name), never anything from the request body.
           clientName: apptClient?.name ?? null,
           actorName: apptClient?.name ?? null,
           actorRole: "client",
@@ -473,7 +473,7 @@ export async function fetchAppointmentForCancelAction(
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
     // Public collapse rule (Blocker 2): ALL token-resolution failures
-    // — malformed / unknown / expired — return the same generic
+    // malformed / unknown / expired: return the same generic
     // public message. No distinct "expired" string is exposed; an
     // attacker cannot learn that a token was a real HMAC that
     // merely aged out.

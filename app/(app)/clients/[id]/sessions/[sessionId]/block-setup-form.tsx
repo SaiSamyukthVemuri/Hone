@@ -4,7 +4,7 @@
 //
 // Session Logging Phase A: practitioner-facing language is "treatment
 // area," not "block." The underlying schema (session_blocks) and the
-// create/update server actions are unchanged — this is an area-first UI
+// create/update server actions are unchanged. This is an area-first UI
 // over the existing fields:
 //   - Treatment area (primary_area / side / custom_area_detail, 0039) is
 //     the section identity and comes first.
@@ -17,7 +17,7 @@
 //
 // Dual mode: with `block` it edits that row via updateSessionBlockAction;
 // without, it creates a new row via createSessionBlockAction. Both
-// actions already accept every field used here — no action behavior
+// actions already accept every field used here, no action behavior
 // change.
 
 import { useEffect, useId, useMemo, useState, useTransition } from "react";
@@ -146,7 +146,7 @@ type Props = {
   // the form and are updated on save; entries 2..N are never touched here.
   firstEntry?: ElectrolysisEntry | null;
   // Create-mode only: initial value for the treatment area, seeded from the
-  // attached treatment plan's primary_area. UI defaulting only — fully
+  // attached treatment plan's primary_area. UI defaulting only: fully
   // editable; never overrides the practitioner's choice on save.
   defaultPrimaryArea?: string | null;
   // Create-mode only (PR #203, migration 0084): sticky machine
@@ -156,7 +156,7 @@ type Props = {
   // Feature A (reliability): most recent lot/batch per probe in this studio,
   // keyed by probe_key AND by normalized probe_label (free-text fallback), each
   // carrying its confirmed flag. The form auto-populates the lot field for the
-  // selected probe (studio-scoped, never auto-confirmed) — keyed match first,
+  // selected probe (studio-scoped, never auto-confirmed), keyed match first,
   // label fallback second. Empty when there is nothing to suggest.
   probeLotSuggestions?: ProbeLotSuggestions;
   // Migration 0128 charting release: the studio's ACTIVE probe-lot inventory
@@ -197,7 +197,7 @@ type Draft = {
   thermolysisDurationSeconds: string;
   galvanicMa: string;
   galvanicDurationSeconds: string;
-  // galvanic_intensity_percent is a retired reading — no longer captured, edited,
+  // galvanic_intensity_percent is a retired reading, no longer captured, edited,
   // hydrated, or sent by this form. Historical values are preserved server-side
   // (the update omits the column); new entries always store NULL.
   unitsOfLye: string;
@@ -286,11 +286,11 @@ function initialDraft(
   }
   // Migration 0108: seed structured observation chips. New rows carry
   // observation_chips directly; legacy rows (empty chips) are hydrated from
-  // `comments` NON-destructively — matched chip tokens become chips, everything
-  // else stays as free-text — so editing an old record shows chips reliably and
+  // `comments` NON-destructively, matched chip tokens become chips, everything
+  // else stays as free-text, so editing an old record shows chips reliably and
   // never double-displays them. The stored row is untouched until the
   // practitioner saves.
-  // Chip-loading fix: seed the SAME way the entry-row renders — via the single
+  // Chip-loading fix: seed the SAME way the entry-row renders: via the single
   // resolveDisplayChips contract. Structured chips preload directly; a LEGACY
   // entry (empty observation_chips) hydrates its chips out of `comments` so
   // reopening an old treatment area shows them as SELECTED controls, with the
@@ -353,7 +353,7 @@ function initialDraft(
     comments: hydrated.freeText,
     // Charting unification: fold a legacy reaction_type into the ONE merged chip
     // selection (shown as a selected chip). On save it migrates into
-    // observation_chips and reaction_type is cleared — the value is preserved,
+    // observation_chips and reaction_type is cleared: the value is preserved,
     // never a separate row.
     observationChips: mergeReactionIntoChips(hydrated.chips, block.reaction_type),
     // PR #190: round-trip the stored response so an edit save that
@@ -433,7 +433,7 @@ export function BlockSetupForm({
   // THE DEFECT THIS FIXES. This used to consider ACTIVE INVENTORY ONLY. A studio
   // with no probe inventory therefore got `choose` on every probe pick, the lot
   // field was CLEARED, and the picker rendered "No active inventory lot for this
-  // probe. Type the lot/batch manually…" — even for a probe whose lot had been
+  // probe. Type the lot/batch manually…", even for a probe whose lot had been
   // charted many times. `resolveProbeLotSuggestion`, which resolves exactly that
   // recorded history, was exported and unit-tested but never called by any
   // application code; this file imported its module for the TYPE only.
@@ -457,7 +457,7 @@ export function BlockSetupForm({
     // effect re-runs on every render, and every one of those runs exits here.
     if (draft.probeKey === lotOwnerProbeKey) return;
     // The probe CHANGED. Whatever was in the field belonged to the old probe, so
-    // it is dropped unconditionally — manual, copied or auto-filled alike. A lot
+    // it is dropped unconditionally: manual, copied or auto-filled alike. A lot
     // is probe-specific; carrying one across a probe switch would attach it to a
     // probe it was never used on.
     const result = resolveProbeLotAutofill({
@@ -480,7 +480,7 @@ export function BlockSetupForm({
       : lotStatus === "copied"
         ? // A copied lot is a transcription of another area's record, so say so
           // and say it still needs checking against the package in hand.
-          "Copied with these settings — confirm the lot/batch on the package."
+          "Copied with these settings: confirm the lot/batch on the package."
         : probeLotSourceMessage(lotStatus);
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
@@ -496,7 +496,7 @@ export function BlockSetupForm({
   // expects: mode, modality, energy, machine frequency and probe.
   // Never the area identity (the practitioner chooses the new area
   // fresh), never MINUTES PERFORMED (an outcome of the treatment that
-  // already happened — copying it silently overwrote destination
+  // already happened: copying it silently overwrote destination
   // minutes already typed by hand), and never the client response
   // (tolerance / reaction / caution belong to the treatment that
   // already happened, not the one being set up). Area-aware: when a
@@ -525,20 +525,20 @@ export function BlockSetupForm({
     // settings PLUS the primary (earliest live) entry's mode-gated machine
     // readings (thermolysis/galvanic/units-of-lye/pulse). Destination areas,
     // laterality, custom area detail, destination MINUTES and every outcome/
-    // response field are preserved — the patch does not own those keys, and a
+    // response field are preserved: the patch does not own those keys, and a
     // key it does not own cannot be overwritten by the spread below.
     //
     // The PROBE LOT is the deliberate exception, and an earlier version of this
     // comment wrongly claimed a manually typed destination lot survives. It does
     // NOT: the patch owns probeLotNumber, probeInventoryItemId and
     // probeLotConfirmed, so Copy settings REPLACES a lot already typed here with
-    // the source's. That is intended — the lot belongs to the probe being copied
-    // — and it is made safe by never copying confirmation: the destination lot
+    // the source's. That is intended: the lot belongs to the probe being copied
+    // and it is made safe by never copying confirmation: the destination lot
     // always lands unconfirmed and the practitioner is asked to check it against
     // the package.
     const firstEntry = firstLiveEntry(source.electrolysis_entries);
     // The lot travels with the probe. Its inventory LINK is carried only when
-    // the source's item is still an ACTIVE lot for the copied probe — so a copy
+    // the source's item is still an ACTIVE lot for the copied probe, so a copy
     // can never resurrect a link to an expired, archived or reclassified row.
     const linkable = new Set(
       activeProbeLotOptionsForProbe(
@@ -670,7 +670,7 @@ export function BlockSetupForm({
       // observation_chips selection. PRESERVE a historical reaction_type while
       // its equivalent chip is still selected (so an unrelated edit never erases
       // it); clear it ONLY when the practitioner explicitly deselects that
-      // reaction. Never invent/collapse a reaction_type from chips — a new
+      // reaction. Never invent/collapse a reaction_type from chips: a new
       // record keeps reaction_type NULL and lives entirely in observation_chips.
       reactionType:
         draft.reactionType &&
@@ -748,7 +748,7 @@ export function BlockSetupForm({
         return;
       }
       // Create: one save → treatment area + first entry. block_name omitted
-      // (null) — the section title falls back to the area, then a muted
+      // (null), the section title falls back to the area, then a muted
       // placeholder.
       const res = await createTreatmentAreaWithEntryAction({
         clientId,
@@ -806,7 +806,7 @@ export function BlockSetupForm({
   // OmniBlend the galvanic settings are charted BEFORE thermolysis, OmniBlend
   // thermolysis has no duration, and galvanic has no intensity. Other modalities
   // are intentionally NOT changed (pending Chloe's review of the rest). Hiding an
-  // input never clears a stored value — an existing reading round-trips on save,
+  // input never clears a stored value: an existing reading round-trips on save,
   // so historical OmniBlend records are not rewritten; new ones leave it empty.
   const isOmniblend = draft.apilusModality === "Omniblend";
 
@@ -924,7 +924,7 @@ export function BlockSetupForm({
           </span>
         )}
         {/* MACHINE ORDER (Chloe): units of lye, then galvanic duration, then mA
-            — the order the Apilus shows them, so she can read straight down.
+            the order the Apilus shows them, so she can read straight down.
             The canonical list lives in lib/sessions/reading-field-order.ts. */}
         <div className="grid gap-4 md:grid-cols-2">
           <label className="flex flex-col gap-1.5">
@@ -1057,7 +1057,7 @@ export function BlockSetupForm({
               selector backed by the studio's sterile-item inventory. Manual
               entry always works (typing sets the value and is never replaced);
               selecting a lot fills the field. The SAVED value is still the
-              free-text lot-number snapshot on session_blocks.probe_lot_number —
+              free-text lot-number snapshot on session_blocks.probe_lot_number,
               no FK, so archiving/expiring a lot never rewrites past charting. */}
           <ProbeLotSelect
             value={draft.probeLotNumber}
@@ -1198,7 +1198,7 @@ export function BlockSetupForm({
         </label>
       )}
 
-      {/* Treatment readings — the first pass, captured on this same page so
+      {/* Treatment readings: the first pass, captured on this same page so
           there is no second form after saving. Mode-aware: thermolysis
           fields for thermolysis/blend, galvanic fields for galvanic/blend.
           All optional (pulse defaults to 1). Saved as the treatment area's
@@ -1222,8 +1222,8 @@ export function BlockSetupForm({
         </label>
 
         {/* MACHINE ORDER (Chloe): the COMPLETE galvanic group precedes
-            thermolysis for every blend modality — PicoBlend, OmniBlend,
-            MultiBlend, EvoluBlend, SynchroBlend — not only OmniBlend as before.
+            thermolysis for every blend modality: PicoBlend, OmniBlend,
+            MultiBlend, EvoluBlend, SynchroBlend, not only OmniBlend as before.
             Pure modes render whichever single group applies. */}
         {galvSection}
         {thermoSection}
@@ -1260,7 +1260,7 @@ export function BlockSetupForm({
         </span>
       </label>
 
-      {/* PR #279 (migration 0095): numbing record — a factual note of whether
+      {/* PR #279 (migration 0095): numbing record: a factual note of whether
           the client used numbing before treatment. "Not recorded" (NULL) is the
           default. No advice / dosing / product guidance. */}
       <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
@@ -1286,7 +1286,7 @@ export function BlockSetupForm({
           })}
         </div>
         {/* 0156: ONE optional free-text note, revealed ONLY when numbing was
-            used. Factual — no dosing/timing/medical instructions. The draft
+            used. Factual, no dosing/timing/medical instructions. The draft
             value is retained across status toggles (so toggling back to "used"
             restores it); the server discards it unless the saved status is
             "used". Label wraps the textarea (accessible name) and the helper is
@@ -1349,12 +1349,12 @@ export function BlockSetupForm({
         </div>
       </div>
 
-      {/* UNIFIED (Chloe): "Treatment observations & skin response" is ONE box —
+      {/* UNIFIED (Chloe): "Treatment observations & skin response" is ONE box,
           a single MERGED multi-select chip list (observation presets + the former
           reaction labels). Everything is stored in observation_chips (the
           canonical multi column). A legacy session_blocks.reaction_type is folded
           into this selection on load (shown as a selected chip) and migrated into
-          observation_chips on save — the value is preserved, never a separate
+          observation_chips on save: the value is preserved, never a separate
           single-select row. Multiple findings may be selected together. */}
       <div className="flex flex-col gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <div>
@@ -1402,7 +1402,7 @@ export function BlockSetupForm({
             className="w-full resize-y rounded-md border border-neutral-300 bg-white px-3 py-3 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           />
         )}
-        {/* Additional notes — one large free-text box directly beneath the merged
+        {/* Additional notes, one large free-text box directly beneath the merged
             chip list. ~8 rows, >=12rem, full-width + vertically resizable, safe at
             390px; multiline preserved verbatim. */}
         <label className="flex flex-col gap-1">

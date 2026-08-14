@@ -26,7 +26,7 @@ describe("treatment-memory card names the area (chart parts)", () => {
   });
 
   it("ties the latest recorded setup to its area", () => {
-    expect(BEFORE_TODAY_CARD).toMatch(/Latest recorded setup —/);
+    expect(BEFORE_TODAY_CARD).toMatch(/Latest recorded setup:/);
     expect(BEFORE_TODAY_BUILDER).toMatch(/areaName/);
   });
 

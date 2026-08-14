@@ -253,6 +253,51 @@ describe("GoogleCalendarCard — dormant messaging + iCal distinction (source)",
   });
 });
 
+// Review 3785134030. NULL-STATE VOCABULARY. This definition list renders inside
+// the isConnected branch, so each fallback must be true of a CONNECTED account.
+// The em-dash cleanup replaced bare "—" placeholders with words, and the first
+// attempt inferred each null's meaning from its field name rather than from
+// what the data can actually be. That produced "Google account: Not connected"
+// underneath "Google Calendar is connected."
+//
+// No component rendering exists in this repo's vitest setup (node environment,
+// no jsdom), so these are source pins in the file's existing convention.
+describe("GoogleCalendarCard — null-state vocabulary is truthful (source)", () => {
+  it("a connected account with no email says the EMAIL is unavailable", () => {
+    // fetchUserInfo accepts a valid `sub` with no email and returns
+    // email: null, so this is a reachable state for a connected account.
+    expect(CARD).toMatch(
+      /googleAccountEmail \?\? "Not available"/,
+    );
+    expect(CARD).not.toMatch(/googleAccountEmail \?\? "Not connected"/);
+  });
+
+  it("a null last-authorized timestamp claims no history, only absence", () => {
+    // last_successful_auth_at is nullable and nothing guarantees
+    // connected => non-null, so "Never" would assert more than the data shows.
+    expect(CARD).toMatch(/:\s*"Not available"\}/);
+    expect(CARD).not.toMatch(/:\s*"Never"\}/);
+  });
+
+  it("a null selected calendar still reads Not selected", () => {
+    // setDestinationMode clears selected_calendar_display_name until a
+    // destination is configured, so null genuinely means none is selected.
+    expect(CARD).toMatch(/selectedCalendarDisplayName \?\? "Not selected"/);
+  });
+
+  it("Not connected remains the label for the genuinely disconnected status", () => {
+    // The distinction is the point: this fix must not globally retire the
+    // phrase, only stop it describing a connected account.
+    expect(CARD).toMatch(/disconnected: "Not connected"/);
+  });
+
+  it("no dash form was reintroduced by the fix", () => {
+    for (const form of ["\u2014", "&mdash;", "&#8212;"]) {
+      expect(CARD).not.toContain(form);
+    }
+  });
+});
+
 describe("profile page — card gated on the studio flag (source)", () => {
   it("renders the Google card ONLY when google_calendar_connection_enabled is true", () => {
     expect(PAGE).toMatch(/google_calendar_connection_enabled === true/);

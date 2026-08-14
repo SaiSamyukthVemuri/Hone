@@ -28,7 +28,7 @@
 // (migration 0032) were unchanged across that cycle, and are unchanged here.
 //
 // CONFIRMATION. Both actions use the in-DOM accessible ConfirmDialog rather
-// than window.confirm(), which iOS Safari can suppress silently — see the
+// than window.confirm(), which iOS Safari can suppress silently. See the
 // shared control for the full history.
 
 import { useEffect, useState, useTransition } from "react";
@@ -121,7 +121,7 @@ export function AppointmentLifecycleActions({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-start gap-2">
-        {/* THE shared completion control — identical here and in charting. */}
+        {/* THE shared completion control: identical here and in charting. */}
         <MarkAppointmentCompleteControl
           appointmentId={appointmentId}
           startsAt={startsAt}

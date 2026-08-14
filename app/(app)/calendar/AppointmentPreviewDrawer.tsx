@@ -10,7 +10,7 @@ import { MoveAppointmentButton } from "./MoveAppointmentButton";
 
 // In-context appointment PREVIEW (desktop PR C-lite). Opened from an appointment
 // card on the desktop week grid so a practitioner can inspect a booking WITHOUT
-// navigating away — the on-grid equivalent of clicking a Google/Apple Calendar
+// navigating away: the on-grid equivalent of clicking a Google/Apple Calendar
 // event. It shows only safe summary fields the calendar page already loaded
 // (client name, service, date/time, status), plus an "Open full details" deep
 // link to the unchanged /calendar/[id] route. It runs NO new query of its own.
@@ -83,7 +83,7 @@ export function AppointmentPreviewDrawer({
           ? "No-show"
           : "Upcoming";
 
-  // Move is offered only for a confirmed, still-future appointment — the same
+  // Move is offered only for a confirmed, still-future appointment: the same
   // gate the detail page uses. A confirmed-but-started ("done") booking is not
   // movable, so the entry is hidden rather than opening a dialog that rejects.
   const canMove =
@@ -144,7 +144,7 @@ export function AppointmentPreviewDrawer({
           </div>
         </dl>
 
-        {/* Move appointment — the single shared workflow, gated to confirmed +
+        {/* Move appointment: the single shared workflow, gated to confirmed +
             future. On success the drawer closes and the calendar refreshes. */}
         {canMove && (
           <MoveAppointmentButton
@@ -164,7 +164,7 @@ export function AppointmentPreviewDrawer({
         )}
 
         {/* The full editor + every other appointment action live on the
-            unchanged detail route — never duplicated here. */}
+            unchanged detail route, never duplicated here. */}
         <Link
           href={`/calendar/${a.id}${returnTo}`}
           className="mt-1 inline-flex items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"

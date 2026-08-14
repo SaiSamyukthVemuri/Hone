@@ -13,7 +13,7 @@ import { QuickImport } from "./QuickImport";
 // IMPORT-01 (mitigation): the route stays, as an INFORMATIONAL surface. An
 // ordinary owner sees what to prepare and how to reach Hone; the executable
 // paste-and-confirm island renders only for a platform operator. This page is
-// the courtesy, not the control — both server actions refuse a non-operator
+// the courtesy, not the control: both server actions refuse a non-operator
 // before their first write (see ./actions.ts and lib/import/operator-assist).
 
 export const metadata = {
@@ -76,7 +76,7 @@ function OperatorAssistedNotice() {
         <h3 className="text-base font-medium">Get your records brought over</h3>
         <p>
           Email us with roughly how many clients you have and what you are
-          coming from — paper cards, Google Sheets, Excel, Jane, Fresha, or a
+          coming from: paper cards, Google Sheets, Excel, Jane, Fresha, or a
           CSV export. We will do the migration with you and confirm the counts
           before and after.
         </p>
@@ -94,14 +94,14 @@ function OperatorAssistedNotice() {
         <h3 className="text-base font-medium">What to have ready</h3>
         <p>
           One row per client, or one row per treatment area if you are coming
-          from paper cards — we group rows for the same client. This is the
+          from paper cards: we group rows for the same client. This is the
           column shape that needs the least back and forth:
         </p>
         <pre className="overflow-x-auto rounded-md border border-neutral-200 bg-neutral-50 p-3 font-mono text-xs text-neutral-800 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-200">
           {templateText()}
         </pre>
         <p className="text-xs text-neutral-500">
-          Imported history is recorded as imported memory — it is never treated
+          Imported history is recorded as imported memory. It is never treated
           as live charting in Hone, and it never overwrites an existing record.
         </p>
       </section>
@@ -110,7 +110,7 @@ function OperatorAssistedNotice() {
 }
 
 // Operator-only. The unchanged PR #257 flow, behind a banner that says plainly
-// which surface this is — so an operator running a migration is never in doubt
+// which surface this is, so an operator running a migration is never in doubt
 // about whose authority they are using.
 function OperatorImport() {
   return (
@@ -127,7 +127,7 @@ function OperatorImport() {
           shows a preview before anything is imported.
         </p>
         <p>
-          Moving from paper cards? Add one row per client or treatment area —
+          Moving from paper cards? Add one row per client or treatment area,
           Hone groups rows for the same client before import.
         </p>
         <p>

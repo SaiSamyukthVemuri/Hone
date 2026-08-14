@@ -140,7 +140,7 @@ export default function HomePage() {
           </Container>
         </Section>
 
-        {/* Workflow progression — editorial split: left header, right numbered steps */}
+        {/* Workflow progression: editorial split: left header, right numbered steps */}
         <Section id="how-hone-works" tone="paper">
           <Container size="wide">
             <div className="grid gap-10 lg:grid-cols-[minmax(17rem,0.72fr)_minmax(0,1.28fr)] lg:items-start lg:gap-[clamp(4rem,6vw,6.5rem)]">

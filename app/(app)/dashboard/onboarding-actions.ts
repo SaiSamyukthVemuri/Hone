@@ -39,7 +39,7 @@ type OwnerStudio = Awaited<
 type OwnerCtx = {
   studioId: string;
   practitionerId: string;
-  // The authenticated user id, resolved server-side from the session — passed to
+  // The authenticated user id, resolved server-side from the session: passed to
   // the service-role completion/celebration commands (never from the browser).
   userId: string;
   studio: OwnerStudio;
@@ -64,10 +64,10 @@ async function requireOnboardingOwner(): Promise<OwnerCtx | null> {
 }
 
 // Rebuild the authoritative onboarding model from REAL signals + the persisted
-// row — the same assembly the dashboard renders. Completion decisions are made
+// row: the same assembly the dashboard renders. Completion decisions are made
 // from this, never from the client, so a forged "I'm done" call cannot mark an
 // unbookable studio complete or fire the celebration early. (First-transition
-// detection is NOT read here — it is the atomic result of the completion RPC.)
+// detection is NOT read here. It is the atomic result of the completion RPC.)
 async function loadLiveModel(ctx: OwnerCtx): Promise<OnboardingModel> {
   const [signals, row] = await Promise.all([
     getOnboardingSignals(ctx.studio),
@@ -119,11 +119,11 @@ export async function skipPaymentsAction(): Promise<OnboardingActionResult> {
 // Acknowledge the success step -> onboarding complete + wizard_completed dispatch.
 // Server-authoritative and TRUSTED-SERVER-ONLY: (1) resolve the authenticated
 // user + active owner membership; (2) rebuild the live model; (3) reject unless
-// the required data steps are ACTUALLY green (a client that calls this early — or
-// a replayed/forged request — cannot stamp completion on an unbookable studio);
+// the required data steps are ACTUALLY green (a client that calls this early, or
+// a replayed/forged request: cannot stamp completion on an unbookable studio);
 // (4) call the service-role admin_complete_onboarding command through the admin
 // client (which re-verifies ownership + flag and does the atomic completed_at
-// CAS). The analytics DISPATCH is scheduled once — only when THIS call performed
+// CAS). The analytics DISPATCH is scheduled once, only when THIS call performed
 // the first transition (the loser of two concurrent calls gets transitioned=false
 // and schedules nothing). Analytics are best-effort (fire-and-forget, no outbox),
 // so this guarantees one dispatch is scheduled, not one durable delivery.
@@ -133,13 +133,13 @@ export async function completeOnboardingAction(): Promise<OnboardingActionResult
 
   const model = await loadLiveModel(ctx);
   if (!model.requiredComplete) {
-    // Setup isn't actually finished — refuse to record completion.
+    // Setup isn't actually finished: refuse to record completion.
     return { ok: false, error: "not_ready" };
   }
 
   const res = await completeOnboarding(ctx.userId, ctx.studioId);
   if (!res.ok) {
-    // Fixed owner-facing code — never the raw DB error (bounded marker logged
+    // Fixed owner-facing code, never the raw DB error (bounded marker logged
     // inside completeOnboarding).
     return { ok: false, error: "complete_failed" };
   }
@@ -176,7 +176,7 @@ export async function reopenOnboardingAction(): Promise<OnboardingActionResult> 
   return res;
 }
 
-// The one-time celebration has been shown — never fire it again. Guarded by the
+// The one-time celebration has been shown, never fire it again. Guarded by the
 // live model: the celebration is only ever suppressible once required setup is
 // genuinely green (a stray call on an incomplete studio must NOT consume the
 // one-time stamp, or the owner would never see their celebration). The stamp

@@ -9,8 +9,8 @@ import type { IntakeConsentFormView } from "@/lib/intake/consent-forms";
 // paragraphs of consent copy, and the CURRENT status sat below all of it.
 //
 // This is the SMALLEST disclosure that fixes that without building a second
-// consent engine. Portal SIGNED records already have one — SignedConsentViewer
-// (#405) — and it is reused unchanged for those. An intake record is not a
+// consent engine. Portal SIGNED records already have one: SignedConsentViewer
+// (#405), and it is reused unchanged for those. An intake record is not a
 // signature and must never be rendered by that component or described with its
 // vocabulary, so it gets this: native <details>, collapsed by default, no
 // client JavaScript, so the review page stays a server component.

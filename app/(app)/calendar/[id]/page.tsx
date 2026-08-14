@@ -201,7 +201,7 @@ export default async function AppointmentDetailPage({
     | "no_show";
 
   // Quick checkout: the appointment's coarse payment state, so the Payment
-  // section shows Paid/Processing/Refunded or the Checkout entry — the SAME
+  // section shows Paid/Processing/Refunded or the Checkout entry: the SAME
   // bounded loader + cell the dashboard uses (one flow, not two).
   const checkoutPaymentState =
     typedStatus === "completed"
@@ -228,7 +228,7 @@ export default async function AppointmentDetailPage({
   // APPOINTMENT BOUNDARY B4. Outcome repair eligibility, resolved SERVER-SIDE
   // so the surface can explain a block instead of rendering a control that the
   // command would inevitably refuse. Loaded ONLY for an owner looking at a
-  // terminal appointment — a member never sees the surface and never pays for
+  // terminal appointment: a member never sees the surface and never pays for
   // the lookup. `revert_appointment_outcome` re-derives the owner check in SQL
   // regardless of what is rendered here.
   const isTerminalOutcome =
@@ -244,7 +244,7 @@ export default async function AppointmentDetailPage({
       ? await loadAppointmentRepairStateAction(id)
       : null;
 
-  // Briefing reads — every additional fetch below is read-only,
+  // Briefing reads: every additional fetch below is read-only,
   // scoped to the authenticated practitioner's studio via RLS, and
   // already used elsewhere in the app. No new RPCs, no mutations.
   let pinnedNotes: Awaited<ReturnType<typeof getPinnedNotesForClient>> = [];
@@ -261,13 +261,13 @@ export default async function AppointmentDetailPage({
   //
   // What it replaces: a `sessions … order started_at desc limit 1` read whose
   // chosen row was then inspected for blocks. That query has no way to ask
-  // whether a session CONTAINS anything, so an abandoned empty session — one is
-  // created the instant a practitioner taps a modality on /sessions/new — or a
+  // whether a session CONTAINS anything, so an abandoned empty session, one is
+  // created the instant a practitioner taps a modality on /sessions/new, or a
   // newer administrative row, or a void row, or this appointment's own
   // in-progress session, permanently won the lookup and rendered an empty "Last
   // session" over the real treatment sitting one row below.
   let prepMemory: AppointmentPrepMemory | null = null;
-  // True only when a read itself failed — never for a first-visit client, and
+  // True only when a read itself failed, never for a first-visit client, and
   // never merely because nothing is charted.
   let prepUnavailable = false;
   // Practitioner narrative recovered from the candidate window. Survives BOTH
@@ -290,7 +290,7 @@ export default async function AppointmentDetailPage({
   let linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null =
     null;
   // Latest consultation + skin/hair note for this client. Reuses the SAME
-  // helper the client profile already calls — no new query shape, no second
+  // helper the client profile already calls, no new query shape, no second
   // note model, and no write path. Only the head of each kind is read; the
   // full dated history stays on the Consultation tab.
   let clinicalNotesSummary: Awaited<
@@ -314,7 +314,7 @@ export default async function AppointmentDetailPage({
       getTreatmentPlansForClient(studio.id, clientId),
       // THE newest charted treatment before this appointment. Same selector,
       // same batched block read and same fail-soft contract as the charting
-      // screen and /sessions/new — this page just has to fetch its own bounded
+      // screen and /sessions/new, this page just has to fetch its own bounded
       // candidate window, because it is appointment-scoped and (deliberately)
       // never loads the client profile.
       //
@@ -350,7 +350,7 @@ export default async function AppointmentDetailPage({
         .limit(1)
         .maybeSingle(),
       // Latest consultation + skin/hair note. It depends on NOTHING else in
-      // this block — only `clientId`, which is already in hand — so it belongs
+      // this block (only `clientId`, which is already in hand) so it belongs
       // INSIDE this parallel wave. Awaiting it after the wave added a whole
       // extra round-trip to every appointment render, including the
       // electrolysis and laser visits where the card goes on to render
@@ -376,7 +376,7 @@ export default async function AppointmentDetailPage({
 
     // The complete pre-visit view model: every treated area with laterality,
     // the complete per-area setup, the outcomes kept separate from that setup,
-    // and the WHOLE practitioner narrative — at full length, with line breaks
+    // and the WHOLE practitioner narrative: at full length, with line breaks
     // preserved and nothing clamped. Assembled by a pure builder; this page
     // decides nothing about which notes exist or how they group.
     //
@@ -507,7 +507,7 @@ export default async function AppointmentDetailPage({
 
       {/* APPOINTMENT BOUNDARY B4 (0173). The reverse edge. Shown only to an
           owner, only for a terminal outcome, and only where the repair is
-          actually reachable — when it is blocked the component explains why
+          actually reachable, when it is blocked the component explains why
           rather than offering a control that would fail. This is the surface
           that makes AppointmentLifecycleActions' "cannot be undone from this
           screen" no longer the end of the story. */}
@@ -528,7 +528,7 @@ export default async function AppointmentDetailPage({
             Payment
           </h2>
           <p className="text-xs text-neutral-500">
-            Take payment for this appointment. Charting is separate — you can
+            Take payment for this appointment. Charting is separate. You can
             finish charting later.
           </p>
           <AppointmentCheckoutCell
@@ -545,12 +545,12 @@ export default async function AppointmentDetailPage({
           sometimes include a short electrolysis test treatment), the
           section now renders for consultations too, gated by an
           explicit "treatment was performed" confirmation on send.
-          B8 / 0177: status IS now a gate — postcare is completed-only,
+          B8 / 0177: status IS now a gate: postcare is completed-only,
           enforced by claim_postcare_send and reflected here so the surface
           does not offer a send the command would refuse. Empty postcare
           aftercare text is
           surfaced as inline guidance, not a silent block. The section
-          renders a clear "Postcare unavailable — no client email"
+          renders a clear "Postcare unavailable: no client email"
           state instead of vanishing when the client has no EMAIL. (A deleted
           client row is a different case and still renders nothing.) */}
       {data.client && (
@@ -689,7 +689,7 @@ export default async function AppointmentDetailPage({
         // legitimate path.
         //
         // Move appointment shares that exact gate (confirmed + future). It is
-        // the ONE shared responsive workflow — the same MoveAppointmentButton /
+        // the ONE shared responsive workflow: the same MoveAppointmentButton /
         // dialog / server actions used by the desktop preview drawer. A move
         // UPDATES this same appointment row (same id, same client/service/
         // payment/clinical links); it never cancels + rebooks.
@@ -699,7 +699,7 @@ export default async function AppointmentDetailPage({
               Reschedule
             </h2>
             <p className="text-xs text-neutral-500">
-              Move this appointment to a new time. Same appointment and details —
+              Move this appointment to a new time. Same appointment and details,
               only the time changes, and the client is notified.
             </p>
             <MoveAppointmentButton
@@ -740,7 +740,7 @@ export default async function AppointmentDetailPage({
           `appointments`, could not be corrected at all. Now any active member
           can fix them through the governed command. The section renders even
           when empty so the "Add notes" affordance exists; the clinical /
-          client-safe hierarchy elsewhere on this page is unchanged — this is
+          client-safe hierarchy elsewhere on this page is unchanged. This is
           the OPERATIONAL booking note, not a clinical record. */}
       <AppointmentNotesEditor appointmentId={id} notes={data.notes ?? null} />
 
@@ -799,7 +799,7 @@ export default async function AppointmentDetailPage({
 }
 
 // ---------------------------------------------------------------------------
-// Status header — pulls the status pill out of the body copy so it's the
+// Status header: pulls the status pill out of the body copy so it's the
 // first thing a practitioner reads.
 // ---------------------------------------------------------------------------
 function StatusHeader({
@@ -898,7 +898,7 @@ function PractitionerLine({
 }
 
 // ---------------------------------------------------------------------------
-// Client briefing — name + contact + pronouns + tags + skin + intake status
+// Client briefing: name + contact + pronouns + tags + skin + intake status
 // in one calm card.
 // ---------------------------------------------------------------------------
 function ClientBriefingCard({
@@ -1100,7 +1100,7 @@ function IntakeStatusLine({
 // ---------------------------------------------------------------------------
 // Appointment preparation memory. PR #190 turned this from a date+modality
 // pointer into a compact per-area summary; Session 1D turns it into the COMPLETE
-// pre-visit read — every treated area, the complete setup, the outcomes kept
+// pre-visit read: every treated area, the complete setup, the outcomes kept
 // distinct from that setup, and the whole practitioner narrative at full length.
 //
 // Appointment preparation uses the same newest-charted-treatment authority as
@@ -1123,12 +1123,12 @@ function LastTreatmentSection({
   //
   // A treatment card owns the plan and its OWN visit's legacy notes. Legacy
   // notes belonging to a DIFFERENT, newer visit are NOT owned by it and must
-  // still be shown — before Session 1D the page rendered the newest eligible
+  // still be shown: before Session 1D the page rendered the newest eligible
   // row's session_notes unconditionally, and this surface is the only render of
   // that column left in the product.
   // ONE authority decides ownership AND chronology; this component only lays
   // out the answer. `owned` is already rendered by the treatment card, so only
-  // `external` is painted here — always attributed, never implied to belong to
+  // `external` is painted here, always attributed, never implied to belong to
   // the treatment above.
   const { external } = buildPrepProvenanceModel({
     selected: memory
@@ -1142,7 +1142,7 @@ function LastTreatmentSection({
   // Null covers three genuinely different situations, and all three are
   // truthfully described by the same sentence: a first-visit client, a client
   // whose only other sessions carry no charting at all, and a failed read (the
-  // loader fails soft — a memory panel must never take the appointment page
+  // loader fails soft: a memory panel must never take the appointment page
   // down). It is deliberately NOT an empty card with headings over nothing.
   // A FAILED read is not the same clinical statement as "no history". Saying
   // "no previous treatment" because a query timed out would have the
@@ -1171,8 +1171,8 @@ function LastTreatmentSection({
     );
   }
   if (!memory || !clientId) {
-    // No charted treatment. That statement stays — a note-only visit is NOT a
-    // treatment and must never be promoted to one — but the practitioner
+    // No charted treatment. That statement stays: a note-only visit is NOT a
+    // treatment and must never be promoted to one, but the practitioner
     // narrative attached to those visits is still shown, because "nothing was
     // charted" and "there is nothing to know" are different things.
     return (
@@ -1218,7 +1218,7 @@ function LastTreatmentSection({
 // Practitioner narrative from prior visits that produced no charted treatment
 // (or whose treatment detail could not be loaded). READ-ONLY, and deliberately
 // never labelled as a treatment: it reuses the same section vocabulary the
-// treatment card uses — "For next visit", "Legacy session notes" — so the two
+// treatment card uses ("For next visit", "Legacy session notes") so the two
 // surfaces read identically without either claiming the other's meaning.
 //
 // Full text, whole: whitespace-pre-wrap keeps the practitioner's line breaks
@@ -1259,10 +1259,10 @@ function PriorNarrative({ items }: { items: PrepNarrativeRenderItem[] }) {
           </p>
           {/* PROVENANCE. Every fallback item is dated, because it may come from
               a different visit than anything shown above it. A session id is
-              never rendered — the date is the practitioner-meaningful handle. */}
+              never rendered: the date is the practitioner-meaningful handle. */}
           {/* PROVENANCE, in BOTH directions. Rendering a date only for the
               "after" case left an OLDER plan silently undated, and that silence
-              read as "written at the treatment above" — inverting the status of
+              read as "written at the treatment above", inverting the status of
               an instruction that may already have been carried out. Chronology
               is the ONLY relationship the data supports: a claim about whether
               an instruction still stands would be an inference Hone cannot
@@ -1455,7 +1455,7 @@ function NextStepCard({
 }
 
 // ---------------------------------------------------------------------------
-// Treatment plan — active plans only on the briefing surface. Closed plans
+// Treatment plan: active plans only on the briefing surface. Closed plans
 // stay on the client profile.
 // ---------------------------------------------------------------------------
 function TreatmentPlanCard({
@@ -1528,7 +1528,7 @@ function TreatmentPlanCard({
 // Pure read-only from the appointment row. Attempt counts come from the
 // existing reminder_*_send_attempts / confirmation_send_attempts /
 // no_show_email_send_attempts columns the row already loaded. No retry
-// implied — this is just an honest status display.
+// implied. This is just an honest status display.
 function EmailRow({
   label,
   iso,

@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 
 // PR #255: Admin Console V1. Operator-only (the /admin layout's isAdmin gate
 // covers this page). Read-only operational metadata and aggregate counts over
-// existing tables via the service-role client — NO client-level clinical data
+// existing tables via the service-role client, NO client-level clinical data
 // (no client names, treatment notes, exposure incidents, imported memory,
 // payment internals, Stripe ids, tokens, or audit JSON is selected here).
 
@@ -116,7 +116,7 @@ async function loadConsole(): Promise<{
       .order("created_at", { ascending: false })
       .limit(20),
     admin.from("waitlist").select("id", { count: "exact", head: true }),
-    // Explicit projection (not select("*")) — matches the discipline of every
+    // Explicit projection (not select("*")), matches the discipline of every
     // other query here and future-proofs against a later column add to
     // demo_requests. Only the operational columns the table renders.
     admin
@@ -227,7 +227,7 @@ async function loadConsole(): Promise<{
 export default async function AdminIndexPage() {
   const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
     await loadConsole();
-  // PR B (smart payment status): platform payment summary — capability
+  // PR B (smart payment status): platform payment summary: capability
   // COUNTS only, current-mode, via the shared presenter. No identifiers.
   const paymentSummary = await loadPlatformPaymentSummary(createAdminClient());
   // PR #265: operator-visible health of the external every-15-min reminder
@@ -266,7 +266,7 @@ export default async function AdminIndexPage() {
 
 // State-driven platform payment banner (PR B). Replaces the pre-live
 // hardcoded payments-off note with the deployment's ACTUAL Stripe runtime
-// mode plus current-mode studio capability counts (counts only — no
+// mode plus current-mode studio capability counts (counts only, no
 // identifiers). A load error is said out loud, never rendered as all-clear.
 function PaymentsBanner({ summary }: { summary: PlatformPaymentSummary }) {
   const live = summary.runtimeMode === "live";
@@ -280,7 +280,7 @@ function PaymentsBanner({ summary }: { summary: PlatformPaymentSummary }) {
       }`}
     >
       <p className="font-medium">
-        Stripe runtime: {live ? "LIVE mode — real charges possible" : "test mode — no real charges"}
+        Stripe runtime: {live ? "LIVE mode: real charges possible" : "test mode: no real charges"}
       </p>
       {summary.loadError ? (
         <p className="mt-1">
@@ -348,7 +348,7 @@ function StudioSetupCard() {
 function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) {
   // Four states, four distinct presentations. A ternary chain whose final
   // `else` meant "Missing" would have silently rendered the new `degraded`
-  // state as "Missing" — an explicit map keeps the card total.
+  // state as "Missing", an explicit map keeps the card total.
   const tone =
     status.status === "healthy"
       ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
@@ -388,7 +388,7 @@ function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) 
         <div className="flex flex-wrap gap-x-2">
           <dt className="opacity-70">Expected cadence:</dt>
           <dd>
-            every {status.cadenceMinutes} minutes — external scheduler
+            every {status.cadenceMinutes} minutes: external scheduler
             (cron-job.org) required
           </dd>
         </div>
@@ -416,7 +416,7 @@ function ReminderSchedulerCard({ status }: { status: ReminderSchedulerStatus }) 
       {status.status !== "healthy" && (
         <p className="mt-3 max-w-prose text-sm">
           {/* OPS-01.1: name the axis that actually failed. A cadence-only
-              failure must not claim the last success is old — the age is shown
+              failure must not claim the last success is old: the age is shown
               directly above and would contradict it. */}
           {status.status === "missing"
             ? "No successful reminder run recorded recently. "
@@ -470,7 +470,7 @@ function Flag({ ok, label }: { ok: boolean; label: string }) {
           : "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400"
       }`}
     >
-      <span aria-hidden="true">{ok ? "✓" : "—"}</span>
+      <span aria-hidden="true">{ok ? "✓" : "✕"}</span>
       {label}
     </span>
   );
@@ -527,7 +527,7 @@ function StudiosSection({ studios }: { studios: StudioRow[] }) {
                         /book/{s.slug}
                       </Link>
                     ) : (
-                      <span className="text-neutral-400">—</span>
+                      <span className="text-neutral-400">Not set</span>
                     )}
                   </Td>
                   <Td className="text-neutral-600 dark:text-neutral-400">

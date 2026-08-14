@@ -160,7 +160,7 @@ test("core memory loop: booking to next-appointment memory", async ({
     // page for are now IN this section, so the hop is gone by design.
     await expect(page.getByTestId("finish-appointment")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /Done — back to client/ }),
+      page.getByRole("button", { name: /Done, back to client/ }),
     ).toBeVisible();
     await expect(page.getByTestId("finish-completion-status")).toBeVisible();
     await expect(

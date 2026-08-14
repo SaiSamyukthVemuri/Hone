@@ -7,7 +7,7 @@
 // "completed" is reserved for rows whose DB status is genuinely `completed`;
 // a derived past-confirmed appointment is "done", never "completed".
 //
-// Pure and computed at render time with Date.now() — no timers, no polling.
+// Pure and computed at render time with Date.now(), no timers, no polling.
 // Status flips on the next render / navigation / refresh / revalidation.
 // Absolute UTC comparison on the ISO `ends_at`, never a local-string compare.
 export type AppointmentDisplayStatus =

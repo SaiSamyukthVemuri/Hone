@@ -2,7 +2,7 @@
 
 // Practitioner-only client personal notes editor.
 //
-// Renders two freeform text areas — Personal notes (always visible)
+// Renders two freeform text areas: Personal notes (always visible)
 // and Private warnings (collapsed by default inside a <details>).
 // The Private warnings collapse is the load-bearing piece of the UX:
 // it stays closed when a client can see the practitioner's screen.

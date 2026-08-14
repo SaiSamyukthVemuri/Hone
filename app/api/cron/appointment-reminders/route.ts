@@ -122,7 +122,7 @@ type SmsRunStats = RunStats;
 // PR #258: when a reminder reaches MAX_ATTEMPTS without sending it is silently
 // dropped (the window query filters attempts >= MAX_ATTEMPTS, so the row is
 // never retried). Surface that to the operator via the existing ops-alert
-// pipeline with NON-SENSITIVE metadata only — no client email/phone/notes,
+// pipeline with NON-SENSITIVE metadata only, no client email/phone/notes,
 // no token, no free-text error string (recordOpsAlert also redacts defensively).
 async function alertIfReminderExhausted(opts: {
   studioId: string;
@@ -203,7 +203,7 @@ async function sendReminderPass(opts: {
     // immediately before the send so a reminder is never emailed for a
     // no-longer-confirmed appointment. Idempotency stays owned by
     // claim-before-send; this only suppresses an out-of-date send (the bumped
-    // claim attempt is harmless — a non-confirmed row is filtered out of the
+    // claim attempt is harmless: a non-confirmed row is filtered out of the
     // next window query).
     const { data: fresh } = await admin
       .from("appointments")
@@ -311,7 +311,7 @@ async function sendReminderPass(opts: {
 // idempotency + due-window loader as the appointment reminders, but only emails
 // when the client's latest intake is still in_progress and always mints + stamps
 // a FRESH secure intake link. No studio toggle (the per-appointment dedupe +
-// skip-submitted + the 7d/3d cadence keep it non-spammy). Logs only ids/kinds —
+// skip-submitted + the 7d/3d cadence keep it non-spammy). Logs only ids/kinds,
 // never a raw token or client PII.
 async function sendIntakeReminderPass(opts: {
   kind: "7d" | "3d";
@@ -347,7 +347,7 @@ async function sendIntakeReminderPass(opts: {
     // Resolve the client's latest intake BEFORE claiming, so a submitted /
     // reviewed / missing intake is skipped without wasting a claim attempt.
     // Admin client (the cron is session-less); studio + client scoped so studio
-    // isolation holds. Only id + status are read — no client PII, no token.
+    // isolation holds. Only id + status are read, no client PII, no token.
     const { data: intake } = await admin
       .from("client_intake_forms")
       .select("id, status")
@@ -387,7 +387,7 @@ async function sendIntakeReminderPass(opts: {
 
     // Always mint a FRESH valid link (now + 14-day TTL; signed token stays the
     // authoritative expiry) so the reminder carries a working link. Saved
-    // answers are preserved — this reuses the existing intake row, never a new
+    // answers are preserved: this reuses the existing intake row, never a new
     // one. The raw token is never logged or stored.
     const intakeUrl = generateIntakeLinkUrl(intake.id, appOrigin);
     const result = await sendIntakeReminderToClient({
@@ -479,7 +479,7 @@ async function sendSmsReminderPass(opts: {
     if (!appt.client.sms_consent_at) continue;
     if (appt.client.sms_opted_out_at) continue;
 
-    // PR #258: same cancellation-race re-check as the email pass — never SMS a
+    // PR #258: same cancellation-race re-check as the email pass, never SMS a
     // reminder for an appointment cancelled/no-showed after the window query.
     const { data: freshSms } = await admin
       .from("appointments")
@@ -605,10 +605,10 @@ export async function GET(req: Request) {
     // PR #265: record a non-sensitive "last successful reminder cron run"
     // heartbeat AFTER all four passes complete (only reached on the authorized
     // success path; a thrown run skips this and the catch records
-    // cron_route_failed instead). Best-effort/fail-open — never blocks the run.
+    // cron_route_failed instead). Best-effort/fail-open, never blocks the run.
     // Aggregate counts only: no client email/phone/name, notes, token, or URL.
     // OPS-01.1 (review 3775042692): `at` is the COMPLETION time (recency axis);
-    // `invokedAt` is this run's real INVOCATION time — `startedAt`, captured
+    // `invokedAt` is this run's real INVOCATION time: `startedAt`, captured
     // immediately after the auth gate and before any reminder work. Scheduler
     // cadence is the spacing between invocations, so a slow or fast run can no
     // longer distort it. `previousInvokedAt` is filled in atomically by the

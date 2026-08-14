@@ -61,7 +61,7 @@ type Props = {
   // 0171. SERVER-GENERATED hash of the exact policy text rendered above this
   // form. Posted back verbatim with the checkbox so the command can prove the
   // visitor acknowledged what they were actually shown. This component never
-  // computes it, never inspects it, and never sees the policy text itself —
+  // computes it, never inspects it, and never sees the policy text itself,
   // it is an opaque proof-of-display string. null when no policy is on file.
   presentedPolicyHash: string | null;
 };
@@ -113,7 +113,7 @@ export function RescheduleForm({
   const [error, setError] = useState<string | null>(null);
   // 0171 amendment. The success state carries the successor's MANAGEMENT URL
   // and the TRUE email outcome, so the page never claims a confirmation is on
-  // its way that the provider refused — and the client always leaves with a
+  // its way that the provider refused, and the client always leaves with a
   // usable path to the new appointment.
   const [done, setDone] = useState<{
     when: string;
@@ -228,7 +228,7 @@ export function RescheduleForm({
 
   if (done) {
     // Copy is chosen by the ACTUAL email outcome. "A confirmation email is on
-    // its way" used to render unconditionally — including when the studio had
+    // its way" used to render unconditionally, including when the studio had
     // confirmations switched off entirely, and when the provider had just
     // failed. The management link renders in ALL THREE states, because it is
     // the client's guaranteed path to the successor and does not depend on any

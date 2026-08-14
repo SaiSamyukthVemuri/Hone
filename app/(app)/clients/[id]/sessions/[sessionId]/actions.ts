@@ -23,7 +23,7 @@ const VALID_MODES: ReadonlyArray<ElectrolysisMode> = ["thermo", "galv", "blend"]
 
 // Pulse delay is recorded only when multiple pulses were done (pulse_count >
 // 1); a single-pulse entry stores null. When applicable the value must be in
-// [0.03, 1.90] — an out-of-range value throws the same clean message the UI
+// [0.03, 1.90], an out-of-range value throws the same clean message the UI
 // shows. Rounded to 2 decimal places.
 function resolvePulseDelay(
   value: FormDataEntryValue | null,
@@ -111,7 +111,7 @@ async function assertSessionVisible(
 // first block is created on demand from the entry's own treatment params.
 //
 // L18 Phase 2: this helper NO LONGER READS OR WRITES the database. Finding the
-// primary block — and creating it when the session has none — now happens
+// primary block (and creating it when the session has none) now happens
 // inside `add_electrolysis_pass` (migration 0166), in the same transaction as
 // the entry and under a row lock. Two defects go with the move: the block and
 // the entry can no longer commit separately (a failed entry write used to leave
@@ -142,17 +142,17 @@ function defaultBlockValues(params: EnsureBlockParams): Record<string, unknown> 
   };
 }
 
-// Chip-loading fix — the write action reports a DISCRIMINATED outcome so the form
+// Chip-loading fix: the write action reports a DISCRIMINATED outcome so the form
 // can tell the three states apart and NEVER blind-retry a write that may already
 // have persisted:
-//   * ok          — verified: the row was created AND a SEPARATE read-back of the
+//   * ok         : verified: the row was created AND a SEPARATE read-back of the
 //                   stored observation_chips matched what was submitted.
-//   * invalid     — nothing was inserted; the submitted chips were unreadable
+//   * invalid    , nothing was inserted; the submitted chips were unreadable
 //                   (malformed JSON) or not an array. Safe to fix + resubmit.
-//   * not_persisted — the insert itself failed; no row exists. Safe to retry.
-//   * unverified  — a row WAS created (entryId returned) but the stored chips
-//                   could not be confirmed. NOT atomic — the row is not rolled
-//                   back (no transaction/RPC in scope) — so the caller must NOT
+//   * not_persisted, the insert itself failed; no row exists. Safe to retry.
+//   * unverified : a row WAS created (entryId returned) but the stored chips
+//                   could not be confirmed. NOT atomic: the row is not rolled
+//                   back (no transaction/RPC in scope), so the caller must NOT
 //                   silently resubmit; it surfaces a recovery message + reload.
 export type AddElectrolysisEntryResult =
   | { ok: true; entryId: string; observationChips: string[] }
@@ -163,14 +163,14 @@ export type AddElectrolysisEntryResult =
 const CHIPS_UNREADABLE_ERROR =
   "Your observations couldn't be read, so nothing was saved. Please re-select them and try again.";
 const CHIPS_UNVERIFIED_ERROR =
-  "This pass may have been saved, but we couldn't confirm your observations recorded correctly. Don't re-add it — reload the session to check first.";
+  "This pass may have been saved, but we couldn't confirm your observations recorded correctly. Don't re-add it: reload the session to check first.";
 
 // Strict parse of the submitted observation_chips form field.
 //   * Absent / blank string  → no chips selected (valid; normalizes to []).
 //   * Valid JSON array       → canonicalized + deduped via normalizeChips.
 //   * Present, non-empty, but NOT parseable JSON → invalid (fail before insert).
 //   * Parses to a non-array (object/string/number/boolean/null) → invalid.
-// Never coerces malformed/non-array input to [] — that would silently discard the
+// Never coerces malformed/non-array input to [], that would silently discard the
 // practitioner's selections and then "verify" the empty value as success.
 function parseSubmittedChips(
   raw: FormDataEntryValue | null,
@@ -189,9 +189,9 @@ function parseSubmittedChips(
 }
 
 // L18 Phase 2: the block/entry atomicity exception that used to sit here is
-// RETIRED. This action is still block-coupled — when the submitted form omits
+// RETIRED. This action is still block-coupled, when the submitted form omits
 // `block_id` (a legacy caller shape it deliberately still supports) the primary
-// block has to be found or created — but both halves now happen inside
+// block has to be found or created, but both halves now happen inside
 // `add_electrolysis_pass` (migration 0166), in one transaction. A failed entry
 // write can no longer leave an orphan block behind.
 export async function addElectrolysisEntryAction(
@@ -211,7 +211,7 @@ export async function addElectrolysisEntryAction(
 
   // Chip-loading fix: parse the STRUCTURED observation chips FIRST, before any
   // studio lookup / session read / insert. A malformed or non-array payload
-  // fails the whole action here — nothing is inserted, no verification query
+  // fails the whole action here, nothing is inserted, no verification query
   // runs, and we never silently coerce lost selections to [] and then "verify"
   // that empty value as success (the exact silent-loss path this incident is
   // about). Absent/blank/empty-array all normalize to [] and proceed.
@@ -271,7 +271,7 @@ export async function addElectrolysisEntryAction(
         max: 100,
       })
     : null;
-  // Thermolysis duration is fractional (e.g. PicoBlend 0.733s) — parse as a
+  // Thermolysis duration is fractional (e.g. PicoBlend 0.733s), parse as a
   // decimal, NOT pickInteger, or 0.733 would silently truncate to 0. Matches the
   // block form's write path and the numeric DB column.
   const thermolysisDurationSeconds = wantThermo
@@ -305,7 +305,7 @@ export async function addElectrolysisEntryAction(
   const supabase = await createClient();
   // PR 3: never trust a client-supplied probe_lot_id. It must be a well-formed
   // UUID that belongs to THIS studio's probe_lots inventory; otherwise reject.
-  // (An absent/free-text lot is fine — probe_lot_number is a separate manual
+  // (An absent/free-text lot is fine: probe_lot_number is a separate manual
   // field and is not made "inventory-verified" here.)
   const lotCheck = await validateProbeLotId(
     supabase,
@@ -342,7 +342,7 @@ export async function addElectrolysisEntryAction(
     p_galvanic_ma: galvanicMa,
     p_galvanic_duration_seconds: galvanicDurationSeconds,
     // galvanic_intensity_percent is RETIRED: the command takes no parameter for
-    // it, so a new row always stores NULL — enforced by the database, not here.
+    // it, so a new row always stores NULL: enforced by the database, not here.
     p_thermolysis_intensity_percent: thermolysisIntensityPercent,
     p_thermolysis_duration_seconds: thermolysisDurationSeconds,
     p_units_of_lye: unitsOfLye,
@@ -354,7 +354,7 @@ export async function addElectrolysisEntryAction(
   if (error || !inserted?.entry_id) {
     // The command raises before writing anything, and rolls back the block with
     // the entry, so a failure here means NO row exists. Safe for the caller to
-    // retry — and the message is mapped, never the raw database text.
+    // retry, and the message is mapped, never the raw database text.
     return {
       ok: false,
       code: "not_persisted",
@@ -372,7 +372,7 @@ export async function addElectrolysisEntryAction(
   // exact id and scoped to the session (already confirmed to belong to this
   // studio via assertSessionVisible; RLS enforces the studio boundary), then a
   // STRICT check of the raw stored array (raw duplicates / non-canonical / non-array
-  // all fail — never masked by dedup).
+  // all fail, never masked by dedup).
   const { data: verifyRow, error: verifyErr } = await supabase
     .from("electrolysis_entries")
     .select("observation_chips")
@@ -436,7 +436,7 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
   // requires a non-null auth.uid(), resolves the studio and client from the
   // trusted `sessions` row, requires the caller to be an ACTIVE practitioner of
   // that studio, and re-checks the asserted client. This action writes ONLY
-  // laser_entries — it has no session_blocks dependency — which is why it is
+  // laser_entries (it has no session_blocks dependency) which is why it is
   // the one writer this phase could move atomically. The thrown message shape
   // is unchanged.
   const { error } = await supabase.rpc("create_laser_entry", {
@@ -455,7 +455,7 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
 }
 
 // Migration 0114: a treatment PASS (an electrolysis_entries / laser_entries row)
-// is removed by an AUDITED SOFT-DELETE — deleted_at/deleted_by/delete_reason —
+// is removed by an AUDITED SOFT-DELETE, deleted_at/deleted_by/delete_reason,
 // NEVER a hard delete. The clinical record is preserved (and still visible in
 // audit/history) but hidden from every active view. This mirrors the
 // session_blocks soft-delete pattern (softDeleteSessionBlockAction, 0019). Only
@@ -487,7 +487,7 @@ async function softDeleteEntry(
 
   // L18 FINAL (migration 0169) revoked INSERT/UPDATE/DELETE from `authenticated`
   // on both pass tables; only SELECT remains. The soft-delete UPDATE therefore
-  // has to run as service_role — the authenticated client now fails it with
+  // has to run as service_role, the authenticated client now fails it with
   // 42501, which is exactly the production regression this restores.
   //
   // Service_role BYPASSES RLS, so RLS no longer contributes anything to tenant
@@ -503,7 +503,7 @@ async function softDeleteEntry(
   //   * `.eq("id", id)` is the primary key, so at most one row can ever match.
   //   * `.eq("session_id", sessionId)` pins the row to that proved session.
   //     session_id is NOT NULL and FK-constrained, so an entry belonging to
-  //     another session — and therefore to another client or studio — cannot
+  //     another session (and therefore to another client or studio) cannot
   //     match. Neither pass table carries its own studio_id/client_id; the
   //     session IS the lineage, which is why this predicate is the boundary.
   //   * `.is("deleted_at", null)` keeps it to a single ACTIVE pass, rejecting a
@@ -542,7 +542,7 @@ async function softDeleteEntry(
     throw new Error("Could not remove this pass. Please try again.");
   }
   // Exactly one active pass must have changed. Zero means it was already removed
-  // (or never belonged to this session) — a SAFE failure, never a silent success.
+  // (or never belonged to this session), a SAFE failure, never a silent success.
   // More than one is impossible against a primary key, so it is treated as a
   // hard fault rather than assumed benign.
   if (!data || data.length !== 1) {

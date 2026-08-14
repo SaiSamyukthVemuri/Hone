@@ -6,7 +6,7 @@ import type { RemoveSessionAreaResult } from "@/app/(app)/clients/[id]/sessions/
 // Willow P1-B: remove a whole incorrectly-recorded treatment AREA from a DRAFT
 // chart. Before removal it summarizes what is attached (recorded passes; any
 // attached photos are voided with the area too), requires a reason (>=10 chars,
-// enforced by the RPC), and calls the atomic aggregate soft-delete action — the
+// enforced by the RPC), and calls the atomic aggregate soft-delete action: the
 // area + its passes + its images are voided in one trusted transaction. Only
 // rendered inside the draft (non-finalized) charting view; the record is
 // preserved (soft-delete), never hard-deleted.
@@ -77,7 +77,7 @@ export function RemoveAreaButton({
         ) : (
           <>This area has no recorded passes.</>
         )}{" "}
-        The record is preserved (soft-deleted) for audit — it just leaves the
+        The record is preserved (soft-deleted) for audit: it just leaves the
         active chart.
       </p>
       <label className="flex flex-col gap-1">

@@ -4,11 +4,11 @@ import type { BookingReadiness, ReadinessItem } from "@/lib/booking/readiness";
 // Owner-only dashboard surface: the publish-readiness checklist for a booking
 // page that is NOT yet ready (derived; no schema flag).
 //
-// CHLOE D2 — it renders only while there is setup left to do.
+// CHLOE D2. It renders only while there is setup left to do.
 // ---------------------------------------------------------------------------
 // This card used to have two states. The "ready" state was a permanent
-// congratulation — "Booking page ready" / "Your public booking page is live",
-// the booking link, an Open-booking-page button, and a column of green ticks —
+// congratulation: "Booking page ready" / "Your public booking page is live",
+// the booking link, an Open-booking-page button, and a column of green ticks,
 // that sat on the Dashboard forever once an established studio had finished
 // setting up. It was no longer operational work, and it was the single biggest
 // block of finished-setup clutter on the page.
@@ -20,8 +20,8 @@ import type { BookingReadiness, ReadinessItem } from "@/lib/booking/readiness";
 //
 // Nothing was removed from the product. Readiness itself is unchanged
 // (lib/booking/readiness.ts is untouched), the public booking page is
-// soft-gated independently, and the booking LINK — copy, open, paste-it-where
-// — still lives on its own pages, which is where an established studio goes
+// soft-gated independently, and the booking LINK: copy, open, paste-it-where
+// still lives on its own pages, which is where an established studio goes
 // looking for it:
 //   * /settings/booking      (BookingLinkCard, variant="card")
 //   * /settings/availability (BookingLinkCard, inline)

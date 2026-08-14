@@ -52,13 +52,13 @@ const INTAKE_TOKEN_INVALID =
 //
 // Admitting it is NOT trusting it. The value is narrowed here to a bounded
 // per-form {template_id, form_type, rendered_template_hash, response} claim,
-// and NOTHING client-authored is persisted — every stored snapshot field is
+// and NOTHING client-authored is persisted: every stored snapshot field is
 // re-derived from the studio's own database row (lib/intake/consent-gate.ts).
 // The claim is evidence to check, never content to store.
 //
 // RETIRED (#518): there used to be a SECOND carve-out here for the versioned
 // electrolysis acknowledgement record. Now that the acknowledgement is no
-// longer collected, that carve-out would be an orphaned forgery channel — a
+// longer collected, that carve-out would be an orphaned forgery channel: a
 // browser-authorable path to a reserved key that no server gate validates any
 // more. It is deliberately GONE, not merely unused, so:
 //
@@ -110,8 +110,8 @@ export async function saveIntakeStepAction(payload: {
     .from("client_intake_forms")
     // studio_id is needed to re-resolve the studio's own live consent
     // templates when normalising a draft consent response below. It is read
-    // from the intake row the verified token addresses — never from the
-    // request — so a claim can only ever be checked against ITS OWN studio's
+    // from the intake row the verified token addresses, never from the
+    // request, so a claim can only ever be checked against ITS OWN studio's
     // forms.
     .select("id, status, responses, studio_id")
     .eq("id", v.intake_id)
@@ -134,8 +134,8 @@ export async function saveIntakeStepAction(payload: {
   };
 
   // Same draft posture for the live consent forms: a save is NEVER refused
-  // for an unanswered or half-answered consent form — that is a normal
-  // in-progress state — but what lands in the row is server-derived. Only a
+  // for an unanswered or half-answered consent form: that is a normal
+  // in-progress state, but what lands in the row is server-derived. Only a
   // claim matching one of THIS studio's current live templates, carrying the
   // current canonical hash, produces a draft entry, and every snapshot field
   // comes from the database row rather than the browser. A stale or forged
@@ -246,14 +246,14 @@ export async function submitIntakeAction(payload: {
   // that is already submitted (that case returned above).
   //
   // The required check above proves an answer EXISTS. It does not prove the
-  // answer is one we offered — the response sanitizer is a key whitelist that
+  // answer is one we offered: the response sanitizer is a key whitelist that
   // passes values through untouched, so without this a crafted payload could
   // put arbitrary text where a clinical enum belongs (e.g. a diabetes type of
   // anything at all) and the review surface would render it as the client's
   // answer. Not relying on the browser having only drawn two buttons is the
   // entire point.
   //
-  // Draft saves stay permissive by design — the same posture the consent draft
+  // Draft saves stay permissive by design: the same posture the consent draft
   // takes a few lines down. A draft is never authoritative; THIS is the gate,
   // and it re-checks the whole merged map, so a bad value planted by an earlier
   // save is caught here rather than waved through.
@@ -267,7 +267,7 @@ export async function submitIntakeAction(payload: {
   }
 
   // RETIRED (#518): the versioned electrolysis acknowledgement gate used to
-  // run here. It is gone with the acknowledgement itself — a submission no
+  // run here. It is gone with the acknowledgement itself: a submission no
   // longer requires it and no longer constructs one. The live consent gate
   // below, added by #529, is now the consent authority for a new intake.
   //
@@ -275,7 +275,7 @@ export async function submitIntakeAction(payload: {
   // in-progress intake started before retirement must be able to finish, and
   // its stored acknowledgement (if any) is preserved by the merge above.
 
-  // Live consent forms — the server-side consent gate.
+  // Live consent forms: the server-side consent gate.
   //
   // Placed below the already-submitted early return (so an intake
   // submitted before this feature is never re-validated, never rewritten and
@@ -286,10 +286,10 @@ export async function submitIntakeAction(payload: {
   // the database rather than trusting the set the browser rendered, so:
   //   * a form that went live after the client opened the wizard is still
   //     required;
-  //   * a v1 acknowledgement cannot satisfy a v2 template — the canonical
+  //   * a v1 acknowledgement cannot satisfy a v2 template: the canonical
   //     hash differs and the submit fails closed with a refresh prompt;
   //   * every treatment consent must be explicitly accepted;
-  //   * every photo consent must be explicitly ANSWERED — and a denial is a
+  //   * every photo consent must be explicitly ANSWERED, and a denial is a
   //     complete answer that must never block the submission.
   //
   // A studio with no live treatment/photo forms yields record = null and
@@ -311,7 +311,7 @@ export async function submitIntakeAction(payload: {
   if (consent.record) {
     merged[INTAKE_CONSENT_RESPONSES.id] = consent.record;
   } else {
-    // Nothing was completed during this intake — either the studio has no live
+    // Nothing was completed during this intake: either the studio has no live
     // forms, or every one of them was already completed in the portal. Drop any
     // record a draft save left behind (the wizard posts an empty claim set in
     // that state) so the stored row does not carry a hollow consent entry the
@@ -344,7 +344,7 @@ export async function submitIntakeAction(payload: {
   }
   if (!updated || updated.length === 0) {
     // Concurrent submit race winner already flipped the row. The
-    // form IS submitted on the server — we return ok:true so the
+    // form IS submitted on the server: we return ok:true so the
     // browser shows the submitted state, matching the pre-update
     // SELECT branch.
     return { ok: true };
@@ -361,11 +361,11 @@ export async function submitIntakeAction(payload: {
   // studio-wide visibility). This runs ONLY in this winner branch: the
   // early-exit (already submitted/reviewed) and the race-loser (zero rows
   // updated) branches above both return before reaching here, so a
-  // resubmit / double-click / retry never double-notifies — the atomic
+  // resubmit / double-click / retry never double-notifies, the atomic
   // status transition is the dedup. The helper never throws and never rolls
   // back the (already-committed) submit; an insert failure logs to
   // ops_alerts. The payload carries ONLY the client name (already shown to
-  // studio members) + safe text — never intake answers, and never the intake
+  // studio members) + safe text, never intake answers, and never the intake
   // token; href is the authenticated intake review page.
   const { data: client } = await admin
     .from("clients")

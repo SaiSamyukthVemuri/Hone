@@ -65,19 +65,19 @@ const Header = () => (
         <span className="font-medium text-neutral-700 dark:text-neutral-300">
           Whole-day blocked dates
         </span>{" "}
-        — vacations and full days off (date ranges).
+        vacations and full days off (date ranges).
       </li>
       <li>
         <span className="font-medium text-neutral-700 dark:text-neutral-300">
           Repeating breaks
         </span>{" "}
-        — a regular daily lunch, dinner, or admin window.
+        a regular daily lunch, dinner, or admin window.
       </li>
       <li>
         <span className="font-medium text-neutral-700 dark:text-neutral-300">
           One-off timed blocks
         </span>{" "}
-        — a single appointment, meeting, or part-day interruption.
+        a single appointment, meeting, or part-day interruption.
       </li>
     </ul>
     <p className="mt-2 text-sm text-neutral-500">
@@ -121,7 +121,7 @@ export default async function AvailabilitySettingsPage({
         studioWideDefaults(supabase, studio.id),
         studioWideOverrides(supabase, studio.id, today, ninetyDaysOut),
         getBlockouts(studio.id),
-        // Legacy shows studio-wide sources ONLY — a retained scoped rule/block
+        // Legacy shows studio-wide sources ONLY: a retained scoped rule/block
         // from a prior enable→disable cycle must stay hidden and dormant.
         getScopedRecurringBreakRulesSafe(supabase, studio.id, legacyScope),
         getScopedUpcomingTimedBlocksSafe(supabase, studio.id, nowIso, legacyScope),

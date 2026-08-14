@@ -517,7 +517,7 @@ function workflowSuite(
         await expect(page.getByTestId("finish-aftercare-status")).toBeVisible();
         await expect(finish.getByText("Postcare email")).toBeVisible();
         await expect(
-          finish.getByRole("button", { name: /Done — back to client/ }),
+          finish.getByRole("button", { name: /Done, back to client/ }),
         ).toBeVisible();
       });
 

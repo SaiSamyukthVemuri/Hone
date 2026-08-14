@@ -40,7 +40,7 @@ describe("2+3) Settings → Payments readiness copy", () => {
     // ok is unconditional; the label flips by mode.
     expect(src).toMatch(/<ReadinessItem\s+ok\s+okLabel=\{/);
     expect(src).toMatch(
-      /isTestMode \? "Test mode — no live charges" : "Live mode enabled"/,
+      /isTestMode \? "Test mode: no live charges" : "Live mode enabled"/,
     );
     // The old shape (check-state tied to isTestMode) rendered "Live mode
     // enabled" as grey once the runtime went live.

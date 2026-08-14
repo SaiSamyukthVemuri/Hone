@@ -106,7 +106,7 @@ export function ConsentSignaturesCard({
             // adds an "Outdated" state (signed an OLDER template version than
             // the current active one → needs a re-sign). card_authorization
             // keeps its legacy Signed/Not-signed shape (no outdated) via
-            // consentRowState — its re-sign flow lives elsewhere, untouched.
+            // consentRowState, its re-sign flow lives elsewhere, untouched.
             const isPhoto = t.form_type === "photo_consent";
             const state = consentRowState(t, sig);
             const EMERALD =

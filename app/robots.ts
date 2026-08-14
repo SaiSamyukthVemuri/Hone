@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { CANONICAL_HOST } from "@/lib/marketing/content";
 
-// robots — production allows crawling of the public marketing site and points to
+// robots: production allows crawling of the public marketing site and points to
 // the sitemap; non-production (preview/development) disallows everything so
 // preview deployments are not indexed (reinforcing the per-page noindex in
 // marketingMetadata). robots is a crawl directive, not a security control.

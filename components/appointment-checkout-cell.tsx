@@ -4,7 +4,7 @@ import type { AppointmentPaymentState } from "@/lib/billing/appointment-payment-
 // The dashboard/calendar checkout cell for one appointment. Renders the SAME
 // quick-checkout entry (CheckoutButton → shared modal) for chargeable
 // appointments, or a status-labelled badge (never colour-only) for
-// paid/processing/refunded — so an already-paid appointment shows "Paid", not a
+// paid/processing/refunded, so an already-paid appointment shows "Paid", not a
 // misleading Checkout. Only completed appointments are checkout-relevant;
 // cancelled / no-show / confirmed render nothing.
 export function AppointmentCheckoutCell({
@@ -43,7 +43,7 @@ export function AppointmentCheckoutCell({
 
   // FREE-01. A deliberately $0 service is not something to check out. Showing
   // Checkout here asked the practitioner to run a payment for a service the
-  // studio decided is free — most obviously a free consultation. This renders
+  // studio decided is free: most obviously a free consultation. This renders
   // the fact instead, and it is reached for ANY studio with an authoritative $0
   // service; nothing here is specific to one studio.
   if (paymentState === "free") {

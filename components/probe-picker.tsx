@@ -14,9 +14,9 @@ import { CHIP_BASE, CHIP_OFF, CHIP_ON } from "@/lib/sessions/charting-input-styl
 // Cascading probe picker (Session Logging Phase B). Brand → material → valid
 // option chips. Only combinations present in the lib/probes.ts catalog are ever
 // offered, so impossible probes can't be selected. The value is a single catalog
-// key (or "" for none); the server re-validates it. Probe is optional — leaving
+// key (or "" for none); the server re-validates it. Probe is optional: leaving
 // it blank is fine. Shared by the block charting form and the whole-session copy
-// editor (single source of truth — no drifting duplicate).
+// editor (single source of truth, no drifting duplicate).
 export function ProbePicker({
   value,
   onChange,

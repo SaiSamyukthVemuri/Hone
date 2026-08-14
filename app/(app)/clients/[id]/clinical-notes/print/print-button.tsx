@@ -1,7 +1,7 @@
 "use client";
 
 // Small print trigger for the clinical-notes export page. Practitioner-only,
-// authenticated route; no data — it just invokes the browser print dialog.
+// authenticated route; no data: it just invokes the browser print dialog.
 export function PrintButton() {
   return (
     <button

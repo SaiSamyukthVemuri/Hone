@@ -197,15 +197,15 @@ export function ClientForm({
 
       {/* RETIRED EDITOR (Chloe Session 1A). `clients.skin_notes` used to be an
           editable textarea with quick-tap condition chips, and it visually
-          outranked the real clinical record — it sat on the profile Overview
+          outranked the real clinical record: it sat on the profile Overview
           well above the append-only "Consultation & skin/hair" card and on the
           appointment detail page, which showed no clinical notes at all.
           Production reflected that hierarchy exactly: legacy skin_notes carried
           text for several clients while ZERO skin/hair-analysis notes existed.
 
           Every edit to that column destroyed the prior clinical text with no
-          author, no date and no revision lineage. The canonical record —
-          client_clinical_notes kind='skin_hair_analysis' — is append-only,
+          author, no date and no revision lineage. The canonical record,
+          client_clinical_notes kind='skin_hair_analysis', is append-only,
           attributed and dated, so the editor is removed here and new skin/hair
           observations are recorded through "Add skin & hair analysis".
 

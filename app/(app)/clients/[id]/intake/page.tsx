@@ -150,7 +150,7 @@ export default async function ClientIntakePage({
 
   // Photo consent lives in the CLIENT PORTAL, not in the intake, so the
   // practitioner reviewing an intake would otherwise have no way to see
-  // whether this client has granted or denied photo use — which is exactly the
+  // whether this client has granted or denied photo use, which is exactly the
   // gap Chloe hit ("I can't see the answers to the consent forms"). Loaded
   // here and rendered beside the intake's own consent record, clearly labelled
   // as a different source. Null when the studio runs no photo consent form.
@@ -275,7 +275,7 @@ export default async function ClientIntakePage({
       </div>
 
       {/* Practitioner-assisted entry. Offered only while the intake is still
-          being filled in — a submitted or reviewed intake is terminal and the
+          being filled in: a submitted or reviewed intake is terminal and the
           correction model is a NEW intake, never a rewrite. The editor covers
           the questionnaire only; the client's own acknowledgements and the
           submission stay with the client. */}
@@ -298,7 +298,7 @@ export default async function ClientIntakePage({
         </section>
       )}
 
-      {/* PR #293: primary resend CTA for an in-progress intake — refreshes
+      {/* PR #293: primary resend CTA for an in-progress intake: refreshes
           the link for THIS row and keeps saved answers. The reissue card
           below is the secondary "start a brand-new blank intake" path. */}
       {intake.status === "in_progress" && (
@@ -401,8 +401,8 @@ export default async function ClientIntakePage({
             <div className="border-t border-neutral-200 px-5 py-5 dark:border-neutral-800">
               <dl className="grid grid-cols-1 gap-x-8 gap-y-5 text-sm md:grid-cols-2">
                 {s.questions.map((q) => {
-                  // Every question still gets a row — the reviewer sees the
-                  // whole form, not a form with holes in it — but WHAT the row
+                  // Every question still gets a row: the reviewer sees the
+                  // whole form, not a form with holes in it, but WHAT the row
                   // says is decided by the projection, which distinguishes an
                   // answer from "you were never asked this" and from "this
                   // record predates the question". See lib/intake/review-answers.
@@ -479,7 +479,7 @@ function practitionerName(
 // badges from Chloe's clinic reference chart (thermolysis / continuous-galvanic
 // / authorization / precaution). Renders nothing when there are no flags. Hone
 // surfaces intake answers for review only and does not make treatment decisions
-// — every flag cites the intake answer it came from and the card closes with
+// every flag cites the intake answer it came from and the card closes with
 // the professional-judgment caveat. Allergy / EpiPen signals live in their own
 // cards above; they are not duplicated here.
 function flagTone(level: IntakeReviewFlag["level"]): string {
@@ -684,7 +684,7 @@ function FitzpatrickSummary({
 }
 
 // Versioned electrolysis acknowledgement. A pure projection of what the
-// row actually stores — it never re-validates the intake, never derives a
+// row actually stores. It never re-validates the intake, never derives a
 // verdict, and offers no control that could change the client's answer.
 // The practitioner review surface reads this record; it does not author it.
 //
@@ -766,7 +766,7 @@ function ElectrolysisAcknowledgementSummary({
 
 // HOW THE QUESTIONNAIRE ANSWERS GOT HERE.
 //
-// Renders NOTHING for an ordinary, self-completed intake — the overwhelming
+// Renders NOTHING for an ordinary, self-completed intake: the overwhelming
 // majority of rows carry no assisted-entry record, and an intake the client
 // filled in themselves must not gain a badge.
 //
@@ -777,7 +777,7 @@ function ElectrolysisAcknowledgementSummary({
 // to draw.
 //
 // Names and dates come from the STORED snapshot, never from a current
-// practitioner lookup — a practitioner who has since been deactivated must
+// practitioner lookup: a practitioner who has since been deactivated must
 // still be named here.
 function IntakeEntrySummary({
   responses,
@@ -861,14 +861,14 @@ function resolveOptionLabel(key: string, value: string): string {
 // them inside the intake.
 //
 // EVERY field rendered here comes from the SNAPSHOT stored at completion, not
-// from today's consent_form_templates row — a studio that has since edited or
+// from today's consent_form_templates row: a studio that has since edited or
 // retired a form must not change what a historical intake says the client read.
 //
 // Emits no form control: this is server-rendered prose, which is what makes it
 // structurally impossible for a practitioner to complete a client's consent
 // from the review surface (pinned by tests/source-guards/assisted-intake-guards).
 //
-// Vocabulary is constrained to INTAKE_CONSENT_REVIEW_COPY — "Acknowledged",
+// Vocabulary is constrained to INTAKE_CONSENT_REVIEW_COPY, "Acknowledged",
 // "Accepted", "Denied". Never "Signed": nothing here is a signature, and only
 // the portal's own signature records may be described that way.
 // The four portal states, in the practitioner's words. `not_signed` cannot
@@ -918,7 +918,7 @@ function IntakeConsentFormsSummary({
           Highest visual priority, and FIRST in the DOM so it is also first at
           a phone width where everything stacks. Every row is compact by
           design: title, the answer, where the answer came from, when. The
-          legal wording is one click away and never inline — that combination
+          legal wording is one click away and never inline: that combination
           is what makes "can this client's photos be taken?" a sub-second
           question instead of a reading exercise. */}
       {hasCurrent && (
@@ -960,7 +960,7 @@ function IntakeConsentFormsSummary({
             ))}
 
             {/* Portal-owned and current: photo consent.
-                ONE ROW PER LIVE TEMPLATE — #545's multi-form correction, kept
+                ONE ROW PER LIVE TEMPLATE, #545's multi-form correction, kept
                 exactly. Two live photo forms are two separate questions;
                 collapsing them into a single granted/denied would drop a real
                 consent record, and ranking them by `version` would do it
@@ -999,7 +999,7 @@ function IntakeConsentFormsSummary({
                   </p>
                 )}
                 {/* The existing signed-record viewer, reused rather than
-                    rebuilt — one signed-consent engine, as PR #405
+                    rebuilt, one signed-consent engine, as PR #405
                     established. */}
                 {photo.record && (
                   <SignedConsentViewer
@@ -1032,7 +1032,7 @@ function IntakeConsentFormsSummary({
         )}
       </div>
       {/* ================= 3 · PREVIOUS CONSENT HISTORY =================
-          Immutable. Nothing here is deleted, rewritten or relabelled — an
+          Immutable. Nothing here is deleted, rewritten or relabelled: an
           Accepted the client really gave still reads "Accepted", with its own
           version and timestamp. What changed is that it can no longer be
           mistaken for the operative answer: it is below the current block,

@@ -27,12 +27,12 @@ function outcomeClass(outcome: string): string {
 }
 
 // The metadata is already sanitized (primitives only, sensitive keys dropped),
-// so a compact key:value summary is safe — no raw JSON blob.
+// so a compact key:value summary is safe, no raw JSON blob.
 function metaSummary(metadata: AdminActionEventRow["metadata"]): string {
   const parts = Object.entries(metadata ?? {})
     .filter(([, v]) => v != null && typeof v !== "object")
     .map(([k, v]) => `${k}: ${String(v)}`);
-  return parts.length ? parts.join(" · ") : "—";
+  return parts.length ? parts.join(" · ") : "None";
 }
 
 export default async function AdminAuditPage() {
@@ -53,7 +53,7 @@ export default async function AdminAuditPage() {
         <p className="mt-1 text-sm text-neutral-500">
           The {events.length} most recent operator actions (append-only). Records
           who did what, to which studio/resource, when, and the outcome. Safe
-          metadata only — no tokens, secrets, card data, URLs, or clinical/intake
+          metadata only, no tokens, secrets, card data, URLs, or clinical/intake
           content.
         </p>
       </div>
@@ -86,14 +86,14 @@ export default async function AdminAuditPage() {
                     <FormattedDateTime iso={e.createdAt} />
                   </td>
                   <td className="px-3 py-2 text-xs">
-                    {e.actorEmail ?? e.actorUserId ?? "—"}
+                    {e.actorEmail ?? e.actorUserId ?? "Unknown"}
                   </td>
                   <td className="px-3 py-2">{e.action}</td>
                   <td className={`px-3 py-2 font-medium ${outcomeClass(e.outcome)}`}>
                     {e.outcome}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-neutral-500">
-                    {e.studioId ? `${e.studioId.slice(0, 8)}…` : "—"}
+                    {e.studioId ? `${e.studioId.slice(0, 8)}…` : "None"}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-neutral-500">
                     {e.targetType}

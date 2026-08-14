@@ -5,7 +5,7 @@ import { QuickCheckoutModal } from "@/components/quick-checkout-modal";
 
 // Entry point for quick checkout. Rendered on practitioner surfaces (appointment
 // detail, today's roster). Payment is session-scoped and requires a COMPLETED
-// appointment, so the button only shows for completed appointments — cancelled /
+// appointment, so the button only shows for completed appointments: cancelled /
 // no-show / confirmed appointments never see it. The modal itself resolves the
 // accurate state (already-paid, no card, no session, refunded) server-side.
 export function CheckoutButton({

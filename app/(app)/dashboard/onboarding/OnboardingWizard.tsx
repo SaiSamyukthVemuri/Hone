@@ -62,7 +62,7 @@ function CopyLinkButton({ url }: { url: string }) {
           setCopied(true);
           setTimeout(() => setCopied(false), 1600);
         } catch {
-          // Clipboard unavailable — the link is visible to copy manually.
+          // Clipboard unavailable: the link is visible to copy manually.
         }
       }}
     >

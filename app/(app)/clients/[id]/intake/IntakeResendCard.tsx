@@ -7,7 +7,7 @@ import { getIntakeLinkAction, resendIntakeEmailAction } from "./actions";
 type Props = {
   clientId: string;
   // The CURRENT in-progress intake row. Resend refreshes the link for
-  // THIS row (preserving saved answers) — it never creates a new intake.
+  // THIS row (preserving saved answers). It never creates a new intake.
   intakeId: string;
   clientHasEmail: boolean;
   // Best-effort hint only: true when this in-progress intake is older than
@@ -41,7 +41,7 @@ function fmtDateTime(iso: string): string {
 // resendIntakeEmailAction (mints a fresh 14-day link for the SAME intake
 // row and re-emails it, keeping any answers the client already saved) and
 // getIntakeLinkAction (copy-link fallback). It deliberately does NOT call
-// requestIntakeUpdateAction — that starts a brand-new blank intake.
+// requestIntakeUpdateAction, that starts a brand-new blank intake.
 export function IntakeResendCard({
   clientId,
   intakeId,
@@ -64,7 +64,7 @@ export function IntakeResendCard({
     startTransition(async () => {
       const res = await resendIntakeEmailAction(fd);
       if (!res.ok) {
-        // Generic message — never surface a token / provider detail.
+        // Generic message, never surface a token / provider detail.
         setError("Could not send the intake link. Please try again.");
         return;
       }
@@ -134,7 +134,7 @@ export function IntakeResendCard({
           <p>
             {status.lastSentAt
               ? `Intake link emailed ${fmtDateTime(status.lastSentAt)}`
-              : "Not emailed yet — use Copy link to share it."}
+              : "Not emailed yet: use Copy link to share it."}
             {status.sendCount >= 2 ? ` · sent ${status.sendCount} times` : ""}
           </p>
           {status.state !== "expired" && (
@@ -184,7 +184,7 @@ export function IntakeResendCard({
 
       {!clientHasEmail && (
         <p className="mt-2 text-xs text-neutral-500">
-          No email on file — use Copy link to share it manually.
+          No email on file. Use Copy link to share it manually.
         </p>
       )}
 

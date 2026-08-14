@@ -6,7 +6,7 @@
 // app/(app)/calendar/page.tsx so empty-cell click handling can run
 // client-side without making the entire page client-rendered. The
 // rendering logic for blockouts, appointments, and the day grid
-// is byte-equivalent to the pre-extraction version — only the
+// is byte-equivalent to the pre-extraction version, only the
 // surrounding wrapper added an absolute-positioned click overlay
 // at z-0 (below the z-[5] blockouts and z-10 appointment Links)
 // so clicks land on event cards first and only fall through to
@@ -36,7 +36,7 @@ import { QuickBlockDrawer } from "./QuickBlockDrawer";
 import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
 // Grid constants live in a plain (non-"use client") module. The server
 // component calendar/page.tsx must import them from there, NOT from this
-// client module — a client-module value imported by a Server Component
+// client module: a client-module value imported by a Server Component
 // becomes a client-reference proxy, not the real number, which silently
 // broke the rail's hour loop. This client component imports them too so
 // there is a single source of truth.
@@ -161,7 +161,7 @@ type Props = {
   clients: QuickBookClient[];
   services: Service[];
   // Calendar Readability Repair: read-only visual context. Neither
-  // affects booking — empty-slot clicks still open the drawer at any
+  // affects booking: empty-slot clicks still open the drawer at any
   // time in the visible range, exactly as before.
   isToday: boolean;
   availability: DayAvailability | null;
@@ -210,7 +210,7 @@ export function DayColumn({
   // PR C: the timed block whose edit/detail drawer is open (null = closed).
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(null);
   // PR C-lite: the appointment whose in-context preview drawer is open. Holds
-  // the appointment object already in this column's props — no new query.
+  // the appointment object already in this column's props, no new query.
   const [preview, setPreview] = useState<AppointmentWithPractitionerColor | null>(
     null,
   );
@@ -436,8 +436,8 @@ export function DayColumn({
     <div
       // Test hook for the Sunday-start invariant: binds this column's rendered
       // appointments to the LOCAL DATE they belong to. A week whose grid starts
-      // Sunday but whose query still starts Monday looks perfectly normal —
-      // the Sunday column simply renders empty — so the browser needs to assert
+      // Sunday but whose query still starts Monday looks perfectly normal,
+      // the Sunday column simply renders empty, so the browser needs to assert
       // "this exact date's column holds this appointment", not just that a
       // header says "Sun".
       data-testid="week-day-column"
@@ -473,7 +473,7 @@ export function DayColumn({
           feedback: the prior near-white gray was too subtle). Still neutral
           (never a status color) and pointer-events-none so the empty-slot
           click overlay below still receives clicks everywhere in the visible
-          range — booking behavior is unchanged. */}
+          range: booking behavior is unchanged. */}
       {tintRegions.map((r, i) => (
         <div
           key={`tint-${i}`}
@@ -483,7 +483,7 @@ export function DayColumn({
         />
       ))}
 
-      {/* Hour / half-hour grid lines — soft and low-contrast (Google-like).
+      {/* Hour / half-hour grid lines: soft and low-contrast (Google-like).
           Hour boundaries (even rows) are faintly visible; the :30 lines are
           nearly invisible. */}
       {Array.from(
@@ -572,7 +572,7 @@ export function DayColumn({
             {/* Display-only: format the live drag-preview labels per the studio
                 12h/24h preference. The positioning uses overlay.top/height (not
                 these labels), and the submitted machine value is minutesToHHMM
-                on release — both unchanged. */}
+                on release: both unchanged. */}
             {formatClockLabel(overlay.startLabel, timeFormat)} to{" "}
             {formatClockLabel(overlay.endLabel, timeFormat)} ·{" "}
             {overlay.durationMinutes} min
@@ -612,11 +612,11 @@ export function DayColumn({
           otherwise show on a day the studio isn't open. Closed days are kept
           unbookable by availability logic (lib/booking/slots.ts), not by
           these reservations, so hiding them is display-safe. One-off timed
-          blocks below are NOT hidden — those are intentional. */}
+          blocks below are NOT hidden. Those are intentional. */}
       {!closedDay && recurringBreaks.map((occ) => {
         const start = new Date(occ.starts_at);
         const end = new Date(occ.ends_at);
-        const localTime = localTimeString(start, tz); // 24h — positioning only
+        const localTime = localTimeString(start, tz); // 24h, positioning only
         const dispStart = formatTimeForStudio(start, tz, timeFormat);
         const dispEnd = formatTimeForStudio(end, tz, timeFormat);
         const [h, m] = localTime.split(":").map(Number);
@@ -654,7 +654,7 @@ export function DayColumn({
       {timedBlocks.map((tb) => {
         const start = new Date(tb.starts_at);
         const end = new Date(tb.ends_at);
-        const localTime = localTimeString(start, tz); // 24h — positioning only
+        const localTime = localTimeString(start, tz); // 24h, positioning only
         const dispStart = formatTimeForStudio(start, tz, timeFormat);
         const dispEnd = formatTimeForStudio(end, tz, timeFormat);
         const [h, m] = localTime.split(":").map(Number);
@@ -713,7 +713,7 @@ export function DayColumn({
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
         // Visible time RANGE ("9:00–10:00"), derived from the existing row
-        // (starts_at + ends_at) — display only, no positioning/logic change.
+        // (starts_at + ends_at), display only, no positioning/logic change.
         const dispStart = formatTimeForStudio(start, tz, timeFormat);
         const dispEnd = a.ends_at
           ? formatTimeForStudio(new Date(a.ends_at), tz, timeFormat)
@@ -776,7 +776,7 @@ export function DayColumn({
                 )}
               </>
             ) : (
-              // Short block: keep it to one dense line — bold name + range.
+              // Short block: keep it to one dense line: bold name + range.
               <div className="truncate font-semibold">
                 {clientName}{" "}
                 <span className="font-normal tabular-nums opacity-70">
@@ -874,7 +874,7 @@ export function DayColumn({
 
 // Local copy of the BlockoutCard from PR #10. Identical render
 // behavior. Lives here because DayColumn now owns the column-level
-// rendering — keeping the helper co-located avoids exporting an
+// rendering: keeping the helper co-located avoids exporting an
 // internal piece from page.tsx.
 function BlockoutCard({
   label,

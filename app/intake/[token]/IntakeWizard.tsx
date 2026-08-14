@@ -27,8 +27,8 @@ type Responses = Record<string, unknown>;
 
 // The consent forms are a wizard-LOCAL phase that follows step 5. It is
 // deliberately NOT a sixth step: `client_intake_forms.current_step` is bounded
-// by the questionnaire (1..TOTAL_STEPS) and every other surface — the assisted
-// editor's clamp, the hand-off, findMissingRequiredAnswers — reads that
+// by the questionnaire (1..TOTAL_STEPS) and every other surface: the assisted
+// editor's clamp, the hand-off, findMissingRequiredAnswers, reads that
 // contract. Persisting a 6 would be a schema change in all but name.
 //
 // So the phase lives only in this component's state, and every save it makes
@@ -39,7 +39,7 @@ const CONSENT_PHASE = TOTAL_STEPS + 1;
 
 // RETIRED (#518): this component used to attach a versioned electrolysis
 // acknowledgement claim to every save and submit. The acknowledgement is no
-// longer collected — #529's real studio consent forms replaced it — so the
+// longer collected (#529's real studio consent forms replaced it) so the
 // claim is gone and the browser no longer sends anything under that key.
 //
 type Props = {
@@ -49,7 +49,7 @@ type Props = {
   initialResponses: Responses;
   alreadySubmitted: boolean;
   // The studio's live treatment/photo consent forms, resolved server-side.
-  // Empty when the studio has none live — the wizard then behaves exactly as
+  // Empty when the studio has none live: the wizard then behaves exactly as
   // it did before this feature: step 5 submits.
   consentForms: RenderedConsentForm[];
 };
@@ -74,7 +74,7 @@ export function IntakeWizard({
   //
   // Seeded EMPTY, deliberately. A resumed draft may carry stored consent
   // entries, but re-checking a box on the client's behalf because a previous
-  // session did is exactly the auto-acceptance this feature must not have —
+  // session did is exactly the auto-acceptance this feature must not have,
   // and the stored entry may be against a version that has since changed. The
   // client re-reads the current text and answers again.
   const [consentAnswers, setConsentAnswers] = useState<
@@ -220,7 +220,7 @@ export function IntakeWizard({
       startTransition(async () => {
         const res = await saveIntakeStepAction({
           token,
-          // Entering the consent phase still persists TOTAL_STEPS — the DB
+          // Entering the consent phase still persists TOTAL_STEPS, the DB
           // step contract is unchanged by this feature.
           step: Math.min(nextStep, TOTAL_STEPS),
           responses: outbound(),

@@ -30,11 +30,11 @@ import type { ImportSourceType } from "@/lib/types/database";
 // lib/import/operator-assist.ts for the full reasoning.
 //
 // PR #257: Quick Import V1 server actions. Owner-only. Reads/writes go through
-// the RLS-backed authenticated client (createClient) — NO service role: the
+// the RLS-backed authenticated client (createClient), NO service role: the
 // 0089 owner-INSERT policies + the 0087 clients member-INSERT policy let the
 // owner insert directly, and RLS keeps everything studio-scoped. The raw
 // pasted text is parsed transiently and is NEVER stored or logged. The import
-// writes ONLY import_batches + clients + imported_treatment_memories — never
+// writes ONLY import_batches + clients + imported_treatment_memories, never
 // sessions, session_blocks, appointments, payments, reminders, or messages.
 
 // --- serializable preview/confirm shapes (no raw rows leave the server) ------
@@ -95,7 +95,7 @@ type OwnerContext = {
 // (never a context) for non-owners AND for owners without operator standing.
 //
 // BOTH server actions route through here, and it runs before the first
-// statement of either — so a direct POST to the action, bypassing the page
+// statement of either, so a direct POST to the action, bypassing the page
 // entirely, is refused on exactly the same terms as a click.
 async function ownerContext(): Promise<
   { ctx: OwnerContext } | { error: string }
@@ -105,7 +105,7 @@ async function ownerContext(): Promise<
     return { error: "Only studio owners can import." };
   }
   // Operator standing is checked on the AUTH user, not on the practitioner
-  // row, and is required in addition to ownership — never instead of it.
+  // row, and is required in addition to ownership, never instead of it.
   if (!(await isImportOperator())) {
     return { error: IMPORT_OPERATOR_ASSISTED_DENIAL };
   }
@@ -175,7 +175,7 @@ export async function previewImportAction(text: string): Promise<PreviewResult> 
 }
 
 // Match a bulk-inserted client row back to its import group. Uses the SAME
-// clientIdentityKey as grouping (single source of truth — they cannot diverge),
+// clientIdentityKey as grouping (single source of truth. They cannot diverge),
 // and groups are distinct by this key, so the match is unambiguous.
 function clientSignature(c: {
   email: string | null;
@@ -229,7 +229,7 @@ export async function confirmImportAction(
   // 1) The import batch (the unit of correction/void). row_count is the source
   //    rows pasted; completed_at is set ONLY after the import succeeds, so a
   //    voided/incomplete batch is never marked completed. On a later failure we
-  //    soft-void this batch (no hard delete — 0089/0087 posture).
+  //    soft-void this batch (no hard delete, 0089/0087 posture).
   const { data: batch, error: batchErr } = await supabase
     .from("import_batches")
     .insert({
@@ -273,13 +273,13 @@ export async function confirmImportAction(
     .select("id, name, email, phone, date_of_birth");
   if (clientErr || !createdClients) {
     await softVoidBatch("Client creation failed during import.");
-    // Generic messages only — never interpolate raw DB errors (could carry a
+    // Generic messages only, never interpolate raw DB errors (could carry a
     // pasted email/phone in some drivers).
     const isDuplicate = clientErr?.code === "23505";
     return {
       ok: false,
       error: isDuplicate
-        ? "An email in your paste already matches an existing client. Remove duplicate emails and try again — nothing was imported."
+        ? "An email in your paste already matches an existing client. Remove duplicate emails and try again, nothing was imported."
         : "No clients were imported because of a database error. Nothing was imported.",
     };
   }
@@ -309,7 +309,7 @@ export async function confirmImportAction(
 
   if (memoryInserts.length > 0) {
     // The memory insert is a single atomic statement (all-or-none) with valid,
-    // owner-scoped rows, so a failure here is essentially transient — retry
+    // owner-scoped rows, so a failure here is essentially transient: retry
     // once before giving up.
     let memErr = (
       await supabase.from("imported_treatment_memories").insert(memoryInserts)
@@ -323,13 +323,13 @@ export async function confirmImportAction(
       // Clients were created (0087 forbids hard-deleting them); void the batch
       // so its zero memory rows are excluded, and report HONESTLY: re-importing
       // will skip these now-existing clients (Quick Import does not modify
-      // existing clients — attach-to-existing is a future PR).
+      // existing clients: attach-to-existing is a future PR).
       const voided = await softVoidBatch(
         "Imported memory creation failed during import.",
       );
       return {
         ok: false,
-        error: `${createdClients.length} client(s) were created, but their imported treatment history could not be saved${voided ? " (the import was voided)" : ""}. Re-importing will skip these clients, so their history must be added separately — please contact support if this persists.`,
+        error: `${createdClients.length} client(s) were created, but their imported treatment history could not be saved${voided ? " (the import was voided)" : ""}. Re-importing will skip these clients, so their history must be added separately: please contact support if this persists.`,
       };
     }
   }

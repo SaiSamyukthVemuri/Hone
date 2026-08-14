@@ -11,7 +11,7 @@ import {
 // (getCurrentPractitionerWithStudio redirects unauthenticated / inactive
 // callers), so no client-supplied studio/role/amount/status is trusted and a
 // cross-studio appointment id resolves to "not found in this studio". This
-// action only READS (via resolveQuickCheckoutContext) — it never charges,
+// action only READS (via resolveQuickCheckoutContext). It never charges,
 // writes, or touches clinical state; the charge itself still runs through the
 // existing hardened prepare/execute/receipt/refund actions.
 

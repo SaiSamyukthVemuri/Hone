@@ -20,7 +20,7 @@ import {
 // thin shell: it resolves context via getQuickCheckoutContextAction and renders
 // the EXISTING SessionPaymentPrepareCard, so every payment rule, state, duplicate
 // protection, and the compact display are reused unchanged. It never marks
-// charting complete or touches clinical state — the practitioner closes it and
+// charting complete or touches clinical state: the practitioner closes it and
 // finishes charting later.
 //
 // CTA discoverability (Chloe workflow fix). The card advances through persisted
@@ -28,7 +28,7 @@ import {
 // automatically because the card's router.refresh() / the actions' revalidatePath
 // re-render that route's server components. This MODAL, however, holds the
 // eligibility in client state fetched once per open, which router.refresh() does
-// NOT re-run — so after "Prepare" the persisted "ready" attempt never surfaced,
+// NOT re-run, so after "Prepare" the persisted "ready" attempt never surfaced,
 // the "Run charge" button never mounted, and the practitioner had to close and
 // reopen to find it. The fix: wrap the four payment actions so a SUCCESSFUL
 // result silently re-resolves the trusted server context here, advancing the
@@ -219,7 +219,7 @@ export function QuickCheckoutModal({
               {ctx.appointment.serviceName && <> · {ctx.appointment.serviceName}</>}
             </div>
 
-            {/* The EXISTING payment card — prepare / confirm / charge / receipt /
+            {/* The EXISTING payment card: prepare / confirm / charge / receipt /
                 refund all run through the same hardened server actions, with the
                 compact (owner-gated) display from PR #418. The actions are wrapped
                 with withRefresh so a successful step advances this modal's view to

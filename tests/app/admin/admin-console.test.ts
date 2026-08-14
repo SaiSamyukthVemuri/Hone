@@ -48,8 +48,8 @@ describe("Admin Console V1 surface", () => {
     // counts, and a load error is never rendered as all-clear.
     expect(PAGE).not.toMatch(/Live payments are disabled\./);
     expect(PAGE).toMatch(/Stripe runtime:/);
-    expect(PAGE).toMatch(/LIVE mode — real charges possible/);
-    expect(PAGE).toMatch(/test mode — no real charges/);
+    expect(PAGE).toMatch(/LIVE mode: real charges possible/);
+    expect(PAGE).toMatch(/test mode: no real charges/);
     expect(PAGE).toMatch(/payouts pending/);
     expect(PAGE).toMatch(/not\s*\n?\s*connected/);
     expect(PAGE).toMatch(/summary could not be loaded/);

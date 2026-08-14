@@ -31,8 +31,8 @@ type Props = {
 };
 
 // Migration 0037: the recurring-break label column accepts free text
-// now (1..60 chars). These preset suggestions are a UX nicety —
-// clicking a pill fills the text input — but the practitioner can type
+// now (1..60 chars). These preset suggestions are a UX nicety,
+// clicking a pill fills the text input, but the practitioner can type
 // any label they want ("Dinner", "School pickup", "Yoga", …).
 const LABEL_PRESETS: ReadonlyArray<string> = [
   "Lunch",
@@ -77,7 +77,7 @@ function formatDays(days: number[]): string {
 }
 
 // Postgres TIME may come back as "HH:MM:SS"; the form input expects HH:MM and
-// the shared formatClockLabel expects a bare "HH:MM" (it applies no timezone —
+// the shared formatClockLabel expects a bare "HH:MM" (it applies no timezone,
 // break times are naive local wall-clock, not UTC instants).
 function trimSeconds(time: string): string {
   return time.slice(0, 5);

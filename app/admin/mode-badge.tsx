@@ -1,7 +1,7 @@
 import { modeBadgeForRow } from "@/lib/payments/payment-status-presenter";
 
 // Shared admin payment-mode badge (PR B). ALWAYS badges from the ROW's own
-// stripe_livemode via the shared presenter — never from the runtime — and a
+// stripe_livemode via the shared presenter (never from the runtime) and a
 // NULL/unknown mode renders "unknown", never silently "test". Red for live
 // (real money), neutral for test, amber for unknown.
 export function AdminModeBadge({

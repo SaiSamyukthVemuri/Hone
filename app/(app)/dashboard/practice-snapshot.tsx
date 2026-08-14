@@ -6,7 +6,7 @@ import type {
 
 // PR #208: Practice Dashboard V1 snapshot. Plain, iPad-friendly cards:
 // appointment counts, booked/completed SERVICE VALUE (service-menu
-// prices; NEVER labeled revenue — collected totals are not a
+// prices; NEVER labeled revenue: collected totals are not a
 // dashboard metric), a
 // payments status card that keeps the test-mode posture explicit, and
 // Hone-specific action cards linking into Record Keeping.
@@ -60,8 +60,8 @@ export function PracticeSnapshot({
   return (
     <section className="flex flex-col gap-4">
       {/* This section carries its own h2. Without one, its cards' h3s would
-          nest under the PRECEDING h2 in the accessibility tree — "Birthdays
-          this month" — so a screen-reader user navigating by heading would
+          nest under the PRECEDING h2 in the accessibility tree: "Birthdays
+          this month", so a screen-reader user navigating by heading would
           find "Service value" and "Payments" as children of Birthdays. The
           attention surface this file used to host is gone entirely: Dashboard
           V2 Part 2B folded it into the one normalized To-do model
@@ -118,7 +118,7 @@ export function PracticeSnapshot({
           {/* Mode-aware card (the promised #323 copy fast-follow, done after
               live billing was proven). The counts come from the CURRENT
               deployment mode only (practice-metrics is scoped by
-              inferStripeLivemode()), so the labels flip with the mode —
+              inferStripeLivemode()), so the labels flip with the mode,
               live counts are never rendered under test-mode copy. The
               test-only status lines below are hidden in live. */}
           <Stat label="Live payments" value={livemode ? "On" : "Off"} />
@@ -132,7 +132,7 @@ export function PracticeSnapshot({
               {metrics.periodLabel})
             </p>
             {/* DASH-TRUTH-03: the prepared-payments row is removed. Preparing
-                a payment is internal plumbing on the way to charging one — it
+                a payment is internal plumbing on the way to charging one: it
                 is not an outcome a practitioner runs their practice on, and it
                 invited reading a prepared-but-uncharged payment as money taken.
                 The outcome-oriented rows below stay. The underlying

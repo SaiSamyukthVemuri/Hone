@@ -33,7 +33,7 @@ import { NowLine } from "./NowLine";
 import type { DayAvailability } from "./DayColumn";
 
 // Single-day mobile timeline (PR: mobile calendar redesign). Renders ONE
-// selected day as a vertical 1px=1min timeline — the same positioning model as
+// selected day as a vertical 1px=1min timeline: the same positioning model as
 // the desktop DayColumn, but full-width with a single vertical scroll (no
 // horizontal week-grid panning). Reuses the exact grid constants, card markup,
 // service colors, NowLine, and studio-tz/12h-24h formatting. It renders + reads
@@ -226,7 +226,7 @@ export function MobileDayTimeline({
             );
           })}
 
-        {/* One-off timed blocks — tappable → edit drawer (owner-gated inside). */}
+        {/* One-off timed blocks: tappable → edit drawer (owner-gated inside). */}
         {timedBlocks.map((tb) => {
           const start = new Date(tb.starts_at);
           const end = new Date(tb.ends_at);
@@ -263,7 +263,7 @@ export function MobileDayTimeline({
           );
         })}
 
-        {/* Appointments — tap → existing detail page (with returnTo). */}
+        {/* Appointments: tap → existing detail page (with returnTo). */}
         {appts.map((a) => {
           const start = new Date(a.starts_at);
           const [h, m] = localTimeString(start, tz).split(":").map(Number);

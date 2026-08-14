@@ -64,7 +64,7 @@ body {
 }
 
 /* ============================================================================
- * MARKETING DESIGN SYSTEM (flagship rebuild — feat/marketing-site-…)
+ * MARKETING DESIGN SYSTEM (flagship rebuild: feat/marketing-site-…)
  * ----------------------------------------------------------------------------
  * Additive and namespaced. These tokens/utilities are consumed ONLY by the
  * marketing surface (pages wrapped in `.marketing-surface`); nothing here
@@ -89,7 +89,7 @@ body {
   --color-hairline-strong: rgba(23, 33, 31, 0.16);
   --color-onband-muted: #9fb3ad; /* muted text on the dark band */
 
-  /* Marketing typography — clean sans-serif throughout (Inter, headings + body) */
+  /* Marketing typography: clean sans-serif throughout (Inter, headings + body) */
   --font-marketing-display: var(--font-marketing-sans), ui-sans-serif, system-ui,
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-marketing-text: var(--font-marketing-sans), ui-sans-serif, system-ui,
@@ -106,7 +106,7 @@ body {
 /* Shared desktop width shells. One coherent edge for the header, hero, sections
  * and footer; the reading shell narrows long-form articles. Fluid so the central
  * canvas is used intentionally: ~1100px @1280, ~1240px @1440, ~1375px @1600,
- * capped at 1400px on very wide screens — never tablet-width content in huge
+ * capped at 1400px on very wide screens, never tablet-width content in huge
  * gutters. */
 .mk-shell {
   width: min(100% - clamp(3rem, 14vw, 15rem), 87.5rem);
@@ -130,7 +130,7 @@ body {
   color: var(--color-ink);
 }
 
-/* Marketing content renders statically visible — no scroll-gated entrance
+/* Marketing content renders statically visible, no scroll-gated entrance
  * animations (an earlier intersection-observer reveal could leave sections
  * stuck invisible). The Reveal component is now a plain layout wrapper. */
 
@@ -180,7 +180,7 @@ body {
   }
 }
 
-/* Onboarding celebration — pure-CSS confetti burst (no animation library).
+/* Onboarding celebration: pure-CSS confetti burst (no animation library).
    Falls once and fades. Disabled entirely under reduced-motion. */
 .hone-confetti {
   position: absolute;

@@ -356,7 +356,7 @@ async function SterileItemsSection({
                   notes: records[0].notes,
                   // Migration 0155: probe classification IS reusable across
                   // purchases, so copy-last carries it (unlike the lot number,
-                  // which is intentionally omitted — never copied).
+                  // which is intentionally omitted, never copied).
                   probe_key: records[0].probe_key,
                 }
               : null

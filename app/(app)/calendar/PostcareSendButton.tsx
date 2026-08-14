@@ -77,7 +77,7 @@ export function PostcareSendButton({
   const [outcome, setOutcome] = useState<PostcareSendOutcome>({ kind: "idle" });
 
   // Briefly stay on the confirmation view so the practitioner reads it, then
-  // close. ONLY an ordinary success auto-closes — the provider-accepted /
+  // close. ONLY an ordinary success auto-closes, the provider-accepted /
   // unrecorded state must stay on screen until it is dismissed, because it is
   // the one state that asks the practitioner to do something (refresh) rather
   // than reporting a finished fact.
@@ -124,7 +124,7 @@ export function PostcareSendButton({
       }
       // ONE call, no retry. The presenter also owns WHEN the server component
       // is re-rendered: on an ordinary success so the trigger settles on the
-      // provider-confirmed postcare_email_sent_at, and — the P1 fix — on the
+      // provider-confirmed postcare_email_sent_at, and (the P1 fix) on the
       // provider-accepted/unrecorded outcome too, so the practitioner sees the
       // fresh server-rendered claim state instead of guessing at it. An
       // ordinary failure does not refresh: nothing changed and nothing claims
@@ -150,7 +150,7 @@ export function PostcareSendButton({
         </button>
         {alreadySentAt ? (
           // PR #311: "Sent" now means a CONFIRMED provider hand-off (sent_at is
-          // stamped only after provider success), NOT delivery/receipt — the
+          // stamped only after provider success), NOT delivery/receipt, the
           // copy stays "sent", never "delivered" / "received" / "opened".
           // If a later RESEND failed after this success, sent_at stays and we
           // add a small sub-note (failedAt is cleared on any success).
@@ -174,7 +174,7 @@ export function PostcareSendButton({
             ) : null}
           </div>
         ) : failedAt ? (
-          // Provider send failed before any success — never claim "sent".
+          // Provider send failed before any success, never claim "sent".
           <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
             Postcare send failed. Try again.
           </p>
@@ -210,7 +210,7 @@ export function PostcareSendButton({
             </pre>
             {/* Shown exactly while a send is still offerable. Tied to the same
                 predicate as the Confirm button so the attestation cannot
-                disappear out from under a control that still requires it —
+                disappear out from under a control that still requires it,
                 after an ordinary failure the practitioner must be able to see
                 and re-tick it. */}
             {requiresConsultationConfirmation && postcareConfirmAvailable(outcome) && (
@@ -227,8 +227,8 @@ export function PostcareSendButton({
                 </span>
               </label>
             )}
-            {/* Every outcome — success, provider-accepted-but-unrecorded, and
-                ordinary failure — is rendered by the presenter, so the copy and
+            {/* Every outcome (success, provider-accepted-but-unrecorded, and
+                ordinary failure) is rendered by the presenter, so the copy and
                 the affordances cannot drift apart from the classification. */}
             <PostcareSendOutcomeNotice outcome={outcome} />
             <PostcareSendFooter

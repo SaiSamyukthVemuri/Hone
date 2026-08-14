@@ -123,7 +123,7 @@ export function IntakeReviewForm({
   // status, and once that status is `reviewed` the generic refusal copy
   // ("...can only be reviewed after this client submits it") sits directly
   // above a Reviewed banner and flatly contradicts it. Re-word it to match what
-  // the practitioner is now looking at. This discloses nothing new — the
+  // the practitioner is now looking at. This discloses nothing new: the
   // Reviewed state is already on screen, rendered from the server row.
   const displayedError =
     error && errorSource === "review" && status === "reviewed"
@@ -136,7 +136,7 @@ export function IntakeReviewForm({
         Practitioner notes
       </h2>
 
-      {/* Notes stay editable in every status — in_progress, submitted and
+      {/* Notes stay editable in every status: in_progress, submitted and
           reviewed. Only the review CTA is status-gated. */}
       <textarea
         value={notes}
@@ -158,7 +158,7 @@ export function IntakeReviewForm({
         </p>
       )}
 
-      {/* IN PROGRESS — durable explanation, no review CTA. This text is
+      {/* IN PROGRESS: durable explanation, no review CTA. This text is
           rendered from the server status, so it survives a reload; it is not
           a toast. */}
       {status === "in_progress" && (
@@ -170,7 +170,7 @@ export function IntakeReviewForm({
         </p>
       )}
 
-      {/* REVIEWED — durable server-derived state, no review CTA. */}
+      {/* REVIEWED: durable server-derived state, no review CTA. */}
       {status === "reviewed" && (
         <p
           className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
@@ -225,7 +225,7 @@ export function IntakeReviewForm({
 
       {/* House accessible in-DOM confirmation (role="alertdialog", focus trap,
           idle-gated Escape, >=44px targets). It is presentational only and
-          never calls a server action itself — Cancel simply closes, issuing
+          never calls a server action itself: Cancel simply closes, issuing
           zero requests. */}
       <ConfirmDialog
         open={confirmOpen}

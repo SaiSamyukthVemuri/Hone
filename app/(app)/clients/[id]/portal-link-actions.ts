@@ -10,7 +10,7 @@ export type SendPortalLinkResult = { ok: true } | { ok: false; error: string };
 
 // Practitioner "Send portal link": emails a KNOWN client a secure magic link to
 // THEIR studio's portal, reusing the shared hashed / single-use / 60-minute
-// issuance. STUDIO-SCOPED — the client is loaded WHERE studio_id = the
+// issuance. STUDIO-SCOPED, the client is loaded WHERE studio_id = the
 // practitioner's studio, so a client in another studio is simply not found (no
 // cross-studio send). RATE-LIMITED (3/hour per practitioner+client). No
 // enumeration concern (the practitioner already sees this client). The email
@@ -34,7 +34,7 @@ export async function sendPortalLinkAction(
     clientId,
   });
   if (!rl.allowed) {
-    // Record the throttled attempt (no token/email/URL — just the fact + a
+    // Record the throttled attempt (no token/email/URL, just the fact + a
     // retry hint). Fail-soft: never blocks the response.
     await logPortalAccessEvent(admin, {
       studioId: studio.id,

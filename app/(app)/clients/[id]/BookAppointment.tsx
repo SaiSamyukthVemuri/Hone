@@ -21,7 +21,7 @@ type Props = {
   clientId: string;
   services: Service[];
   defaultDate: string; // YYYY-MM-DD in studio tz
-  // Studio IANA timezone — required to interpret the owner override's local
+  // Studio IANA timezone: required to interpret the owner override's local
   // time as a UTC instant (DST-safe via utcInstantFromLocal).
   timezone: string;
   // Owner-only outside-hours override. Non-owners never see the control; the
@@ -58,7 +58,7 @@ export function BookAppointment({
   const [error, setError] = useState<string | null>(null);
   const [loading, startLoading] = useTransition();
   const [booking, startBooking] = useTransition();
-  // Owner-only override: same contract as the calendar Quick Book drawer —
+  // Owner-only override: same contract as the calendar Quick Book drawer,
   // allow_outside_availability=true + a UTC instant from the local time. Off by
   // default; requires an explicit confirmation.
   const [overrideEnabled, setOverrideEnabled] = useState(false);
@@ -101,7 +101,7 @@ export function BookAppointment({
         date: nextDate,
         practitionerId: showSelector ? nextTarget : undefined,
       });
-      if (req !== slotReq.current) return; // stale — a newer request superseded this
+      if (req !== slotReq.current) return; // stale: a newer request superseded this
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
@@ -288,7 +288,7 @@ export function BookAppointment({
         </label>
       </div>
 
-      {/* Item 6: owner practitioner selector — active, service-eligible, same-studio
+      {/* Item 6: owner practitioner selector: active, service-eligible, same-studio
           practitioners only (display names only, ids never shown). */}
       {showSelector && (
         <label className="flex flex-col gap-1.5">

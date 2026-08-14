@@ -29,7 +29,7 @@ export type PaymentsSettingsProps = {
   status: StripeStatusView;
   // Shared payment-status presenter outputs (PR A). ALL status copy is
   // derived server-side (lib/payments/payment-status-presenter.ts) and
-  // passed in as plain data — this client component makes no payment-state
+  // passed in as plain data: this client component makes no payment-state
   // claims of its own. runtimeMode comes from the DEPLOYMENT
   // (inferStripeLivemode()), never from the nullable settings row.
   runtimeMode: "test" | "live";
@@ -171,7 +171,7 @@ export function PaymentsSettings({
 
   // State-driven status banner (presenter-derived, passed in as data).
   // Pre-PR-A this was an amber "Test mode" banner keyed off the ROW's
-  // livemode — null (not connected) read as test even on a live
+  // livemode: null (not connected) read as test even on a live
   // deployment. The banner now reflects runtime mode + Connect capability:
   // live-ready, test-ready, payouts-pending WARNING, or setup guidance.
   const bannerStyles =
@@ -424,7 +424,7 @@ function CardOnFileReadiness({
   const hasBothPolicies = hasCancellationPolicy && hasNoShowPolicy;
   // Mode display comes from the DEPLOYMENT runtime, never from the
   // nullable settings row (pre-PR-A, a not-yet-connected studio on a
-  // LIVE deployment rendered "Test mode" here — the row-null bug).
+  // LIVE deployment rendered "Test mode" here: the row-null bug).
   const isTestMode = runtimeMode !== "live";
 
   return (
@@ -479,13 +479,13 @@ function CardOnFileReadiness({
                 : "No-show policy still missing; cancellation policy on file"
           }
         />
-        {/* Factual mode line — informational, never an incomplete/grey item.
+        {/* Factual mode line: informational, never an incomplete/grey item.
             Pre-cleanup the check-state was tied to isTestMode, which rendered
             "Live mode enabled" as a grey unfinished task once live. */}
         <ReadinessItem
           ok
           okLabel={
-            isTestMode ? "Test mode — no live charges" : "Live mode enabled"
+            isTestMode ? "Test mode: no live charges" : "Live mode enabled"
           }
           notYetLabel=""
         />
@@ -502,7 +502,7 @@ function CardOnFileReadiness({
         <p>
           Card-on-file applies to paid services only; free consultations
           stay card-free. Hone does not charge clients at booking. Manual
-          no-show and late-cancellation fees are configuration only — money
+          no-show and late-cancellation fees are configuration only: money
           is never charged automatically, and a practitioner runs each fee
           explicitly against a saved, authorized card. During the supervised
           launch, run manual fees only if explicitly approved.

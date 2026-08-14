@@ -12,7 +12,7 @@ export type AcceptState = { error: string } | null;
 //   1. validates the unchecked-by-default current-policy checkbox;
 //   2. resolves the authenticated user from the session;
 //   3. calls admin_accept_pending_invitation(p_user_id) via the service-role
-//      client, passing ONLY the session user id — the command derives the
+//      client, passing ONLY the session user id: the command derives the
 //      verified email + current policy versions internally and accepts no
 //      email/studio/role/timestamps/versions from the browser.
 export async function acceptInvitationAction(

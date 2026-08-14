@@ -95,7 +95,7 @@ describe("3. charting: obvious finish, no new write path", () => {
     ]) {
       expect(SESSION_PAGE).toContain(step);
     }
-    expect(SESSION_PAGE).toMatch(/Done — back to client/);
+    expect(SESSION_PAGE).toMatch(/Done, back to client/);
   });
 
   it("finish actions navigate to existing routes; no new session write/submit path", () => {
@@ -110,7 +110,7 @@ describe("3. charting: obvious finish, no new write path", () => {
     // which navigates to the sessions tab (doneHref) — still no session write.
     expect(finish).toMatch(/<DoneChartingButton/);
     expect(finish).toMatch(/doneHref=\{`\/clients\/\$\{id\}\?tab=sessions`\}/);
-    expect(finish).toMatch(/label="Done — back to client"/);
+    expect(finish).toMatch(/label="Done, back to client"/);
     // The "Review appointment & billing" hop is GONE: the completion and
     // postcare controls it pointed at are now in this very section.
     expect(finish).not.toMatch(/Review appointment/);
@@ -247,7 +247,7 @@ describe("safety", () => {
     const spec = read("e2e/mobile-ux.spec.ts");
     expect(spec).toMatch(/fontSize/);
     expect(spec).toMatch(/selectOption/);
-    expect(spec).toMatch(/Done — back to client/);
+    expect(spec).toMatch(/Done, back to client/);
     const core = read("e2e/core-memory-loop.spec.ts");
     expect(core).toMatch(/Procedure records|procedure record for one client/);
   });

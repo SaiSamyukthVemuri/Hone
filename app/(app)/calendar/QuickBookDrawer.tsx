@@ -7,14 +7,14 @@
 //   - bookAppointmentForClientAction       (./actions, unchanged)
 //   - fetchSlotsForClientBookingAction     (../clients/[id]/booking-actions, unchanged)
 //   - createClientForCalendarBookingAction (./actions, added in
-//     Phase C — narrow authenticated insert that mirrors the
+//     Phase C: narrow authenticated insert that mirrors the
 //     existing createClientAction but returns the new row instead
 //     of redirecting)
 //
 // The drawer does not touch slot computation, conflict detection,
 // reservation logic, public booking, Stripe, payment collection, or
 // require_card_on_file. The new-client action uses the user-scoped
-// Supabase client (RLS-enforced) — no createAdminClient. Only the
+// Supabase client (RLS-enforced), no createAdminClient. Only the
 // minimal name/email/phone/pronouns fields are collected; the full
 // client profile is filled in later from /clients/[id].
 
@@ -295,7 +295,7 @@ export function QuickBookDrawer({
       autoOverrideRef.current = true;
     } else {
       // Bare click on a NEW slot: the outside-availability override must start
-      // OFF for each new booking attempt — it is never sticky across slots
+      // OFF for each new booking attempt. It is never sticky across slots
       // (Chloe feedback). A drag soft-enables above; a plain click resets.
       setOverrideDurationMinutes("");
       setOverrideEnabled(false);
@@ -304,7 +304,7 @@ export function QuickBookDrawer({
     }
     // This effect keys on the DRAFT identity, so a new slot always resets the
     // override above. Within the SAME draft it does not re-fire, so a manual
-    // override toggle sticks until the slot changes or the drawer closes — we
+    // override toggle sticks until the slot changes or the drawer closes: we
     // intentionally do NOT add overrideEnabled / overrideConfirmed to the deps.
   }, [open, draft?.localDate, draft?.localTime, draft?.durationMinutes]);
 
@@ -329,7 +329,7 @@ export function QuickBookDrawer({
   }, [open, serviceId]);
 
   // Item 6: load the eligible practitioners for the selected service (owner +
-  // capacity ON only). Resolves the default target; FAILS CLOSED — a lookup
+  // capacity ON only). Resolves the default target; FAILS CLOSED: a lookup
   // error or an empty list leaves target "" so the slot effect below does not
   // fetch and booking is blocked (never a silent self-slot fallback).
   // Latest-request-wins: a stale service response cannot overwrite a newer one.
@@ -390,7 +390,7 @@ export function QuickBookDrawer({
   }, [open, onClose]);
 
   // Fetch slots whenever (serviceId, draft.localDate) changes. The
-  // clicked time from Phase A is only a hint — we preselect it if it
+  // clicked time from Phase A is only a hint: we preselect it if it
   // matches an available slot exactly, otherwise the practitioner picks
   // from the offered slots. We never send an arbitrary time to the
   // booking action.
@@ -881,7 +881,7 @@ export function QuickBookDrawer({
 
           {/* Rebook shortcut. Only for an existing selected client with a
               last service that is still active (present in `services`).
-              "Use this service" just selects it — the same path as picking
+              "Use this service" just selects it: the same path as picking
               it manually, which re-triggers slot loading. Never auto-books,
               never bypasses availability. Hidden entirely (no placeholder)
               when there's no eligible last service. */}
@@ -942,7 +942,7 @@ export function QuickBookDrawer({
           )}
         </section>
 
-        {/* Item 6: owner practitioner selector — active, service-eligible,
+        {/* Item 6: owner practitioner selector: active, service-eligible,
             same-studio practitioners only (display names only, ids never shown).
             Changing the target re-runs the slot effect for that practitioner. */}
         {showSelector && (

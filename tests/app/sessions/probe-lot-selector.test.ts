@@ -52,7 +52,7 @@ describe("selector component: id identity, manual entry, expired handling", () =
 
   it("shows linked/manual badges + the probe-specific empty state", () => {
     expect(SELECT).toMatch(/Inventory linked/);
-    expect(SELECT).toMatch(/Manual entry — not linked to inventory/);
+    expect(SELECT).toMatch(/Manual entry, not linked to inventory/);
     expect(SELECT).toMatch(/No active inventory lot for this probe/);
   });
 

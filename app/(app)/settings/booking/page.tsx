@@ -89,7 +89,7 @@ export default async function BookingSettingsPage({
 
       {/* Stable anchor ids below. Global Search resolves an individual SETTING
           (not just this page) to /settings/booking#<id>, so each control needs
-          a durable target. Ids are content-stable names, never positions —
+          a durable target. Ids are content-stable names, never positions,
           tests/lib/search/settings-control-coverage.test.ts fails if a
           registered anchor stops existing. `scroll-mt-24` clears the sticky
           header, matching the existing #postcare convention. */}

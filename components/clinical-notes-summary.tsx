@@ -1,6 +1,6 @@
 // Read-only at-a-glance summary of the latest CONSULTATION note + latest
 // SKIN/HAIR ANALYSIS note (migration 0126) for the appointment-prep briefing on
-// the client profile overview. No forms — it links to the Consultation tab for
+// the client profile overview. No forms: it links to the Consultation tab for
 // the full dated history + add/revise. Server component; renders nothing
 // interactive, so it is safe to include in the prep view.
 //

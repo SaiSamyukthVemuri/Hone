@@ -67,7 +67,7 @@ export function MultiAreaEditor({
     return true;
   }
 
-  // Any edit to the SET invalidates the notice — it asserts a fact about the
+  // Any edit to the SET invalidates the notice: it asserts a fact about the
   // current set ("X is already in this settings block"), so leaving it up after
   // the practitioner removes that very area would state something false.
   function setLaterality(index: number, lat: Laterality) {
@@ -95,7 +95,7 @@ export function MultiAreaEditor({
         </p>
       </div>
 
-      {/* Selected areas — each with its own laterality + remove. */}
+      {/* Selected areas: each with its own laterality + remove. */}
       {value.length > 0 ? (
         <ul className="flex flex-col gap-2" data-testid="selected-areas">
           {value.map((a, i) => (

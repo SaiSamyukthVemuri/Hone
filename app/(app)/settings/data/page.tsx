@@ -58,7 +58,7 @@ export default async function DataSettingsPage() {
         <p className="max-w-[680px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
           All client records, session notes, and pricing belong to you. Hone
           uses third-party infrastructure that may process this data outside
-          Canada — see the{" "}
+          Canada. See the{" "}
           <a href="/privacy" className="underline">
             Privacy Policy
           </a>{" "}
@@ -72,7 +72,7 @@ export default async function DataSettingsPage() {
       <DataCard
         anchorId="export-data"
         title="Export your data"
-        body="Download a portable copy of your supported studio records as a ZIP. Reads are paginated to exhaustion, so no file is silently truncated, and manifest.json records how many rows each file received. It is not point-in-time consistent and is not a transactional database backup — it does not replace Hone's disaster-recovery backups."
+        body="Download a portable copy of your supported studio records as a ZIP. Reads are paginated to exhaustion, so no file is silently truncated, and manifest.json records how many rows each file received. It is not point-in-time consistent and is not a transactional database backup. It does not replace Hone's disaster-recovery backups."
       >
         <div className="flex flex-col gap-5">
           <div>
@@ -115,7 +115,7 @@ export default async function DataSettingsPage() {
               </li>
               <li>
                 Exposure-incident log (owner-only): contains personal
-                information about the exposed person — handle securely
+                information about the exposed person: handle securely
               </li>
               <li>
                 manifest.json: how many rows were exported to each file, plus
@@ -153,7 +153,7 @@ export default async function DataSettingsPage() {
       <DataCard
         anchorId="import-csv"
         title="Import clients from CSV"
-        body="Bring existing client records in from a spreadsheet. Import is currently operator-assisted — Hone brings your records over for you."
+        body="Bring existing client records in from a spreadsheet. Import is currently operator-assisted, Hone brings your records over for you."
       >
         <a
           href="/settings/import"

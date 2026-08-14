@@ -195,7 +195,7 @@ export function SessionPaymentPrepareCard({
   eligibility: SessionPaymentEligibility;
   // Server-derived studio-owner flag (trusted; from practitioner.role on the
   // session page). Gates the owner-only Technical payment details disclosure +
-  // the Refund button (refunds are ALSO server-side owner-only — unchanged).
+  // the Refund button (refunds are ALSO server-side owner-only, unchanged).
   isOwner?: boolean;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
@@ -257,10 +257,10 @@ export function SessionPaymentPrepareCard({
   // Reviews 3780456783 / 3780746701. The complete PRICING-DEPENDENT
   // presentation decision lives in lib/billing/ready-control-permission, and
   // this component reads its fields rather than interpreting any price itself.
-  // That is the precise claim: the card still owns branches of its own —
+  // That is the precise claim: the card still owns branches of its own,
   // attempt existence, status panel dispatch, the previous-terminal callout,
   // prepareJustSucceeded, the eligibility BlockedPanel and local
-  // submit/pending/error state — none of which interpret a price.
+  // submit/pending/error state, none of which interpret a price.
   // Card-local NARROWING, not a decision. PrepareForm needs the eligible
   // variant of the eligibility union, and the old
   // `showPrepareForm && resolvedAmount` gate happened to supply that narrowing
@@ -353,7 +353,7 @@ export function SessionPaymentPrepareCard({
       )}
 
       {/* Blocked pricing: a calm explanation instead of a blank editable box.
-          Preparation is withdrawn entirely — there is no amount to confirm. */}
+          Preparation is withdrawn entirely. There is no amount to confirm. */}
       {/* A null result means the pricing context itself could not be loaded.
           Never render nothing: say so, and offer no prepare action. */}
       {presentation.unavailableExplanationVisible && (
@@ -365,7 +365,7 @@ export function SessionPaymentPrepareCard({
         </p>
       )}
 
-      {/* FREE-01: an explicit $0 service renders a calm, factual state — never
+      {/* FREE-01: an explicit $0 service renders a calm, factual state, never
           Prepare, never Run charge, and never the amber "pricing blocked"
           warning, because nothing is wrong. Defense in depth: even if a route
           reaches this card directly, there is no money-moving control here. */}
@@ -559,7 +559,7 @@ function ReadyPanel({
   executeAction: ExecuteAction;
   // Reviews 3780371682 / 3780573779. The prepared attempt is TRANSACTION
   // HISTORY and is always rendered. Only the money-moving section below is
-  // withdrawn when current authoritative pricing is not `resolved` — otherwise
+  // withdrawn when current authoritative pricing is not `resolved`, otherwise
   // a single prepared payment appeared to vanish while still blocking
   // preparation. This is the SAME value the presentation decision exposes and
   // the tests assert, under the same name the whole way down.
@@ -745,9 +745,9 @@ function SucceededPanel({
   sendReceiptAction: SendReceiptAction;
   refundAction: RefundAction;
 }) {
-  // Compact card: derivePaymentSummary picks the SINGLE current headline —
+  // Compact card: derivePaymentSummary picks the SINGLE current headline,
   // "Paid" for a live charge, "Refunded" once the row carries
-  // refund_status='succeeded' — so the practitioner never sees a paid heading
+  // refund_status='succeeded', so the practitioner never sees a paid heading
   // and a refunded sub-panel fighting each other. Sub-panels handle the rest.
   const refunded = attempt.refundStatus === "succeeded";
   return (
@@ -760,7 +760,7 @@ function SucceededPanel({
     >
       {/* Compact practitioner face: "Paid · $X" (or "Refunded · $X"), with the
           charge date. Processor identifiers move into the owner-only disclosure
-          below — never shown in the default charting view. */}
+          below, never shown in the default charting view. */}
       <PaymentSummaryCard
         summary={derivePaymentSummary(attempt)}
         subLine={
@@ -843,7 +843,7 @@ function ReceiptSubPanel({
         Receipt
       </p>
 
-      {/* Masked destination only — the full email never appears in the
+      {/* Masked destination only: the full email never appears in the
           practitioner card (it stays in the owner-only technical details). */}
       {(persistedSent || localSent) && (
         <ReceiptStatus

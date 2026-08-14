@@ -23,7 +23,7 @@ import {
   type DeadRowSweepResult,
 } from "@/lib/google-calendar/sync/reconcile-heartbeat";
 
-// Google Calendar — Phase B2.3-b: the reconciliation-sweep route.
+// Google Calendar: Phase B2.3-b: the reconciliation-sweep route.
 //
 // AUTH: constant-time Bearer CRON_SECRET (isAuthorizedCronRequest); 401 otherwise.
 // No browser-supplied studio/connection/destination/calendar/provider id is trusted.
@@ -42,7 +42,7 @@ import {
 
 const METRIC_RETENTION_DAYS = 30;
 const METRIC_PRUNE_LIMIT = 1000;
-// Kept materially below the lock/coordinator TTL (120s) — but not a substitute for
+// Kept materially below the lock/coordinator TTL (120s), but not a substitute for
 // the per-actuator ownership check inside the sweep.
 const ROUTE_BUDGET_MS = 50_000;
 const DEAD_ROW_PAGE_SIZE = 100;
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
     const run = await runReconciliation({ store, lock, coordinator, continuation, observability, deadlineMs });
 
     // ---- Case A: the MAIN coordinator was HELD by another invocation. Benign
-    // concurrency — this invocation performed NO run. Do NOT prune, sweep, or write a
+    // concurrency: this invocation performed NO run. Do NOT prune, sweep, or write a
     // heartbeat (writing one would mask the active/crashed run). Return 202.
     if (run.coordinatorSkipped === "held") {
       await emitRouteSignal("info", "calendar_reconcile_skipped_held", { outcome: "skipped_held", coordinator: "main", duration_ms: Date.now() - startedAt });
@@ -92,13 +92,13 @@ export async function GET(req: Request) {
 
     // ---- Case C: the main reconciliation ACTUALLY RAN (main coordinator acquired +
     // released inside runReconciliation).
-    // 1. Bounded metric prune — UNLOCKED, best-effort, fail-open, idempotent.
+    // 1. Bounded metric prune: UNLOCKED, best-effort, fail-open, idempotent.
     let metricsPruned = 0;
     try {
       const cutoff = new Date(startedAt - METRIC_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
       metricsPruned = await pruneMetricEvents(admin, cutoff, METRIC_PRUNE_LIMIT);
     } catch {
-      // maintenance — a prune failure must not fail the run
+      // maintenance: a prune failure must not fail the run
     }
 
     // 2-4. Dead-row alert campaign under the SEPARATE dead-alert coordinator.
@@ -123,7 +123,7 @@ export async function GET(req: Request) {
       });
     }
 
-    // 5-6. Final heartbeat tier (§11) — a non-completed dead-row campaign degrades a
+    // 5-6. Final heartbeat tier (§11), a non-completed dead-row campaign degrades a
     // successful reconciliation; error is reserved for reconciliation-run failure.
     const outcome = finalHeartbeatOutcome(run.outcome, deadRows.outcome);
     const completedAt = Date.now();
@@ -196,14 +196,14 @@ export async function GET(req: Request) {
   } finally {
     // PR OPS-01: SECOND independent detector for a dead external reminder
     // scheduler. This is a separate Vercel cron (09:00 UTC) from
-    // materialize-recurring-breaks (08:00 UTC), so a failure of either route —
-    // or of either job's registration — no longer removes reminder monitoring
+    // materialize-recurring-breaks (08:00 UTC), so a failure of either route,
+    // or of either job's registration, no longer removes reminder monitoring
     // for the day. Dedupe inside recordReminderSchedulerHealthAlert (an
     // unresolved ops_alerts row for the same event) means several daily
     // callers still produce at most ONE alert per outage, not one per cron.
     //
     // Same control-flow contract as the materialize route: no `return`, no
-    // `throw` in this block, so it cannot mask the route's real result — this
+    // `throw` in this block, so it cannot mask the route's real result: this
     // route's 202 "skipped_held", 200 "degraded" and 500 paths all pass through
     // unchanged. Runs only after the auth gate above (a 401 returns before the
     // try, so an unauthorized request records nothing). It NEVER sends a

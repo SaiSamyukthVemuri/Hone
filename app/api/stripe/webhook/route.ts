@@ -55,7 +55,7 @@
 //
 // Webhook discipline:
 //   * Raw body via await req.text(). NEVER req.json() before
-//     constructEvent — Stripe's signature verification requires the
+//     constructEvent, Stripe's signature verification requires the
 //     exact byte string sent.
 //   * 400 with generic "Invalid signature" on any verification
 //     failure. Stripe error message is logged internally, not
@@ -85,7 +85,7 @@ import {
 } from "@/lib/billing/payment-webhook-reconciliation";
 import { ensureCardChangeNotification } from "@/lib/billing/card-change-notification";
 
-// Force Node runtime — Stripe SDK + raw body buffering need Node, not
+// Force Node runtime: Stripe SDK + raw body buffering need Node, not
 // the Edge runtime.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -152,7 +152,7 @@ export async function POST(req: Request): Promise<Response> {
 
   // 4. Resolve account context. Stripe Connect webhooks include the
   //    connected `account` field on the event envelope. Some events
-  //    arrive at the platform level with no account set — we still
+  //    arrive at the platform level with no account set: we still
   //    claim those but cannot sync per-studio status.
   const stripeAccountId = event.account ?? null;
   const livemode = event.livemode === true;
@@ -206,7 +206,7 @@ export async function POST(req: Request): Promise<Response> {
   }
   if (claim.currently_processing_elsewhere) {
     // Another worker is mid-process. Tell Stripe we're alive but not
-    // done — they'll re-deliver shortly.
+    // done: they'll re-deliver shortly.
     return NextResponse.json({ ok: false, retry: true }, { status: 409 });
   }
   if (!claim.claimed_by_this_request || !claim.claim_token) {
@@ -305,7 +305,7 @@ async function handleStripeEvent(
       // Allowed Phase 1 mutation: sync the connected-account status
       // onto studio_payment_settings.
       if (!ctx.studioId || !ctx.stripeAccountId) {
-        // No local binding — record but don't sync.
+        // No local binding: record but don't sync.
         return {
           eventType: event.type,
           unboundAccount: true,
@@ -438,25 +438,25 @@ async function handleStripeEvent(
 // ---------------------------------------------------------------------------
 // terminalCardRejection
 // ---------------------------------------------------------------------------
-// A payload Stripe legitimately delivered that Hone's domain cannot admit —
+// A payload Stripe legitimately delivered that Hone's domain cannot admit,
 // forged/absent metadata, lineage that does not resolve, a non-card payment
 // method. Retrying cannot fix any of these, so the event is marked processed
 // rather than left to storm.
 //
 // But it must NEVER masquerade as success. Previously these branches returned
 // a bare `rejected` summary; the parent then called mark_stripe_event_processed
-// and the delivery ended as a 200 with NO alert at all — while the client had
+// and the delivery ended as a 200 with NO alert at all, while the client had
 // already been told "Card saved" and Hone held no card row.
 //
 // Operator-visible evidence, stated precisely:
 //   * recordOpsAlert ALWAYS emits a structured stderr log with the event name
-//     and safe identifiers — that is its documented floor, emitted even when
+//     and safe identifiers: that is its documented floor, emitted even when
 //     the DB insert fails;
 //   * it also attempts a durable public.ops_alerts row. That insert is
 //     best-effort by design ("No retry. A failure to insert is logged and
-//     dropped." — lib/ops/alerts.ts), so it is NOT claimed here as guaranteed;
+//     dropped.", lib/ops/alerts.ts), so it is NOT claimed here as guaranteed;
 //   * the returned summary is persisted on stripe_events.payload_summary with
-//     terminalRejection: true, which IS durable — the parent commits it via
+//     terminalRejection: true, which IS durable: the parent commits it via
 //     mark_stripe_event_processed.
 // So a terminal rejection always leaves at least two independent traces and can
 // never be mistaken for a saved card.
@@ -469,7 +469,7 @@ async function terminalCardRejection(
 ): Promise<Record<string, unknown>> {
   const setupIntentId = si.id;
   // THE OWNERSHIP ANCHOR. The portal must be able to prove a rejection belongs
-  // to the asking client WITHOUT trusting the SetupIntent's metadata — metadata
+  // to the asking client WITHOUT trusting the SetupIntent's metadata: metadata
   // is caller-supplied and Stripe signing the envelope says nothing about who
   // authored it. (stripe_account_id, stripe_livemode, stripe_customer_id) is
   // UNIQUE in client_stripe_customers, so the customer resolves to exactly one
@@ -499,7 +499,7 @@ async function terminalCardRejection(
     eventType: event.type,
     setupIntentId,
     // Ownership anchor for the portal's client-binding check. Null when the
-    // event carried no usable customer — those rejections are deliberately not
+    // event carried no usable customer: those rejections are deliberately not
     // portal-attributable and settle as "not confirmed" instead.
     stripeCustomerId,
     stripeAccountId: ctx.stripeAccountId,
@@ -511,7 +511,7 @@ async function terminalCardRejection(
     terminalRejection: true,
     // Named for what is actually guaranteed. recordOpsAlert always emits its
     // structured log, but its ops_alerts row insert is best-effort, so this
-    // must not be called `opsAlerted` — that would imply a durable row exists.
+    // must not be called `opsAlerted`, that would imply a durable row exists.
     opsAlertAttempted: true,
   };
 }
@@ -695,7 +695,7 @@ async function handleSetupIntentSucceeded(
 
   // 7. Persist the card ATOMICALLY via the 0180 governed command.
   //
-  //    This used to be two independent PostgREST writes — an UPDATE that
+  //    This used to be two independent PostgREST writes: an UPDATE that
   //    retired the existing active row, then a separate INSERT. PostgREST
   //    gives each request its own transaction, so any non-23505 failure of the
   //    INSERT left the client with ZERO ACTIVE CARDS after their working card
@@ -707,7 +707,7 @@ async function handleSetupIntentSucceeded(
   //    inside that transaction, takes an advisory lock per
   //    (studio, client, mode) so two concurrent replacements cannot interleave,
   //    and returns 'inserted' or 'idempotent'. Anything else raises, which we
-  //    surface as a throw so the parent releases the claim and Stripe retries —
+  //    surface as a throw so the parent releases the claim and Stripe retries,
   //    with the previous card still active, because the retire rolled back too.
   const { data: saveRows, error: saveErr } = await admin.rpc(
     "save_client_card_on_file",
@@ -727,8 +727,8 @@ async function handleSetupIntentSucceeded(
     },
   );
   if (saveErr) {
-    // 22023 is the command's own lineage refusal. It is terminal — a retry
-    // cannot make forged lineage resolve — but it is still operator-visible,
+    // 22023 is the command's own lineage refusal. It is terminal: a retry
+    // cannot make forged lineage resolve, but it is still operator-visible,
     // and no card row was written because the whole transaction rolled back.
     if (saveErr.code === "22023") {
       return await terminalCardRejection(
@@ -760,7 +760,7 @@ async function handleSetupIntentSucceeded(
   });
 
   // Studio-facing notification (Chloe's ask): card added / replaced. Awaited
-  // and durable — if it throws, the parent handler releases the Stripe event
+  // and durable, if it throws, the parent handler releases the Stripe event
   // claim and Stripe retries; the saved card is NOT undone (the row stays,
   // and the retry's idempotency branch re-ensures the notification). Added vs
   // replaced is derived from persisted same-mode history, not the portal mode.

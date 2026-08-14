@@ -8,12 +8,12 @@ import {
   type NarrativeItem,
 } from "@/lib/sessions/appointment-prep-memory";
 
-// "Last treatment" for APPOINTMENT PREPARATION — the pre-visit read on the
+// "Last treatment" for APPOINTMENT PREPARATION: the pre-visit read on the
 // calendar appointment-detail screen.
 //
-// Chloe's complaint: before a client arrives she needs the whole picture — every
+// Chloe's complaint: before a client arrives she needs the whole picture: every
 // treated area, the complete setup, what actually happened, and the notes she
-// wrote last time — and the appointment page gave her a one-line date, a compact
+// wrote last time, and the appointment page gave her a one-line date, a compact
 // per-area strip, and a reaction note silently dropped above 140 characters.
 // Everything else meant opening the prior chart, and some of it meant entering
 // Edit.
@@ -21,7 +21,7 @@ import {
 // This card is READ-ONLY. It renders a view model the page already assembled
 // (lib/sessions/appointment-prep-memory.ts); it issues no query, owns no state,
 // performs no mutation, and decides nothing about which notes exist or how they
-// group — that is the pure helper's job.
+// group: that is the pure helper's job.
 //
 // LAYOUT CONTRACT
 //   * Reading order follows the actual workflow: what/when → what to know →
@@ -114,8 +114,8 @@ function NoteGroup({
 export function AppointmentPrepMemoryCard({
   clientId,
   memory,
-  // EMBEDDED variant (Dashboard V2 Part 2A). The card is unchanged in content —
-  // every field family still renders — but when it lives INSIDE another
+  // EMBEDDED variant (Dashboard V2 Part 2A). The card is unchanged in content,
+  // every field family still renders, but when it lives INSIDE another
   // section's disclosure it must not bring its own chrome or its own heading
   // rank with it:
   //
@@ -135,7 +135,7 @@ export function AppointmentPrepMemoryCard({
   //
   // `embedded` is a LAYOUT fact (heading rank + chrome). Whether a surface is
   // allowed to offer a link that leaves it is a PRODUCT fact, and the two are
-  // not the same question — inferring one from the other is how a styling flag
+  // not the same question: inferring one from the other is how a styling flag
   // quietly acquires navigation policy.
   //
   // On the appointment-preparation screen the full-chart link is the point:
@@ -143,7 +143,7 @@ export function AppointmentPrepMemoryCard({
   // Inside the Dashboard Today disclosure it is a trap: she expanded a row to
   // READ something, and the only controls in reach must not throw her off the
   // worklist. The Dashboard therefore passes `false`; every other caller keeps
-  // the link. Reaching the full chart from Today is still one tap — the row's
+  // the link. Reaching the full chart from Today is still one tap: the row's
   // own resolved action button, outside the disclosure, does exactly that.
   showFullChartLink = true,
 }: {
@@ -153,7 +153,7 @@ export function AppointmentPrepMemoryCard({
   showFullChartLink?: boolean;
 }) {
   const fullChartHref = `/clients/${clientId}/sessions/${memory.sessionId}`;
-  // A prior visit can be genuinely charted and still carry no settings blocks —
+  // A prior visit can be genuinely charted and still carry no settings blocks,
   // a LASER visit charts into laser_entries, and pre-0019 legacy electrolysis
   // charted straight into entries. Both are real treatments; neither fits the
   // block-shaped model, and saying "Area not recorded" about them would be a
@@ -194,7 +194,7 @@ export function AppointmentPrepMemoryCard({
         </div>
         <p className="text-sm text-neutral-700 dark:text-neutral-300">
           {/* A session's started_at is a real instant, so it follows the
-              viewer's zone — unlike a clinical note's occurred_at. */}
+              viewer's zone, unlike a clinical note's occurred_at. */}
           <FormattedDateTime iso={memory.startedAt} format="date" />
           <span className="capitalize"> · {memory.modality}</span>
           {memory.totalMinutes != null && ` · ${memory.totalMinutes} min`}
@@ -244,7 +244,7 @@ export function AppointmentPrepMemoryCard({
           {/* The SECOND full-chart affordance, and it obeys the same
               capability. The blockless COPY above is shared with the charting
               card and the /sessions/new panel (and is source-pinned there), so
-              it is never rewritten per surface — it keeps saying that the full
+              it is never rewritten per surface. It keeps saying that the full
               chart is where the rest lives. On a surface that may not navigate,
               that sentence is guidance and the row's own action button is the
               control; leaving the link here would reintroduce exactly the
@@ -263,7 +263,7 @@ export function AppointmentPrepMemoryCard({
       )}
 
       {/* ---- LAST SESSION NOTES: the whole practitioner narrative, in one
-              place, at full length. Rendered for a blockless visit too — a
+              place, at full length. Rendered for a blockless visit too: a
               laser or legacy visit still has notes, and hiding them behind the
               fallback copy is exactly the dead end this replaces. ---- */}
       <div
@@ -343,7 +343,7 @@ export function AppointmentPrepMemoryCard({
       </div>
 
       {/* ---- WHAT HAPPENED: outcomes, per area, structured. Distinct from the
-              setup below — this is the result, not the recipe. ---- */}
+              setup below. This is the result, not the recipe. ---- */}
       {hasBlockDetail && (
         <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
           <SectionLabel>What happened</SectionLabel>
@@ -431,7 +431,7 @@ export function AppointmentPrepMemoryCard({
                     data-testid="prep-settings-changed"
                     className="mt-1.5 text-xs text-amber-700 dark:text-amber-400"
                   >
-                    Settings changed during the session — these are the first
+                    Settings changed during the session. These are the first
                     pass. Open the full chart for every pass.
                   </p>
                 )}
@@ -450,7 +450,7 @@ export function AppointmentPrepMemoryCard({
 }
 
 // Every treated area of the block, each named in full. A block treating Left
-// Cheek and Right Sideburn shows BOTH — never just the first, and never a bare
+// Cheek and Right Sideburn shows BOTH, never just the first, and never a bare
 // primary_area. areaLabel is the shared joined form ("Left Cheek · Right
 // Sideburn"); areaParts carries the same areas individually for the model and
 // its tests.

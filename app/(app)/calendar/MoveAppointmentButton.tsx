@@ -6,7 +6,7 @@ import MoveAppointmentDialog, { type MoveDialogAppointment } from "./MoveAppoint
 
 // The single practitioner entry point into the shared Move workflow. Rendered on
 // the responsive appointment detail page (mobile/tablet/desktop) AND from the
-// desktop in-grid preview drawer. It only OPENS the shared MoveAppointmentDialog —
+// desktop in-grid preview drawer. It only OPENS the shared MoveAppointmentDialog,
 // it holds no mutation logic of its own (the dialog owns the two server actions,
 // which re-authorize server-side). The trigger is gated by the caller to a
 // confirmed, future appointment; this component does not re-derive that gate.

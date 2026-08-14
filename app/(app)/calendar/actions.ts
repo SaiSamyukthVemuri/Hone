@@ -64,7 +64,7 @@ function bookingResultMessage(result: string | undefined): string {
       return "That time is outside the practitioner's availability.";
     case "buffer_conflict":
       // Soft buffer/gap (migration 0152). Only reachable on the NON-override
-      // path — the owner override bypasses the buffer server-side. Guide the
+      // path: the owner override bypasses the buffer server-side. Guide the
       // practitioner to the override rather than expose any DB detail.
       return "That time is within the buffer around another appointment. Turn on “Outside your regular availability” to book it anyway.";
     case "studio_not_found":
@@ -167,13 +167,13 @@ export async function bookAppointmentForClientAction(
   //
   //     allow_outside_availability = true  ⇒  practitioner.role must be "owner"
   //
-  // It is enforced on the SERVER-RESOLVED role only. NO client-supplied signal —
-  // duration, source, mode, form name, UI route, or drag-vs-click — is trusted as
+  // It is enforced on the SERVER-RESOLVED role only. NO client-supplied signal,
+  // duration, source, mode, form name, UI route, or drag-vs-click, is trusted as
   // authorization evidence, so a non-owner cannot bypass by attaching a custom
   // duration or forging a source label. (Because the drag-to-create path couples
   // a custom LENGTH to the availability bypass, non-owner custom-length booking
   // is owner-only too; see PRODUCT POLICY in docs/reviews/booking-availability-
-  // authorization.md. The standard slot flow — no bypass — is unchanged for every
+  // authorization.md. The standard slot flow (no bypass) is unchanged for every
   // active practitioner.)
   if (allowOutsideAvailability && practitioner.role !== "owner") {
     return {
@@ -185,7 +185,7 @@ export async function bookAppointmentForClientAction(
   // Part 4: a capacity-ON OWNER may book FOR another practitioner (submitted
   // practitioner_id); every other case (Legacy, member, owner-without-selection)
   // books for the acting practitioner. The canonical command re-validates the
-  // target authoritatively (active, same-studio, service-eligible) — this is
+  // target authoritatively (active, same-studio, service-eligible). This is
   // only the default; nothing here is trusted as the final authority.
   const submittedPractitionerId = formDataStrOrNull(formData, "practitioner_id");
   const capacityOn = studio.practitioner_capacity_enabled === true;
@@ -308,7 +308,7 @@ export async function bookAppointmentForClientAction(
   // through the shared, target-aware availability validator. The custom length
   // (p_duration_override_minutes) and the availability bypass
   // (p_allow_outside_availability) are OWNER-ONLY and re-checked server-side
-  // inside the command — the values below are only honoured for an owner actor.
+  // inside the command: the values below are only honoured for an owner actor.
   const { data: rpcRows, error: rpcErr } = await admin.rpc(
     "create_internal_appointment_v2",
     {
@@ -325,7 +325,7 @@ export async function bookAppointmentForClientAction(
     },
   );
   if (rpcErr) {
-    // 23P01 = the per-resource exclusion — the slot was taken between the
+    // 23P01 = the per-resource exclusion: the slot was taken between the
     // advisory pre-check and the insert. Safe, structured; no raw DB text.
     if (rpcErr.code === "23P01") {
       console.error(
@@ -359,7 +359,7 @@ export async function bookAppointmentForClientAction(
     .eq("id", createdId)
     .maybeSingle();
   if (!created) {
-    // Committed, but the follow-up read failed — the booking still succeeded.
+    // Committed, but the follow-up read failed: the booking still succeeded.
     revalidatePath("/calendar");
     return { ok: true, appointmentId: createdId };
   }
@@ -537,7 +537,7 @@ export type AppointmentStateActionResult =
 //   * verifies the practitioner is active in the studio,
 //   * locks the appointment FOR UPDATE,
 //   * refuses any source state other than 'confirmed',
-//   * refuses if starts_at is in the future — B6 moved the temporal gate from
+//   * refuses if starts_at is in the future: B6 moved the temporal gate from
 //     ends_at to starts_at, so a visit that has BEGUN may be completed early,
 //   * writes the appointment_audit row atomically.
 // Completing early does not release capacity: the booked interval is untouched.
@@ -594,7 +594,7 @@ export async function markAppointmentCompleteAction(
 
   // Migration 0110: if the studio opted into auto_on_complete, send postcare
   // now. Fail-soft + idempotent (never throws; shares the manual sender's claim
-  // columns) — a postcare failure must never fail the completion above.
+  // columns), a postcare failure must never fail the completion above.
   const { autoSendPostcareOnComplete } = await import("./postcare-auto-send");
   await autoSendPostcareOnComplete(appointmentId, studio.id, practitioner.id);
 
@@ -682,10 +682,10 @@ function formDataStrOrNull(fd: FormData, key: string): string | null {
 //
 // Boundaries observed (mirroring bookAppointmentForClientAction):
 //   * resolves practitioner + studio server-side via
-//     getCurrentPractitionerWithStudio — studio_id is NEVER trusted
+//     getCurrentPractitionerWithStudio, studio_id is NEVER trusted
 //     from the browser
 //   * uses the user-scoped Supabase client (createClient), not
-//     createAdminClient — RLS still applies
+//     createAdminClient, RLS still applies
 //   * inactive practitioners are refused, same gate as booking
 //   * only the minimal name / email / phone / pronouns fields are
 //     accepted; the full client profile (DOB, fitzpatrick, allergies,
@@ -735,13 +735,13 @@ export async function createClientForCalendarBookingAction(
 
   if (error || !data) {
     // Never surface a raw Postgres/PostgREST message (constraint names, schema
-    // hints, or submitted values) to the browser — the quick-book drawer renders
+    // hints, or submitted values) to the browser: the quick-book drawer renders
     // this string verbatim. Log a bounded SQLSTATE marker instead.
     logBookingDbError("create_client", "insert", error?.code);
     return { ok: false, error: "Could not create the client. Please try again." };
   }
 
-  // Same pages that the existing createClientAction revalidates —
+  // Same pages that the existing createClientAction revalidates,
   // keeps Clients list + Dashboard recent-clients in sync. We also
   // revalidate /calendar so a follow-up booking sees the new client
   // in the server-passed clients prop after router.refresh().
@@ -762,7 +762,7 @@ export async function createClientForCalendarBookingAction(
 }
 
 // Calendar rebook shortcut: read-only lookup of a client's "last
-// service" so the quick-book drawer can offer a one-tap rebook. Lazy —
+// service" so the quick-book drawer can offer a one-tap rebook. Lazy,
 // called only when an existing client is selected in the drawer, never
 // prefetched for the whole client list.
 //
@@ -773,7 +773,7 @@ export async function createClientForCalendarBookingAction(
 // Completed is the strongest signal and wins even if an upcoming
 // confirmed booking is more recent.
 //
-// Boundaries: user-scoped createClient() (RLS applies) — no
+// Boundaries: user-scoped createClient() (RLS applies), no
 // createAdminClient; studio resolved server-side (studio_id never
 // trusted from the browser); read-only SELECTs, no writes, no emails,
 // no booking creation, no slot/availability computation.
@@ -847,7 +847,7 @@ export async function fetchLastServiceForClientAction(
       },
     };
   } catch {
-    // Fixed, safe copy — the inner query already logged a bounded SQLSTATE marker.
+    // Fixed, safe copy: the inner query already logged a bounded SQLSTATE marker.
     return { ok: false, error: "Could not load the last service. Please try again." };
   }
 }
@@ -993,7 +993,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
 // removed in PR #72), does NOT depend on display-derived "done", and
 // does NOT rely on payment.
 //
-// B8 / 0177 — THIS ACTION WRITES NO APPOINTMENT COLUMN.
+// B8 / 0177, THIS ACTION WRITES NO APPOINTMENT COLUMN.
 //
 // It used to own four direct UPDATEs on the six postcare columns: a
 // conditional first-send claim, an unconditional resend claim, and the two
@@ -1007,7 +1007,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
 // completed-only gate, first-send vs resend, the five-minute stale window, the
 // attempt counter, the actor's active same-studio membership, and the claim
 // timestamp itself. Race-safety is no longer "Postgres serialises per-row
-// UPDATEs and one click wins" — the claim command hands exactly one caller a
+// UPDATEs and one click wins", the claim command hands exactly one caller a
 // token, and settlement only writes while that token still matches. That closed
 // a real gap: the old resend path bumped the claim unconditionally, so two
 // concurrent resends could BOTH reach the provider, mitigated only by a
@@ -1074,7 +1074,7 @@ export async function sendPostcareEmailAction(
   // The admin client is used for the join so the full studio postcare text,
   // the service modality and the client email arrive in one round-trip, and
   // because the two 0177 commands are service_role-only. It is NOT needed to
-  // "write through" any longer — this action issues no appointment UPDATE at
+  // "write through" any longer: this action issues no appointment UPDATE at
   // all, and service_role holds no UPDATE grant to issue one with. RLS would
   // also permit a member-scoped read here; the existing email-sending actions
   // in this file all use the admin client and we keep the pattern.
@@ -1141,16 +1141,16 @@ export async function sendPostcareEmailAction(
   }
 
 
-  // B8 / 0177 — CLAIM THE SEND IN THE DATABASE.
+  // B8 / 0177, CLAIM THE SEND IN THE DATABASE.
   //
   // This replaces two direct UPDATEs (first-send claim and resend claim). The
   // database now owns the claim timestamp, the attempt counter and the stale
   // window. Nothing below generates a timestamp for a postcare column, and no
   // branch here may write one.
   //
-  // WHO THE ACTOR IS, stated exactly. THIS CALL SITE authenticates the human —
+  // WHO THE ACTOR IS, stated exactly. THIS CALL SITE authenticates the human,
   // getCurrentPractitionerWithStudio() above requires an active practitioner
-  // membership — and resolves `practitioner.id` server-side; the browser never
+  // membership, and resolves `practitioner.id` server-side; the browser never
   // supplies it. service_role is transport, so the database cannot verify who
   // is behind the connection: what `claim_postcare_send` does is VALIDATE the
   // supplied identity, rejecting an inactive or cross-studio practitioner. It
@@ -1175,7 +1175,7 @@ export async function sendPostcareEmailAction(
   if (claimRpcErr) {
     // Includes the app-first deployment window, where 0177 is not yet applied
     // and PostgREST cannot find the function. FAIL CLOSED: there is deliberately
-    // no direct-UPDATE fallback, because this route no longer settles either —
+    // no direct-UPDATE fallback, because this route no longer settles either,
     // a fallback claim would send an email the database could never record.
     logPostcare("send_postcare_claim_command_failed", {
       code: claimRpcErr.code,
@@ -1196,7 +1196,7 @@ export async function sendPostcareEmailAction(
     return { ok: false, error: postcareClaimRefusalCopy(claim.result) };
   }
   // THE TOKEN. Forwarded to settlement byte-for-byte exactly as the database
-  // returned it. Re-deriving it — `new Date(...).toISOString()` — would round a
+  // returned it. Re-deriving it (`new Date(...).toISOString()`) would round a
   // microsecond value to milliseconds and every settlement would miss its own
   // claim, so the send would never be recorded.
   const claimToken = claim.claimed_at;
@@ -1217,7 +1217,7 @@ export async function sendPostcareEmailAction(
     reviewPromptText: studioRow.postcare_review_prompt_text ?? null,
   });
   if (!result.ok) {
-    // PR #311: the provider send FAILED. Record the failure honestly — set
+    // PR #311: the provider send FAILED. Record the failure honestly: set
     // failed_at + a SAFE/GENERIC last_error (never the raw provider payload,
     // client PII, or exception details) and clear the claim. Do NOT set
     // sent_at: a first send stays "not sent"; a resend keeps any prior real
@@ -1232,12 +1232,12 @@ export async function sendPostcareEmailAction(
         retryable: result.retryable,
         // Bounded: retryable category only. A raw provider error can carry the
         // recipient address and vendor internals, and the DB stores only the
-        // safe derived copy — operational logging matches that posture.
+        // safe derived copy: operational logging matches that posture.
         timestamp: new Date().toISOString(),
       }),
     );
     // B8: settle the FAILURE through the command, under the exact claim token.
-    // The safe operator-facing copy is derived in SQL from `retryable` alone —
+    // The safe operator-facing copy is derived in SQL from `retryable` alone,
     // a raw provider error can carry recipient addresses and vendor internals
     // into a field practitioners read.
     const { data: settleRows, error: settleErr } = await admin.rpc(
@@ -1271,7 +1271,7 @@ export async function sendPostcareEmailAction(
     };
   }
 
-  // PR #311: provider SUCCESS — now (and only now) stamp sent_at, and clear the
+  // PR #311: provider SUCCESS: now (and only now) stamp sent_at, and clear the
   // failure state + claim. "Sent" means Hone handed the email to the provider,
   // never delivered/received/opened.
   // B8: settle the SUCCESS through the command, under the exact claim token.
@@ -1295,7 +1295,7 @@ export async function sendPostcareEmailAction(
     successSettleErr ?? (okSettled?.result === "settled" ? null : { code: okSettled?.result });
   if (successWriteErr) {
     // The email DID hand off to the provider, but the success stamp failed.
-    // Log it; the claim stays and is stale-reclaimable — we under-claim
+    // Log it; the claim stays and is stale-reclaimable, we under-claim
     // ("still sending" → "not sent yet") rather than overclaim "sent".
     console.error(
       JSON.stringify({
@@ -1314,7 +1314,7 @@ export async function sendPostcareEmailAction(
   if (successWriteErr) {
     // PROVIDER TRUTH != PERSISTED TRUTH. The provider accepted the message, so
     // this is not a failed send and the practitioner must not be nudged into
-    // sending again — that would duplicate a real email. But settlement did not
+    // sending again: that would duplicate a real email. But settlement did not
     // commit, so there is no durable sent_at and the ordinary green "Postcare
     // sent" confirmation would be false.
     return {

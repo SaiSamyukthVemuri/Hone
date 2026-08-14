@@ -1,6 +1,6 @@
 // Stripe's `return_url` lands here after the practitioner finishes
 // (or abandons) the onboarding flow. We do NOT trust the URL itself
-// as proof of onboarding completion — Stripe just redirects whoever
+// as proof of onboarding completion: Stripe just redirects whoever
 // pressed "Continue". Instead we re-pull the account status from
 // Stripe and reflect the freshly synced state.
 

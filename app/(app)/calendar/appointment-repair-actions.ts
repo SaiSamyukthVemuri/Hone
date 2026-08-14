@@ -1,6 +1,6 @@
 "use server";
 
-// APPOINTMENT BOUNDARY B4 — governed repair server actions.
+// APPOINTMENT BOUNDARY B4, governed repair server actions.
 //
 // 0172 revoked direct anon/authenticated INSERT/UPDATE/DELETE on
 // `public.appointments`, which closed an operational hatch nobody was using but
@@ -135,7 +135,7 @@ export async function loadAppointmentRepairStateAction(
   //
   // Every export of a `"use server"` module is a callable server action, so
   // this loader is reachable from any authenticated browser session with an
-  // arbitrary appointment id — it is NOT merely an internal page helper.
+  // arbitrary appointment id. It is NOT merely an internal page helper.
   //
   // `appointment_audit` carries no `studio_id` (that column is B5/0174-era
   // work, deliberately out of scope here), so the baseline lookup below CANNOT
@@ -177,7 +177,7 @@ export async function loadAppointmentRepairStateAction(
   }
 
   // The audit baseline that established the current outcome, and the window
-  // measured from it — the same anchor the command uses.
+  // measured from it: the same anchor the command uses.
   const { data: baseline, error: baselineErr } = await admin
     .from("appointment_audit")
     .select("created_at")
@@ -209,7 +209,7 @@ export type RevertAppointmentOutcomeInput = {
  * Restore a terminal appointment (completed / no_show / cancelled) to
  * confirmed, through the governed 0173 command.
  *
- * Owner-only — enforced in SQL, not here. `expectedStatus` is the status the
+ * Owner-only, enforced in SQL, not here. `expectedStatus` is the status the
  * practitioner was actually looking at; the command uses it for optimistic
  * concurrency and refuses if the row has moved.
  */
@@ -267,7 +267,7 @@ export type SetAppointmentNotesInput = {
  *
  * Any ACTIVE studio member may do this (unlike outcome reversal): notes are
  * operational text the practitioner who ran the visit needs to be able to fix.
- * The audit records lengths only — never the note text.
+ * The audit records lengths only, never the note text.
  */
 export async function setAppointmentNotesAction(
   input: SetAppointmentNotesInput,

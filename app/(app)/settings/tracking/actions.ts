@@ -69,7 +69,7 @@ export async function saveTrackingProviderConfigAction(
   if (rawToken) {
     const enc = encryptTrackingProviderToken(rawToken);
     if (!enc.ok) {
-      // e.g. encryption key not configured — do NOT store anything.
+      // e.g. encryption key not configured: do NOT store anything.
       return { ok: false, error: `Could not secure the token (${enc.reason}).` };
     }
     patch.encrypted_server_token = enc.encrypted;

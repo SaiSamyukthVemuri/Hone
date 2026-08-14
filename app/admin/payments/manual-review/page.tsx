@@ -26,12 +26,12 @@ import {
 // payments. It is READ ONLY: it renders two derived sections and links to
 // /admin/ops-alerts (where the existing resolve action lives). It NEVER
 // mutates a payment attempt or an alert and NEVER calls Stripe. Resolution,
-// retry, and refund are deliberately NOT here — see the runbook (docs/16 §17).
+// retry, and refund are deliberately NOT here. See the runbook (docs/16 §17).
 //
 // Access: admin-only. The app/admin layout already redirects non-admins; this
 // page re-verifies isAdmin (defense in depth for a payment-sensitive surface)
 // and reads via the service-role client so studio_id-NULL alerts are visible
-// to the operator (matching /admin/ops-alerts). No client names are rendered —
+// to the operator (matching /admin/ops-alerts). No client names are rendered,
 // only ids (the studios/[id] privacy convention).
 
 export const dynamic = "force-dynamic";
@@ -54,7 +54,7 @@ export default async function PaymentManualReviewPage() {
     Date.now() - STUCK_PENDING_THRESHOLD_MINUTES * 60_000,
   ).toISOString();
 
-  // Section 1 — attempts stuck in pending_stripe past the reconcile window
+  // Section 1, attempts stuck in pending_stripe past the reconcile window
   // (docs/16 §17.7 query 1). READ ONLY.
   const { data: stuckRows, error: stuckErr } = await admin
     .from("payment_charge_attempts")
@@ -63,7 +63,7 @@ export default async function PaymentManualReviewPage() {
     .lt("updated_at", cutoffIso)
     .order("updated_at", { ascending: true })
     .limit(100);
-  // A failed read must NEVER render as an empty "all clear" queue — that would
+  // A failed read must NEVER render as an empty "all clear" queue: that would
   // hide real payment risk. Surface it loudly with a generic message (the raw
   // provider error is never leaked, matching the PR #285 redaction posture).
   if (stuckErr) {
@@ -73,7 +73,7 @@ export default async function PaymentManualReviewPage() {
     toStuckAttemptView,
   );
 
-  // Section 2 — unresolved CRITICAL payment ops alerts (docs/16 §17.7 query
+  // Section 2, unresolved CRITICAL payment ops alerts (docs/16 §17.7 query
   // 3/6). Fetch unresolved criticals, then keep payment events only. READ ONLY.
   const { data: alertRows, error: alertErr } = await admin
     .from("ops_alerts")

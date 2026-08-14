@@ -81,7 +81,7 @@ describe("one control per fact", () => {
       PAGE.indexOf('id="session-payment"'),
     );
     expect(finish).toContain("<DoneChartingButton");
-    expect(finish).toContain('label="Done — back to client"');
+    expect(finish).toContain('label="Done, back to client"');
   });
 
   it("the safe-exit warning semantics are preserved intact", () => {
@@ -156,7 +156,7 @@ describe("shared PostcareSection", () => {
   });
 
   it("the no-client-email state is shared, explicit, and has no send button", () => {
-    expect(POSTCARE).toContain("Postcare unavailable — no client email");
+    expect(POSTCARE).toContain("Postcare unavailable: no client email");
     expect(POSTCARE).toMatch(/hasClientEmail/);
     // Both surfaces pass the email so the shared state can render.
     expect(CALENDAR_PAGE).toMatch(/clientEmail=\{data\.client\?\.email \?\? null\}/);

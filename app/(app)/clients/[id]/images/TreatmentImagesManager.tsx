@@ -64,7 +64,7 @@ export type SessionAttachOption = {
 type PhotoContextKind = "client" | "session" | "block";
 
 // Treatment-context tags shown on each card and in the larger preview. Labels
-// only — no UUIDs, storage paths, bucket names, or signed-URL text.
+// only, no UUIDs, storage paths, bucket names, or signed-URL text.
 function ContextTags({
   scopeLabel,
   areaLabel,
@@ -88,7 +88,7 @@ function ContextTags({
 // PR #307: per-photo practitioner note/caption. Inline: shows the note (when
 // present) + an "Edit note" / "Add note" control; opens a small textarea with
 // Save / Cancel that calls updateTreatmentImageNoteAction (RLS-scoped, capped).
-// Display-only over the photo — never touches upload/storage/security.
+// Display-only over the photo, never touches upload/storage/security.
 function PhotoNoteEditor({
   imageId,
   clientId,
@@ -123,7 +123,7 @@ function PhotoNoteEditor({
         note: value,
       });
       if (!res.ok) {
-        // Generic message — never surface a raw provider/DB detail.
+        // Generic message, never surface a raw provider/DB detail.
         setError(res.error);
         return;
       }
@@ -240,7 +240,7 @@ export function TreatmentImagesManager({
   }
 
   // Multi-file upload. Each selected file is uploaded on its OWN call to the
-  // (unchanged) server action — so every file is independently validated,
+  // (unchanged) server action, so every file is independently validated,
   // EXIF-stripped, and studio/client/context scoped. One file failing never
   // blocks the others, and nothing is silently dropped: every file shows a
   // per-file status. All files in a batch share the ONE context (client /
@@ -285,7 +285,7 @@ export function TreatmentImagesManager({
     let anyOk = false;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      // Per-file client-side validation — the same rules the server enforces
+      // Per-file client-side validation: the same rules the server enforces
       // (defense-in-depth: the server re-validates every file). An invalid file
       // fails on its own and never blocks the valid ones.
       const v = validateTreatmentImageUpload({
@@ -356,7 +356,7 @@ export function TreatmentImagesManager({
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Upload card — styled "Choose image" affordance over the native input. */}
+      {/* Upload card: styled "Choose image" affordance over the native input. */}
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
           Treatment Photos
@@ -451,16 +451,16 @@ export function TreatmentImagesManager({
                   ? "Will attach as: Client photo."
                   : contextKind === "session"
                     ? ctxSession
-                      ? `Will attach as: Session photo — Session on ${sessionDateLabel(ctxSession.startedAt)}.`
-                      : "Will attach as: Session photo — choose a session."
+                      ? `Will attach as: Session photo: Session on ${sessionDateLabel(ctxSession.startedAt)}.`
+                      : "Will attach as: Session photo: choose a session."
                     : ctxBlockId && ctxSession
-                      ? `Will attach as: Treatment area photo — ${ctxBlocks.find((b) => b.id === ctxBlockId)?.areaLabel ?? ""}, Session on ${sessionDateLabel(ctxSession.startedAt)}.`
-                      : "Will attach as: Treatment area photo — choose a session and area."}
+                      ? `Will attach as: Treatment area photo, ${ctxBlocks.find((b) => b.id === ctxBlockId)?.areaLabel ?? ""}, Session on ${sessionDateLabel(ctxSession.startedAt)}.`
+                      : "Will attach as: Treatment area photo: choose a session and area."}
               </p>
             </fieldset>
           ) : (
             <p className="text-xs text-neutral-500">
-              No sessions yet for this client — photos attach to the client.
+              No sessions yet for this client: photos attach to the client.
             </p>
           )}
 
@@ -532,7 +532,7 @@ export function TreatmentImagesManager({
         )}
       </section>
 
-      {/* Gallery — inline previews. Clicking opens the in-app modal (no new tab
+      {/* Gallery: inline previews. Clicking opens the in-app modal (no new tab
           as the primary path). Thumbnail pipeline and dual-photo review are
           deferred. */}
       {images.length === 0 ? (

@@ -17,7 +17,7 @@ function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
 // render as their own pills (separate from free-text notes). For LEGACY rows
 // (observation_chips = []) the chips are still in `comments`, so we hydrate them
 // via resolveDisplayChips so pre-0108 / legacy-form observations still render as
-// pills (the caller shows the chip-stripped free-text as the note — no
+// pills (the caller shows the chip-stripped free-text as the note, no
 // double-display). normalizeChips() drops any unknown value; stored data is
 // never mutated.
 function ObservationChips({ chips }: { chips: string[] }) {
@@ -89,7 +89,7 @@ export function ElectrolysisEntryRow({
   // present, show grouped Galvanic / Thermolysis lines instead of the
   // legacy intensity/duration/pulse in the meta line (avoids duplication).
   // Legacy entries (no structured readings) keep the original display.
-  // MACHINE ORDER (Chloe): units of lye, then duration, then mA — the same
+  // MACHINE ORDER (Chloe): units of lye, then duration, then mA, the same
   // order the charting forms capture them in, so a saved record reads back the
   // way it was entered. Canonical list: lib/sessions/reading-field-order.ts.
   const galvanicParts: string[] = [];

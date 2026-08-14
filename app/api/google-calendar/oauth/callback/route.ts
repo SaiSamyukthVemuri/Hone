@@ -27,7 +27,7 @@ import {
   persistConnectedFromCallback,
 } from "@/lib/google-calendar/connection";
 
-// Google OAuth 2.0 authorization-code CALLBACK — Phase A + B2.2 + B2.4.
+// Google OAuth 2.0 authorization-code CALLBACK: Phase A + B2.2 + B2.4.
 //
 // Browser-called WITH the practitioner's Supabase session (the httpOnly session
 // cookie is SameSite=Lax, so it IS sent on Google's top-level redirect back).
@@ -41,7 +41,7 @@ import {
 // NOTHING. Only after the actual grant is validated do we replace credentials.
 // Destination provisioning/selection happens LATER in a separate owner action, so a
 // post-replacement provisioning/selection failure keeps the new grant and derives a
-// pending state — it never rolls back the consented credentials.
+// pending state. It never rolls back the consented credentials.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!user) return redirect("/login", "error");
 
   // Consume the single-use state (validates hash, expiry, nonce cookie, that this
-  // is the SAME user who started the flow, and — atomically — that no concurrent
+  // is the SAME user who started the flow, and (atomically) that no concurrent
   // duplicate callback already consumed it). Also returns the B2.4 destination
   // binding (null for a plain Phase-A connect).
   const jar = await cookies();
@@ -118,7 +118,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!info.ok) return redirect(consumed.redirectPath, "error");
 
   // ACCOUNT-SWITCH PROTECTION. If a connection already exists, the returned Google
-  // identity MUST match it. On a mismatch we STOP (PRE-replacement) — never
+  // identity MUST match it. On a mismatch we STOP (PRE-replacement), never
   // overwrite credentials or granted_scopes; the practitioner must disconnect first.
   const existing = await getOwnConnectionMetadata(consumed.studioId, consumed.practitionerId);
   const existingAccountId = await getConnectionAccountId(consumed.studioId, consumed.practitionerId);
@@ -135,7 +135,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return redirect(consumed.redirectPath, "destination_changed");
     }
     // Re-derive the required scope from the (current) mode and compare to the bound
-    // value — a tampered single-column state value cannot pass.
+    // value: a tampered single-column state value cannot pass.
     const expected = requiredEventScopeFor(boundMode);
     if (expected === null || expected !== consumed.requiredEventScope) {
       return redirect(consumed.redirectPath, "error");
@@ -150,7 +150,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   // Write calendar. Preserve any existing selection. For a plain Phase-A connect
   // (no destination binding) discover a sensible default so selection has a value;
-  // for a destination upgrade DO NOT auto-pick — the destination config step sets
+  // for a destination upgrade DO NOT auto-pick, the destination config step sets
   // the real write target (and setDestinationMode cleared the Phase-A default).
   let writeCalendarId = existing?.writeCalendarId ?? null;
   if (!writeCalendarId && boundMode === null) {
@@ -162,7 +162,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   // Encrypt the (possibly rotated) refresh token before storage. If Google withheld
   // one (silent re-grant), persist PRESERVES the existing encrypted token; if
-  // encryption fails we redirect error and never store plaintext — the existing
+  // encryption fails we redirect error and never store plaintext: the existing
   // token stays intact (fail-closed).
   let encryptedRefreshToken: string | null = null;
   let refreshTokenLast4: string | null = null;

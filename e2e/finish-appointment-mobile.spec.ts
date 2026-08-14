@@ -160,7 +160,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await expect(page.getByTestId("mark-appointment-complete")).toBeDisabled();
       // The safe exit is still there.
       await expect(
-        finish(page).getByRole("button", { name: /Done — back to client/ }),
+        finish(page).getByRole("button", { name: /Done, back to client/ }),
       ).toBeVisible();
       await expectNoHorizontalScroll(page);
     });
@@ -205,7 +205,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       // Charting status and the safe exit still work.
       await expect(page.getByTestId("finish-charting-status")).toBeVisible();
       await expect(
-        finish(page).getByRole("button", { name: /Done — back to client/ }),
+        finish(page).getByRole("button", { name: /Done, back to client/ }),
       ).toBeVisible();
     });
 
@@ -219,7 +219,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await openSession(page, s.clientId, s.sessionId);
 
       await expect(page.getByTestId("postcare-no-client-email")).toHaveText(
-        "Postcare unavailable — no client email",
+        "Postcare unavailable: no client email",
       );
       await expect(page.getByRole("button", { name: /Send postcare/ })).toHaveCount(0);
       // The whole Finish section is still there.
@@ -318,7 +318,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await loginAsOwner(page, seed);
       await openSession(page, s.clientId, s.sessionId);
 
-      await finish(page).getByRole("button", { name: /Done — back to client/ }).click();
+      await finish(page).getByRole("button", { name: /Done, back to client/ }).click();
       await expect(page.getByText(/Aftercare not marked/i)).toBeVisible({ timeout: T });
       // Cancel stays on charting and writes nothing.
       // The dismiss affordance is the full-screen backdrop; the centered panel
@@ -396,7 +396,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
 
       for (const btn of [
         page.getByTestId("mark-appointment-complete"),
-        finish(page).getByRole("button", { name: /Done — back to client/ }),
+        finish(page).getByRole("button", { name: /Done, back to client/ }),
       ]) {
         const box = await btn.boundingBox();
         expect(box).not.toBeNull();

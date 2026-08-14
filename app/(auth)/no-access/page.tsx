@@ -5,7 +5,7 @@ import { signOutFromGate, switchStudioAction } from "./actions";
 
 // Invite-only "no studio access yet" gate (PR #253). Hone is invite-only
 // for supervised studios. A signed-in user with NO active practitioner
-// row (e.g. an uninvited Google sign-in — auth.users exists but
+// row (e.g. an uninvited Google sign-in, auth.users exists but
 // handle_new_user created no studio/practitioner) is sent here by the app
 // shell guard (requirePractitionerWithStudio) instead of seeing a raw
 // error or any studio data.
@@ -63,7 +63,7 @@ export default async function NoAccessPage({
       ? "We couldn't finish setting up your access"
       : "No studio access yet";
   const body = multiple
-    ? "Your account is an active member of more than one studio. Choose which studio you want to work in — you can switch anytime from the account menu."
+    ? "Your account is an active member of more than one studio. Choose which studio you want to work in. You can switch anytime from the account menu."
     : reason === "invite-conflict"
       ? "This invitation couldn't be completed automatically. Please contact the studio or Hone support so it can be sorted out."
       : reason === "invite-ambiguous"

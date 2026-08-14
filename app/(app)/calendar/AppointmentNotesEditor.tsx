@@ -1,6 +1,6 @@
 "use client";
 
-// APPOINTMENT BOUNDARY B4 — governed appointment-notes correction surface.
+// APPOINTMENT BOUNDARY B4, governed appointment-notes correction surface.
 //
 // Appointment notes are written once, at booking time, by the client or by the
 // practitioner taking the booking. Nothing in the product ever let them be
@@ -8,15 +8,15 @@
 // `appointments` they became immutable through the browser outright. Migration
 // 0173 supplies the governed correction command; this is its surface.
 //
-// SCOPE. This is the OPERATIONAL note attached to the booking — "parking is
+// SCOPE. This is the OPERATIONAL note attached to the booking: "parking is
 // round the back", "running late, arriving 10 past". It is NOT a clinical
 // record: charting, treatment memory and clinical notes have their own
 // surfaces with their own retention rules, and this component deliberately
 // does not touch them. The existing client-safe / clinical hierarchy on the
 // detail page is unchanged; only this one operational field becomes editable.
 //
-// Any ACTIVE studio member may correct it — unlike outcome repair, which is
-// owner-only — because the practitioner who ran the visit is usually the one
+// Any ACTIVE studio member may correct it: unlike outcome repair, which is
+// owner-only, because the practitioner who ran the visit is usually the one
 // who needs to fix it. The command re-derives membership in SQL regardless.
 //
 // The audit records the BEFORE and AFTER LENGTHS only, never the text: these

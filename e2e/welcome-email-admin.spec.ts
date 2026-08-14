@@ -148,7 +148,7 @@ test.describe("welcome-email admin resend — fake Resend", () => {
 
     await resendButton(page).click();
     await expect(statusMessage(page)).toHaveText(
-      /A send is already in progress — nothing sent this time\./,
+      /A send is already in progress, nothing sent this time\./,
     );
 
     // Nothing was sent: the live attempt still owns the claim and no result was

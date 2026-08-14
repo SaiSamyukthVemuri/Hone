@@ -56,7 +56,7 @@ export type ClientContactOption = {
   address: string;
 };
 
-// Sentinel select value for "Other (type a name)" — a non-staff operator.
+// Sentinel select value for "Other (type a name)", a non-staff operator.
 const OTHER_OPERATOR = "__other__";
 
 // PR #205: add-record forms for the Record Keeping logbook. Plain
@@ -97,7 +97,7 @@ function AddRecordForm({
   const [pending, startTransition] = useTransition();
   // PR #280: bump on a successful submit to REMOUNT the fields. form.reset()
   // clears uncontrolled DOM inputs but NOT child React state (the OperatorPicker
-  // select, the ExposedPersonPicker person-type) — without this, a second add
+  // select, the ExposedPersonPicker person-type), without this, a second add
   // would keep the previous operator/person selection. Remounting resets both.
   const [resetKey, setResetKey] = useState(0);
 
@@ -208,7 +208,7 @@ const PILL_ON =
 const PILL_OFF =
   "rounded-full border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300";
 
-// PR #280: operator dropdown — current user + active same-studio staff, with a
+// PR #280: operator dropdown: current user + active same-studio staff, with a
 // free-text "Other" fallback (for an operator without an account, or legacy
 // records). When a staff member is picked, only operator_practitioner_id is
 // submitted and the server resolves the display name; "Other" submits a typed
@@ -275,7 +275,7 @@ function OperatorPicker({
 // controlled so it works with copy-last (a new key/defaultValue prefills it) and
 // preserves free-text/legacy values on edit. Submits exactly ONE
 // `manufacturer_name` value via a hidden input: the selected brand, or the typed
-// "Other" text. The column stays free text — no schema change.
+// "Other" text. The column stays free text, no schema change.
 function ManufacturerPicker({ defaultValue }: { defaultValue?: string }) {
   const known = (MANUFACTURER_OPTIONS as readonly string[]).includes(
     (defaultValue ?? "").trim(),
@@ -301,7 +301,7 @@ function ManufacturerPicker({ defaultValue }: { defaultValue?: string }) {
           onChange={(e) => setSel(e.target.value)}
           className={INPUT_CLS}
         >
-          <option value="">— Select —</option>
+          <option value="">Select...</option>
           {MANUFACTURER_OPTIONS.map((m) => (
             <option key={m} value={m}>
               {m}
@@ -332,7 +332,7 @@ function ManufacturerPicker({ defaultValue }: { defaultValue?: string }) {
 // fields (full name / phone / address) stay free text and editable; picking a
 // same-studio Client or Staff/self just autofills them (imperatively, so the
 // form still resets cleanly). "Other" is the manual path. No client/staff FK is
-// stored — this only pre-fills text the member could type anyway, so the
+// stored. This only pre-fills text the member could type anyway, so the
 // owner-only read posture of exposure incidents is unchanged.
 function ExposedPersonPicker({
   clients,
@@ -421,7 +421,7 @@ function ExposedPersonPicker({
         </label>
       )}
 
-      {/* The actual stored fields — always shown + editable; the pickers above
+      {/* The actual stored fields, always shown + editable; the pickers above
           autofill them, and the practitioner can correct anything after. */}
       <label className="flex flex-col gap-1">
         <span className={LABEL_CLS}>Exposed person&apos;s full name</span>
@@ -459,7 +459,7 @@ function ExposedPersonPicker({
 }
 
 // PR #316: the shape copy-last prefills from (the studio's most recent sterile
-// record). lot_number is intentionally absent — it must NEVER be copied.
+// record). lot_number is intentionally absent. It must NEVER be copied.
 export type SterileCopyLast = {
   date_purchased: string;
   item_description: string;
@@ -535,7 +535,7 @@ export function AddSterileItemForm({
           placeholder="e.g. 50"
           defaultValue={prefill?.amount_purchased}
         />
-        {/* Lot # is NEVER prefilled from copy-last — always starts blank. */}
+        {/* Lot # is NEVER prefilled from copy-last, always starts blank. */}
         <Field label="Lot #" name="lot_number" placeholder="e.g. 460941" />
         <Field
           label="Expiry date"
@@ -569,7 +569,7 @@ export function AddDisinfectantForm({
           placeholder="e.g. CaviCide"
         />
         <Field label="Concentration" name="concentration" placeholder="e.g. ready to use / 1:10" />
-        {/* PR #280: three distinct dates — prepared (made), discard/replace-by
+        {/* PR #280: three distinct dates: prepared (made), discard/replace-by
             (drives the read-time due alert), and actual date discarded. */}
         <Field label="Discard / replace by" name="discard_due_date" type="date" />
         <Field label="Actual date discarded" name="date_discarded" type="date" />
