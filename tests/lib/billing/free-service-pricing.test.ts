@@ -154,7 +154,7 @@ describe("FREE-01 no money-moving path", () => {
     // sets showPrepareForm false, and the status panel would still offer
     // Run charge.
     expect(CARD).toMatch(/\{isFreeNow && !settledOrInFlightAttempt && \(/);
-    expect(CARD).toMatch(/\{activeAttempt && !readyAttemptIsNowFree && \(/);
+    expect(CARD).toMatch(/\{activeAttempt && !readyAttemptBlocked && \(/);
     // PrepareForm is gated on a strictly `resolved` amount, so free cannot reach it.
     expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
   });
@@ -191,9 +191,15 @@ describe("FREE-01 no money-moving path", () => {
     // money-moving control, so only `ready` may be hidden. Hiding the others
     // concealed an in-flight charge and removed receipt/refund from a
     // succeeded one.
-    expect(CARD).toMatch(
-      /const readyAttemptIsNowFree =\s*\n?\s*isFreeNow && activeAttempt !== null && activeAttempt\.status === "ready"/,
-    );
+    // Review 3780286321 generalised this: freeness is no longer a special
+    // case, it is one of the non-resolved pricing results that withdraw the
+    // ready control. The invariant F10 protects — only `ready` is suppressed,
+    // in-flight and settled survive — is unchanged and now lives in the shared
+    // decision module.
+    expect(CARD).toMatch(/decideReadyControlPermission\(/);
+    const PERM = read("lib/billing/ready-control-permission.ts");
+    expect(PERM).toMatch(/if \(attemptStatus !== "ready"\)/);
+    expect(PERM).toMatch(/return \{ canRun: false, blocked: false \}/);
     expect(CARD).toMatch(
       /const settledOrInFlightAttempt =\s*\n?\s*activeAttempt !== null && activeAttempt\.status !== "ready"/,
     );

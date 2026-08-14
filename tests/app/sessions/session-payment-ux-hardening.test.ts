@@ -145,7 +145,7 @@ describe("PR #174 patch: activeAttempt vs latestHistoricalAttempt", () => {
     // condition; it can never widen it, because the `activeAttempt` conjunct
     // still has to hold.
     expect(CARD).toMatch(
-      /\{activeAttempt && !readyAttemptIsNowFree && \(\s*\n?\s*<AttemptStatusPanel/,
+      /\{activeAttempt && !readyAttemptBlocked && \(\s*\n?\s*<AttemptStatusPanel/,
     );
     // the gate is still activeAttempt-based, not latestAttempt-based
     expect(CARD).not.toMatch(/\{latestAttempt && [\s\S]{0,80}<AttemptStatusPanel/);

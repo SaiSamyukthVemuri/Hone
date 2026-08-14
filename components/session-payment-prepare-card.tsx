@@ -11,6 +11,7 @@ import type {
   SessionPaymentAmountResult,
 } from "@/lib/billing/session-payment-amount";
 import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
+import { decideReadyControlPermission } from "@/lib/billing/ready-control-permission";
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -264,10 +265,36 @@ export function SessionPaymentPrepareCard({
   // appointment-state reducer deliberately ranks processing/paid/refunded
   // ABOVE free for exactly this reason. Mirror that ranking here: what the
   // price says today never overrides what has already happened.
-  const readyAttemptIsNowFree =
-    isFreeNow && activeAttempt !== null && activeAttempt.status === "ready";
+  // `readyAttemptIsNowFree` is retired: freeness is no longer a special case,
+  // it is simply one of the non-resolved pricing results that withdraw the
+  // ready control (see readyAttemptBlocked below).
   const settledOrInFlightAttempt =
     activeAttempt !== null && activeAttempt.status !== "ready";
+
+  // Review 3780286321. READY-CONTROL PERMISSION, stated once.
+  //
+  // `ready` is the only attempt status carrying a money-moving control, and it
+  // may expose that control ONLY while current authoritative pricing is
+  // `resolved`. The previous gate was free-only, so an attempt whose service
+  // price had since been cleared to NULL, whose custom pricing had become
+  // ambiguous, or whose pricing read had failed still rendered Run charge. The
+  // execution action already refuses all of those, so no wrong charge could
+  // run — but the practitioner saw an apparently runnable control and only
+  // discovered the block after submitting.
+  //
+  // Stated as permission rather than as another special case: anything that is
+  // not a currently resolved price withdraws the control and explains why.
+  // The rule itself lives in lib/billing/ready-control-permission so the card
+  // and its tests share ONE definition; a test that re-implemented these
+  // conditions could only prove itself self-consistent.
+  const readyControl = decideReadyControlPermission(
+    activeAttempt?.status ?? null,
+    amountResult ?? null,
+  );
+  const readyAttemptBlocked = readyControl.blocked;
+  // Current pricing governs whether a READY attempt may still act. It never
+  // erases money that has already moved: pending_stripe and succeeded keep
+  // their panel, receipt and refund controls regardless of today's price.
   // F-PAY-001: there is no "suggested" amount any more. Either the server
   // resolved ONE authoritative amount, or preparation is blocked with a reason.
   // The historical session price is NOT a pricing authority and is no longer
@@ -297,7 +324,7 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
-      {activeAttempt && !readyAttemptIsNowFree && (
+      {activeAttempt && !readyAttemptBlocked && (
         <AttemptStatusPanel
           attempt={activeAttempt}
           sessionId={sessionId}
@@ -349,7 +376,7 @@ export function SessionPaymentPrepareCard({
           Preparation is withdrawn entirely — there is no amount to confirm. */}
       {/* A null result means the pricing context itself could not be loaded.
           Never render nothing: say so, and offer no prepare action. */}
-      {showPrepareForm && !amountResult && (
+      {(showPrepareForm || readyAttemptBlocked) && !amountResult && (
         <p
           data-testid="pricing-blocked"
           className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
@@ -371,7 +398,7 @@ export function SessionPaymentPrepareCard({
         </p>
       )}
 
-      {showPrepareForm &&
+      {(showPrepareForm || readyAttemptBlocked) &&
         amountResult &&
         amountResult.kind !== "resolved" &&
         amountResult.kind !== "free" && (
