@@ -161,12 +161,37 @@ export async function POST(req: Request): Promise<Response> {
   let studioId: string | null = null;
   if (stripeAccountId) {
     const admin = createAdminClient();
-    const { data } = await admin
+    const { data, error } = await admin
       .from("studio_payment_settings")
       .select("studio_id")
       .eq("stripe_account_id", stripeAccountId)
       .eq("stripe_livemode", livemode)
       .maybeSingle();
+    // A FAILED READ IS NOT AN UNBOUND ACCOUNT.
+    //
+    // This read previously discarded its error, so a database failure and a
+    // genuine "this connected account belongs to no studio" both produced
+    // studioId = null. That difference is durable: with a null studio the
+    // account.updated / capability.updated arm returns `unboundAccount` WITHOUT
+    // syncing, the route then marks the event processed and answers 200, and
+    // Stripe never redelivers. The local Connect status would keep whatever it
+    // last held -- including charges_enabled = true after Stripe had disabled
+    // charges.
+    //
+    // Failing here is deliberately BEFORE claim_stripe_event, so nothing is
+    // recorded and the next delivery starts clean. It mirrors how the claim
+    // RPC's own error is already handled a few lines below. A successful query
+    // returning zero rows still yields studioId = null and the unchanged
+    // unbound behaviour.
+    if (error) {
+      logInternal("stripe_webhook_studio_binding_read_failed", {
+        eventId: event.id,
+        eventType: event.type,
+        code: error.code,
+        message: error.message,
+      });
+      return NextResponse.json({ ok: false }, { status: 500 });
+    }
     studioId = data?.studio_id ?? null;
   }
 
@@ -327,12 +352,23 @@ async function handleStripeEvent(
       // Mode-scoped (0103): a studio can hold one settings row per Stripe
       // mode; preserve-first-completion must read the row for THIS event's
       // mode only (never the other mode's timestamp).
-      const { data: existingSettings } = await admin
+      const { data: existingSettings, error: existingSettingsErr } = await admin
         .from("studio_payment_settings")
         .select("stripe_onboarding_completed_at")
         .eq("studio_id", ctx.studioId)
         .eq("stripe_livemode", ctx.livemode)
         .maybeSingle();
+      // Same class as the studio-binding read above. Discarding this error made
+      // a failed read look like "no first-completion recorded yet", which sends
+      // a NON-null onboarding timestamp into the RPC and overwrites the
+      // original first-completion time -- the exact thing the coalesce() below
+      // exists to preserve. Throwing routes into the handler catch, which
+      // releases the claim and answers 500, so the event stays retryable.
+      if (existingSettingsErr) {
+        throw new Error(
+          `studio_payment_settings preserve-first-completion read failed: ${existingSettingsErr.message}`,
+        );
+      }
       const onboardingCompletedAtForRpc =
         existingSettings?.stripe_onboarding_completed_at != null
           ? null
