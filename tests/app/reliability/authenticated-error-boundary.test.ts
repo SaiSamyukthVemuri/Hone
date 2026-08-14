@@ -152,6 +152,10 @@ describe("the support reference is shown only when it is safe", () => {
         "Failed to load clients: permission denied",
         "d9b4f0e2-1c3a-4f5b-8e7d-2a1b3c4d5e6f",
         "<script>alert(1)</script>",
+        // Codex review, PR #580: numeric, but far outside the uint32 range Next
+        // can emit, so it is data rather than a digest.
+        "4111111111111111",
+        "90071992547409910",
       ]) {
         const html = render(digest);
         expect(html, digest).not.toContain("Reference");
@@ -163,6 +167,53 @@ describe("the support reference is shown only when it is safe", () => {
       for (const digest of [12345, { a: 1 }, ["1"], true]) {
         expect(render(digest)).not.toContain("Reference");
       }
+    });
+  }
+});
+
+// Codex review, PR #580. Both boundaries used to do a bare `error.digest`.
+// React passes the boundary whatever was thrown, so `throw null` in a client
+// component made the boundary itself raise a TypeError mid-render. That escaped
+// to global-error.tsx, which dereferenced identically and also failed, leaving a
+// blank document. These render the RAW thrown value, not an Error.
+describe("a non-Error throw does not break the boundary", () => {
+  const THROWN: Array<[string, unknown]> = [
+    ["null", null],
+    ["undefined", undefined],
+    ["a string", "boom"],
+    ["a number", 42],
+    ["a plain object", { message: "boom" }],
+    ["an object with a hostile digest", { digest: { toString: () => "x" } }],
+  ];
+
+  for (const [label, thrown] of THROWN) {
+    it(`app/(app)/error.tsx survives ${label}`, () => {
+      const render = () =>
+        renderToStaticMarkup(
+          createElement(AuthenticatedAreaError, {
+            error: thrown as Error & { digest?: string },
+            reset: () => undefined,
+          }),
+        );
+      expect(render).not.toThrow();
+      const html = render();
+      expect(html).toContain("Something went wrong");
+      expect(html).not.toContain("Reference");
+      expect(html).not.toContain("undefined");
+    });
+
+    it(`app/global-error.tsx survives ${label}`, () => {
+      const render = () =>
+        renderToStaticMarkup(
+          createElement(GlobalError, {
+            error: thrown as Error & { digest?: string },
+          }),
+        );
+      expect(render).not.toThrow();
+      const html = render();
+      expect(html).toContain("Something went wrong");
+      expect(html).toContain("Reload the page");
+      expect(html).not.toContain("Reference");
     });
   }
 });

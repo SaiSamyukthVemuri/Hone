@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  errorDigest,
+  MAX_NEXT_ERROR_DIGEST,
   NEXT_ERROR_DIGEST_PATTERN,
   safeErrorReference,
   shouldReportRouteErrorFromClient,
@@ -66,15 +68,69 @@ describe("safeErrorReference — everything else yields NO reference", () => {
     expect(safeErrorReference("<script>alert(1)</script>")).toBeNull();
   });
 
-  it("rejects an over-long numeric string, so the panel cannot be flooded", () => {
-    expect(safeErrorReference("1".repeat(21))).toBeNull();
-    expect(safeErrorReference("1".repeat(20))).toBe("1".repeat(20));
+  // Codex review, PR #580: the pattern used to allow up to 20 digits, but Next
+  // cannot produce more than a uint32. Anything larger is not a digest, and
+  // accepting it meant a numeric identifier or card-shaped number carried in a
+  // pre-existing `err.digest` would render into the page as a reference.
+  it("rejects a numeric value larger than Next can produce", () => {
+    expect(MAX_NEXT_ERROR_DIGEST).toBe(4294967295);
+    expect(safeErrorReference("4294967295")).toBe("4294967295");
+    expect(safeErrorReference("4294967296")).toBeNull();
+    // The concrete disclosure this closes: a 16-digit card-shaped value.
+    expect(safeErrorReference("4111111111111111")).toBeNull();
+    // And a plausible internal numeric id.
+    expect(safeErrorReference("90071992547409910")).toBeNull();
+    expect(safeErrorReference("1".repeat(11))).toBeNull();
+    expect(safeErrorReference("1".repeat(20))).toBeNull();
+  });
+
+  it("rejects a zero-padded value, which Number.toString never produces", () => {
+    expect(safeErrorReference("0411111111")).toBeNull();
+    expect(safeErrorReference("0000000001")).toBeNull();
+    // A bare zero is still a legitimate hash result.
+    expect(safeErrorReference("0")).toBe("0");
+  });
+
+  it("still accepts every digest Next CAN generate, so support keeps a reference", () => {
+    // stringHash ends in `>>> 0`, so the numeric part is a uint32 rendered by
+    // Number.prototype.toString: 1 to 10 digits, never padded.
+    for (const value of [0, 1, 42, 999999999, 2969792940, MAX_NEXT_ERROR_DIGEST]) {
+      const digest = String(value);
+      expect(safeErrorReference(digest), digest).toBe(digest);
+      expect(safeErrorReference(`${digest}@E394`), digest).toBe(`${digest}@E394`);
+    }
   });
 
   it("the pattern is anchored, so a valid digest cannot smuggle a suffix", () => {
     expect(NEXT_ERROR_DIGEST_PATTERN.test("3142859661 and then some")).toBe(false);
     expect(NEXT_ERROR_DIGEST_PATTERN.test("3142859661\nchloe@example.com")).toBe(false);
     expect(safeErrorReference("3142859661;/login")).toBeNull();
+  });
+});
+
+// Codex review, PR #580: a boundary must not assume the thrown value is an
+// Error. React hands it whatever was actually thrown, and `throw null` is legal.
+// An unguarded `error.digest` raised a TypeError inside the boundary's own
+// render, which escaped to global-error.tsx, which dereferenced the same way and
+// failed too: a blank document, exactly when the boundary is needed most.
+describe("errorDigest — reading a digest off a non-Error throw", () => {
+  it("returns undefined instead of throwing for a non-object thrown value", () => {
+    for (const thrown of [null, undefined, "a thrown string", 42, true, Symbol("s")]) {
+      expect(() => errorDigest(thrown), String(thrown)).not.toThrow();
+      expect(errorDigest(thrown), String(thrown)).toBeUndefined();
+    }
+  });
+
+  it("still reads the digest off a real Error", () => {
+    expect(errorDigest(Object.assign(new Error("boom"), { digest: "42" }))).toBe("42");
+    expect(errorDigest({ digest: "3142859661" })).toBe("3142859661");
+    expect(errorDigest(new Error("boom"))).toBeUndefined();
+  });
+
+  it("composes with safeErrorReference so a non-Error throw shows no reference", () => {
+    for (const thrown of [null, undefined, "text", 0]) {
+      expect(safeErrorReference(errorDigest(thrown)), String(thrown)).toBeNull();
+    }
   });
 });
 

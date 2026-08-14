@@ -43,7 +43,21 @@
  * The exact shape Next.js generates for an unexpected server error digest:
  * decimal digits, optionally followed by "@E" plus an internal error code.
  */
-export const NEXT_ERROR_DIGEST_PATTERN = /^[0-9]{1,20}(@E[A-Za-z0-9]{1,16})?$/;
+export const NEXT_ERROR_DIGEST_PATTERN = /^([0-9]{1,10})(@E[A-Za-z0-9]{1,16})?$/;
+
+/**
+ * Largest value Next can produce for the numeric part. The digest is
+ * `stringHash(...)` which ends in `>>> 0`, so it is a uint32: 0 to 4294967295,
+ * never more than ten digits and never zero-padded.
+ *
+ * The bound is load-bearing, not cosmetic. Because Next respects a
+ * pre-existing `err.digest` instead of regenerating one, a numeric value that
+ * Next could never have produced can arrive here. A wider digit allowance would
+ * let, say, a 16-digit internal identifier or card-shaped number render into the
+ * page as a "support reference". Anything outside the range Next can actually
+ * emit is therefore not a digest, and is refused.
+ */
+export const MAX_NEXT_ERROR_DIGEST = 4294967295;
 
 /**
  * The digest, if and only if it is safe to render to a user. `null` otherwise,
@@ -53,8 +67,32 @@ export const NEXT_ERROR_DIGEST_PATTERN = /^[0-9]{1,20}(@E[A-Za-z0-9]{1,16})?$/;
 export function safeErrorReference(digest: unknown): string | null {
   if (typeof digest !== "string") return null;
   const trimmed = digest.trim();
-  if (!NEXT_ERROR_DIGEST_PATTERN.test(trimmed)) return null;
+  const match = NEXT_ERROR_DIGEST_PATTERN.exec(trimmed);
+  if (!match) return null;
+  const numeric = match[1];
+  // Number.prototype.toString never zero-pads, so a padded value did not come
+  // from Next and is refused rather than displayed.
+  if (numeric.length > 1 && numeric.startsWith("0")) return null;
+  if (Number(numeric) > MAX_NEXT_ERROR_DIGEST) return null;
   return trimmed;
+}
+
+/**
+ * The `digest` property of a thrown value, read WITHOUT assuming the value is
+ * an object.
+ *
+ * Next types an error boundary's prop as `Error & { digest?: string }`, but
+ * that is a compile-time convenience, not a runtime guarantee: React hands the
+ * boundary whatever was actually thrown, and `throw null` / `throw undefined` /
+ * `throw "text"` are all legal. A bare `error.digest` would then raise a
+ * TypeError inside the boundary's own render. That failure escapes to
+ * global-error.tsx, and if it dereferences the same way it fails too, leaving
+ * the user with a blank document: the boundary breaking exactly when it is
+ * needed most.
+ */
+export function errorDigest(error: unknown): unknown {
+  if (typeof error !== "object" || error === null) return undefined;
+  return (error as { digest?: unknown }).digest;
 }
 
 /**

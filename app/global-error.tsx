@@ -2,7 +2,10 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
-import { safeErrorReference } from "@/lib/reliability/route-error-reference";
+import {
+  errorDigest,
+  safeErrorReference,
+} from "@/lib/reliability/route-error-reference";
 
 // REL-001. Last-resort boundary. Next.js renders this ONLY when an error
 // escapes every nested error.tsx, which in practice means the root layout or a
@@ -35,7 +38,9 @@ export default function GlobalError({
 }: {
   error: Error & { digest?: string };
 }) {
-  const reference = safeErrorReference(error.digest);
+  // Guarded read. This is the LAST boundary: if it throws on a non-object
+  // thrown value, the user gets a blank document.
+  const reference = safeErrorReference(errorDigest(error));
 
   useEffect(() => {
     Sentry.captureException(error);

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { startTransition, useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
 import {
+  errorDigest,
   safeErrorReference,
   shouldReportRouteErrorFromClient,
 } from "@/lib/reliability/route-error-reference";
@@ -52,7 +53,9 @@ export default function AuthenticatedAreaError({
   reset: () => void;
 }) {
   const router = useRouter();
-  const reference = safeErrorReference(error.digest);
+  // errorDigest, not error.digest: the declared prop type is a compile-time
+  // convenience and React really can hand a boundary a thrown null/string.
+  const reference = safeErrorReference(errorDigest(error));
 
   useEffect(() => {
     // Server-side failures are already captured by onRequestError in
