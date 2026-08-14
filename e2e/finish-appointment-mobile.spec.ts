@@ -219,7 +219,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await openSession(page, s.clientId, s.sessionId);
 
       await expect(page.getByTestId("postcare-no-client-email")).toHaveText(
-        "Postcare unavailable — no client email",
+        "Postcare unavailable: no client email",
       );
       await expect(page.getByRole("button", { name: /Send postcare/ })).toHaveCount(0);
       // The whole Finish section is still there.

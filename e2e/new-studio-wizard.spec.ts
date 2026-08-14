@@ -187,7 +187,7 @@ test.describe("Admin Console V1 (PR #255)", () => {
     // PR B: state-driven banner. The e2e stack runs in Stripe test mode.
     await expect(page.getByText(/Stripe runtime:/)).toBeVisible();
     await expect(
-      page.getByText(/test mode — no real charges/),
+      page.getByText(/test mode: no real charges/),
     ).toBeVisible();
     // Overview cards + studios table render (the studios table exists because
     // the wizard test seeded a studio earlier; either way the heading shows).
@@ -239,7 +239,7 @@ test.describe("Admin studio detail privacy (PR #256)", () => {
     // connected.
     await expect(page.getByText(/account ids are redacted/)).toBeVisible();
     await expect(
-      page.getByText(/No test-mode row — not connected in this mode\./),
+      page.getByText(/No test-mode row, not connected in this mode\./),
     ).toBeVisible();
 
     // The seeded client NAME must NOT appear anywhere on the detail page.
