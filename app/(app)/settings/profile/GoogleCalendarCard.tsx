@@ -367,7 +367,14 @@ export function GoogleCalendarCard({
 
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-neutral-700 dark:text-neutral-300">
             <dt className="text-neutral-500">Google account</dt>
-            <dd>{connection?.googleAccountEmail ?? "Not connected"}</dd>
+            {/* This list renders inside the isConnected branch, and fetchUserInfo
+                accepts a valid `sub` with no email, returning email: null. A
+                connected account can therefore have no display email, so the
+                fallback must describe the missing EMAIL, not the connection.
+                "Not connected" here would contradict "Google Calendar is
+                connected." directly above, and it is already the established
+                READINESS_LABEL for the genuinely disconnected state. */}
+            <dd>{connection?.googleAccountEmail ?? "Not available"}</dd>
             <dt className="text-neutral-500">Destination</dt>
             <dd>
               {destinationMode === "dedicated_app_created"
@@ -382,9 +389,13 @@ export function GoogleCalendarCard({
             <dd>{READINESS_LABEL[readiness]}</dd>
             <dt className="text-neutral-500">Last authorized</dt>
             <dd>
+              {/* last_successful_auth_at is nullable and nothing guarantees
+                  connected => non-null, so a null proves only that Hone has no
+                  timestamp to show. "Never" would assert authorization never
+                  happened, which the data does not support. */}
               {connection?.lastSuccessfulAuthAt
                 ? new Date(connection.lastSuccessfulAuthAt).toLocaleString()
-                : "Never"}
+                : "Not available"}
             </dd>
           </dl>
 
