@@ -9,7 +9,7 @@
 // lives in lib/treatment-time/queries.ts because it imports createClient
 // from @/lib/supabase/server, which would pull server-only code into
 // the client bundle if it lived here. The two files coordinate via the
-// PlannedVsActual type below — pure callers compute, server callers
+// PlannedVsActual type below: pure callers compute, server callers
 // supply the actual side.
 
 import type {
@@ -100,7 +100,7 @@ export function computePlannedVsActual(
   if (plan.treatment_goal_minutes_override != null) {
     estimatedTotalMinutes = plan.treatment_goal_minutes_override;
     // The override is a minutes-only target. Visit count is undefined
-    // without cadence — set to null so the UI doesn't render a
+    // without cadence: set to null so the UI doesn't render a
     // fabricated visit count.
     estimatedTotalVisits = null;
     source = "override";

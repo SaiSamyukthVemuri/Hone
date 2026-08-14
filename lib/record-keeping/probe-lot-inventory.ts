@@ -1,6 +1,6 @@
 // Inventory-backed probe-lot selection logic (Chloe item #9, migration 0155).
 //
-// SOURCE OF TRUTH: record_keeping_sterile_items — the studio's actively
+// SOURCE OF TRUTH: record_keeping_sterile_items, the studio's actively
 // maintained sterile-inventory log. From 0155 a sterile item may carry a
 // structured probe_key (lib/probes.ts catalog), so probe lots are now selected
 // PROBE-SPECIFICALLY from real inventory rows, each carrying its immutable
@@ -14,7 +14,7 @@
 //
 // Identity is the inventory row `id`, NEVER the lot number: two different
 // inventory records may share a lot number (no DB uniqueness) yet differ by
-// probe / manufacturer / description / expiry — they stay DISTINCT options.
+// probe / manufacturer / description / expiry: they stay DISTINCT options.
 //
 // "Active" = not past its expiry date (a null expiry never expires). Expired
 // lots are still SELECTABLE for truthful retrospective charting, but never sort
@@ -49,7 +49,7 @@ function compareExpiryDesc(a: string | null, b: string | null): number {
   return a < b ? 1 : -1;
 }
 
-// Shape raw probe sterile-item rows into classified, ordered options — ONE
+// Shape raw probe sterile-item rows into classified, ordered options, ONE
 // option per inventory row (NO dedupe by lot number). Active options sort first,
 // then later expiry, then lot number, then id (stable). Rows with a blank lot
 // number are dropped (a lot with no number cannot be a durable selection).
@@ -92,7 +92,7 @@ export function activeProbeLotOptionsForProbe(
   return options.filter((o) => !o.isExpired && o.probeKey === key);
 }
 
-// All (active + expired) options for a specific probe — used when EDITING a
+// All (active + expired) options for a specific probe: used when EDITING a
 // historical linked record so an expired linked lot stays visible.
 export function probeLotOptionsForProbe(
   options: ReadonlyArray<ProbeLotOption>,

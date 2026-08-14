@@ -31,7 +31,7 @@ type ServerSupabase = Awaited<ReturnType<typeof createClient>>;
 // Resolution of a signed-in user's ACTIVE practitioner memberships.
 //
 // Hone lets a user be an active practitioner in more than one studio: the
-// practitioners unique key is (studio_id, user_id) — NOT user_id — so 0, 1, or
+// practitioners unique key is (studio_id, user_id) (NOT user_id) so 0, 1, or
 // 2+ active rows are all reachable states. (The old resolvers used
 // `.maybeSingle()`, which ERRORS on 2+ rows.)
 //
@@ -89,7 +89,7 @@ async function resolveActivePractitionerMembership(
   if (selectedStudioId) {
     const match = rows.find((r) => r.studio_id === selectedStudioId);
     if (match) return { kind: "selected", value: toValue(match) };
-    // else: stale/forged selection — fall through to the chooser (never trust it).
+    // else: stale/forged selection: fall through to the chooser (never trust it).
   }
   return {
     kind: "choose",
@@ -145,7 +145,7 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
     // only as a server-action backstop: the middleware + shell layout redirect
     // multi-membership users with no valid selection to the chooser before any
     // page loader runs, and server actions run inside try/catch that returns a
-    // generic denial — so no raw 500 reaches the user because of multiple rows.
+    // generic denial, so no raw 500 reaches the user because of multiple rows.
     throw new Error(
       `Multiple active studio memberships (${membership.options.length}) with no valid studio selection; choose a studio first.`,
     );
@@ -156,8 +156,8 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
 // Route-guard variant of getCurrentPractitionerWithStudio for the
 // authenticated app SHELL (app/(app)/layout.tsx). Hone is invite-only
 // (PR #189 / migration 0081 / PR #253): a signed-in user with no active
-// practitioner row — e.g. an uninvited Google sign-in, which creates an
-// auth.users row but NO studio/practitioner — must not reach the app.
+// practitioner row: e.g. an uninvited Google sign-in, which creates an
+// auth.users row but NO studio/practitioner, must not reach the app.
 // Instead of throwing a raw 500 (what getCurrentPractitionerWithStudio
 // does), this redirects:
 //   * no auth user                 -> /login
@@ -688,7 +688,7 @@ export async function getLaserTreatmentCountsForClient(
 // started before `beforeIso` (the current session's start). Used only to
 // add modality context to the electrolysis session heading
 // ("· N laser sessions previously"). Does not touch treatment-time
-// calculations — it's a plain session count, separate from TTT.
+// calculations: it's a plain session count, separate from TTT.
 export async function getPriorLaserSessionCount(
   studioId: string,
   clientId: string,
@@ -824,7 +824,7 @@ export async function getSessionBlockById(
 // entries grouped under each block. Laser entries are out of scope for the
 // blocks restructure (blocks model electrolysis treatment-level params).
 // Batch loader (migration 0128): the structured areas for a set of already-loaded
-// session-block IDs, grouped by block id. ONE bounded, RLS-scoped query — no N+1.
+// session-block IDs, grouped by block id. ONE bounded, RLS-scoped query, no N+1.
 // Used by every list/history/summary/print/export surface so multi-area blocks
 // display every treated area + laterality. Studio isolation is enforced by RLS
 // (session_block_areas member policy); the caller passes block ids it already

@@ -12,7 +12,7 @@
 //   * Mode-branched on the ROW's stripe_livemode (PR #323): test rows
 //     carry the test-mode disclaimer in subject and body; live rows use
 //     the lawyer-approved live wording (2026-07-04). The sender passes
-//     the attempt row's mode — never the runtime's.
+//     the attempt row's mode, never the runtime's.
 //   * The studio name (from studios.name).
 //   * The client's name (greeting only; the body never includes
 //     other PII).
@@ -105,7 +105,7 @@ const NO_TAX_BODY_DISCLAIMER =
 const REFUND_AVAILABLE_BODY_DISCLAIMER =
   "If this test payment needs to be refunded, the practitioner can issue a test-mode refund in Hone.";
 
-// Live-mode receipt copy — LAWYER-APPROVED (2026-07-04). It makes no
+// Live-mode receipt copy: LAWYER-APPROVED (2026-07-04). It makes no
 // tax-invoice claim, promises no refund, and states Hone is the software
 // platform and not the treatment provider or merchant of record. Tests pin
 // this exact wording + the absence of tax-invoice / merchant-of-record /
@@ -164,7 +164,7 @@ export function buildPaymentReceiptEmail(
   const contact = input.studioContactEmail?.trim() || null;
   const livemode = input.livemode === true;
   const last4 = input.last4?.trim() || null;
-  // Neutral fallback when the card last-4 is unavailable — never blocks the
+  // Neutral fallback when the card last-4 is unavailable, never blocks the
   // receipt over a missing display detail. Never a full card number.
   const paymentMethod = last4 ? `Card ending in ${last4}` : "Card on file";
 

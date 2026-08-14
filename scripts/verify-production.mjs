@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * scripts/verify-production.mjs — PR #308
+ * scripts/verify-production.mjs, PR #308
  *
  * Operator-run, READ-ONLY health check that PRODUCTION matches the repo's
  * required state. Production is LIVE-CAPABLE (live billing was proven on a
@@ -8,18 +8,18 @@
  * before broadening sensitive-data use, or any time remote production state
  * must be independently confirmed. It answers the P0 "we cannot independently
  * confirm remote production state" gap: it proves remote Supabase =
- * repo-required (the latest migration — derived from supabase/migrations/, not
- * hardcoded — plus the 0093/0097/0098/0099 effects), that the treatment-image
+ * repo-required (the latest migration: derived from supabase/migrations/, not
+ * hardcoded, plus the 0093/0097/0098/0099 effects), that the treatment-image
  * bucket is private with hardened policies, that RLS is on for the critical
  * tables, that there are no unresolved critical payment ops alerts, that the
  * Stripe source gates are intact, and that the reminder scheduler heartbeat is
- * fresh — and it REPORTS the current live/test payment posture (mode-separated
+ * fresh, and it REPORTS the current live/test payment posture (mode-separated
  * counts, redacted; never a pass/fail gate) for operator visibility.
  *
  * Run (from the production-linked Mac):
  *   node --env-file=.env.local scripts/verify-production.mjs
  *
- * SAFETY (hard rules — enforced by tests/scripts/verify-production.test.ts):
+ * SAFETY (hard rules: enforced by tests/scripts/verify-production.test.ts):
  *   - READ-ONLY. Uses `supabase db query --linked` for every DB read. It NEVER
  *     runs `supabase db push` / `supabase db execute`, never applies a
  *     migration, never INSERT/UPDATE/DELETE/UPSERT, never calls a Stripe write
@@ -30,7 +30,7 @@
  *     key, the Upstash token, client names/emails/phones, raw tokens, health/
  *     treatment data, notes, or ops-alert message bodies.
  *   - FAIL-CLOSED. A required check that cannot run (CLI not linked, Upstash
- *     env absent for the heartbeat) is FAIL/INCOMPLETE — never a silent PASS —
+ *     env absent for the heartbeat) is FAIL/INCOMPLETE, never a silent PASS,
  *     and the script exits non-zero.
  *
  * This is NOT a CI gate (CI has no production link, by design) and NOT a
@@ -50,7 +50,7 @@ const HEARTBEAT_KEY = "reminder_cron:last_success";
 const REMINDER_STALE_AFTER_MINUTES = 45;
 
 // Expected repo-required production state. DERIVED from supabase/migrations/ at
-// run time (PR #314) — NOT hardcoded — so this pre-live verifier can never go
+// run time (PR #314) (NOT hardcoded) so this pre-live verifier can never go
 // stale against the repo. The expected max is the highest 4-digit migration
 // prefix in the repo (e.g. 0100_postcare_send_state.sql -> "0100"). If the repo
 // gains a migration, the expected value tracks automatically.
@@ -79,24 +79,24 @@ const CRITICAL_RLS_TABLES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Output helpers — PASS / FAIL / INCOMPLETE, scalars only.
+// Output helpers: PASS / FAIL / INCOMPLETE, scalars only.
 // ---------------------------------------------------------------------------
 const results = [];
 function record(status, name, detail) {
   results.push({ status, name });
   const tag =
     status === "PASS" ? "PASS " : status === "FAIL" ? "FAIL " : "INCOMPLETE";
-  console.log(`  ${tag}  ${name}${detail ? ` — ${detail}` : ""}`);
+  console.log(`  ${tag}  ${name}${detail ? `: ${detail}` : ""}`);
 }
 const pass = (n, d) => record("PASS", n, d);
 const fail = (n, d) => record("FAIL", n, d);
 const incomplete = (n, d) => record("INCOMPLETE", n, d);
-// Informational report line — printed for operator visibility, NOT a
+// Informational report line: printed for operator visibility, NOT a
 // pass/fail gate: it does NOT push to `results`, so it never affects the
 // summary counts or the exit code. Scalars only (counts / booleans / key
-// shapes) — never ids, secrets, or client data.
+// shapes), never ids, secrets, or client data.
 function report(name, detail) {
-  console.log(`  INFO   ${name}${detail ? ` — ${detail}` : ""}`);
+  console.log(`  INFO   ${name}${detail ? `: ${detail}` : ""}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ function checkMigrationMax() {
 // 2. Required migration effects (0093 / 0097 / 0098 / 0099)
 // ---------------------------------------------------------------------------
 function checkMigrationEffects() {
-  // 0093 — treatment image storage hardening.
+  // 0093, treatment image storage hardening.
   try {
     const bucket = dbRows(
       "select count(*) as n, coalesce(bool_and(public = false), false) as private " +
@@ -223,7 +223,7 @@ function checkMigrationEffects() {
     fail("0093 policies/trigger", e.message);
   }
 
-  // 0097 — intake link metadata columns on client_intake_forms.
+  // 0097, intake link metadata columns on client_intake_forms.
   columnCountCheck(
     "0097 intake link columns",
     "client_intake_forms",
@@ -231,7 +231,7 @@ function checkMigrationEffects() {
     3,
   );
 
-  // 0098 — intake reminder columns + indexes + RPC branches on appointments.
+  // 0098, intake reminder columns + indexes + RPC branches on appointments.
   columnCountCheck(
     "0098 intake reminder columns",
     "appointments",
@@ -275,7 +275,7 @@ function checkMigrationEffects() {
     fail("0098 RPC branches", e.message);
   }
 
-  // 0099 — treatment_images.practitioner_note.
+  // 0099, treatment_images.practitioner_note.
   columnCountCheck(
     "0099 practitioner_note column",
     "treatment_images",
@@ -330,7 +330,7 @@ function checkRls() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Unresolved critical payment ops alerts (count only — never message bodies)
+// 4. Unresolved critical payment ops alerts (count only, never message bodies)
 // ---------------------------------------------------------------------------
 function checkOpsAlerts() {
   try {
@@ -351,7 +351,7 @@ function checkOpsAlerts() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Stripe source gates — spawn the existing read-only source-grep gate.
+// 5. Stripe source gates: spawn the existing read-only source-grep gate.
 // ---------------------------------------------------------------------------
 function checkStripeGates() {
   const out = spawnSync("node", ["scripts/check-stripe-gates.mjs"], {
@@ -368,16 +368,16 @@ function checkStripeGates() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Payments posture (REPORT — not gates). Mode-separated counts + redacted
+// 6. Payments posture (REPORT, not gates). Mode-separated counts + redacted
 //    status for the current live/test state. Every read returns COUNTS and
-//    BOOLEANS only — no account/PaymentIntent/customer ids, no card data, no
+//    BOOLEANS only, no account/PaymentIntent/customer ids, no card data, no
 //    client data. A read that errors degrades to an "unavailable" report line
 //    and never changes the exit code (these are observations, not gates).
 // ---------------------------------------------------------------------------
 function reportRuntimeMode() {
   // Reflects the env-file loaded for THIS run (mirrors inferStripeLivemode():
   // STRIPE_SECRET_KEY.startsWith("sk_live_")). Prints only the key SHAPE and
-  // the flag boolean — never the secret value. The authoritative DEPLOYMENT
+  // the flag boolean, never the secret value. The authoritative DEPLOYMENT
   // runtime mode is confirmed via the Dashboard "Live payments" stat.
   const key = process.env.STRIPE_SECRET_KEY || "";
   const shape = key.startsWith("sk_live_")
@@ -390,7 +390,7 @@ function reportRuntimeMode() {
   const allow = process.env.STRIPE_ALLOW_LIVE_MODE === "true";
   report(
     "Runtime Stripe mode (this env-file)",
-    `secret-key shape=${shape}, STRIPE_ALLOW_LIVE_MODE=${allow} — reflects the env loaded for this run; confirm the deployment runtime via the Dashboard "Live payments" stat`,
+    `secret-key shape=${shape}, STRIPE_ALLOW_LIVE_MODE=${allow}, reflects the env loaded for this run; confirm the deployment runtime via the Dashboard "Live payments" stat`,
   );
 }
 
@@ -408,7 +408,7 @@ function reportPaymentsPosture() {
       `live=${Number(r.live)}, test=${Number(r.test)}, null-mode placeholder=${Number(r.placeholder)}`,
     );
   } catch (e) {
-    report("studio_payment_settings rows", `unavailable — ${e.message}`);
+    report("studio_payment_settings rows", `unavailable: ${e.message}`);
   }
   try {
     const r = dbRows(
@@ -420,11 +420,11 @@ function reportPaymentsPosture() {
         "from studio_payment_settings where stripe_livemode = true and stripe_account_id is not null;",
     )[0];
     report(
-      "Live connected accounts (redacted — counts only)",
+      "Live connected accounts (redacted, counts only)",
       `count=${Number(r.live_connected)}, charges_enabled=${Number(r.charges)}, payouts_enabled=${Number(r.payouts)}, account_status=enabled=${Number(r.enabled)}`,
     );
   } catch (e) {
-    report("Live connected accounts (redacted — counts only)", `unavailable — ${e.message}`);
+    report("Live connected accounts (redacted, counts only)", `unavailable: ${e.message}`);
   }
   try {
     const r = dbRows(
@@ -435,7 +435,7 @@ function reportPaymentsPosture() {
     )[0];
     report("Active cards on file", `live=${Number(r.live)}, test=${Number(r.test)}`);
   } catch (e) {
-    report("Active cards on file", `unavailable — ${e.message}`);
+    report("Active cards on file", `unavailable: ${e.message}`);
   }
   try {
     const rows = dbRows(
@@ -447,10 +447,10 @@ function reportPaymentsPosture() {
         .filter((x) => x.stripe_livemode === mode)
         .map((x) => `${x.status}=${Number(x.n)}`)
         .join(", ") || "none";
-    report("Charge attempts — live", fmt(true));
-    report("Charge attempts — test", fmt(false));
+    report("Charge attempts (live)", fmt(true));
+    report("Charge attempts (test)", fmt(false));
   } catch (e) {
-    report("Charge attempts by mode/status", `unavailable — ${e.message}`);
+    report("Charge attempts by mode/status", `unavailable: ${e.message}`);
   }
   try {
     const r = dbRows(
@@ -465,7 +465,7 @@ function reportPaymentsPosture() {
       `total=${Number(r.live_total)}, errored=${Number(r.live_errored)}, unprocessed=${Number(r.live_unprocessed)}`,
     );
   } catch (e) {
-    report("Live webhook events", `unavailable — ${e.message}`);
+    report("Live webhook events", `unavailable: ${e.message}`);
   }
   try {
     const n = Number(
@@ -478,7 +478,7 @@ function reportPaymentsPosture() {
     );
     report("Warning payment ops alerts", `${n} unresolved (critical is a gate above)`);
   } catch (e) {
-    report("Warning payment ops alerts", `unavailable — ${e.message}`);
+    report("Warning payment ops alerts", `unavailable: ${e.message}`);
   }
 }
 
@@ -492,7 +492,7 @@ async function checkHeartbeat() {
   if (!url || !token) {
     incomplete(
       "Reminder scheduler heartbeat",
-      "UPSTASH_REDIS_REST_URL/TOKEN not set — verify the Reminder scheduler card in /admin (see runbook)",
+      "UPSTASH_REDIS_REST_URL/TOKEN not set: verify the Reminder scheduler card in /admin (see runbook)",
     );
     return;
   }
@@ -532,7 +532,7 @@ async function checkHeartbeat() {
 // ---------------------------------------------------------------------------
 async function main() {
   console.log("Read-only production verification (PR #308)");
-  console.log("Automated remote checks — no writes, no secrets, no PII.\n");
+  console.log("Automated remote checks, no writes, no secrets, no PII.\n");
 
   console.log("Migration state:");
   checkMigrationMax();
@@ -545,7 +545,7 @@ async function main() {
   checkOpsAlerts();
   checkStripeGates();
 
-  console.log("\nPayments posture (report — not gates, counts only):");
+  console.log("\nPayments posture (report, not gates, counts only):");
   reportRuntimeMode();
   reportPaymentsPosture();
 
@@ -560,7 +560,7 @@ async function main() {
     `\nSummary: ${passed.length} PASS, ${failed.length} FAIL, ${incompletes.length} INCOMPLETE`,
   );
   console.log(
-    "\nMANUAL checks still required (NOT covered here — see docs/16 §17.13):\n" +
+    "\nMANUAL checks still required (NOT covered here. See docs/16 §17.13):\n" +
       "  - Vercel PRODUCTION env: OPS_ALERT_EMAILS set, Upstash set, " +
       "STRIPE_ALLOW_LIVE_MODE and the Stripe key mode match the intended " +
       "deployment posture (production is live-capable).\n" +
@@ -577,7 +577,7 @@ async function main() {
 
   if (failed.length > 0 || incompletes.length > 0) {
     console.log(
-      "\nNOT VERIFIED ✗ — automated checks did not fully pass (or could not be " +
+      "\nNOT VERIFIED ✗, automated checks did not fully pass (or could not be " +
         "verified). Do NOT treat production as ready. Resolve every FAIL/INCOMPLETE.",
     );
     process.exit(1);
@@ -592,7 +592,7 @@ async function main() {
 
 main().catch((e) => {
   // Fail-closed on any unexpected error; never print secrets.
-  console.log(`  FAIL   verify-production crashed — ${e?.message ?? "unknown error"}`);
+  console.log(`  FAIL   verify-production crashed, ${e?.message ?? "unknown error"}`);
   console.log("\nNOT VERIFIED ✗");
   process.exit(1);
 });

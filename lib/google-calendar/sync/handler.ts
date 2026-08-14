@@ -3,19 +3,19 @@ import { hasRequiredEventScopes } from "../destination-scopes";
 import type { ClaimedJob, JobResult } from "./job-result";
 import type { ConnectionAuthRow, ConnectionStore, TokenManager } from "./token-manager";
 
-// Google Calendar — Phase B2.1: the transport-neutral worker core.
+// Google Calendar: Phase B2.1: the transport-neutral worker core.
 //
 // handleCalendarSyncJob is the single orchestration seam every transport (cron
 // route, dedicated worker) calls. It depends on NO Next.js/Vercel/cron/host type
 // and on NO feature flag being enabled. It performs the execution-time
 // eligibility gate + token acquisition, then delegates the actual Google event
 // operation to an INJECTED operations map. B2.3-c1 supplies the real event
-// create/update/delete operations (dormant — wired to no route); tests also
+// create/update/delete operations (dormant, wired to no route); tests also
 // inject mock operations to exercise the full JobResult mapping. The core NEVER
 // creates/updates/deletes a Google event itself.
 
 // B2.4: the required outbound event scope is DESTINATION-AWARE (derived from the
-// connection's destination_mode via hasRequiredEventScopes) — calendar.app.created
+// connection's destination_mode via hasRequiredEventScopes), calendar.app.created
 // for a Hone-created calendar, calendar.events.owned for an existing owned
 // calendar. Broad calendar.events satisfies eligibility NOWHERE. This execution-
 // time gate mirrors the (B2.3/0131) claim-side calendar_connection_outbound_ready

@@ -1,5 +1,5 @@
-// Shared portal card-on-file wrapper copy (PR C). Client-safe constants —
-// NO server-only import — used by both PortalCardOnFileCard and
+// Shared portal card-on-file wrapper copy (PR C). Client-safe constants,
+// NO server-only import: used by both PortalCardOnFileCard and
 // PortalPaymentMethodForm so the test-mode note cannot drift, and by the
 // portal page for the mode-aware no-immediate-charge wrappers.
 //
@@ -13,7 +13,7 @@ export const TEST_MODE_CARD_NOTE =
   "Test mode only. No live card will be charged.";
 
 // Live-mode wrapper: truthful "no immediate charge" plus the equally
-// truthful "later authorized charges may occur" — a live client must never
+// truthful "later authorized charges may occur", a live client must never
 // read an unqualified blanket no-charge promise on the surface that stores
 // a chargeable card.
 export const LIVE_SAVE_CARD_NOTE =

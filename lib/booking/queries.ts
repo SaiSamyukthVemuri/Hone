@@ -60,7 +60,7 @@ export async function getAllServices(studioId: string): Promise<Service[]> {
     // Canonical ordering columns. Callers still re-sort in JS through
     // lib/booking/service-order.ts (the client and Postgres collations can
     // disagree on `name`), but a services query that omits sort_order entirely
-    // is a trap — it is what let the settings page and the reorder action
+    // is a trap. It is what let the settings page and the reorder action
     // disagree about which row sat at which position.
     .order("active", { ascending: false })
     .order("sort_order", { ascending: true })
@@ -210,7 +210,7 @@ export async function getRecurringBreakOccurrencesForRange(
 // joins on practitioner (for color), client (for the calendar card
 // headline), and service (for the secondary modality/name line) so the
 // week view can render readable cards without an N+1 lookup. All three
-// joins are existing FK relationships with no new RLS exposure — every
+// joins are existing FK relationships with no new RLS exposure: every
 // row was already accessible to this studio's session via the
 // underlying appointments query.
 export type AppointmentWithPractitionerColor = Appointment & {

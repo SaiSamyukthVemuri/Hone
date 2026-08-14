@@ -7,22 +7,22 @@
 // It lives outside the React component on purpose: the component cannot be
 // rendered in the unit lane (environment is "node", and the repository carries
 // no React testing library or DOM shim), and the fake-Stripe browser lane
-// cannot drive Stripe Elements — `confirmSetup` needs real Stripe.js from
+// cannot drive Stripe Elements: `confirmSetup` needs real Stripe.js from
 // js.stripe.com plus a live SetupIntent client_secret, and the payment E2E lane
 // covers server-authoritative charge flows rather than Elements. Extracting the state
 // machine means the part with the actual decisions is behaviourally testable
 // today, instead of being covered only by source greps.
 //
 // THREE independent bounds, because an attempt count is not a wall-clock
-// ceiling — each confirmation request can take arbitrary network time:
-//   * deadlineMs        — a HARD overall wall clock. Every per-attempt budget
+// ceiling: each confirmation request can take arbitrary network time:
+//   * deadlineMs       , a HARD overall wall clock. Every per-attempt budget
 //                         and every inter-attempt pause is clamped to the time
 //                         actually remaining, so the caller settles by the
 //                         deadline rather than overshooting it by the last
 //                         attempt's full timeout;
-//   * attemptTimeoutMs  — per request ceiling, so one hung read cannot pin the
+//   * attemptTimeoutMs , per request ceiling, so one hung read cannot pin the
 //                         caller in "finalizing" forever;
-//   * attempts          — request budget.
+//   * attempts         : request budget.
 // Whichever binds first ends the window, truthfully, as "pending". The only
 // slack is ordinary event-loop scheduling jitter.
 
@@ -51,7 +51,7 @@ export type PollOptions = {
   now?: () => number;
   /**
    * Schedules `fire` after `ms` and returns a cancel handle. Injected so tests
-   * can distinguish SCHEDULING a timeout from the timeout actually FIRING — a
+   * can distinguish SCHEDULING a timeout from the timeout actually FIRING: a
    * fake clock that advanced on scheduling would mismodel every fast path.
    */
   setTimer?: (ms: number, fire: () => void) => () => void;
@@ -72,7 +72,7 @@ export type PollOutcome = {
  *
  * The timer is CLEARED as soon as the read settles. The previous version raced
  * against `sleep(ms)`, which meant a fast confirmation still left a live timer
- * behind — and, in a fake-clock test, still advanced time by the full unused
+ * behind, and, in a fake-clock test, still advanced time by the full unused
  * budget. `setTimer` returns a cancel handle so the loser is torn down.
  */
 async function withTimeout<T>(
@@ -95,7 +95,7 @@ async function withTimeout<T>(
 
 /**
  * Waits for Hone's OWN record of the card. Returns "saved" only when Hone has
- * an active row for this SetupIntent — never merely because Stripe succeeded.
+ * an active row for this SetupIntent, never merely because Stripe succeeded.
  *
  * Issues no Stripe call of any kind: it cannot mint a SetupIntent and cannot
  * re-confirm one, so a confirmation timeout can never submit another card.

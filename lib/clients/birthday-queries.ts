@@ -1,7 +1,7 @@
 // Practitioner-only birthday lookups.
 //
 // Reads month + day from the existing public.clients.date_of_birth
-// column (the year is ignored — see app/(app)/clients/[id]/birthday-
+// column (the year is ignored. See app/(app)/clients/[id]/birthday-
 // actions.ts for the sentinel-year storage convention).
 //
 // Filters in app code rather than via SQL EXTRACT because Supabase

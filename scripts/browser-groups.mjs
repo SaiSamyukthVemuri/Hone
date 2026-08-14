@@ -11,7 +11,7 @@
 // So caching setup is marginal. The cost is 53 specs running strictly
 // serially (`fullyParallel: false, workers: 1` in playwright.config.ts).
 // The fix is to run only the specs a diff can affect on a PR, and to shard
-// the extended suite across SEPARATE JOBS for full/nightly runs — separate
+// the extended suite across SEPARATE JOBS for full/nightly runs: separate
 // runners mean separate Supabase stacks, which preserves the isolation the
 // single-worker config was protecting.
 //
@@ -21,7 +21,7 @@
 
 /**
  * Every browser group. `specs` are matched against the e2e/ filename.
- * A spec belonging to no group falls into `extended` — never dropped.
+ * A spec belonging to no group falls into `extended`, never dropped.
  */
 export const BROWSER_GROUPS = {
   smoke: {
@@ -67,7 +67,7 @@ export const BROWSER_GROUPS = {
       // 0181: a practitioner ACTIVE IN TWO STUDIOS driving the real
       // profile -> "+ Log session" -> modality journey. Every other spec in
       // this group seeds ONE studio, where the old unordered membership pick
-      // was always right by construction — which is exactly how the P1 reached
+      // was always right by construction, which is exactly how the P1 reached
       // production. This is the only fixture that can express the defect.
       "multi-studio-session-start.spec.ts",
     ],
@@ -134,7 +134,7 @@ export const BROWSER_GROUPS = {
       // per-area setup + outcomes, and the full practitioner narrative.
       "appointment-prep-memory.spec.ts",
       // The practitioner week runs Sunday → Saturday, and the SAME Sunday
-      // boundary drives the data range — a grid that starts Sunday while the
+      // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
     ],
@@ -180,7 +180,7 @@ export const EXTENDED = "__extended__";
 const SHARED_PATTERNS = [
   // Changing CI itself can alter how every lane runs, so it must not be able
   // to narrow browser coverage. Without this a workflow change would set
-  // full_matrix_required=true while selecting NO browser group — the lane
+  // full_matrix_required=true while selecting NO browser group: the lane
   // would be skipped exactly when the most caution is warranted.
   /^\.github\/workflows\//,
   /^scripts\/(classify-changes|browser-groups|ci-plan)\.mjs$/,
@@ -226,13 +226,13 @@ export function specsForGroups(groups) {
 export function selectBrowserGroups(files) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
   if (list.length === 0) {
-    return { groups: [EXTENDED], extended: true, reason: "no detectable diff — failing safe to extended coverage" };
+    return { groups: [EXTENDED], extended: true, reason: "no detectable diff: failing safe to extended coverage" };
   }
 
   // Docs / ledger / migration-only never need a browser.
   const NON_BROWSER = [/^docs\//, /\.md$/, /^supabase\/migrations\//, /^tests\/(db|migrations|security|audits|scripts|ci)\//];
   if (list.every((f) => NON_BROWSER.some((re) => re.test(f)))) {
-    return { groups: [], extended: false, reason: "docs / ledger / migration-only — no browser coverage needed" };
+    return { groups: [], extended: false, reason: "docs / ledger / migration-only, no browser coverage needed" };
   }
 
   const shared = list.filter((f) => SHARED_PATTERNS.some((re) => re.test(f)));
@@ -240,7 +240,7 @@ export function selectBrowserGroups(files) {
     return {
       groups: [EXTENDED],
       extended: true,
-      reason: `shared browser/app infrastructure changed (${shared[0]}) — a shared helper can affect any workflow, so filename proximity is not enough`,
+      reason: `shared browser/app infrastructure changed (${shared[0]}), a shared helper can affect any workflow, so filename proximity is not enough`,
     };
   }
 
@@ -274,11 +274,11 @@ export function selectBrowserGroups(files) {
   // DID match a group silently cancelled the safety net for every file that did
   // not. Measured: `app/(app)/dashboard/page.tsx` alone correctly selected
   // extended, but that same file plus one calendar test selected `calendar` +
-  // `smoke` — the dashboard, entirely uncovered, because something else in the
+  // `smoke`, the dashboard, entirely uncovered, because something else in the
   // commit happened to be attributable.
   //
   // The doctrine this restores is the one already written down in CLAUDE.md §3:
-  // "Unattributable application code fails safe to extended — NEVER to a narrow
+  // "Unattributable application code fails safe to extended, NEVER to a narrow
   // group." Attributing a file narrows it on purpose; failing to attribute one
   // must never narrow it by accident.
   const unattributed = list.filter(
@@ -290,7 +290,7 @@ export function selectBrowserGroups(files) {
     return {
       groups: [EXTENDED],
       extended: true,
-      reason: `application code changed that matches no browser group (${unattributed[0]}) — failing safe to extended coverage`,
+      reason: `application code changed that matches no browser group (${unattributed[0]}), failing safe to extended coverage`,
     };
   }
 

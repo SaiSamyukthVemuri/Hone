@@ -16,7 +16,7 @@ import type { CalendarDestinationMode } from "./destination-scopes";
 // encrypts the PKCE verifier, and inserts the binding row.
 //
 // consumeOAuthState atomically consumes exactly one matching row and returns the
-// verifier + the studio/practitioner binding — after validating expiry, nonce,
+// verifier + the studio/practitioner binding: after validating expiry, nonce,
 // and the calling user. It never returns anything on a replay/expiry/mismatch.
 
 export type CreateStateResult =
@@ -28,7 +28,7 @@ export async function createOAuthState(input: {
   practitionerId: string;
   userId: string;
   redirectPath: string | null;
-  // B2.4 — destination-BOUND upgrade intent (migration 0131). Present only for a
+  // B2.4, destination-BOUND upgrade intent (migration 0131). Present only for a
   // destination scope-upgrade; a plain Phase-A connect passes null (binds neither
   // column). The DB CHECK enforces the matched pair. The mode + its EXACT
   // server-derived required scope are bound so the callback can reject a
@@ -105,7 +105,7 @@ export async function consumeOAuthState(input: {
   if (!input.nonce || sha256Hex(input.nonce) !== row.session_nonce_hash) {
     return { ok: false, reason: "nonce_mismatch" };
   }
-  // The returning session must be the SAME authenticated user that started it —
+  // The returning session must be the SAME authenticated user that started it,
   // the structural guard against attaching a Google account to another user.
   if (input.userId !== row.user_id) return { ok: false, reason: "user_mismatch" };
 

@@ -5,7 +5,7 @@
 // Why: on a fresh MANAGED Supabase project, pgcrypto (and uuid-ossp) live in the
 // `extensions` schema, which is NOT on the migration session's search_path. A bare
 // call such as `gen_random_bytes(...)` therefore fails at parse/plan time with
-// SQLSTATE 42883 "function ... does not exist" — even on an empty database and even
+// SQLSTATE 42883 "function ... does not exist", even on an empty database and even
 // though older prod projects and the local dev stack (pgcrypto reachable on the
 // path) resolve it fine. This guard is the deterministic regression fence for the
 // 0025_email_system.sql fresh-apply defect: it makes the whole 0001->NNNN chain
@@ -38,7 +38,7 @@ for (const file of files) {
   const lines = readFileSync(join(DIR, file), 'utf8').split('\n');
   lines.forEach((line, idx) => {
     // Skip whole-line SQL comments (does not strip trailing comments, which is fine
-    // — a bare call before a trailing comment should still be flagged).
+    // a bare call before a trailing comment should still be flagged).
     if (line.trimStart().startsWith('--')) return;
     for (const fn of EXT_FUNCS) {
       // "bare" = the function name is a call `fn(` NOT preceded by a word char or a
@@ -48,7 +48,7 @@ for (const file of files) {
       const re = new RegExp(`(?<![\\w.])${fn}\\s*\\(`);
       if (re.test(line)) {
         violations.push(
-          `${file}:${idx + 1}: bare ${fn}( — must be extensions.${fn}(  ->  ${line.trim().slice(0, 120)}`,
+          `${file}:${idx + 1}: bare ${fn}( must be extensions.${fn}(  ->  ${line.trim().slice(0, 120)}`,
         );
       }
     }

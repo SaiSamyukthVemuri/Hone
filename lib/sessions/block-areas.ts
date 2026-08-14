@@ -11,7 +11,7 @@
 //     `side`, migration 0039). Legacy records keep rendering unchanged.
 //
 // WRITE CONTRACT: new/edited blocks persist child rows AND a safe legacy
-// projection — primary_area = the first area, and block-level `side` ONLY when
+// projection: primary_area = the first area, and block-level `side` ONLY when
 // every area shares one side (never a misleading single value for mixed sides).
 
 import type { SessionBlockSide } from "@/lib/types/database";
@@ -108,7 +108,7 @@ export function formatAreaLabel(area: BlockArea): string {
   }
 }
 
-// One combined, ordered label for a block's treated areas — the SINGLE display
+// One combined, ordered label for a block's treated areas: the SINGLE display
 // contract for every clinical surface (charting summary, history, print, export,
 // treatment-memory). Structured rows win ("Left Cheeks · Right Sideburns");
 // otherwise the legacy primary_area + side ("Left Upper lip"). Returns null when
@@ -138,7 +138,7 @@ export function resolveBlockAreas(
 
 // The write-side legacy projection: keep primary_area = the first area, and set
 // block-level `side` ONLY when EVERY area shares one laterality (so mixed sides
-// never collapse into one misleading value — such a block gets side = null and
+// never collapse into one misleading value: such a block gets side = null and
 // its detail lives entirely in the child rows).
 export function deriveLegacyProjection(areas: ReadonlyArray<BlockArea>): {
   primaryArea: string | null;

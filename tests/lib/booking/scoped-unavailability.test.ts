@@ -176,7 +176,7 @@ describe("getPractitionerDirectory + scopeLabel", () => {
     );
     expect(scopeLabel(null, dir)).toBe("All practitioners");
     expect(scopeLabel(P1, dir)).toBe("Only Ana");
-    expect(scopeLabel("p2", dir)).toBe("Only Bo — inactive");
+    expect(scopeLabel("p2", dir)).toBe("Only Bo, inactive");
     expect(scopeLabel("gone", dir)).toBe("A former practitioner");
   });
 });

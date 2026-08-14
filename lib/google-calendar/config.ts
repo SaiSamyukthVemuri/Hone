@@ -2,9 +2,9 @@ import "server-only";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { isE2eFakeGoogleEnabled } from "./e2e/fake-google-guard";
 
-// Google Calendar OAuth configuration — Phase A (connection foundation).
+// Google Calendar OAuth configuration: Phase A (connection foundation).
 //
-// DEPENDENCY DECISION: Option B — direct OAuth + Calendar REST via server-side
+// DEPENDENCY DECISION: Option B: direct OAuth + Calendar REST via server-side
 // `fetch`, NOT the `googleapis` npm package. Rationale (documented in
 // docs/integrations/google-calendar-sync.md §Dependency):
 //   * Bundle/security surface: Phase A needs exactly four HTTP calls (token
@@ -19,7 +19,7 @@ import { isE2eFakeGoogleEnabled } from "./e2e/fake-google-guard";
 //   * Testability: mocking one thin typed client (fetch) is trivial in vitest;
 //     mocking the library's client objects is heavier.
 //   * Type safety: we declare narrow response types for the exact fields we
-//     consume — safer than importing a huge, mostly-unused type surface.
+//     consume: safer than importing a huge, mostly-unused type surface.
 // Trade-off accepted: we hand-write ~4 request builders. Revisit if Phase B+
 // needs batch/watch ergonomics the library would materially simplify.
 
@@ -41,7 +41,7 @@ export const GOOGLE_CALENDARS_ENDPOINT =
 
 // --- Scopes ---
 // PHASE A (this PR): the MINIMUM for account identity + calendar-list discovery
-// + validating a selected calendar. Least privilege by design — NO event read
+// + validating a selected calendar. Least privilege by design, NO event read
 // or write scope is requested, because no event sync exists yet.
 //   * openid + userinfo.email  -> the connected Google account id (sub) + email.
 //   * calendar.calendarlist.readonly -> list the calendars the account is
@@ -54,11 +54,11 @@ export const PHASE_A_SCOPES = [
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ] as const;
 
-// PHASE B (DOCUMENTED here, requested destination-specifically — NOT broad). B2.4
+// PHASE B (DOCUMENTED here, requested destination-specifically, NOT broad). B2.4
 // makes the outbound event scope DERIVE from the connection's chosen destination
 // (see lib/google-calendar/destination-scopes.ts): a Hone-created calendar needs
 // calendar.app.created; an existing owned calendar needs calendar.events.owned.
-// Broad `calendar.events` is DELIBERATELY EXCLUDED — B2.4 superseded it; it
+// Broad `calendar.events` is DELIBERATELY EXCLUDED: B2.4 superseded it; it
 // satisfies the outbound contract nowhere. Inbound busy (Phase C) will add
 // calendar.readonly. All are requested via INCREMENTAL authorization
 // (include_granted_scopes=true), so a connection takes exactly ONE additional

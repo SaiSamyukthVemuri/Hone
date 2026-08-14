@@ -1,7 +1,7 @@
 // PR #306: automated intake-form REMINDER email, sent by the appointment-
 // reminder cron ~7 days and ~3 days before a confirmed appointment when the
 // client's latest intake is still in_progress. Distinct from the practitioner-
-// triggered buildIntakeRequestEmail ("please complete your UPDATED intake") —
+// triggered buildIntakeRequestEmail ("please complete your UPDATED intake"),
 // this is a gentle pre-appointment nudge.
 //
 // Copy rules: short + friendly; mention the appointment date/time; say the form
@@ -43,7 +43,7 @@ export function buildIntakeReminderEmail(p: {
   timezone: string;
 }): IntakeReminderEmail {
   const studioName = p.studioName.trim() || "Your studio";
-  // No PII / no date in the subject (privacy) — generic, non-alarming.
+  // No PII / no date in the subject (privacy), generic, non-alarming.
   const subject =
     "Reminder: please complete your intake form before your appointment";
 

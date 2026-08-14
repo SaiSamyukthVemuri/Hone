@@ -1,5 +1,5 @@
 // Provider-agnostic conversion-tracking types. Platform-neutral: Meta is the
-// first adapter, but nothing here is Meta-specific. PURE type/const module — no
+// first adapter, but nothing here is Meta-specific. PURE type/const module, no
 // server-only, no I/O. See docs/22 for the full plan.
 //
 // This layer is NOT wired into the booking flow and sends nothing (adapters'
@@ -32,7 +32,7 @@ export const CONVERSION_EVENT_NAMES = [
 export type ConversionEventName = (typeof CONVERSION_EVENT_NAMES)[number];
 
 // A provider-agnostic conversion event. By CONSTRUCTION this type has NO field
-// for clinical/sensitive data — no name, notes, intake, contraindications,
+// for clinical/sensitive data, no name, notes, intake, contraindications,
 // body areas, photos, cancellation reasons, or free-text service names. Raw
 // email/phone are carried in-process ONLY to be hashed by an adapter; they must
 // never be logged.
@@ -77,7 +77,7 @@ export type SendResult =
   | { ok: false; retryable: boolean; errorSafe: string };
 
 // Server-side send context. The dispatcher decrypts the studio's own token from
-// the DB (AES-256-GCM) and passes the plaintext here — the token never lives on
+// the DB (AES-256-GCM) and passes the plaintext here: the token never lives on
 // the config, in env, or in the client bundle, and is never logged.
 export type SendContext = { token: string; timeoutMs?: number };
 
@@ -103,7 +103,7 @@ export type ConversionProviderAdapter = {
 export type DeliveryStatus = "skipped" | "sent" | "failed";
 
 // The ONLY thing safe to log/persist. Contains no email/phone/token/clinical
-// data — mirrors the proposed conversion_event_deliveries row.
+// data: mirrors the proposed conversion_event_deliveries row.
 export type DeliveryRecord = {
   studioId: string;
   provider: TrackingProvider;

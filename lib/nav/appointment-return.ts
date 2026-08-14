@@ -1,6 +1,6 @@
 // Safe "back to appointment" return-target validation. Mirrors the
 // calendar-return.ts posture: NEVER echo an untrusted URL. The only accepted
-// value is an internal appointment route "/calendar/<uuid>" — a single segment
+// value is an internal appointment route "/calendar/<uuid>", a single segment
 // that is a valid UUID. Anything external, malformed, cross-route, multi-segment,
 // or carrying a query/fragment is rejected and returns null (no back link shown).
 const APPOINTMENT_RETURN_RE =

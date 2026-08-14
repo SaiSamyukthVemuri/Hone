@@ -2,7 +2,7 @@ import "server-only";
 import { computeBackoff } from "./backoff";
 import { isDead, isDone, isRetry, resultToRpcParams, type ClaimedJob, type JobResult } from "./job-result";
 
-// Google Calendar — Phase B2.1: the two transport adapters. Each does ONLY:
+// Google Calendar: Phase B2.1: the two transport adapters. Each does ONLY:
 //   claim -> handleCalendarSyncJob -> record result.
 // They contain no Google logic (that lives in the injected `handle`) and no
 // route/host coupling. They are DEFINED here but NOT ACTIVATED: there is no

@@ -29,7 +29,7 @@ import {
 } from "./job-result";
 import { recordWorkerRun, type WorkerHeartbeat } from "./worker-heartbeat";
 
-// Google Calendar — Phase B2.3-c2: the PRODUCTION worker-drain runtime.
+// Google Calendar: Phase B2.3-c2: the PRODUCTION worker-drain runtime.
 //
 // This is the ONE server-only seam that wires the deployed claim -> handle ->
 // record architecture to the c1 operations map for the authenticated
@@ -42,7 +42,7 @@ import { recordWorkerRun, type WorkerHeartbeat } from "./worker-heartbeat";
 //   * drains a BOUNDED number of claimed jobs (<= WORKER_MAX_CLAIMED) within a
 //     server-side deadline, distinguishing the HANDLER result from the DURABLE
 //     record-RPC result and never manually mutating the outbox; and
-//   * exposes handleWorkerRoute — auth first (before any admin client / claim),
+//   * exposes handleWorkerRoute, auth first (before any admin client / claim),
 //     then drain, then a fail-open heartbeat + bounded fail-open ops alerts.
 //
 // It adds NO queue, NO coordinator beyond the narrow per-connection token-refresh
@@ -230,7 +230,7 @@ export async function drainCalendarSyncQueue(
         return finish();
       }
 
-      // HANDLE — the handler returns a typed JobResult for a Google outcome; an
+      // HANDLE: the handler returns a typed JobResult for a Google outcome; an
       // unexpected throw stops the run (never converted to success).
       let result: JobResult;
       try {
@@ -247,7 +247,7 @@ export async function drainCalendarSyncQueue(
       else if (isRetry(result.code)) r.handler_retry_results += 1;
       else if (isDead(result.code)) r.handler_terminal_results += 1;
 
-      // RECORD — the DURABLE outcome. Never inferred from the handler result.
+      // RECORD: the DURABLE outcome. Never inferred from the handler result.
       const backoff = computeBackoff({
         attempts: job.attempts,
         retryAfterSeconds: result.retryAfterSeconds ?? null,
@@ -292,7 +292,7 @@ export async function drainCalendarSyncQueue(
         case "not_found":
         case "not_claimed":
         case "stale_token":
-          // A closed rejection: our claim was lost/superseded. Truthful — never
+          // A closed rejection: our claim was lost/superseded. Truthful, never
           // counted as durably done; the run is degraded, not healthy.
           r.record_rejected += 1;
           break;
@@ -421,7 +421,7 @@ export function createProductionWorkerRuntime(overrides: WorkerRuntimeOverrides 
 }
 
 // ---------------------------------------------------------------------------
-// The route handler seam (§6/§16/§17/§18/§19). Auth FIRST — before any admin
+// The route handler seam (§6/§16/§17/§18/§19). Auth FIRST: before any admin
 // client, claim, heartbeat, or request-bearing alert.
 // ---------------------------------------------------------------------------
 const ROUTE = "/api/cron/calendar-sync";
@@ -550,7 +550,7 @@ export async function handleWorkerRoute(
     return { status: 401, body: { ok: false, error: "Unauthorized" } };
   }
 
-  // 2. Reject any caller-supplied query parameter (fail-closed, PHI-free) — the
+  // 2. Reject any caller-supplied query parameter (fail-closed, PHI-free), the
   //    route trusts NO caller-selected tenant/provider/batch target (§7).
   let url: URL | null = null;
   try {

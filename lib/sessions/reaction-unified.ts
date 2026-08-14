@@ -1,10 +1,10 @@
-// UNIFIED reaction derivation (Chloe charting unification) — the ONE canonical
+// UNIFIED reaction derivation (Chloe charting unification), the ONE canonical
 // contract every reaction-driven surface reads, so old (session_blocks.
 // reaction_type) and new (reaction chips in electrolysis_entries.observation_
 // chips) records behave identically.
 //
 // Reactions are classified ONLY by the explicit merged reaction-chip definitions
-// (isReactionChipLabel over REACTION_CHIP_LABELS) — never by string-guessing an
+// (isReactionChipLabel over REACTION_CHIP_LABELS), never by string-guessing an
 // ordinary observation chip. Severity for attention prioritization uses the
 // EXISTING explicit reaction enum ordering (REACTION_TYPES), never inferred from
 // wording. Pure + client-safe (no I/O).
@@ -27,7 +27,7 @@ import {
 // A SAFETY-RESPONSE label (Redness (erythema) / Slight swelling (edema) /
 // Sensitive skin) has no enum member of its own, so it ranks through the coded
 // PEER declared in clinical-response.ts. That keeps ONE severity vocabulary and
-// ONE ordering — this function never invents a rank.
+// ONE ordering: this function never invents a rank.
 function severityRank(label: string): number {
   const t = reactionTypeForLabel(label) ?? safetyResponseSeverityPeer(label);
   if (!t || t === "other") return -1;
@@ -35,7 +35,7 @@ function severityRank(label: string): number {
 }
 
 // The CLINICAL RESPONSE chip labels present in a stored observation_chips value
-// — coded reaction labels AND the safety-relevant response labels. Ordinary
+// coded reaction labels AND the safety-relevant response labels. Ordinary
 // observation chips (Coarse hair, Lots of anagen, …) are ignored. Canonical
 // casing, order-preserved.
 //
@@ -48,7 +48,7 @@ export function reactionLabelsFromChips(observationChips: unknown): string[] {
   );
 }
 
-// ALL clinical-response labels for a block under the unified model — the union
+// ALL clinical-response labels for a block under the unified model: the union
 // of the legacy reaction_type's label and every response chip across the block's
 // live entries, deduped case-insensitively (reaction_type first, then chip
 // order). Retains every real response (never collapsed to one).
@@ -77,8 +77,8 @@ export function unifiedReactionLabels(
 // The single EFFECTIVE response label (legacy single-reaction shape).
 //
 // A REAL response always wins over "No visible reaction". Historical rows can be
-// internally contradictory — `reaction_type = 'none'` on the block while an
-// entry chip records "Redness (erythema)" — because the two were captured by
+// internally contradictory: `reaction_type = 'none'` on the block while an
+// entry chip records "Redness (erythema)", because the two were captured by
 // different UIs at different times, and `unifiedReactionLabels` deliberately
 // lists reaction_type FIRST to preserve provenance order. Taking element [0]
 // blindly would let a stale "none" mask a real recorded response on any surface
@@ -86,7 +86,7 @@ export function unifiedReactionLabels(
 //
 // The forward path can no longer create that contradiction (toggleFindingChip in
 // lib/observation-chips.ts makes "No visible reaction" mutually exclusive with
-// every real response chip), so this rule exists purely for historical data —
+// every real response chip), so this rule exists purely for historical data,
 // which is exactly where it matters, because nothing is being backfilled.
 export function effectiveReactionLabel(
   reactionType: string | null | undefined,

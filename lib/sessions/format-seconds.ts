@@ -7,11 +7,11 @@
 //   * null / undefined / non-finite -> null (the caller decides
 //     whether to render anything).
 //   * Preserved to 3 decimal places (the clinically supported
-//     thermolysis precision — e.g. PicoBlend 0.733s), trailing zeros
+//     thermolysis precision: e.g. PicoBlend 0.733s), trailing zeros
 //     trimmed. Rounding at the 3rd decimal both avoids the
 //     0.150000000... float-formatting surprise and the 0.20-vs-0.2
 //     inconsistency AND shows the exact stored value the practitioner
-//     entered — never a lossily rounded 0.73 for a stored 0.733.
+//     entered, never a lossily rounded 0.73 for a stored 0.733.
 //   * Singular "second" only when the value rounds to exactly 1.
 //     Everything else (0, 0.15, 1.5, 2, 2.5) uses "seconds".
 //

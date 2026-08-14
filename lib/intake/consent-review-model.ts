@@ -8,7 +8,7 @@
 //
 // Both records were real. Her intake carried a photo answer of Accepted
 // (3:56 PM) and her portal carried Consent denied (3:57 PM). #545 rendered the
-// intake record first — title, answer, and the FULL legal body inline — and the
+// intake record first (title, answer, and the FULL legal body inline) and the
 // current portal status underneath, so the screen presented two answers with
 // equal authority and buried the operative one below a wall of legal text.
 //
@@ -27,11 +27,11 @@
 // Photo consent moved to the portal in #545, so:
 //
 //   * a consent type the intake STILL COLLECTS (`INTAKE_CONSENT_COLLECTED_
-//     FORM_TYPES` — treatment consent) is intake-owned, and its stored intake
+//     FORM_TYPES`, treatment consent) is intake-owned, and its stored intake
 //     record IS the current answer;
 //   * a consent type the intake NO LONGER COLLECTS (photo consent) is
 //     portal-owned. The live portal form is the current answer and the stored
-//     intake record is history — even when the intake record says "Accepted"
+//     intake record is history, even when the intake record says "Accepted"
 //     and the portal says "Consent denied".
 //
 // The partition keys off the existing COLLECTED constant rather than testing
@@ -66,7 +66,7 @@ export type HistoricalConsentEntry = {
 export type ConsentReviewModel = {
   // Intake-owned consent that is still current (treatment consent).
   currentIntakeForms: IntakeConsentFormView[];
-  // Portal-owned consent that is current. One entry per LIVE template — #545's
+  // Portal-owned consent that is current. One entry per LIVE template, #545's
   // multi-form correction, preserved verbatim: two live photo forms are two
   // separate questions and are never collapsed into one status.
   currentPortalPhotos: PortalPhotoConsentView[];
@@ -78,7 +78,7 @@ export type ConsentReviewModel = {
 // Is `portalIso` provably later than `intakeIso`?
 //
 // Returns false when either timestamp is missing or unparseable. "Cannot prove"
-// must never render as "superseded" — that would be the same category of
+// must never render as "superseded", that would be the same category of
 // overclaim the whole fix exists to remove, just in the other direction.
 function portalIsProvablyNewer(
   portalIso: string | null | undefined,
@@ -106,7 +106,7 @@ export function buildConsentReviewModel(args: {
       continue;
     }
 
-    // LINEAGE, PROVEN — not assumed.
+    // LINEAGE, PROVEN, not assumed.
     //
     // A consent template is versioned in place: `update consent_form_templates
     // set version = version + 1 where id = $id`. So template_id is the stable

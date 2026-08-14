@@ -1,4 +1,4 @@
-// THE definition of "the newest prior CHARTED session" — one rule, one module.
+// THE definition of "the newest prior CHARTED session", one rule, one module.
 //
 // WHY THIS EXISTS
 // ---------------
@@ -12,7 +12,7 @@
 // The rule is deliberately split in two halves so it can be enforced where each
 // half belongs:
 //
-//   SQL HALF (push to the database — the caller's query):
+//   SQL HALF (push to the database: the caller's query):
 //     sessions.studio_id      = :studioId
 //     sessions.client_id      = :clientId
 //     sessions.deleted_at    IS NULL
@@ -22,7 +22,7 @@
 //   newest-first, and which already embeds live entries.
 //
 //   CONTENT HALF (pure, below): void exclusion, the current-session exclusion,
-//   the time bound, and — the part a `LIMIT 1` can never express — whether the
+//   the time bound, and (the part a `LIMIT 1` can never express) whether the
 //   session actually CONTAINS charting.
 //
 // A session counts as charted when it has at least one live settings block, or
@@ -69,12 +69,12 @@ export type ChartedSessionOptions = {
   // appointment_id is the current visit record, not the visit before it.
   //
   // Strictly stronger than excludeSessionId for that job: `sessions.appointment_id`
-  // has no unique constraint (migration 0068 — "one appointment may have zero or
+  // has no unique constraint (migration 0068, "one appointment may have zero or
   // more sessions"), so excluding the single row a `limit(1)` linked-session
   // lookup happened to return would leave a sibling behind. It is also why this
   // is a JS-side filter and not a PostgREST `.neq("appointment_id", …)`: the
   // column is nullable, and `NULL <> 'x'` is NULL, so a SQL neq would silently
-  // discard every UNLINKED session — which is nearly all of them.
+  // discard every UNLINKED session, which is nearly all of them.
   excludeAppointmentId?: string | null;
   // Restrict to one modality. Deliberately OFF by default: a prior laser
   // session is legitimately "the last treatment" for a client mid-transition.
@@ -110,7 +110,7 @@ function newestFirst<T extends ChartedSessionCandidate>(
 }
 
 // The filters a `LIMIT 1` cannot express, applied to a candidate row. Content is
-// NOT checked here — that needs the blocks map, which callers load in one
+// NOT checked here: that needs the blocks map, which callers load in one
 // batched query over the surviving candidate ids.
 export function isChartedSessionCandidate(
   session: ChartedSessionCandidate,

@@ -147,7 +147,7 @@ export async function getBeforeTodayPreviews(
   // Migration 0128: attach the structured area rows so every summary surface
   // (last treatment, appointment prep, before-today) shows EVERY treated area +
   // laterality, not just the legacy primary_area. One bounded, studio-scoped
-  // query over the loaded block ids — no N+1, no cross-studio rows.
+  // query over the loaded block ids, no N+1, no cross-studio rows.
   if (blocks.length > 0) {
     const { data: areaRows } = await supabase
       .from("session_block_areas")

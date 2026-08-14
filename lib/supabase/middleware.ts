@@ -125,7 +125,7 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/api/cron/") ||
     // Stripe webhook authenticates via Stripe-Signature header verified
     // by stripe.webhooks.constructEvent inside the route handler. Exact
-    // path match — do NOT broaden to /api/stripe/* because future Stripe
+    // path match: do NOT broaden to /api/stripe/* because future Stripe
     // routes (refresh, dashboard link, etc.) should remain owner-only.
     pathname === "/api/stripe/webhook" ||
     // Twilio inbound SMS webhook authenticates via X-Twilio-Signature
@@ -143,7 +143,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   // PR #253 invite-only gate: an AUTHENTICATED user with no active
-  // practitioner row (an uninvited sign-in — auth.users exists but the
+  // practitioner row (an uninvited sign-in, auth.users exists but the
   // 0081 handle_new_user trigger created no studio/practitioner) is sent
   // to the safe /no-access page BEFORE any (app) layout or page renders.
   // Doing it here (not only in the shell layout) means no-studio users
@@ -155,7 +155,7 @@ export async function updateSession(request: NextRequest) {
   // guard as defense in depth.
   // /accept-invitation is authenticated (the !user gate above still applies)
   // but MUST be reachable by a signed-in user who has a pending invitation and
-  // no active membership yet (the existing-account reconciliation path) — so it
+  // no active membership yet (the existing-account reconciliation path), so it
   // is exempt from the no-studio gate, like /no-access itself.
   if (
     user &&

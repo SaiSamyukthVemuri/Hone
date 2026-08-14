@@ -1,9 +1,9 @@
-// Studio data export — client_clinical_notes (consultation + skin/hair analysis).
+// Studio data export: client_clinical_notes (consultation + skin/hair analysis).
 //
 // WHY THIS EXISTS
 // ===========================================================================
 // `public.client_clinical_notes` (0126/0127) is the authoritative append-only
-// store for the two narrative clinical record kinds — `consultation` and
+// store for the two narrative clinical record kinds: `consultation` and
 // `skin_hair_analysis`. Both are visible in the product and printable, and
 // both were MISSING from the studio data export. That is a records-portability
 // defect: an owner exporting "everything" received their charting, sessions,
@@ -11,8 +11,8 @@
 // each client.
 //
 // This module is the row-shaping half only, kept pure and DB-free so the parts
-// that are easy to get wrong — history retention, revision lineage, author
-// attribution and serialization of free text — are unit-testable without a
+// that are easy to get wrong (history retention, revision lineage, author
+// attribution and serialization of free text) are unit-testable without a
 // database or a ZIP. The query, the tenancy filter and the ZIP entry stay in
 // app/(app)/settings/data/actions.ts, which remains the single export
 // mechanism. Nothing here opens a second export path.
@@ -25,7 +25,7 @@
 // lineage column is carried verbatim. Collapsing to latest-only would silently
 // discard clinical history the database deliberately preserved.
 //
-// There is no soft-delete on this table — no `deleted_at`, no withdrawn flag —
+// There is no soft-delete on this table, no `deleted_at`, no withdrawn flag,
 // so unlike `sessions` there is nothing to filter. Emitting every row IS the
 // existing export policy applied honestly, not a widening of it.
 
@@ -38,7 +38,7 @@ export type ClinicalNoteExportSource = {
   kind: string;
   body: string;
   areas: string[] | null;
-  // Clinical event time — BACKDATABLE, and distinct from created_at.
+  // Clinical event time: BACKDATABLE, and distinct from created_at.
   occurred_at: string;
   // Revision lineage: when set, this row revises that note.
   supersedes_note_id: string | null;
@@ -86,13 +86,13 @@ export const CLINICAL_NOTES_CSV_FILENAME = "client_clinical_notes.csv";
  * THIS IS DELIBERATELY NOT THE SIBLING CONVENTION, and the difference is worth
  * stating because an earlier version of this comment claimed otherwise. The two
  * existing array columns in this export are flattened to delimiter-joined
- * strings before serialization — `electrolysis_entries.areas` with `"; "` and
+ * strings before serialization: `electrolysis_entries.areas` with `"; "` and
  * `treatment_plans.treatment_areas` with `" | "`. Both are chosen for
  * spreadsheet readability, and both are LOSSY: a value that itself contains the
  * delimiter cannot be recovered from the joined string.
  *
  * Clinical-note areas keep the JSON encoding instead, because this column is
- * part of a clinical record whose whole point here is historical portability —
+ * part of a clinical record whose whole point here is historical portability,
  * the exported form must be reconstructable, not merely readable. JSON preserves
  * the `text[]` structure exactly, including element count and any element that
  * contains punctuation. Nothing is dropped and no delimiter is overloaded.

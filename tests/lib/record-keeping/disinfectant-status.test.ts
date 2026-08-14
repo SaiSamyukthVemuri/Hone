@@ -86,6 +86,10 @@ describe("isDisinfectantAlert / labels", () => {
   });
   it("alert labels are human + factual", () => {
     expect(disinfectantStatusLabel("overdue")).toMatch(/overdue/i);
+    // Exact pin: the loose /overdue/i above survives any punctuation change, so
+    // it could not catch the label drifting. The browser spec asserts this
+    // exact text, so the producer and that assertion must agree.
+    expect(disinfectantStatusLabel("overdue")).toBe("Overdue: replace now");
     expect(disinfectantStatusLabel("due_today")).toBe("Due today");
     expect(disinfectantStatusLabel("due_soon")).toBe("Due soon");
     expect(disinfectantStatusLabel("scheduled")).toBe("");

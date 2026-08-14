@@ -5,14 +5,14 @@ import {
   daysBetween,
 } from "@/lib/record-keeping/disinfectant-status";
 
-// Overdue-disinfectant operational alerts for the Notification Centre (Willow —
+// Overdue-disinfectant operational alerts for the Notification Centre (Willow,
 // Issue #420 follow-up / Chloe: overdue "Replace now" disinfectants should also
 // appear in Notifications).
 //
 // COMPUTED, NOT PERSISTED. The overdue condition is a read-time DERIVED state
 // (lib/record-keeping/disinfectant-status.ts, the SAME source of truth the
 // Records page renders), so these alerts are computed on each Notification Centre
-// / header-badge render — never a stored row, cron, or email/SMS. That gives free
+// / header-badge render, never a stored row, cron, or email/SMS. That gives free
 // auto-resolution (recording a replacement / discard / a later due date makes the
 // item no longer overdue, so the alert simply stops being computed), free
 // deduplication (exactly one alert per overdue record, keyed by the record id),
@@ -20,7 +20,7 @@ import {
 // overdue yields a new alert. No migration required.
 //
 // Privacy: the alert carries ONLY studio-operational, member-visible fields
-// already shown on the Records page — the product/container label, the replace-by
+// already shown on the Records page: the product/container label, the replace-by
 // date, and days overdue. NEVER a client name, appointment, treatment/health data,
 // or an internal database identifier (the record id is used only as a stable React
 // key + dedup identity; it is never rendered).
@@ -54,7 +54,7 @@ const DISINFECTANTS_HREF = "/records?section=disinfectants";
 
 // Pure + deterministic (studio-local `todayYmd` is passed in), so it is fully
 // unit-testable and timezone-consistent with the Records UI. Overdue is decided
-// by the ONE shared helper (disinfectantDueStatus) — never re-derived here.
+// by the ONE shared helper (disinfectantDueStatus), never re-derived here.
 export function computeOverdueDisinfectantAlerts(
   records: ReadonlyArray<DisinfectantRow>,
   todayYmd: string,
@@ -91,10 +91,10 @@ export function computeOverdueDisinfectantAlerts(
 
 // Bounded, studio-scoped read + compute. Uses the RLS cookie client (the caller
 // passes the authenticated client + the server-derived studio id), so tenancy is
-// enforced by is_studio_member(studio_id) AND the explicit studio filter — no
+// enforced by is_studio_member(studio_id) AND the explicit studio filter, no
 // browser-supplied id is trusted. Fetches only the currently-in-use batches that
 // carry a replace-by date (a naturally small set), capped for safety; the overdue
-// decision + display are then applied by the pure helper above. One query — no
+// decision + display are then applied by the pure helper above. One query, no
 // per-record / per-practitioner lookups.
 export async function loadOverdueDisinfectantAlerts(
   supabase: Awaited<ReturnType<typeof createClient>>,

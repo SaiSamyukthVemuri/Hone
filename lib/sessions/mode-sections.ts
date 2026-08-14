@@ -1,7 +1,7 @@
 // Shared, pure UI mode-gating for electrolysis charting. A single source of
 // truth for which setting sections apply to a mode, used by BOTH the block
 // charting form and the whole-session copy editor so they can never drift.
-// (The DATA-layer gating — clearing off-mode values to null — lives in
+// (The DATA-layer gating (clearing off-mode values to null) lives in
 // buildTreatmentSetupDraftPatch and normalizeWholeSessionCopy; this only decides
 // what the UI shows.)
 

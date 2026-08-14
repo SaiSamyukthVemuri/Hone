@@ -4,7 +4,7 @@
 // settings" control (the only copy surface active today). It is deliberately
 // written to become the SHARED contract for the future migration-first
 // whole-session "Copy areas and settings" DRAFT workflow when that lands, so the
-// two surfaces cannot drift — but that whole-session workflow does not exist
+// two surfaces cannot drift, but that whole-session workflow does not exist
 // yet, so today only the in-form control consumes this module.
 //
 // A treatment-setup snapshot is the machine/probe SETUP a practitioner reuses
@@ -18,15 +18,15 @@
 //   destination id.
 //
 // THE PROBE LOT IS A DELIBERATE EXCEPTION, and this list used to lie about it.
-// The lot is not an outcome — it is part of the probe SETUP, and copying a probe
+// The lot is not an outcome. It is part of the probe SETUP, and copying a probe
 // without its lot let the destination silently auto-resolve a DIFFERENT lot from
 // unrelated history, swapping a traceability value the practitioner believed she
 // had copied. So the contract is three distinct rules, not one:
-//   * probe_lot_number      — COPIED verbatim (trimmed) with the probe;
-//   * probe_inventory_item_id — copied ONLY while that item is still an ACTIVE
+//   * probe_lot_number     : COPIED verbatim (trimmed) with the probe;
+//   * probe_inventory_item_id: copied ONLY while that item is still an ACTIVE
 //     lot for the copied probe; expired, archived or reclassified links are
 //     DROPPED (the lot TEXT survives, the traceability claim does not);
-//   * probe_lot_confirmed   — NEVER copied. A copy is a transcription, not a
+//   * probe_lot_confirmed  : NEVER copied. A copy is a transcription, not a
 //     check of the physical package, so the destination always starts
 //     unconfirmed and the UI asks for confirmation against the package.
 //
@@ -37,7 +37,7 @@
 // removed STRUCTURALLY rather than emitted blank: a patch that carried
 // `minutes: ""` would erase destination-entered work just as surely as one that
 // carried the source's value. Spreading a patch that does not own the key leaves
-// the destination's minutes exactly as the practitioner left them — blank when
+// the destination's minutes exactly as the practitioner left them: blank when
 // none was typed, and the typed value when there is one.
 //
 // Mode gating mirrors the write path (block-actions.ts structuredReadingColumns
@@ -73,7 +73,7 @@ export const ENTRY_SETUP_FIELDS = [
 ] as const;
 
 // The reusable setup that lives on the session_blocks row.
-// NOTE: minutes_performed is DELIBERATELY absent — it is an outcome of the
+// NOTE: minutes_performed is DELIBERATELY absent. It is an outcome of the
 // treatment that already happened, never reusable setup (see the header).
 export const BLOCK_SETUP_FIELDS = [
   "mode",
@@ -90,7 +90,7 @@ export const BLOCK_SETUP_FIELDS = [
   "probe_label",
   // The lot/batch travels WITH the probe. Copying the probe but not its lot left
   // the destination with a probe whose lot then auto-resolved from unrelated
-  // history — silently swapping a traceability value the practitioner believed
+  // history: silently swapping a traceability value the practitioner believed
   // she had copied. The lot is copied EXACTLY; the inventory link is copied only
   // when it still belongs to that probe (checked by the caller against live
   // inventory), and a copy is NEVER confirmed.
@@ -140,14 +140,14 @@ export type TreatmentSetupDraftPatch = {
   energyLevel: string;
   probeKey: string;
   machineFrequency: string;
-  // `minutes` is intentionally absent — minutes performed is an OUTCOME. The key
+  // `minutes` is intentionally absent: minutes performed is an OUTCOME. The key
   // is omitted rather than emitted blank so applying this patch over a draft
   // leaves the destination's own minutes untouched (see the header).
   thermolysisIntensityPercent: string;
   thermolysisDurationSeconds: string;
   galvanicMa: string;
   galvanicDurationSeconds: string;
-  // galvanicIntensityPercent is intentionally absent — a retired input is never
+  // galvanicIntensityPercent is intentionally absent: a retired input is never
   // copied into a new draft (see ENTRY_SETUP_FIELDS).
   unitsOfLye: string;
   pulseCount: string;
@@ -178,7 +178,7 @@ export function firstLiveEntry<T extends SetupSourceEntry>(
 
 // Build the reusable-setup patch a form draft applies. `block` supplies the
 // block-level setup; `firstEntry` supplies the mode-gated machine readings. The
-// resulting mode is the block's mode (falling back to the entry's) — readings
+// resulting mode is the block's mode (falling back to the entry's), readings
 // are gated on THAT resulting mode, never on which source columns happened to be
 // populated.
 export function buildTreatmentSetupDraftPatch(
@@ -187,7 +187,7 @@ export function buildTreatmentSetupDraftPatch(
   // Live inventory ids that are ACTIVE and belong to the copied probe. A link is
   // carried only when the source's item is in this set, so a copy can never
   // resurrect a link to an expired, archived or reclassified inventory row.
-  // Omit it to copy the lot NUMBER only (link dropped) — the safe default for a
+  // Omit it to copy the lot NUMBER only (link dropped), the safe default for a
   // caller that cannot check inventory.
   linkableInventoryItemIds?: ReadonlySet<string>,
 ): TreatmentSetupDraftPatch {

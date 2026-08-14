@@ -1,7 +1,7 @@
 // Shared, single-source terminology for the charting forms and the saved-record
 // display, so the two chip groups read identically everywhere and are never
 // confused with each other (Chloe charting-usability polish). This is a
-// display-only vocabulary — it changes NO stored field:
+// display-only vocabulary: it changes NO stored field:
 //   * Treatment observations  -> observation_chips (MULTI-select, what was seen)
 //   * Client / skin response  -> reaction_type     (SINGLE-select, how it reacted)
 // Keeping the strings in one module lets BlockSetupForm, SimplifiedEntryForm and
@@ -9,7 +9,7 @@
 
 export const TREATMENT_OBSERVATIONS_HEADING = "Treatment observations";
 export const TREATMENT_OBSERVATIONS_HELPER =
-  "What you saw during treatment — follicle, skin, and hair. Tap all that apply.";
+  "What you saw during treatment: follicle, skin, and hair. Tap all that apply.";
 
 export const CLIENT_RESPONSE_HEADING = "Client / skin response";
 export const CLIENT_RESPONSE_HELPER =
@@ -21,7 +21,7 @@ export const CLIENT_RESPONSE_HELPER =
 export const OBSERVATIONS_RESPONSE_HEADING =
   "Treatment observations & skin response";
 export const OBSERVATIONS_RESPONSE_HELPER =
-  "What you saw and how the skin responded — follicle, skin, hair, and reaction. Tap all that apply.";
+  "What you saw and how the skin responded: follicle, skin, hair, and reaction. Tap all that apply.";
 
 export const ADDITIONAL_NOTES_HEADING = "Additional notes";
 export const ADDITIONAL_NOTES_HELPER =

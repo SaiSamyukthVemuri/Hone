@@ -70,7 +70,7 @@ export async function getActivePractitioners(
  * Resolve a requested practitioner id (e.g. from the URL) to a valid scope.
  * NEVER trusts the id: it must be an active practitioner of THIS studio.
  * Anything else (missing, malformed, inactive, cross-studio) falls back to the
- * studio scope — without revealing whether the id belongs to another studio.
+ * studio scope: without revealing whether the id belongs to another studio.
  */
 export function resolveScope(
   requested: string | null | undefined,

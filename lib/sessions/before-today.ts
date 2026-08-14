@@ -82,7 +82,7 @@ export type BeforeToday = {
     energyLevel: number | null;
     // PR #268 (chart parts): which treatment area this latest setup was
     // recorded on, so the memory card can name it ("Latest recorded setup
-    // — Chin") instead of showing unlabeled chips. null for legacy data.
+    // Chin") instead of showing unlabeled chips. null for legacy data.
     areaName: string | null;
   } | null;
   // "27.12 MHz · Ballet F3 · Thermolysis · EL 14" joined form, kept

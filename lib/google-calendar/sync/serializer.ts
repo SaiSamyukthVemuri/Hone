@@ -2,7 +2,7 @@ import "server-only";
 import { buildEventMarker } from "./event-id";
 import type { GoogleEventPayload } from "./google-rest-client";
 
-// Google Calendar — Phase B2.3-c1: the fixed, minimal appointment event
+// Google Calendar: Phase B2.3-c1: the fixed, minimal appointment event
 // serializer. It is a PURE function over the frozen v1 allow-list (approved
 // 2026-07-14) plus the machine-only private correlation marker. It exports ZERO
 // client identity / clinical / payment / location / description / token data.
@@ -10,7 +10,7 @@ import type { GoogleEventPayload } from "./google-rest-client";
 // Timestamps: `dateTime` is the UTC instant in offset-bearing RFC3339 (…Z) and
 // `timeZone` carries the studio's IANA zone. An absolute instant + an IANA zone
 // is unambiguous and DST-correct: Google stores the exact instant and displays it
-// in the studio zone (recurrence is never used — Hone appointments are one-off).
+// in the studio zone (recurrence is never used: Hone appointments are one-off).
 // The end is EXCLUSIVE and is the human end (`ends_at`), never a buffered end.
 
 export type SerializerInput = {
@@ -32,7 +32,7 @@ function toUtcRfc3339(iso: string): string | null {
   return new Date(ms).toISOString(); // canonical …Z RFC3339 (offset-bearing)
 }
 
-// Build the core event payload (WITHOUT the event id — the create op supplies the
+// Build the core event payload (WITHOUT the event id: the create op supplies the
 // caller-chosen id in the insert body; patch addresses by id in the URL and sends
 // this same body, which preserves the private marker on every update).
 export function buildAppointmentEventPayload(input: SerializerInput): SerializerResult {

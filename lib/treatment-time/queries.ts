@@ -36,7 +36,7 @@ export {
 // primary_area as exactly that), so a block treating Left cheek + Right
 // sideburn credited its whole duration to Cheek and the sideburn disappeared
 // from the breakdown. The structured child rows are now selected in the SAME
-// embed — still one round-trip, no N+1 — and the bucket label is resolved by
+// embed (still one round-trip, no N+1) and the bucket label is resolved by
 // lib/treatment-time/area-bucket.ts, which credits a multi-area block ONCE to
 // one combined bucket. primary_area is retained as the legacy fallback. The
 // total-minutes and session-number helpers don't read either, so the extra
@@ -108,8 +108,8 @@ export async function getTotalTreatmentTime(
 
 // The structured child rows are authoritative; legacy blocks continue to flow
 // through primary_area and then bucketize(block_name). The result is still a
-// single Area-layer breakdown with no side fragmentation — `Underarms · left`
-// still rolls up into `Underarms` — but a block that treated SEVERAL areas now
+// single Area-layer breakdown with no side fragmentation: `Underarms · left`
+// still rolls up into `Underarms`, but a block that treated SEVERAL areas now
 // buckets under one combined label naming all of them, credited exactly once,
 // instead of silently crediting only its first area. See
 // lib/treatment-time/area-bucket.ts for the full rule.

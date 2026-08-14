@@ -7,14 +7,14 @@ import {
   type GoogleError,
 } from "./errors";
 
-// Google Calendar — Phase B2.1: server-side, fetch-only REST client for the
+// Google Calendar: Phase B2.1: server-side, fetch-only REST client for the
 // worker. Direct REST (no `googleapis`), consistent with Phase A. Every method
 // returns a typed result: success payload, or a normalized GoogleError. NO
 // token, event body, or PII is ever logged. Bounded per-request timeout via
 // AbortController; bounded response-body parsing.
 //
 // The event helpers (get/insert/patch/delete) are IMPLEMENTED and unit-tested
-// against mocked HTTP only. In B2.1 they are wired to NOTHING — no appointment
+// against mocked HTTP only. In B2.1 they are wired to NOTHING, no appointment
 // path, no production outbox, no live Google call.
 
 const DEFAULT_TIMEOUT_MS = 10_000;

@@ -4,12 +4,12 @@ import "server-only";
 //
 // For this launch, LIVE-mode charging is restricted to session payments only.
 // Manual no-show / late-cancellation fee charging is on a HARD HOLD in live
-// mode until it is explicitly enabled in a future PR — enforced server-side
+// mode until it is explicitly enabled in a future PR: enforced server-side
 // (prepare AND execute), never UI-only. TEST mode is unaffected: every reason
 // is allowed so existing manual-fee testing keeps working.
 //
 // This module changes NO charge/refund/webhook execution and adds NO Stripe
-// SDK calls or DB writes — it is a pure predicate + the user-facing message.
+// SDK calls or DB writes. It is a pure predicate + the user-facing message.
 
 export const LIVE_MANUAL_FEE_HOLD_MESSAGE =
   "Live cancellation and no-show fee charging is on hold for this launch. Use session payments only unless manual fees are explicitly approved.";

@@ -1,16 +1,16 @@
-// First-time studio-owner onboarding — step vocabulary + progress model.
+// First-time studio-owner onboarding: step vocabulary + progress model.
 //
 // PURE module: no DB, no Stripe, no I/O. Given the derived signals (real data)
 // and the persisted studio_onboarding row (acknowledgements / skips / stamps),
 // it produces the wizard model consumed by the overlay wizard, the pinned
-// dashboard progress card, and the admin onboarding-% view — ONE source of
+// dashboard progress card, and the admin onboarding-% view, ONE source of
 // truth so those surfaces never disagree.
 //
 // Honesty rules (carried over from lib/onboarding/getting-started.ts):
 //   * A data-backed step is "done" ONLY when real data proves it (a service
 //     exists, an open availability day exists, the public page is bookable,
 //     Stripe is genuinely ready). It flips back to "todo" if that data goes
-//     away — no false green.
+//     away, no false green.
 //   * Payments is OPTIONAL; bookings work without Stripe. It is "done" when
 //     truly ready OR explicitly skipped by the owner.
 //   * "welcome" and "done" are framing steps (no data signal); they advance on
@@ -47,7 +47,7 @@ export type OnboardingStepDef = {
   key: OnboardingStepKey;
   // Short heading shown in the wizard + progress card.
   title: string;
-  // One-line "why this matters" — no long paragraphs, no overclaims.
+  // One-line "why this matters", no long paragraphs, no overclaims.
   blurb: string;
   kind: OnboardingStepKind;
   // Primary CTA for the step, when it has an action to take. `href` deep-links
@@ -64,7 +64,7 @@ export const ONBOARDING_STEPS: Record<OnboardingStepKey, OnboardingStepDef> = {
     key: "welcome",
     title: "Welcome to Hone",
     blurb:
-      "Bookings, client history, treatment memory, photos and notes in one place. Let's get your studio ready to take its first booking — about five minutes.",
+      "Bookings, client history, treatment memory, photos and notes in one place. Let's get your studio ready to take its first booking, about five minutes.",
     kind: "intro",
     cta: null,
   },
@@ -233,7 +233,7 @@ export function buildOnboardingModel(
   const shouldCelebrate = requiredComplete && !persisted.celebratedAt;
 
   // Resume pointer. Honour the persisted position ONLY while that step is still
-  // actionable ('todo'); otherwise auto-advance to the first open step — so a
+  // actionable ('todo'); otherwise auto-advance to the first open step, so a
   // data step completed on a settings page shows the NEXT step on return (the
   // "automatically continue" behaviour), a skipped step is stepped past, and
   // when nothing is left the success step is shown.

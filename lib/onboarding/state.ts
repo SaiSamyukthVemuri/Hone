@@ -84,7 +84,7 @@ export async function setCurrentStep(
   return upsertOwner(studioId, { current_step: stepKey, status: "in_progress" });
 }
 
-// Explicitly advance past a framing step (welcome/done) — records the
+// Explicitly advance past a framing step (welcome/done), records the
 // acknowledgement and moves the pointer.
 export async function markStepAdvanced(
   studioId: string,
@@ -132,7 +132,7 @@ export async function reopenOnboarding(
 
 // Bounded DB-error marker for the trusted completion/celebration commands.
 // NEVER logs the raw Supabase/Postgres error, the studio, the user, or any DB
-// text — only onboarding_action_db_error:<op>:<safe_code>.
+// text, only onboarding_action_db_error:<op>:<safe_code>.
 function logOnboardingDbError(op: "complete" | "celebrate", code: string): void {
   console.error(`onboarding_action_db_error:${op}:${code}`);
 }
@@ -159,7 +159,7 @@ export async function completeOnboarding(
   return { ok: true, transitioned: data === true };
 }
 
-// The one-time celebration has been shown — never re-fire it. TRUSTED-SERVER-ONLY:
+// The one-time celebration has been shown, never re-fire it. TRUSTED-SERVER-ONLY:
 // celebrated_at is a protected field (the guard trigger blocks direct browser
 // writes), so this calls the service-role admin_mark_onboarding_celebrated command
 // (active-owner + flag verified), which stamps celebrated_at exactly once. The

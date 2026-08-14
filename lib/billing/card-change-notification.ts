@@ -7,7 +7,7 @@ import { ensurePractitionerNotification } from "@/lib/notifications/practitioner
 // facing notification in the existing in-app notification center.
 //
 // This is invoked from the setup_intent.succeeded webhook arm AFTER the
-// card row is persisted — from every success branch (fresh insert, the
+// card row is persisted: from every success branch (fresh insert, the
 // idempotency early-return where the card was already saved, and the 23505
 // backstop). It is awaited; a failure throws so the webhook releases its
 // Stripe event claim and Stripe retries.
@@ -23,14 +23,14 @@ import { ensurePractitionerNotification } from "@/lib/notifications/practitioner
 // Added vs replaced is decided from PERSISTED same-mode payment-method
 // history, never from the browser's "add" or "replace" portal mode:
 //   * card_added   -> exactly one payment-method row exists for the
-//                     (studio, client, Stripe mode) — the one just saved.
+//                     (studio, client, Stripe mode), the one just saved.
 //   * card_replaced -> a prior row exists for that pair+mode (the previous
 //                     active card was retired to status='removed' by the
 //                     webhook pre-flip, so the row count is >= 2).
 //
 // Only card_added / card_replaced ship. card_removed and default_card_changed
 // are NOT emitted here because the portal has no card-removal or default-card
-// workflow — those product actions do not exist yet (documented as future
+// workflow: those product actions do not exist yet (documented as future
 // events on the PractitionerNotificationEventType union).
 //
 // Privacy: the body carries only the client name (already visible to every
@@ -39,8 +39,8 @@ import { ensurePractitionerNotification } from "@/lib/notifications/practitioner
 // id, email, or phone.
 
 // Pure content builder. Kept separate + exported so the exact studio-facing
-// wording, event type, and href — and the privacy guarantee (only client name
-// + brand + last4, nothing else) — are unit-testable without a database.
+// wording, event type, and href, and the privacy guarantee (only client name
+// + brand + last4, nothing else), are unit-testable without a database.
 export function buildCardChangeNotification(input: {
   clientName: string;
   brand: string;
@@ -83,7 +83,7 @@ export async function ensureCardChangeNotification(
 ): Promise<{ eventType: "card_added" | "card_replaced"; deduped: boolean }> {
   const { studioId, clientId, livemode, setupIntentId } = params;
 
-  // 1. The card row THIS SetupIntent saved — authoritative brand/last4.
+  // 1. The card row THIS SetupIntent saved: authoritative brand/last4.
   //    Keyed by setup_intent_id so the content describes the exact card this
   //    event represents (stable across the fresh + retry paths).
   const { data: card, error: cardErr } = await admin
@@ -147,8 +147,8 @@ export async function ensureCardChangeNotification(
 
   // 4. Secure the notification durably (awaited). The dedupe key is the
   //    mode-scoped SetupIntent, so any re-attempt for the same successful
-  //    SetupIntent — a Stripe redelivery OR a second distinct Event object for
-  //    the same SetupIntent — conflicts on the dedupe key and returns
+  //    SetupIntent: a Stripe redelivery OR a second distinct Event object for
+  //    the same SetupIntent: conflicts on the dedupe key and returns
   //    deduped:true. The already-created admin client is passed through.
   const dedupeKey = `stripe:setup_intent:${livemode ? "live" : "test"}:${setupIntentId}`;
   const { deduped } = await ensurePractitionerNotification(admin, {

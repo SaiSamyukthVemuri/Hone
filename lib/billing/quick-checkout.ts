@@ -7,7 +7,7 @@ import type { SessionPaymentAmountResult } from "@/lib/billing/session-payment-a
 import type { SessionPaymentEligibility } from "@/lib/billing/session-payment-types";
 
 // Quick checkout (Chloe feedback: checkout takes too many clicks while the client
-// is waiting). This resolver is the ONLY new server logic — it turns an
+// is waiting). This resolver is the ONLY new server logic: it turns an
 // APPOINTMENT into the exact same eligibility + authoritative-amount decision the
 // session detail page uses, so the quick-checkout modal can render the
 // existing SessionPaymentPrepareCard and drive the existing prepare/execute/

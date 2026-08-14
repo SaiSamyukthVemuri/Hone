@@ -54,7 +54,7 @@ const RULES = [
 // Baseline risk tier (ENGINEERING_STANDARDS.md).
 //
 // This is DETERMINISTIC PATH EVIDENCE, NOT SEMANTIC PROOF. It cannot see what a
-// file does — only where it lives. A file that looks ordinary here may still
+// file does, only where it lives. A file that looks ordinary here may still
 // cross a trust boundary in its body, so every session and reviewer performs
 // semantic risk judgement on top of this and escalates when warranted. This
 // output may never be cited to DE-escalate a change whose behaviour crosses a
@@ -62,7 +62,7 @@ const RULES = [
 // is not semantic proof".
 //
 // Each rule names one distinct failure class and either reuses an existing lane
-// key above — so there is ONE path map, not a competing second one — or adds
+// key above (so there is ONE path map, not a competing second one) or adds
 // patterns for a boundary the lane map does not already isolate.
 //
 // Reasons are fixed literal strings containing no comma, semicolon or newline,
@@ -75,7 +75,7 @@ const TIER_RULES = [
     reason: "payment authority path changed",
     // DELIBERATELY NOT `lane: "payment"`. The CI payment lane matches the bare
     // words "payment"/"stripe" anywhere in a path, which is exactly right for
-    // SELECTING tests — if a file mentions payment, run the payment suites — and
+    // SELECTING tests (if a file mentions payment, run the payment suites) and
     // exactly wrong for assigning engineering ceremony. Under the lane,
     // `components/payment-method-card.tsx` baselined T3 even though it is
     // read-only practitioner UI with no Charge, Replace or Remove control: a
@@ -85,7 +85,7 @@ const TIER_RULES = [
     //
     // What counts as authority: the money-moving and Stripe-credential modules,
     // their proof surfaces, and server ACTIONS named for the money they move.
-    // Presentation never matches — every action pattern requires `-actions.ts`,
+    // Presentation never matches: every action pattern requires `-actions.ts`,
     // so a component cannot be dragged in by its filename. A presentation file
     // that later grows money-moving behaviour is caught by semantic escalation,
     // not by its name.
@@ -93,7 +93,7 @@ const TIER_RULES = [
     // A WORKED EXAMPLE OF THE LIMIT, because it is not hypothetical.
     // `lib/payment-methods/refresh-card-authorization-pointer.ts` baselines T1
     // here: it moves no money and matches no authority path. Its own header
-    // calls it "the load-bearing write that closes the audit-trail gap" — a
+    // calls it "the load-bearing write that closes the audit-trail gap", a
     // service-role write binding a stored card to the consent artefact that
     // authorizes it. A path cannot see that, and widening this rule to the word
     // "payment" to catch it would drag every presenter and copy file back to T3,
@@ -153,7 +153,7 @@ const TIER_RULES = [
     reason: "server API or server action boundary changed",
     // Three shapes, because Hone uses three. `app/api/**` and `app/actions/**`
     // are the explicit ones; `*-actions.ts` catches the named-suffix convention.
-    // The fourth pattern catches the CONVENTIONAL Next colocated file — a bare
+    // The fourth pattern catches the CONVENTIONAL Next colocated file: a bare
     // `actions.ts` beside the page it serves, e.g. `app/(app)/dashboard/actions.ts`,
     // which is `"use server"` and signs the user out. Without it that file
     // matched no boundary rule and fell to the generic T1 application signal,
@@ -184,7 +184,7 @@ const match = (file, patterns) => patterns.some((re) => re.test(file));
 
 /**
  * Highest applicable deterministic tier wins. `lanes` MUST be the raw per-rule
- * hits, never the post-`full_matrix_required` expansion — that expansion sets
+ * hits, never the post-`full_matrix_required` expansion: that expansion sets
  * every lane true, which would misreport a `package.json` bump as T3.
  *
  * `riskReasons` explains why the baseline landed on the winning tier, so it
@@ -192,7 +192,7 @@ const match = (file, patterns) => patterns.some((re) => re.test(file));
  */
 function baselineRisk(list, lanes, docsOnly) {
   if (list.length === 0) {
-    return { baselineRiskTier: "T3", riskReasons: ["no detectable diff — failing safe to the highest tier"] };
+    return { baselineRiskTier: "T3", riskReasons: ["no detectable diff: failing safe to the highest tier"] };
   }
   if (docsOnly) return { baselineRiskTier: "T0", riskReasons: ["documentation and non-runtime files only"] };
 

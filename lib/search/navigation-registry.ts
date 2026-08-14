@@ -1,24 +1,24 @@
 import "server-only";
 
-// Global Search V2-A — the canonical searchable navigation/settings registry.
+// Global Search V2-A, the canonical searchable navigation/settings registry.
 //
 // WHY THIS EXISTS
 // Search V1 shipped six hard-coded page shortcuts, one of which was a single
 // generic "Settings" row. Chloe's ask ("everything in Hone should be
 // searchable, doesn't matter what") is not satisfied by a shortcut to the
-// settings *index*: an individual setting — the booking buffer, the 24-hour
-// reminder toggle, photo consent — was undiscoverable unless you already knew
+// settings *index*: an individual setting (the booking buffer, the 24-hour
+// reminder toggle, photo consent) was undiscoverable unless you already knew
 // which of the fifteen settings tabs owned it.
 //
 // This module is the ONE place that answers "what can a practitioner navigate
 // to, what is it called, what would someone type to find it, and who is
 // allowed to see that it exists".
 //
-// SECURITY POSTURE — search is discovery over existing authority, never
+// SECURITY POSTURE: search is discovery over existing authority, never
 // authority itself:
 //   * Every entry carries an explicit `visibility`. `owner` entries are
 //     filtered out for a non-owner BEFORE matching, so an owner-only surface
-//     is never advertised — not even as a "no permission" row.
+//     is never advertised, not even as a "no permission" row.
 //   * `import "server-only"` keeps this module out of the browser bundle
 //     entirely. Filtering owner entries out of the RESULTS would still have
 //     shipped their titles to every practitioner's browser as dead code; the
@@ -27,7 +27,7 @@ import "server-only";
 //     clinical data in this module at all, and no way for it to widen a row's
 //     visibility. It is static product metadata.
 //   * Every href is an app-internal path. No tokens, no ids, no secrets, no
-//     query values carrying identifiers — pinned by
+//     query values carrying identifiers: pinned by
 //     tests/lib/search/navigation-registry.test.ts.
 //   * Deliberately EXCLUDED destinations are recorded in NON_SEARCHABLE_ROUTES
 //     with a reason rather than omitted silently, so the coverage tripwire can
@@ -64,7 +64,7 @@ export type NavEntry = {
   description: string;
   /**
    * Terminology a practitioner would actually type. These are what make
-   * "hours" find Availability and "buffer" find Booking — the page titles
+   * "hours" find Availability and "buffer" find Booking: the page titles
    * contain neither word.
    */
   keywords: readonly string[];
@@ -437,7 +437,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     visibility: "owner",
     priority: 440,
   },
-  // IMPORT-01. Still searchable — an owner looking for "import" needs to find
+  // IMPORT-01. Still searchable: an owner looking for "import" needs to find
   // the one page that tells them how to actually get their records moved. What
   // changed is the promise: the title no longer implies a self-service run the
   // server will refuse, and the description states the operator-assisted model
@@ -448,7 +448,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     title: "Import clients and history",
     category: "Settings",
     href: "/settings/import",
-    description: "Operator-assisted — Hone brings your existing records over for you",
+    description: "Operator-assisted: Hone brings your existing records over for you",
     keywords: ["quick import", "import", "csv", "spreadsheet", "migrate", "migration", "upload clients", "bring data", "transfer", "operator assisted", "assisted import", "migration help", "help importing", "move my clients"],
     visibility: "owner",
     priority: 450,
@@ -789,13 +789,13 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Deliberate exclusions — the other half of the coverage decision
+// Deliberate exclusions: the other half of the coverage decision
 // ---------------------------------------------------------------------------
 //
 // Every authenticated destination is either IN NAV_ENTRIES or listed here with
 // a reason. tests/lib/search/navigation-registry.test.ts walks the app router
 // and fails when a route appears in neither, so a newly-added Settings page
-// cannot silently become undiscoverable — nor silently discoverable.
+// cannot silently become undiscoverable: nor silently discoverable.
 
 export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   route: string;
@@ -828,7 +828,7 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   },
   {
     route: "/admin/audit",
-    reason: "Platform audit surface — raw change payloads, cross-studio.",
+    reason: "Platform audit surface: raw change payloads, cross-studio.",
   },
   {
     route: "/admin/ops-alerts",
@@ -847,7 +847,7 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
 /**
  * Record Keeping sections that exist but are deliberately NOT advertised.
  * Kept separate from NON_SEARCHABLE_ROUTES because the underlying ROUTE
- * (/records) IS searchable — it is this section of it that is withheld.
+ * (/records) IS searchable. It is this section of it that is withheld.
  */
 export const NON_SEARCHABLE_RECORD_SECTIONS: ReadonlyArray<{
   section: string;

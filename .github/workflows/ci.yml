@@ -68,7 +68,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Full history so the PR BASE sha is reachable — the diff must be
+          # Full history so the PR BASE sha is reachable: the diff must be
           # against the merge base, not merely the previous commit, or a
           # multi-commit PR would classify only its most recent push.
           fetch-depth: 0
@@ -260,7 +260,7 @@ jobs:
         # Was `supabase db start` (Postgres only). The DB-integration lane now
         # also exercises server-side code that reaches Supabase over the REST API
         # via createAdminClient() (e.g. the REAL getSessionPaymentEligibility
-        # resolver) — that needs kong (54321), not just Postgres (54322). Bring
+        # resolver), that needs kong (54321), not just Postgres (54322). Bring
         # up the same trimmed stack the browser-e2e job uses (proven in CI); the
         # node-pg harness (54322) and `db reset --local` are unaffected.
         run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
@@ -274,7 +274,7 @@ jobs:
 
       - name: Fresh-managed extension proof
         # RC hardening: proves the just-migrated local DB matches a FRESH MANAGED
-        # project's extension layout — pgcrypto in `extensions`, and with
+        # project's extension layout: pgcrypto in `extensions`, and with
         # `extensions` OFF the session search_path a BARE pgcrypto call fails
         # (42883) while extensions.<fn> succeeds. Together with the static
         # extension-qualification guard this proves the whole chain (through 0151)
@@ -306,7 +306,7 @@ jobs:
   # no external service is called; live payments stay structurally
   # disabled. Separate job: a flake here never blocks the fast lane.
   browser-e2e-shard:
-    # Dynamic name — branch protection must NOT depend on it. The stable
+    # Dynamic name: branch protection must NOT depend on it. The stable
     # required check is the `browser-e2e` aggregator at the end of this file.
     name: browser shard ${{ matrix.shard }} (${{ needs.changes.outputs.browser_extended == 'true' && 'extended' || 'targeted' }})
     needs: changes
@@ -316,13 +316,13 @@ jobs:
     # deliberately ABOVE the target, so a job that is merely slow fails loudly on
     # its own terms instead of being cancelled at exactly its target. Run
     # 30767725631 was cancelled at a 10-minute hard timeout while shard 2 had
-    # completed 72/90 tests with ZERO failures — a budget problem misreported as
+    # completed 72/90 tests with ZERO failures: a budget problem misreported as
     # a test failure.
     #
     # The TARGETED ceiling was raised 10 -> 15 after run 30814919019 hit it
     # twice on one unchanged head, both times with ZERO recorded test failures:
-    #   attempt 1 — 101/105 passed,  4 not reached, cancelled at ~10m15s
-    #   attempt 2 —  95/105 passed, 10 not reached, cancelled at ~10m15s
+    #   attempt 1, 101/105 passed,  4 not reached, cancelled at ~10m15s
+    #   attempt 2,  95/105 passed, 10 not reached, cancelled at ~10m15s
     # The identical selection had passed in 9m37s on the prior head, so the lane
     # was sitting on its ceiling with no margin. Raising the ceiling does not
     # change the performance target: a targeted run that needs more than ~10
@@ -409,7 +409,7 @@ jobs:
           set -euo pipefail
           echo "reason: ${{ needs.changes.outputs.browser_reason }}"
           if [ "${{ needs.changes.outputs.browser_extended }}" = "true" ]; then
-            echo "extended coverage — native Playwright shard ${{ matrix.shard }} of 4"
+            echo "extended coverage: native Playwright shard ${{ matrix.shard }} of 4"
             npx playwright test --shard=${{ matrix.shard }}/4
           else
             echo "targeted specs: ${{ needs.changes.outputs.browser_specs }}"
@@ -444,7 +444,7 @@ jobs:
           echo "test duration (s)  : $(( NOW - SETUP_END ))"
           echo "job outcome        : ${{ steps.e2e.outcome }}"
           if [ "${{ steps.e2e.outcome }}" = "cancelled" ]; then
-            echo "NOTE: cancelled — most likely the job exceeded its timeout budget."
+            echo "NOTE: cancelled. Most likely the job exceeded its timeout budget."
           fi
 
   # Stable required check. Branch protection points HERE, never at a dynamic
@@ -476,7 +476,7 @@ jobs:
           # changed-path detection's OUTPUTS. When that job does not succeed its
           # outputs are the empty string, so REQUIRED computes to "false", the
           # shard job reports "skipped", and this aggregator concluded "no
-          # browser coverage required for this diff — satisfied" and exited 0.
+          # browser coverage required for this diff: satisfied" and exited 0.
           #
           # That is a fail-OPEN: the one check the repository designates as the
           # stable required check reported SUCCESS having run zero tests, purely
@@ -493,7 +493,7 @@ jobs:
           # coverage was required, and "we could not tell" must never render as
           # a green required check.
           if [ "${CHANGES_RESULT:-}" != "success" ]; then
-            echo "::error::changed-path detection did not succeed (result: ${CHANGES_RESULT:-<missing>}) — browser coverage cannot be proven unnecessary, so this required check fails closed"
+            echo "::error::changed-path detection did not succeed (result: ${CHANGES_RESULT:-<missing>}), browser coverage cannot be proven unnecessary, so this required check fails closed"
             exit 1
           fi
 
@@ -515,7 +515,7 @@ jobs:
               echo "::error::browser shard result is MISSING while browser coverage was required"
               exit 1
             fi
-            echo "no shard result and no browser coverage required — satisfied"
+            echo "no shard result and no browser coverage required: satisfied"
             exit 0
           fi
 
@@ -533,12 +533,12 @@ jobs:
                 echo "::error::shards were skipped but the diff required browser coverage"
                 exit 1
               fi
-              echo "no browser coverage required for this diff — satisfied"
+              echo "no browser coverage required for this diff: satisfied"
               exit 0 ;;
             cancelled)
               # Run 30767725631: shards were cancelled at their hard timeout with
               # zero test failures. That must FAIL the required check, never pass.
-              echo "::error::browser shard(s) were CANCELLED (timeout or manual cancel) — treated as failure"
+              echo "::error::browser shard(s) were CANCELLED (timeout or manual cancel), treated as failure"
               exit 1 ;;
             *)
               echo "::error::browser shard(s) did not pass (result: $SHARD_RESULT)"
@@ -550,7 +550,7 @@ jobs:
   # external service), but this is the ONLY lane that enables the guarded fake
   # Stripe processor: it sets the two server-only markers (HONE_E2E_FAKE_STRIPE=1
   # + a per-job HONE_E2E_RUN_ID) so the fake activation guard passes here and
-  # NOWHERE else. No Vercel markers, sk_test_dummy only — so no real charge,
+  # NOWHERE else. No Vercel markers, sk_test_dummy only, so no real charge,
   # refund, email, or SMS can leave this lane. Separate job (own runner) → no
   # port collision with browser-e2e, and a flake here never blocks the fast lane.
   payment-browser-e2e:
@@ -647,13 +647,13 @@ jobs:
   # journey (in-DOM ConfirmDialog that replaced native window.confirm, optional
   # note, in-place charge) on the CHROMIUM engine at iPhone dimensions (iPhone 13
   # viewport + iOS UA + hasTouch) plus a Pixel 5 control. NOTE: this is Chromium
-  # emulation, NOT a real WebKit/iOS-Safari run — the repo E2E harness is
+  # emulation, NOT a real WebKit/iOS-Safari run: the repo E2E harness is
   # hard-wired to plain-http http://localhost, and a real WebKit context upgrades
   # localhost subresources to https (no hydration) + drops Secure cookies over
   # http (auth fails); a real-WebKit lane needs an HTTPS harness (tracked as a
   # follow-up). Same LOCAL-only, guarded-fake-Stripe posture as
   # payment-browser-e2e (HONE_E2E_FAKE_STRIPE=1 + a per-job HONE_E2E_RUN_ID, no
-  # Vercel markers, sk_test_dummy) — no real charge/refund/email/SMS/Google can
+  # Vercel markers, sk_test_dummy), no real charge/refund/email/SMS/Google can
   # leave the lane; the specs additionally assert zero real provider egress.
   # Separate job (own runner) → no port collision with the other browser lanes.
   mobile-completion-e2e:

@@ -223,7 +223,7 @@ export function buildMissingRecordsAssistant(
 }
 
 // ---------------------------------------------------------------------------
-// Loader — bounded, read-only, studio-scoped reads over tables Hone
+// Loader: bounded, read-only, studio-scoped reads over tables Hone
 // already has RLS on. Mirrors the clients-needing-attention loader shape:
 // scan the recent window, group in memory, hand pure facts to the builder.
 // No service-role, no public route, no model/provider call, no write.
@@ -348,7 +348,7 @@ export async function getMissingRecordsAssistant(
   // Review 3779063526. The follow-up gap ("a plan exists but nothing is on the
   // calendar") was retired with the `follow_up` To-do kind: a plan for the next
   // visit is clinical memory, not unresolved work, so not having rebooked yet
-  // is not a task. Its plumbing outlived it — this loader still selected
+  // is not a task. Its plumbing outlived it: this loader still selected
   // next_session_note, derived follow-up client ids and ran an extra
   // appointments query, then carried nextVisitNote and hasUpcomingAppointment
   // into RecordedSession that nothing read. That cost a database round trip on

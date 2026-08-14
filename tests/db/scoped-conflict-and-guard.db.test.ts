@@ -97,7 +97,7 @@ const conflict = (
   ).then((r) => r.rows as Array<{ source_kind: string; starts_at: string; ends_at: string; resource_key: string }>);
 
 // ---------------------------------------------------------------------------
-describe("0139 defect #2 — inactive-practitioner recurring-rule guard", () => {
+describe("0139 defect #2, inactive-practitioner recurring-rule guard", () => {
   it("allows toggle-off, edit-disabled, reassign-to-active, studio-wide, delete; blocks re-enable + save-active + new-assign", async () => {
     const rule = await insRule(P(1), true); // P(1) active at creation
     expect(rule.id).toBeTruthy();

@@ -2,7 +2,7 @@ import "server-only";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 // Server-only authenticated encryption for Google OAuth secrets (refresh token +
-// PKCE verifier). Google Calendar — Phase A.
+// PKCE verifier). Google Calendar: Phase A.
 //
 // This mirrors lib/conversion/token-crypto.ts (AES-256-GCM, server-only,
 // fail-closed) but with two deliberate differences the design requires:
@@ -15,13 +15,13 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 //
 //        v1:<keyVersion>:<base64(iv)>:<base64(tag)>:<base64(ciphertext)>
 //
-//      * `v1`         — scheme id (AES-256-GCM, 12-byte IV, 16-byte tag).
-//      * <keyVersion> — the GOOGLE_TOKEN_ENCRYPTION_KEY_VERSION that encrypted
+//      * `v1`        , scheme id (AES-256-GCM, 12-byte IV, 16-byte tag).
+//      * <keyVersion>, the GOOGLE_TOKEN_ENCRYPTION_KEY_VERSION that encrypted
 //                       this row (also persisted alongside as encryption_key_
 //                       version). Used to pick the right key on decrypt/rotate.
 //
 // FAIL-CLOSED everywhere: a missing/malformed key or a wrong-key/tampered blob
-// returns { ok:false, reason } — never throws, never logs, never leaks the token
+// returns { ok:false, reason }, never throws, never logs, never leaks the token
 // or the raw crypto error. `import "server-only"` guarantees this never reaches
 // a client bundle; the key is read from process.env only inside this module.
 
@@ -135,7 +135,7 @@ export function decryptGoogleSecret(
     const dec = Buffer.concat([decipher.update(data), decipher.final()]);
     return { ok: true, secret: dec.toString("utf8") };
   } catch {
-    // Wrong key / tampered / corrupt — never surface the raw error or secret.
+    // Wrong key / tampered / corrupt, never surface the raw error or secret.
     return { ok: false, reason: "decrypt_failed" };
   }
 }

@@ -41,7 +41,7 @@ export const MERGED_OBSERVATION_CHIPS: ReadonlyArray<string> = (() => {
   return out;
 })();
 
-// Back-compat alias — now the merged vocabulary (reaction labels are valid chips).
+// Back-compat alias: now the merged vocabulary (reaction labels are valid chips).
 export const OBSERVATION_CHIPS: ReadonlyArray<string> = MERGED_OBSERVATION_CHIPS;
 
 const CANONICAL = new Map<string, string>(
@@ -82,7 +82,7 @@ function canonicalFor(token: string): string | undefined {
 
 // Coerce an unknown stored value (jsonb) into a clean canonical chip array:
 // keep only known chips (normalized to canonical casing), dedup, drop anything
-// unrecognized. Never throws — a null/garbage/legacy value yields [] rather than
+// unrecognized. Never throws: a null/garbage/legacy value yields [] rather than
 // breaking the render. This is the single read-side contract for the column.
 export function normalizeChips(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -101,7 +101,7 @@ export function normalizeChips(value: unknown): string[] {
 
 // Single DISPLAY/preload contract for a stored entry (structured column +
 // legacy comments). Returns the chips to show as pills and the free-text note to
-// show separately — WITHOUT ever mutating stored data. Structured rows use their
+// show separately: WITHOUT ever mutating stored data. Structured rows use their
 // observation_chips (+ full comments as the note). Legacy rows (empty structured
 // column) hydrate chips out of `comments` so pre-0108 observations still render
 // as pills, and the note shows the remaining free-text so nothing double-shows
@@ -138,12 +138,12 @@ export type StoredChipsVerification =
 // array element-by-element:
 //   * must be an array;
 //   * every member must be a string;
-//   * every member must be EXACTLY a canonical chip label — we insert canonical
+//   * every member must be EXACTLY a canonical chip label: we insert canonical
 //     labels, so a value coming back non-canonical (unknown / alias-form / wrong
 //     casing) means the stored data is not what we wrote → fail (documented
 //     contract: noncanonical stored casing/spacing FAILS raw verification rather
 //     than being silently canonicalized away);
-//   * NO raw duplicates (a repeated member fails — never masked by dedup);
+//   * NO raw duplicates (a repeated member fails, never masked by dedup);
 //   * the set of members must equal `expected` exactly (no missing, no extra).
 // `expected` is the canonical, unique array we submitted to the insert. Returns a
 // structured verdict so the caller can distinguish verified success from a
@@ -212,7 +212,7 @@ export function toggleFindingChip(chips: readonly string[], chip: string): strin
 // Split a LEGACY `comments` string (chips + free-text mixed as comma tokens)
 // into structured chips + the remaining free-text, WITHOUT losing anything.
 // Used ONLY to present a legacy record (observation_chips empty) in the new
-// structured UI — the stored `comments` is untouched until the practitioner
+// structured UI: the stored `comments` is untouched until the practitioner
 // saves. Tokens matching a canonical chip become chips (deduped, canonical
 // casing); every other token is preserved verbatim as free-text, rejoined with
 // the same ", " separator and in original order. This is the non-destructive,
@@ -222,7 +222,7 @@ export function toggleFindingChip(chips: readonly string[], chip: string): strin
 // merged chip set: the normalized observation chips PLUS the reaction's label
 // (folded in) if the legacy reaction_type is set and not already present. This is
 // the ONE contract for hydrating the unified box on load, rendering the saved
-// record, exporting, and driving reaction-aware surfaces — so old (reaction_type)
+// record, exporting, and driving reaction-aware surfaces, so old (reaction_type)
 // and new (chip-in-observation_chips) records read identically. Never mutates.
 export function mergeReactionIntoChips(
   observationChips: unknown,
@@ -253,19 +253,19 @@ export function hydrateLegacyChips(comments: string | null | undefined): {
     // string-guessed into a coded reaction (which would spuriously flag safety
     // surfaces). It stays as free-text, exactly as before unification.
     //
-    // Chloe Session 1A — DELIBERATELY STILL `isReactionChipLabel`, NOT the wider
+    // Chloe Session 1A, DELIBERATELY STILL `isReactionChipLabel`, NOT the wider
     // `isClinicalResponseLabel`. The distinction is about PROVENANCE, not about
     // which labels are safety-relevant:
     //   * the seven CODED labels had their own single-select column
     //     (session_blocks.reaction_type), so a matching comment token is more
-    //     likely incidental prose than a recorded selection — do not promote;
+    //     likely incidental prose than a recorded selection: do not promote;
     //   * the three SAFETY-RELEVANT labels ("Redness (erythema)",
     //     "Slight swelling (edema)", "Sensitive skin") only ever existed as
     //     COMMON_COMMENTS chips written by the old picker via appendComment, so
     //     an exact whole-token match IS the practitioner's own selection. This
     //     is the documented non-destructive per-record migration path, and
     //     demoting them to free text would visibly lose historical pills.
-    // Matching is exact whole-token after a comma split — never substring — so
+    // Matching is exact whole-token after a comma split (never substring) so
     // prose like "some redness after" is not affected either way.
     if (canon && !isReactionChipLabel(canon)) {
       if (!seen.has(canon)) {

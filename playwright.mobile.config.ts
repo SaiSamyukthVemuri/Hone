@@ -16,17 +16,17 @@ import {
 // hasTouch), plus a Pixel 5 control. The repo's E2E harness is hard-wired to a
 // plain-http http://localhost:3111 origin (e2e/helpers/local-env.ts refuses any
 // other), and a real WebKit context upgrades every localhost subresource to
-// https (no hydration) and drops Secure cookies over http (auth fails) — so a
+// https (no hydration) and drops Secure cookies over http (auth fails), so a
 // real-WebKit lane needs an HTTPS E2E harness, which is a separate infra
 // follow-up (see the PR's follow-up list). The ConfirmDialog under test is
-// standard in-DOM markup with no engine-specific APIs — the WebKit-specific
-// failure mode was the native window.confirm dialog, which this PR removes — so
+// standard in-DOM markup with no engine-specific APIs: the WebKit-specific
+// failure mode was the native window.confirm dialog, which this PR removes, so
 // the Chromium iPhone-profile run gives high confidence for the fix itself.
 //
 // Same LOCAL-only, no-secrets posture as the payment lane: it reuses
 // PAYMENT_WEB_SERVER_ENV, so the guarded fake Stripe is enabled ONLY here and in
 // the payment lane (HONE_E2E_FAKE_STRIPE=1 + a per-run HONE_E2E_RUN_ID, no Vercel
-// markers, sk_test_dummy) — no real charge/refund/email/SMS/Google can leave the
+// markers, sk_test_dummy), no real charge/refund/email/SMS/Google can leave the
 // lane; the journey additionally asserts zero real provider egress. Port 3111
 // (the proven magic-link redirect / site_url origin); the mobile job runs on its
 // own CI runner so there is no port collision, and reuseExistingServer is off in
@@ -56,7 +56,7 @@ export default defineConfig({
     },
     {
       name: "mobile-control",
-      // Pixel 5 (Chromium mobile) — the control that proves the fix is not
+      // Pixel 5 (Chromium mobile), the control that proves the fix is not
       // iPhone-viewport-specific.
       use: { ...devices["Pixel 5"] },
     },

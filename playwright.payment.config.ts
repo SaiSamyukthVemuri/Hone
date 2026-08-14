@@ -33,7 +33,7 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
     baseURL: PAYMENT_E2E_APP_ORIGIN,
     // iPad-sized viewport (Chloe charges from an iPad) without pulling in the
-    // webkit iPad device preset — chromium is the only browser CI installs.
+    // webkit iPad device preset: chromium is the only browser CI installs.
     viewport: { width: 1080, height: 810 },
     hasTouch: true,
     trace: "retain-on-failure",

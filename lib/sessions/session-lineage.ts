@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 //
 // Charting mutations target a session/block/entry by id. Migration 0094
 // guarantees same-STUDIO parent consistency (block ∈ session, entry ∈ block ∈
-// session), and RLS scopes every read/write to the caller's studio — but
+// session), and RLS scopes every read/write to the caller's studio, but
 // neither proves that the session belongs to the CLIENT in the current route/
 // form context. A stale tab, a bug, or a tampered form could submit a
 // Client A route action with Client B's (same-studio) session/block/entry id
@@ -47,7 +47,7 @@ export async function assertSessionForClient(
     .eq("client_id", clientId)
     .is("deleted_at", null)
     .maybeSingle();
-  // A DB error is surfaced generically too — never leak the provider message,
+  // A DB error is surfaced generically too, never leak the provider message,
   // and never accept the write on an indeterminate lineage result.
   if (error || !data) {
     throw new SessionLineageError("Treatment session not found.");

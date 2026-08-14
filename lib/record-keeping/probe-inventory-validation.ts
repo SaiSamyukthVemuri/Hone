@@ -8,16 +8,16 @@ import { isUuid } from "@/lib/sessions/probe-lot-validation";
 //
 // SECURITY: a client-supplied probe_inventory_item_id is NEVER trusted. When a
 // link is being ESTABLISHED or CHANGED, it must be a well-formed UUID that
-// (a) exists, (b) belongs to the caller's OWN studio (RLS-scoped query — a
+// (a) exists, (b) belongs to the caller's OWN studio (RLS-scoped query: a
 // cross-studio id returns no row), (c) has a nonblank lot number, (d) is
 // classified for the NEWLY-selected probe, and (e) satisfies the expired-lot
-// policy. The lot-number snapshot is DERIVED FROM THE DATABASE ROW — client
+// policy. The lot-number snapshot is DERIVED FROM THE DATABASE ROW: client
 // text is never trusted for the linked path. On any failure we return an error
 // and write nothing (never fall back to client text).
 //
-// HISTORICAL IMMUTABILITY: when the link is UNCHANGED — the incoming inventory
+// HISTORICAL IMMUTABILITY: when the link is UNCHANGED: the incoming inventory
 // id AND the incoming selected probe both equal what the block ALREADY stored
-// (values loaded server-side from the block row, never claimed by the client) —
+// (values loaded server-side from the block row, never claimed by the client),
 // the frozen snapshot is preserved with NO live re-validation. The link was
 // validated when first written and is still protected by the same-studio FK, so
 // a later inventory lot-number edit, expiry change, or probe RECLASSIFICATION
@@ -48,7 +48,7 @@ export type ProbeInventoryInput = {
   manualLotNumber: string | null;
   // The practitioner's explicit "package is correct" confirmation. An EXPIRED
   // inventory lot may only be linked when explicitly confirmed (truthful
-  // retrospective charting) — never auto-filled.
+  // retrospective charting), never auto-filled.
   probeLotConfirmed: boolean;
   // EDIT ONLY: the block's currently-STORED probe classification + inventory
   // link + snapshot, read server-side (never from the client). "Unchanged" is
@@ -100,7 +100,7 @@ export async function resolveProbeInventorySelection(
   // ---- UNCHANGED historical link -----------------------------------------
   // Derived ONLY from the server-loaded block: the incoming inventory id AND the
   // incoming selected probe both equal what the block already stored. Preserve
-  // the frozen snapshot with NO live re-validation — the link was validated when
+  // the frozen snapshot with NO live re-validation, the link was validated when
   // first written and is still protected by the same-studio FK, so a later
   // inventory lot-number edit, expiry change, or probe RECLASSIFICATION must not
   // block an unrelated edit to this historical record. A client can never forge
@@ -173,7 +173,7 @@ export async function resolveProbeInventorySelection(
     };
   }
 
-  // Snapshot is DERIVED from the DB row — client text is never trusted here.
+  // Snapshot is DERIVED from the DB row: client text is never trusted here.
   return {
     ok: true,
     probeInventoryItemId: rawId,

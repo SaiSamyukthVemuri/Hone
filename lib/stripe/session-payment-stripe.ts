@@ -15,7 +15,7 @@ import { createFakeStripe } from "@/lib/stripe/e2e-fake-stripe";
 // activation guard is fail-closed and rejects every deployed environment, so
 // isE2eFakeStripeEnabled() is always false in production and this returns the
 // exact same real Stripe client. No browser input, request header/cookie/query/
-// form, or NEXT_PUBLIC_* variable can select the fake — the only inputs are the
+// form, or NEXT_PUBLIC_* variable can select the fake: the only inputs are the
 // server-only HONE_E2E_* env markers, which cannot exist in a deployed runtime.
 //
 // Business rules, call signatures, idempotency, and connected-account handling

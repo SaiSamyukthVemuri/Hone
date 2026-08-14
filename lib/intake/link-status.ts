@@ -1,5 +1,5 @@
 // Pure, server-safe smart-status computation for an in-progress intake link
-// (PR #303). No DB, no token, no PII — just the display metadata columns
+// (PR #303). No DB, no token, no PII, just the display metadata columns
 // (migration 0097) plus started_at, turned into the status a practitioner
 // reads: when it expires, how many days are left, and which CTA to show.
 //
@@ -10,7 +10,7 @@
 import { INTAKE_LINK_TTL_DAYS } from "./queries";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// A link with this many days (or fewer) left is "close to expiry" — prompt the
+// A link with this many days (or fewer) left is "close to expiry", prompt the
 // practitioner to send a fresh one before the client is locked out mid-form.
 export const INTAKE_LINK_CLOSE_TO_EXPIRY_DAYS = 3;
 
@@ -32,7 +32,7 @@ export type IntakeLinkStatus = {
   // never emailed). Never a delivery/receipt confirmation.
   lastSentAt: string | null;
   sendCount: number;
-  // True when expiry was derived from started_at (no stored metadata yet) —
+  // True when expiry was derived from started_at (no stored metadata yet),
   // the UI hedges the copy in this case.
   usingFallback: boolean;
   buttonLabel: IntakeLinkButtonLabel;

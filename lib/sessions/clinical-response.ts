@@ -76,7 +76,7 @@ export function reactionTypeForLabel(label: string): ReactionType | null {
 // They therefore never reached "Clients needing attention", the prior-visit
 // response line, treatment intelligence, or the onboarding completeness check.
 // Measured in production at the time of writing: 12 live entries carry one of
-// the three, and 10 of those carry NO coded reaction chip at all — so for a
+// the three, and 10 of those carry NO coded reaction chip at all, so for a
 // large share of chip-bearing clinical records the recorded skin response
 // reached the chart and no safety surface. The practitioner had no way to know:
 // the three render as visually identical pills beside the coded ones.
@@ -84,7 +84,7 @@ export function reactionTypeForLabel(label: string): ReactionType | null {
 // WHY A SECOND SET RATHER THAN NEW ENUM VALUES. `session_blocks.reaction_type`
 // is constrained by session_blocks_reaction_type_check (migration 0082). Adding
 // enum members would need a migration and would imply these three are storable
-// in that legacy column — they are not, and never will be: new charting stores
+// in that legacy column. They are not, and never will be: new charting stores
 // findings as chips. This layer is a pure classification of chip LABELS, needs
 // no schema change, and rewrites no row.
 //
@@ -111,7 +111,7 @@ export function isSafetyResponseLabel(label: string): boolean {
   return SAFETY_RESPONSE_SET.has(label.trim().toLowerCase());
 }
 
-// True iff a chip label carries CLINICAL RESPONSE meaning at all — either a
+// True iff a chip label carries CLINICAL RESPONSE meaning at all: either a
 // coded reaction label or one of the safety-relevant response labels. This is
 // the single predicate every response-driven surface should ask.
 export function isClinicalResponseLabel(label: string): boolean {
@@ -120,7 +120,7 @@ export function isClinicalResponseLabel(label: string): boolean {
 
 // SEVERITY, expressed in the EXISTING vocabulary and ordering.
 //
-// The severity model already in use is `REACTION_TYPES.indexOf(...)` — the enum
+// The severity model already in use is `REACTION_TYPES.indexOf(...)`, the enum
 // declaration order, low to high:
 //     none(0) · mild_redness(1) · moderate_redness(2) · swelling(3) ·
 //     sensitivity(4) · irritation(5)          ("other" is ranked -1, not notable)
@@ -136,7 +136,7 @@ export function isClinicalResponseLabel(label: string): boolean {
 //       intensity the practitioner did not record. Consequence: it is a
 //       response (it reaches the prior-visit line, treatment intelligence and
 //       the onboarding check) but it is NOT "notable", so it does not raise a
-//       dashboard alert — matching how the coded "Mild redness" chip already
+//       dashboard alert: matching how the coded "Mild redness" chip already
 //       behaves. This is the conservative reading and it is deliberate.
 //
 //   Slight swelling (edema) -> swelling (rank 3)
@@ -166,7 +166,7 @@ export function safetyResponseSeverityPeer(label: string): ReactionType | null {
   return SAFETY_RESPONSE_SEVERITY_PEER[label.trim().toLowerCase()] ?? null;
 }
 
-// The clinically NOTABLE responses, as chip LABELS — the set that drives
+// The clinically NOTABLE responses, as chip LABELS: the set that drives
 // "Clients needing attention".
 //
 // Coded members: "none"/"mild_redness"/"other" are intentionally not notable.
@@ -232,7 +232,7 @@ export function toleranceLabel(rating: number): string {
 }
 
 // PR #279: numbing vocabulary. Whether the client used numbing before the
-// treatment — a factual record, not advice/dosing/product guidance. The stored
+// treatment: a factual record, not advice/dosing/product guidance. The stored
 // value is NULL for "Not recorded" (every legacy row); 'none' / 'used'
 // otherwise. Mirrors the session_blocks_numbing_status_check in migration 0095.
 export const NUMBING_STATUSES = ["none", "used"] as const;
@@ -258,7 +258,7 @@ export function numbingStatusLabel(value: NumbingStatus): string {
 // 0156: pure normalization for the optional numbing note (server contract).
 // The note is preserved ONLY when numbing was actually used; it is trimmed and a
 // blank/whitespace-only value becomes NULL. Any non-'used' status (including
-// 'none', not-recorded/NULL, or an invalid value) yields NULL — a note is never
+// 'none', not-recorded/NULL, or an invalid value) yields NULL: a note is never
 // stored without "used", never fabricated, and never used to infer the status.
 export function normalizeNumbingNotes(
   status: unknown,
@@ -272,7 +272,7 @@ export function normalizeNumbingNotes(
 // (treatment-area card, and any future session/last-visit/print surface) so the
 // status label + optional note can never drift between them. Returns null when
 // there is nothing to show (status not recorded). The note is shown ONLY when
-// the status is 'used' AND a non-empty note exists — never for 'none' or a
+// the status is 'used' AND a non-empty note exists, never for 'none' or a
 // legacy/not-recorded row, and a note is never displayed without "used".
 export function numbingDisplay(
   status: unknown,

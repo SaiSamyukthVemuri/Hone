@@ -83,7 +83,7 @@ function trimmedOrNull(value: string | null | undefined): string | null {
 
 function areaName(block: ClinicalSummaryBlock, index: number): string {
   // Migration 0128: every clinical surface shows EVERY treated area + laterality
-  // via the shared resolver — structured rows win, legacy primary_area + side is
+  // via the shared resolver: structured rows win, legacy primary_area + side is
   // the fallback, and mixed laterality is never flattened to one block-level side.
   const label = blockAreasLabel(block.structured_areas, {
     primary_area: block.primary_area,
@@ -109,7 +109,7 @@ function settingsLine(block: ClinicalSummaryBlock): string | null {
 }
 
 function reactionLine(block: ClinicalSummaryBlock): string | null {
-  // Charting unification: the reaction(s) come from the unified representation —
+  // Charting unification: the reaction(s) come from the unified representation,
   // legacy reaction_type AND reaction chips in the block's live entries'
   // observation_chips. Retain ALL reactions, joined.
   const labels = unifiedReactionLabels(

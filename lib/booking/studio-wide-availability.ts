@@ -6,18 +6,18 @@ import type {
 
 // Migration-order-safe STUDIO-WIDE availability loaders (PR B Part 3A).
 //
-// The rollback lifecycle — capacity enabled -> per-practitioner rows created ->
-// capacity disabled (rows RETAINED for future reactivation) — means a flag-OFF
+// The rollback lifecycle: capacity enabled -> per-practitioner rows created ->
+// capacity disabled (rows RETAINED for future reactivation), means a flag-OFF
 // studio can hold both studio-wide (practitioner_id IS NULL) AND practitioner
 // rows. Every OFF read path (settings page, slot generation) and the flag-ON
 // Studio-default scope MUST see ONLY the studio-wide rows, or a weekday/date
 // would resolve to multiple rows (breaking the single-row UI + slot maybeSingle).
 //
-// These loaders query `practitioner_id IS NULL`. If — and ONLY if — the column
+// These loaders query `practitioner_id IS NULL`. If (and ONLY if) the column
 // is genuinely absent (code temporarily running before migration 0135 is
 // applied) they fail over to the exact legacy studio-wide query. Any OTHER
 // error (auth, network, malformed response, other DB error) FAILS CLOSED. We
-// never log query contents or row data — only a safe operational marker.
+// never log query contents or row data, only a safe operational marker.
 
 type PgErr = { code?: string | null } | null | undefined;
 
@@ -29,7 +29,7 @@ function isUndefinedColumn(error: PgErr): boolean {
 }
 
 function failClosed(error: PgErr, what: string): never {
-  // Safe operational code only — never the raw message (which can echo data).
+  // Safe operational code only, never the raw message (which can echo data).
   throw new Error(`availability_read_failed:${what}:${error?.code ?? "unknown"}`);
 }
 

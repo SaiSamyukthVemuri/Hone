@@ -3,7 +3,7 @@
 // here) so it can be unit-tested and shared by the Records page (row styling +
 // summary banner) and the dashboard "Supplies expiring" attention card.
 //
-// Display-only over the EXISTING expiry_date column — no schema/RLS change.
+// Display-only over the EXISTING expiry_date column, no schema/RLS change.
 
 // A sterile item counts as "expiring soon" when its expiry date is within this
 // many days of today (inclusive). Expired = strictly before today.
@@ -33,7 +33,7 @@ export function supplyExpiryState(
 }
 
 // Short, action-oriented label for a state (null = no badge/marker). Used by the
-// Records badges, the dashboard card, and (lowercased) the print marker — one
+// Records badges, the dashboard card, and (lowercased) the print marker, one
 // source of truth so the surfaces never drift.
 export function supplyExpiryLabel(state: SupplyExpiryState): string | null {
   switch (state) {

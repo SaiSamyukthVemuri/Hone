@@ -1,5 +1,5 @@
 // PR #254: pure input validation/normalization for the internal New Studio
-// Wizard (app/admin/studios/new). No I/O — the operator gate (isAdmin) and the
+// Wizard (app/admin/studios/new). No I/O, the operator gate (isAdmin) and the
 // service-role inserts live in the server action. Kept pure so the rules are
 // unit-tested directly without mocking Supabase.
 

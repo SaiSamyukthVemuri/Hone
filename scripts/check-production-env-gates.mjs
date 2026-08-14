@@ -7,7 +7,7 @@
  * non-zero (aborting `npm run build`, hence the production deploy) if ANY gate
  * fails. Off-production (local / CI / preview) the whole script is a no-op SKIP.
  *
- * Gate 1 — public rate-limit Upstash vars (PR #262):
+ * Gate 1, public rate-limit Upstash vars (PR #262):
  *
  * Public unauthenticated rate limiting (lib/rate-limit/public.ts) FAILS
  * OPEN: when UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN are unset,
@@ -36,7 +36,7 @@
  * build AND in CI/local builds, where it is a no-op SKIP). Also runnable
  * standalone via `npm run check:prod-env-gates`.
  *
- * No emergency bypass — by design
+ * No emergency bypass: by design
  * -------------------------------
  * A presence check does not depend on Upstash being reachable, so an
  * Upstash OUTAGE never trips it (the vars stay set; the outage is handled
@@ -45,19 +45,19 @@
  * gate exists to prevent, and "temporary" prod fail-open flags rot into
  * permanently-on. So there is intentionally no bypass.
  *
- * Gate 2 — critical ops-alert delivery (PR #291):
+ * Gate 2, critical ops-alert delivery (PR #291):
  * Critical ops alerts (payment / storage / cron / webhook failures) email the
  * recipients in OPS_ALERT_EMAILS via lib/ops/alert-email.ts, AFTER the durable
  * ops_alerts row. When OPS_ALERT_EMAILS is unset/empty the email is a silent
  * no-op (once-per-instance warning log) and a critical alert exists only as a
- * DB row + the /admin/ops-alerts page — operators may not see a payment/cron/
+ * DB row + the /admin/ops-alerts page: operators may not see a payment/cron/
  * webhook failure in time. In production that proactive channel must be wired,
  * so this gate fails the production build when OPS_ALERT_EMAILS does not parse
  * to >=1 recipient. This is operations reliability hardening before live
  * payments. It does NOT send any email or read alert content.
  *
  * Secrets: this script reads only the PRESENCE (and, for OPS_ALERT_EMAILS, the
- * recipient COUNT) of the env vars. It prints variable NAMES only — never their
+ * recipient COUNT) of the env vars. It prints variable NAMES only, never their
  * values (no Upstash secrets, no configured alert email addresses).
  */
 
@@ -85,8 +85,8 @@ function isMissing(name) {
 
 // Count of deliverable recipients in OPS_ALERT_EMAILS. Mirrors
 // parseOpsAlertEmails() in lib/ops/alert-email.ts (split "," / trim / drop
-// empties) so a whitespace-only or comma-only value — which would deliver to
-// nobody at runtime — correctly counts as zero. Reads the count only, never
+// empties) so a whitespace-only or comma-only value, which would deliver to
+// nobody at runtime: correctly counts as zero. Reads the count only, never
 // prints an address.
 function opsAlertRecipientCount() {
   const raw = process.env[OPS_ALERT_DELIVERY_ENV_VAR];
@@ -160,7 +160,7 @@ function main() {
   // failed (so one fix-and-redeploy surfaces all missing config at once).
   let failed = false;
 
-  // Gate 3 — Google Calendar OAuth/crypto config SHAPE (Phase A).
+  // Gate 3, Google Calendar OAuth/crypto config SHAPE (Phase A).
   // Validate-if-present, NON-BREAKING: total absence (Google Calendar
   // unprovisioned) PASSES so the current production deploy is unaffected and
   // the connection flag stays OFF; a PARTIAL/MALFORMED config FAILS the build
@@ -170,14 +170,14 @@ function main() {
   if (gcal.pass) {
     process.stdout.write(
       gcal.dormant
-        ? `PASS google-calendar-env: Google Calendar is unprovisioned (all vars absent) — ` +
+        ? `PASS google-calendar-env: Google Calendar is unprovisioned (all vars absent), ` +
             `dormant; the connection flag must stay OFF until GOOGLE_TOKEN_ENCRYPTION_KEY ` +
             `(+ _VERSION), GOOGLE_OAUTH_CLIENT_ID/SECRET are set.\n`
         : `PASS google-calendar-env: Google Calendar OAuth/crypto config present and well-formed.\n`,
     );
   } else {
     failed = true;
-    // NAMES + shape problems only — never any value.
+    // NAMES + shape problems only, never any value.
     process.stderr.write(
       `FAIL google-calendar-env: Google Calendar config is partially set or malformed in production: ` +
         `${gcal.problems.join("; ")}.\n` +
@@ -188,7 +188,7 @@ function main() {
     );
   }
 
-  // Gate 1 — public rate-limit Upstash vars (PR #262).
+  // Gate 1, public rate-limit Upstash vars (PR #262).
   const missing = REQUIRED_PUBLIC_RATELIMIT_ENV.filter(isMissing);
   if (missing.length === 0) {
     process.stdout.write(
@@ -197,7 +197,7 @@ function main() {
     );
   } else {
     failed = true;
-    // NAMES only — never values.
+    // NAMES only, never values.
     process.stderr.write(
       `FAIL public-rate-limit-env: missing required Upstash env var(s) in production: ` +
         `${missing.join(", ")}.\n` +
@@ -209,7 +209,7 @@ function main() {
     );
   }
 
-  // Gate 2 — critical ops-alert delivery recipients (PR #291).
+  // Gate 2, critical ops-alert delivery recipients (PR #291).
   if (opsAlertRecipientCount() > 0) {
     process.stdout.write(
       `PASS ops-alert-delivery-env: ${OPS_ALERT_DELIVERY_ENV_VAR} configured in production ` +
@@ -217,7 +217,7 @@ function main() {
     );
   } else {
     failed = true;
-    // NAMES only — never the configured addresses.
+    // NAMES only, never the configured addresses.
     process.stderr.write(
       `FAIL ops-alert-delivery-env: ${OPS_ALERT_DELIVERY_ENV_VAR} is required in production ` +
         `and must list at least one recipient (comma-separated; a whitespace-only or comma-only value counts as none).\n` +

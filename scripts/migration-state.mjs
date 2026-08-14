@@ -3,7 +3,7 @@
 // Canonical migration-state utility.
 //
 // WHY THIS EXISTS
-// Before this, the repository migration max was hard-coded in 18 places — a
+// Before this, the repository migration max was hard-coded in 18 places: a
 // `toBe(165)` here, a `/^01(6[6-9]|[7-9]\d)_/` "trip on the next one" regex
 // there, plus scripts/verify-production.mjs and the docs guards. Every new
 // migration meant a mechanical edit across all of them, and the pins lived in
@@ -13,7 +13,7 @@
 //
 // Repository state is DERIVABLE from filenames, so it is derived here, once.
 //
-// HOSTED state is NOT derivable from the repo — a file on disk says nothing
+// HOSTED state is NOT derivable from the repo: a file on disk says nothing
 // about what production has applied. That single fact stays declared in the
 // canonical ledger record (docs/production/migration-state.json) and is read
 // from there, never duplicated.
@@ -52,7 +52,7 @@ function pad(n) {
 
 /**
  * Scan supabase/migrations and derive repository state.
- * Throws on malformed prefixes and duplicate versions — a silent pass there is
+ * Throws on malformed prefixes and duplicate versions: a silent pass there is
  * exactly how a bad migration number would reach production.
  */
 export function scanMigrations(dir = MIGRATIONS_DIR) {
@@ -178,7 +178,7 @@ if (process.argv[1] && process.argv[1].endsWith("migration-state.mjs")) {
     console.log(`total in repo       ${state.total_migrations_in_repo}`);
     console.log(`permanently skipped ${state.permanently_skipped.join(", ") || "(none)"}`);
     console.log(
-      `pending             ${state.pending_migrations.join(", ") || "(none — repo == hosted)"}`,
+      `pending             ${state.pending_migrations.join(", ") || "(none, repo == hosted)"}`,
     );
   }
 }

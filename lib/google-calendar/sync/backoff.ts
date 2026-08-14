@@ -1,11 +1,11 @@
 import "server-only";
 
-// Google Calendar — Phase B2.1: the single reusable bounded backoff helper.
+// Google Calendar: Phase B2.1: the single reusable bounded backoff helper.
 //
 // Exponential backoff with FULL jitter, honoring a server-supplied Retry-After
 // when present, clamped to the outbox contract's [5, 21600] seconds. Both the
 // randomness and the clock are injectable so tests are deterministic. There is
-// NO backoff for terminal auth errors — the caller simply does not call this for
+// NO backoff for terminal auth errors: the caller simply does not call this for
 // a terminal result.
 
 export const MIN_BACKOFF_SECONDS = 5;
@@ -23,7 +23,7 @@ export type BackoffInput = {
 
 // Returns a whole number of seconds in [5, 21600].
 export function computeBackoff(input: BackoffInput): number {
-  // A server Retry-After is authoritative — respect it, only bounded.
+  // A server Retry-After is authoritative: respect it, only bounded.
   if (typeof input.retryAfterSeconds === "number" && Number.isFinite(input.retryAfterSeconds)) {
     return bound(input.retryAfterSeconds);
   }

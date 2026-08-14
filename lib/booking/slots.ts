@@ -90,15 +90,15 @@ type ReservationRow = {
 
 // One optional, SERVER-CONTROLLED reservation exclusion, so an appointment being
 // MOVED does not count its OWN shadow reservation as a conflict against its new
-// candidate times. Every OTHER reservation — other appointments, timed blocks,
-// recurring-break occurrences, full-day blockouts — remains a conflict.
+// candidate times. Every OTHER reservation: other appointments, timed blocks,
+// recurring-break occurrences, full-day blockouts: remains a conflict.
 //
 // Two callers pass it, and in BOTH the id is derived server-side; the browser
 // never supplies it:
 //   * the authenticated practitioner move-slot server action;
 //   * the PUBLIC RESCHEDULE read surfaces (migration 0171). Counting the
 //     original's own reservation hid every slot adjacent to it, and did not
-//     model the final transaction — reschedule_appointment_v2 cancels the
+//     model the final transaction: reschedule_appointment_v2 cancels the
 //     original, which deletes that reservation, BEFORE inserting the successor.
 //     public.public_reschedule_slot_candidates applies the identical exclusion
 //     in SQL so the offered set and the accepted set cannot diverge.
@@ -119,18 +119,18 @@ type BlockoutRow = {
 // candidate starts are ANCHORED to (1) the opening time and (2) immediately
 // after each existing reservation's protected end, plus a COARSE fallback so a
 // long empty stretch still offers a few choices instead of a single slot.
-// FALLBACK_GRANULARITY_MINUTES is intentionally coarse (hourly) — it only
+// FALLBACK_GRANULARITY_MINUTES is intentionally coarse (hourly). It only
 // fills empty windows; the precise anchors do the packing.
 const FALLBACK_GRANULARITY_MINUTES = 60;
 
-// EDGE PACKING — the free-window model, and the one boundary it was missing.
+// EDGE PACKING: the free-window model, and the one boundary it was missing.
 //
 // Conceptually the day is:   availability window − protected reservations
 //                          = a list of FREE WINDOWS
 // and each free window deserves two precise anchors:
 //
-//   LEFT-PACK  — the earliest legal start in the window.
-//   RIGHT-PACK — the latest legal start that still fits before the window's
+//   LEFT-PACK , the earliest legal start in the window.
+//   RIGHT-PACK, the latest legal start that still fits before the window's
 //                right edge.
 //
 // The anchor families above ALREADY implement that model for every window
@@ -143,12 +143,12 @@ const FALLBACK_GRANULARITY_MINUTES = 60;
 // rather than a reservation start. Nothing generated `close − duration`, so the
 // most tightly packed end-of-day start simply did not exist as a candidate. On a
 // 09:00–17:00 day with a 45-minute service the hourly fallback walk from the
-// OPENING edge ends at 16:00 (16:00 + 45 = 16:45), stranding 16:45–17:00 — while
+// OPENING edge ends at 16:00 (16:00 + 45 = 16:45), stranding 16:45–17:00, while
 // 16:15 would have consumed the closing window exactly. The asymmetry is
 // structural: every family is derived from the opening edge or from a
 // reservation, and never from the closing edge.
 //
-// BUFFER SEMANTICS AT THE CLOSING EDGE — deliberately NOT symmetric with (2b).
+// BUFFER SEMANTICS AT THE CLOSING EDGE, deliberately NOT symmetric with (2b).
 //
 //   right-pack before a RESERVATION = reservation.start − duration − buffer
 //   right-pack before CLOSING TIME  = close − duration          (NO buffer)
@@ -162,13 +162,13 @@ const FALLBACK_GRANULARITY_MINUTES = 60;
 // the last slot of every day that the loader already offers today.
 //
 // So the closing anchor is exactly the maximal start satisfying the existing fit
-// filter — which is also why it is computed in the UTC-instant domain
+// filter, which is also why it is computed in the UTC-instant domain
 // (`closeMs − durationMs`) rather than by walking local minutes. The filter it
 // mirrors lives in that domain, so the two cannot disagree, and a duration is a
 // real elapsed span: across a DST transition the anchor stays exactly `duration`
 // of wall-clock-independent time before close, which is the correct meaning.
 //
-// SCOPE — INTERNAL SURFACES ONLY, and why that is not timidity.
+// SCOPE: INTERNAL SURFACES ONLY, and why that is not timidity.
 //
 // The PUBLIC booking and PUBLIC reschedule commands do not merely validate a
 // submitted time against broad rules; migrations 0170/0171 RE-DERIVE this
@@ -176,18 +176,18 @@ const FALLBACK_GRANULARITY_MINUTES = 60;
 // public_reschedule_slot_candidates) and require EXACT millisecond membership,
 // returning 'not_a_public_slot' otherwise. Adding a fourth anchor family here
 // without porting it there would make the public page offer 16:15 and the
-// database refuse it — the precise display-vs-acceptance divergence the SQL port
+// database refuse it: the precise display-vs-acceptance divergence the SQL port
 // exists to prevent, and it would break the two behavioural parity suites that
 // assert set equality between the engines.
 //
 // Enabling this for the public surfaces therefore requires a migration that
 // ports the closing anchor into both SQL functions, in the same change. Until
 // then the option is opt-in and only the INTERNAL practitioner surfaces (which
-// validate through validate_appointment_availability — broad rules, no grid
+// validate through validate_appointment_availability, broad rules, no grid
 // membership) pass it. Public callers omit it and are byte-for-byte unchanged.
 export type SlotPackingOptions = {
   // Adds the closing-edge right-pack anchor (`close − duration`) and suppresses
-  // the coarse fallback candidate it dominates. INTERNAL SURFACES ONLY — see the
+  // the coarse fallback candidate it dominates. INTERNAL SURFACES ONLY. See the
   // scope note above before passing this from a public route.
   packAgainstClosingEdge?: boolean;
 };
@@ -195,8 +195,8 @@ export type SlotPackingOptions = {
 // The packing contract for AUTHENTICATED PRACTITIONER surfaces: the calendar
 // quick-book drawer, the client-page booking form, and move/reassign. Those
 // three book through create_internal_appointment_v2 / move_or_reassign_appointment,
-// which validate via validate_appointment_availability — hours, blockouts,
-// overlap and buffer, but NO exact grid membership — so a newly packed candidate
+// which validate via validate_appointment_availability, hours, blockouts,
+// overlap and buffer, but NO exact grid membership, so a newly packed candidate
 // is accepted by the database exactly as it is offered.
 //
 // Shared as one frozen object so a surface that shows slots and the re-check
@@ -332,7 +332,7 @@ export async function getAvailableSlots(
   // day we are searching.
   const windowStartUtc = utcInstantFromLocal(dateStr, "00:00", tz);
   const windowEndUtc = new Date(windowStartUtc.getTime() + 36 * 3600 * 1000);
-  // ON: the practitioner's own timeline — resource_key = practitionerId already
+  // ON: the practitioner's own timeline: resource_key = practitionerId already
   // holds their appointments PLUS every studio-wide block fanned to them (0134),
   // so different practitioners run in parallel. OFF: studio-wide (today).
   const reservationBase = supabase
@@ -386,7 +386,7 @@ export async function getAvailableSlots(
 
   // Candidate slot starts come from three sources (NOT "every 15 minutes"):
   const candidateMs = new Set<number>();
-  // PRECISE anchors — the packing candidates: the opening edge, each
+  // PRECISE anchors: the packing candidates: the opening edge, each
   // reservation boundary, and (when enabled) the closing edge. Tracked apart
   // from the coarse hourly fallback so the dominance rule below can suppress a
   // merely-arbitrary grid time without ever suppressing a real packing anchor.
@@ -401,14 +401,14 @@ export async function getAvailableSlots(
   for (let m = openMin; m + duration <= closeMin; m += FALLBACK_GRANULARITY_MINUTES) {
     const ms = utcInstantFromLocal(dateStr, minutesToHHMM(m), tz).getTime();
     candidateMs.add(ms);
-    // The FIRST step is the opening anchor — a genuine left-pack, not a
+    // The FIRST step is the opening anchor: a genuine left-pack, not a
     // fallback artifact. Every later step is coarse.
     if (m === openMin) preciseMs.add(ms);
   }
 
   // (2) immediately after each existing reservation's SOURCE-AWARE protected end
   //     (appointment: actual end + current buffer; timed blocks / breaks /
-  //     blockouts: raw end — see the conflicts map above). The conflict's `end`
+  //     blockouts: raw end. See the conflicts map above). The conflict's `end`
   //     IS the earliest legal next start, so this packs a new client right after
   //     the previous one exactly as the DB buffer validator would allow.
   for (const c of conflicts) {
@@ -416,7 +416,7 @@ export async function getAvailableSlots(
     preciseMs.add(c.end);
     // (2b) immediately BEFORE each reservation: the LATEST start whose protected
     //      interval [start, start + duration + buffer) exactly TOUCHES this
-    //      reservation's start — i.e. reservation.start − duration − buffer.
+    //      reservation's start: i.e. reservation.start − duration − buffer.
     //      Symmetric to the forward anchor above (which packs right after). The
     //      window + overlap filter below drop it if it falls before open,
     //      overruns close, or collides with another reservation. This is the
@@ -426,7 +426,7 @@ export async function getAvailableSlots(
     preciseMs.add(c.start - durationMs - bufferMs);
   }
 
-  // (4) the CLOSING-EDGE right-pack anchor — the last free window's missing
+  // (4) the CLOSING-EDGE right-pack anchor: the last free window's missing
   //     right-pack (see the EDGE PACKING note above). `close − duration` is
   //     precisely the maximal start the fit filter below accepts, so the trailing
   //     studio buffer is deliberately NOT subtracted: Hone fits the SERVICE end
@@ -438,14 +438,14 @@ export async function getAvailableSlots(
   // LIMITATION, recorded deliberately: Hone models ONE open/close pair per date
   // per practitioner (studio_availability_default / _overrides each carry a
   // single open_time + close_time), so there is exactly one closing edge to pack.
-  // Split availability is expressed today as a timed block inside one window —
+  // Split availability is expressed today as a timed block inside one window,
   // which the reservation families already pack from both sides. If Hone ever
   // gains true multi-window availability, this anchor must become per-window or
   // only the final window's right edge will be packed.
   const closingAnchorMs = closeMs - durationMs;
   // Is the anchor genuinely NEW, or does the tail already pack exactly? On a
   // 09:00–17:00 day a 60-minute service already has 16:00 from the hourly walk,
-  // and `close − duration` IS 16:00 — there is nothing to repair. Recording this
+  // and `close − duration` IS 16:00. There is nothing to repair. Recording this
   // BEFORE the anchor is added is what lets the dominance rule below guarantee it
   // never removes a candidate without offering a better one in its place.
   const closingAnchorIsNew = !candidateMs.has(closingAnchorMs);
@@ -457,7 +457,7 @@ export async function getAvailableSlots(
   // The window + overlap contract, as ONE predicate. The closing anchor has to be
   // tested for offerability before the loop (the dominance rule may only suppress
   // a candidate when something strictly better genuinely survives), and the loop
-  // has to apply exactly the same rule — so both read this, and the two cannot
+  // has to apply exactly the same rule, so both read this, and the two cannot
   // drift apart into a state where a slot is suppressed in favour of an anchor
   // that was itself filtered out.
   const isOfferable = (startMs: number): boolean => {
@@ -483,8 +483,8 @@ export async function getAvailableSlots(
   // closing anchor REPLACES: the LATEST coarse, offerable candidate that starts
   // before the anchor and strands the tail.
   //
-  // Resolving one target up front — rather than testing a predicate inside the
-  // loop — is what bounds the rule to a one-for-one trade. The stranding
+  // Resolving one target up front (rather than testing a predicate inside the
+  // loop) is what bounds the rule to a one-for-one trade. The stranding
   // condition `close − (start + duration) < duration` is satisfied across an
   // interval (close − 2·duration, close − duration) that is `duration` wide, so
   // as soon as the service runs longer than FALLBACK_GRANULARITY_MINUTES that
@@ -508,11 +508,11 @@ export async function getAvailableSlots(
   for (const slotStartMs of [...candidateMs].sort((a, b) => a - b)) {
     if (!isOfferable(slotStartMs)) continue;
 
-    // GAP MINIMISATION — drop the ONE coarse grid time the closing anchor
+    // GAP MINIMISATION: drop the ONE coarse grid time the closing anchor
     // replaces (resolved above as `suppressedMs`). The conditions that selected
     // it were:
     //
-    //   (a) `dominanceActive` — packing is on, the closing anchor is genuinely
+    //   (a) `dominanceActive`, packing is on, the closing anchor is genuinely
     //       NEW, and it survived the filters, so a strictly better-packed slot
     //       is really on offer and the list can never become empty.
     //   (b) the candidate is COARSE, never a precise anchor. The opening anchor,
@@ -520,13 +520,13 @@ export async function getAvailableSlots(
     //       slot before one are each a packing decision in their own right. The
     //       16:00 that follows a 15:00–16:00 appointment means "finish at 16:45
     //       and go home"; that is a legitimate choice, not a grid artifact.
-    //   (c) it starts strictly BEFORE the anchor, so the anchor itself — and any
-    //       candidate coinciding with it — is never suppressed.
+    //   (c) it starts strictly BEFORE the anchor, so the anchor itself, and any
+    //       candidate coinciding with it, is never suppressed.
     //   (d) it STRANDS THE TAIL: the treatment window left after its service end
     //       is shorter than one more service (`close − (start + duration) <
     //       duration`), so nothing of this length can follow it before close.
     //
-    // (d) is measured on the SERVICE end, not the buffered end — the same edge
+    // (d) is measured on the SERVICE end, not the buffered end: the same edge
     // Hone fits against close everywhere else. An earlier revision folded the
     // buffer into this test and it suppressed far too much: with a 60-minute
     // service and a 30-minute buffer it removed 15:00 while adding nothing,

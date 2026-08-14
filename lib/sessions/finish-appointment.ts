@@ -3,8 +3,8 @@
 // WHY THIS EXISTS
 // ---------------
 // Chloe finishes charting and sees a generic "Done charting" exit. The two
-// consequential visit-closing actions — marking the appointment completed and
-// sending postcare — live on the calendar appointment page, a different surface
+// consequential visit-closing actions: marking the appointment completed and
+// sending postcare: live on the calendar appointment page, a different surface
 // entirely. Payment is gated behind completion. So the visit ends with the
 // record written but the appointment still open, and postcare never sent.
 //
@@ -21,7 +21,7 @@
 // A presenter that disagrees with those is a display bug, never an escalation:
 // every state below is re-derived server-side before anything is written.
 //
-// PURE: no I/O, no provider knowledge, no mutation, and NO CLOCK — `nowMs` is
+// PURE: no I/O, no provider knowledge, no mutation, and NO CLOCK: `nowMs` is
 // injected so the start-time boundary is testable and so a server render and a
 // client render cannot disagree.
 
@@ -33,9 +33,9 @@ export type FinishCompletionState =
   // No appointment is linked to this session at all.
   | { kind: "unlinked" }
   // Linked, confirmed, but the appointment has not STARTED yet.
-  // B6: renamed from before_end — explicit completion waits for the START.
+  // B6: renamed from before_end, explicit completion waits for the START.
   | { kind: "before_start"; startsAt: string }
-  // Linked, confirmed, and already STARTED — the completion action is offered.
+  // Linked, confirmed, and already STARTED: the completion action is offered.
   // It need not have ended: the practitioner decides treatment is finished.
   | { kind: "ready"; appointmentId: string; startsAt: string }
   | { kind: "completed" }
@@ -98,7 +98,7 @@ export type FinishAppointmentState = {
   isUnlinked: boolean;
 };
 
-// A claim older than this is stale — the sender died, so the row is not
+// A claim older than this is stale: the sender died, so the row is not
 // "sending" any more. Mirrors the calendar surface's existing window.
 const STALE_CLAIM_MS = 5 * 60_000;
 
@@ -210,7 +210,7 @@ export function postcareLabel(state: FinishPostcareState): string {
     case "unlinked":
       return "No booked appointment linked";
     case "no_client_email":
-      return "Postcare unavailable — no client email";
+      return "Postcare unavailable: no client email";
     case "not_configured":
       return "Postcare email is not configured yet";
     case "sending":

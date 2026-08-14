@@ -106,7 +106,7 @@ function sanitizeFailureMessage(
 // ---------------------------------------------------------------------------
 // Exported (PR #319) so the setup_intent.succeeded handler applies the SAME
 // guard the four money handlers use. PR #323: this is now a MODE-MATCHING guard,
-// not a "live is structurally disabled" guard — the reconcilers process ONLY
+// not a "live is structurally disabled" guard: the reconcilers process ONLY
 // events whose mode matches the current deployment mode (inferStripeLivemode()),
 // and safely IGNORE mismatched-mode events (record a warning ops alert, mutate
 // nothing). In test env inferStripeLivemode() is false, so this is identical to
@@ -508,7 +508,7 @@ export async function handlePaymentIntentSucceeded(
     );
   }
   // PR #263: zero-row detection. The status-conditional UPDATE matched
-  // no row — the attempt left ready/pending_stripe between the read
+  // no row: the attempt left ready/pending_stripe between the read
   // above and this write (a concurrent action-layer or webhook write).
   // Do NOT report a reconciliation that did not happen.
   if (!updatedRows || updatedRows.length === 0) {
@@ -612,7 +612,7 @@ export async function handlePaymentIntentPaymentFailed(
   // The event-mode guard above only checks event.livemode; the resolver + the
   // metadata guard do NOT check the row's stripe_livemode. Post-0105 a session
   // can hold both a test and a live attempt with the same studio/client/reason,
-  // so a mode-matching failed event could resolve the OTHER mode's row — refuse
+  // so a mode-matching failed event could resolve the OTHER mode's row: refuse
   // to mutate it and alert, exactly as the two other mutating handlers do.
   if (attempt.stripe_livemode !== inferStripeLivemode()) {
     await recordOpsAlert({

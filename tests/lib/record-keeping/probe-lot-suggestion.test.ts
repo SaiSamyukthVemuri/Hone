@@ -117,7 +117,7 @@ describe("form wiring (source pins — NOT a DOM behavior test)", () => {
     expect(AUTOFILL).toMatch(/Only active inventory lot for this probe/);
     expect(AUTOFILL).toMatch(/Choose the lot\/batch from inventory/);
     // THE new one: a history-derived lot must say so, and must not imply a link.
-    expect(AUTOFILL).toMatch(/Auto-filled from your last charted lot for this probe — not linked to inventory/);
+    expect(AUTOFILL).toMatch(/Auto-filled from your last charted lot for this probe, not linked to inventory/);
     expect(FORM).toMatch(/probeLotSourceMessage\(lotStatus\)/);
   });
 });

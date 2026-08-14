@@ -14,7 +14,7 @@ import type {
 // area-specific clinical recommendations. Area-specific defaults (e.g. Upper
 // lip) and practitioner templates are intentionally out of scope here.
 //
-// English textbook terminology: "Clearing" (not "Cleaning" — that is a
+// English textbook terminology: "Clearing" (not "Cleaning", that is a
 // French-origin Dectro translation of the same phase).
 
 export type FixedStageDefault = {

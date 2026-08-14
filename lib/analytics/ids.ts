@@ -1,15 +1,15 @@
 // Opaque analytics identifier boundary (Correction 2).
 //
 // Every distinctId that reaches PostHog must be an opaque UUID (or the
-// `studio:<uuid>` derivative) — never an email, phone, bearer token,
+// `studio:<uuid>` derivative), never an email, phone, bearer token,
 // token-bearing path, client name, or free text. The previous API accepted
 // `distinctId: string`, which is NOT enforcement: any string typechecks.
 //
 // This module enforces two ways:
-//   1. Type level — callers pass a discriminated `AnalyticsActor`
+//   1. Type level: callers pass a discriminated `AnalyticsActor`
 //      ({ kind: "user" | "studio"; id }), so a bare string cannot be handed in
 //      as a distinctId by accident.
-//   2. Runtime — `resolveDistinctId` validates the id is a UUID and returns a
+//   2. Runtime: `resolveDistinctId` validates the id is a UUID and returns a
 //      branded `AnalyticsDistinctId`, or `null` if it is not. It FAILS CLOSED
 //      (invalid -> null -> caller drops the event) and NEVER THROWS, so a bad
 //      id can never affect a product path. It never returns or logs the

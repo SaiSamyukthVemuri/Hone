@@ -2,7 +2,7 @@ import "server-only";
 import { type AccessTokenCache, DEFAULT_EXPIRY_SKEW_MS } from "./access-token-cache";
 import type { GoogleRestClient } from "./google-rest-client";
 
-// Google Calendar — Phase B2.1: token-refresh lifecycle for the worker.
+// Google Calendar: Phase B2.1: token-refresh lifecycle for the worker.
 //
 // Guarantees:
 //   * SINGLE-FLIGHT refresh per connection. In-process: an inflight-promise map
@@ -14,7 +14,7 @@ import type { GoogleRestClient } from "./google-rest-client";
 //   * ROTATION PERSISTENCE (fixes the live Phase-A defect): when Google returns a
 //     new refresh token, it is encrypted and stored under the lock BEFORE the
 //     result is returned, so the next refresh uses it. If encryption fails, we
-//     FAIL CLOSED — the refresh is reported failed and the OLD encrypted token is
+//     FAIL CLOSED: the refresh is reported failed and the OLD encrypted token is
 //     left intact (never silently dropped).
 //   * invalid_grant -> mark the connection reconnect_required, clear the cache,
 //     do not retry the refresh repeatedly.
@@ -33,15 +33,15 @@ export type ConnectionAuthRow = {
   tokenExpiresAt: string | null;
   // B2.4: the chosen destination. The worker's execution-time scope gate DERIVES
   // the required event scope from it (calendar.app.created / calendar.events.owned)
-  // — broad calendar.events satisfies eligibility nowhere.
+  // broad calendar.events satisfies eligibility nowhere.
   destinationMode: string | null;
 };
 
 // A safe typed error for a FAILED/uncertain refresh-secret read (a Supabase query
 // error or a thrown transport error while reading calendar_connection_secrets). It
 // is DISTINCT from a genuinely-absent secret (which loadRefreshCiphertext returns
-// as null). The token manager maps it to a transient retry — NEVER to
-// reconnect_required — so a transient DB blip can't force a re-auth or touch the
+// as null). The token manager maps it to a transient retry, NEVER to
+// reconnect_required, so a transient DB blip can't force a re-auth or touch the
 // stored refresh token. Carries NO raw Supabase/SQL detail, connection id,
 // ciphertext, or secret.
 export class RefreshSecretReadError extends Error {
@@ -119,7 +119,7 @@ export function createTokenManager(deps: TokenManagerDeps): TokenManager {
   async function refreshUnderLock(connectionId: string, studioId: string): Promise<TokenResult> {
     // Double-check the cache inside the lock (an in-process waiter may already
     // have filled it). Access tokens are per-process, so a peer PROCESS that
-    // refreshed does not populate our cache — but the lock still prevents its
+    // refreshed does not populate our cache, but the lock still prevents its
     // concurrent refresh from racing our rotated-token persist.
     const cachedInLock = deps.cache.get(connectionId, now(), skewMs);
     const conn = await deps.store.loadConnection(connectionId, studioId);
@@ -175,7 +175,7 @@ export function createTokenManager(deps: TokenManagerDeps): TokenManager {
       };
     }
 
-    // Rotation persistence — the fix for the live defect. A rotated refresh token
+    // Rotation persistence: the fix for the live defect. A rotated refresh token
     // is encrypted + stored under the lock. Encryption failure FAILS CLOSED: the
     // refresh is reported failed and the OLD stored token is left untouched.
     if (refreshed.rotatedRefreshToken) {
@@ -205,7 +205,7 @@ export function createTokenManager(deps: TokenManagerDeps): TokenManager {
       if (cached) {
         const conn = await deps.store.loadConnection(connectionId, studioId);
         if (conn) return { ok: true, accessToken: cached, connection: conn };
-        // Connection vanished under us — treat as transient.
+        // Connection vanished under us: treat as transient.
         deps.cache.clear(connectionId);
       }
       const existing = inflight.get(connectionId);

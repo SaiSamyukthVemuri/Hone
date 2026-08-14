@@ -10,7 +10,7 @@
 //      so emails sent from a Preview deploy point back to that
 //      deploy's URL, never to production.
 //   3. http://localhost:3000, only when NODE_ENV !== "production".
-//   4. Throw — production with no NEXT_PUBLIC_APP_ORIGIN is a config
+//   4. Throw: production with no NEXT_PUBLIC_APP_ORIGIN is a config
 //      error. Failing closed (a 500 on the action that needs the
 //      origin) is preferable to silently sending a wrong-domain link
 //      to a real client.

@@ -4,7 +4,7 @@
 // the prepare action read `amount_dollars` off the form and inserted it. The
 // page computed a correct suggestion, the practitioner could edit the field,
 // and whatever came back was stored. A tampered request preparing $1.00 against
-// a $145.00 service was accepted and became a real chargeable row — the
+// a $145.00 service was accepted and became a real chargeable row: the
 // executor then faithfully charged the tampered amount, because by then the
 // unsafe decision had already been made.
 //
@@ -19,7 +19,7 @@
 //   2. Otherwise the booked service's current menu price.
 //   3. Otherwise preparation is BLOCKED. There is no fallback to
 //      sessions.price_paid_cents, to a prior attempt, or to anything the
-//      browser sent — a guess is not an authority.
+//      browser sent: a guess is not an authority.
 //
 // Each service row is already its own duration variant, so no per-minute
 // arithmetic is invented here. `durationMinutes` is descriptive metadata for
@@ -32,7 +32,7 @@ export type ResolvedSessionPaymentAmount = {
   amountCents: number;
   source: SessionPaymentAmountSource;
   serviceName: string;
-  // Descriptive only — never an input to the arithmetic.
+  // Descriptive only, never an input to the arithmetic.
   durationMinutes: number | null;
   // Note from the matching client_pricing row (custom_pricing only).
   customPricingNote: string | null;
@@ -51,7 +51,7 @@ export type UnresolvedSessionPaymentAmount =
   // an amount decided by database row order.
   | { kind: "ambiguous_custom_pricing"; serviceName: string; candidateCents: number[] };
 
-// FREE-01. A studio can deliberately price a service at $0 — a free
+// FREE-01. A studio can deliberately price a service at $0, a free
 // consultation being the obvious case. That is a REAL, decided price, and it is
 // categorically different from "no price is configured", which is what a NULL
 // price means. Conflating them produced two wrong behaviours: a free service
@@ -102,7 +102,7 @@ export function resolveAuthoritativeSessionPaymentAmount(input: {
 
   // Current, positively-priced custom rows for THIS service.
   //
-  // A zero or negative custom price is not treated as "charge nothing" — the
+  // A zero or negative custom price is not treated as "charge nothing", the
   // model has always read it as "no custom price recorded", and silently
   // charging $0 because of a bad row would be worse than falling through to the
   // menu price. (The DB CHECK already forbids negatives; this is belt and

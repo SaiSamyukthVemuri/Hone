@@ -8,11 +8,11 @@ import { assertE2eFakeGoogleAllowed, isValidE2eRunId } from "./fake-google-guard
 // Stripe ledger (lib/stripe/e2e-fake-ledger.ts): the Next.js server process serves
 // synthetic Google responses; the Playwright runner is a SEPARATE process that
 // configures the per-run scenario and reads recorded events through run-id-keyed
-// temp files — WITHOUT any browser-readable endpoint.
+// temp files: WITHOUT any browser-readable endpoint.
 //
 // Every read/write is gated by the fake-Google activation guard (fail-closed,
 // deployment-impossible). Paths are constructed ONLY from os.tmpdir() + the
-// validated run id + a fixed prefix — never from user/browser input.
+// validated run id + a fixed prefix, never from user/browser input.
 //
 // Stored fields are SYNTHETIC ONLY: requested OAuth scopes, a synthetic account
 // sub/email, synthetic calendar ids/summaries/roles, and a NON-SENSITIVE
@@ -111,7 +111,7 @@ export function appendFakeGoogleEvent(runId: string, event: FakeGoogleEvent): vo
   appendFileSync(eventsPath(runId), line, { mode: 0o600 });
 }
 
-// Calendars the fake has "created" so far (from recorded events) — the fake
+// Calendars the fake has "created" so far (from recorded events), the fake
 // calendarList returns these (with their descriptions) so provisioning
 // reconciliation by exact attempt-token works across requests.
 export function createdCalendars(runId: string): Array<{ id: string; description: string }> {
@@ -125,7 +125,7 @@ export function createdCalendars(runId: string): Array<{ id: string; description
     .map((e) => ({ id: e.id, description: e.description }));
 }
 
-// Deterministic tmp-suffix seed from the validated run id — no Math.random.
+// Deterministic tmp-suffix seed from the validated run id, no Math.random.
 function hashRun(runId: string): number {
   let h = 0;
   for (let i = 0; i < runId.length; i++) h = (h * 31 + runId.charCodeAt(i)) | 0;

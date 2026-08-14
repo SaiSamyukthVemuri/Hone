@@ -3,8 +3,8 @@
 // WHY THIS EXISTS
 // ---------------
 // Chloe: "Today and the Daily Prep Brief are redundant." They were. Every
-// appointment rendered TWICE on the same screen — once chronologically in
-// Today, once again a few hundred pixels lower in the priority-sorted brief —
+// appointment rendered TWICE on the same screen: once chronologically in
+// Today, once again a few hundred pixels lower in the priority-sorted brief,
 // and the two lists disagreed about the same facts:
 //
 //   * the note. `compactBeforeToday` collapses a briefing into
@@ -26,7 +26,7 @@
 // gap); those must stay two cards with their own status, session and actions.
 // Joining by client would silently merge them and lose one.
 //
-// ORDER IS THE INPUT ORDER — the dashboard's chronological query. Daily Prep's
+// ORDER IS THE INPUT ORDER: the dashboard's chronological query. Daily Prep's
 // priority sort is retained ONLY as an in-card attention signal; it must never
 // reorder the day, because the day is a sequence she works through in time.
 
@@ -71,7 +71,7 @@ export type TodayWorkflowItem = {
   status: string;
   serviceName: string | null;
 
-  // Preparation — each fact resolved ONCE, and never re-labelled elsewhere.
+  // Preparation: each fact resolved ONCE, and never re-labelled elsewhere.
   hasHistory: boolean;
   // The plan note. Rendered once under "Remember".
   remember: string | null;
@@ -87,7 +87,7 @@ export type TodayWorkflowItem = {
   intake: TodayIntake;
   charting: TodayCharting;
 
-  // Attention only — must not reorder the day.
+  // Attention only: must not reorder the day.
   priority: TodayPriority;
 };
 
@@ -136,7 +136,7 @@ function trimmedOrNull(value: string | null | undefined): string | null {
 function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
   // The plan note and the watch note are DISTINCT facts with distinct
   // labels. They are deliberately NOT collapsed into one "Remember" string the
-  // way `compactBeforeToday.rememberLine` did — that collapse is exactly what
+  // way `compactBeforeToday.rememberLine` did: that collapse is exactly what
   // made the same caution text appear twice under two different labels.
   const caution = trimmedOrNull(input.cautionNote);
   const remember = trimmedOrNull(input.nextVisitNote);

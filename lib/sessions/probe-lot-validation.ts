@@ -6,7 +6,7 @@ import "server-only";
 // must never be trusted: it has to be a well-formed UUID that belongs to the
 // caller's OWN studio. This validator enforces that before any write. Free-text
 // probe_lot_number is a separate, manual/unverified field and is NOT touched
-// here — a manual lot never becomes an inventory-verified probe_lot_id.
+// here: a manual lot never becomes an inventory-verified probe_lot_id.
 
 // Type-only inline import so there is no runtime/unused import of createClient.
 type ServerSupabase = Awaited<

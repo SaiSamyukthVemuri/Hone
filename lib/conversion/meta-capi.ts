@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 
 // Meta Conversions API (CAPI) payload + hashing layer for the "Schedule"
 // booking-conversion event. PURE and server-only: this module builds payloads
-// and hashes identifiers — it performs NO network I/O, NO DB reads, and is not
+// and hashes identifiers: it performs NO network I/O, NO DB reads, and is not
 // wired into the booking flow yet (that wiring + the per-studio config live
 // behind a migration + owner/legal approval; see
 // docs/22_META_CONVERSION_TRACKING_PLAN.md).
 //
-// DATA-MINIMIZATION CONTRACT (clinic-adjacent business — this is load-bearing):
+// DATA-MINIMIZATION CONTRACT (clinic-adjacent business. This is load-bearing):
 // The builder ACCEPTS ONLY the whitelisted, non-clinical fields below. There is
 // deliberately NO parameter for: client name, appointment/booking notes, intake
 // answers, contraindications, allergies, skin notes, body areas, photos,
@@ -19,7 +19,7 @@ import { createHash } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Normalization + hashing (Meta requires SHA-256 of normalized, lowercased,
-// trimmed values, UNSALTED — distinct from lib/portal/tokens' salted
+// trimmed values, UNSALTED: distinct from lib/portal/tokens' salted
 // hashFingerprint, which is for internal logs only).
 // ---------------------------------------------------------------------------
 
@@ -36,7 +36,7 @@ export function normalizeEmailForMeta(
 }
 
 // Digits only, with country code, no '+' / spaces / punctuation (Meta spec).
-// Defaults a bare 10-digit number to North America (+1) — Willow is Ontario.
+// Defaults a bare 10-digit number to North America (+1), Willow is Ontario.
 export function normalizePhoneForMeta(
   phone: string | null | undefined,
   defaultCountryCode = "1",
@@ -48,7 +48,7 @@ export function normalizePhoneForMeta(
 }
 
 // Generic, non-revealing service category. NEVER pass a free-text service NAME
-// here — anything outside the allowlist collapses to "other" so a name like
+// here: anything outside the allowlist collapses to "other" so a name like
 // "Brazilian Electrolysis" can never leak a body area to Meta.
 const SAFE_MODALITIES = ["electrolysis", "laser", "consultation"] as const;
 export function safeServiceCategory(
@@ -68,7 +68,7 @@ export type MetaTrackingConfig = {
   testEventCode?: string | null;
 };
 
-// The ONLY inputs the builder accepts — no clinical/PII fields exist here.
+// The ONLY inputs the builder accepts, no clinical/PII fields exist here.
 export type BookingConversionInput = {
   appointmentId: string;
   eventTimeUnixSeconds: number;

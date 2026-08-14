@@ -3,12 +3,12 @@
 // pre-treatment summary, and unit-tested without a database/DOM.
 //
 // States:
-//   * not_signed / not_answered — no signature yet (missing).
-//   * outdated — signed an OLDER template version than the current active one
+//   * not_signed / not_answered, no signature yet (missing).
+//   * outdated: signed an OLDER template version than the current active one
 //     (needs a re-sign).
-//   * signed — up-to-date signature (non-photo).
-//   * granted / denied — up-to-date photo_consent answer (denied is a valid,
-//     answered, immutable response — NOT "missing").
+//   * signed: up-to-date signature (non-photo).
+//   * granted / denied: up-to-date photo_consent answer (denied is a valid,
+//     answered, immutable response, NOT "missing").
 //
 // card_authorization is deliberately EXCLUDED from the summary and keeps its
 // legacy row behaviour: it has its own status card + portal re-sign flow, and

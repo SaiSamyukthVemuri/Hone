@@ -68,7 +68,7 @@ describe("item 3: probe-lot auto-populate + explicit confirm (Feature A)", () =>
     expect(AUTOFILL).toMatch(/Only active inventory lot for this probe/);
     // The history fallback that makes auto-fill work for a studio with no
     // probe inventory at all.
-    expect(AUTOFILL).toMatch(/Auto-filled from your last charted lot for this probe — not linked to inventory/);
+    expect(AUTOFILL).toMatch(/Auto-filled from your last charted lot for this probe, not linked to inventory/);
     expect(FORM).toMatch(/probeLotSourceMessage\(lotStatus\)/);
     expect(FORM).toMatch(/Confirm lot\/batch/);
     // Old copy is gone.

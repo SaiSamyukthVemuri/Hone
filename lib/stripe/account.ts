@@ -79,7 +79,7 @@ export async function createOrLoadConnectedAccountForStudio(
   }
 
   // If another worker is mid-claim we wait by returning the existing
-  // in-flight account id (if Stripe has already issued one) — Stripe's
+  // in-flight account id (if Stripe has already issued one), Stripe's
   // accounts.create is idempotency-keyed below so the second worker's
   // retry collapses with the first.
   if (!claim.should_execute_stripe_call) {
@@ -277,7 +277,7 @@ export async function refreshAccountStatusFromStripe(params: {
   // uses `coalesce(p_onboarding_completed_at, sps.stripe_onboarding_completed_at)`
   // so a non-null timestamp overwrites the stored value. We never
   // want to bump the first-completion timestamp on subsequent
-  // refreshes — that would forge the "when did onboarding finish"
+  // refreshes: that would forge the "when did onboarding finish"
   // record. We therefore SEND null to the RPC if the stored value
   // is already set; only the first observation of charges_enabled
   // (when the stored timestamp is still null) writes a real value.

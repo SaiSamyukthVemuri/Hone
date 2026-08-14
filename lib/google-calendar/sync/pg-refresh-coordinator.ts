@@ -1,14 +1,14 @@
 import "server-only";
 import type { RefreshCoordinator } from "./token-manager";
 
-// Google Calendar — Phase B2.1: cross-process single-flight refresh via a
+// Google Calendar: Phase B2.1: cross-process single-flight refresh via a
 // transaction-scoped Postgres advisory lock.
 //
 // runExclusive opens a transaction on a pooled connection, takes
 //   pg_advisory_xact_lock( hashtextextended('gcal_refresh:' || connectionId, 0) )
 // then runs the callback (which performs the Google refresh + persist) while the
 // lock is held, and COMMITs. The lock is released automatically at COMMIT/ROLLBACK
-// — including on process death — so a crashed refresh never wedges a connection.
+// including on process death, so a crashed refresh never wedges a connection.
 //
 // The pool is typed STRUCTURALLY so this module adds no `pg` dependency to the
 // application bundle: the worker wiring (B2.3+) and the DB integration tests pass

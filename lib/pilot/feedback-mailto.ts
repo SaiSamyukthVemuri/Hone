@@ -9,7 +9,7 @@
 // Safety by construction: this builder takes ENUM inputs only (surface +
 // intent). There is no free-form argument that could carry a client
 // name, contact detail, treatment note, exposure detail, payment
-// internal, Stripe id, raw token, or audit JSON — so none can ever reach
+// internal, Stripe id, raw token, or audit JSON, so none can ever reach
 // the subject/body. The body invites the practitioner to add their own
 // words; it is empty of any recorded data by default.
 
@@ -17,7 +17,7 @@
 // `another_electrologist` (the intent) were reachable ONLY from the Dashboard
 // "Pilot learning" card. That card is gone, so both members are unreachable and
 // are removed with it rather than left as dead branches of a SAFETY-relevant
-// enum — the point of an enum-only builder is that every member it accepts is a
+// enum: the point of an enum-only builder is that every member it accepts is a
 // member something actually renders. The remaining surfaces are the two quiet
 // <PilotFeedbackPrompt> footers, which are unchanged.
 export type PilotSurface =

@@ -4,15 +4,15 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import type { ReconcileCoordinator, ReconcileRunResult, RunOutcome } from "./reconcile";
 
-// Google Calendar — Phase B2.3-b: operator-visible heartbeat + health/dead-row
+// Google Calendar: Phase B2.3-b: operator-visible heartbeat + health/dead-row
 // alerting for the reconciliation sweep. Mirrors lib/cron/reminder-heartbeat.ts: a
 // single overwritten Upstash key (NOT the append-only ops_alerts table), FAIL-OPEN,
 // non-sensitive scalars only.
 //
-// FAIL-OPEN posture: the heartbeat/alert writes are best-effort and never throw — a
+// FAIL-OPEN posture: the heartbeat/alert writes are best-effort and never throw: a
 // failure must never break a reconcile run (and the run itself never touches a
 // booking). This is DISTINCT from the reconcile LOCK + CONTINUATION, which are
-// FAIL-CLOSED correctness state — observability failing open must not be confused
+// FAIL-CLOSED correctness state: observability failing open must not be confused
 // with those.
 //
 // NON-SENSITIVE ONLY: timestamps + aggregate run counts + a coarse outcome/error
@@ -124,7 +124,7 @@ export async function readReconcileHeartbeat(): Promise<ReconcileHeartbeat | nul
   }
 }
 
-// A recent run is NOT healthy merely because it is recent — its OUTCOME matters.
+// A recent run is NOT healthy merely because it is recent: its OUTCOME matters.
 export type ReconcileSchedulerStatus = {
   status: "healthy" | "degraded" | "error" | "stale" | "missing";
   lastRunAt: string | null;
@@ -210,7 +210,7 @@ export async function recordReconcileSchedulerHealthAlert(nowMs: number = Date.n
 }
 
 // ---------------------------------------------------------------------------
-// §8 — dead-row operational signal. The phase register assigns dead-row alerting
+// §8, dead-row operational signal. The phase register assigns dead-row alerting
 // to B2.3-b. A PHI-free, deduped, per-studio ops alert for terminal dead outbox
 // work. It NEVER touches an outbox row (a dead row is never reopened under its
 // idempotency key). A resolved alert recurs when NEW dead rows appear.
@@ -281,10 +281,10 @@ export type DeadRowSweepResult = {
 };
 
 // Run the dead-row alert campaign under its OWN dead-alert coordinator (a separate
-// lock + durable cursor namespace from the main reconciliation coordinator — the two
+// lock + durable cursor namespace from the main reconciliation coordinator: the two
 // are never held simultaneously by one invocation). It reads the pre-aggregated
 // `calendar_sync_queue_health` view via **durable cursor** pagination (immutable
-// studio_id) — no raw 10k-row scan — resuming AFTER the persisted cursor, bounded by
+// studio_id) (no raw 10k-row scan) resuming AFTER the persisted cursor, bounded by
 // the per-invocation studio cap + the route deadline, ownership-atomically persisting
 // the cursor after each fully-processed studio and clearing it on completion.
 //
@@ -292,7 +292,7 @@ export type DeadRowSweepResult = {
 // an unavailable backend, or a cursor read I/O error -> `unavailable` (never run from
 // an unknown position). A store/inventory failure -> `error` (NOT a completed sweep).
 // The alert INSERT + best-effort signalling remain fail-open (business ops never
-// blocked), but a failure is reported truthfully — fail-open ≠ "maintenance succeeded".
+// blocked), but a failure is reported truthfully: fail-open ≠ "maintenance succeeded".
 export async function sweepCalendarDeadRowAlerts(
   store: { pageStudiosWithDeadOutbox(afterStudioId: string | null, limit: number): Promise<{ studioId: string; deadCount: number }[]> },
   coordinator: ReconcileCoordinator,
@@ -313,7 +313,7 @@ export async function sweepCalendarDeadRowAlerts(
   try {
     const cur = await coordinator.readCursor();
     if (!cur.ok) {
-      // Read I/O error — do NOT run from an unknown position (distinct from absent).
+      // Read I/O error: do NOT run from an unknown position (distinct from absent).
       return { ...empty, outcome: "unavailable", coordinatorStatus: "unavailable" };
     }
     let after = cur.cursor; // absent (null) => start at the beginning
@@ -391,10 +391,10 @@ export async function sweepCalendarDeadRowAlerts(
   }
 }
 
-// §11 — the final reconciliation-heartbeat tier given the main run + the dead-row
+// §11, the final reconciliation-heartbeat tier given the main run + the dead-row
 // sweep. `error` is reserved for a reconciliation-run failure. A successful run whose
 // dead-row campaign was anything other than `completed` (deferred / skipped_held /
-// unavailable / error) is at least `degraded` — never falsely `ok`.
+// unavailable / error) is at least `degraded`, never falsely `ok`.
 export function finalHeartbeatOutcome(runOutcome: RunOutcome, deadOutcome: DeadRowSweepOutcome): RunOutcome {
   if (runOutcome === "error") return "error";
   if (deadOutcome !== "completed") return "degraded";

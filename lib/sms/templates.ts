@@ -49,7 +49,7 @@ export type ReminderSmsInput = {
 // Compact phrase for the appointment moment used by every template:
 // "Tuesday, June 3 at 2:30 PM". We do not include the year (it adds
 // length and noise; the client booked recently). SMS is CLIENT-FACING, so
-// the time is rendered 12-hour (localTimeString12h) — never 24-hour — while
+// the time is rendered 12-hour (localTimeString12h) (never 24-hour) while
 // the studio/appointment timezone is preserved unchanged.
 function appointmentMoment(startsAt: Date, timezone: string): string {
   const long = localLongDate(startsAt, timezone);

@@ -55,7 +55,7 @@ test("overdue disinfectant surfaces in Notification Centre and resolves on repla
   await alerts.getByRole("link", { name: "Review disinfectant records" }).click();
   await expect(page).toHaveURL(/\/records\?section=disinfectants/);
   await expect(page.getByText("Barbicide E2E jar").first()).toBeVisible();
-  await expect(page.getByText(/Overdue — replace now/i)).toBeVisible();
+  await expect(page.getByText(/Overdue: replace now/i)).toBeVisible();
 
   // Record a replacement through the REAL edit form: set the actual discard date.
   await page.getByText("Edit", { exact: true }).first().click();
@@ -66,7 +66,7 @@ test("overdue disinfectant surfaces in Notification Centre and resolves on repla
   await editForm.getByRole("button", { name: "Save changes" }).click();
 
   // The record is no longer overdue (the row's "Replace now" badge is gone).
-  await expect(page.getByText(/Overdue — replace now/i)).toHaveCount(0);
+  await expect(page.getByText(/Overdue: replace now/i)).toHaveCount(0);
 
   // Back in the Notification Centre, the alert is resolved/absent — and no
   // duplicate was created.

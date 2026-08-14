@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// `npm run ci:plan` — what CI will do for the current diff, and why.
+// `npm run ci:plan`, what CI will do for the current diff, and why.
 //
 // This is the single source Claude (or anyone) should consult before deciding
 // local test scope. It shares the classifier and the browser-group selector
@@ -42,7 +42,7 @@ export function buildPlan(files) {
   const lanes = [];
   const add = (lane, run, why) => lanes.push({ lane, run, why });
 
-  add("changed-path detection", true, "always — classifies the diff");
+  add("changed-path detection", true, "always: classifies the diff");
   add(
     "typecheck / lint / build / test / safety gates",
     !c.docs_only,
@@ -97,7 +97,7 @@ if (process.argv[1] && process.argv[1].endsWith("ci-plan.mjs")) {
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(plan, null, 2));
   } else {
-    console.log(`\nCI PLAN — ${plan.changed_file_count} changed file(s)\n`);
+    console.log(`\nCI PLAN, ${plan.changed_file_count} changed file(s)\n`);
     console.log("Risk classification:");
     for (const [k, v] of Object.entries(plan.classification)) {
       if (typeof v === "boolean" && v) console.log(`  • ${k}`);
@@ -109,9 +109,9 @@ if (process.argv[1] && process.argv[1].endsWith("ci-plan.mjs")) {
     }
     console.log("\nBrowser coverage:");
     if (plan.browser.groups.length === 0) {
-      console.log(`  none — ${plan.browser.reason}`);
+      console.log(`  none, ${plan.browser.reason}`);
     } else if (plan.browser.extended) {
-      console.log(`  EXTENDED (all specs, 2 shards) — ${plan.browser.reason}`);
+      console.log(`  EXTENDED (all specs, 2 shards), ${plan.browser.reason}`);
     } else {
       console.log(`  groups: ${plan.browser.groups.join(", ")}`);
       console.log(`  specs:  ${plan.browser.spec_count}`);

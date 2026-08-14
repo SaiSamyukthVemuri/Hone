@@ -9,7 +9,7 @@ import {
 // ---------------------------------------------------------------------------
 //
 // Surfaces existing intake answers that Chloe wants flagged for review before
-// treatment. Hone does NOT make clinical decisions — it only surfaces what the
+// treatment. Hone does NOT make clinical decisions. It only surfaces what the
 // client already reported on their intake, for the practitioner to review.
 //
 // Derivation is a PURE read-time map over the structured answers already in
@@ -17,7 +17,7 @@ import {
 // values, yes_no = "yes"). NO new fields, NO migration, NO free-text parsing,
 // NO AI/OCR, NO persisted risk score. Free-text `_notes` companions are never
 // inspected (parsing prose for medical terms would be inference, not
-// surfacing). Allergy / EpiPen signals are intentionally NOT flagged here —
+// surfacing). Allergy / EpiPen signals are intentionally NOT flagged here,
 // they already have dedicated cards on the review page; this avoids
 // duplication.
 //
@@ -36,12 +36,12 @@ export type IntakeReviewFlag = {
   wording: string;
   // Short human label of the matched item.
   category: string;
-  // "Based on intake response: <question label> — <answer label>".
+  // "Based on intake response: <question label>, <answer label>".
   basis: string;
   // PR #267. Modality/category badges from Chloe's clinic reference chart
   // (resolve to wording via MODALITY_WORDING). For a chart-mapped condition
   // these are the chart's per-modality review signals; otherwise a single
-  // fallback derived from `level`. Render-only — never a treatment decision.
+  // fallback derived from `level`. Render-only, never a treatment decision.
   badges: IntakeModality[];
 };
 
@@ -103,7 +103,7 @@ const LEVEL_FALLBACK_MODALITY: Record<IntakeReviewLevel, IntakeModality> = {
 // haemophilia, MS / nervous-system disorder, radiotherapy, chemotherapy,
 // arteritis, retinal implant, circulatory problems, hyper/hypotension,
 // infectious disease, total paralysis) are NOT invented. Surfaced for review
-// only — not a treatment decision.
+// only, not a treatment decision.
 const CHART_MODALITIES: Record<string, ReadonlyArray<IntakeModality>> = {
   // Heart problem or pacemaker → continuous/galvanic + medical authorization.
   "medical_conditions:heart": ["galvanic", "authorization"],
@@ -120,7 +120,7 @@ const CHART_MODALITIES: Record<string, ReadonlyArray<IntakeModality>> = {
   // Hepatitis and AIDS/HIV (the intake's single blood-borne option covers
   // both rows) → thermolysis + continuous/galvanic.
   "medical_conditions:blood_borne": ["thermolysis", "galvanic"],
-  // Diabetes — the conservative UNION of all three diabetes chart rows.
+  // Diabetes: the conservative UNION of all three diabetes chart rows.
   //
   // The intake now DOES collect a Type 1 / Type 2 subtype (`diabetes_type`),
   // and this mapping deliberately continues to ignore it. Two reasons, both
@@ -132,11 +132,11 @@ const CHART_MODALITIES: Record<string, ReadonlyArray<IntakeModality>> = {
   //     per-type rule.
   //   * The subtype cannot be relied on to be present or specific. Every intake
   //     submitted before it existed has no type at all, and "Other / not sure"
-  //     is a legitimate answer a client may give — so keying off it would flag
+  //     is a legitimate answer a client may give, so keying off it would flag
   //     otherwise-identical records differently for no clinically stated reason.
   //
   // (The option set now includes gestational, which is a chart row in its own
-  // right. That makes a per-type rule MORE tempting, not less — and it is still
+  // right. That makes a per-type rule MORE tempting, not less, and it is still
   // Chloe's call to make, not this table's to assume.)
   //
   // So the union stands, and the subtype is information for the practitioner to
@@ -232,7 +232,7 @@ function multiHas(value: unknown, optionValue: string): boolean {
 }
 
 function basisLine(questionKey: string, answerLabel: string): string {
-  return `Based on intake response: ${getQuestionLabel(questionKey)} — ${answerLabel}`;
+  return `Based on intake response: ${getQuestionLabel(questionKey)}, ${answerLabel}`;
 }
 
 // Pure. Derives the practitioner review flags from a single intake's

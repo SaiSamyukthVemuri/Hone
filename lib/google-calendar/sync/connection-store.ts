@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { storeRotatedRefreshToken } from "../connection";
 import { RefreshSecretReadError, type ConnectionAuthRow, type ConnectionStore } from "./token-manager";
 
-// Google Calendar — Phase B2.1: the production ConnectionStore, backed by the
+// Google Calendar: Phase B2.1: the production ConnectionStore, backed by the
 // service-role admin client. Every read/write is re-derived by (connectionId,
 // studioId) so a worker can never touch another studio's connection or secret.
 // The ciphertext table is never exposed to a browser role (Phase A posture).
@@ -61,7 +61,7 @@ export function createAdminConnectionStore(): ConnectionStore {
     },
     async storeRotatedToken(args) {
       // Reuses the Phase-A helper (keyed by connectionId + studioId). Until B2.1
-      // this was defined but never called — wiring it here fixes the live defect.
+      // this was defined but never called: wiring it here fixes the live defect.
       await storeRotatedRefreshToken(args);
     },
     async touchTokenExpiry(connectionId, studioId, expiresAtIso) {

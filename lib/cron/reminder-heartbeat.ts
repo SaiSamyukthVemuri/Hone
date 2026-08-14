@@ -12,7 +12,7 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 // /api/cron/appointment-reminders is driven by an external every-15-minute
 // scheduler (cron-job.org), because Vercel's plan caps cron at once-per-day
 // (PR #258). If that external scheduler is disabled, misconfigured, or
-// failing, reminders silently stop and NOTHING is recorded — a stopped
+// failing, reminders silently stop and NOTHING is recorded: a stopped
 // scheduler produces SILENCE, not an alert (the existing
 // `cron_route_failed` / `reminder_send_exhausted` ops_alerts only fire when
 // the route runs AND something throws/exhausts).
@@ -20,13 +20,13 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 // This module records a single positive "last successful reminder cron run"
 // heartbeat so the admin console can show healthy / stale / missing. It
 // reuses the Upstash Redis that already backs public rate limiting
-// (PR #262 makes it production-required) — a single overwritten KV key, NOT
+// (PR #262 makes it production-required), a single overwritten KV key, NOT
 // the append-only ops_alerts table (which would gain ~96 info rows/day and
 // pollute the failure dashboard). No migration, no new dependency, no new
 // scheduler/queue.
 //
 // Posture (mirrors lib/rate-limit/public.ts): FAIL-OPEN. The write is
-// best-effort and never throws — a heartbeat failure must never break a real
+// best-effort and never throws: a heartbeat failure must never break a real
 // reminder run. The read returns null ("unknown/unconfigured") on any error
 // rather than crashing the admin page. Locally (no Upstash) it reads as
 // missing/unknown, which is acceptable for an operator signal; in production
@@ -42,7 +42,7 @@ const HEARTBEAT_KEY = "reminder_cron:last_success";
 const HEARTBEAT_TTL_SECONDS = 60 * 60 * 24; // 24h
 
 // ---------------------------------------------------------------------------
-// Health thresholds — derived from the shipped cadence contract, never literals
+// Health thresholds: derived from the shipped cadence contract, never literals
 // ---------------------------------------------------------------------------
 //
 // Both thresholds are multiples of CRON_INTERVAL_MINUTES so a future cadence
@@ -59,7 +59,7 @@ const HEARTBEAT_TTL_SECONDS = 60 * 60 * 24; // 24h
 // A heartbeat age above 2 x cadence therefore means "the external scheduler is
 // no longer delivering the cadence the window math depends on".
 //
-// STALE (3 x cadence = 45 min) is unchanged from PR #265 — three consecutive
+// STALE (3 x cadence = 45 min) is unchanged from PR #265, three consecutive
 // missed cycles is a sustained failure, not a blip, and matches the 3-strike
 // per-row MAX_ATTEMPTS posture of the reminder route itself.
 //
@@ -67,12 +67,12 @@ const HEARTBEAT_TTL_SECONDS = 60 * 60 * 24; // 24h
 // reported it as a WARNING, which never emails. That left two holes this module
 // now closes: ages between 30 and 45 minutes were reported as fully "healthy"
 // (a silent cadence regression), and a genuinely dead scheduler only produced
-// an EMAIL once the 24h heartbeat TTL expired it into "missing" — up to ~48h.
+// an EMAIL once the 24h heartbeat TTL expired it into "missing", up to ~48h.
 // A stored timestamp more than this far in the FUTURE is not evidence of a
-// recent run — it is corruption or a badly skewed clock. Without this bound a
+// recent run. It is corruption or a badly skewed clock. Without this bound a
 // future-dated value sorts after every real candidate, so it is never replaced,
 // its TTL is refreshed on every run, and the negative age is clamped to 0 and
-// reported HEALTHY — permanently masking a dead scheduler. The allowance covers
+// reported HEALTHY: permanently masking a dead scheduler. The allowance covers
 // ordinary clock skew between the app instance and whatever wrote the value.
 export const REMINDER_FUTURE_TOLERANCE_MINUTES = 5;
 
@@ -136,7 +136,7 @@ function coerceHeartbeat(raw: unknown): ReminderHeartbeat | null {
 //
 // Two reminder runs can overlap, and Redis completion order is NOT invocation
 // order: an older invocation can finish (and reach Redis) after a newer one.
-// A read-then-write cannot be monotonic under that — the earlier claim in this
+// A read-then-write cannot be monotonic under that: the earlier claim in this
 // file that it "keeps `at` monotonic" was simply WRONG and has been removed.
 //
 // This pure function is the SPECIFICATION of the merge. The Lua script below
@@ -144,7 +144,7 @@ function coerceHeartbeat(raw: unknown): ReminderHeartbeat | null {
 // write cannot be interleaved by another run.
 //
 // Rules, given the stored value and an arriving candidate:
-//   * `at` (recency) takes the LATER completion — a successful run that
+//   * `at` (recency) takes the LATER completion: a successful run that
 //     finished later is real, so recency never moves backwards.
 //   * a candidate whose invocation is NEWER becomes the cadence point, and the
 //     one it displaces becomes `previousInvokedAt`.
@@ -169,7 +169,7 @@ export function mergeReminderHeartbeat(
   };
   // A stored heartbeat whose completion timestamp is unusable cannot be ordered
   // against, so this run replaces it outright rather than being compared to it.
-  // The Lua applies the identical guard — without it, a corrupt-but-valid-JSON
+  // The Lua applies the identical guard: without it, a corrupt-but-valid-JSON
   // value would sort AFTER every real ISO timestamp and pin the heartbeat in a
   // broken state forever.
   if (!current || t(current.at) === null) return { ...candidate };
@@ -229,7 +229,7 @@ export function mergeReminderHeartbeat(
 const HEARTBEAT_MERGE_LUA = `
 -- Every timestamp this module writes is a canonical ISO-8601 UTC string from
 -- Date.prototype.toISOString(), so LEXICOGRAPHIC order equals chronological
--- order — but ONLY for values that are genuinely well-formed. A stored value
+-- order, but ONLY for values that are genuinely well-formed. A stored value
 -- can be valid JSON and still hold a corrupt timestamp, and corrupt values tend
 -- to sort AFTER real ones ("not-a-date", and digit-shaped impossibilities like
 -- "9999-99-99T99:99:99.000Z"). Either would pin the heartbeat in a broken state
@@ -238,18 +238,18 @@ const HEARTBEAT_MERGE_LUA = `
 --
 -- So a stored timestamp is orderable only if it matches the FULL canonical form
 -- AND its components are in range. The ranges below mirror what Date.parse
--- actually accepts (month 1-12, day 1-31 — it rolls Feb 31 over rather than
+-- actually accepts (month 1-12, day 1-31, it rolls Feb 31 over rather than
 -- rejecting it, hour 0-24, minute/second 0-59; it rejects month 99 and
 -- second 60).
 --
 -- The asymmetry is deliberate: this validator must never be MORE permissive
 -- than Date.parse, because accepting something JS later rejects is exactly the
--- wedge described above. Being slightly STRICTER is harmless — it only means
+-- wedge described above. Being slightly STRICTER is harmless. It only means
 -- the value is treated as absent and the current run replaces it, so the
 -- heartbeat still heals.
 --
 -- Hour 24 is therefore rejected OUTRIGHT rather than range-allowed. Date.parse
--- accepts "T24:00:00.000Z" but rejects "T24:59:59.000Z" — hour 24 is legal only
+-- accepts "T24:00:00.000Z" but rejects "T24:59:59.000Z", hour 24 is legal only
 -- when minute, second and millisecond are all zero. Encoding that
 -- cross-component rule buys nothing here: toISOString() NEVER emits hour 24
 -- (it normalises to 00:00 of the next day), so no timestamp this module writes
@@ -320,7 +320,7 @@ return 1
 // a documented method on the installed @upstash/redis client). There is no
 // separate client-side read to race, so:
 //   * recency and the cadence point are monotonic under overlapping runs;
-//   * Redis completion order cannot determine heartbeat ordering — invocation
+//   * Redis completion order cannot determine heartbeat ordering: invocation
 //     timestamps do;
 //   * "failing to obtain prior evidence" cannot suppress this run's recency,
 //     because the prior value is read inside the same atomic step and an
@@ -420,7 +420,7 @@ function worseHealth(
 // OPS-01.1 (review 3775029882): classify the RAW elapsed milliseconds, never a
 // rounded minute count. `Math.round` pulled 30:01-30:29 back to 30 and
 // 45:01-45:29 back to 45, so an interval that genuinely exceeds the threshold
-// could still read healthy — or dodge the stale/critical escalation and its
+// could still read healthy, or dodge the stale/critical escalation and its
 // operator email. The reminder-window invariant is about the real elapsed time,
 // so the comparison is too; rounding is for DISPLAY only.
 function classifyElapsedMs(ms: number): ReminderSchedulerHealth {
@@ -429,18 +429,18 @@ function classifyElapsedMs(ms: number): ReminderSchedulerHealth {
   return "stale";
 }
 
-// Pure, deterministic classifier — the testable core. `nowMs` is injected so
+// Pure, deterministic classifier: the testable core. `nowMs` is injected so
 // tests are time-independent.
 //
 // OPS-01.1 (review 3774540589). Health is now the WORSE of two independent
 // conditions, because recency alone is not evidence of cadence:
 //
-//   A. RECENCY  — minutes since the latest successful run.
-//   B. CADENCE  — minutes between the latest TWO successful runs.
+//   A. RECENCY : minutes since the latest successful run.
+//   B. CADENCE : minutes between the latest TWO successful runs.
 //
 // The finding's example is exactly why B is required. A scheduler firing at
-// 07:50 / 08:30 / 09:10 / 09:50 is running a 40-minute cadence — wide enough to
-// miss appointment offsets in the 30-minute 2h window — yet health checks at
+// 07:50 / 08:30 / 09:10 / 09:50 is running a 40-minute cadence: wide enough to
+// miss appointment offsets in the 30-minute 2h window, yet health checks at
 // 08:00 / 09:00 / 09:30 see ages of only 10 / 30 / 20 minutes and would each
 // report "healthy". Sampling recency can never expose the gap BETWEEN runs; only
 // a stored previous-success timestamp can.
@@ -453,7 +453,7 @@ function classifyElapsedMs(ms: number): ReminderSchedulerHealth {
 // When cadence evidence is absent or corrupt (a pre-hotfix heartbeat, an
 // unparseable or mis-ordered invocation pair) the classifier falls back to
 // recency ONLY and reports cadenceEvidence: "unavailable". It never fabricates
-// an interval and never implies cadence was proven. No fifth status is added —
+// an interval and never implies cadence was proven. No fifth status is added,
 // the honest signal is carried by cadenceEvidence + a null interval, which the
 // admin card and safe_details both surface.
 export function computeReminderSchedulerStatus(
@@ -492,7 +492,7 @@ export function computeReminderSchedulerStatus(
   // the classification for every input.
   const ageMinutes = Math.ceil(ageMs / 60000);
 
-  // CADENCE axis — measured between the two most recent successful
+  // CADENCE axis: measured between the two most recent successful
   // INVOCATIONS (review 3775042692). Completion times are deliberately not used
   // here: a run that starts late but finishes fast would otherwise look on
   // time, and a slow run would make an on-time scheduler look late.
@@ -551,7 +551,7 @@ export function computeReminderSchedulerStatus(
 // ---------------------------------------------------------------------------
 //
 // PR #265 made the external-scheduler health observable (the admin
-// "Reminder scheduler" card), but the signal stayed PASSIVE — an operator
+// "Reminder scheduler" card), but the signal stayed PASSIVE: an operator
 // only learns the scheduler stopped if they happen to open /admin. This
 // records an ops alert so a dead scheduler becomes actionable (and, for the
 // missing case, emails OPS_ALERT_EMAILS via the critical path).
@@ -567,7 +567,7 @@ export function computeReminderSchedulerStatus(
 //
 // Dedupe: skip if an UNRESOLVED ops_alerts row already exists for the same
 // event. An unresolved alert means the operator has not yet handled this
-// outage; do not pile on a duplicate each daily run. No auto-resolve — the
+// outage; do not pile on a duplicate each daily run. No auto-resolve, the
 // operator resolves manually (admin ops-alerts page) after fixing the
 // scheduler, matching every other ops alert.
 //
@@ -639,10 +639,10 @@ export function isAtLeastAsSevere(
 }
 
 // The severity of the strongest UNRESOLVED alert already open for the event,
-// or null when none is open (or the lookup failed — see the caller).
+// or null when none is open (or the lookup failed. See the caller).
 export type ExistingUnresolvedAlert = { severity: ReminderAlertSeverity } | null;
 
-// Pure, deterministic decision — the testable core. Given the computed status
+// Pure, deterministic decision: the testable core. Given the computed status
 // and the strongest UNRESOLVED ops alert already open for the matching event,
 // decide whether to record a new one.
 //   healthy                          -> no alert
@@ -655,7 +655,7 @@ export type ExistingUnresolvedAlert = { severity: ReminderAlertSeverity } | null
 // PR OPS-01: `stale` is CRITICAL, not warning. recordOpsAlert only emails
 // OPS_ALERT_EMAILS for critical severity, so the previous warning meant a dead
 // scheduler produced no operator email until the 24h heartbeat TTL expired the
-// key into `missing` — up to ~48h of silence. `degraded` stays a warning on
+// key into `missing`, up to ~48h of silence. `degraded` stays a warning on
 // purpose: it is the early cadence signal (row + admin card), and paging on it
 // would train operators to ignore the channel.
 //
@@ -664,7 +664,7 @@ export type ExistingUnresolvedAlert = { severity: ReminderAlertSeverity } | null
 // one severity forever. OPS-01 changed `reminder_scheduler_stale` from warning
 // to critical, so any warning-severity stale row left unresolved from before
 // that change would have silently swallowed the first real critical escalation
-// — and with it the OPS_ALERT_EMAILS notification the escalation exists to
+// and with it the OPS_ALERT_EMAILS notification the escalation exists to
 // send. A lower-severity open row must never suppress a higher-severity alert.
 // The legacy warning is deliberately NOT auto-resolved: rewriting operator-owned
 // history to make a check pass would be worse than letting the critical row sit
@@ -685,7 +685,7 @@ export function decideReminderSchedulerAlert(
   return { shouldAlert: true, event, severity };
 }
 
-// Pure builder for the alert's safe_details. NON-SENSITIVE scalars only —
+// Pure builder for the alert's safe_details. NON-SENSITIVE scalars only,
 // status + timing. Intentionally carries NO CRON_SECRET, Authorization
 // header, client phone/email/PII, reminder contents, or provider payload.
 export function reminderSchedulerAlertSafeDetails(
@@ -696,7 +696,7 @@ export function reminderSchedulerAlertSafeDetails(
     status: status.status,
     last_success_at: status.lastSuccessAt,
     age_minutes: status.ageMinutes,
-    // OPS-01.1: non-sensitive timing scalars only — two ISO timestamps and an
+    // OPS-01.1: non-sensitive timing scalars only: two ISO timestamps and an
     // integer minute count. No identifiers, no reminder content, no secrets.
     invoked_at: status.invokedAt,
     previous_invoked_at: status.previousInvokedAt,
@@ -725,7 +725,7 @@ function reminderSchedulerAlertMessage(
   }
   const cause =
     status.failingAxis === "cadence"
-      ? `the last two successful runs were ${status.observedIntervalMinutes} minutes apart (the most recent was only ${status.ageMinutes} minutes ago, so the scheduler is still firing — just too slowly)`
+      ? `the last two successful runs were ${status.observedIntervalMinutes} minutes apart (the most recent was only ${status.ageMinutes} minutes ago, so the scheduler is still firing, just too slowly)`
       : status.failingAxis === "both"
         ? `the last successful run was ${status.ageMinutes} minutes ago AND the last two runs were ${status.observedIntervalMinutes} minutes apart`
         : `the last successful run was ${status.ageMinutes} minutes ago`;
@@ -738,12 +738,12 @@ function reminderSchedulerAlertMessage(
 
 // Best-effort, fail-open. Reads the heartbeat, classifies, and records ONE
 // deduped ops alert when the scheduler is degraded/stale/missing. Never throws
-// — a health-check failure must never break the daily cron that calls it.
+// a health-check failure must never break the daily cron that calls it.
 // `nowMs` is injected so tests are time-independent.
 //
 // SAFE TO CALL FROM SEVERAL DAILY CRONS. The dedupe below keys on an
 // UNRESOLVED ops_alerts row for the same event, so the 08:00, 09:00 and 09:30
-// UTC checks record at most ONE alert per outage per event — the second and
+// UTC checks record at most ONE alert per outage per event: the second and
 // third callers of the day dedupe. This is what makes the monitor survive any
 // single daily cron route failing.
 export async function recordReminderSchedulerHealthAlert(
@@ -771,7 +771,7 @@ export async function recordReminderSchedulerHealthAlert(
   // (the severity this event used before OPS-01) would suppress the new
   // critical escalation and its OPS_ALERT_EMAILS notification.
   //
-  // On a read error, fall through (null = nothing open) and record —
+  // On a read error, fall through (null = nothing open) and record,
   // recordOpsAlert is fail-open; a rare duplicate beats silently dropping a
   // scheduler-down alert.
   let existingUnresolved: ExistingUnresolvedAlert = null;

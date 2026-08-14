@@ -8,20 +8,20 @@
 // Stripe retries.
 //
 // Guarantees:
-//   * product success NEVER depends on analytics — nothing here throws into a
+//   * product success NEVER depends on analytics, nothing here throws into a
 //     caller; every failure mode is caught;
 //   * dispatch runs AFTER the response via Next's stable `after()` (caught
 //     fire-and-forget fallback when out of request scope);
 //   * bounded execution time (DISPATCH_TIMEOUT_MS race);
-//   * distinctIds are opaque, UUID-validated actors (lib/analytics/ids.ts) —
+//   * distinctIds are opaque, UUID-validated actors (lib/analytics/ids.ts),
 //     an email/phone/token/free-text id fails closed (event dropped) and is
 //     never logged;
-//   * event properties are ALLOWLISTED — unknown keys are dropped, never sent;
+//   * event properties are ALLOWLISTED: unknown keys are dropped, never sent;
 //   * `identify` carries the opaque id and, optionally, a validated coarse role
 //     enum only.
 //
 // Design: best-effort bounded post-commit dispatch (framework `after()`), NOT a
-// durable outbox — product analytics is tolerable-loss and a queue would add
+// durable outbox: product analytics is tolerable-loss and a queue would add
 // write amplification to clinical paths for no product benefit.
 
 import { after } from "next/server";
@@ -119,7 +119,7 @@ function schedule(work: () => Promise<void>): void {
 /**
  * Fire a product analytics event from the server. Non-blocking, bounded, never
  * throws, never affects the caller's result. The actor's id is UUID-validated
- * inside the post-response work — a non-UUID id drops the event (no value
+ * inside the post-response work: a non-UUID id drops the event (no value
  * logged).
  */
 export function captureServerEvent(args: {

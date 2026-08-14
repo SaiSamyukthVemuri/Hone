@@ -2,10 +2,10 @@
 //
 // Two callers, two different admitted sets, ONE whitelist implementation:
 //
-//   sanitizeQuestionResponses          — the public, token-authenticated
+//   sanitizeQuestionResponses         , the public, token-authenticated
 //                                        client wizard. Admits every
 //                                        questionnaire key.
-//   sanitizePractitionerAssistedAnswers — the authenticated practitioner
+//   sanitizePractitionerAssistedAnswers, the authenticated practitioner
 //                                        assisted editor. Admits the same set
 //                                        MINUS every key the client alone may
 //                                        author.
@@ -20,9 +20,9 @@
 // The practitioner-assisted provenance key
 // (lib/intake/entry-provenance.ts) must NEVER be admitted by either function.
 // It is not a questionnaire answer and it is not a client claim: it is derived
-// on the server from the authenticated session. Admitting it — even "narrowed"
+// on the server from the authenticated session. Admitting it, even "narrowed"
 // the way the electrolysis acknowledgement claim is admitted by the public
-// action — would let whoever holds the intake token author, replace or erase
+// action: would let whoever holds the intake token author, replace or erase
 // practitioner attribution. tests/source-guards/assisted-intake-guards.test.ts
 // pins that this file never references the provenance key.
 
@@ -60,7 +60,7 @@ export function sanitizeQuestionResponses(
 // A practitioner may record what the client tells them about their health
 // history. A practitioner may not tick the client's first-person
 // acknowledgements, and may not author the versioned electrolysis
-// acknowledgement record — those are the client's own statements. Anything in
+// acknowledgement record. Those are the client's own statements. Anything in
 // CLIENT_OWNED_RESPONSE_KEYS is dropped silently here rather than rejected,
 // because a legitimate assisted save carrying a stale merged map should still
 // save the answers it is allowed to save; the caller separately reports when a
@@ -80,13 +80,13 @@ export function sanitizePractitionerAssistedAnswers(
 // Refusing on mere key PRESENCE was wrong and shipped a hard-block: the
 // assisted editor seeds its state from the stored responses and posts the whole
 // map, so an intake where the client had already touched a step-5 checkbox
-// through their own link (ticking OR unticking — presence, not value) made
+// through their own link (ticking OR unticking: presence, not value) made
 // every assisted save fail, with copy blaming the practitioner and naming a
 // button that could never mount. It also contradicted this module's own
 // contract below, which says a stale merged map should still save what it may.
 //
-// Comparing against what is STORED keeps the boundary exactly as strong — the
-// practitioner still cannot set, alter or clear a client-owned answer — while
+// Comparing against what is STORED keeps the boundary exactly as strong: the
+// practitioner still cannot set, alter or clear a client-owned answer, while
 // letting a payload that merely echoes the client's own value through.
 // Sanitization drops these keys regardless; this is the loud backstop.
 export function assistedKeysChanged(

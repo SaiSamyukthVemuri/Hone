@@ -17,7 +17,7 @@ import {
 // The fake Google responder. `googleFetch` (lib/google-calendar/google-transport.ts)
 // routes here ONLY when the fail-closed guard passes (never in production). It
 // returns SYNTHETIC responses for the exact Google endpoints the OAuth/calendar
-// path calls — no real Google network request is ever made. Scenario/behaviour is
+// path calls, no real Google network request is ever made. Scenario/behaviour is
 // read from the per-run guarded ledger; nothing is browser-selectable.
 
 function json(body: unknown, status = 200): Response {
@@ -107,7 +107,7 @@ export async function fakeGoogleFetch(
         return json({ id: id1 });
       }
       const id = `fake-cal-${rid}-${base + 1}`;
-      // Google DID create the calendar (record it) — but the client sees an error.
+      // Google DID create the calendar (record it), but the client sees an error.
       // The retry reconciles by the persisted attempt token and adopts this orphan.
       appendFakeGoogleEvent(rid, { type: "calendar_created", id, description });
       if (scenario.provisioning === "insert_error_orphan") {
@@ -124,7 +124,7 @@ export async function fakeGoogleFetch(
     return new Response(null, { status: 200 });
   }
 
-  // Any other Google URL is unexpected — fail LOUD so a test surfaces it (this
+  // Any other Google URL is unexpected: fail LOUD so a test surfaces it (this
   // never falls through to a real network request).
   return json({ error: "fake_google_unhandled_url", url }, 501);
 }

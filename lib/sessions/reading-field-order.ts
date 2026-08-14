@@ -4,7 +4,7 @@
 // ---------------
 // Chloe reads values off the Apilus screen top-to-bottom and types them in.
 // Every surface that captured or displayed these readings had drifted into its
-// own order — the one-page form put thermolysis before galvanic, "Add another
+// own order: the one-page form put thermolysis before galvanic, "Add another
 // pass" put intensity before duration, the copy card used a third order, and
 // the saved-record row used a fourth. Each one forced her to hunt for the next
 // field instead of reading straight down the machine.
@@ -29,7 +29,7 @@ export type ReadingField =
   | "pulseDelay";
 
 // Blend (and every blend modality: PicoBlend, OmniBlend, MultiBlend,
-// EvoluBlend, SynchroBlend) — the full machine order.
+// EvoluBlend, SynchroBlend), the full machine order.
 export const MACHINE_READING_ORDER: readonly ReadingField[] = [
   "energyLevel",
   // Units of lye sits with EL at the top, and opens the galvanic group.
@@ -71,7 +71,7 @@ const THERMOLYSIS_FIELDS: ReadonlySet<ReadingField> = new Set([
 ]);
 
 // Which fields a mode shows, in machine order. This mirrors the mode gating the
-// forms already applied (lib/sessions/mode-sections.ts) — it does not change it:
+// forms already applied (lib/sessions/mode-sections.ts). It does not change it:
 //   * pure galvanic has no energy level and no thermolysis readings;
 //   * pure thermolysis has no units of lye and no galvanic readings;
 //   * blend shows everything.
@@ -80,7 +80,7 @@ const THERMOLYSIS_FIELDS: ReadonlySet<ReadingField> = new Set([
 // more than one pulse is charted.
 //
 // KNOWN, DELIBERATE DIVERGENCE: for pure galvanic this returns no energy level
-// (matching the data layer — buildTreatmentSetupDraftPatch blanks energy_level
+// (matching the data layer: buildTreatmentSetupDraftPatch blanks energy_level
 // for galv), but the one-page charting form still RENDERS the energy-level input
 // in every mode. Hiding it would be a mode-gating change, which the machine-order
 // work deliberately does not make; the current behaviour is pinned in

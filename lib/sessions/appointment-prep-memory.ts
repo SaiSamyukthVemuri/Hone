@@ -1,4 +1,4 @@
-// APPOINTMENT PREPARATION MEMORY — the "what happened last time" view model
+// APPOINTMENT PREPARATION MEMORY: the "what happened last time" view model
 // rendered on the calendar appointment-detail screen, before the client arrives.
 //
 // WHY THIS EXISTS
@@ -6,15 +6,15 @@
 // Three surfaces answer "what happened last time", at three different distances
 // from the client:
 //
-//   /sessions/new                 buildLastSessionSummary  — a five-second recap
-//   the live charting screen      buildPointOfCareMemory   — the setup to reproduce
-//   the appointment detail page   THIS MODULE              — the full pre-visit read
+//   /sessions/new                 buildLastSessionSummary , a five-second recap
+//   the live charting screen      buildPointOfCareMemory  , the setup to reproduce
+//   the appointment detail page   THIS MODULE             : the full pre-visit read
 //
 // The first two are deliberately compact: one is a glance before starting, the
 // other is read over the client with a probe in hand. The appointment page is
 // neither. Chloe opens it before the client walks in, and what she needs there
-// is everything — every treated area, the complete per-area setup and outcome,
-// and the whole practitioner narrative — WITHOUT opening the prior chart and
+// is everything: every treated area, the complete per-area setup and outcome,
+// and the whole practitioner narrative: WITHOUT opening the prior chart and
 // WITHOUT entering Edit.
 //
 // So this module is the point-of-care memory PLUS the narrative that the
@@ -28,7 +28,7 @@
 // a column is included only when it is proven practitioner-authored treatment
 // text belonging to THIS session):
 //
-//   sessions.session_notes                General notes.       LEGACY — no
+//   sessions.session_notes                General notes.       LEGACY, no
 //                                         writer survives, but it is the only
 //                                         render of the column in the product
 //                                         and the text can never be recreated.
@@ -36,33 +36,33 @@
 //   session_blocks.caution_note           Caution.             LEGACY read.
 //   session_blocks.reaction_notes         Response.            LEGACY read.
 //   session_blocks.numbing_notes          Numbing.             LIVE.
-//   electrolysis_entries.comments         Additional notes.    LIVE — the
+//   electrolysis_entries.comments         Additional notes.    LIVE: the
 //                                         highest-volume practitioner text in
 //                                         the product, and invisible on every
 //                                         memory surface until now.
-//   laser_entries.observation_notes       Observation notes.   LIVE — the only
+//   laser_entries.observation_notes       Observation notes.   LIVE: the only
 //                                         narrative a laser visit has.
 //
 // DELIBERATELY EXCLUDED, each for a stated reason:
 //   observation_chips        structured; already rendered as response labels.
 //   custom_area_detail       area identity, not narrative; current form writes NULL.
 //   block_name               legacy heading; already the area-label fallback.
-//   block_notes              dead — only ever written as literal null.
-//   ejection_results         dead column — zero reads, zero writes in the app.
+//   block_notes              dead, only ever written as literal null.
+//   ejection_results         dead column: zero reads, zero writes in the app.
 //   delete_reason (any)      deletion/audit metadata.
 //   intake / consent / payment / cancellation / audit / relationship notes
 //                            different records entirely; see Phase 4 of the brief.
 //
 // DUPLICATION IS PREVENTED STRUCTURALLY, not by eyeballing the render:
 //   * Each note carries its SOURCE and its AREA. Two notes are the same note
-//     only when source, area and text all match — so the identical sentence
+//     only when source, area and text all match, so the identical sentence
 //     recorded against two different areas keeps both, with provenance.
 //   * next_session_note is a field of its own. If session_notes happens to hold
 //     the same text, the general entry is dropped, not shown twice.
 //   * The notes section is the SINGLE render authority for free text. The area
 //     cards carry the same values on the model (so the outcome model is
 //     complete and independently assertable) but render structured values only.
-//     One text, one place on the page — which is also the only way ten areas of
+//     One text, one place on the page, which is also the only way ten areas of
 //     narrative stay readable at 390px.
 //
 // Pure. No I/O. Client-safe.
@@ -99,7 +99,7 @@ export type NarrativeSource =
   | "laser_observation_notes";
 
 // The practitioner-facing label for each source. Every string is the one the
-// product already uses at the point of capture or of saved-record display —
+// product already uses at the point of capture or of saved-record display,
 // never a new vocabulary invented for this card.
 export const NARRATIVE_SOURCE_LABELS: Readonly<Record<NarrativeSource, string>> =
   {
@@ -140,7 +140,7 @@ export type AppointmentPrepNotes = {
   forNextVisit: NarrativeItem | null;
   // NOTE: no provenance field here any more. This slot now carries ONLY the
   // selected treatment's own plan, so the treatment header already supplies its
-  // date. Narrative from any other visit is a separate, attributed surface —
+  // date. Narrative from any other visit is a separate, attributed surface,
   // see buildPrepProvenanceModel.
   cautions: AreaNarrativeItem[];
   additional: AreaNarrativeItem[];
@@ -154,7 +154,7 @@ export type AppointmentPrepNotes = {
 export type AppointmentPrepArea = {
   key: string;
   areaLabel: string;
-  // Each treated area as its own label — "Left Cheek", "Right Sideburn". The
+  // Each treated area as its own label: "Left Cheek", "Right Sideburn". The
   // joined areaLabel above is the heading; this is what proves a multi-area
   // block never collapses to its first area.
   areaParts: string[];
@@ -180,13 +180,13 @@ export type AppointmentPrepArea = {
     | "cautionFlag"
     | "notes"
   >;
-  // True when NOTHING about the setup was recorded — so the card can say that
+  // True when NOTHING about the setup was recorded, so the card can say that
   // once instead of rendering an empty chip row.
   setupRecorded: boolean;
   // True when a LATER live pass recorded different machine readings from the
   // canonical (earliest) one.
   //
-  // The readings shown come from the canonical pass — Session 1B's rule, shared
+  // The readings shown come from the canonical pass: Session 1B's rule, shared
   // with the live charting card and with the in-form Copy settings control, and
   // deliberately not changed here. But this card's whole promise is that the
   // prior visit can be read without opening the chart, and silently showing
@@ -208,7 +208,7 @@ export type AppointmentPrepMemory = {
   areas: AppointmentPrepArea[];
   notes: AppointmentPrepNotes;
   // Non-null ONLY when the selected visit is genuinely charted but carries no
-  // settings blocks — a laser visit, or pre-0019 legacy electrolysis. Says what
+  // settings blocks: a laser visit, or pre-0019 legacy electrolysis. Says what
   // the record IS; never "Area not recorded" about a visit that plainly
   // happened.
   blocklessNote: string | null;
@@ -238,7 +238,7 @@ export type PrepFallbackItem = {
   startedAt: string;
 };
 
-// THE PROVENANCE AUTHORITY — one pure function, exhaustively tested.
+// THE PROVENANCE AUTHORITY, one pure function, exhaustively tested.
 //
 // Three repair cycles found defects in narrative ownership and provenance, each
 // time because the decision was spread across a boolean here, a JSX branch
@@ -254,7 +254,7 @@ export type PrepFallbackItem = {
 //
 //   B. Narrative from ANOTHER eligible visit. A newer uncharted consultation
 //      carrying "Client started doxycycline, do not treat" is not part of the
-//      July treatment, and must not be shown as though it were — but it is
+//      July treatment, and must not be shown as though it were, but it is
 //      exactly what Chloe needs today, so it renders separately, attributed.
 //
 // PROVENANCE. Every item from a session other than the selected treatment
@@ -264,7 +264,7 @@ export type PrepFallbackItem = {
 // are inferences the data does not support, and none is ever emitted.
 //
 // The bug this closes: chronology was gated on `planAt > selectedAt`, so an
-// OLDER plan rendered with NO date while the newer case always carried one —
+// OLDER plan rendered with NO date while the newer case always carried one,
 // and that silence read as "written at the treatment above", inverting the
 // status of an instruction that may already have been carried out.
 //
@@ -293,9 +293,9 @@ export type PrepNarrativeRenderItem = {
 };
 
 export type PrepProvenanceModel = {
-  // Rendered by the treatment card — the selected visit's own narrative.
+  // Rendered by the treatment card: the selected visit's own narrative.
   owned: PrepNarrativeRenderItem[];
-  // Rendered separately, attributed — narrative from any other visit.
+  // Rendered separately, attributed: narrative from any other visit.
   external: PrepNarrativeRenderItem[];
 };
 
@@ -325,7 +325,7 @@ export function buildPrepProvenanceModel(input: {
   const selectedAt = input.selected?.startedAt ?? null;
   const owned: PrepNarrativeRenderItem[] = [];
   const external: PrepNarrativeRenderItem[] = [];
-  // source + session + normalized text — never text alone.
+  // source + session + normalized text, never text alone.
   const seen = new Set<string>();
 
   const push = (
@@ -373,7 +373,7 @@ export function buildPrepProvenanceModel(input: {
 
   // ONE VISIT, ONE FACT: a single session that stored the identical string in
   // both next_session_note and session_notes recorded one thing twice. Scoped
-  // to a single session on purpose — the same sentence on two different visits
+  // to a single session on purpose: the same sentence on two different visits
   // stays two items, because the provenance differs.
   const collapse = (list: PrepNarrativeRenderItem[]) => {
     const plans = new Map<string, string>();
@@ -398,7 +398,7 @@ export type PrepLaserEntry = {
 
 // An electrolysis pass that belongs to NO settings block. Pre-0019 electrolysis
 // charted straight into electrolysis_entries, and 0019 added block_id as a
-// NULLABLE column with ON DELETE SET NULL — so these rows exist, they are
+// NULLABLE column with ON DELETE SET NULL, so these rows exist, they are
 // genuinely charted, and their `comments` are practitioner narrative that no
 // block-shaped model can reach.
 export type PrepOrphanEntry = {
@@ -423,7 +423,7 @@ export type AppointmentPrepMemoryInput = {
   // happens HERE so a caller cannot forget it.
   laserEntries?: ReadonlyArray<PrepLaserEntry> | null;
   // Every electrolysis pass on the selected session, live or soft-deleted.
-  // Only the ones with NO block_id are read — a pass that belongs to a block
+  // Only the ones with NO block_id are read: a pass that belongs to a block
   // already reaches the model through that block's area.
   electrolysisEntries?: ReadonlyArray<PrepOrphanEntry> | null;
   supersededByEmptySession?: boolean;
@@ -441,7 +441,7 @@ function trimmedOrNull(value: string | null | undefined): string | null {
 // The dedup identity of a note: source + area + exact text.
 //
 // Text is compared on its TRIMMED value only. It is deliberately NOT normalised
-// further — no case folding, no whitespace collapsing, no punctuation
+// further, no case folding, no whitespace collapsing, no punctuation
 // stripping. Two clinical notes that differ by a line break or by capitalisation
 // are two different notes, and the practitioner wrote both.
 function noteIdentity(
@@ -485,7 +485,7 @@ class NarrativeCollector {
 }
 
 // The pure note-section helper. It OWNS source identity, grouping, labels,
-// deduplication and the empty-state decision — nothing about narrative is
+// deduplication and the empty-state decision, nothing about narrative is
 // decided in a component.
 export function buildLastSessionNoteSections(input: {
   session: { session_notes?: string | null; next_session_note?: string | null };
@@ -534,7 +534,7 @@ export function buildLastSessionNoteSections(input: {
 
   for (const area of input.areas) {
     // A block can be flagged to watch with NO note. The compact summary has
-    // always rendered that as "<area>: flagged to watch." — dropping it here
+    // always rendered that as "<area>: flagged to watch.", dropping it here
     // would demote a safety flag to an unstyled chip below the fold.
     const caution = collect.add(
       "caution_note",
@@ -573,13 +573,13 @@ export function buildLastSessionNoteSections(input: {
   }
 
   // A pre-0019 electrolysis pass carries no block_id, so its narrative reaches
-  // no area and would otherwise be invisible behind the blockless copy — the
+  // no area and would otherwise be invisible behind the blockless copy: the
   // card would print "No notes recorded at the last session." over text the
   // practitioner had written. Grouped by the entry's own `area` column.
   //
   // Passes that DO belong to a block are skipped: they already arrived through
   // that block's area, and emitting them here would render each one twice.
-  // "Orphan" means NO SURVIVING AREA — not merely a null block_id. A block can
+  // "Orphan" means NO SURVIVING AREA, not merely a null block_id. A block can
   // be soft-deleted while its entries stay live and keep pointing at it
   // (soft_delete_session_block, 0166, deliberately does not cascade), and the
   // block read filters deleted blocks out. Those entries would otherwise fall
@@ -715,7 +715,7 @@ function toPrepArea(
     // `hairs: 0` is NOT currently reachable: Session 1B's buildArea sums with
     // `if (h != null && h > 0)`, so a pass recording zero hairs yields null.
     // That rule is shared with the live charting card, so changing it is a 1B
-    // contract change and out of scope here — stated rather than implied,
+    // contract change and out of scope here: stated rather than implied,
     // because the null check below would otherwise read as covering it.
     outcomeRecorded:
       outcome.minutes != null
@@ -802,15 +802,15 @@ function areaPartsFor(block: PointOfCareBlock): string[] {
 // THE ONE MAPPING from a loaded treatment to this model's input.
 // ---------------------------------------------------------------------------
 //
-// Both surfaces that show a previous treatment — the calendar appointment page
-// and the Today row — need the same fifteen lines of "which loaded field feeds
+// Both surfaces that show a previous treatment: the calendar appointment page
+// and the Today row: need the same fifteen lines of "which loaded field feeds
 // which model field", including the two that are easy to get quietly wrong:
 // the legacy `session_notes` passthrough, and `hasLiveElectrolysisEntries`,
 // which is what tells a pre-0019 entry-only electrolysis visit apart from a
 // laser one when there are no blocks.
 //
 // It lives here, once. A second copy is how two surfaces start disagreeing
-// about what a visit looked like — and the disagreement would be invisible,
+// about what a visit looked like, and the disagreement would be invisible,
 // because both would still render something plausible.
 //
 // Structurally typed on purpose: this module is pure and client-safe, so it

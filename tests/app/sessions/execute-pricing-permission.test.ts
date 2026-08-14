@@ -176,7 +176,7 @@ describe("execution requires a currently authoritative CHARGEABLE price", () => 
     expect(res.ok).toBe(false);
     expect(res).toMatchObject({ outcome: "blocked" });
     expect("error" in res ? res.error : "").toMatch(
-      /Consultation is free — no payment is required/,
+      /Consultation is free\. No payment is required/,
     );
     expect(runCharge).toHaveBeenCalledTimes(0);
   });

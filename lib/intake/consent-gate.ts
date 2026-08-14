@@ -24,8 +24,8 @@ import {
 //
 // Two jobs, and only the server may do either:
 //
-//   1. RESOLVE which forms apply — the studio's own currently live, active
-//      treatment/photo templates — and produce the render payload with a
+//   1. RESOLVE which forms apply: the studio's own currently live, active
+//      treatment/photo templates, and produce the render payload with a
 //      canonical hash attached to each.
 //   2. VALIDATE the client's claims against a FRESH re-read of those same
 //      templates at submit time, and build the records that get stored.
@@ -47,7 +47,7 @@ import {
 //
 // PHOTO CONSENT IS DELIBERATELY ABSENT (Chloe, 2026-08-09). Photos are not
 // taken at the consultation, so asking here implied they might be. It is not
-// retired — the client portal is now its only collection surface. Excluded at
+// retired: the client portal is now its only collection surface. Excluded at
 // the QUERY, so the photo template's title and body are never even sent to the
 // intake browser; hiding it client-side would still ship the text.
 //
@@ -56,7 +56,7 @@ import {
 // defense-in-depth and so does this one: a future migration that weakens the
 // CHECK must not silently expose draft consent text to a client mid-intake.
 //
-// Ordering is `created_at` ascending, tie-broken by id — the same ordering
+// Ordering is `created_at` ascending, tie-broken by id: the same ordering
 // getActiveConsentTemplatesForPortal uses, so a studio's forms appear in the
 // intake in the same sequence as in the portal. The id tiebreak makes the
 // order total, so two templates created in the same transaction cannot swap
@@ -121,8 +121,8 @@ async function loadLiveIntakeConsentTemplates(
 // hash of the template row as it stands right now. That is deliberately
 // stricter than the version comparison `consentRowState` uses
 // (`sig.template_version < template.version`): the hash covers title, body AND
-// version, so a studio that edited the body WITHOUT bumping the version — which
-// a version check would miss entirely — also invalidates the old completion.
+// version, so a studio that edited the body WITHOUT bumping the version, which
+// a version check would miss entirely: also invalidates the old completion.
 // It reuses the same buildConsentTemplateSnapshot authority the signing side
 // wrote the column with, so there is no second hashing scheme to drift.
 export type IntakeConsentPortalCompletion = {
@@ -159,7 +159,7 @@ async function loadCurrentPortalCompletions(input: {
       "template_id",
       input.rows.map((r) => r.id),
     )
-    // Newest first, so the first match per template is the latest signature —
+    // Newest first, so the first match per template is the latest signature,
     // the same first-write-wins pass getLatestSignaturesByTemplateForPortal
     // uses.
     .order("signed_at", { ascending: false });
@@ -174,7 +174,7 @@ async function loadCurrentPortalCompletions(input: {
     );
     // Fail SAFE, not open: an unreadable signature history means we simply do
     // not credit any portal completion, so the client is asked to complete the
-    // form in intake. That is a duplicate request in the worst case — never a
+    // form in intake. That is a duplicate request in the worst case, never a
     // skipped consent.
     return out;
   }
@@ -213,7 +213,7 @@ async function loadCurrentPortalCompletions(input: {
 }
 
 // One form as the wizard renders it. The body is the studio's own text,
-// verbatim — never truncated, never clamped, never re-authored here.
+// verbatim, never truncated, never clamped, never re-authored here.
 export type IntakeConsentFormForRender = {
   templateId: string;
   formType: IntakeConsentFormType;
@@ -231,7 +231,7 @@ export type IntakeConsentFormForRender = {
 };
 
 // Resolve the forms to display for an intake. Returns [] when the studio has
-// none live — a legitimate state that must leave intake submission behaving
+// none live: a legitimate state that must leave intake submission behaving
 // exactly as it did before this feature.
 export async function getIntakeConsentFormsForRender(
   studioId: string,
@@ -281,7 +281,7 @@ export type IntakeConsentGateResult =
 //
 // The stale message reuses the approved first sentence of
 // STALE_CONSENT_FORM_MESSAGE verbatim; only the trailing clause differs,
-// because the portal's "...before signing." is false here — nothing in intake
+// because the portal's "...before signing." is false here, nothing in intake
 // is signed, and the whole point of this feature is that it never claims to
 // be. Keeping the shared sentence means the two surfaces stay recognisably
 // the same message without the intake surface asserting a signature.
@@ -344,7 +344,7 @@ function findClaim(
 
 // THE FINAL SUBMIT GATE.
 //
-// Re-resolves the studio's CURRENT live forms — it does not trust the set the
+// Re-resolves the studio's CURRENT live forms. It does not trust the set the
 // browser rendered, so a form that went live after the client opened the
 // wizard is still required, and a form retired since is no longer required.
 //
@@ -352,19 +352,19 @@ function findClaim(
 //   * exist;
 //   * carry the form type the database actually has (a type flipped between
 //     render and submit is a stale render, not a re-classification);
-//   * carry the canonical hash of the CURRENT title/body/version — this is
+//   * carry the canonical hash of the CURRENT title/body/version. This is
 //     what makes a v1 acknowledgement fail to satisfy v2;
 //   * carry a response valid for that type.
 //
 // Treatment consent is satisfied ONLY by `accepted`. Photo consent is
-// satisfied by `accepted` OR `denied` — a denial is a completed answer and
+// satisfied by `accepted` OR `denied`, a denial is a completed answer and
 // must never block submission.
 export async function validateIntakeConsentResponses(input: {
   studioId: string;
   clientId: string;
   responses: Record<string, unknown>;
   respondedAtIso: string | null;
-  // The row's CURRENTLY STORED responses, straight from the database — NOT
+  // The row's CURRENTLY STORED responses, straight from the database, NOT
   // the merged map, whose consent key the browser has already overwritten with
   // claims. Needed so an answer the intake no longer collects survives.
   storedResponses?: Record<string, unknown> | null;
@@ -379,7 +379,7 @@ export async function validateIntakeConsentResponses(input: {
   const retained = retainedHistoricalConsentForms(input.storedResponses);
 
   // No live intake forms: this studio has nothing to complete. Submission
-  // behaves exactly as it did before this feature existed — except that any
+  // behaves exactly as it did before this feature existed: except that any
   // retained historical answer is still preserved rather than dropped.
   if (rows.length === 0) {
     return retained.length > 0
@@ -401,7 +401,7 @@ export async function validateIntakeConsentResponses(input: {
   // satisfies a form:
   //   treatment : portal accepted   OR intake accepted
   //   photo     : portal accepted/denied OR intake accepted/denied
-  // Nothing else does — and an OLD portal signature is not a completion,
+  // Nothing else does, and an OLD portal signature is not a completion,
   // because loadCurrentPortalCompletions matched on the current hash.
   const portal = await loadCurrentPortalCompletions({
     studioId: input.studioId,
@@ -441,7 +441,7 @@ export async function validateIntakeConsentResponses(input: {
       continue;
     }
 
-    // photo_consent — BOTH answers complete the form.
+    // photo_consent, BOTH answers complete the form.
     if (claim.response !== "accepted" && claim.response !== "denied") {
       return reject("photo_not_answered", ERR_PHOTO);
     }
@@ -454,7 +454,7 @@ export async function validateIntakeConsentResponses(input: {
 
   // Every live form was satisfied by an existing portal completion and there
   // is nothing historical to keep, so the client completed nothing during this
-  // intake. Write no record rather than an empty one — an absent key honestly
+  // intake. Write no record rather than an empty one: an absent key honestly
   // means "nothing was completed here".
   if (forms.length === 0) return { ok: true, record: null };
 
@@ -464,8 +464,8 @@ export async function validateIntakeConsentResponses(input: {
   };
 }
 
-// Draft counterpart. A save never refuses for consent — an unanswered or
-// half-answered form is a normal in-progress state — but what gets STORED is
+// Draft counterpart. A save never refuses for consent: an unanswered or
+// half-answered form is a normal in-progress state, but what gets STORED is
 // still server-derived: only claims matching a current live template, with a
 // current hash, produce a draft record, and the snapshot text always comes
 // from the database row.
@@ -491,7 +491,7 @@ export async function buildIntakeConsentDraftRecord(input: {
   if (claims.length === 0) {
     // The client cleared their answers: store an empty set rather than
     // leaving a stale record behind (the server merge is a spread). Retained
-    // history is NOT theirs to clear — the intake stopped offering that form,
+    // history is NOT theirs to clear: the intake stopped offering that form,
     // so no client action here can be a retraction of it.
     return { version: INTAKE_CONSENT_RESPONSES.version, forms: retained };
   }

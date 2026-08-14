@@ -39,7 +39,7 @@ export function practitionerIntakeReviewHref(clientId: string): string {
 }
 
 // One row of the dashboard's narrow intake projection. Deliberately the
-// SMALLEST shape that can answer "which row, and what state" — no `responses`,
+// SMALLEST shape that can answer "which row, and what state", no `responses`,
 // no medical answers, no acknowledgement or consent text. Those belong on the
 // review page, which is where the practitioner has actually asked for them.
 export type TodayIntakeRow = {
@@ -51,7 +51,7 @@ export type TodayIntakeRow = {
 // The current intake per client, for MANY clients, in ONE pass.
 //
 // THE RULE IS NOT NEW. It is the in-memory equivalent of Hone's canonical
-// single-client selection — lib/intake/queries.ts:
+// single-client selection: lib/intake/queries.ts:
 //
 //     .is("deleted_at", null).order("created_at", { ascending: false }).limit(1)
 //
@@ -63,14 +63,14 @@ export type TodayIntakeRow = {
 // IN-PROGRESS reissue. The newer row is the current record, so Today must say
 // "Intake in progress" and must NOT offer to review the stale one. Selecting
 // by status precedence, or by "the newest reviewed row", would silently
-// disagree with the page the link opens — the practitioner would click
+// disagree with the page the link opens: the practitioner would click
 // "Review intake" and land on a different record than the one Today described.
 //
 // Deleted rows are excluded by the CALLER's query (`deleted_at is null`),
 // matching the canonical rule; this helper never sees them.
 //
 // Strictly-later `created_at` wins. An exact tie keeps the first row in input
-// order — the canonical `.limit(1)` resolves a tie arbitrarily too, so this
+// order: the canonical `.limit(1)` resolves a tie arbitrarily too, so this
 // adds no guarantee the rest of Hone does not already make.
 export function selectCurrentIntakeByClient(
   rows: ReadonlyArray<TodayIntakeRow>,
@@ -94,7 +94,7 @@ export type TodayIntakeAction = {
   href: string;
 };
 
-// STATE MATRIX — the CTA must be truthful.
+// STATE MATRIX: the CTA must be truthful.
 //
 //   submitted   -> Review intake   (awaiting her review; this is the point)
 //   reviewed    -> Review intake   (already reviewed; re-reading is normal
@@ -104,7 +104,7 @@ export type TodayIntakeAction = {
 //                                   completed record that does not exist. The
 //                                   row's pill says "Intake in progress".)
 //   none        -> null            (nothing to review, and nothing is created
-//                                   from Today — intake creation belongs to
+//                                   from Today: intake creation belongs to
 //                                   Health & Forms' "Start intake with
 //                                   client", PR #527. The pill says "No intake
 //                                   on file".)

@@ -14,7 +14,7 @@
 // Both are the same defect: the tested tree and the committed tree diverged.
 // This script refuses to let that reach a push.
 //
-// It does NOT install or mutate any global Git hook — it is invoked explicitly.
+// It does NOT install or mutate any global Git hook. It is invoked explicitly.
 //
 // Usage:  npm run verify:prepush
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ function check(name, fn) {
   }
 }
 
-console.log("pre-push verification — the committed tree must be what you tested\n");
+console.log("pre-push verification: the committed tree must be what you tested\n");
 
 // 1. Nothing tracked may remain modified or staged-but-uncommitted.
 check("working tree is clean (no tracked modifications after the commit)", () => {
@@ -74,7 +74,7 @@ check("working tree is clean (no tracked modifications after the commit)", () =>
   }
   if (untracked.length) {
     // Untracked files are reported, but a documented local-only allowlist is
-    // honoured — supabase/config.toml is local E2E stack config that must
+    // honoured: supabase/config.toml is local E2E stack config that must
     // never be committed.
     const ALLOWED_UNTRACKED = [/^\?\? supabase\/config\.toml$/, /^\?\? node_modules/];
     const unexpected = untracked.filter((l) => !ALLOWED_UNTRACKED.some((re) => re.test(l)));
@@ -153,8 +153,8 @@ console.log("");
 for (const n of notes) console.log(`${DIM}note: ${n}${RESET}`);
 
 if (failures.length) {
-  console.log(`\n${RED}pre-push verification FAILED${RESET} — ${failures.length} problem(s). Do not push.`);
+  console.log(`\n${RED}pre-push verification FAILED${RESET}, ${failures.length} problem(s). Do not push.`);
   console.log(`${DIM}The required sequence is documented in CLAUDE.md.${RESET}`);
   process.exit(1);
 }
-console.log(`\n${GREEN}pre-push verification passed${RESET} — the committed tree matches what you tested.`);
+console.log(`\n${GREEN}pre-push verification passed${RESET}, the committed tree matches what you tested.`);

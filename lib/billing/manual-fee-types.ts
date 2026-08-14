@@ -18,7 +18,7 @@ export type ManualFeeChargeType = "late_cancel" | "no_show";
 // is THIS server action allowed to execute", and conflating the two let an
 // authenticated caller post a ready `session_payment` attempt id to the
 // manual-fee action and reach the shared runner without the current-price
-// permission gate — reopening the stale prepared-amount bypass.
+// permission gate: reopening the stale prepared-amount bypass.
 //
 // Endpoint authority is per-endpoint. `session_payment` belongs exclusively to
 // the session-payment execution action, where pricing permission is enforced.

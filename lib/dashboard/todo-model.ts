@@ -4,10 +4,10 @@ import type { ProcedureActionMetrics } from "./practice-metrics";
 import { supplyExpiryState } from "@/lib/record-keeping/expiry";
 
 // ===========================================================================
-// Dashboard V2 Part 2B — ONE To-do model.
+// Dashboard V2 Part 2B, ONE To-do model.
 // ===========================================================================
 //
-// Part 1 put one "To do" heading over four independent products — Action
+// Part 1 put one "To do" heading over four independent products: Action
 // needed, Follow-up assistant, Supplies expiring, Needs attention. They had
 // four loaders, four row grammars, four empty states, and they asked for the
 // same unresolved work more than once. Part 1 said so in the page and deferred
@@ -18,7 +18,7 @@ import { supplyExpiryState } from "@/lib/record-keeping/expiry";
 // Everything here is PURE. It takes facts the page has already loaded and
 // returns an ordered, deduplicated list. It opens no client, issues no query,
 // reads no clock, and never calls a model. The domain loaders deliberately
-// stay separate — rewriting them is not this PR's scope; unifying what the
+// stay separate: rewriting them is not this PR's scope; unifying what the
 // practitioner SEES is.
 //
 // Product law: completed work disappears, unfinished work comes back. Every
@@ -26,7 +26,7 @@ import { supplyExpiryState } from "@/lib/record-keeping/expiry";
 // vanishes the moment its underlying gap is filled and returns if it reopens.
 // Nothing is cached, snapshotted or acknowledged away.
 //
-// ROW GRAMMAR — every item answers three questions, in this order:
+// ROW GRAMMAR: every item answers three questions, in this order:
 //
 //     subject.label   ·   reason        ·   action.label
 //     WHO / WHAT         WHY unresolved     WHAT to do next
@@ -74,7 +74,7 @@ export type TodoAction = {
 };
 
 export type DashboardTodoItem = {
-  // `${kind}:${subject.id}` — the deduplication key. Deterministic domain
+  // `${kind}:${subject.id}`, the deduplication key. Deterministic domain
   // identity, never rendered text (see dedupe notes below).
   id: string;
   kind: TodoKind;
@@ -96,7 +96,7 @@ export type DashboardTodoItem = {
 };
 
 // ---------------------------------------------------------------------------
-// ORDERING — deterministic, documented, no AI.
+// ORDERING: deterministic, documented, no AI.
 // ---------------------------------------------------------------------------
 //
 // Three tiers, and within a tier the source's own authoritative priority:
@@ -120,7 +120,7 @@ export type DashboardTodoItem = {
 // missing-records assistant already used (`newerFirst`), and the dedupe there
 // keeps the most recent instance, so an older-first list would show a
 // different session than the one the assistant's own dedupe selected. `id` is
-// the final tiebreak so the order is a TOTAL order — two items that tie on
+// the final tiebreak so the order is a TOTAL order: two items that tie on
 // priority and timestamp still sort deterministically, which is what makes the
 // list stable across renders.
 export const TODO_PRIORITY: Record<TodoKind, number> = {
@@ -160,7 +160,7 @@ export function compareTodoItems(
 }
 
 // ---------------------------------------------------------------------------
-// Inputs — already-loaded domain facts. No loader is called from here.
+// Inputs: already-loaded domain facts. No loader is called from here.
 // ---------------------------------------------------------------------------
 
 export type TodoStudioSignals = {
@@ -195,7 +195,7 @@ export type BuildDashboardTodoInput = {
 // DASH-TRUTH-02: how many normalized To-do rows the loaders hand to the model.
 //
 // The list shows a compact page and discloses the rest with a real "Show N
-// more" control, so those rows must ACTUALLY be loaded — a toggle over rows
+// more" control, so those rows must ACTUALLY be loaded: a toggle over rows
 // that were never fetched would be a lie. This is a bounded ceiling on rows
 // RETURNED, not on rows scanned: the underlying safety scan caps
 // (SCAN_CAP / SESSION_SCAN_CAP / COMPLETED_APPT_CAP) are untouched, so no query
@@ -229,7 +229,7 @@ const ASSISTANT_KIND: Record<string, TodoKind> = {
 /**
  * Normalize every To-do source into one ordered, deduplicated list.
  *
- * DEDUPLICATION — two mechanisms, both on DOMAIN IDENTITY, never on text.
+ * DEDUPLICATION: two mechanisms, both on DOMAIN IDENTITY, never on text.
  *
  * 1. `${kind}:${subject.id}` is unique. Two sources describing the same
  *    unresolved condition for the same subject collapse to one row, and the
@@ -240,8 +240,8 @@ const ASSISTANT_KIND: Record<string, TodoKind> = {
  *    reaching the practitioner through TWO paths with mismatched windows and
  *    mismatched units: a per-session row from the missing-records assistant
  *    (120 most recent sessions), and a count tile over the 100 most recent
- *    procedure records. The count tile is gone — `recordsMissingDetails` now
- *    supplies only the part no per-item row covers — and the surviving
+ *    procedure records. The count tile is gone: `recordsMissingDetails` now
+ *    supplies only the part no per-item row covers, and the surviving
  *    aftercare row is keyed `aftercare:<clientId>`, so it cannot appear twice
  *    for the same client's unresolved aftercare no matter how many sources
  *    later learn to report it.
@@ -252,7 +252,7 @@ const ASSISTANT_KIND: Record<string, TodoKind> = {
  *    clinical memory rather than unresolved work, so neither the `follow_up`
  *    row nor the plan-derived reason is produced at all. "Clients needing
  *    attention" now contributes a row only for a watch note or a notable
- *    reaction — genuinely separate unresolved facts.
+ *    reaction: genuinely separate unresolved facts.
  *
  * WHAT IS DELIBERATELY *NOT* COLLAPSED:
  *   - `intake_incomplete` (intake started, never submitted) and
@@ -366,7 +366,7 @@ export function buildDashboardTodo(
     if (c.hasWatch) reasons.push("Watch note");
     // DASH-TRUTH-01: a stored plan for the next visit is CLINICAL MEMORY, not
     // unresolved work. It is not a task merely because no follow-up appointment
-    // has been booked yet — the practitioner decides when to rebook, and the
+    // has been booked yet: the practitioner decides when to rebook, and the
     // plan is already surfaced where it is useful (Today → Before today →
     // Remember, Treatment Memory, appointment prep, session/client history).
     // `c.hasPlan` is deliberately NOT a reason here. The client can still
@@ -396,7 +396,7 @@ export function buildDashboardTodo(
       action: { href: `/clients/${c.clientId}`, label: "Open client" },
       priority: TODO_PRIORITY.treatment_memory,
       // Review 3779063515. The To-do sort also orders by occurredAt, so this
-      // must be the attention SIGNAL's date, not the client's newest session —
+      // must be the attention SIGNAL's date, not the client's newest session,
       // otherwise a plan-only session reorders the To-do list too.
       occurredAt: c.attentionDate,
       tone: "normal",
@@ -467,8 +467,8 @@ export function buildDashboardTodo(
 
   // DASH-TRUTH-01: the old cross-kind rule dropped a treatment-memory row that
   // rested on the plan note ALONE when a `follow_up` row for the same client
-  // survived. Both halves are gone — a plan is never a reason for inclusion, and
-  // `follow_up` is no longer generated — so there is nothing left to reconcile.
+  // survived. Both halves are gone: a plan is never a reason for inclusion, and
+  // `follow_up` is no longer generated, so there is nothing left to reconcile.
   const final = deduped;
 
   // What the sources capped away. Never negative, even if a source ever

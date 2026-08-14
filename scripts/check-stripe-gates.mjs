@@ -115,7 +115,7 @@ const RULES = [
       // (voided) BEFORE the terminal 'failed' outcome is written, so Stripe
       // cannot later succeed it while Hone records 'failed' (webhook
       // reconciliation only transitions from ready/pending_stripe). This VOIDS
-      // money — it never moves it. One call site, in the charge executor's
+      // money. It never moves it. One call site, in the charge executor's
       // finalizeRequiresActionPaymentIntent; test-mode gated via getStripe().
       // Adding a second cancel site is a deliberate review event.
       "lib/billing/session-payment-charge.ts",
@@ -167,7 +167,7 @@ const RULES = [
   // These create Stripe OBJECTS/ACCOUNTS but move NO money. They are
   // intentionally ALLOWED and are test-mode gated at runtime (the shared
   // getStripe()/assertStripeKeyAllowed() key gate + inferStripeLivemode()).
-  // They are pinned here — exactly one occurrence, in exactly one file —
+  // They are pinned here, exactly one occurrence, in exactly one file,
   // so a NEW non-money write site (or a second occurrence) is a deliberate,
   // reviewed change, NOT a silent addition. This does NOT change runtime
   // behavior; it inventories what already exists. A count/allowlist change
@@ -405,9 +405,9 @@ function evaluateRule(rule, files) {
 // --------------------------------------------------------------------
 //
 // The per-method rules above pin the KNOWN Stripe writes. This catch-all
-// hard-fails if ANY OTHER Stripe mutating call appears — a new verb
+// hard-fails if ANY OTHER Stripe mutating call appears: a new verb
 // (.update/.cancel/.confirm/.capture/…), a new namespace, or a write in a
-// new file — so no Stripe write can be added without either landing on the
+// new file, so no Stripe write can be added without either landing on the
 // classified list or failing the gate.
 //
 // It matches Stripe write SHAPES (server: a `stripe.<...>.<write-verb>`
@@ -489,7 +489,7 @@ function evaluateUnknownStripeWrites(files) {
 // getStripe() binding convention (PR #321)
 // --------------------------------------------------------------------
 //
-// The unclassified-write catch-all above matches `stripe.<ns>.<method>` — it
+// The unclassified-write catch-all above matches `stripe.<ns>.<method>`, it
 // only fires when the Stripe client is the variable literally named `stripe`.
 // A RENAMED client would evade the ENTIRE inventory (money rules + catch-all):
 //   const s = getStripe(); await s.transfers.create(...)      // `s.*` unmatched
@@ -500,7 +500,7 @@ function evaluateUnknownStripeWrites(files) {
 // `const stripe = getStripe()` (or `let`). Renamed bindings, destructuring, and
 // inline member access are hard failures. With `stripe` enforced, every mutating
 // call is `stripe.<ns>.<method>` and is therefore covered by the classified
-// rules + the catch-all — which together DENY every dangerous mutating resource
+// rules + the catch-all, which together DENY every dangerous mutating resource
 // v1 does not use (transfers, payouts, subscriptions, invoices, applicationFees,
 // charges, checkout.sessions). This is the generic deny coverage: not a per-
 // resource allowlist (harmless reads like `stripe.invoices.retrieve` stay fine),
@@ -532,7 +532,7 @@ function evaluateGetStripeBinding(files) {
     return {
       ok: false,
       summary:
-        "getStripe() must be bound as `const stripe = getStripe()` — a renamed/" +
+        "getStripe() must be bound as `const stripe = getStripe()`, a renamed/" +
         "aliased/destructured/inline client evades the write inventory: " +
         offenders.map((o) => `${o.path} [${o.snippet}]`).join(", "),
     };

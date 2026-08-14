@@ -73,7 +73,7 @@ const MAX_MESSAGE_LEN = 2000;
 
 // PR #285: central redaction. The pure, dependency-free helpers live in
 // lib/ops/redact.ts so they are trivially testable and reusable. The
-// message scrubber (redactOpsAlertMessage) is the PR #285 fix — the raw
+// message scrubber (redactOpsAlertMessage) is the PR #285 fix: the raw
 // `message` was previously only truncated, so a provider error.message
 // could leak PII / signed URLs / tokens / Stripe secrets into the log,
 // the ops_alerts row, the admin page, and the critical email. safeDetails
@@ -110,7 +110,7 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
   // PR #285: redact the message CENTRALLY before it reaches ANY sink
   // (console log, ops_alerts row, admin page, critical email). The single
   // `message` local below is the only message surface, so this one call
-  // makes every caller's message safe-by-default — no per-call-site fix
+  // makes every caller's message safe-by-default, no per-call-site fix
   // is required for correctness.
   const message = truncate(
     redactOpsAlertMessage(input.message),

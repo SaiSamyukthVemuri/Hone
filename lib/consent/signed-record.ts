@@ -1,5 +1,5 @@
 // Pure, client-safe helpers for the practitioner "View signed form" record and
-// the photo-consent summary. No server-only, no DB — unit-tested without a DOM.
+// the photo-consent summary. No server-only, no DB: unit-tested without a DOM.
 // P1-A (signed-consent visibility).
 
 import type { ConsentRowState } from "./signature-status";
@@ -50,9 +50,9 @@ export function reviewSignedRecord(
 
 // The at-a-glance photo-consent summary shown near the image workflow. Maps the
 // centralized consent state to the four required, immediately-understandable
-// outcomes — a DENIED response is a valid, answered choice (not "missing").
+// outcomes: a DENIED response is a valid, answered choice (not "missing").
 export type PhotoConsentSummary = {
-  label: "Photo use consented" | "Photo use not consented" | "Photo consent not completed" | "Consent response unavailable — needs review";
+  label: "Photo use consented" | "Photo use not consented" | "Photo consent not completed" | "Consent response unavailable: needs review";
   tone: "ok" | "warn" | "neutral";
 };
 
@@ -68,8 +68,8 @@ export function photoConsentSummary(
     case "not_signed":
       return { label: "Photo consent not completed", tone: "neutral" };
     // "outdated" (re-sign needed) or any unexpected/absent state is treated as
-    // unverifiable — surface a review prompt rather than an implied grant.
+    // unverifiable: surface a review prompt rather than an implied grant.
     default:
-      return { label: "Consent response unavailable — needs review", tone: "warn" };
+      return { label: "Consent response unavailable: needs review", tone: "warn" };
   }
 }

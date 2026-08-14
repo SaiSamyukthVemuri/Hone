@@ -357,7 +357,7 @@ export async function getManualFeeChargeEligibility(
   //    runtime writes. Legacy rows are read too so historical
   //    attempts stay visible.
   // Mode-scoped (0105): both lists feed the "an active fee already exists"
-  // decision below, so each is read for the CURRENT deployment mode only —
+  // decision below, so each is read for the CURRENT deployment mode only,
   // a test fee attempt must never block (or display as) a live one, and
   // vice versa. The legacy table's rows are pinned test-mode by its CHECK,
   // so in live mode the legacy list is empty by construction.

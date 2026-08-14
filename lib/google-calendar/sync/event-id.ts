@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 
-// Google Calendar — Phase B2.3-c1: deterministic provider event identity + the
+// Google Calendar: Phase B2.3-c1: deterministic provider event identity + the
 // private Hone correlation marker.
 //
 // The Google event id is derived from the IMMUTABLE calendar_event_links.id (the
@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 //
 // Format (exact): "hone1" + lowercase, padding-free base32hex of
 // SHA-256(UTF-8(studio_id + ":" + link.id)). Prefix 5 + digest 52 = 57 chars,
-// alphabet [0-9a-v] only — within Google's permitted event-id charset
+// alphabet [0-9a-v] only: within Google's permitted event-id charset
 // (base32hex) and length (5..1024). The digest is NEVER truncated.
 
 const EVENT_ID_PREFIX = "hone1";

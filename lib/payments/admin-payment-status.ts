@@ -8,11 +8,11 @@ import {
 } from "@/lib/payments/payment-status-presenter";
 
 // Admin payment-status reads (PR B). REDACTION-FIRST by construction:
-//   * selects capability/status/count columns only — never PaymentIntent
+//   * selects capability/status/count columns only, never PaymentIntent
 //     ids, card ids, customer ids, fingerprints, tokens, emails, or any
 //     client/intake content;
 //   * the ONLY identifier that leaves this module is a redacted account-id
-//     suffix ("acct_…1a2b") for operator cross-reference — never a full id;
+//     suffix ("acct_…1a2b") for operator cross-reference, never a full id;
 //   * counts are ALWAYS mode-separated (per-row stripe_livemode); a status
 //     summary is derived via the shared presenter, so "ready" here means
 //     the same thing it means on the practitioner surfaces.
@@ -44,7 +44,7 @@ function toCapability(row: SettingsRow | undefined): ConnectCapability {
 
 // ---------------------------------------------------------------------------
 // Platform summary (admin homepage): current-mode capability counts across
-// all studios. Counts only — no per-studio identifiers at all.
+// all studios. Counts only, no per-studio identifiers at all.
 // ---------------------------------------------------------------------------
 export type PlatformPaymentSummary = {
   runtimeMode: RuntimeMode;

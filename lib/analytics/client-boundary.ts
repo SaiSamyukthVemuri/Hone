@@ -3,7 +3,7 @@
 // Hone is a clinical app and the PostHog browser SDK initializes globally (all
 // routes). The threat is NOT limited to autocapture: `$pageview` / `$pageleave`
 // are NOT governed by `autocapture.url_allowlist`, so by default they leave
-// EVERY route — and authenticated URLs carry linkable clinical identifiers
+// EVERY route, and authenticated URLs carry linkable clinical identifiers
 // (client/session/appointment/record UUIDs, query params). This was confirmed
 // live: production PostHog Activity showed `$pageview` with Current URL
 // `https://hone.care/clients/<uuid>`.
@@ -13,12 +13,12 @@
 // event. An event survives ONLY if BOTH hold:
 //   1. its `$current_url` pathname is one of the exact canonical marketing
 //      routes (derived from the marketing page registry so sitemap, metadata,
-//      tests and analytics cannot drift — a new route is NOT analytics-enabled
+//      tests and analytics cannot drift: a new route is NOT analytics-enabled
 //      by placement), AND
 //   2. its event name is on the marketing allowlist ($pageview, $pageleave,
 //      the autocapture family, or an explicit `marketing:*` event).
-// Everything else — the authenticated app, `/book/*`, portal, all six
-// token-bearing routes, login/auth, payment, and any unknown/unparsable URL —
+// Everything else: the authenticated app, `/book/*`, portal, all six
+// token-bearing routes, login/auth, payment, and any unknown/unparsable URL,
 // is DROPPED (not redacted). Token redaction is defence in depth, not
 // permission to transmit.
 //
@@ -69,7 +69,7 @@ const MARKETING_ALLOWED_EVENTS = new Set([
 ]);
 const MARKETING_EVENT_PREFIX = "marketing:";
 
-// Property keys whose string value is a URL — sanitized as a URL (query/
+// Property keys whose string value is a URL: sanitized as a URL (query/
 // fragment/token handling), not merely token-redacted.
 const URL_PROP_KEYS = new Set([
   "$current_url",

@@ -2,7 +2,7 @@
 // READ-ONLY admin payment manual-review queue
 // (app/admin/payments/manual-review/page.tsx).
 //
-// This module has NO server-only import, NO database, NO Stripe — so it is
+// This module has NO server-only import, NO database, NO Stripe, so it is
 // trivially unit-testable and cannot mutate anything. The page does the
 // service-role reads (mirroring docs/16 §17.7's read-only reconciliation
 // SELECTs) and renders these view-models. The view-model mappers copy ONLY a
@@ -11,13 +11,13 @@
 
 // The synchronous reconcile window is 60 min (RECONCILIATION_WINDOW_MINUTES in
 // session-payment-charge.ts; docs/16 §17.7 query (1)). A pending_stripe row
-// older than this may be an unreconciled charge — surface it for review.
+// older than this may be an unreconciled charge: surface it for review.
 export const STUCK_PENDING_THRESHOLD_MINUTES = 60;
 
 // Conservative operator guidance shown on the queue. Deliberately tells the
 // operator NOT to retry/refund blindly and to follow the readiness runbook.
 export const MANUAL_REVIEW_NEXT_STEP =
-  "Review this PaymentIntent in the Stripe dashboard and compare it with the Hone attempt. Do NOT retry the charge or issue a refund blindly — follow the live-payment readiness runbook (docs/16 §17) before any action. Resolve the related alert on the Ops alerts page once reconciled.";
+  "Review this PaymentIntent in the Stripe dashboard and compare it with the Hone attempt. Do NOT retry the charge or issue a refund blindly. Follow the live-payment readiness runbook (docs/16 §17) before any action. Resolve the related alert on the Ops alerts page once reconciled.";
 
 // Critical payment-alert event prefixes that belong in the manual-review
 // queue. Combined with severity='critical' + resolved_at IS NULL at the query
@@ -29,7 +29,7 @@ export const MANUAL_REVIEW_NEXT_STEP =
 // charge_refunded_*, stripe_webhook_metadata_mismatch / _processing_failed),
 // and disputes (payment_charge_dispute_*). WARNING-level reconciliation alerts
 // (no_match, *_reconcile_zero_rows, livemode_event_ignored) and card-on-file
-// setup failures are deliberately EXCLUDED — they stay on /admin/ops-alerts.
+// setup failures are deliberately EXCLUDED: they stay on /admin/ops-alerts.
 export const PAYMENT_MANUAL_REVIEW_EVENT_PREFIXES = [
   "session_payment_",
   "payment_intent_",
@@ -103,7 +103,7 @@ export type StuckAttemptView = {
   updatedAt: string;
 };
 
-// Copies ONLY the safe allowlist — never the client name, notes,
+// Copies ONLY the safe allowlist, never the client name, notes,
 // failure_message_safe, card data, or any other column.
 export function toStuckAttemptView(row: StuckAttemptRow): StuckAttemptView {
   return {
@@ -132,7 +132,7 @@ export type ReviewAlertRow = {
   created_at: string;
   severity: string;
   event: string;
-  // Redacted at write time by recordOpsAlert (PR #285) — safe to display.
+  // Redacted at write time by recordOpsAlert (PR #285), safe to display.
   message: string;
   studio_id: string | null;
   client_id: string | null;

@@ -1,9 +1,9 @@
-// Versioned electrolysis acknowledgement — RETIRED, kept as the legacy READ
+// Versioned electrolysis acknowledgement: RETIRED, kept as the legacy READ
 // contract.
 //
 // RETIREMENT (this PR). #518 was a temporary stand-in for the studio's own
-// consent documents. #529 shipped the real thing — the studio's live
-// treatment/photo consent forms, completed inside the intake — so this
+// consent documents. #529 shipped the real thing: the studio's live
+// treatment/photo consent forms, completed inside the intake, so this
 // acknowledgement is no longer collected: the question is gone from
 // INTAKE_STEPS, the wizard sends no claim, the public sanitizer admits no
 // carve-out for it, and the submit gate no longer requires or builds one.
@@ -13,7 +13,7 @@
 // and version the client actually read. So the constant, the claim parser and
 // readElectrolysisAcknowledgement all stay. The three WRITE-side helpers
 // (claim builder, draft-record builder, submit validator) are gone with the
-// collection they served — leaving them would be an invitation to re-wire a
+// collection they served: leaving them would be an invitation to re-wire a
 // retired write path.
 //
 // Nothing here is backfilled, rewritten or deleted from stored history.
@@ -28,7 +28,7 @@
 // NOT server-only, and NO node:crypto. This module is imported into the
 // public wizard's client bundle, so it must stay pure and isomorphic. That
 // is also why the stored provenance record carries the literal wording
-// snapshot rather than a hash — it mirrors the
+// snapshot rather than a hash: it mirrors the
 // `client_consent_signatures.template_body_snapshot` convention (docs/05),
 // where the frozen text itself is the evidence and a hash is only a
 // convenience.
@@ -39,7 +39,7 @@
 // a consent form, NOT an electronic signature, and NOT a replacement for
 // the studio's own informed-consent documents or policies (those live in
 // `consent_form_templates` / `client_consent_signatures` and are signed in
-// the client portal with a typed name — an entirely separate system that
+// the client portal with a typed name: an entirely separate system that
 // this module must never touch). No typed signature is collected here and
 // none may be added.
 //
@@ -52,20 +52,20 @@
 // That approval is PRODUCT AND CLINICAL, not legal. This module does not
 // claim the wording is legally approved or reviewed by counsel, and it must
 // never be described that way. What the client ticks remains an
-// acknowledgement of what electrolysis involves — it is NOT informed
+// acknowledgement of what electrolysis involves. It is NOT informed
 // consent, NOT a consent form, NOT an electronic signature, and NOT any
 // form of clearance to treat. The studio's own informed-consent documents
 // and policies are separate and unaffected.
 //
 // The approval is scoped to the wording exactly as it stands at v1. Any
 // future edit requires a version bump (see CHANGING THE WORDING below) AND
-// fresh review — approving v1 says nothing about v2. Neither approving nor
+// fresh review: approving v1 says nothing about v2. Neither approving nor
 // bumping a version reaches backwards: intakes already submitted keep the
 // wording snapshot their client actually read.
 //
 // Per the posture established by lib/consent/card-authorization-draft.ts,
 // any statement about approval status lives in THIS comment and in the
-// PR/docs record — never in the string the client reads.
+// PR/docs record, never in the string the client reads.
 //
 // CHANGING THE WORDING
 // --------------------
@@ -171,7 +171,7 @@ export function normalizeElectrolysisAcknowledgementClaim(
 // in for ONE inference, and only that one: an absent record on a
 // submitted/reviewed intake proves the intake predates this feature,
 // because submission now requires the record. An absent record on a draft
-// proves nothing further — the client may not have got to the step, or may
+// proves nothing further: the client may not have got to the step, or may
 // have read the wording and chosen not to tick it (the wizard writes no
 // record until the checkbox is touched). The read side must therefore
 // report "no record" for a draft and MUST NOT narrate the client's
@@ -188,7 +188,7 @@ export type AcknowledgementView =
     }
   // Record present, client has not ticked the box. It used to be true that
   // this was "only reachable on a draft, because submission is refused
-  // without an acceptance" — retirement removed that gate, so a draft left
+  // without an acceptance", retirement removed that gate, so a draft left
   // unticked before retirement can now be submitted and arrive here with
   // status `submitted`/`reviewed`. The copy below must therefore claim
   // nothing about submission being blocked.
@@ -199,7 +199,7 @@ export type AcknowledgementView =
   // No record on a submitted/reviewed intake. RENAMED from "predates" at
   // retirement: that word asserted the intake was submitted BEFORE this
   // acknowledgement existed, which the database cannot prove any more. Now
-  // that #518 is retired, an intake submitted TODAY also carries no record —
+  // that #518 is retired, an intake submitted TODAY also carries no record,
   // and calling that "predates" would be a plain falsehood on a clinical
   // surface. The state now reports only what is true: nothing was recorded.
   | { state: "not_recorded" }
@@ -250,7 +250,7 @@ export function readElectrolysisAcknowledgement(
 
 // Practitioner-facing copy, centralized so the review surface never
 // hand-writes a claim about what a client did or did not agree to. Kept
-// free of any "safe / approved / cleared" framing — Hone surfaces the
+// free of any "safe / approved / cleared" framing: Hone surfaces the
 // record, it does not render a verdict.
 export const ACKNOWLEDGEMENT_REVIEW_COPY = {
   heading: "Electrolysis acknowledgement",
@@ -264,7 +264,7 @@ export const ACKNOWLEDGEMENT_REVIEW_COPY = {
   notAcknowledged: "Not acknowledged. The client did not tick this box.",
   // States only what the stored row proves. An earlier draft of this copy
   // said the client "has not got to the acknowledgement step", which is
-  // false for a client who read the wording and chose not to tick it —
+  // false for a client who read the wording and chose not to tick it,
   // both cases store no record at all.
   noRecord: "No acknowledgement recorded. This intake is still in progress.",
   // Neutral and provable. Says what the row shows and claims nothing about

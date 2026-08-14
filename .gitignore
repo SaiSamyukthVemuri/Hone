@@ -38,7 +38,7 @@ Hone_Pilot_Control_Sheet.xlsx
 # Sentry Config File
 .env.sentry-build-plugin
 
-# Supabase CLI local workspace state — carries the LINKED project reference
+# Supabase CLI local workspace state: carries the LINKED project reference
 # (project-ref / linked-project.json / pooler-url). MUST stay untracked so a
 # checkout never silently re-points the CLI at another project (the staging↔prod
 # foot-gun that overwrote the staging link with the production ref).

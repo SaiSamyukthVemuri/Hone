@@ -2,7 +2,7 @@ import { AREAS, OTHER_AREA } from "@/lib/constants";
 
 // Server-safe treatment-area validation (Charting Validation PR 2).
 //
-// The canonical allow-list is the FLAT AREAS list (lib/constants.ts) — which
+// The canonical allow-list is the FLAT AREAS list (lib/constants.ts), which
 // deliberately INCLUDES "Full face" and "Other". It is NOT AREA_REGIONS: that
 // grouped list decomposes "Full face" and would wrongly reject a legitimate
 // "Full face" pick. Matching is case-insensitive and canonical CASING is

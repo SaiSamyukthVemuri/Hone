@@ -3,13 +3,13 @@
 //
 // The static guard (check-migration-extension-qualification.mjs) proves every
 // pgcrypto/uuid-ossp call in the migrations is `extensions.<fn>`-qualified. This
-// script proves the RUNTIME precondition that qualification exists for — on the
-// just-migrated local database — matching a fresh MANAGED Supabase project:
+// script proves the RUNTIME precondition that qualification exists for: on the
+// just-migrated local database: matching a fresh MANAGED Supabase project:
 //
 //   (a) pgcrypto is installed in the `extensions` schema (NOT public), and
 //   (b) with `extensions` ABSENT from the session search_path, a BARE pgcrypto
 //       call (gen_random_bytes) fails with 42883, while the schema-qualified call
-//       (extensions.gen_random_bytes) succeeds — and the pg_catalog built-in
+//       (extensions.gen_random_bytes) succeeds, and the pg_catalog built-in
 //       gen_random_uuid() still works bare.
 //
 // Together with the all-qualified static guarantee, this shows the 0001->NNNN
@@ -67,7 +67,7 @@ try {
     bareFailed = e.code === "42883"; // undefined_function -> exactly the fresh-managed failure mode
     if (!bareFailed) fail(`bare gen_random_bytes failed with ${e.code}, expected 42883`);
   }
-  if (!bareFailed) fail("bare gen_random_bytes() resolved with extensions off search_path — managed layout NOT reproduced");
+  if (!bareFailed) fail("bare gen_random_bytes() resolved with extensions off search_path, managed layout NOT reproduced");
 
   // qualified call must succeed under the same off-path session.
   await client
@@ -84,7 +84,7 @@ try {
     process.exit(1);
   }
   console.log(
-    "OK: fresh-managed layout verified — pgcrypto in `extensions`; bare pgcrypto fails (42883) " +
+    "OK: fresh-managed layout verified: pgcrypto in `extensions`; bare pgcrypto fails (42883) " +
       "and extensions.<fn> succeeds with extensions off search_path; gen_random_uuid() built-in unaffected.",
   );
 } catch (e) {

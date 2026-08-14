@@ -20,14 +20,14 @@ import {
 //   * `resolveInventoryAutofill` (migration 0155) resolves an ACTIVE INVENTORY
 //     lot for the selected probe. The charting form calls it.
 //   * `resolveProbeLotSuggestion` resolves the most recent RECORDED lot for the
-//     selected probe — exact `probe_key` first, normalized display-label second
+//     selected probe: exact `probe_key` first, normalized display-label second
 //     for legacy rows with a null key. It is exported and unit-tested, and no
 //     application code has ever called it. The form imports its module for the
 //     TYPE only.
 //
 // So when a studio had no probe inventory, `resolveInventoryAutofill` returned
 // `choose`, the form CLEARED the lot field, and the picker rendered "No active
-// inventory lot for this probe. Type the lot/batch manually…" — every single
+// inventory lot for this probe. Type the lot/batch manually…", every single
 // appointment, even for a probe whose lot the practitioner had already charted
 // many times. Willow is exactly that shape: zero probe inventory rows, but four
 // distinct probes with recorded lots across 21 rows, none inventory-linked.
@@ -36,22 +36,22 @@ import {
 // unit-testable without a DOM or a database.
 //
 // PRECEDENCE (highest first):
-//   1. `last-confirmed` — the practitioner's last CONFIRMED, INVENTORY-LINKED
+//   1. `last-confirmed`, the practitioner's last CONFIRMED, INVENTORY-LINKED
 //      lot, when it is still active and matches the selected probe.
-//   2. `only-active`    — exactly one active inventory lot for this probe.
-//   3. `choose`         — MORE THAN ONE active inventory lot. Never guess;
+//   2. `only-active`   , exactly one active inventory lot for this probe.
+//   3. `choose`        , MORE THAN ONE active inventory lot. Never guess;
 //      the form shows the selector. (Note: `resolveInventoryAutofill` collapses
 //      "none" and "many" into `choose`; this module separates them, which is
 //      what makes the history fallback reachable at all.)
-//   4. `from-history`   — no active inventory, but a recorded lot exists for
+//   4. `from-history`  , no active inventory, but a recorded lot exists for
 //      this probe. Fills the NUMBER only: never an inventory link, never
 //      auto-confirmed, because nothing was scanned off a package today. Uses
-//      `lastCharted` (recency ONLY) — NOT `lot`, which is confirmed-first and
+//      `lastCharted` (recency ONLY), NOT `lot`, which is confirmed-first and
 //      would pin one old confirmed row forever, since auto-fill never confirms.
 //      A number matching an EXPIRED inventory lot is refused here and falls to
 //      `choose`: the server only enforces the expiry rule on the LINKED path,
 //      so auto-filling it as free text would route around that rule entirely.
-//   5. `none`           — nothing known. Leave the field blank for manual entry.
+//   5. `none`          , nothing known. Leave the field blank for manual entry.
 //
 // Studio isolation and probe matching are enforced upstream: `options` are
 // already studio-scoped and probe-filtered, and `suggestions` are built from a
@@ -98,7 +98,7 @@ export function resolveProbeLotAutofill(args: {
     return inv;
   }
 
-  // 4: no active inventory — fall back to what the practitioner actually
+  // 4: no active inventory: fall back to what the practitioner actually
   // charted for THIS probe. Exact key first, normalized label only for legacy
   // rows; `resolveProbeLotSuggestion` owns that and never crosses studios.
   const suggestion = resolveProbeLotSuggestion(probeKey, suggestions);
@@ -123,7 +123,7 @@ export function resolveProbeLotAutofill(args: {
 // The draft patch a result implies. Returning this (rather than letting the
 // component branch) keeps the two invariants that matter in ONE place:
 //   * an inventory link is set ONLY for a real inventory selection;
-//   * auto-fill NEVER marks a lot confirmed — confirmation means the
+//   * auto-fill NEVER marks a lot confirmed: confirmation means the
 //     practitioner checked the physical package, which no resolver can do.
 export type ProbeLotDraftPatch = {
   probeLotNumber: string;
@@ -177,7 +177,7 @@ export function probeLotSourceMessage(
     case "from-history":
       // Truthful about BOTH facts that matter clinically: where it came from,
       // and that it carries no inventory traceability.
-      return "Auto-filled from your last charted lot for this probe — not linked to inventory. Check the package.";
+      return "Auto-filled from your last charted lot for this probe, not linked to inventory. Check the package.";
     case "none":
     default:
       return null;

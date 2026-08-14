@@ -498,7 +498,7 @@ export async function findActiveClientsForPortalLogin(
 // Practitioner-side portal-access summary for a client (PR: Send portal link).
 // Read-only, studio-scoped: the most recent magic link ISSUED to this client
 // (client_portal_magic_links.created_at) and the last time they were seen in the
-// portal (client_portal_sessions.last_seen_at). No new table — these already
+// portal (client_portal_sessions.last_seen_at). No new table: these already
 // exist. Returns ISO strings or null. Never returns tokens.
 export async function getPortalAccessSummary(
   studioId: string,
@@ -529,8 +529,8 @@ export async function getPortalAccessSummary(
 }
 
 // Recent portal access/send events for a client (Portal Access PR 3).
-// Studio-scoped, newest first. FAIL-SOFT: returns [] on any error — including
-// the pre-migration case where client_portal_access_events does not exist yet —
+// Studio-scoped, newest first. FAIL-SOFT: returns [] on any error, including
+// the pre-migration case where client_portal_access_events does not exist yet,
 // so the practitioner status card degrades gracefully. Never returns tokens.
 export type PortalAccessEventRow = {
   id: string;

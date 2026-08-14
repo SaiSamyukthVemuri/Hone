@@ -9,7 +9,7 @@ import {
 } from "@/lib/email/templates/appointment";
 
 // Cancellation email must make the ACTOR explicit on the practitioner-facing
-// email: "Cancelled by: <name> — <Client|Practitioner|Studio owner|System>",
+// email: "Cancelled by: <name> (<Client|Practitioner|Studio owner|System>)",
 // plus Client / Original time / Service+duration / Reason, and a clearer subject.
 // The actor is derived server-side at each cancellation path (see the wiring guard
 // at the bottom); these tests pin the rendering + fallbacks for every role.
@@ -46,13 +46,13 @@ describe("cancellationActorRoleLabel", () => {
   });
 });
 
-describe("cancellationActorSummary — name with role, or role-only fallback", () => {
-  it("renders '<name> — <Role>' when a display name is present", () => {
+describe("cancellationActorSummary: name with role, or role-only fallback", () => {
+  it("renders '<name> (<Role>)' when a display name is present", () => {
     expect(cancellationActorSummary("Chloe Vemuri LE", "client")).toBe(
-      "Chloe Vemuri LE — Client",
+      "Chloe Vemuri LE (Client)",
     );
     expect(cancellationActorSummary("Sam Owner", "owner")).toBe(
-      "Sam Owner — Studio owner",
+      "Sam Owner (Studio owner)",
     );
   });
   it("falls back to the role label alone when the name is missing/blank", () => {
@@ -62,14 +62,14 @@ describe("cancellationActorSummary — name with role, or role-only fallback", (
   });
 });
 
-describe("practitioner-facing cancellation email — the reported example", () => {
+describe("practitioner-facing cancellation email: the reported example", () => {
   const out = studioFacing(); // client actor, named
   it("subject names the actor + service + month/day", () => {
     expect(out.subject).toBe(
       "Appointment cancelled by Chloe Vemuri LE: 90 minute session on July 21",
     );
   });
-  it("body shows Client, Cancelled by (name — role), Original time, Service+duration, Reason", () => {
+  it("body shows Client, Cancelled by (name and role), Original time, Service+duration, Reason", () => {
     expect(out.text).toContain("Client: Chloe Vemuri LE");
     expect(out.text).toContain(
       `Cancelled by: ${cancellationActorSummary("Chloe Vemuri LE", "client")}`,
@@ -94,25 +94,25 @@ describe("actor role is attributed correctly for every path", () => {
     {
       role: "client",
       name: "Chloe Vemuri LE",
-      expectSummary: "Chloe Vemuri LE — Client",
+      expectSummary: "Chloe Vemuri LE (Client)",
       expectSubject: "Appointment cancelled by Chloe Vemuri LE: 90 minute session on July 21",
     },
     {
       role: "practitioner",
       name: "Dr. Alex Kim",
-      expectSummary: "Dr. Alex Kim — Practitioner",
+      expectSummary: "Dr. Alex Kim (Practitioner)",
       expectSubject: "Appointment cancelled by Dr. Alex Kim: 90 minute session on July 21",
     },
     {
       role: "owner",
       name: "Sam Owner",
-      expectSummary: "Sam Owner — Studio owner",
+      expectSummary: "Sam Owner (Studio owner)",
       expectSubject: "Appointment cancelled by Sam Owner: 90 minute session on July 21",
     },
     {
       role: "system",
       name: "Hone",
-      expectSummary: "Hone — System",
+      expectSummary: "Hone (System)",
       expectSubject: "Appointment cancelled by Hone: 90 minute session on July 21",
     },
   ];
@@ -129,7 +129,7 @@ describe("missing-name fallback", () => {
   it("renders 'Cancelled by: <Role>' and a role-worded subject when no name is available", () => {
     const out = studioFacing({ actorName: null, actorRole: "client" });
     expect(out.text).toContain("Cancelled by: Client");
-    expect(out.text).not.toMatch(/Cancelled by: Client —/); // no dangling dash
+    expect(out.text).not.toMatch(/Cancelled by: Client \(/); // no dangling separator
     expect(out.subject).toBe(
       "Appointment cancelled by the client: 90 minute session on July 21",
     );
@@ -143,7 +143,7 @@ describe("missing-name fallback", () => {
   });
 });
 
-describe("safety — no IDs, tokens, raw audit JSON, or notes", () => {
+describe("safety: no IDs, tokens, raw audit JSON, or notes", () => {
   it("renders only display fields", () => {
     const out = studioFacing({ actorName: "Hone", actorRole: "system" });
     for (const body of [out.subject, out.html, out.text]) {
@@ -159,7 +159,7 @@ describe("safety — no IDs, tokens, raw audit JSON, or notes", () => {
   });
 });
 
-describe("wiring guard — actor is derived server-side, never from the request", () => {
+describe("wiring guard: actor is derived server-side, never from the request", () => {
   const read = (rel: string) =>
     readFileSync(path.resolve(__dirname, "../../..", rel), "utf8");
   const PUBLIC = read("app/cancel/[token]/actions.ts");

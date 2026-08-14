@@ -25,7 +25,7 @@ const FORMAT_TO_TYPE: Record<string, TreatmentImageContentType> = {
 // photo (a 50MP camera is 50M px) while rejecting pathological pixel bombs.
 const MAX_INPUT_PIXELS = 100_000_000;
 
-// Single generic message — never leak why (format, dimensions, decode error).
+// Single generic message, never leak why (format, dimensions, decode error).
 const GENERIC_ERROR = "Upload a valid JPEG, PNG, or WebP image.";
 
 export type SanitizeResult =
