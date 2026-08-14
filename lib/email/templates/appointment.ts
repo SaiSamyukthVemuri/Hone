@@ -284,7 +284,7 @@ export function cancellationActorRoleLabel(role: CancellationActorRole): string 
   }
 }
 
-// "Cancelled by" value for the email. With a display name → "<name>, <Role>";
+// "Cancelled by" value for the email. With a display name → "<name> (<Role>)";
 // with no usable name → just the role label (safe fallback per the spec, e.g.
 // "Cancelled by: Client"). No IDs/tokens/emails are ever placed here.
 export function cancellationActorSummary(
