@@ -160,7 +160,12 @@ describe("FREE-01 no money-moving path", () => {
       /freeNoticeServiceName:\s*\n?\s*amountResult\?\.kind === "free" && !settledOrInFlight/,
     );
     // PrepareForm is gated on a strictly `resolved` amount, so free cannot reach it.
-    expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
+    // PrepareForm is gated on a strictly `resolved` amount, so free cannot
+    // reach it. That rule now lives in the shared presentation decision.
+    const PERM_F7b = read("lib/billing/ready-control-permission.ts");
+    expect(PERM_F7b).toMatch(
+      /showPrepareForm && amountResult\?\.kind === "resolved" \? amountResult : null/,
+    );
   });
 
   it("F8 free is not shown as a pricing error", () => {

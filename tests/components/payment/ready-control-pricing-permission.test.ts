@@ -27,6 +27,11 @@ const CARD = readFileSync(
   "utf8",
 );
 
+const PERM = readFileSync(
+  join(process.cwd(), "lib/billing/ready-control-permission.ts"),
+  "utf8",
+);
+
 function codeOnly(src: string): string {
   return src
     .split("\n")
@@ -148,6 +153,58 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
     expect(view("ready", "resolved").runChargeVisible).toBe(true);
   });
 
+  // ---- Review 3780746701: the prepare-form decision is exported and tested.
+
+  it("PF1 no attempt + eligible + resolved => prepareFormAmount is the resolved object", () => {
+    const v = view(null, "resolved");
+    expect(v.prepareFormAmount).not.toBeNull();
+    expect(v.prepareFormAmount?.kind).toBe("resolved");
+    expect(v.prepareFormAmount?.amountCents).toBe(12_000);
+  });
+
+  it("PF2 no attempt + free => no prepare form, free notice instead", () => {
+    const v = view(null, "free");
+    expect(v.prepareFormAmount).toBeNull();
+    expect(v.freeNoticeServiceName).toBe("Consultation");
+  });
+
+  it("PF3 no attempt + missing_price / missing_service / ambiguous => no form, explanation", () => {
+    for (const k of ["missing_price", "missing_service", "ambiguous_custom_pricing"] as const) {
+      const v = view(null, k);
+      expect(v.prepareFormAmount, k).toBeNull();
+      expect(v.unresolvedExplanation, k).not.toBeNull();
+    }
+  });
+
+  it("PF4 no attempt + pricing unavailable => no form, unavailable explanation", () => {
+    const v = view(null, null);
+    expect(v.prepareFormAmount).toBeNull();
+    expect(v.unavailableExplanationVisible).toBe(true);
+  });
+
+  it("PF5 an ACTIVE attempt never yields a prepare form, whatever the price", () => {
+    for (const status of ["ready", "pending_stripe", "succeeded"] as const) {
+      for (const k of ["resolved", "free", "missing_price", "ambiguous_custom_pricing", null] as const) {
+        expect(
+          view(status, k as Kind | null).prepareFormAmount,
+          `${status}/${String(k)}`,
+        ).toBeNull();
+      }
+    }
+    // and the ready transaction laws are unaffected by that
+    expect(view("ready", "resolved").runChargeVisible).toBe(true);
+    expect(view("ready", "free").runChargeVisible).toBe(false);
+  });
+
+  it("PF6 ineligible => no prepare form even with a resolved price", () => {
+    const v = decideSessionPaymentPresentation({
+      attemptStatus: null,
+      amountResult: amount("resolved"),
+      showPrepareForm: false, // eligibility/prepareJustSucceeded upstream
+    });
+    expect(v.prepareFormAmount).toBeNull();
+  });
+
   it("no attempt: the prepare-side behaviour is unchanged", () => {
 
     expect(view(null, "missing_price").unresolvedExplanation).not.toBeNull();
@@ -186,7 +243,11 @@ describe("source wiring", () => {
   });
 
   it("execution authority and prepared-amount semantics are untouched", () => {
-    expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
+    // PrepareForm still requires a strictly `resolved` amount — the rule moved
+    // into the presentation decision (review 3780746701), so assert it there.
+    expect(PERM).toMatch(
+      /showPrepareForm && amountResult\?\.kind === "resolved" \? amountResult : null/,
+    );
     const amountRefs = codeOnly(CARD).match(/\w*amount_cents/g) ?? [];
     expect(new Set(amountRefs)).toEqual(new Set(["expected_amount_cents"]));
   });
@@ -198,11 +259,6 @@ describe("exactly ONE ready-control authority", () => {
   // asserted the first, the card consumed the second, and they agreed only
   // because one was derived from the other. A later edit could have made them
   // diverge with this matrix still green and the UI doing the opposite.
-  const PERM = readFileSync(
-    join(process.cwd(), "lib/billing/ready-control-permission.ts"),
-    "utf8",
-  );
-
   it("the panel CANNOT be gated on pricing — there is no field to do it with", () => {
     // Census outcome A. "A persisted active attempt is always visible" needs no
     // presentation field: it is exactly "an attempt exists". A `panelVisible`
@@ -246,6 +302,40 @@ describe("exactly ONE ready-control authority", () => {
         new RegExp(`presentation\\.${f}`),
       );
     }
+  });
+
+  it("the card makes NO pricing-dependent decision of its own", () => {
+    // Review 3780746701 was the inverse of the duplicate findings: the
+    // prepare-form decision was never exported, so the card interpreted
+    // pricing itself and only a source regex covered it. This asserts the
+    // direction that census missed.
+    const code = codeOnly(CARD);
+    for (const token of [
+      /const resolvedAmount/,
+      /kind === "resolved"/,
+      /kind === "free"/,
+      /"missing_price"/,
+      /"missing_service"/,
+      /"ambiguous_custom_pricing"/,
+      /unresolvedAmountMessage\(/,
+      /isFreeNow/,
+      /readyAttemptIsNowFree/,
+      /readyControl/,
+      /canRun/,
+    ]) {
+      expect(code, `card must not interpret pricing: ${token}`).not.toMatch(token);
+    }
+    // it may still PASS pricing data into the decision
+    expect(code).toMatch(/amountResult: amountResult \?\? null/);
+  });
+
+  it("the prepare form is ONE value carrying both presence and payload", () => {
+    expect(codeOnly(PERM)).not.toMatch(/prepareFormVisible/);
+    expect(PERM).toMatch(
+      /const prepareFormAmount =\s*\n?\s*showPrepareForm && amountResult\?\.kind === "resolved" \? amountResult : null/,
+    );
+    expect(CARD).toMatch(/\{presentation\.prepareFormAmount !== null && eligibleDetails && \(/);
+    expect(CARD).toMatch(/amount=\{presentation\.prepareFormAmount\}/);
   });
 
   it("the presentation model exposes no second ready-control representation", () => {

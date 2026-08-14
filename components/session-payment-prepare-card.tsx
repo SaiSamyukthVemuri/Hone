@@ -259,6 +259,13 @@ export function SessionPaymentPrepareCard({
   // lib/billing/ready-control-permission and this component only reads its
   // fields. Nothing here recomputes a branch, so there is nothing for a test
   // to duplicate and no way for this card to drift from the rule.
+  // Card-local NARROWING, not a decision. PrepareForm needs the eligible
+  // variant of the eligibility union, and the old
+  // `showPrepareForm && resolvedAmount` gate happened to supply that narrowing
+  // as a side effect. Eligibility is not pricing, so it stays here; whether the
+  // form renders at all is decided by presentation.prepareFormAmount.
+  const eligibleDetails = eligibility.eligible ? eligibility : null;
+
   const presentation = decideSessionPaymentPresentation({
     attemptStatus: activeAttempt?.status ?? null,
     amountResult: amountResult ?? null,
@@ -271,8 +278,6 @@ export function SessionPaymentPrepareCard({
   // resolved ONE authoritative amount, or preparation is blocked with a reason.
   // The historical session price is NOT a pricing authority and is no longer
   // consulted here.
-  const resolvedAmount =
-    amountResult && amountResult.kind === "resolved" ? amountResult : null;
 
   return (
     <section
@@ -380,11 +385,11 @@ export function SessionPaymentPrepareCard({
         </p>
       )}
 
-      {showPrepareForm && resolvedAmount && (
+      {presentation.prepareFormAmount !== null && eligibleDetails && (
         <PrepareForm
           sessionId={sessionId}
-          eligibility={eligibility}
-          amount={resolvedAmount}
+          eligibility={eligibleDetails}
+          amount={presentation.prepareFormAmount}
           pending={preparePending}
           error={prepareError}
           blockingReasons={prepareBlockingReasons}

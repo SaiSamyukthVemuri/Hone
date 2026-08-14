@@ -1,12 +1,23 @@
 import {
   unresolvedAmountMessage,
+  type ResolvedSessionPaymentAmount,
   type SessionPaymentAmountResult,
 } from "@/lib/billing/session-payment-amount";
 
 // Reviews 3780286321 / 3780371682 / 3780456783 / 3780573779.
 //
-// THE SESSION-PAYMENT CARD'S PRESENTATION DECISION — one value per question,
-// each of them the value the component actually consumes.
+// THE SESSION-PAYMENT CARD'S PRICING-DEPENDENT PRESENTATION DECISION — one
+// value per question, each of them the value the component actually consumes.
+//
+// SCOPE, stated precisely. This module owns every presentation decision that
+// depends on CURRENT PRICING. It does not own the card's other conditionals,
+// and should not: whether an active persisted attempt exists, status-specific
+// panel dispatch, the previous-terminal-attempt callout, the transient
+// prepareJustSucceeded state, the eligibility BlockedPanel and local
+// submit/pending/error interaction all remain card-local, because none of them
+// interprets a price. An earlier comment here claimed "the complete render
+// decision" and that "the card holds no branch of its own"; that was over-broad
+// and is corrected — the claim is now exactly what is true.
 //
 // Two questions, which were originally conflated:
 //
@@ -37,11 +48,18 @@ import {
 // same name from here through AttemptStatusPanel into ReadyPanel's render
 // gate — no alias, no wrapper, no second boolean.
 //
-// The whole render decision lives here, not just the permission flag, because
-// this repository's vitest setup renders no components (node environment,
-// `tests/**/*.test.ts`, no jsdom). A test cannot assert on rendered output, so
-// if the card computed its own branches a test could only ever duplicate them
-// and prove the duplicate self-consistent. The card holds no branch of its own.
+// The whole PRICING-DEPENDENT decision lives here, not just the permission
+// flag, because this repository's vitest setup renders no components (node
+// environment, `tests/**/*.test.ts`, no jsdom). A test cannot assert on
+// rendered output, so if the card interpreted pricing itself a test could only
+// duplicate that interpretation and prove the duplicate self-consistent.
+//
+// Review 3780746701 was the INVERSE of the duplicate-authority findings: the
+// prepare-form decision was never exported at all. The card derived its own
+// `resolvedAmount` and rendered `showPrepareForm && resolvedAmount`, so the
+// matrix could be fully green while that branch was wrong. One decision
+// exported twice and one decision never exported break the same law — anything
+// a test asserts must be the value the component consumes.
 //
 // SCOPE — presentation only. It decides what is offered, never what may be
 // charged. Execution authority stays with decideExecutionPricingPermission and
@@ -60,6 +78,11 @@ export type SessionPaymentPresentation = {
   // THE READY money-control decision. The single authority: tested here,
   // consumed by the card, threaded unchanged into ReadyPanel's render gate.
   runChargeVisible: boolean;
+  // The prepare form, as ONE value: the authoritative resolved amount when the
+  // form should render, null when it should not. Deliberately NOT
+  // `prepareFormVisible` + `prepareFormAmount`, which would recreate exactly
+  // the pair this PR has already collapsed twice.
+  prepareFormAmount: ResolvedSessionPaymentAmount | null;
   // The free notice, as ONE value: the service name when the notice should
   // render, null when it should not.
   //
@@ -104,8 +127,15 @@ export function decideSessionPaymentPresentation(input: {
     amountResult.kind !== "resolved" &&
     amountResult.kind !== "free";
 
+  // Preparation requires eligibility AND a currently resolved price. Free,
+  // missing, ambiguous and unavailable pricing all withhold the form; the
+  // explanations below say why.
+  const prepareFormAmount =
+    showPrepareForm && amountResult?.kind === "resolved" ? amountResult : null;
+
   return {
     runChargeVisible,
+    prepareFormAmount,
     // A settled or in-flight attempt is money that moved; never overwrite it
     // with "No payment required".
     freeNoticeServiceName:

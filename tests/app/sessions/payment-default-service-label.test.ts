@@ -58,7 +58,18 @@ describe("the authoritative amount is displayed, not edited", () => {
     );
     expect(PERM_MSG).toMatch(/unresolvedAmountMessage\(amountResult\)/);
     // The prepare form only renders when the amount actually resolved.
-    expect(CARD).toMatch(/showPrepareForm && resolvedAmount &&/);
+    // Review 3780746701 moved the prepare-form decision into the shared
+    // pricing-dependent presentation model, so the card no longer derives
+    // `resolvedAmount`. The invariant is unchanged: the form renders only for
+    // a currently resolved price.
+    expect(CARD).toMatch(/\{presentation\.prepareFormAmount !== null &&/);
+    const PERM_PF = readFileSync(
+      path.join(process.cwd(), "lib/billing/ready-control-permission.ts"),
+      "utf8",
+    );
+    expect(PERM_PF).toMatch(
+      /showPrepareForm && amountResult\?\.kind === "resolved" \? amountResult : null/,
+    );
   });
 
   it("carries no historical-session-price fallback", () => {
