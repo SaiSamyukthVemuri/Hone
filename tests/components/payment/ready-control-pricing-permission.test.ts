@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { decideReadyControlPermission } from "@/lib/billing/ready-control-permission";
+import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-permission";
 
 // Review 3780286321 — READY-CONTROL PERMISSION.
 //
@@ -41,149 +41,160 @@ type Kind =
   | "missing_service"
   | "ambiguous_custom_pricing";
 
-// The card's derived flags, mirrored exactly from the component.
-function model(status: string | null, kind: Kind | null) {
-  const activeAttempt = status === null ? null : { status };
-  const amountResult = kind === null ? null : { kind };
-  const isFreeNow = amountResult?.kind === "free";
-  const settledOrInFlightAttempt =
-    activeAttempt !== null && activeAttempt.status !== "ready";
-  // The REAL decision, not a re-implementation of it. NC43 proved why: with a
-  // mirrored copy, reverting the component's gate left these cases green.
-  const readyAttemptBlocked = decideReadyControlPermission(
-    activeAttempt?.status ?? null,
-    (amountResult ?? null) as never,
-  ).blocked;
-  // An active attempt always makes showPrepareForm false.
-  const showPrepareForm = activeAttempt === null;
-
+// No reconstruction. Review 3780456783: a test that rebuilds the card's
+// conditions proves only that the rebuild is self-consistent. The card now
+// reads these exact fields and holds no branch of its own, so exercising the
+// decision IS exercising the card's render choice.
+function amount(kind: Kind | null) {
+  if (kind === null) return null;
+  if (kind === "resolved")
+    return {
+      kind,
+      amountCents: 12_000,
+      source: "service_price",
+      serviceName: "Electrolysis",
+      durationMinutes: 30,
+      customPricingNote: null,
+    } as never;
+  if (kind === "free")
+    return { kind, serviceName: "Consultation", durationMinutes: 30 } as never;
+  if (kind === "missing_service") return { kind } as never;
+  if (kind === "missing_price")
+    return { kind, serviceName: "Electrolysis" } as never;
   return {
-    // the panel carries Run charge for a ready attempt
-    runChargeVisible: activeAttempt !== null && !readyAttemptBlocked,
-    freeNoticeVisible: !!isFreeNow && !settledOrInFlightAttempt,
-    unavailableExplanation:
-      (showPrepareForm || readyAttemptBlocked) && !amountResult,
-    unresolvedExplanation:
-      (showPrepareForm || readyAttemptBlocked) &&
-      !!amountResult &&
-      amountResult.kind !== "resolved" &&
-      amountResult.kind !== "free",
-  };
+    kind,
+    serviceName: "Electrolysis",
+    candidateCents: [9_000, 12_000],
+  } as never;
 }
 
-describe("a READY attempt may run only while pricing is currently resolved", () => {
-  it("1 ready + resolved => Run charge visible", () => {
-    const m = model("ready", "resolved");
-    expect(m.runChargeVisible).toBe(true);
-    expect(m.unresolvedExplanation).toBe(false);
-    expect(m.unavailableExplanation).toBe(false);
+function view(status: string | null, kind: Kind | null) {
+  return decideSessionPaymentPresentation({
+    attemptStatus: status,
+    amountResult: amount(kind),
+    // An active attempt always makes the prepare form false.
+    showPrepareForm: status === null,
+  });
+}
+
+describe("a persisted attempt stays visible; only the control is withdrawn", () => {
+  it("1 READY + resolved => prepared summary visible, Run charge visible", () => {
+    const v = view("ready", "resolved");
+    expect(v.panelVisible).toBe(true);
+    expect(v.runChargeVisible).toBe(true);
+    expect(v.unresolvedExplanationVisible).toBe(false);
+    expect(v.unavailableExplanationVisible).toBe(false);
   });
 
-  it("2 ready + free => Run charge absent, No payment required shown", () => {
-    const m = model("ready", "free");
-    expect(m.runChargeVisible).toBe(false);
-    expect(m.freeNoticeVisible).toBe(true);
+  it("2 READY + free => summary visible, no Run charge, No payment required", () => {
+    const v = view("ready", "free");
+    expect(v.panelVisible).toBe(true);
+    expect(v.runChargeVisible).toBe(false);
+    expect(v.freeNoticeVisible).toBe(true);
+    expect(v.freeServiceName).toBe("Consultation");
   });
 
-  it("3 ready + missing_price => Run charge absent, unresolved explanation shown", () => {
-    const m = model("ready", "missing_price");
-    expect(m.runChargeVisible).toBe(false);
-    expect(m.unresolvedExplanation).toBe(true);
+  it("3 READY + missing_price => summary visible, no Run charge, pricing explanation", () => {
+    const v = view("ready", "missing_price");
+    expect(v.panelVisible).toBe(true);
+    expect(v.runChargeVisible).toBe(false);
+    expect(v.unresolvedExplanation).toMatch(/No price is configured/i);
   });
 
-  it("3b ready + missing_service => Run charge absent, unresolved explanation shown", () => {
-    const m = model("ready", "missing_service");
-    expect(m.runChargeVisible).toBe(false);
-    expect(m.unresolvedExplanation).toBe(true);
+  it("4 READY + missing_service => summary visible, no Run charge, pricing explanation", () => {
+    const v = view("ready", "missing_service");
+    expect(v.panelVisible).toBe(true);
+    expect(v.runChargeVisible).toBe(false);
+    expect(v.unresolvedExplanation).toMatch(/no booked service/i);
   });
 
-  it("4 ready + ambiguous_custom_pricing => Run charge absent, explanation shown", () => {
-    const m = model("ready", "ambiguous_custom_pricing");
-    expect(m.runChargeVisible).toBe(false);
-    expect(m.unresolvedExplanation).toBe(true);
+  it("5 READY + ambiguous_custom_pricing => summary visible, no Run charge, ambiguity explained", () => {
+    const v = view("ready", "ambiguous_custom_pricing");
+    expect(v.panelVisible).toBe(true);
+    expect(v.runChargeVisible).toBe(false);
+    expect(v.unresolvedExplanation).toMatch(/more than one current client-specific price/i);
   });
 
-  it("5 ready + pricing read failure (null) => Run charge absent, unavailable explanation shown", () => {
-    const m = model("ready", null);
-    expect(m.runChargeVisible).toBe(false);
-    expect(m.unavailableExplanation).toBe(true);
+  it("6 READY + pricing read failure => summary visible, no Run charge, unavailable explained", () => {
+    const v = view("ready", null);
+    expect(v.panelVisible).toBe(true);
+    expect(v.runChargeVisible).toBe(false);
+    expect(v.unavailableExplanationVisible).toBe(true);
   });
 
-  it("6 pending_stripe + pricing unavailable => Processing panel preserved", () => {
-    for (const kind of [null, "missing_price", "ambiguous_custom_pricing", "free"] as const) {
-      const m = model("pending_stripe", kind as Kind | null);
-      expect(m.runChargeVisible, String(kind)).toBe(true); // the panel renders
-      expect(m.freeNoticeVisible, String(kind)).toBe(false); // and never claims free
+  it("7 PENDING_STRIPE + pricing failure => Processing panel preserved", () => {
+    for (const k of [null, "missing_price", "ambiguous_custom_pricing", "free"] as const) {
+      const v = view("pending_stripe", k as Kind | null);
+      expect(v.panelVisible, String(k)).toBe(true);
+      expect(v.runChargeVisible, String(k)).toBe(false); // ready-only control
+      expect(v.freeNoticeVisible, String(k)).toBe(false); // never claims free
     }
   });
 
-  it("7 succeeded + pricing unavailable => Paid / receipt / refund truth preserved", () => {
-    for (const kind of [null, "missing_price", "ambiguous_custom_pricing", "free"] as const) {
-      const m = model("succeeded", kind as Kind | null);
-      expect(m.runChargeVisible, String(kind)).toBe(true);
-      expect(m.freeNoticeVisible, String(kind)).toBe(false);
+  it("8 SUCCEEDED + pricing failure => Paid / receipt / refund preserved", () => {
+    for (const k of [null, "missing_price", "ambiguous_custom_pricing", "free"] as const) {
+      const v = view("succeeded", k as Kind | null);
+      expect(v.panelVisible, String(k)).toBe(true);
+      expect(v.freeNoticeVisible, String(k)).toBe(false);
     }
   });
 
-  it("8 no active attempt: the prepare-side behaviour is unchanged", () => {
-    expect(model(null, "resolved").unresolvedExplanation).toBe(false);
-    expect(model(null, "missing_price").unresolvedExplanation).toBe(true);
-    expect(model(null, null).unavailableExplanation).toBe(true);
-    expect(model(null, "free").freeNoticeVisible).toBe(true);
-    // and no panel exists without an attempt
-    expect(model(null, "resolved").runChargeVisible).toBe(false);
-  });
-
-  it("EVERY non-resolved pricing result withdraws the ready control", () => {
-    const kinds: Array<Kind | null> = [
-      "free",
-      "missing_price",
-      "missing_service",
-      "ambiguous_custom_pricing",
-      null,
-    ];
-    for (const k of kinds) {
-      expect(model("ready", k).runChargeVisible, String(k)).toBe(false);
-      // and the practitioner is never left with no explanation at all
-      const m = model("ready", k);
+  it("9 THE FINDING: a SINGLE ready attempt with unresolved pricing stays visible", () => {
+    // AttemptHistory only renders with more than one attempt, so suppressing
+    // the panel made the only prepared payment appear to vanish while it still
+    // blocked preparation.
+    for (const k of ["free", "missing_price", "missing_service", "ambiguous_custom_pricing", null] as const) {
+      const v = view("ready", k as Kind | null);
+      expect(v.panelVisible, `${String(k)} must keep the prepared summary`).toBe(true);
+      expect(v.runChargeVisible, `${String(k)} must withdraw the control`).toBe(false);
       expect(
-        m.freeNoticeVisible || m.unresolvedExplanation || m.unavailableExplanation,
+        v.freeNoticeVisible ||
+          v.unresolvedExplanationVisible ||
+          v.unavailableExplanationVisible,
         `${String(k)} must explain itself`,
       ).toBe(true);
     }
-    expect(model("ready", "resolved").runChargeVisible).toBe(true);
+    expect(view("ready", "resolved").runChargeVisible).toBe(true);
+  });
+
+  it("no attempt: the prepare-side behaviour is unchanged", () => {
+    expect(view(null, "resolved").panelVisible).toBe(false);
+    expect(view(null, "missing_price").unresolvedExplanationVisible).toBe(true);
+    expect(view(null, null).unavailableExplanationVisible).toBe(true);
+    expect(view(null, "free").freeNoticeVisible).toBe(true);
   });
 });
 
 describe("source wiring", () => {
-  it("permission is expressed as resolved-only, not another free special case", () => {
-    expect(CARD).toMatch(/decideReadyControlPermission\(/);
-    expect(CARD).toMatch(/const readyAttemptBlocked = readyControl\.blocked/);
-    const PERM = readFileSync(
-      join(process.cwd(), "lib/billing/ready-control-permission.ts"),
-      "utf8",
-    );
-    expect(PERM).toMatch(/const canRun = amountResult\?\.kind === "resolved"/);
-    expect(codeOnly(PERM)).not.toMatch(/"free"/); // free is not special-cased
-    // the old free-only gate is gone from the panel condition
-    expect(codeOnly(CARD)).not.toMatch(/\{activeAttempt && !readyAttemptIsNowFree && \(/);
-    expect(CARD).toMatch(/\{activeAttempt && !readyAttemptBlocked && \(/);
+  it("the card reads the decision and holds no branch of its own", () => {
+    expect(CARD).toMatch(/decideSessionPaymentPresentation\(/);
+    expect(CARD).toMatch(/\{presentation\.panelVisible && activeAttempt && \(/);
+    expect(CARD).toMatch(/\{presentation\.freeNoticeVisible && \(/);
+    expect(CARD).toMatch(/\{presentation\.unavailableExplanationVisible && \(/);
+    expect(CARD).toMatch(/\{presentation\.unresolvedExplanation !== null && \(/);
+    // the old reconstructed locals are gone
+    const code = codeOnly(CARD);
+    expect(code).not.toMatch(/const isFreeNow =/);
+    expect(code).not.toMatch(/const settledOrInFlightAttempt =/);
+    expect(code).not.toMatch(/const readyAttemptBlocked =/);
+    // the panel is no longer suppressed by pricing
+    expect(code).not.toMatch(/activeAttempt && !readyAttemptBlocked/);
   });
 
-  it("explanations are no longer tied to showPrepareForm alone", () => {
-    // Both pricing explanations must also fire for a blocked ready attempt,
-    // which is exactly when showPrepareForm is false.
-    const occurrences =
-      codeOnly(CARD).match(/\(showPrepareForm \|\| readyAttemptBlocked\)/g) ?? [];
-    expect(occurrences).toHaveLength(2);
+  it("the READY charge section is the only thing pricing withdraws", () => {
+    expect(CARD).toMatch(/canRun=\{readyControl\.canRun\}/);
+    expect(CARD).toMatch(/\{canRun && \(/);
+    expect(CARD).toMatch(/data-testid="ready-charge-section"/);
+    // PaymentSummaryCard for the prepared attempt sits OUTSIDE that gate
+    const ready = CARD.slice(CARD.indexOf("function ReadyPanel("));
+    const summaryIdx = ready.indexOf("<PaymentSummaryCard");
+    const gateIdx = ready.indexOf("{canRun && (");
+    expect(summaryIdx).toBeGreaterThan(-1);
+    expect(gateIdx).toBeGreaterThan(summaryIdx);
   });
 
   it("execution authority and prepared-amount semantics are untouched", () => {
-    // PrepareForm still requires a strictly resolved amount.
     expect(CARD).toMatch(/amountResult\.kind === "resolved" \? amountResult : null/);
-    // The card derives no amount of its own. The ONLY amount_cents in code is
-    // `expected_amount_cents`, the optimistic-concurrency echo submitted back
-    // for confirmation — not a pricing authority.
     const amountRefs = codeOnly(CARD).match(/\w*amount_cents/g) ?? [];
     expect(new Set(amountRefs)).toEqual(new Set(["expected_amount_cents"]));
   });

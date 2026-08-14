@@ -46,7 +46,17 @@ describe("the authoritative amount is displayed, not edited", () => {
 
   it("blocked pricing replaces the form with a calm reason — never a blank box", () => {
     expect(CARD).toMatch(/data-testid="pricing-blocked"/);
-    expect(CARD).toMatch(/unresolvedAmountMessage\(amountResult\)/);
+    // Review 3780456783 moved this call into the shared presentation decision
+    // (lib/billing/ready-control-permission), so the card renders the returned
+    // copy instead of recomputing it. The invariant is unchanged: unresolved
+    // pricing yields a calm practitioner reason, never a blank box and never a
+    // historical-price fallback.
+    expect(CARD).toMatch(/presentation\.unresolvedExplanation/);
+    const PERM_MSG = readFileSync(
+      path.join(process.cwd(), "lib/billing/ready-control-permission.ts"),
+      "utf8",
+    );
+    expect(PERM_MSG).toMatch(/unresolvedAmountMessage\(amountResult\)/);
     // The prepare form only renders when the amount actually resolved.
     expect(CARD).toMatch(/showPrepareForm && resolvedAmount &&/);
   });

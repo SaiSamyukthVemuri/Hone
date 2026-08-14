@@ -1,45 +1,119 @@
-import type { SessionPaymentAmountResult } from "@/lib/billing/session-payment-amount";
+import {
+  unresolvedAmountMessage,
+  type SessionPaymentAmountResult,
+} from "@/lib/billing/session-payment-amount";
 
-// Review 3780286321. Whether an already-prepared `ready` attempt may still
-// expose its money-moving control, given CURRENT authoritative pricing.
+// Reviews 3780286321 / 3780371682 / 3780456783.
 //
-// `ready` is the only attempt status carrying a Run charge control. It may
-// expose that control ONLY while current pricing is `resolved`. The previous
-// gate was free-only, so an attempt whose service price had since been cleared
-// to NULL, whose custom pricing had become ambiguous, or whose pricing read had
-// failed still rendered Run charge. Execution already refuses every one of
-// those, so no wrong charge could run — but the practitioner saw an apparently
-// runnable control and only discovered the block after submitting.
+// THE SESSION-PAYMENT CARD'S PRESENTATION DECISION, in one place.
 //
-// This lives in a pure module rather than inline in the card for one reason:
-// a test that re-implements the card's conditions can only prove the model is
-// self-consistent, never that the component obeys it. Both the card and its
-// tests import THIS function, so a change to the rule cannot pass unnoticed.
+// Two separate questions, previously conflated:
 //
-// SCOPE — presentation permission only. It decides whether a control is
-// offered, never what may be charged. Execution authority stays with
-// decideExecutionPricingPermission and the prepared attempt remains the sole
-// execution amount.
+//   1. Should the persisted attempt be VISIBLE?
+//      Always. A prepared attempt is transaction history. Suppressing the
+//      panel when current pricing went unresolved made a single prepared
+//      payment appear to vanish while it still blocked preparation
+//      (AttemptHistory only renders with more than one attempt).
+//
+//   2. May a READY attempt expose its MONEY-MOVING control?
+//      Only while current authoritative pricing is `resolved`. Free, missing
+//      price/service, ambiguous custom pricing and a failed pricing read all
+//      withdraw it. Execution refuses all of those anyway, so this is UI
+//      truth: without it the practitioner saw a runnable-looking control and
+//      discovered the block only after clicking.
+//
+// Current pricing governs whether a READY attempt may still ACT. It never
+// erases money that has already MOVED: pending_stripe and succeeded keep their
+// panel, receipt and refund controls under every pricing state.
+//
+// WHY THE WHOLE DECISION LIVES HERE, not just the permission flag.
+// The card is a `.tsx` client component and this repository's vitest setup
+// renders no components (node environment, `tests/**/*.test.ts`, no jsdom), so
+// a test cannot assert on rendered output without new test infrastructure. The
+// first version of this module exported only `canRun`, and the tests then
+// RECONSTRUCTED the card's render conditions from it — which proves only that
+// the reconstruction is self-consistent, not that the component obeys it. So
+// the complete render decision is computed here and the card merely reads the
+// fields. There is no branch left in the card for a test to duplicate, and no
+// way for the card to drift from the rule.
+//
+// SCOPE — presentation only. It decides what is offered, never what may be
+// charged. Execution authority stays with decideExecutionPricingPermission and
+// the prepared attempt remains the sole execution amount.
 
 export type ReadyControlPermission = {
-  // The panel may render its money-moving control.
   canRun: boolean;
-  // The attempt is `ready` but current pricing withdraws the control, so the
-  // surface must explain why instead of silently showing nothing.
   blocked: boolean;
+};
+
+export type SessionPaymentPresentation = {
+  // The persisted attempt's status panel. Visible whenever an attempt exists.
+  panelVisible: boolean;
+  // The READY branch's "Charge client" section, including Run charge.
+  runChargeVisible: boolean;
+  // "<service> is free · No payment required." The service name comes back
+  // narrowed so the card renders copy without re-testing `kind` — a narrowing
+  // guard beside the decision is one more branch that could drift.
+  freeNoticeVisible: boolean;
+  freeServiceName: string | null;
+  // "The payment amount could not be confirmed. Refresh and try again."
+  unavailableExplanationVisible: boolean;
+  // Practitioner copy for missing/ambiguous pricing, already resolved here.
+  unresolvedExplanationVisible: boolean;
+  unresolvedExplanation: string | null;
+  // Retained for callers that only need the permission question.
+  readyControl: ReadyControlPermission;
 };
 
 export function decideReadyControlPermission(
   attemptStatus: string | null,
-  // null means the authoritative pricing context could not be loaded at all.
   amountResult: SessionPaymentAmountResult | null,
 ): ReadyControlPermission {
   if (attemptStatus !== "ready") {
-    // pending_stripe / succeeded are transaction state: money that has already
-    // moved. Current pricing never withdraws their panel, receipt or refund
-    // controls. Any other status has no panel here at all.
+    // pending_stripe / succeeded are transaction state; any other status has
+    // no money-moving control here at all.
     return { canRun: false, blocked: false };
   }
   const canRun = amountResult?.kind === "resolved";
   return { canRun, blocked: !canRun };
+}
+
+export function decideSessionPaymentPresentation(input: {
+  attemptStatus: string | null;
+  amountResult: SessionPaymentAmountResult | null;
+  // Eligibility-driven, and independent of pricing. False whenever an attempt
+  // is active, which is exactly why the explanations could not hang off it
+  // alone: the reason vanished precisely when a blocked ready attempt showed.
+  showPrepareForm: boolean;
+}): SessionPaymentPresentation {
+  const { attemptStatus, amountResult, showPrepareForm } = input;
+  const readyControl = decideReadyControlPermission(attemptStatus, amountResult);
+
+  const settledOrInFlight = attemptStatus !== null && attemptStatus !== "ready";
+  const explain = showPrepareForm || readyControl.blocked;
+
+  // A settled or in-flight attempt is money that moved; never overwrite it
+  // with "No payment required".
+  const freeNoticeVisible =
+    amountResult?.kind === "free" && !settledOrInFlight;
+  const isUnresolved =
+    amountResult !== null &&
+    amountResult.kind !== "resolved" &&
+    amountResult.kind !== "free";
+  const unresolvedExplanationVisible = explain && isUnresolved;
+
+  return {
+    panelVisible: attemptStatus !== null,
+    runChargeVisible: readyControl.canRun,
+    freeNoticeVisible,
+    freeServiceName:
+      amountResult?.kind === "free" ? amountResult.serviceName : null,
+    unavailableExplanationVisible: explain && amountResult === null,
+    unresolvedExplanationVisible,
+    unresolvedExplanation:
+      unresolvedExplanationVisible && isUnresolved
+        ? unresolvedAmountMessage(amountResult)
+        : null,
+    readyControl,
+  };
 }

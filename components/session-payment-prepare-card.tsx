@@ -11,7 +11,10 @@ import type {
   SessionPaymentAmountResult,
 } from "@/lib/billing/session-payment-amount";
 import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
-import { decideReadyControlPermission } from "@/lib/billing/ready-control-permission";
+import {
+  decideSessionPaymentPresentation,
+  type ReadyControlPermission,
+} from "@/lib/billing/ready-control-permission";
 import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -255,43 +258,16 @@ export function SessionPaymentPrepareCard({
   // attempt already in `ready` sets showPrepareForm false, so gating the free
   // notice on it left the AttemptStatusPanel still offering Run charge for a
   // visit every other surface now calls "No payment required".
-  const isFreeNow = amountResult?.kind === "free";
-  // Review 3777045537. ACTIVE_STATUSES is {ready, pending_stripe, succeeded},
-  // so suppressing the whole panel whenever the price is now free hid an
-  // IN-FLIGHT charge behind "No payment required" and stripped the receipt and
-  // refund controls off a SUCCEEDED one. Only `ready` carries a money-moving
-  // control, so only `ready` may be suppressed. pending_stripe and succeeded
-  // are transaction state — money that has actually moved — and the
-  // appointment-state reducer deliberately ranks processing/paid/refunded
-  // ABOVE free for exactly this reason. Mirror that ranking here: what the
-  // price says today never overrides what has already happened.
-  // `readyAttemptIsNowFree` is retired: freeness is no longer a special case,
-  // it is simply one of the non-resolved pricing results that withdraw the
-  // ready control (see readyAttemptBlocked below).
-  const settledOrInFlightAttempt =
-    activeAttempt !== null && activeAttempt.status !== "ready";
-
-  // Review 3780286321. READY-CONTROL PERMISSION, stated once.
-  //
-  // `ready` is the only attempt status carrying a money-moving control, and it
-  // may expose that control ONLY while current authoritative pricing is
-  // `resolved`. The previous gate was free-only, so an attempt whose service
-  // price had since been cleared to NULL, whose custom pricing had become
-  // ambiguous, or whose pricing read had failed still rendered Run charge. The
-  // execution action already refuses all of those, so no wrong charge could
-  // run — but the practitioner saw an apparently runnable control and only
-  // discovered the block after submitting.
-  //
-  // Stated as permission rather than as another special case: anything that is
-  // not a currently resolved price withdraws the control and explains why.
-  // The rule itself lives in lib/billing/ready-control-permission so the card
-  // and its tests share ONE definition; a test that re-implemented these
-  // conditions could only prove itself self-consistent.
-  const readyControl = decideReadyControlPermission(
-    activeAttempt?.status ?? null,
-    amountResult ?? null,
-  );
-  const readyAttemptBlocked = readyControl.blocked;
+  // Review 3780456783. The COMPLETE render decision lives in
+  // lib/billing/ready-control-permission and this component only reads its
+  // fields. Nothing here recomputes a branch, so there is nothing for a test
+  // to duplicate and no way for this card to drift from the rule.
+  const presentation = decideSessionPaymentPresentation({
+    attemptStatus: activeAttempt?.status ?? null,
+    amountResult: amountResult ?? null,
+    showPrepareForm,
+  });
+  const readyControl = presentation.readyControl;
   // Current pricing governs whether a READY attempt may still act. It never
   // erases money that has already moved: pending_stripe and succeeded keep
   // their panel, receipt and refund controls regardless of today's price.
@@ -324,9 +300,10 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
-      {activeAttempt && !readyAttemptBlocked && (
+      {presentation.panelVisible && activeAttempt && (
         <AttemptStatusPanel
           attempt={activeAttempt}
+          readyControl={readyControl}
           sessionId={sessionId}
           clientId={clientId}
           isOwner={isOwner}
@@ -376,7 +353,7 @@ export function SessionPaymentPrepareCard({
           Preparation is withdrawn entirely — there is no amount to confirm. */}
       {/* A null result means the pricing context itself could not be loaded.
           Never render nothing: say so, and offer no prepare action. */}
-      {(showPrepareForm || readyAttemptBlocked) && !amountResult && (
+      {presentation.unavailableExplanationVisible && (
         <p
           data-testid="pricing-blocked"
           className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
@@ -389,24 +366,21 @@ export function SessionPaymentPrepareCard({
           Prepare, never Run charge, and never the amber "pricing blocked"
           warning, because nothing is wrong. Defense in depth: even if a route
           reaches this card directly, there is no money-moving control here. */}
-      {isFreeNow && !settledOrInFlightAttempt && (
+      {presentation.freeNoticeVisible && (
         <p
           data-testid="payment-not-required"
           className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
         >
-          {amountResult.serviceName} is free · No payment required.
+          {presentation.freeServiceName} is free · No payment required.
         </p>
       )}
 
-      {(showPrepareForm || readyAttemptBlocked) &&
-        amountResult &&
-        amountResult.kind !== "resolved" &&
-        amountResult.kind !== "free" && (
+      {presentation.unresolvedExplanation !== null && (
         <p
           data-testid="pricing-blocked"
           className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
         >
-          {unresolvedAmountMessage(amountResult)}
+          {presentation.unresolvedExplanation}
         </p>
       )}
 
@@ -510,6 +484,7 @@ function AttemptStatusPanel({
   executeAction,
   sendReceiptAction,
   refundAction,
+  readyControl,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
@@ -518,6 +493,10 @@ function AttemptStatusPanel({
   executeAction: ExecuteAction;
   sendReceiptAction: SendReceiptAction;
   refundAction: RefundAction;
+  // Review 3780371682. Whether the READY branch may offer its money-moving
+  // control. Only `ready` consults it: pending_stripe and succeeded are
+  // transaction state and are never affected by current pricing.
+  readyControl: ReadyControlPermission;
 }) {
   switch (attempt.status) {
     case "ready":
@@ -528,6 +507,7 @@ function AttemptStatusPanel({
           clientId={clientId}
           isOwner={isOwner}
           executeAction={executeAction}
+          canRun={readyControl.canRun}
         />
       );
     case "pending_stripe":
@@ -565,12 +545,18 @@ function ReadyPanel({
   clientId,
   isOwner,
   executeAction,
+  canRun,
 }: {
   attempt: SessionPaymentExistingAttemptSummary;
   sessionId: string;
   clientId: string;
   isOwner: boolean;
   executeAction: ExecuteAction;
+  // Review 3780371682. The prepared attempt is TRANSACTION HISTORY and is
+  // always rendered. Only the money-moving section below is withdrawn when
+  // current authoritative pricing is not `resolved` — otherwise a single
+  // prepared payment appeared to vanish while still blocking preparation.
+  canRun: boolean;
 }) {
   const [confirmExecute, setConfirmExecute] = useState(false);
   const [executePending, startExecuteTransition] = useTransition();
@@ -620,7 +606,11 @@ function ReadyPanel({
         }
       />
 
-      <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+      {canRun && (
+      <div
+        data-testid="ready-charge-section"
+        className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30"
+      >
         <p className="text-[11px] font-medium uppercase tracking-wider text-amber-900 dark:text-amber-200">
           Charge client
         </p>
@@ -690,6 +680,7 @@ function ReadyPanel({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
