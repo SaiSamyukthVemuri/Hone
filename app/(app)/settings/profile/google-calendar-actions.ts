@@ -45,14 +45,14 @@ import {
   setWriteCalendar,
 } from "@/lib/google-calendar/connection";
 
-// Google Calendar — Phase A + B2.2 + B2.4 server actions. Every action:
+// Google Calendar: Phase A + B2.2 + B2.4 server actions. Every action:
 //   * runs authenticated (getCurrentPractitionerWithStudio),
 //   * enforces the studio connection flag SERVER-SIDE (UI gating alone is
 //     insufficient),
 //   * DESTINATION actions additionally require the studio OWNER role,
 //   * never returns a token/secret to the client,
 //   * fails closed when crypto/OAuth env is not configured.
-// NO event sync happens here — B2.4 is destination SETUP only. Nothing enqueues,
+// NO event sync happens here: B2.4 is destination SETUP only. Nothing enqueues,
 // syncs, or turns on the outbound flag / worker.
 
 type StartResult = { ok: true; url: string } | { ok: false; error: string };
@@ -124,7 +124,7 @@ async function mintAccessToken(studioId: string, practitionerId: string): Promis
 }
 
 // returnPath: the in-app page to return to after the callback. Validated against
-// the open-redirect allowlist (safeReturnPath) — a browser-supplied value can only
+// the open-redirect allowlist (safeReturnPath), a browser-supplied value can only
 // ever resolve to an allow-listed settings path, never an arbitrary URL.
 export async function startGoogleCalendarConnectAction(
   returnPath?: string,
@@ -183,7 +183,7 @@ export async function startGoogleCalendarConnectAction(
   return { ok: true, url };
 }
 
-// B2.4 — OWNER-only: choose the appointment DESTINATION mode. NO-SWITCH: once a
+// B2.4, OWNER-only: choose the appointment DESTINATION mode. NO-SWITCH: once a
 // mode is chosen it cannot be changed to the other (setDestinationMode enforces
 // this; switching is a future product/data-lifecycle decision). Records the mode
 // only; the scope-upgrade + target config are separate steps.
@@ -208,7 +208,7 @@ export async function chooseDestinationModeAction(
       return {
         ok: false,
         error:
-          "This connection already has a destination. Changing destinations isn't supported yet — disconnect to start over.",
+          "This connection already has a destination. Changing destinations isn't supported yet: disconnect to start over.",
       };
     }
     return { ok: false, error: "Couldn't save the destination. Please try again." };
@@ -217,9 +217,9 @@ export async function chooseDestinationModeAction(
   return { ok: true };
 }
 
-// B2.2/B2.4 — OWNER-only: start the incremental-authorization EVENT-SCOPE UPGRADE.
+// B2.2/B2.4, OWNER-only: start the incremental-authorization EVENT-SCOPE UPGRADE.
 // The requested scope DERIVES from the connection's chosen destination
-// (calendar.app.created for dedicated, calendar.events.owned for existing-owned) —
+// (calendar.app.created for dedicated, calendar.events.owned for existing-owned),
 // broad calendar.events is never requested. include_granted_scopes=true preserves
 // the Phase-A grant; prompt=consent re-issues a refresh token (doubles as
 // reconnect). The chosen mode + its EXACT required scope are BOUND onto the OAuth
@@ -245,7 +245,7 @@ export async function startGoogleCalendarEventScopeUpgradeAction(
     return { ok: false, error: "Connect your Google account first." };
   }
 
-  // The destination MUST be chosen first — the required scope derives from it.
+  // The destination MUST be chosen first: the required scope derives from it.
   const mode = existing.destinationMode;
   const requiredScopes = requiredEventScopesForDestination(mode);
   const requiredScope = requiredEventScopeFor(mode);
@@ -287,14 +287,14 @@ export async function startGoogleCalendarEventScopeUpgradeAction(
   return { ok: true, url };
 }
 
-// B2.4 dedicated — OWNER-only: provision (or reconcile+adopt) the Hone Appointments
+// B2.4 dedicated: OWNER-only: provision (or reconcile+adopt) the Hone Appointments
 // calendar. IDEMPOTENT + concurrency-safe via a STABLE attempt token embedded in
 // the created calendar description and reconciled by EXACT match (never by name):
 //   * already provisioned (app_created_calendar_id set) -> converge + succeed.
 //   * ambiguous flagged -> needs attention, never auto-create.
 //   * a stable attempt token is minted ONCE (CAS); every retry reconciles under it.
 //   * reconcile 1 match -> adopt; >1 -> fail closed (ambiguous); 0 -> create one.
-// Creates only an EMPTY secondary calendar — NO event, NO sync, NO worker.
+// Creates only an EMPTY secondary calendar, NO event, NO sync, NO worker.
 export async function provisionDedicatedCalendarAction(
   returnPath?: string,
 ): Promise<SimpleResult> {
@@ -316,7 +316,7 @@ export async function provisionDedicatedCalendarAction(
   if (existing.provisioningAmbiguousAt) {
     return {
       ok: false,
-      error: "Multiple Hone calendars were found for this connection. It needs attention — contact support.",
+      error: "Multiple Hone calendars were found for this connection. It needs attention: contact support.",
     };
   }
   // Idempotency: already provisioned -> re-affirm + succeed (never re-create).
@@ -399,7 +399,7 @@ export async function provisionDedicatedCalendarAction(
     displayName: DEDICATED_CALENDAR_NAME,
   });
   if (!saved.ok) {
-    // Do NOT delete — the token lets a retry reconcile + adopt this exact calendar.
+    // Do NOT delete: the token lets a retry reconcile + adopt this exact calendar.
     return { ok: false, error: "Created the calendar but couldn't save it. Please try again." };
   }
   await designateStudioCalendarOwner(studio.id, practitioner.id);
@@ -407,7 +407,7 @@ export async function provisionDedicatedCalendarAction(
   return { ok: true };
 }
 
-// B2.4 existing-owned — OWNER-only: list the calendars the connected account OWNS
+// B2.4 existing-owned, OWNER-only: list the calendars the connected account OWNS
 // (exact accessRole === "owner"), for selection. Re-mints an access token; never
 // returns the token. Writer/reader/freeBusy/unknown roles are excluded.
 export async function listOwnedCalendarsAction(): Promise<CalendarsResult> {
@@ -423,7 +423,7 @@ export async function listOwnedCalendarsAction(): Promise<CalendarsResult> {
   return { ok: true, calendars: owned };
 }
 
-// B2.4 existing-owned — OWNER-only: select an OWNED calendar as the destination.
+// B2.4 existing-owned, OWNER-only: select an OWNED calendar as the destination.
 // The browser submits only a candidate id; the server re-fetches Google's own list
 // and confirms the candidate has exact accessRole === "owner" (ignores any browser
 // role). Stores nothing on validation failure. Reads/creates NO event.
@@ -453,7 +453,7 @@ export async function selectOwnedCalendarAction(
   if (!token.ok) return { ok: false, error: token.error };
   const list = await fetchCalendarList(token.accessToken);
   if (!list.ok) return { ok: false, error: "Couldn't load your Google calendars." };
-  // Server-side ownership revalidation — EXACT owner role, ignore browser claims.
+  // Server-side ownership revalidation: EXACT owner role, ignore browser claims.
   const entry = list.calendars.find((c) => c.id === calendarId && c.accessRole === "owner");
   if (!entry) {
     return { ok: false, error: "Choose a calendar you own." };
@@ -478,7 +478,7 @@ export async function disconnectGoogleCalendarAction(
 
   // Best-effort revoke at Google BEFORE destroying local state, so we never
   // orphan a live grant. If revoke fails we still proceed to clear locally
-  // (the token is destroyed regardless) — a failed revoke is logged, not fatal.
+  // (the token is destroyed regardless), a failed revoke is logged, not fatal.
   // NOTE (B2.4 §17): disconnect NEVER deletes a Hone-created Google calendar; it
   // only revokes credentials + clears local connection state. Calendar deletion is
   // a separate future product decision.

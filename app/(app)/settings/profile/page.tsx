@@ -9,7 +9,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 export default async function ProfileSettingsPage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
 
-  // Google Calendar — Phase A. The card renders ONLY when the studio flag is on;
+  // Google Calendar: Phase A. The card renders ONLY when the studio flag is on;
   // when it's off the card is hidden and the server actions reject anyway.
   const googleEnabled = studio.google_calendar_connection_enabled === true;
   const google = googleEnabled

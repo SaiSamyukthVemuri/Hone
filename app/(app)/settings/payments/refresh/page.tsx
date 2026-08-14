@@ -33,7 +33,7 @@ export default async function StripeOnboardingRefreshPage() {
     // page itself surfaces the current Stripe state and a Refresh
     // status button.
     if (typeof err === "object" && err !== null && "digest" in err) {
-      // NEXT_REDIRECT — let it propagate.
+      // NEXT_REDIRECT, let it propagate.
       throw err;
     }
     console.error(

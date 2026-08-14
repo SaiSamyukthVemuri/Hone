@@ -5,15 +5,15 @@
 // the current entry (dated + attributed), an "Add note" form, a "Revise" flow
 // (append-only correction that supersedes the current entry), and dated
 // history. Used on three surfaces via the `variant` prop:
-//   * "full"    — the client-profile "Consultation" tab (default open history)
-//   * "compact" — inline on session charting + appointment prep (history
+//   * "full"   , the client-profile "Consultation" tab (default open history)
+//   * "compact", inline on session charting + appointment prep (history
 //                 collapsed; same add/revise write path)
 //
 // Write path safety:
 //   * Forms post to the server actions (addClinicalNoteAction /
 //     reviseClinicalNoteAction), which re-derive the studio + practitioner from
 //     auth and read-back-verify the persisted row. This component NEVER assumes
-//     a save succeeded — it only updates local state from the verified note the
+//     a save succeeded. It only updates local state from the verified note the
 //     action returns.
 //   * The Save button is disabled while a submit is in flight (no accidental
 //     double submission), and on failure the form STAYS OPEN with the entered
@@ -95,8 +95,8 @@ function withDerivedSupersede(
 
 // `occurred_at` is a CALENDAR DATE (the form posts `YYYY-MM-DD` into a
 // timestamptz, so it lands at midnight UTC). Converting it into the viewer's
-// zone showed the PREVIOUS day in every negative UTC offset — every Canadian
-// and US studio — so a note dated July 21 read as July 20 right beside the
+// zone showed the PREVIOUS day in every negative UTC offset: every Canadian
+// and US studio, so a note dated July 21 read as July 20 right beside the
 // July 21 in its own date input. The shared civil-date formatter pins the day
 // and lets only the month NAME follow locale.
 const formatDate = formatClinicalDate;
@@ -445,7 +445,7 @@ function NoteForm({
       {mode === "revise" && (
         <p className="text-[11px] text-neutral-500">
           Saving records a new dated revision. The current note is kept in
-          history — nothing is overwritten.
+          history, nothing is overwritten.
         </p>
       )}
 

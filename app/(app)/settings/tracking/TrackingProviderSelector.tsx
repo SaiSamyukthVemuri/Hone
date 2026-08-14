@@ -110,7 +110,7 @@ function MetaPanel({
       <HelpLinks entry={entry} />
       <VideoNote entry={entry} />
 
-      {/* Editable setup — the only provider with token fields + save. */}
+      {/* Editable setup: the only provider with token fields + save. */}
       <TrackingProviderForm
         provider="meta"
         providerLabel={entry.displayName}
@@ -144,7 +144,7 @@ function ComingSoonPanel({ entry }: { entry: ProviderRegistryEntry }) {
       </div>
       <p className="text-xs italic text-neutral-500">
         This provider is supported by Hone&rsquo;s tracking architecture, but the
-        sender is not enabled yet — no token can be added and nothing is sent.
+        sender is not enabled yet, no token can be added and nothing is sent.
       </p>
       <DataSafety entry={entry} />
       <HelpLinks entry={entry} />
@@ -179,7 +179,7 @@ export function TrackingProviderSelector({
           {PROVIDER_REGISTRY.map((p) => (
             <option key={p.provider} value={p.provider}>
               {p.displayName}
-              {p.status === "coming_soon" ? " — Coming soon" : ""}
+              {p.status === "coming_soon" ? " (Coming soon)" : ""}
             </option>
           ))}
         </select>

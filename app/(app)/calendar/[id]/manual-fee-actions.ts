@@ -294,7 +294,7 @@ export async function chargeManualFeeAttemptAction(
   // it may execute manual-fee attempts and nothing else.
   //
   // The global live-mode allowlist deliberately permits `session_payment`,
-  // because ordinary live session payments are allowed — it answers "which
+  // because ordinary live session payments are allowed: it answers "which
   // reasons may be charged in this deployment mode", not "which reasons may
   // THIS action execute". Relying on it here meant an authenticated caller
   // could post a ready `session_payment` attempt id to this action and reach
@@ -517,7 +517,7 @@ export async function refundFeeAttemptAction(
     // (same rule as refundPaymentChargeAttemptAction).
     if (practitioner.role !== "owner") {
       // PR #296: record the denied (non-owner) refund attempt. Safe IDs +
-      // event name only — no client name/email/phone, no health/treatment
+      // event name only, no client name/email/phone, no health/treatment
       // data, no Stripe secret or raw payload.
       logInternal("payment_refund_denied_not_owner", {
         studioId: studio.id,

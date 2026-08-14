@@ -8,7 +8,7 @@ import {
 } from "@/lib/sessions/body-zones";
 
 // PR #270. Built-in body-map treatment-area picker. A simple SCHEMATIC body
-// (inline SVG vector shapes — NO image asset, upload, canvas, drawing, or
+// (inline SVG vector shapes, NO image asset, upload, canvas, drawing, or
 // annotation) with clickable broad zones (Face / Neck / Torso / Arms / Legs /
 // Bikini-intimate / Other). Picking a zone reveals its specific area chips,
 // which set the same structured value the list-below AreaPicker uses
@@ -33,7 +33,7 @@ export function BodyMapAreaPicker({
     // sub-area (e.g. "Underarms"), never a whole zone. zoneForArea maps it to its
     // owning zone (Underarms -> Arms). Previously the whole broad zone shape (both
     // arms) flooded emerald, which read as if the ENTIRE region was being treated
-    // — confusing when only underarms was selected. Now the broad shape gets only
+    // confusing when only underarms was selected. Now the broad shape gets only
     // a SUBTLE "contains the selected area" tint; the exact area is shown by the
     // highlighted area chip below + the form's "Area being charted: Underarms" line.
     const containsSelection = selectedZone === id;

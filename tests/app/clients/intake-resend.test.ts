@@ -64,7 +64,7 @@ describe("Resend intake link CTA wiring (PR #293)", () => {
 
   it("no-email state disables resend and points to Copy link", () => {
     expect(CARD).toMatch(/disabled=\{isPending \|\| !clientHasEmail\}/);
-    expect(CARD).toMatch(/No email on file — use Copy link to share it manually\./);
+    expect(CARD).toMatch(/No email on file\. Use Copy link to share it manually\./);
   });
 
   it("shows the best-effort 'previous link may have expired' hint", () => {

@@ -6,7 +6,7 @@ import {
 } from "@/lib/treatment-plans/display";
 
 // Compact treatment-plan card shown directly under the session title.
-// Green for active plans (positive, ongoing context — not an alert),
+// Green for active plans (positive, ongoing context, not an alert),
 // neutral for closed plans (historical context without urgency).
 //
 // Lead with the area chip(s) and (when set) the months-timeline

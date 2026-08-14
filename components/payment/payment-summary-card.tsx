@@ -1,5 +1,5 @@
 // Compact, practitioner-facing payment summary header. Answers the only
-// questions Chloe needs during charting — is it paid? how much? — in one line,
+// questions Chloe needs during charting (is it paid? how much?) in one line,
 // without processor internals. Presentation only: it derives nothing and calls
 // no action; the caller passes the derived summary + slots the existing actions
 // and the owner-only technical disclosure as children.
@@ -25,7 +25,7 @@ export function PaymentSummaryCard({
 }: {
   summary: PaymentSummary;
   heading?: string;
-  // e.g. "Jul 12, 2026 at 3:03 PM" or a receipt line — small secondary text.
+  // e.g. "Jul 12, 2026 at 3:03 PM" or a receipt line: small secondary text.
   subLine?: React.ReactNode;
   // actions, receipt status, technical disclosure.
   children?: React.ReactNode;

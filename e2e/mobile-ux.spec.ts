@@ -524,7 +524,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(page.getByTestId("finish-completion-status")).toHaveText(
       "No booked appointment linked",
     );
-    const doneCharting = page.getByRole("button", { name: /Done — back to client/ });
+    const doneCharting = page.getByRole("button", { name: /Done, back to client/ });
     await expect(doneCharting).toBeVisible();
     await expectInsideViewport(page, doneCharting, "done charting button");
     await expect(

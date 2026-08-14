@@ -1,6 +1,6 @@
 "use client";
 
-// PR B 3E-6 — the shared "Applies to" scope control for owner-managed timed
+// PR B 3E-6, the shared "Applies to" scope control for owner-managed timed
 // blocks and recurring breaks. Rendered ONLY when practitioner capacity is on.
 //
 //   value ""      -> studio-wide (every practitioner)
@@ -9,14 +9,14 @@
 // New / changed targets may only be ACTIVE practitioners (`selectable`). An
 // existing source that already points at an inactive practitioner keeps that
 // value as a distinct, labelled option so the owner can edit its time/label
-// without being forced to reassign — but they cannot pick an inactive
+// without being forced to reassign, but they cannot pick an inactive
 // practitioner for a source that isn't already scoped to them.
 
 export type ScopeSelectable = { id: string; display_name: string };
 export type ScopeDirectoryEntry = { display_name: string; active: boolean };
 export type ScopeDirectory = Record<string, ScopeDirectoryEntry>;
 
-// The scope the current VIEW is anchored to — drives the form's default target.
+// The scope the current VIEW is anchored to: drives the form's default target.
 export type ViewScope =
   | { kind: "studio" }
   | { kind: "practitioner"; practitionerId: string };
@@ -34,7 +34,7 @@ export function scopeRowLabel(
   if (!entry) return "A former practitioner";
   return entry.active
     ? `Only ${entry.display_name}`
-    : `Only ${entry.display_name} — inactive`;
+    : `Only ${entry.display_name}, inactive`;
 }
 
 export function ScopeField({
@@ -74,7 +74,7 @@ export function ScopeField({
           </option>
         ))}
         {showExtra && (
-          <option value={value}>Only {extraLabel} — inactive</option>
+          <option value={value}>Only {extraLabel}, inactive</option>
         )}
       </select>
     </label>

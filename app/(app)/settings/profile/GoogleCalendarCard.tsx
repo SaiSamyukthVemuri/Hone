@@ -19,9 +19,9 @@ import {
 // Google Calendar connection card on Settings → Profile / Integrations.
 //
 // Phase A = OAuth connection foundation. B2.4 = DUAL DESTINATION setup (owner-only):
-// the owner picks WHERE Hone will add appointments — a dedicated Hone-created
+// the owner picks WHERE Hone will add appointments: a dedicated Hone-created
 // calendar (calendar.app.created) or an existing calendar they own
-// (calendar.events.owned) — then grants the destination-specific scope and finishes
+// (calendar.events.owned), then grants the destination-specific scope and finishes
 // the target. Readiness is DERIVED server-side (passed as `readiness`), never
 // stored. NOTHING here syncs events: even an "outbound_scope_ready" connection shows
 // the dormant banner. No token/scope/state is ever exposed to the browser.
@@ -40,7 +40,7 @@ const STATUS_MESSAGES: Record<string, { tone: "ok" | "warn"; text: string }> = {
   connected: { tone: "ok", text: "Google Calendar connected." },
   event_scope_granted: {
     tone: "ok",
-    text: "Calendar permission granted. Finish setting up the destination below — synchronization stays off.",
+    text: "Calendar permission granted. Finish setting up the destination below: synchronization stays off.",
   },
   event_scope_not_granted: {
     tone: "warn",
@@ -54,8 +54,8 @@ const STATUS_MESSAGES: Record<string, { tone: "ok" | "warn"; text: string }> = {
     tone: "warn",
     text: "That Google account is different from the one already connected. Disconnect first to switch accounts.",
   },
-  denied: { tone: "warn", text: "Connection cancelled — no access was granted." },
-  error: { tone: "warn", text: "Something went wrong. Nothing was saved — please try again." },
+  denied: { tone: "warn", text: "Connection cancelled, no access was granted." },
+  error: { tone: "warn", text: "Something went wrong. Nothing was saved: please try again." },
   insufficient_scope: {
     tone: "warn",
     text: "The required calendar permission wasn't granted. Please reconnect and allow calendar access.",
@@ -67,11 +67,11 @@ const READINESS_LABEL: Record<ConnectionReadiness, string> = {
   disconnected: "Not connected",
   error: "Connection error",
   reconnect_required: "Reconnect required",
-  connected_no_destination: "Connected — choose a destination",
+  connected_no_destination: "Connected: choose a destination",
   dedicated_permission_required: "Permission required (dedicated calendar)",
-  dedicated_provisioning_pending: "Permission granted — create the calendar",
+  dedicated_provisioning_pending: "Permission granted: create the calendar",
   existing_permission_required: "Permission required (your calendar)",
-  existing_selection_pending: "Permission granted — choose your calendar",
+  existing_selection_pending: "Permission granted: choose your calendar",
   needs_attention: "Needs attention",
   outbound_scope_ready: "Ready for future event sync",
 };
@@ -176,7 +176,7 @@ export function GoogleCalendarCard({
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           Connect your Google account so Hone can add appointments to your calendar in a
           later release. This is <strong>separate</strong> from the read-only calendar feed
-          above — the feed is a one-way subscription that never imports events into Hone.
+          above: the feed is a one-way subscription that never imports events into Hone.
         </p>
       </div>
 
@@ -217,7 +217,7 @@ export function GoogleCalendarCard({
                 </div>
               )}
 
-              {/* Step 1 — choose a destination (only before one is chosen). */}
+              {/* Step 1, choose a destination (only before one is chosen). */}
               {!ambiguous && destinationMode === null && (
                 <fieldset
                   data-testid="gcal-destination-chooser"
@@ -256,7 +256,7 @@ export function GoogleCalendarCard({
                 </fieldset>
               )}
 
-              {/* Step 2 — dedicated: grant permission, then create the calendar. */}
+              {/* Step 2, dedicated: grant permission, then create the calendar. */}
               {!ambiguous && destinationMode === "dedicated_app_created" && !outboundReady && (
                 <div
                   data-testid="gcal-dedicated-setup"
@@ -276,7 +276,7 @@ export function GoogleCalendarCard({
                     <>
                       <p className="text-sm text-amber-900 dark:text-amber-200">
                         Permission granted. Create the dedicated “Hone Appointments” calendar
-                        to finish. This creates an empty calendar — no events are added.
+                        to finish. This creates an empty calendar, no events are added.
                       </p>
                       <button type="button" onClick={provision} disabled={pending} className={btnPrimary}>
                         {pending ? "Creating…" : "Create the Hone Appointments calendar"}
@@ -286,7 +286,7 @@ export function GoogleCalendarCard({
                 </div>
               )}
 
-              {/* Step 2 — existing owned: grant permission, then pick an owned calendar. */}
+              {/* Step 2, existing owned: grant permission, then pick an owned calendar. */}
               {!ambiguous && destinationMode === "existing_owned" && !outboundReady && (
                 <div
                   data-testid="gcal-existing-setup"

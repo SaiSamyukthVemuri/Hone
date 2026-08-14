@@ -114,7 +114,7 @@ function normalizeClinicalResponse(
   }
   // 0156: the optional numbing note is preserved ONLY when numbing was actually
   // used; trimmed, blank/whitespace -> NULL (shared pure helper). Status 'none'
-  // or NULL/not-recorded stores NULL — a note without "used" is discarded, never
+  // or NULL/not-recorded stores NULL: a note without "used" is discarded, never
   // used to infer that numbing was used, and no placeholder is ever fabricated.
   const numbingNotes = normalizeNumbingNotes(numbing, input.numbingNotes);
   return {
@@ -216,7 +216,7 @@ function normalizeAreaSet(
 // Session Logging Phase B: the eight structured probe columns
 // (migration 0041) are always written as a set, derived server-side from
 // a single catalog key. The lib/probes.ts catalog is the source of truth
-// — the action never trusts decomposed fields from the client. An empty/
+// the action never trusts decomposed fields from the client. An empty/
 // null key clears the structured probe (all columns NULL). Legacy
 // probe_type / probe_size are NOT touched here.
 type ProbeColumns = {
@@ -291,20 +291,20 @@ export type CreateBlockInput = {
   probeType?: ProbeType | null;
   probeSize?: string | null;
   machineFrequency?: MachineFrequency | null;
-  // Body Chart v1 Phase B — optional structured anatomical area.
+  // Body Chart v1 Phase B: optional structured anatomical area.
   primaryArea?: string | null;
   side?: string | null;
   customAreaDetail?: string | null;
   // PR 2: explicit "Other" custom-area intent from the client.
   areaIsCustom?: boolean;
-  // Session Logging Phase B — optional structured probe (catalog key).
+  // Session Logging Phase B: optional structured probe (catalog key).
   // Validated + decomposed server-side. Empty/absent → no structured probe.
   probeOptionKey?: string | null;
 };
 
 // PR #286: clinical lineage. Every charting write below validates the session
 // belongs to BOTH the studio AND the route client (input.clientId) via the
-// shared assertSessionForClient — not just the studio. This closes the
+// shared assertSessionForClient, not just the studio. This closes the
 // same-studio wrong-client write that assertSessionInStudio (studio-only,
 // removed) allowed. Block/entry writes remain scoped by the (now client-
 // validated) session_id, and migration 0094 guarantees block ∈ session and
@@ -326,7 +326,7 @@ async function rememberMachineFrequencyDefault(
   if (frequency !== "13.56 MHz" && frequency !== "27.12 MHz") return;
   try {
     // 0178: this used the ADMIN client because the authenticated path was
-    // owner-gated by the 0001 RLS policy — a service-role bypass standing in
+    // owner-gated by the 0001 RLS policy: a service-role bypass standing in
     // for a missing self-service boundary. The governed command is bound to
     // auth.uid() in the database, so the SAME entitlement is now reached
     // without service_role vouching for a human, and no practitioner id
@@ -354,7 +354,7 @@ export async function createSessionBlockAction(
 
   // Validate the new structured-area fields up front so the caller gets a
   // clean message instead of an opaque CHECK violation. Existing block
-  // fields (block_name etc.) are unchanged — never derive primary_area
+  // fields (block_name etc.) are unchanged, never derive primary_area
   // from block_name or vice versa; they are intentionally independent.
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
@@ -373,7 +373,7 @@ export async function createSessionBlockAction(
   const supabase = await createClient();
 
   // L18 Phase 2: created through create_block_with_entry (migration 0166) with
-  // p_with_entry FALSE — a block-only create must not fabricate an
+  // p_with_entry FALSE: a block-only create must not fabricate an
   // electrolysis entry. sort_order is no longer computed here: the 0129
   // boundary the command delegates to derives it as max(sort_order)+1 inside
   // the same transaction, which also removes the read-then-insert race the
@@ -460,7 +460,7 @@ export type UpdateBlockInput = {
       | "machine_frequency"
       | "started_at"
       | "ended_at"
-      // Body Chart v1 Phase B — structured-area columns are patchable so
+      // Body Chart v1 Phase B: structured-area columns are patchable so
       // a follow-up inline editor can mutate them. block_name remains
       // independent; this action never derives one from the other.
       | "primary_area"
@@ -468,7 +468,7 @@ export type UpdateBlockInput = {
       | "custom_area_detail"
     >
   >;
-  // Session Logging Phase B — structured probe. Separate from `patch`
+  // Session Logging Phase B: structured probe. Separate from `patch`
   // because the eight columns are derived server-side from this single
   // catalog key (never trusted from the client). Semantics:
   //   - undefined  → leave the structured probe columns untouched
@@ -499,7 +499,7 @@ export async function updateSessionBlockAction(
   // mass-assign server-managed columns. In particular the 0155 inventory link
   // (probe_inventory_item_id), the lot-number snapshot (probe_lot_number) and
   // the confirmation (probe_lot_confirmed) are ONLY ever written through the
-  // validated resolver in the charting entry actions — never here.
+  // validated resolver in the charting entry actions, never here.
   const PATCHABLE_BLOCK_COLUMNS = new Set<string>([
     "block_name",
     "block_notes",
@@ -558,14 +558,14 @@ export async function updateSessionBlockAction(
   const supabase = await createClient();
 
   // L18 Phase 2: written through update_block_with_entry (migration 0166) in
-  // BLOCK-ONLY mode — p_with_entry false, so no unrelated entry is touched.
+  // BLOCK-ONLY mode: p_with_entry false, so no unrelated entry is touched.
   //
   // The command delegates the shared block columns to 0129's
   // update_session_block_with_areas, which writes its WHOLE allow-list from
   // jsonb_populate_record. Sending this action's PARTIAL patch straight through
   // would therefore NULL every allow-listed column the patch omits. So the
   // current row is read and the patch overlaid on top, and the row's own
-  // updated_at is passed as the optimistic-concurrency value — which closes the
+  // updated_at is passed as the optimistic-concurrency value, which closes the
   // read-modify-write window that merge would otherwise open, and reuses the
   // stale-edit message this file already shows elsewhere.
   const { data: current, error: readErr } = await supabase
@@ -610,7 +610,7 @@ export async function updateSessionBlockAction(
     numbing_status: before.numbing_status,
     numbing_notes: before.numbing_notes,
   };
-  // Columns 0129 does NOT own — sent as the strict p_block_extra allow-list.
+  // Columns 0129 does NOT own: sent as the strict p_block_extra allow-list.
   // Only keys actually PRESENT in the patch are sent, so an omitted field is
   // left unchanged and an explicit null clears it.
   const EXTRA_KEYS = [
@@ -705,7 +705,7 @@ export async function copyPreviousSessionAreasAction(input: {
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
 
-  // TEMPORARY CONTAINMENT — the whole-session copy is paused (zero writes).
+  // TEMPORARY CONTAINMENT: the whole-session copy is paused (zero writes).
   //
   // The audit established that this action previously persisted real
   // session_blocks (including minutes + machine settings) into today's chart
@@ -719,7 +719,7 @@ export async function copyPreviousSessionAreasAction(input: {
   // The authenticated + current-session lineage checks above are preserved;
   // this then returns a fixed safe "unavailable" result BEFORE any
   // source-session lookup or any session_blocks read/insert. It performs ZERO
-  // writes — no blocks, entries, areas, drafts, metrics, or audit records — and
+  // writes (no blocks, entries, areas, drafts, metrics, or audit records) and
   // cannot be bypassed by calling the action directly. The in-form "Copy
   // settings" control (a client-side prefill) is unaffected.
   return {
@@ -755,7 +755,7 @@ export async function softDeleteSessionBlockAction(
   // L18 Phase 2: soft retirement through soft_delete_session_block (0166).
   // deleted_at and delete_reason are written by the command; deleted_by is
   // DERIVED there from auth.uid(), so removal attribution can no longer be
-  // supplied by the caller. Still a soft delete — never a hard delete.
+  // supplied by the caller. Still a soft delete, never a hard delete.
   const { error } = await supabase.rpc("soft_delete_session_block", {
     p_session_id: input.sessionId,
     p_client_id: input.clientId,
@@ -829,7 +829,7 @@ export async function removeSessionAreaAction(
 // instead of saving the area and then filling readings in a second form.
 //
 // They DO NOT replace createSessionBlockAction / updateSessionBlockAction
-// or addElectrolysisEntryAction — those remain for the "add another pass"
+// or addElectrolysisEntryAction, those remain for the "add another pass"
 // flow, the legacy entry form, and ensureBlockForSession. This is purely
 // additive: same tables, same columns, no schema change.
 //
@@ -838,7 +838,7 @@ export async function removeSessionAreaAction(
 // be saved without a treatment area. Machine settings are snapshotted onto
 // the entry exactly like addElectrolysisEntryAction (galvanic carries no
 // apilus_modality/energy_level). Legacy probe_type/probe_size are never
-// written or cleared on entries here — the structured probe lives on the
+// written or cleared on entries here: the structured probe lives on the
 // block, and the new flow leaves the entry's legacy probe columns null on
 // create and untouched on update.
 // =====================================================================
@@ -909,7 +909,7 @@ function normalizedComments(r: EntryReadingsInput): string | null {
 }
 
 // Structured observation chips for the DB write: always a canonical, deduped
-// array (never null — the column is jsonb NOT NULL default []). Unknown/garbage
+// array (never null: the column is jsonb NOT NULL default []). Unknown/garbage
 // values collapse to [] rather than corrupting the clinical record.
 function normalizedChips(r: EntryReadingsInput): string[] {
   return normalizeChips(r.observationChips);
@@ -1087,8 +1087,8 @@ export async function createTreatmentAreaWithEntryAction(
   if (!responseCheck.ok) return responseCheck;
 
   // Migration 0128/0129: when `areas` is provided (the area-selection form path),
-  // the structured set is CANONICAL for this block — for one area, many, OR zero
-  // — and the whole save goes through the atomic RPC (which writes the block +
+  // the structured set is CANONICAL for this block: for one area, many, OR zero
+  // and the whole save goes through the atomic RPC (which writes the block +
   // legacy projection + the COMPLETE area set in one transaction, replacing any
   // stale rows). `areaRows` may be [] (an intentionally area-less block: the RPC
   // atomically clears the child set). `areas` ABSENT → the legacy single-area
@@ -1127,7 +1127,7 @@ export async function createTreatmentAreaWithEntryAction(
   // server-side (UUID + same studio + nonblank lot + matching probe_key +
   // expired-policy) and derives the snapshot FROM THE DB ROW; the manual path
   // keeps the trimmed free-text. A forged / cross-studio / wrong-probe / stale /
-  // expired-unconfirmed id is rejected — never falling back to client text.
+  // expired-unconfirmed id is rejected, never falling back to client text.
   const inv = await resolveProbeInventorySelection(supabase, studio.id, {
     probeInventoryItemId: input.probeInventoryItemId ?? null,
     probeKey: probeCheck.columns.probe_key,
@@ -1159,14 +1159,14 @@ export async function createTreatmentAreaWithEntryAction(
   // L18 Phase 2: block + areas + first entry are now ONE transaction via
   // create_block_with_entry (migration 0166). Previously the block was created
   // first and the entry second, with a COMPENSATING soft-delete of the block if
-  // the entry write failed — that compensation is gone because a failure now
+  // the entry write failed: that compensation is gone because a failure now
   // rolls the block, its area rows and the entry back together.
   //
   // The entry payload is built from the SAME helpers the direct insert used, so
   // its shaping is unchanged: `entryMachineSnapshot` still nulls apilus_modality
   // and energy_level for a galvanic entry, and `structuredReadingColumns` still
   // mode-gates the galvanic/thermolysis readings. The legacy generic
-  // `intensity`/`duration_seconds` remain unwritten — the command has no
+  // `intensity`/`duration_seconds` remain unwritten: the command has no
   // parameter for them.
   const snap = entryMachineSnapshot({
     mode: (input.mode ?? null) as SessionMode | null,
@@ -1199,7 +1199,7 @@ export async function createTreatmentAreaWithEntryAction(
         display_order: i,
       })),
       // Create the first entry only when a treatment area is present. An
-      // area-less, readings-less save creates just the block — a valid "set the
+      // area-less, readings-less save creates just the block: a valid "set the
       // area up later" state, exactly as before.
       p_with_entry: Boolean(area),
       p_area: area,
@@ -1335,8 +1335,8 @@ export async function updateTreatmentAreaWithEntryAction(
   if (!responseCheck.ok) return responseCheck;
 
   // Migration 0128/0129: when `areas` is provided (the area-selection form path),
-  // the structured set is CANONICAL for this block — for one area, many, OR zero
-  // — and the whole save goes through the atomic RPC (which writes the block +
+  // the structured set is CANONICAL for this block: for one area, many, OR zero
+  // and the whole save goes through the atomic RPC (which writes the block +
   // legacy projection + the COMPLETE area set in one transaction, replacing any
   // stale rows). `areaRows` may be [] (an intentionally area-less block: the RPC
   // atomically clears the child set). `areas` ABSENT → the legacy single-area
@@ -1361,7 +1361,7 @@ export async function updateTreatmentAreaWithEntryAction(
 
   // Creating a new first entry (block had none) needs an area, same NOT NULL
   // reason as create. Updating an existing entry keeps its current area when
-  // the treatment area is cleared — we never null an existing entry's area.
+  // the treatment area is cleared. We never null an existing entry's area.
   if (!input.firstEntryId && !area && readingsPresent(readings)) {
     return {
       ok: false,
@@ -1437,7 +1437,7 @@ export async function updateTreatmentAreaWithEntryAction(
   // Entry shaping is unchanged: the same `entryMachineSnapshot` (galvanic
   // carries no apilus params) and the same mode-gated reading columns. Legacy
   // `intensity`/`duration_seconds` and an existing entry's `probe_type` /
-  // `probe_size` / `probe_lot_id` are all preserved — the command's update
+  // `probe_size` / `probe_lot_id` are all preserved: the command's update
   // deliberately omits them, so old probe data is never wiped by an edit.
   const snap = entryMachineSnapshot({
     mode: (input.mode ?? null) as SessionMode | null,
@@ -1465,7 +1465,7 @@ export async function updateTreatmentAreaWithEntryAction(
     p_block_extra: { probe_inventory_item_id: inv.probeInventoryItemId },
     // `areas` ABSENT (the legacy single-area edit path) sends NULL, which the
     // command reads as "leave the recorded area set exactly as it is". An
-    // explicitly submitted set — including an empty one — replaces it.
+    // explicitly submitted set (including an empty one) replaces it.
     p_areas: areaRows
       ? areaRows.map((a, i) => ({
           area: a.area,

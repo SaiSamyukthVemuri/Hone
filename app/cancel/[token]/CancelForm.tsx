@@ -144,7 +144,7 @@ export function CancelForm({
         // B7 / 0176. Exactly ONE outcome is branched on, and it is not a
         // token state: the studio edited its policy while this page was
         // open. A changed policy can never be silently accepted, and it
-        // must not be retried automatically — the client has to see the
+        // must not be retried automatically: the client has to see the
         // NEW text and consent to it.
         //
         // So: clear the acknowledgement, tell them plainly what happened,

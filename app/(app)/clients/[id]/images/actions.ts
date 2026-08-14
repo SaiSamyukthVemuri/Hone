@@ -49,7 +49,7 @@ export async function uploadTreatmentImageAction(
   }
 
   // PR #284: optional attach-at-upload context. The browser may submit a
-  // session and/or session-block id, but these are NEVER trusted — they are
+  // session and/or session-block id, but these are NEVER trusted. They are
   // validated server-side below (session ∈ studio+client; block ∈ session+
   // studio) before being stored. Empty string → not attached.
   const requestedSessionId = String(formData.get("sessionId") ?? "").trim();
@@ -134,11 +134,11 @@ export async function uploadTreatmentImageAction(
     // corrupt data, and re-encodes WITHOUT EXIF/GPS/metadata. Everything below
     // uses the SANITIZED output: its content type drives the path/extension, its
     // bytes are what we upload, its length is the stored size. A normal user
-    // mistake (wrong file) just returns the generic error — no ops alert.
+    // mistake (wrong file) just returns the generic error, no ops alert.
     const inputBytes = Buffer.from(await file.arrayBuffer());
     // PR #292 defense-in-depth: the pre-buffer gate trusted the client-reported
     // file.size. Re-bound the ACTUAL buffered length (> 0 and <= 15 MB) on the
-    // real bytes BEFORE any Sharp work — independent of file.size — reusing the
+    // real bytes BEFORE any Sharp work (independent of file.size) reusing the
     // same single-source validator + constant + generic error strings.
     const bufferValid = validateTreatmentImageUpload({
       contentType: valid.contentType,
@@ -155,7 +155,7 @@ export async function uploadTreatmentImageAction(
     // PR #292: cap the SANITIZED OUTPUT size before any storage work. The
     // re-encode is bounded by the 100 MP pixel limit, not by the 15 MB byte cap;
     // enforce the byte cap on the output too so a re-encode that grows past the
-    // limit is never uploaded or recorded. Generic error — no provider detail.
+    // limit is never uploaded or recorded. Generic error, no provider detail.
     if (sanitized.bytes.byteLength > TREATMENT_IMAGE_MAX_BYTES) {
       return { ok: false, error: "Could not upload the image." };
     }
@@ -183,7 +183,7 @@ export async function uploadTreatmentImageAction(
       await recordOpsAlert({
         severity: "warning",
         event: "treatment_image_upload_failed",
-        // PR #285: generic message — the event already says what failed, and a
+        // PR #285: generic message: the event already says what failed, and a
         // raw storage error.message can carry a storage path / signed URL. The
         // central redactor in recordOpsAlert is the real backstop; this keeps
         // the alert clean at the source. The provider error code stays in the
@@ -199,7 +199,7 @@ export async function uploadTreatmentImageAction(
 
     // METADATA plane (L18 Phase 4): recorded through create_treatment_image_metadata
     // (migration 0168) on the AUTHENTICATED client. studio_id and uploaded_by are
-    // no longer sent — the command derives both from auth.uid() — and it re-derives
+    // no longer sent (the command derives both from auth.uid()) and it re-derives
     // the expected storage path from (studio, client, id) so a forged path cannot
     // point at another tenant's prefix.
     //
@@ -297,7 +297,7 @@ export async function getTreatmentImageSignedUrlAction(input: {
       await recordOpsAlert({
         severity: "warning",
         event: "treatment_image_sign_failed",
-        // PR #285: generic message — a storage signing error can echo the
+        // PR #285: generic message: a storage signing error can echo the
         // signed URL / path. Central redaction is the backstop.
         message: "Treatment image signed-URL creation failed.",
         studioId: studio.id,
@@ -313,7 +313,7 @@ export async function getTreatmentImageSignedUrlAction(input: {
 }
 
 // PR #307: add / edit / clear the practitioner note under a treatment photo.
-// Metadata-only UPDATE via the RLS client (createClient) — no service-role, no
+// Metadata-only UPDATE via the RLS client (createClient), no service-role, no
 // storage/token/sanitizer touch. Scoped exactly like archiveTreatmentImageAction
 // (id + studio_id + client_id + not-already-deleted, with a .select("id")
 // row-affected check) so a same-studio cross-client write is a generic
@@ -342,7 +342,7 @@ export async function updateTreatmentImageNoteAction(input: {
     // L18 Phase 4: the same scoping (id + studio + client + not archived) now
     // lives inside set_treatment_image_note (migration 0168). The studio is
     // derived from auth.uid() rather than supplied. A NULL return means no row
-    // matched — missing, wrong client, or already archived — which stays a
+    // matched (missing, wrong client, or already archived) which stays a
     // generic "not found" so it never reveals another client's image.
     const { data, error } = await supabase.rpc("set_treatment_image_note", {
       p_image_id: input.imageId,
@@ -376,12 +376,12 @@ export async function archiveTreatmentImageAction(input: {
     // image id would archive the wrong client's photo (RLS/0093 allow the
     // same-studio deleted_at flip); without the row-affected check, a
     // nonexistent / already-archived / wrong-client id would update zero rows
-    // and still report success. A zero-row result is a generic "not found" —
+    // and still report success. A zero-row result is a generic "not found",
     // it never reveals whether another client's image exists.
     // L18 Phase 4: archive_treatment_image (migration 0168) keeps the exact
     // scoping and adds two things the direct write could not: deleted_at is
     // generated by the DATABASE and deleted_by is derived from auth.uid(), so an
-    // archive cannot be attributed to another practitioner. Still SOFT only —
+    // archive cannot be attributed to another practitioner. Still SOFT only,
     // no row and no storage object is deleted. A NULL return is the generic
     // "not found" for missing / wrong-client / already-archived.
     const { data, error } = await supabase.rpc("archive_treatment_image", {

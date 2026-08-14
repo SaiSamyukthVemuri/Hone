@@ -4,11 +4,11 @@ import { OAUTH_CALLBACK_PATH } from "@/lib/google-calendar/config";
 import { assertE2eFakeGoogleAllowed } from "@/lib/google-calendar/e2e/fake-google-guard";
 import { recordFakeAuthorizeRequest } from "@/lib/google-calendar/e2e/fake-google-provider";
 
-// GUARDED fake Google OAuth authorize endpoint — E2E ONLY.
+// GUARDED fake Google OAuth authorize endpoint: E2E ONLY.
 //
 // In production the fake-Google activation guard is fail-closed (rejects every
 // deployed environment + requires the server-only HONE_E2E_* markers), so this
-// route returns 404 and is NOT usable — no fake authorize is exposed in any
+// route returns 404 and is NOT usable, no fake authorize is exposed in any
 // deployed build. Only the guarded local E2E lane reaches the redirect below,
 // standing in for accounts.google.com so the browser never leaves the local origin.
 export const runtime = "nodejs";

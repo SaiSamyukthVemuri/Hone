@@ -9,16 +9,16 @@
 //
 // Estimates are local UI-only: a small formula converts (stage length,
 // how often, visit length) into an approximate visit count and minute
-// total. This does NOT touch lib/treatment-time — TTT actual-logged
+// total. This does NOT touch lib/treatment-time, TTT actual-logged
 // computations stay exactly as they are; Phase D will wire planned vs.
 // actual.
 //
 // Vocabulary (from product copy):
-//   "Treatment schedule" — the ordered list of stages on a plan
-//   "Stage"              — one segment with its own timing and length
-//   "How often"          — Weekly / Every 2 weeks / Monthly
-//   "Visit length"       — minutes per visit
-//   "Estimated total"    — derived from stages, displayed with "about"
+//   "Treatment schedule", the ordered list of stages on a plan
+//   "Stage"             , one segment with its own timing and length
+//   "How often"         , Weekly / Every 2 weeks / Monthly
+//   "Visit length"      , minutes per visit
+//   "Estimated total"   , derived from stages, displayed with "about"
 
 import { useState, useTransition } from "react";
 import type {
@@ -45,7 +45,7 @@ export type TreatmentScheduleAction = (
 type Props = {
   planId: string;
   clientId: string;
-  // Closed plans render the schedule read-only — practitioners must
+  // Closed plans render the schedule read-only, practitioners must
   // reopen a plan (via a future action) to edit it.
   isClosed: boolean;
   stages: TreatmentPlanStage[];
@@ -78,7 +78,7 @@ const VISIT_LENGTH_PRESETS: ReadonlyArray<number> = [15, 30, 45, 60, 90];
 // Phase D: the stages → estimate formula now lives in
 // lib/treatment-time/plans.ts so the same numbers appear here, in
 // TreatmentPlansCard's planned-vs-actual block, and in any future
-// surface. Same with formatMinutes — sourced from
+// surface. Same with formatMinutes, sourced from
 // lib/treatment-time/format.ts (already the canonical TTT formatter).
 
 function formatHowOften(unit: TreatmentPlanStageHowOftenUnit): string {

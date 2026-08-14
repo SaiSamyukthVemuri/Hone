@@ -24,11 +24,11 @@ import type { CopyAreaDraft } from "@/lib/sessions/whole-session-copy";
 const CUSTOM_DETAIL_MAX = 60;
 
 // One EPHEMERAL, editable copy-preview card. It edits a CopyAreaDraft entirely in
-// the parent's React state via onChange — it performs ZERO server actions and
+// the parent's React state via onChange, it performs ZERO server actions and
 // ZERO database writes. It reuses the SAME shared widgets/constants/mode-gating
 // as the block charting form (MultiAreaEditor, ProbePicker, ELECTROLYSIS_MODES,
 // MACHINE_FREQUENCIES, APILUS_MODALITIES_BY_MODE, resolveModeSections) so the two
-// never drift. Performed treatment time is intentionally NOT editable here —
+// never drift. Performed treatment time is intentionally NOT editable here,
 // today's minutes stay blank and are never copied.
 export function CopyDraftCard({
   draft,
@@ -67,7 +67,7 @@ export function CopyDraftCard({
         thermolysisDurationSeconds: next.showThermo ? draft.setup.thermolysisDurationSeconds : "",
         galvanicMa: next.showGalv ? draft.setup.galvanicMa : "",
         galvanicDurationSeconds: next.showGalv ? draft.setup.galvanicDurationSeconds : "",
-        // galvanic_intensity_percent is retired — no card field to re-gate.
+        // galvanic_intensity_percent is retired, no card field to re-gate.
         unitsOfLye: next.showGalv ? draft.setup.unitsOfLye : "",
       },
     });
@@ -102,7 +102,7 @@ export function CopyDraftCard({
         </button>
       </div>
 
-      {/* Areas + laterality — shared MultiAreaEditor. */}
+      {/* Areas + laterality: shared MultiAreaEditor. */}
       <MultiAreaEditor
         value={draft.areas.map((a) => ({ area: a.area, laterality: a.laterality }) as BlockArea)}
         onChange={setAreas}
@@ -171,7 +171,7 @@ export function CopyDraftCard({
               value={s.apilusModality}
               onChange={(e) => {
                 const next = e.target.value;
-                // OmniBlend has no thermolysis duration — clear it on switch so a
+                // OmniBlend has no thermolysis duration: clear it on switch so a
                 // now-hidden reading can't be committed (mirrors the charting form).
                 patchSetup({
                   apilusModality: next,
@@ -323,7 +323,7 @@ export function CopyDraftCard({
       {/* Pulse control moved INSIDE the thermolysis section above (Phase A:
           pulse is thermolysis-specific, shown only for thermo/blend). */}
 
-      {/* Probe — shared ProbePicker (server derives decomposition from the key). */}
+      {/* Probe: shared ProbePicker (server derives decomposition from the key). */}
       <div className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">Probe</span>
         <ProbePicker

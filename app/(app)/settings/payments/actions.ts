@@ -143,7 +143,7 @@ export async function refreshStripeStatusAction(): Promise<RefreshStatusResult> 
 
   const admin = createAdminClient();
   // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
-  // refresh must load the CURRENT deployment mode's account only — never the
+  // refresh must load the CURRENT deployment mode's account only, never the
   // other mode's acct_ id (Stripe rejects a test account under a live key).
   const { data: settings, error: settingsErr } = await admin
     .from("studio_payment_settings")

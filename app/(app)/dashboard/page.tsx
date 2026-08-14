@@ -92,10 +92,10 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 // because the dashboard is where the hierarchy is most visible; the
 // appointment briefing and client profile follow the same rules.
 //
-//   Allergies / cautions ........ RED   (rose-*)   — never amber
-//   Pinned notes ................. AMBER (amber-*)  — distinct from allergies
-//   Intake incomplete / awaiting . AMBER (amber-*)  — easy-to-miss → visible
-//   Intake reviewed / complete ... GREEN (emerald-*) / neutral — calm/good
+//   Allergies / cautions ........ RED   (rose-*)  , never amber
+//   Pinned notes ................. AMBER (amber-*) , distinct from allergies
+//   Intake incomplete / awaiting . AMBER (amber-*) , easy-to-miss → visible
+//   Intake reviewed / complete ... GREEN (emerald-*) / neutral: calm/good
 //   Needs attention (urgent) ..... AMBER accent (amber-* left border + tint)
 //   Needs attention (soft/info) .. NEUTRAL (no Phase-1-blocking urgency)
 //   Birthdays .................... WARM  (rose-* tint)
@@ -200,7 +200,7 @@ export default async function DashboardPage({
       : r.practitioner,
   }));
 
-  // The visible roster excludes cancelled appointments — they shouldn't
+  // The visible roster excludes cancelled appointments: they shouldn't
   // crowd a "what's today" briefing. Cancellation records remain on the
   // calendar week view, where context is appropriate.
   const visibleAppointments = todayAppointments.filter(
@@ -235,7 +235,7 @@ export default async function DashboardPage({
     countIntakesAwaitingReview(supabase, studio.id),
     countActiveServices(studio.id),
     isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
-    // Birthday reminders — month-of-year only, derived from
+    // Birthday reminders: month-of-year only, derived from
     // clients.date_of_birth. Practitioner-facing only. Never sent as
     // email/SMS or exposed to client/public surfaces.
     getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
@@ -320,7 +320,7 @@ export default async function DashboardPage({
   }
 
   // Quick checkout (Chloe): one bounded, tenant-scoped batch loader for the
-  // visible appointments' payment state — no per-row query, no full history.
+  // visible appointments' payment state, no per-row query, no full history.
   const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds, studio.timezone);
 
   const beforeTodayPreviews = await getBeforeTodayPreviews(
@@ -331,7 +331,7 @@ export default async function DashboardPage({
   // Dashboard V2 Part 2A: the FULL previous treatment for every returning
   // client of the day, from the SAME #517 authority the appointment page uses.
   //
-  // ONE batched call for the whole day — two round-trips total, independent of
+  // ONE batched call for the whole day: two round-trips total, independent of
   // how many appointments there are. Calling the per-client loader inside the
   // map below would be an N+1 that grows with the studio's schedule, which is
   // why the batched companion exists.
@@ -352,7 +352,7 @@ export default async function DashboardPage({
     })),
   });
 
-  // Pure fold into the shared model — no I/O. `prepLoads` is ALREADY keyed by
+  // Pure fold into the shared model, no I/O. `prepLoads` is ALREADY keyed by
   // appointment id (the requestKey passed above), so this reads its own key and
   // never re-derives one from the client. An earlier version looked the load up
   // by `appt.client_id`, which handed both of a client's appointments whichever
@@ -376,9 +376,9 @@ export default async function DashboardPage({
   }
 
   // ONE combined Today workflow (Chloe: "Today and the Daily Prep Brief are
-  // redundant"). A pure helper turns facts already loaded above — visible
+  // redundant"). A pure helper turns facts already loaded above: visible
   // appointments, the Before Today previews, the linked-session charting state,
-  // intake status — into exactly one card per appointment, keyed by APPOINTMENT
+  // intake status: into exactly one card per appointment, keyed by APPOINTMENT
   // id and in the query's chronological order. No new query; nothing sorted.
   const todayWorkflowInputs: TodayWorkflowInput[] = visibleAppointments.map(
     (appt) => {
@@ -432,7 +432,7 @@ export default async function DashboardPage({
   // studio-scoped, for the on-dashboard "Supplies expiring" attention card.
   const expiringSupplies = await getExpiringSterileItems(studio.id, todayLocal);
 
-  // Dashboard V2 Part 2B — the ONE To-do model.
+  // Dashboard V2 Part 2B, the ONE To-do model.
   //
   // Everything below was already loaded for the four sub-sections this
   // replaces. `buildDashboardTodo` is PURE: no client, no query, no clock, no
@@ -564,13 +564,13 @@ export default async function DashboardPage({
 
 
       {/* ===================================================================
-          TO DO — Dashboard V2 Part 2B.
+          TO DO: Dashboard V2 Part 2B.
           ===================================================================
           Part 1 put ONE heading over four independent products: "Action
           needed", "Follow-up assistant", "Supplies expiring" and "Needs
           attention". They still had four loaders, four row grammars, four
           empty states, and they asked for the same unresolved work more than
-          once — most visibly "Aftercare not marked", which arrived both as a
+          once: most visibly "Aftercare not marked", which arrived both as a
           per-session row from the assistant and as a count tile computed over
           a different window in a different unit.
 
@@ -579,8 +579,8 @@ export default async function DashboardPage({
 
               domain facts → lib/dashboard/todo-model.ts → one To-do list
 
-          The domain loaders below are deliberately UNCHANGED — rewriting them
-          would expand scope — and NO query was added: `buildDashboardTodo` is
+          The domain loaders below are deliberately UNCHANGED: rewriting them
+          would expand scope, and NO query was added: `buildDashboardTodo` is
           pure and consumes results the page already had. Deduplication is on
           domain identity (`kind:subjectId`), never on rendered text; ordering
           is documented in TODO_PRIORITY. Every action that worked before is
@@ -593,7 +593,7 @@ export default async function DashboardPage({
             as well. See the note at the foot of this file. */}
       </section>
 
-      {/* Relationship context, BELOW the operational work — never above it. */}
+      {/* Relationship context, BELOW the operational work, never above it. */}
       <BirthdaysThisMonth
         birthdays={birthdaysThisMonth}
         today={todayLocal}
@@ -601,7 +601,7 @@ export default async function DashboardPage({
       />
 
       {/* ===================================================================
-          Secondary — reporting and setup, below the operational hierarchy.
+          Secondary: reporting and setup, below the operational hierarchy.
           ===================================================================
           PR #208's practice snapshot (period filter + appointment counts +
           service value + test-mode payment posture). It is REPORTING, so it is
@@ -609,16 +609,16 @@ export default async function DashboardPage({
           owner-only Financials route that will eventually own service value and
           payment posture does not exist yet, and deleting the only surface that
           shows them before their replacement exists would destroy working
-          functionality. Nothing here was recomputed, renamed or duplicated —
+          functionality. Nothing here was recomputed, renamed or duplicated,
           the only change to its numbers in this PR is the Sunday week
           boundary correction in resolvePeriodRange. */}
       <PracticeSnapshot metrics={practiceMetrics} livemode={inferStripeLivemode()} />
 
-      {/* CHLOE D2 — setup that is DONE is not daily work.
+      {/* CHLOE D2, setup that is DONE is not daily work.
           ------------------------------------------------------------------
           This card used to render in both states. Once every required item was
           satisfied it became a permanent "Booking page ready / Your public
-          booking page is live" banner plus a column of ticks — a congratulation
+          booking page is live" banner plus a column of ticks: a congratulation
           occupying the daily workspace forever.
 
           The gate is `readiness.status`, the EXISTING derived authority
@@ -634,7 +634,7 @@ export default async function DashboardPage({
       {/* PR #215: setup/readiness checklist entry point. A normal
           link card, never a blocking modal. PR #238: shown only while
           auto-detected steps remain; the full checklist always lives on
-          /getting-started. Demoted out of the operational flow — setup is not
+          /getting-started. Demoted out of the operational flow: setup is not
           daily work. */}
       {!onboardingV2On && !setupComplete && (
         <Link
@@ -649,7 +649,7 @@ export default async function DashboardPage({
         </Link>
       )}
 
-      {/* CHLOE D3 — a finished checklist is not a dashboard card.
+      {/* CHLOE D3, a finished checklist is not a dashboard card.
           ------------------------------------------------------------------
           PR #238 collapsed completed setup into a quiet footer reading "Setup
           complete. Getting started checklist →". Chloe's report is that the
@@ -669,7 +669,7 @@ export default async function DashboardPage({
           card once `model.isComplete` (see OnboardingSurface), so both systems
           now agree: no completed-setup card on the daily Dashboard.
 
-          CHLOE D4 — the "Pilot learning" card ("…Send it to Sam", "Send
+          CHLOE D4, the "Pilot learning" card ("…Send it to Sam", "Send
           feedback", "Know another electrologist?") was PR #250 pilot tooling
           and no longer belongs in a practitioner's daily workspace. It was
           removed earlier and its component file deleted.
@@ -678,7 +678,7 @@ export default async function DashboardPage({
           footers that survived under Today and To do are now gone too. The
           daily product no longer routes practitioner feedback directly to Sam.
           The PilotFeedbackPrompt component and the shared
-          buildPilotFeedbackMailto helper are deliberately NOT deleted — this
+          buildPilotFeedbackMailto helper are deliberately NOT deleted: this
           requirement is Dashboard-specific, and a census found no other live
           consumer to break, so removing the shared helper would be a wider
           decision than this tranche was asked to make. */}
@@ -695,7 +695,7 @@ function DaySummary({
 }) {
   // ONE empty-day message. EmptyDayState is the single source of truth for the
   // empty day; this summary used to print "No appointments today." as well, so
-  // the sentence appeared twice — once under the heading and once in the card
+  // the sentence appeared twice: once under the heading and once in the card
   // below it. The counts below are the only thing this component adds, and on
   // an empty day there are no counts worth stating.
   if (appointmentCount === 0) return null;
@@ -751,7 +751,7 @@ function AppointmentRow({
   // Review intake: the direct route from Today into the canonical
   // practitioner intake-review surface, replacing the
   // Today -> client profile -> Health & Forms -> intake detour. Resolved from
-  // `intakeStatus`, which is ALREADY loaded — no extra query, no wider read.
+  // `intakeStatus`, which is ALREADY loaded, no extra query, no wider read.
   // Null for in-progress and no-intake states, where the IntakePill below is
   // the truthful statement and there is nothing to review.
   const intakeAction = resolveTodayIntakeAction({
@@ -772,7 +772,7 @@ function AppointmentRow({
     // detail), and a separate primary-action button sits beside it,
     // wrapping below the content on phones. No nested anchors.
     <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900">
-      {/* CHLOE D1 — the row body is a link, so NOTHING interactive may live
+      {/* CHLOE D1, the row body is a link, so NOTHING interactive may live
           inside it.
           ----------------------------------------------------------------
           The Treatment Memory disclosure used to be rendered as the last child
@@ -781,12 +781,12 @@ function AppointmentRow({
 
             1. the toggle's click bubbled to the ancestor <Link>, so pressing
                "View full last treatment" set the open state AND pushed
-               /calendar/<id> — the region expanded and was then thrown away by
+               /calendar/<id>, the region expanded and was then thrown away by
                a navigation she never asked for;
             2. once open, the embedded card rendered an <a> INSIDE an <a>,
                which is invalid HTML with undefined activation behaviour.
 
-          stopPropagation() would only paper over (1) — a nested anchor and a
+          stopPropagation() would only paper over (1), a nested anchor and a
           nested <button> are still invalid content for <a>, and native anchor
           activation is not a React synthetic event. So the disclosure is
           HOISTED OUT of the link instead, and sits directly beneath it in the
@@ -861,7 +861,7 @@ function AppointmentRow({
                 {truncate(pinnedNoteText, 50)}
               </div>
             )}
-            {/* PREPARATION — the facts that used to be split across the Today
+            {/* PREPARATION: the facts that used to be split across the Today
                 row and the Daily Prep Brief, now resolved ONCE by
                 buildTodayWorkflow and rendered once here. Nothing below repeats
                 a status already shown by a pill or chip above. */}
@@ -934,14 +934,14 @@ function AppointmentRow({
           </div>
         </Link>
         {/* Dashboard V2 Part 2A: the previous treatment in place. Compact by
-            default — one line naming the visit — and expandable to the complete
+            default (one line naming the visit) and expandable to the complete
             #517 card WITHOUT leaving Today. Rendered only for a client who HAS
             history, so a first visit stays a single calm relationship line.
 
             CHLOE D1: it is a SIBLING of the row-body link, never a descendant.
             The left padding lines it up with the text column above it (w-14
             time cell + gap-4), so it reads as the last line of "Before today"
-            exactly as it did before — it simply is no longer inside a control
+            exactly as it did before: it simply is no longer inside a control
             that navigates. */}
         {workflow?.hasHistory && (
           <div className="pl-[4.5rem] text-xs">
@@ -1085,7 +1085,7 @@ function EmptyDayState() {
 }
 
 // ---------------------------------------------------------------------------
-// Read-only data helpers — kept inline because each is a narrow single-call-
+// Read-only data helpers: kept inline because each is a narrow single-call-
 // site SELECT/RPC against tables we already use elsewhere. Promoting them
 // to lib/ would scatter the dashboard's "needs attention" wiring without
 // reuse.
@@ -1098,7 +1098,7 @@ async function loadIntakeStatusByClient(
   if (clientIds.length === 0) {
     return new Map<string, ClientIntakeForm["status"]>();
   }
-  // ONE bounded, studio-scoped, RLS-backed read for EVERY client on the day —
+  // ONE bounded, studio-scoped, RLS-backed read for EVERY client on the day,
   // never one query per appointment. The projection is deliberately narrow:
   // `responses` (the medical answers, the #518 acknowledgement, consent text)
   // is NEVER loaded here. Today only needs to know which row is current and
@@ -1196,7 +1196,7 @@ async function loadPaymentStatus(
   };
 }
 
-// Birthdays this month — practitioner-facing only. Renders nothing when
+// Birthdays this month: practitioner-facing only. Renders nothing when
 // the studio has no clients with a birthday in the current month so the
 // dashboard stays quiet. Each row links to the client profile so the
 // practitioner can pull up context before wishing them a happy birth
@@ -1211,7 +1211,7 @@ function BirthdaysThisMonth({
   birthdays: ReadonlyArray<{ id: string; name: string; month: number; day: number }>;
   // Studio-local YYYY-MM-DD for the "today" highlight.
   today: string;
-  // Studio-chosen accent (migration 0040). Never red/rose — that's
+  // Studio-chosen accent (migration 0040). Never red/rose, that's
   // reserved for allergies/cautions. Falls back to purple if unset.
   accentColor: BirthdayReminderColor;
 }) {

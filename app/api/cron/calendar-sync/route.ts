@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { handleWorkerRoute } from "@/lib/google-calendar/sync/worker-runtime";
 import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
 
-// Google Calendar — Phase B2.3-c2: the authenticated, bounded worker-drain route.
+// Google Calendar: Phase B2.3-c2: the authenticated, bounded worker-drain route.
 //
 // AUTH: constant-time Bearer CRON_SECRET (isAuthorizedCronRequest, inside the
 // server-only seam); 401 otherwise, before any admin client / claim. No browser
@@ -11,7 +11,7 @@ import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbea
 // It delegates entirely to the ONE approved server-only seam
 // lib/google-calendar/sync/worker-runtime, which wires the deployed
 // claim -> handle -> record architecture to the c1 operations map. This route file
-// itself references NO raw outbound-sync table or RPC — those stay behind the seam.
+// itself references NO raw outbound-sync table or RPC: those stay behind the seam.
 // The database claim RPC (invoked in the seam) is the sole work selector.
 //
 // DORMANT in production: NOT cron-registered (c3 owns scheduling), NOT gated code
@@ -38,7 +38,7 @@ export async function GET(req: Request) {
   //
   // Auth for this route lives inside the worker seam, so there is no local gate
   // to sit behind. Gating on `status !== 401` preserves the same contract every
-  // other caller has — an unauthorized request records nothing — without
+  // other caller has (an unauthorized request records nothing) without
   // reaching into the seam or duplicating its auth logic.
   //
   // Deliberately does NOT touch the seam, the outbound-sync tables, or the

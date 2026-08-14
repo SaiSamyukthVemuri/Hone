@@ -30,12 +30,12 @@ import {
 export type ReviewResult = { ok: true } | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
-// F-CLIN-004 — intake review integrity (APPLICATION PATH).
+// F-CLIN-004, intake review integrity (APPLICATION PATH).
 //
 // The previous implementation filtered the review UPDATE by intake id +
 // studio_id + deleted_at only. It did NOT require the submitted client_id,
 // did NOT require status='submitted', did NOT require submitted_at, and did
-// NOT select the affected row — so a zero-row UPDATE reported success and a
+// NOT select the affected row, so a zero-row UPDATE reported success and a
 // forged client_id could drive a same-studio cross-client review. It also
 // returned the raw PostgREST error.message.
 //
@@ -45,7 +45,7 @@ export type ReviewResult = { ok: true } | { ok: false; error: string };
 // row transitioned. A pre-read is never used in place of the update.
 //
 // SCOPE NOTE (deliberate, load-bearing): this closes the ordinary application
-// and UI exploit only. F-CLIN-004 REMAINS OPEN at the database boundary — an
+// and UI exploit only. F-CLIN-004 REMAINS OPEN at the database boundary: an
 // authenticated direct PostgREST PATCH can still drive in_progress → reviewed,
 // because migration 0118's review guards are nested under
 // `if old.status in ('submitted','reviewed')` and therefore never run when the
@@ -58,7 +58,7 @@ export type ReviewResult = { ok: true } | { ok: false; error: string };
 // Single generic failure for EVERY non-success outcome of the review update.
 // It deliberately does not disclose whether the intake exists, belongs to
 // another client, belongs to another studio, was deleted, is already
-// reviewed, or is still in progress — all six collapse to one string.
+// reviewed, or is still in progress: all six collapse to one string.
 const REVIEW_NOT_PERMITTED =
   "This intake can only be reviewed after this client submits it. Refresh and check the current intake status.";
 
@@ -74,7 +74,7 @@ const NOTES_NOT_PERMITTED =
 const NOTES_DB_FAILURE = "Could not save these notes. Please try again.";
 
 // FOCUSED PRIVACY FIX (see PR body). The reissue/link helpers below used to
-// return the raw PostgREST `error.message` to the browser — the exact pattern
+// return the raw PostgREST `error.message` to the browser: the exact pattern
 // the review path at the top of this file already collapses. Provider text can
 // name columns, constraints and policies, so these constants replace it and
 // the real code/message is logged server-side only via
@@ -91,7 +91,7 @@ const STUDIO_NOT_AVAILABLE = "Could not load this studio. Please try again.";
 // One collapsed refusal for every non-success outcome of an assisted write.
 // Like REVIEW_NOT_PERMITTED above it does not disclose whether the intake
 // exists, belongs to another client or studio, was deleted, or has already
-// been submitted — they all read the same.
+// been submitted: they all read the same.
 const ASSISTED_NOT_PERMITTED =
   "This intake can no longer be completed with the client. Refresh and check the current intake status.";
 
@@ -109,7 +109,7 @@ const ASSISTED_CLIENT_OWNED =
   "The final confirmations are completed by the client themselves. Use Hand to client to finish this intake.";
 
 // A single-choice answer that is not one of the offered options. The editor
-// cannot produce this — it renders the option list — so reaching it means a
+// cannot produce this (it renders the option list) so reaching it means a
 // crafted request or a genuine bug, and either way the value must not land in a
 // clinical record. Refused rather than silently dropped, for the same reason
 // the client-owned boundary above is.
@@ -117,7 +117,7 @@ const ASSISTED_INVALID_CHOICE =
   "One of the answers is not one of the available options. Refresh and record that answer again.";
 
 // Structured, PII-free log for a sanitized failure. Never logs responses,
-// practitioner notes, client identity, or the raw row — only the event, the
+// practitioner notes, client identity, or the raw row, only the event, the
 // action, and the provider error code/message for operator triage. The
 // message is logged server-side ONLY; it is never returned to the browser.
 function logIntakeActionFailure(
@@ -166,16 +166,16 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
   const supabase = await createClient();
 
   // THE single authority. Every predicate is in the statement:
-  //   id           — the intake being reviewed
-  //   studio_id    — server-derived tenancy (RLS also applies)
-  //   client_id    — must be the client whose route this is
-  //   deleted_at   — soft-deleted rows are not reviewable
-  //   status       — must still be 'submitted' (this is ALSO the race
+  //   id          : the intake being reviewed
+  //   studio_id   , server-derived tenancy (RLS also applies)
+  //   client_id   , must be the client whose route this is
+  //   deleted_at  , soft-deleted rows are not reviewable
+  //   status      : must still be 'submitted' (this is ALSO the race
   //                  boundary: under READ COMMITTED the second of two
   //                  concurrent updates re-evaluates this predicate against
   //                  the winner's committed row, sees 'reviewed', and
   //                  matches zero rows)
-  //   submitted_at — a submitted row must carry its submission timestamp
+  //   submitted_at, a submitted row must carry its submission timestamp
   //
   // status / reviewed_at / reviewed_by are all server-derived. Nothing the
   // browser sent can reach them.
@@ -204,7 +204,7 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
   }
 
   const rows = data ?? [];
-  // Zero rows means the update matched nothing — it is NOT success. More than
+  // Zero rows means the update matched nothing. It is NOT success. More than
   // one row would mean the predicate set failed to identify a single record,
   // which must never happen on a primary key; treat it as a failure too rather
   // than reporting a partial success.
@@ -238,7 +238,7 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
 }
 
 // Practitioner notes stay editable in EVERY status (in_progress, submitted,
-// reviewed) — that is existing, intended product behaviour and is unchanged.
+// reviewed), that is existing, intended product behaviour and is unchanged.
 // What changes is the guard set: the update now also requires the submitted
 // client_id and proves exactly one row was affected, and it returns curated
 // copy instead of the raw provider error. It writes practitioner_notes and
@@ -774,8 +774,8 @@ export async function saveAssistedIntakeStepAction(payload: {
   // editor seeds its state from the stored responses and posts the whole map,
   // so an intake where the client had already touched a step-5 checkbox
   // through their own link would otherwise make every assisted save fail. The
-  // boundary is unchanged in strength — a practitioner still cannot set, alter
-  // or clear one — and sanitization drops these keys regardless. This is the
+  // boundary is unchanged in strength: a practitioner still cannot set, alter
+  // or clear one, and sanitization drops these keys regardless. This is the
   // loud backstop for a UI bug or a crafted request.
   const forbidden = assistedKeysChanged(payload.responses, loaded.responses);
   if (forbidden.length > 0) {
@@ -787,7 +787,7 @@ export async function saveAssistedIntakeStepAction(payload: {
 
   // Merge existing-first so answers the client already gave through their own
   // link are preserved, and so the electrolysis acknowledgement record and any
-  // other client-owned key already present survive untouched — `answers`
+  // other client-owned key already present survive untouched: `answers`
   // cannot contain them.
   const merged: Record<string, unknown> = { ...loaded.responses, ...answers };
 
@@ -795,7 +795,7 @@ export async function saveAssistedIntakeStepAction(payload: {
   // cannot be the soft way in. Run over the MERGED map for the same reason the
   // submit gate is: what matters is what would be stored, not what was posted.
   //
-  // Incompleteness is fine here and must stay fine — an assisted save is a
+  // Incompleteness is fine here and must stay fine: an assisted save is a
   // work-in-progress by definition, and findInvalidChoiceAnswers ignores absent
   // answers. Only a value that is present and not on the list is refused.
   const invalidChoices = findInvalidChoiceAnswers(merged);
@@ -917,7 +917,7 @@ export async function handOffAssistedIntakeAction(
     // Same concurrency guard as the save. This UPDATE also assigns the whole
     // responses jsonb (when there is provenance to stamp), so without it a
     // client draft-save landing between the read above and this write would be
-    // reinstated from a stale snapshot — including re-setting a checkbox the
+    // reinstated from a stale snapshot, including re-setting a checkbox the
     // client had just cleared.
     .eq("updated_at", loaded.updatedAt)
     .select("id, client_id");
@@ -945,7 +945,7 @@ export async function handOffAssistedIntakeAction(
 }
 
 // ---------------------------------------------------------------------------
-// "Start intake with client" — the missing entry point into the assisted
+// "Start intake with client", the missing entry point into the assisted
 // workflow above.
 // ---------------------------------------------------------------------------
 //
@@ -959,20 +959,20 @@ export async function handOffAssistedIntakeAction(
 // WHAT THIS ACTION IS, AND IS NOT. It is a resolver: it answers "which
 // in_progress intake should this practitioner open with the client in front of
 // them?" and creates one only when there is none. It is NOT a second intake
-// creation path — creation stays with requestIntakeUpdateAction, which stays
+// creation path: creation stays with requestIntakeUpdateAction, which stays
 // the single authority for the insert, the token, the link stamping and the
 // authorisation around them.
 //
 // TWO PROPERTIES ARE STRUCTURAL, NOT CONVENTIONS:
 //
 //   1. NO EMAIL. The client is standing in the room. `send_email` is pinned to
-//      "false" here and the caller cannot influence it — this action reads no
+//      "false" here and the caller cannot influence it: this action reads no
 //      email flag from its own FormData, so there is no value a browser could
 //      send to turn it on.
 //
 //   2. NO TOKEN REACHES THE BROWSER. The result carries an intakeId and
-//      nothing else. requestIntakeUpdateAction's intakeUrl — the client's
-//      bearer link — is deliberately discarded rather than returned, so this
+//      nothing else. requestIntakeUpdateAction's intakeUrl (the client's
+//      bearer link) is deliberately discarded rather than returned, so this
 //      entry point cannot navigate the practitioner onto the client's own
 //      tokenized route even by mistake. The hand-off to that route stays where
 //      #525 put it: handOffAssistedIntakeAction, after the practitioner has
@@ -981,7 +981,7 @@ export type StartAssistedIntakeResult =
   | { ok: true; intakeId: string }
   | { ok: false; error: string };
 
-// One collapsed refusal for every authorisation miss — inactive practitioner,
+// One collapsed refusal for every authorisation miss: inactive practitioner,
 // another studio's client, an absent client. Like ASSISTED_NOT_PERMITTED above
 // it is not an existence oracle.
 const START_NOT_PERMITTED =
@@ -1009,8 +1009,8 @@ export async function startAssistedIntakeAction(
 
   // DUPLICATE SAFETY. An in_progress intake already open for this client IS
   // the one to complete with them, so open it rather than stacking a second
-  // blank row behind it. This covers the ordinary races the button can lose —
-  // a double click, a stale tab, two practitioners on the same client — and
+  // blank row behind it. This covers the ordinary races the button can lose,
+  // a double click, a stale tab, two practitioners on the same client, and
   // it is also the honest answer to "start intake with client" in that state.
   //
   // It is a mitigation, not a guarantee: two genuinely simultaneous requests
@@ -1054,6 +1054,6 @@ export async function startAssistedIntakeAction(
     return { ok: false, error: START_DB_FAILURE };
   }
 
-  // created.intakeUrl is intentionally dropped here — see the header note.
+  // created.intakeUrl is intentionally dropped here. See the header note.
   return { ok: true, intakeId: created.intakeId };
 }

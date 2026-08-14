@@ -1,7 +1,7 @@
 // Owner-only, collapsed-by-default disclosure for raw processor identifiers and
-// codes. Rendered ONLY when isOwner is true (server-derived, trusted) — a
+// codes. Rendered ONLY when isOwner is true (server-derived, trusted), a
 // non-owner gets null, not CSS-hidden content, so the data never reaches a
-// non-owner's DOM. Contains identifiers/codes only — never secrets, never full
+// non-owner's DOM. Contains identifiers/codes only, never secrets, never full
 // payment-method data. Keeps processor internals out of the practitioner card
 // while preserving them for the owner + the existing admin/support surfaces.
 

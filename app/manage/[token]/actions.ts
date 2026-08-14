@@ -34,7 +34,7 @@ function logInternal(event: string, detail: unknown) {
 // any HMAC-based links a client may hold in an email. As of PR #260 the
 // reschedule surface ALSO accepts the HMAC fallback, so the Reschedule
 // button on a manage page reached via an HMAC link (portal / reminder /
-// internal confirmation) now resolves too — the previous column-only
+// internal confirmation) now resolves too: the previous column-only
 // asymmetry is gone. We intentionally do not export this resolver; the
 // manage surface is the only caller and a shared helper would broaden
 // the import graph without a need.

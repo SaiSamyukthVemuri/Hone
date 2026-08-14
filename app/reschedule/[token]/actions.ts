@@ -18,7 +18,7 @@ import { addDays, localTimeString12h, todayInTz } from "@/lib/booking/tz";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 // 0171: `isWithinPublicBookingHorizon` and `localDateString` are deliberately
 // NOT imported any more. The submit path used them to pre-check the horizon and
-// to build a date string for its own getAvailableSlots re-verification — both of
+// to build a date string for its own getAvailableSlots re-verification, both of
 // which are now owned by reschedule_appointment_v2, under the studio lock. A
 // second, unlocked implementation of either could only drift from the
 // authoritative one. `horizonRangeInStudioTz` remains for the READ surfaces,
@@ -76,7 +76,7 @@ import {
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 // Public reschedule collapse string. Returned for every user-facing
-// outcome that depends on the appointment's existence or state —
+// outcome that depends on the appointment's existence or state,
 // token didn't resolve, appointment row missing post-resolve,
 // appointment data malformed, appointment in a non-reschedulable
 // status (cancelled / completed / no_show), or starts_at in the
@@ -88,7 +88,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 // initial GET (collapsed by the page render) or a mid-flow
 // fetch/submit (collapsed here). Internal infra errors and user-
 // input errors (slot conflicts, invalid time format, date out of
-// horizon) are NOT collapsed — they have actionable meaning and
+// horizon) are NOT collapsed. They have actionable meaning and
 // don't expose appointment/token state.
 const PUBLIC_RESCHEDULE_GENERIC_ERROR =
   "This reschedule link can't be used right now.";
@@ -240,7 +240,7 @@ async function assertReschedulableOriginal(
 
 // 0171. The one place the reschedule read surfaces build their slot-engine
 // arguments, so `fetchRescheduleSlotsAction` and
-// `fetchNextAvailableDateForRescheduleAction` cannot drift apart — and cannot
+// `fetchNextAvailableDateForRescheduleAction` cannot drift apart, and cannot
 // drift from what the command will accept.
 //
 // Three things every reschedule slot query needs and none of them used to pass:
@@ -249,7 +249,7 @@ async function assertReschedulableOriginal(
 //     studio_calendar_reservations row. Counting it as a conflict hides
 //     otherwise valid moves (every slot adjacent to the original, and the
 //     original's own time) and does not model the final transaction, in which
-//     the original is cancelled — and its reservation deleted — before the
+//     the original is cancelled (and its reservation deleted) before the
 //     successor is inserted. The exclusion id is derived SERVER-side from the
 //     resolved token; the browser never supplies it.
 //   * THE PRESERVED PRACTITIONER + the studio's current capacity flag, so a
@@ -329,7 +329,7 @@ export type RescheduleSummary = {
   // policy between this render and the submit gets `policy_changed`, and no
   // acknowledgement of unseen text is ever recorded.
   //
-  // null when the studio has no policy on file — there is nothing to
+  // null when the studio has no policy on file. There is nothing to
   // acknowledge, so the command requires neither the checkbox nor the hash.
   presentedPolicyHash: string | null;
 };
@@ -434,7 +434,7 @@ export async function fetchAppointmentForRescheduleAction(
       appointmentId: row.id,
       serviceId: service.id,
       serviceName: service.name,
-      // The ORIGINAL appointment's stored duration — what the client booked —
+      // The ORIGINAL appointment's stored duration: what the client booked,
       // not service.default_duration_minutes.
       durationMinutes: row.duration_minutes,
       studioId: studio.id,
@@ -483,7 +483,7 @@ export async function fetchRescheduleSlotsAction(params: {
   }
 
   // 0171. Duration is the ORIGINAL appointment's, never the service's current
-  // default — this call used to pass `svc?.default_duration_minutes ??
+  // default: this call used to pass `svc?.default_duration_minutes ??
   // r.duration_minutes`, so a studio that edited the service after the booking
   // made the page offer slots at one length while the submit path used another.
   // The exclusion and the practitioner are passed for the first time here.
@@ -592,7 +592,7 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
 //
 // The email is not a reliable carrier. Three ways a committed reschedule left
 // the client with no way to manage the successor:
-//   * `send_confirmation_emails = false` — no email at all, and SMS used to be
+//   * `send_confirmation_emails = false`, no email at all, and SMS used to be
 //     nested inside that same block so it was skipped too;
 //   * an optional post-commit failure (practitioner lookup, service lookup,
 //     intake, treatment-time) aborted the shared try BEFORE the email call;
@@ -670,7 +670,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // 0171. METADATA IS LOADED BEFORE THE COMMAND, NEVER AFTER IT.
   //
   // Everything needed to send the confirmation is read here, while a failure
-  // can still be reported honestly — because once the command commits, the
+  // can still be reported honestly, because once the command commits, the
   // reschedule HAS happened and no later read may turn that into a failure.
   // The old code loaded these AFTER the RPC and had a branch that returned
   // {ok:false} when the post-commit successor SELECT failed; that branch both
@@ -696,7 +696,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   //
   // The successor's raw management token is a ONE-TIME IN-MEMORY SECRET. Only
   // its SHA-256 is persisted (`cancellation_token_hash`), the old token is not
-  // reused, and no token can be regenerated after the commit — so the
+  // reused, and no token can be regenerated after the commit, so the
   // confirmation email is the ONLY carrier of the credential the client needs
   // to cancel or reschedule the successor.
   //
@@ -705,7 +705,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // precisely the hazard: an errored or empty client lookup would let the
   // command commit, skip the email path (which is gated on `clientRow?.email`),
   // and drop the raw token when this function returns. The reschedule would
-  // succeed while the client was left holding links they can never use — the
+  // succeed while the client was left holding links they can never use: the
   // exact token-loss failure this PR exists to close, reintroduced one layer up.
   //
   // So the rule is: HONE DOES NOT COMMIT A PUBLIC RESCHEDULE IT CANNOT DELIVER
@@ -735,7 +735,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // APPLICATION ORIGIN, RESOLVED BEFORE THE MUTATION.
   //
   // Every management link is built from it, so a reschedule that commits
-  // without one leaves the client with no usable path to the successor — the
+  // without one leaves the client with no usable path to the successor: the
   // same class of failure as a missing recipient. `getRequiredAppOrigin()`
   // THROWS when the origin is unset, and it used to be called inside the
   // post-commit block where that throw would have aborted the confirmation
@@ -755,7 +755,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 
   // The raw successor token is minted only AFTER the delivery gates pass, and
   // only its SHA-256 crosses the boundary. The raw value lives in this closure
-  // and nowhere else — never stored, never logged, and the ONLY thing that can
+  // and nowhere else, never stored, never logged, and the ONLY thing that can
   // build the client's cancel/reschedule/manage links.
   const newToken = generateAppointmentToken();
 
@@ -768,7 +768,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // ONE AUTHORITATIVE MUTATION. The command owns the cancellation, the
   // successor, both lineage directions, both audits and the policy
   // acknowledgement. It takes no end time, no duration, no studio/client/
-  // service/practitioner, no status and no lineage id — every one of those is
+  // service/practitioner, no status and no lineage id: every one of those is
   // derived from the LOCKED original inside the transaction.
   const { data: rpcData, error: rpcErr } = await admin.rpc(
     "reschedule_appointment_v2",
@@ -821,7 +821,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     switch (row.result) {
       // Token state and appointment state collapse to ONE string so a probing
       // caller cannot distinguish "unknown token" from "valid token, wrong
-      // state" — this is the same collapse every read surface applies.
+      // state". This is the same collapse every read surface applies.
       case "appointment_not_found":
       case "appointment_not_reschedulable":
         return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -868,8 +868,8 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   //
   // AND NOTHING MAY SHORT-CIRCUIT ITS SIBLINGS. An earlier revision wrapped the
   // whole region in ONE try, which contained exceptions correctly but chained
-  // the effects: a rejected practitioner lookup — an OPTIONAL enrichment used
-  // only for a display name — jumped straight to the catch and the client's
+  // the effects: a rejected practitioner lookup: an OPTIONAL enrichment used
+  // only for a display name: jumped straight to the catch and the client's
   // confirmation email was never attempted at all. The email is the carrier of
   // the successor's management credential, so an optional lookup must never be
   // able to suppress it.
@@ -879,7 +879,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // other's outcome.
   const parsed = parseRescheduleSuccessRow(row);
   if (!parsed) {
-    // The command said `success`, so the mutation IS committed — this is an
+    // The command said `success`, so the mutation IS committed. This is an
     // internal command-contract violation, not a visitor-facing failure, and it
     // must NOT be reported as a failed reschedule. The SQL return is
     // structurally non-null for `success` (pinned by
@@ -888,7 +888,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     logInternal("public_reschedule_malformed_success_row", {
       studioId: asserted.original.studio_id,
       appointmentId: asserted.original.appointment_id,
-      // Field PRESENCE only — never the payload, which carries ids and times.
+      // Field PRESENCE only, never the payload, which carries ids and times.
       missing: missingSuccessFields(row).join(","),
     });
     const salvagedId =
@@ -899,8 +899,8 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       // rather than a claim that nothing happened.
       return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
     }
-    // The management URL is still valid — it was built from the token this
-    // request minted, and the command stored that token's hash — so the client
+    // The management URL is still valid. It was built from the token this
+    // request minted, and the command stored that token's hash, so the client
     // is not stranded even when the return shape is broken.
     return {
       ok: true,
@@ -920,7 +920,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
    *
    * Returns `fallback` when it throws, so a failure degrades this ONE
    * enrichment instead of cancelling every effect after it. Logs a SAFE
-   * classification only — see the logging note below.
+   * classification only. See the logging note below.
    */
   async function attempt<T>(
     event: string,
@@ -933,7 +933,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       // NEVER `err.message`. A provider or template error can carry the
       // recipient address, a generated management URL (which embeds the RAW
       // successor token), a bearer credential or request payload details. Only
-      // the error's NAME — a fixed class like "TypeError" or "AbortError" — and
+      // the error's NAME (a fixed class like "TypeError" or "AbortError") and
       // the ids we already own are safe to record.
       logInternal(event, {
         appointmentId: newAppointmentId,
@@ -1043,7 +1043,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // --- INDEPENDENT EFFECT A: the client confirmation email ----------------
   //
   // Truthful by construction: `sent` ONLY when the provider reported success.
-  // `disabled` when the studio turned confirmations off — which is a
+  // `disabled` when the studio turned confirmations off, which is a
   // configuration, not a failure, and still returns the management URL.
   let confirmationEmailStatus: ConfirmationEmailStatus = "disabled";
   if (studioRow.send_confirmation_emails) {
@@ -1087,7 +1087,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // --- INDEPENDENT EFFECT B: the confirmation SMS -------------------------
   //
   // NOT nested under `send_confirmation_emails`. It used to be, so a studio
-  // that turned email confirmations off silently lost SMS too — including the
+  // that turned email confirmations off silently lost SMS too, including the
   // /manage link SMS carries. Its own gates (studio SMS toggle, consent_at,
   // opted_out_at, phone normalisation, claim race guard) all live inside the
   // helper, which owns the decision.
@@ -1125,7 +1125,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 
   // THE RESCHEDULE SUCCEEDED, and the client leaves with a usable path to the
   // successor whatever the email did. `manageUrl` goes ONLY to this authorised
-  // browser — it is never persisted, logged or reported.
+  // browser. It is never persisted, logged or reported.
   return {
     ok: true,
     newAppointmentId,
@@ -1146,7 +1146,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 // This parser converts that guarantee into a runtime one so the action never
 // does `row.new_appointment_id as string` and silently threads `null` into a
 // URL, an email payload or a notification href. It NEVER throws and NEVER
-// echoes the payload — a malformed row becomes `null` plus a field-name list.
+// echoes the payload: a malformed row becomes `null` plus a field-name list.
 
 /** Fields that must be non-null on a `success` row. */
 const REQUIRED_SUCCESS_FIELDS = [

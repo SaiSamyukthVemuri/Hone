@@ -36,12 +36,12 @@ export default async function ServicesSettingsPage() {
   // One list, active services first (then hidden), each as a collapsed row.
   // Keeping hidden services inline (rather than in a separate section) means
   // the Hide/Show toggle flips the row's status pill in place instead of
-  // relocating the card — clearer feedback.
+  // relocating the card: clearer feedback.
   //
   // THE ORDER IS NOW SHARED. sortServicesForSettings applies the same TOTAL
   // ordering (sort_order, name, id) that migration 0161's reorder RPC and the
   // public booking page use. The old local sort omitted the `id` term, so tied
-  // sort_order values were resolved differently here than on the server — which
+  // sort_order values were resolved differently here than on the server, which
   // is why an arrow could point at one row and move another, or silently do
   // nothing at all.
   const orderedServices = sortServicesForSettings(services);
@@ -128,7 +128,7 @@ export default async function ServicesSettingsPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Edit form for one service — rendered inside the (collapsed-by-default)
+// Edit form for one service: rendered inside the (collapsed-by-default)
 // ServiceAccordionItem. The row chrome (name, duration, price, status pill,
 // Hide/Show toggle, Edit/Close) lives in the accordion header; this is just
 // the form body that appears when the row is expanded. All form field names
@@ -246,7 +246,7 @@ function ServiceEditForm({
                   the browser reported a stepMismatch and silently blocked
                   submission of the WHOLE edit form, so unrelated edits to name,
                   price or care instructions appeared to do nothing. min={0}
-                  still holds — the 0161 RPC only ever writes 10, 20, 30 … */}
+                  still holds: the 0161 RPC only ever writes 10, 20, 30 … */}
               <input
                 name="sort_order"
                 type="number"
@@ -260,7 +260,7 @@ function ServiceEditForm({
           </div>
         </details>
 
-        {/* Footer actions — duration/price already shown in the row summary. */}
+        {/* Footer actions: duration/price already shown in the row summary. */}
         <div className="flex flex-wrap items-center justify-end gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
           <ServiceSubmitButton
             idleLabel="Save changes"
@@ -352,7 +352,7 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
 // ---------------------------------------------------------------------------
 
 // Standalone visibility-toggle form. Rendered in the accordion row header
-// (passed as the `toggle` slot), never nested inside the edit form — this
+// (passed as the `toggle` slot), never nested inside the edit form: this
 // preserves the PR #35 fix (a nested <form> is invalid HTML and made the
 // toggle "do nothing"). Submits toggleServiceActiveAction with the flipped
 // `active` value; the action's revalidatePath re-renders the row with the

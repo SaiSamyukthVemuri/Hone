@@ -24,7 +24,7 @@ const EVENT_LABELS: Record<string, string> = {
 // Practitioner-side card: get a client into the existing secure portal without
 // crafting instructions. "Send portal link" emails a secure magic link (reuses
 // the shared hashed/single-use/60-min issuance). "Copy login URL" copies the
-// studio portal address (NO token) — safe to paste anywhere. Simple access
+// studio portal address (NO token), safe to paste anywhere. Simple access
 // hints (last link sent / last sign-in) read from existing tables.
 export function PortalAccessCard({
   clientId,
@@ -36,7 +36,7 @@ export function PortalAccessCard({
   recentEvents = [],
 }: {
   clientId: string;
-  portalLoginUrl: string; // /portal/login?studio=SLUG — no token
+  portalLoginUrl: string; // /portal/login?studio=SLUG, no token
   clientHasEmail: boolean;
   lastLinkSentAt: string | null;
   lastSeenAt: string | null;
@@ -78,7 +78,7 @@ export function PortalAccessCard({
         <h3 className="text-sm font-semibold">Client portal access</h3>
         <p className="mt-1 text-xs text-neutral-500">
           Send a secure sign-in link, or copy the studio portal address. The
-          client enters their email to receive a one-hour, single-use link — you
+          client enters their email to receive a one-hour, single-use link: you
           never send a password or a raw token.
         </p>
       </div>

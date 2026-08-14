@@ -103,7 +103,7 @@ export default async function CancelAppointmentPage({
                   policy edited between render and submit can never be
                   acknowledged as though it had been read.
 
-                  The hash is computed UNCONDITIONALLY — including when
+                  The hash is computed UNCONDITIONALLY, including when
                   the studio has no policy at all, where it is the hash
                   of the empty snapshot. That is what lets the command
                   catch a policy ADDED or REMOVED mid-flight; reschedule

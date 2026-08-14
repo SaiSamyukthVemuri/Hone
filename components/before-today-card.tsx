@@ -119,7 +119,7 @@ export function BeforeTodayCard({
               </p>
               {setup?.areaName && (
                 <p className="mt-1.5 text-xs text-neutral-500">
-                  Latest recorded setup — {setup.areaName}
+                  Latest recorded setup: {setup.areaName}
                 </p>
               )}
               <div className="mt-1.5 flex flex-wrap gap-1.5">

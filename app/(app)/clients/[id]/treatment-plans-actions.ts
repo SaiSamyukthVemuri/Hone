@@ -21,7 +21,7 @@ const VISIT_LENGTH_MAX = 240;
 const STAGE_LENGTH_MIN = 1;
 const STAGE_LENGTH_MAX = 240;
 const GOAL_MINUTES_OVERRIDE_MAX = 60000;
-// Body Chart v1 Phase A — matches migration 0038's CHECK.
+// Body Chart v1 Phase A: matches migration 0038's CHECK.
 const PRIMARY_AREA_MAX = 60;
 // Multi-area + timeline caps that match migration 0051 CHECK constraints.
 const TREATMENT_AREAS_MAX = 12;
@@ -386,7 +386,7 @@ export async function detachChartEntryFromPlanAction(
 // All four new actions follow the existing pattern of this file:
 //   - getCurrentPractitionerWithStudio() resolves practitioner + studio
 //     server-side; the browser never supplies studio_id
-//   - user-scoped createClient() (RLS still applies) — no createAdminClient
+//   - user-scoped createClient() (RLS still applies), no createAdminClient
 //   - validate parent plan ownership before any write
 //   - return { ok: true } | { ok: false, error } with sanitized messages
 //   - revalidatePath('/clients/[id]') so the page re-renders

@@ -75,7 +75,7 @@ function parseSortOrder(value: FormDataEntryValue | null): number | null {
 // normalized 10/20/30 sequence.
 //
 // The error path deliberately does NOT fall back to a constant. Returning 100
-// on a transient read failure silently re-created a duplicate — the exact
+// on a transient read failure silently re-created a duplicate: the exact
 // condition the reorder RPC then had to repair.
 async function nextStudioSortOrder(studioId: string): Promise<number> {
   const supabase = await createClient();
@@ -189,13 +189,13 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
 // with TWO independent, untransacted UPDATEs.
 //   * `services.sort_order` is `not null default 100` with no uniqueness and a
 //     PER-MODALITY allocator, so ties are the normal state. Tied rows came back
-//     in HEAP order, which changes after every UPDATE — so `list[idx]` was
+//     in HEAP order, which changes after every UPDATE, so `list[idx]` was
 //     routinely NOT the row at screen position idx. When the action happened to
 //     find the clicked service at index 0 it returned silently: the arrow did
 //     nothing, forever, because nothing changed to break the tie. That is
 //     Chloe's "Client Consultation cannot reliably reach the top".
 //   * A failure between the two UPDATEs left both rows holding the neighbour's
-//     value — a NEW permanent duplicate.
+//     value: a NEW permanent duplicate.
 //
 // NOW: one atomic, owner-authorized RPC (migration 0161) normalizes the visible
 // order to 10, 20, 30 … and applies the move in the same transaction, using the
@@ -212,7 +212,7 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
 // in place, instead of tripping an error boundary and losing scroll position.
 //
 // It returns the RESULTING ORDER, not just ok/failed. The RPC does not always
-// perform the requested move — if the caller's view was stale (the service was
+// perform the requested move, if the caller's view was stale (the service was
 // hidden or removed elsewhere) it normalizes and returns the order it actually
 // produced. Reporting a bare `ok` there would let the client keep an optimistic
 // order the database never agreed to, until the next full page load.
@@ -257,7 +257,7 @@ export async function moveServiceAction(input: {
       return {
         ok: false,
         error:
-          "The service order changed while you were tapping. The list has been refreshed — try again.",
+          "The service order changed while you were tapping. The list has been refreshed: try again.",
       };
     }
     return { ok: false, error: `Failed to reorder: ${error.message}` };
@@ -281,7 +281,7 @@ export async function toggleServiceActiveAction(
   const supabase = await createClient();
   if (active) {
     // SHOWING. A hidden service keeps whatever sort_order it held when it was
-    // hidden — often 100, i.e. right inside the normalized 10/20/30 sequence,
+    // hidden: often 100, i.e. right inside the normalized 10/20/30 sequence,
     // or exactly equal to another row. Re-slot it at the END of the visible
     // order and renormalize, atomically (migration 0161).
     const { error } = await supabase.rpc("show_studio_service", {

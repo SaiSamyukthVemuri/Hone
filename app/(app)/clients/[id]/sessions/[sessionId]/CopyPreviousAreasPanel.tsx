@@ -24,7 +24,7 @@ function hasVisitDate(iso: string | null | undefined): boolean {
 // The source visit's date, rendered through Hone's canonical instant renderer.
 //
 // WHY NOT toLocaleDateString HERE: a session's started_at is an INSTANT, and
-// this is a Client Component — Next renders it on the server too. A
+// this is a Client Component: Next renders it on the server too. A
 // runtime-default locale therefore produces one string in Node and a different
 // one in an fr-CA browser, which is a React hydration mismatch on a clinical
 // screen (caught by the fr-CA charting probe in e2e/point-of-care-memory.spec.ts).
@@ -39,25 +39,25 @@ function VisitDate({ iso }: { iso: string | null }) {
 // with the repeat-client FAST PATH ("Start from last session") as the primary
 // action.
 //
-// TWO ROUTES, ONE AUTHORITY. Both routes run the SAME governed pipeline —
+// TWO ROUTES, ONE AUTHORITY. Both routes run the SAME governed pipeline,
 // loadSource() (server-derived source + fingerprint) -> buildCopyDrafts ->
 // submitCommit() -> draftToCopyInput -> the server normalizer ->
 // copy_session_setup. There is exactly ONE call site for the read action and
 // exactly ONE for the commit action, so the fast path and the preview path
 // cannot drift into two copy implementations.
 //
-//   * START FROM LAST SESSION (primary) — one interaction. The reusable setup
+//   * START FROM LAST SESSION (primary), one interaction. The reusable setup
 //     the previous visit already recorded is brought forward and the page lands
 //     the practitioner directly in TODAY'S editor for the first copied area.
 //     Nothing is previewed because nothing is invented: the payload is a pure
 //     function of the source the server chose.
-//   * PREVIEW FIRST (secondary) — the original draft-review flow, unchanged.
+//   * PREVIEW FIRST (secondary), the original draft-review flow, unchanged.
 //     The preview is EPHEMERAL (component state only); building, refreshing,
 //     cancelling or removing a card performs NO clinical write.
 //
 // SAFETY, identical on both routes: the SOURCE session and its fingerprint are
 // SERVER-derived; the browser only echoes them back at commit so the server can
-// reject a stale source. The copy is SETUP-ONLY — minutes performed, hairs,
+// reject a stale source. The copy is SETUP-ONLY, minutes performed, hairs,
 // observations, reaction, tolerance, notes and every other outcome are never
 // copied, so today's clinical facts start blank and record only what happens
 // today.
@@ -74,12 +74,12 @@ const NOTHING_TO_COPY = "There's nothing from a previous visit to copy here.";
 const NO_AREAS = "Last session has no areas to copy.";
 
 // Truthful copy for an UNKNOWN outcome. It deliberately does NOT claim that
-// nothing was written — at this point nobody knows, and saying "nothing was
+// nothing was written: at this point nobody knows, and saying "nothing was
 // saved" about a copy that actually landed would be a lie on a clinical screen.
 const AMBIGUOUS_MESSAGE =
   "We couldn't confirm whether the setup was added. Try again to check safely.";
 
-// The server-derived source plus the drafts built from it. EPHEMERAL — holding
+// The server-derived source plus the drafts built from it. EPHEMERAL: holding
 // this performs no write.
 type LoadedSource =
   | {
@@ -104,10 +104,10 @@ type RetryEnvelope = {
 };
 
 // The outcome of ONE commit attempt.
-//   committed — the server answered: here is what exists (possibly a replay).
-//   failed    — the server answered with a DEFINITIVE domain refusal. Every RPC
+//   committed: the server answered: here is what exists (possibly a replay).
+//   failed   : the server answered with a DEFINITIVE domain refusal. Every RPC
 //               refusal path creates zero rows, so nothing was written.
-//   unknown   — no answer arrived. The write may or may not have landed; only a
+//   unknown  , no answer arrived. The write may or may not have landed; only a
 //               replay of the same request can settle it.
 type CommitOutcome =
   | { kind: "committed"; createdBlockIds: string[]; idempotentReplay: boolean }
@@ -142,8 +142,8 @@ export function CopyPreviousAreasPanel({
   const [fastStarting, startFast] = useTransition();
 
   // At-most-once guard for the fast path. A ref is written SYNCHRONOUSLY, so a
-  // genuine double-click whose two handlers run in the same tick — before React
-  // has re-rendered the button as disabled — issues exactly ONE request.
+  // genuine double-click whose two handlers run in the same tick: before React
+  // has re-rendered the button as disabled: issues exactly ONE request.
   const fastInFlightRef = useRef(false);
 
   // The retry envelope for an attempt whose outcome is unknown. A ref, not
@@ -197,7 +197,7 @@ export function CopyPreviousAreasPanel({
           }
         : { kind: "failed", error: res.error };
     } catch {
-      // Never surfaces the underlying error text — the server action's own
+      // Never surfaces the underlying error text: the server action's own
       // mapped messages are the only vocabulary this panel speaks.
       return { kind: "unknown" };
     }
@@ -212,7 +212,7 @@ export function CopyPreviousAreasPanel({
   }
 
   // PRIMARY: bring the reusable setup forward and land in today's editor. One
-  // interaction — no preview, no confirm, no scroll-and-reopen.
+  // interaction, no preview, no confirm, no scroll-and-reopen.
   function startFromLastSession() {
     if (fastInFlightRef.current) return; // at-most-once per click burst
     fastInFlightRef.current = true;
@@ -225,7 +225,7 @@ export function CopyPreviousAreasPanel({
         // Re-reading here is precisely the bug this replaces: if the first
         // attempt DID land, today's chart is no longer empty, so
         // whole_session_copy_source_descriptor reports eligible=false /
-        // not_empty — and the panel would announce "there's nothing from a
+        // not_empty, and the panel would announce "there's nothing from a
         // previous visit to copy here" about a copy that had just succeeded,
         // while never reaching the retained idempotency key that would have
         // settled it.
@@ -258,12 +258,12 @@ export function CopyPreviousAreasPanel({
           return;
         }
 
-        // Definitive either way — the envelope has served its purpose.
+        // Definitive either way: the envelope has served its purpose.
         pendingRetryRef.current = null;
         setAmbiguous(false);
 
         if (outcome.kind === "failed") {
-          // Fail CLOSED and truthfully — a changed source is reported, never
+          // Fail CLOSED and truthfully: a changed source is reported, never
           // silently copied stale. A definitive refusal wrote nothing, so the
           // next press legitimately starts fresh and re-reads the source.
           setError(outcome.error);
@@ -280,7 +280,7 @@ export function CopyPreviousAreasPanel({
 
   // SECONDARY: build (or refresh) the preview. READ-ONLY: no clinical rows are
   // created. A fresh idempotency key is minted per build because preview drafts
-  // are EDITABLE — the payload is not a pure function of the source, so it must
+  // are EDITABLE: the payload is not a pure function of the source, so it must
   // not share a key with a differently-edited request.
   function buildPreview() {
     setError(null);
@@ -299,7 +299,7 @@ export function CopyPreviousAreasPanel({
     });
   }
 
-  // All of these are pure client-state changes — they write nothing.
+  // All of these are pure client-state changes: they write nothing.
   function removeDraft(key: string) {
     setDrafts((d) => d.filter((x) => x.key !== key));
   }
@@ -343,7 +343,7 @@ export function CopyPreviousAreasPanel({
         setError(outcome.error);
         return;
       }
-      // Reviewed copies land in today's editor too — the reopen loop is gone on
+      // Reviewed copies land in today's editor too: the reopen loop is gone on
       // BOTH routes.
       const created = outcome.createdBlockIds;
       cancel();
@@ -384,7 +384,7 @@ export function CopyPreviousAreasPanel({
             onClick={buildPreview}
             // Disabled while an outcome is unknown: previewing would re-read the
             // source, and if the copy DID land the descriptor would report
-            // "nothing to copy" — the misleading state this recovery exists to
+            // "nothing to copy", the misleading state this recovery exists to
             // prevent. Settle the outcome first.
             disabled={busy || ambiguous}
             data-testid="copy-previous-preview"
@@ -425,7 +425,7 @@ export function CopyPreviousAreasPanel({
       className="flex flex-col gap-3 rounded-md border border-neutral-300 bg-white px-4 py-4 text-sm dark:border-neutral-700 dark:bg-neutral-950"
     >
       <div className="flex flex-col gap-1">
-        <span className="font-medium">Preview — copy from last session</span>
+        <span className="font-medium">Preview: copy from last session</span>
         {hasVisitDate(sourceStartedAt) && (
           <span className="text-xs text-neutral-500" data-testid="copy-previous-source-date">
             From the visit on <VisitDate iso={sourceStartedAt} />
@@ -433,7 +433,7 @@ export function CopyPreviousAreasPanel({
         )}
         <span className="text-neutral-600 dark:text-neutral-400">
           {drafts.length} area{drafts.length === 1 ? "" : "s"} ready. This is a
-          preview only — nothing is saved yet. Edit anything below; machine
+          preview only, nothing is saved yet. Edit anything below; machine
           settings copy over, but today&apos;s minutes start blank. Remove any you
           don&apos;t want, then confirm.
         </span>

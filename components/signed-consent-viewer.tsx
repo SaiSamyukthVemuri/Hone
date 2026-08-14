@@ -6,8 +6,8 @@ import { reviewSignedRecord } from "@/lib/consent/signed-record";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 
 // P1-A: the practitioner "View signed form" record. Renders the COMPLETE
-// immutable signed consent — the exact form copy the client agreed to, the
-// photo-consent choice, the typed signature, and the signed timestamp — never
+// immutable signed consent: the exact form copy the client agreed to, the
+// photo-consent choice, the typed signature, and the signed timestamp, never
 // reducing it to a "Signed" badge and never exposing raw JSON. If the stored
 // record is malformed/incomplete, it shows a visible review warning instead of
 // implying the consent is valid.

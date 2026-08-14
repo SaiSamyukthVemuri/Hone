@@ -20,7 +20,7 @@ export type ResendWelcomeResult = {
 
 // Operator-only "Resend welcome email" for a studio. Re-checks isAdmin (the
 // real gate; defense-in-depth over the /admin layout), then reuses the same
-// deliverWelcomeEmail path as studio creation — which also re-stamps the send
+// deliverWelcomeEmail path as studio creation, which also re-stamps the send
 // outcome on studio_onboarding. Never mints an auth user or touches
 // practitioners. Best-effort; surfaces the send outcome to the operator.
 export async function resendWelcomeEmailAction(

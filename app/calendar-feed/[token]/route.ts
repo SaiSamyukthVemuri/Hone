@@ -11,19 +11,19 @@ import { hashCalendarFeedToken } from "@/lib/calendar-feed/token";
 // Lookup model: the [token] path segment is a high-entropy random
 // string matched by its SHA-256 hash against
 // practitioners.calendar_feed_token_hash (migrations 0079/0116; the raw
-// token is never stored — hash-only at rest).
+// token is never stored: hash-only at rest).
 // The route resolves the practitioner via the admin client (anon /
 // authenticated callers have no row-level access to practitioners by
 // token), then loads the practitioner's appointments and renders an
 // ICS calendar. No login, no cookies. Anyone with the token can fetch.
 //
-// Privacy rules baked in (PR #289 — privacy-preserving by default).
+// Privacy rules baked in (PR #289, privacy-preserving by default).
 //   * The feed URL is a BEARER secret. Third-party calendar providers
 //     (Google / Apple / Outlook) store the URL AND the event contents.
 //     So the default ICS exposes NO client data and NO treatment
-//     context — anyone who obtains the URL learns only the
+//     context: anyone who obtains the URL learns only the
 //     practitioner's busy/free times, not who or what.
-//   * SUMMARY is always "Hone appointment" — generic, no service name
+//   * SUMMARY is always "Hone appointment", generic, no service name
 //     (lock-screen safe; shared-calendar safe).
 //   * DESCRIPTION is generic ("Appointment scheduled in Hone…") plus a
 //     link back to /calendar/<id> in Hone (auth-gated; not a token).
@@ -31,7 +31,7 @@ import { hashCalendarFeedToken } from "@/lib/calendar-feed/token";
 //     service / modality / body area / treatment context, notes,
 //     status, any token, Stripe/payment data, or storage paths.
 //   * The route does not even SELECT the client name or service
-//     modality — defense in depth, so a row leaked to logs carries no
+//     modality: defense in depth, so a row leaked to logs carries no
 //     client PII.
 //   * No intake responses, allergies, EpiPen flags, private warnings,
 //     pricing, payment data, or session notes ever appear in the feed.
@@ -104,7 +104,7 @@ export async function GET(
   ).toISOString();
 
   // PR #289: pull ONLY the time-window columns. We deliberately do NOT
-  // select the client name or the service/modality — the default feed
+  // select the client name or the service/modality, the default feed
   // exposes neither, and not fetching them means a row leaked to logs
   // carries no client PII or treatment context. The status filter still
   // excludes cancelled appointments; status itself is not projected

@@ -15,7 +15,7 @@ export async function signOutFromGate() {
 
 // Studio chooser action for multi-studio users (PR 2). Sets the
 // hone_selected_studio cookie ONLY after verifying, server-side, that the
-// signed-in user is an ACTIVE practitioner in the requested studio — so the
+// signed-in user is an ACTIVE practitioner in the requested studio, so the
 // cookie can never point at a studio the user is not an active member of.
 // The lookup is user-scoped + RLS-scoped, and (studio_id, user_id) is unique
 // (so .maybeSingle() is safe here). On success, redirect to the dashboard.
@@ -42,7 +42,7 @@ export async function switchStudioAction(formData: FormData): Promise<void> {
     .maybeSingle();
 
   if (!membership) {
-    // Not an active member of that studio — never set the cookie; back to chooser.
+    // Not an active member of that studio, never set the cookie; back to chooser.
     redirect("/no-access?reason=multiple-studios");
   }
 

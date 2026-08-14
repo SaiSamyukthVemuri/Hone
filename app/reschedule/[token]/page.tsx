@@ -69,7 +69,7 @@ export default async function ReschedulePage({
                 </p>
               </div>
 
-              {/* Current appointment summary. No address — the
+              {/* Current appointment summary. No address: the
                   reschedule fetch action intentionally does not
                   return that field, same security stance as cancel. */}
               <dl

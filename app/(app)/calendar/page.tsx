@@ -165,7 +165,7 @@ export default async function CalendarPage({
   // Resolve whether a given visible date (Sunday-start index i = day_of_week)
   // is closed, using the SAME precedence as public booking's slot generation
   // (lib/booking/slots.ts): a date override wins; else the weekday default;
-  // else (no default configured) the day is closed. Display-only — used to
+  // else (no default configured) the day is closed. Display-only, used to
   // hide auto-materialized recurring breaks on closed dates.
   function isClosedDate(date: string, dow: number): boolean {
     const override = overrideByDate.get(date);
@@ -240,7 +240,7 @@ export default async function CalendarPage({
     recurringByDate.set(localDate, arr);
   }
 
-  // Per-day slices of the SAME loaded week data for the mobile day view — no
+  // Per-day slices of the SAME loaded week data for the mobile day view, no
   // new query, no divergent status/tz rules (identical maps the desktop grid
   // uses). Passed as plain JSON to the client CalendarMobileDayView.
   const mobileDays: MobileDayData[] = days.map((date, i) => ({
@@ -275,7 +275,7 @@ export default async function CalendarPage({
         hideStepNavOnMobile
       />
 
-      {/* Layout (PR B): the calendar body scrolls INTERNALLY — the grid is a
+      {/* Layout (PR B): the calendar body scrolls INTERNALLY: the grid is a
           fixed 1020px, so without a height bound it forced the whole page to
           scroll. max-h + overflow-y-auto keeps it within the viewport; the
           day-of-week header stays sticky at the top and the time rail stays
@@ -303,7 +303,7 @@ export default async function CalendarPage({
 
       {/* Desktop/tablet keep the existing week grid, untouched, at md+. */}
       {/* PR B: desktop week body = ONE clean vertical scroll. The columns are
-          minmax(0,1fr) so they always flex to fit the container width — no
+          minmax(0,1fr) so they always flex to fit the container width, no
           horizontal scroll and no min-width forcing on desktop. Sticky day
           header + sticky time rail + the 1px=1min positioning math are
           unchanged. */}
@@ -337,7 +337,7 @@ export default async function CalendarPage({
                   }
                 >
                   {/* Two-line Google/Fresha header: weekday over date.
-                      Today gets a subtle text accent + faint sky tint — no
+                      Today gets a subtle text accent + faint sky tint, no
                       ring, no badge, no extra height. */}
                   <div
                     className={
@@ -365,8 +365,8 @@ export default async function CalendarPage({
           </div>
 
           {/* Body grid. Time rail uses the calendar's OWN positioning
-              model — a relative, explicit-height column with each hour
-              label absolutely positioned at its top offset — exactly how
+              model: a relative, explicit-height column with each hour
+              label absolutely positioned at its top offset, exactly how
               DayColumn places its grid lines and event cards. The earlier
               flow-based rail (block cells relying on grid-row stretch)
               rendered blank in production three times despite correct

@@ -4,7 +4,7 @@
 //
 // Replaces native window.confirm() for consequential practitioner actions
 // (Mark completed / Mark no-show). window.confirm is unreliable on iOS
-// Safari — WebKit can suppress the dialog and return false silently, which
+// Safari: WebKit can suppress the dialog and return false silently, which
 // the caller cannot distinguish from a real "Cancel" tap, so the action
 // never runs and nothing changes on screen. An in-DOM dialog removes that
 // entire class of failure and is keyboard/screen-reader accessible.
@@ -48,7 +48,7 @@ export type ConfirmDialogProps = {
   // the dialog (buttons disabled, Escape/backdrop close suppressed).
   pending?: boolean;
   // A SAFE, fixed, caller-supplied failure string (the calendar actions map
-  // every RPC failure to curated copy — never raw DB/provider text). Rendered
+  // every RPC failure to curated copy, never raw DB/provider text). Rendered
   // in an assertive alert region; the dialog stays open so the practitioner
   // can read it and Cancel or retry.
   error?: string | null;

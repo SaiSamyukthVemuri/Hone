@@ -173,7 +173,7 @@ export default async function SessionDetailPage({
     practitionerName: string | null;
   } | null = null;
   // THE appointment identity for this page: sessions.appointment_id. Taken
-  // directly from the session row, NOT from the billing eligibility result —
+  // directly from the session row, NOT from the billing eligibility result,
   // the Finish workflow must not depend on billing-domain types, and lineage is
   // verified below against BOTH studio and client.
   const linkedAppointmentId = session.appointment_id ?? null;
@@ -186,8 +186,8 @@ export default async function SessionDetailPage({
     // column-hint form therefore returned PGRST200 ("Could not
     // find a relationship between 'appointments' and 'service_id'") on every
     // request, the error was discarded, and the booked-service default amount
-    // was silently null on this page while quick checkout — which already used
-    // the bare-table form — kept working. Same class of breakage migration 0094
+    // was silently null on this page while quick checkout, which already used
+    // the bare-table form: kept working. Same class of breakage migration 0094
     // caused and commit 8f0517e swept; 0151 was not swept.
     // ONE appointment context read. It already existed for the booked-service
     // payment default; it is WIDENED here to also supply the Finish appointment
@@ -208,7 +208,7 @@ export default async function SessionDetailPage({
       .maybeSingle();
     if (apptErr) {
       // Never throw: a failed default-amount read must not block charting. But
-      // it must be OBSERVABLE — swallowing it is what let this regress for a
+      // it must be OBSERVABLE: swallowing it is what let this regress for a
       // week. No client data in the log line.
       console.error(
         JSON.stringify({
@@ -281,7 +281,7 @@ export default async function SessionDetailPage({
   const finishState = resolveFinishAppointmentState({
     chartedBlockCount: liveChartedCount,
     aftercareExplainedAt: session.aftercare_and_risks_explained_at ?? null,
-    // Joined by sessions.appointment_id — NEVER by client id, because a client
+    // Joined by sessions.appointment_id, NEVER by client id, because a client
     // can have several appointments and the wrong one would be completed.
     appointment: finishAppt
       ? {
@@ -337,9 +337,9 @@ export default async function SessionDetailPage({
 
   // UI defaulting (NOT attachment): the new-treatment-area picker is seeded
   // from a plan's first structured area. Prefer the attached plan; if the
-  // session isn't attached — auto-attach only fires at session creation, and
+  // session isn't attached: auto-attach only fires at session creation, and
   // only when the client has exactly one active electrolysis plan
-  // (app/(app)/clients/[id]/sessions/new/actions.ts) — fall back to the
+  // (app/(app)/clients/[id]/sessions/new/actions.ts), fall back to the
   // client's single active plan's first area. This is a starting value
   // only: fully editable, never forced, and it does NOT attach the session,
   // change charting, or mutate any plan/saved data.
@@ -397,9 +397,9 @@ export default async function SessionDetailPage({
     previousWithNote?.next_session_note?.trim() || null;
 
   // POINT-OF-CARE TREATMENT MEMORY (Chloe). Everything she needs to reproduce
-  // last time's treatment — areas + laterality, frequency, probe and lot, mode
+  // last time's treatment: areas + laterality, frequency, probe and lot, mode
   // and modality, the mode-valid readings, hairs, minutes, numbing, tolerance
-  // and response — used to live on the client Overview tab or inside the
+  // and response: used to live on the client Overview tab or inside the
   // previous session's own chart, two or three navigations from the screen she
   // is standing at. It renders here instead.
   //
@@ -407,7 +407,7 @@ export default async function SessionDetailPage({
   // already in clientData (getClientById), so only the prior settings blocks
   // are fetched, batched over the whole candidate window.
   //
-  // The candidate is the newest CHARTED session, not the newest session ROW —
+  // The candidate is the newest CHARTED session, not the newest session ROW,
   // tapping a modality on /sessions/new creates an empty session immediately,
   // and an abandoned one used to win every "previous session" lookup.
   const lastTreatment = await loadLastChartedTreatment({
@@ -455,7 +455,7 @@ export default async function SessionDetailPage({
     : null;
 
   // Whole-session copy (0157): the ONE canonical authority for whether an
-  // eligible previous session exists is whole_session_copy_source_descriptor —
+  // eligible previous session exists is whole_session_copy_source_descriptor,
   // the SAME function the commit RPC derives its source from. We gate the panel
   // on it (not a separate "latest previous session" query), so page gating and
   // commit can never disagree about which session is the source.
@@ -467,7 +467,7 @@ export default async function SessionDetailPage({
     (copyDescriptor as { eligible?: boolean } | null)?.eligible,
   );
   // The canonical source visit date, from the SAME descriptor that gates the
-  // panel — so the "Start from last session" card names the visit it will bring
+  // panel, so the "Start from last session" card names the visit it will bring
   // forward without the practitioner having to open a preview to find out.
   const copySourceStartedAt =
     (copyDescriptor as { source_started_at?: string } | null)?.source_started_at ??
@@ -475,7 +475,7 @@ export default async function SessionDetailPage({
 
   // Repeat-client fast charting: after the governed copy commits, the panel
   // routes back here naming the treatment area to open in TODAY'S editor. Only
-  // a LIVE block on THIS session is honoured — a stale or crafted id resolves to
+  // a LIVE block on THIS session is honoured: a stale or crafted id resolves to
   // null and changes nothing, and the param can only pre-open an editor the
   // practitioner could already open by tapping "Edit" on an area in front of her.
   const autoEditBlockId = resolveAutoEditBlockId(
@@ -494,7 +494,7 @@ export default async function SessionDetailPage({
 
   // Signed/finalized clinical records are RETIRED (migration 0159): there is no
   // Finalize control, no signed-correction control, and no studio flag that can
-  // bring them back. `isFinalized` survives for exactly one reason — production
+  // bring them back. `isFinalized` survives for exactly one reason: production
   // retains ONE legacy finalized session from a controlled non-Willow test studio,
   // and it must stay visibly read-only and undeletable. Every ordinary session is
   // 'draft' and fully editable, and the database now refuses any new transition
@@ -647,7 +647,7 @@ export default async function SessionDetailPage({
 
           Shown only on an EMPTY editable electrolysis chart, gated on the
           canonical source descriptor (the same authority the commit RPC uses).
-          A chart that already has areas keeps this hidden — copy_session_setup
+          A chart that already has areas keeps this hidden: copy_session_setup
           refuses a non-empty target (HN003), so today's chart can never be
           destructively replaced. */}
       {!isFinalized &&
@@ -767,8 +767,8 @@ export default async function SessionDetailPage({
 
 
       {/* FINISH APPOINTMENT (Chloe). She charts the visit, then the two
-          consequential closing actions — marking the appointment completed and
-          sending postcare — live on the calendar appointment page, a different
+          consequential closing actions: marking the appointment completed and
+          sending postcare: live on the calendar appointment page, a different
           surface. So they get forgotten, and payment (which is gated on
           completion) stays locked. This section brings the EXISTING trusted
           controls into one visible checklist: the shared completion control and
@@ -788,7 +788,7 @@ export default async function SessionDetailPage({
           </p>
         </div>
 
-        {/* 1. TREATMENT CHART — informational. Deliberately NOT a block on
+        {/* 1. TREATMENT CHART: informational. Deliberately NOT a block on
             completion: completion is already possible today with an empty
             chart, and silently introducing a clinical lock here would be a new
             restriction nobody asked for. */}
@@ -808,7 +808,7 @@ export default async function SessionDetailPage({
           </span>
         </div>
 
-        {/* 2. RISKS & AFTERCARE EXPLAINED — the session stamp, distinct from
+        {/* 2. RISKS & AFTERCARE EXPLAINED: the session stamp, distinct from
             the postcare email. "Explained" means she discussed it; "sent" means
             an email was handed to the provider. Never auto-stamped. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
@@ -835,12 +835,12 @@ export default async function SessionDetailPage({
           )}
         </div>
 
-        {/* 3. APPOINTMENT COMPLETED — only when a booked appointment is linked
+        {/* 3. APPOINTMENT COMPLETED, only when a booked appointment is linked
             (by sessions.appointment_id, never by client). Uses THE shared
             completion control, so the start-time gate (B6 / 0175), the
             accessible confirmation, single-flight and the audit row are the
             same ones the calendar surface has always used. No-show is
-            deliberately absent — it stays gated on ends_at. */}
+            deliberately absent. It stays gated on ends_at. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Appointment completed
@@ -857,7 +857,7 @@ export default async function SessionDetailPage({
           </span>
           {/* Mounted for BOTH before_start and ready. The shared control owns
               the disabled state AND the timer that re-enables the button the
-              moment starts_at passes — mounting it only when already "ready"
+              moment starts_at passes: mounting it only when already "ready"
               meant the timer never ran, so the button could not appear without
               a manual refresh, while the copy claimed it would update on its
               own. The control renders its own authoritative helper text when
@@ -870,13 +870,13 @@ export default async function SessionDetailPage({
               <MarkAppointmentCompleteControl
                 appointmentId={linkedAppointmentId}
                 startsAt={finishState.completion.startsAt}
-                notStartedHint="You can mark it completed once the appointment start time passes — this updates on its own."
+                notStartedHint="You can mark it completed once the appointment start time passes: this updates on its own."
                 block
               />
             )}
         </div>
 
-        {/* 4. POSTCARE EMAIL — THE shared section, identical to the calendar
+        {/* 4. POSTCARE EMAIL: THE shared section, identical to the calendar
             surface: same preview, same first-send claim, same consultation
             attestation, same failure honesty. Postcare stays an explicit manual
             action unless the studio's existing auto_on_complete setting sends
@@ -934,7 +934,7 @@ export default async function SessionDetailPage({
         {/* FINAL EXIT. The safe-exit semantics from DoneChartingButton move
             here intact: leaving without the aftercare stamp still requires the
             explicit warning, and "Continue without marking" still proceeds
-            without writing anything. Nothing above navigates automatically —
+            without writing anything. Nothing above navigates automatically,
             she must be able to SEE the updated statuses before leaving. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 sm:flex-row sm:items-center dark:border-neutral-800">
           {isFinalized ? (
@@ -952,7 +952,7 @@ export default async function SessionDetailPage({
                 session.aftercare_and_risks_explained_at != null
               }
               markAction={markAftercareExplainedAction}
-              label="Done — back to client"
+              label="Done, back to client"
             />
           )}
         </div>
@@ -961,8 +961,8 @@ export default async function SessionDetailPage({
       {/* MOVED, NOT CHANGED (Chloe's flow: chart → finish → pay). This block
           used to sit ABOVE the charting content, so payment was the first thing
           on the page and the completion it depends on was the last. It is
-          relocated verbatim — same wrapper, same anchor, same component, same
-          props, same actions — so the practitioner reaches it immediately after
+          relocated verbatim: same wrapper, same anchor, same component, same
+          props, same actions, so the practitioner reaches it immediately after
           completing the appointment that unlocks it. */}
       {/* PR #181. id="session-payment" anchor so the calendar
           NextStepCard's "Go to billing" link deep-scrolls into the
@@ -974,7 +974,7 @@ export default async function SessionDetailPage({
           clientId={id}
           eligibility={sessionPaymentEligibility}
           amountResult={sessionPaymentAmount}
-          // Trusted, server-derived owner flag — gates the owner-only Technical
+          // Trusted, server-derived owner flag: gates the owner-only Technical
           // payment details disclosure + the Refund button (server refund
           // authorization is unchanged; it is owner-only there too).
           isOwner={practitioner.role === "owner"}
@@ -985,8 +985,8 @@ export default async function SessionDetailPage({
         />
       </div>
 
-      {/* An archived (legacy finalized) record cannot be soft-deleted — the DB
-          guard from 0119 still enforces that — so the destructive control is
+      {/* An archived (legacy finalized) record cannot be soft-deleted, the DB
+          guard from 0119 still enforces that, so the destructive control is
           withdrawn for it. Ordinary sessions keep it. */}
       {!isFinalized && (
         <div className="pt-6">

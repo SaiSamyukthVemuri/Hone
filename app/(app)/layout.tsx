@@ -191,7 +191,7 @@ async function loadUnreadNotificationCount(studioId: string): Promise<number> {
 // Willow follow-up: count of overdue disinfectant "Replace now" records for the
 // badge. Computed from the same read-time source of truth as the Records page +
 // Notification Centre (one bounded, studio-scoped, RLS-gated read). Never throws
-// — a failure falls back to zero so the header never breaks.
+// a failure falls back to zero so the header never breaks.
 async function loadOverdueDisinfectantCount(
   studioId: string,
   timezone: string,

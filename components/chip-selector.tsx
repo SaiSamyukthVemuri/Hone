@@ -25,7 +25,7 @@ type Props = {
 // `MultiAreaEditor` used its `onChange` to append, so typing an 8-letter custom
 // area appended and PERSISTED eight partial rows, one per keystroke. If a list-
 // append parent is ever needed here, add an explicit commit (Enter + a button)
-// first — see `AreaPicker`'s `customCommit="explicit"` mode and
+// first. See `AreaPicker`'s `customCommit="explicit"` mode and
 // `lib/sessions/area-input.ts`.
 export function ChipSelector({
   options,

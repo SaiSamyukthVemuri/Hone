@@ -21,7 +21,7 @@ export function ResendWelcomeButton({ studioId }: { studioId: string }) {
             } else if (res.status === "not_configured") {
               setMsg("Email is not configured in this environment (nothing sent).");
             } else if (res.status === "already_in_progress") {
-              setMsg("A send is already in progress — nothing sent this time.");
+              setMsg("A send is already in progress, nothing sent this time.");
             } else {
               setMsg("Welcome email sent.");
             }

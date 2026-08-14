@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CalendarViewToggle } from "./ViewToggle";
 
-// Google/Apple-style desktop calendar toolbar (PR A). Presentational only — it
+// Google/Apple-style desktop calendar toolbar (PR A). Presentational only: it
 // renders navigation LINKS using the calendar's existing query params
 // (?view=/?week=/?month=); it changes no booking, view-resolution, or data
 // logic. Shared by the week and month renders so switching views keeps one

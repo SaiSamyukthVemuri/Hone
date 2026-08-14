@@ -5,8 +5,8 @@
 // Chloe's feedback: tapping an observation chip selects it, but nothing
 // visibly told her WHAT would be saved, so she wasn't confident the
 // selection "took". This renders the current structured selection as a
-// clear, adjacent read-out — a plain sentence of the selected chip labels,
-// or an explicit empty state — so the practitioner always sees exactly what
+// clear, adjacent read-out, a plain sentence of the selected chip labels,
+// or an explicit empty state, so the practitioner always sees exactly what
 // will be stored to observation_chips (separate from the free-text note).
 //
 // Pure display. It reads the same `chips` state the toggle buttons drive; it

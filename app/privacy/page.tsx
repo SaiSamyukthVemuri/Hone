@@ -256,7 +256,7 @@ export default function PrivacyPolicyPage() {
       </H3>
       <P>
         A studio may choose to enable third-party marketing or analytics
-        integrations for its own booking pages and ads &mdash; for example Meta,
+        integrations for its own booking pages and ads, for example Meta,
         Google, TikTok, Pinterest, LinkedIn, Microsoft Ads, or similar
         providers. Where a studio enables such an integration and, where
         applicable, you consent, Hone may send limited booking or conversion
@@ -360,7 +360,7 @@ export default function PrivacyPolicyPage() {
       </P>
       <P>
         When a client is deleted by their practitioner in Hone, the record is{" "}
-        <strong>archived</strong> — marked as deleted and hidden from everyday
+        <strong>archived</strong>, marked as deleted and hidden from everyday
         use, but retained for audit and clinical-record purposes. Archiving is
         not the same as permanent erasure: the record remains in our systems,
         and in backups, unless and until it is permanently deleted following a

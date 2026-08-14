@@ -34,7 +34,7 @@ export default async function TrackingSettingsPage() {
   }
 
   const admin = createAdminClient();
-  // Redacted status ONLY — encrypted_server_token is never selected.
+  // Redacted status ONLY: encrypted_server_token is never selected.
   const { data } = await admin
     .from("studio_tracking_providers")
     .select(
@@ -53,13 +53,13 @@ export default async function TrackingSettingsPage() {
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           Optional. Connect your studio-owned marketing and analytics providers
           to measure bookings from your website and ads. Your provider accounts,
-          pixels, and tokens are yours — Hone stores each token encrypted and
+          pixels, and tokens are yours: Hone stores each token encrypted and
           only ever sends a minimal, non-clinical booking event, and only when a
           client has agreed to marketing tracking. Off unless you enable it.
         </p>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
           <strong>Meta is available now.</strong> Additional providers can be
-          added later — this is a provider-agnostic integration, not a Meta-only
+          added later. This is a provider-agnostic integration, not a Meta-only
           feature. Choose a provider below to see its setup instructions.
         </p>
       </header>

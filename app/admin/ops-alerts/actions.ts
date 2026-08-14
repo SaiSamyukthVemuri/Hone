@@ -74,11 +74,11 @@ export async function resolveOpsAlertAction(
 
   const admin = createAdminClient();
 
-  // 0178 — PLURALITY-SAFE ATTRIBUTION FOR A PLATFORM-GLOBAL OPERATION.
+  // 0178, PLURALITY-SAFE ATTRIBUTION FOR A PLATFORM-GLOBAL OPERATION.
   //
   // Resolving ops alerts is not studio-scoped, so there is no correct studio to
   // scope this lookup to. The previous `.maybeSingle()` did not make the
-  // ambiguity go away — for a platform admin with two active memberships it
+  // ambiguity go away: for a platform admin with two active memberships it
   // ERRORS, and the error silently decided attribution by leaving the id null.
   //
   // The plurality is now explicit: attribute only when the admin has exactly
@@ -95,8 +95,8 @@ export async function resolveOpsAlertAction(
 
   // A LOOKUP FAILURE AND "NO MEMBERSHIP" ARE DIFFERENT FACTS, and the earlier
   // revision collapsed them: both produced NULL, one by rule and one by
-  // accident. Attribution is deliberately NOT availability-critical — resolving
-  // the alert must still succeed — so a failed lookup fails SOFT to NULL, but it
+  // accident. Attribution is deliberately NOT availability-critical, resolving
+  // the alert must still succeed, so a failed lookup fails SOFT to NULL, but it
   // says so rather than pretending the admin has no membership.
   if (practitionerLookupError) {
     // Bounded: a stable event name and the error CODE only. No raw database

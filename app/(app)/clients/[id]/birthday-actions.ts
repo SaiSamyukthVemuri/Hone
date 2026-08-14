@@ -3,8 +3,8 @@
 // Practitioner-only birthday update.
 //
 // Stores month + day in the existing public.clients.date_of_birth column
-// (no schema change needed — the column has been there since migration
-// 0001). We deliberately avoid asking the practitioner for a year — only
+// (no schema change needed: the column has been there since migration
+// 0001). We deliberately avoid asking the practitioner for a year, only
 // month and day are needed for the "happy birth month" reminder.
 //
 // Year handling rules:

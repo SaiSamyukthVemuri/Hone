@@ -72,7 +72,7 @@ async function assertOwner(): Promise<{
 
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
-// Reserved booking slugs. Block new submissions only — owners with an
+// Reserved booking slugs. Block new submissions only: owners with an
 // existing slug that happens to match (unlikely; the list is the routes
 // the marketing/app surface uses) keep working because the check is
 // skipped when the submitted slug is byte-identical to the studio's

@@ -6,7 +6,7 @@ import { getIntakeById, getLatestIntakeForClient } from "@/lib/intake/queries";
 import { PRACTITIONER_ENTERABLE_STEPS } from "@/lib/intake/questions";
 import { AssistedIntakeEditor } from "./AssistedIntakeEditor";
 
-// "Complete intake with client" — the practitioner-assisted questionnaire
+// "Complete intake with client", the practitioner-assisted questionnaire
 // editor.
 //
 // Scope: the health questionnaire only (every step except the client's own
@@ -39,7 +39,7 @@ export default async function AssistedIntakePage({
     .eq("studio_id", studio.id)
     .eq("id", id)
     .maybeSingle();
-  // A cross-studio or absent client is a 404, identical to the review page —
+  // A cross-studio or absent client is a 404, identical to the review page,
   // it does not disclose that the row exists somewhere else.
   if (clientErr) notFound();
   if (!client) notFound();

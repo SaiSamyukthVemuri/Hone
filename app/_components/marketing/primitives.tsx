@@ -15,7 +15,7 @@ const displayStyle = (
 ): CSSProperties => ({
   fontFamily: MK_FONT_DISPLAY,
   fontSize: clamp,
-  fontWeight: 600, // Inter Semibold — clean modern heading weight
+  fontWeight: 600, // Inter Semibold: clean modern heading weight
   lineHeight: 1.1,
   letterSpacing: "-0.02em",
   ...extra,

@@ -20,7 +20,7 @@ type Status =
   | { kind: "sent" }
   | { kind: "error"; message: string };
 
-// The checkbox is an IDENTITY / invitation confirmation, not legal acceptance —
+// The checkbox is an IDENTITY / invitation confirmation, not legal acceptance,
 // Hone is invite-only and this gate just confirms the person is using their
 // invited address (the current Terms/Privacy versions are confirmed later, when
 // they actually join a studio). The un-ticked-box error must say THAT, never

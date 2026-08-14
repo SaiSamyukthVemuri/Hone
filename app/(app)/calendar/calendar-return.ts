@@ -7,7 +7,7 @@
 //
 // Safety: we never accept or echo a full return URL (no open-redirect
 // surface). The return target is ALWAYS `/calendar` plus a validated subset
-// of the existing calendar params — `view` (week|month) and the date anchors
+// of the existing calendar params: `view` (week|month) and the date anchors
 // `week`/`month` (strict YYYY-MM-DD). Anything else is dropped, so the back
 // link can only ever point inside `/calendar`.
 
@@ -47,7 +47,7 @@ export function buildCalendarReturnParams(ctx: CalendarReturnContext): string {
 }
 
 // Reconstruct the SAFE internal /calendar href from (untrusted) detail-page
-// searchParams. Always returns a path under `/calendar` — never external.
+// searchParams. Always returns a path under `/calendar`, never external.
 // Falls back to bare `/calendar` when no valid context is present.
 export function calendarReturnHref(ctx: CalendarReturnContext): string {
   return `/calendar${buildCalendarReturnParams(ctx)}`;

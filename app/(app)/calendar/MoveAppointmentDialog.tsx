@@ -15,15 +15,15 @@ import {
   type MovePractitionerOption,
 } from "./move-appointment-actions";
 
-// Practitioner Move appointment — ONE shared responsive dialog + state machine used by
+// Practitioner Move appointment, ONE shared responsive dialog + state machine used by
 // mobile, tablet, and desktop (responsive by Tailwind; no separate mobile/desktop paths).
 // Mobile: full-width bottom sheet (<= 90dvh, safe-area padding, sticky header/footer,
 // 44px tap targets, 2-col time grid). Tablet/desktop: centered modal (wider time grid,
 // keyboard-operable, focus trapped, Escape closes when idle, focus returns to the opener).
 //
 // Two modes share the same state machine + the same server action:
-//   * "available_slot" (default) — pick a generated available time (server-verified).
-//   * "custom_time" (OWNER ONLY) — enter a studio-local time that may be outside regular
+//   * "available_slot" (default), pick a generated available time (server-verified).
+//   * "custom_time" (OWNER ONLY), enter a studio-local time that may be outside regular
 //     operating hours; still conflict-safe (the DB reservations/constraints reject
 //     overlaps). The custom option renders ONLY when the SERVER says the caller is an
 //     owner (canUseCustomTime from loadMoveSlotsAction); the action re-authorizes on submit.
@@ -65,8 +65,8 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   const [selected, setSelected] = useState<MoveSlot | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
   const [loadingSlots, startLoad] = useTransition();
-  // The critical mutation lock is EXPLICIT — a synchronous useState + a one-shot ref
-  // — NOT useTransition. useTransition's pending flag is deferred, which left a window
+  // The critical mutation lock is EXPLICIT: a synchronous useState + a one-shot ref
+  // NOT useTransition. useTransition's pending flag is deferred, which left a window
   // where the footer had not yet repainted the disabled "Moving…" state (the reported
   // "button vanishes ~1s then returns" + invisibly-clickable submit). setSubmitting(true)
   // + submittingRef establish the visible loading state, the disabled controls, and
@@ -119,7 +119,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
           localDate: forDate,
           targetPractitionerId: forTarget,
         });
-        if (req !== loadReq.current) return; // stale — a newer load superseded this
+        if (req !== loadReq.current) return; // stale: a newer load superseded this
         if (!res.ok) {
           setSlots([]);
           setLoadError(res.error);
@@ -202,7 +202,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     return () => document.removeEventListener("keydown", onKey);
   }, [open, submitting, onClose]);
 
-  // Return focus to the opener ONLY when the dialog actually closes/unmounts —
+  // Return focus to the opener ONLY when the dialog actually closes/unmounts,
   // keyed on `open` alone so a mid-flight `submitting` change never steals focus.
   useEffect(() => {
     if (!open) return;
@@ -213,7 +213,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
 
   // Fully clear the submit lock once closed. The success path intentionally leaves
   // `submitting` set while the dialog closes (so no enabled button flashes before it
-  // disappears); this resets it AFTER close — while the dialog renders null — so a
+  // disappears); this resets it AFTER close (while the dialog renders null) so a
   // later reopen never paints a stale "Moving appointment…" frame.
   useEffect(() => {
     if (open) return;
@@ -264,7 +264,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   };
 
   // Item 7: when reassignment is enabled the current target MUST be a resolved
-  // eligible practitioner (fail closed — an empty/failed lookup leaves target "").
+  // eligible practitioner (fail closed: an empty/failed lookup leaves target "").
   const targetChosen = !reassignEnabled || eligible.some((p) => p.id === target);
   const canConfirm =
     targetChosen &&
@@ -321,7 +321,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     // Keep focus inside the dialog when the just-tapped button becomes disabled.
     panelRef.current?.focus();
     void (async () => {
-      // The try wraps ONLY the network mutation — never onMoved(). A throwing success
+      // The try wraps ONLY the network mutation, never onMoved(). A throwing success
       // callback (e.g. router.refresh) must not convert a COMMITTED move into a false
       // failure + a stale-time retry.
       let res: Awaited<ReturnType<typeof moveAppointmentAction>>;
@@ -389,14 +389,14 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
         tabIndex={-1}
         className="relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl outline-none dark:bg-neutral-950 sm:max-h-[85vh] sm:w-[540px] sm:rounded-2xl"
       >
-        {/* Header — a normal shrink-0 flex child (never position:sticky), so it is
+        {/* Header: a normal shrink-0 flex child (never position:sticky), so it is
             always painted; only the middle body scrolls. */}
         <div className="flex shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 className="font-serif text-lg font-semibold">Move appointment</h2>
           <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} aria-label="Close" className="min-h-[44px] min-w-[44px] rounded-lg px-2 text-neutral-500 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-900">✕</button>
         </div>
 
-        {/* Scrollable body — the ONLY scroll region. min-h-0 lets it shrink so the
+        {/* Scrollable body: the ONLY scroll region. min-h-0 lets it shrink so the
             header + footer keep their height and stay painted. */}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {/* Current appointment */}
@@ -578,7 +578,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
           )}
         </div>
 
-        {/* Footer — a normal shrink-0 flex child (never position:sticky), opaque with a
+        {/* Footer: a normal shrink-0 flex child (never position:sticky), opaque with a
             top border + safe-area bottom padding. Because it is a flex sibling of the
             scroll body (not sticky inside an overflow-clipped container) it stays
             continuously painted on iOS Safari before, during and after submission. */}

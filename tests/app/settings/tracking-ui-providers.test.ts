@@ -33,7 +33,7 @@ describe("selector — renders every provider; Meta editable, others read-only",
   it("maps the whole registry into the provider <select>", () => {
     expect(SELECTOR).toMatch(/PROVIDER_REGISTRY\.map\(\(p\) =>/);
     expect(SELECTOR).toMatch(/<option key=\{p\.provider\}/);
-    expect(SELECTOR).toMatch(/p\.status === "coming_soon" \? " — Coming soon" : ""/);
+    expect(SELECTOR).toMatch(/p\.status === "coming_soon" \? " \(Coming soon\)" : ""/);
   });
   it("shows the editable Meta panel only for the available + editable provider", () => {
     expect(SELECTOR).toMatch(/entry\.status === "available" && entry\.editable \?/);

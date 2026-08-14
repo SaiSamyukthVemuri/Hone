@@ -72,9 +72,9 @@ const COPY: Record<
     submittedHeadline: "Card submitted. Finalizing with Hone...",
     successHeadline: "Card saved.",
     stillFinalizingHeadline:
-      "Your card was accepted, but we have not confirmed it yet. Do not enter it again \u2014 check status again below, or contact the studio if it does not confirm.",
+      "Your card was accepted, but we have not confirmed it yet. Do not enter it again. Check status again below, or contact the studio if it does not confirm.",
     rejectedHeadline:
-      "Your card was accepted by our payment provider, but we could not attach it to your file. Please contact the studio \u2014 do not re-enter your card.",
+      "Your card was accepted by our payment provider, but we could not attach it to your file. Please contact the studio. do not re-enter your card.",
     introCopy: null,
     startingHeadline: "Preparing secure card form...",
     startErrorMessage:
@@ -87,9 +87,9 @@ const COPY: Record<
     submittedHeadline: "New card submitted. Finalizing with Hone...",
     successHeadline: "Card updated. Your new card is now on file.",
     stillFinalizingHeadline:
-      "Your new card was accepted, but we have not confirmed it yet. Your existing card stays on file and remains the card we will use until the new one is confirmed. Do not enter it again \u2014 check status again below, or contact the studio.",
+      "Your new card was accepted, but we have not confirmed it yet. Your existing card stays on file and remains the card we will use until the new one is confirmed. Do not enter it again. Check status again below, or contact the studio.",
     rejectedHeadline:
-      "Your new card was accepted by our payment provider, but we could not attach it to your file. Your previous card is unchanged. Please contact the studio \u2014 do not re-enter your card.",
+      "Your new card was accepted by our payment provider, but we could not attach it to your file. Your previous card is unchanged. Please contact the studio. do not re-enter your card.",
     introCopy:
       `Your current card will be replaced after the new card is saved. ${TEST_MODE_CARD_NOTE}`,
     startingHeadline: "Preparing secure card form...",
@@ -376,7 +376,7 @@ function StripeElementsBoundary({
 }
 
 // The finalization state machine lives in lib/payments/card-finalization.ts so
-// it can be behaviourally tested — this component cannot be rendered in the
+// it can be behaviourally tested: this component cannot be rendered in the
 // unit lane, and the fake-Stripe browser lane cannot drive Elements. See that
 // module's header for the three bounds and why they exist.
 
@@ -385,7 +385,7 @@ type SubmitPhase =
   | "submitting" // confirmSetup in flight
   | "finalizing" // Stripe accepted; waiting for Hone's own record
   | "saved" // Hone has an ACTIVE row for this SetupIntent
-  | "notConfirmed" // accepted, not confirmed within the window — RECOVERABLE
+  | "notConfirmed" // accepted, not confirmed within the window: RECOVERABLE
   | "rechecking" // an explicit "Check status again" is in flight
   | "rejected"; // Hone durably refused the payload
 
@@ -439,7 +439,7 @@ function PaymentForm({
       return;
     }
 
-    // Stripe accepted. Hone has NOT saved anything yet — the webhook does that.
+    // Stripe accepted. Hone has NOT saved anything yet: the webhook does that.
     // Poll Hone's own record before claiming the card is saved.
     setPhase("finalizing");
     const settled = await pollForPersistence();
@@ -447,7 +447,7 @@ function PaymentForm({
   }
 
   // Shared by the initial window and the explicit "Check status again" button.
-  // NEVER mints a SetupIntent and NEVER calls confirmSetup — it only asks Hone
+  // NEVER mints a SetupIntent and NEVER calls confirmSetup. It only asks Hone
   // about the SetupIntent Stripe already accepted.
   async function pollForPersistence(
     attempts: number = CONFIRM_MAX_ATTEMPTS,

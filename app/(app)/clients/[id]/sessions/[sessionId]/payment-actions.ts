@@ -218,7 +218,7 @@ export async function prepareSessionPaymentChargeAction(
   const clientId = eligibility.client.id;
   const appointmentId = eligibility.appointment.id ?? null;
 
-  // THE AMOUNT DECISION. Independently re-loaded from current records — not
+  // THE AMOUNT DECISION. Independently re-loaded from current records, not
   // from the page's props, not from the modal's state, and not from the form.
   // This is the whole point of F-PAY-001: the value inserted below is derived
   // here, server-side, at the moment of preparation.
@@ -230,14 +230,14 @@ export async function prepareSessionPaymentChargeAction(
   if (!priced.ok) {
     return { ok: false, error: loadFailureMessage(priced.failure) };
   }
-  // FREE-01. A deliberately $0 service is not a pricing failure — it is a
+  // FREE-01. A deliberately $0 service is not a pricing failure. It is a
   // decided price of nothing. It stops here with a calm explanation rather than
   // a warning, and critically it returns BEFORE any payment_charge_attempt is
   // written, so a free visit can never become a chargeable row.
   if (priced.result.kind === "free") {
     return {
       ok: false,
-      error: `${priced.result.serviceName} is free — no payment is required, so there is nothing to prepare.`,
+      error: `${priced.result.serviceName} is free. No payment is required, so there is nothing to prepare.`,
     };
   }
   if (priced.result.kind !== "resolved") {
@@ -420,7 +420,7 @@ export async function executeSessionPaymentChargeAction(
   // The whole rule lives in decideExecutionPricingPermission; see that module
   // for why it is one exhaustive decision rather than a chain of refusals.
   //
-  // The session id is read from the attempt ROW, never from the browser — the
+  // The session id is read from the attempt ROW, never from the browser: the
   // form's session_id is used only for revalidatePath and is untrusted here.
   // The lookup is studio-scoped, so it cannot reach another tenant's attempt.
   //
@@ -664,7 +664,7 @@ export async function refundPaymentChargeAttemptAction(
     // to the studio owner ahead of controlled live enablement.
     if (practitioner.role !== "owner") {
       // PR #296: record the denied (non-owner) refund attempt. Safe IDs +
-      // event name only — no client name/email/phone, no health/treatment
+      // event name only, no client name/email/phone, no health/treatment
       // data, no Stripe secret or raw payload.
       logInternal("payment_refund_denied_not_owner", {
         studioId: studio.id,

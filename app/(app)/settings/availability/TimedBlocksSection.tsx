@@ -23,7 +23,7 @@ import {
 type Props = {
   studioTimezone: string;
   // Migration 0109: 12h/24h preference for the DISPLAYED block times. The edit
-  // form inputs stay 24h HH:MM (formatTimeForInput) — that is a machine value.
+  // form inputs stay 24h HH:MM (formatTimeForInput), that is a machine value.
   timeFormat: TimeFormat;
   todayLocal: string;
   blocks: ReadonlyArray<StudioTimedBlock>;
@@ -139,12 +139,12 @@ export function TimedBlocksSection({
     fd.set("end_local", endLocal);
     fd.set("category", category);
     fd.set("private_note", privateNote);
-    // Send all_day on create AND edit — the update action now honours it, so
+    // Send all_day on create AND edit: the update action now honours it, so
     // editing an all-day block keeps it all-day and toggling converts modes.
     if (allDay) {
       fd.set("all_day", "true");
     }
-    // Send the explicit scope whenever capacity is on — INCLUDING whole-day
+    // Send the explicit scope whenever capacity is on, INCLUDING whole-day
     // blocks, which may be scoped to one practitioner (their whole day off) or
     // studio-wide (All practitioners).
     if (capacityOn) {

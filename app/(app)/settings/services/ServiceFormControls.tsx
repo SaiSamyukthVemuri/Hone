@@ -4,7 +4,7 @@
 // They exist only to provide UI affordances (preset duration pills +
 // in-flight save feedback) on top of the existing server forms. They
 // do NOT change the server actions, the FormData shape, or the
-// validation rules — every input still submits as
+// validation rules: every input still submits as
 // `default_duration_minutes`, `name`, etc., and is parsed by the
 // unchanged actions.ts handlers.
 
@@ -15,7 +15,7 @@ import { SERVICE_COLOR_KEYS, isServiceColorKey } from "@/lib/calendar/service-co
 const DURATION_PRESETS_MINUTES: ReadonlyArray<number> = [15, 30, 45, 60, 90];
 
 // Swatch dot per allowed color key (preview only; the real card bundle lives in
-// lib/calendar/service-colors.ts). No rose/red/pink — reserved for allergy and
+// lib/calendar/service-colors.ts). No rose/red/pink, reserved for allergy and
 // clinical-caution signals. Tones mirror the palette's light/deep alternation so
 // the swatch previews the separation the calendar card will actually show.
 const COLOR_SWATCH: Record<string, string> = {
@@ -131,7 +131,7 @@ function StatusPill({ active }: { active: boolean }) {
 // children). Each row owns its own open state, so multiple rows can be open
 // at once and toggling one never affects another. The `toggle` slot is the
 // standalone visibility form (its own <form>, never nested in the edit form
-// — preserves the PR #35 fix). No server-action or FormData changes.
+// preserves the PR #35 fix). No server-action or FormData changes.
 export function ServiceAccordionItem({
   name,
   durationLabel,
@@ -214,7 +214,7 @@ export function ServiceAccordionItem({
 // Duration field. The presets sit as a tight pill row directly above
 // the number input. Clicking a preset sets the input value (and
 // dispatches an input event so any controlled-input watchers see the
-// change). Custom durations still work — the input is a normal
+// change). Custom durations still work: the input is a normal
 // number field with min=5, max=480, step=5. FormData submits as
 // `default_duration_minutes` exactly as the unchanged action expects.
 export function DurationField({
@@ -283,7 +283,7 @@ export function DurationField({
 }
 
 // Submit button that shows in-flight feedback via useFormStatus().
-// Renders inside the parent <form action={...}> — same scope as the
+// Renders inside the parent <form action={...}>, same scope as the
 // existing button it replaces. While pending the button is disabled
 // and reads pendingLabel; otherwise it shows idleLabel. The page
 // re-render that Next.js triggers on revalidatePath() is the implicit
@@ -310,7 +310,7 @@ export function ServiceSubmitButton({
 }
 
 // Hide-from-booking / Show-in-booking toggle submit. Lives in its OWN
-// <form action={toggleServiceActiveAction}> in the card header — NOT
+// <form action={toggleServiceActiveAction}> in the card header, NOT
 // nested inside the edit form (a nested <form> is invalid HTML; the
 // browser drops the inner one, which is why this toggle previously
 // "did nothing": the click submitted the outer edit form instead of the

@@ -64,7 +64,7 @@ export function AssistedIntakeEditor({
   const current = stepById(step);
 
   // Same conditional-visibility authority the client's wizard uses. Not a
-  // copy of it — the same exported function.
+  // copy of it: the same exported function.
   const visibleQuestions = useMemo(
     () => visibleQuestionsForStep(step, responses),
     [step, responses],
@@ -99,7 +99,7 @@ export function AssistedIntakeEditor({
         // seeded from the stored responses, which can already contain the
         // client's own step-5 answers if they used their link first; sending
         // them back is pointless and makes the server work harder to prove
-        // they are unchanged. The server remains the authority — it strips
+        // they are unchanged. The server remains the authority: it strips
         // these keys and refuses any that would CHANGE a client answer.
         responses: withoutClientOwnedKeys(responses),
         expectedUpdatedAt: updatedAt,
@@ -261,8 +261,8 @@ export function AssistedIntakeEditor({
   );
 }
 
-// Persistent, unmissable, and carefully worded. It states what is happening —
-// the practitioner is recording answers the client is giving — and who
+// Persistent, unmissable, and carefully worded. It states what is happening,
+// the practitioner is recording answers the client is giving, and who
 // finishes. It never says "acting as", "on behalf of", "signing for" or
 // "submitting for": none of those would be true.
 function AssistedBanner({ clientName }: { clientName: string }) {
@@ -353,7 +353,7 @@ function HandoffPanel({
         </h2>
         <p className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
           The questionnaire is recorded. The final step is {clientName}&rsquo;s
-          own — a short set of confirmations they read and tick themselves,
+          own: a short set of confirmations they read and tick themselves,
           followed by submitting the intake. You cannot complete that part for
           them.
         </p>

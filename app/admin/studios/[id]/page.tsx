@@ -14,7 +14,7 @@ import { ResendWelcomeButton } from "./ResendWelcomeButton";
 // AGGREGATE counts + setup-health flags ONLY. It deliberately does NOT select
 // or render raw client names/contacts, treatment notes, imported-memory
 // contents, exposure incidents, payment internals, Stripe ids, tokens, or
-// audit JSON — clients/appointments/imported memory appear as counts only.
+// audit JSON: clients/appointments/imported memory appear as counts only.
 
 type OwnerInviteStatus = "accepted" | "pending" | "none";
 
@@ -36,7 +36,7 @@ type StudioDetail = {
 };
 
 // Onboarding-v2 status for the admin view (migration 0140). Send outcome only
-// (Sent / Failed / not sent) — no delivered/opened tracking. requiredDone is a
+// (Sent / Failed / not sent), no delivered/opened tracking. requiredDone is a
 // coarse progress derived from the aggregate counts already loaded here.
 type OnboardingAdminView = {
   enabled: boolean;
@@ -58,7 +58,7 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
     // appointments/imported_treatment_memories) has a studio_id FK to studios.
     // The onboarding-v2 flag + state are read SEPARATELY (below) so that a
     // deployment where migration 0140 is not yet applied (or was rolled back)
-    // never breaks this core page — the onboarding section degrades to "off".
+    // never breaks this core page: the onboarding section degrades to "off".
     admin
       .from("studios")
       .select(
@@ -174,7 +174,7 @@ export default async function AdminStudioPage({
   const { id } = await params;
   const studio = await loadStudioDetail(id);
   if (!studio) notFound();
-  // PR B: per-studio payment status — capability/status/counts only, both
+  // PR B: per-studio payment status: capability/status/counts only, both
   // modes, redacted account suffix. Read via the shared admin helper.
   const payments = await loadStudioPaymentStatus(createAdminClient(), id);
 
@@ -229,7 +229,7 @@ export default async function AdminStudioPage({
           <Stat label="Imported memory" value={studio.imported_memory_count} />
         </div>
         <p className="mt-2 text-xs text-neutral-500">
-          Aggregate counts only — no client names, contact details, or clinical
+          Aggregate counts only, no client names, contact details, or clinical
           content are shown here.
         </p>
       </section>
@@ -314,7 +314,7 @@ export default async function AdminStudioPage({
         <h2 className="mb-3 text-xl font-medium">Payments</h2>
         <p className="mb-3 max-w-prose text-sm text-neutral-500">
           Runtime: {payments.runtimeMode} mode. Capability, status, and
-          mode-separated counts only — account ids are redacted; no payment,
+          mode-separated counts only: account ids are redacted; no payment,
           card, or customer identifiers are shown.
         </p>
         {payments.loadError ? (
@@ -381,7 +381,7 @@ function Flag({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-// PR B: one mode's payment posture. Redaction-first — the helper only ever
+// PR B: one mode's payment posture. Redaction-first, the helper only ever
 // returns capability/status/counts plus a redacted account suffix.
 function PaymentModeCard({ label, row }: { label: "Live" | "Test"; row: StudioModeRow }) {
   return (
@@ -425,7 +425,7 @@ function PaymentModeCard({ label, row }: { label: "Live" | "Test"; row: StudioMo
           </div>
         </dl>
       ) : (
-        <p className="text-neutral-500">No {label.toLowerCase()}-mode row — not connected in this mode.</p>
+        <p className="text-neutral-500">No {label.toLowerCase()}-mode row, not connected in this mode.</p>
       )}
     </div>
   );

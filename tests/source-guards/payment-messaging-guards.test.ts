@@ -95,7 +95,7 @@ describe("banned stale payment claims (runtime app/lib/components)", () => {
       path.join(ROOT, "app/(app)/settings/payments/PaymentsSettings.tsx"),
       "utf8",
     );
-    expect(settings).toMatch(/isTestMode \? "Test mode — no live charges" : "Live mode enabled"/);
+    expect(settings).toMatch(/isTestMode \? "Test mode: no live charges" : "Live mode enabled"/);
   });
 });
 

@@ -37,14 +37,14 @@ import { removeSessionAreaAction } from "./block-actions";
 // area; settings + entries follow. The underlying schema and the
 // create/update actions are unchanged.
 
-// Section title precedence (presentation only — never mutates schema):
-//   1. primary_area (+ side / specifics)   — the structured area
-//   2. block_name                          — legacy free-text label
-//   3. "Treatment area N" placeholder      — muted; no area chosen yet
+// Section title precedence (presentation only, never mutates schema):
+//   1. primary_area (+ side / specifics)  , the structured area
+//   2. block_name                         , legacy free-text label
+//   3. "Treatment area N" placeholder     : muted; no area chosen yet
 function areaTitle(
   block: SessionBlock & { structured_areas?: SessionBlockArea[] },
 ): { text: string; placeholder: boolean } {
-  // Multi-area (0128): structured child rows take precedence — render every
+  // Multi-area (0128): structured child rows take precedence: render every
   // area with its own laterality ("Left cheek · Right sideburn"). Legacy blocks
   // (no child rows) fall back to primary_area + side below.
   const structured = resolveBlockAreas(block.structured_areas ?? [], {
@@ -124,15 +124,15 @@ export function SessionBlocksView({
   // Charting-usability polish (Chloe): the long settings form no longer
   // auto-renders. A session with zero saved blocks starts on a COMPACT "Add
   // settings block" CTA; opening the form is an explicit tap and Cancel returns
-  // to the compact state. Opening or cancelling creates NO database row — the
+  // to the compact state. Opening or cancelling creates NO database row: the
   // block is written only when the practitioner saves (existing create action).
   const [adding, setAdding] = useState(false);
   const previousBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
 
   // The fast-start param is a ONE-SHOT instruction ("open the editor for the
   // area I just created"), not durable page state. Consume it here with a
-  // shallow history rewrite — no router navigation, no server refetch, no extra
-  // history entry — so reloading this URL later does not silently reopen an
+  // shallow history rewrite, no router navigation, no server refetch, no extra
+  // history entry, so reloading this URL later does not silently reopen an
   // editor. The editor is already open by then: BlockSection seeds its own
   // `editing` state from the prop at mount, so clearing the URL cannot close it.
   useEffect(() => {
@@ -238,14 +238,14 @@ function BlockSection({
 
   // Bring the auto-opened area into view. The copy panel that sat above it has
   // just been replaced by the copied areas, so without this the practitioner
-  // would land mid-page and still have to scroll — the exact step this feature
+  // would land mid-page and still have to scroll: the exact step this feature
   // removes. Mount-only: it never fights a scroll position she chose herself.
   useEffect(() => {
     if (!autoEdit) return;
     sectionRef.current?.scrollIntoView({ block: "start" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // Extra passes are optional and collapsed by default — the first reading
+  // Extra passes are optional and collapsed by default: the first reading
   // is captured on the one-page treatment-area form, so this is only for
   // additional passes on the same area.
   const [addingPass, setAddingPass] = useState(false);
@@ -415,12 +415,12 @@ function BlockSection({
             );
           })()}
 
-          {/* Charting unification: reactions are ONE unified findings concept —
+          {/* Charting unification: reactions are ONE unified findings concept,
               new/migrated reactions render as chips in the entries above. There is
               NO "Client / skin response" reaction section. This block level shows
               only: (a) Client tolerance (its own concept), and (b) LEGACY, clearly
-              labeled, un-migrated data — a legacy reaction_type not yet captured as
-              a chip, and a legacy per-area response note — so old records stay
+              labeled, un-migrated data: a legacy reaction_type not yet captured as
+              a chip, and a legacy per-area response note, so old records stay
               intact and truthful without recreating a second reaction group or
               double-showing a migrated reaction. */}
           {block.tolerance_rating != null && (

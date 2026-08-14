@@ -27,7 +27,7 @@ function outcomeClass(outcome: string): string {
 }
 
 // The metadata is already sanitized (primitives only, sensitive keys dropped),
-// so a compact key:value summary is safe — no raw JSON blob.
+// so a compact key:value summary is safe, no raw JSON blob.
 function metaSummary(metadata: AdminActionEventRow["metadata"]): string {
   const parts = Object.entries(metadata ?? {})
     .filter(([, v]) => v != null && typeof v !== "object")
@@ -53,7 +53,7 @@ export default async function AdminAuditPage() {
         <p className="mt-1 text-sm text-neutral-500">
           The {events.length} most recent operator actions (append-only). Records
           who did what, to which studio/resource, when, and the outcome. Safe
-          metadata only — no tokens, secrets, card data, URLs, or clinical/intake
+          metadata only, no tokens, secrets, card data, URLs, or clinical/intake
           content.
         </p>
       </div>

@@ -151,12 +151,18 @@ export function resolveInventoryAutofill(
 }
 
 // A one-line label for an option, e.g.
-//   "460941 — Sterex Gold F3 · expires 2026-12-01"
-//   "460941 — Sterex Gold F3 · no expiry"
-//   "460941 — Sterex Gold F3 · EXPIRED 2025-01-01"
+//   "460941: Sterex Gold F3 · expires 2026-12-01"
+//   "460941: Sterex Gold F3 · no expiry"
+//   "460941: Sterex Gold F3 · EXPIRED 2025-01-01"
+//
+// The lot-number prefix delimiter is a CONTRACT with probe-lot-select.tsx,
+// which strips it to show the description alone beside the lot number it
+// already renders. Producer and consumer must change together; see
+// tests/lib/record-keeping/probe-lot-inventory.test.ts for the pin.
+export const PROBE_LOT_LABEL_DELIMITER = ": ";
 export function probeLotOptionLabel(o: ProbeLotOption): string {
   const head = o.itemDescription
-    ? `${o.lotNumber} — ${o.itemDescription}`
+    ? `${o.lotNumber}${PROBE_LOT_LABEL_DELIMITER}${o.itemDescription}`
     : o.lotNumber;
   const status = o.expiryDate
     ? o.isExpired

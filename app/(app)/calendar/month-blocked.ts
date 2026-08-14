@@ -1,5 +1,5 @@
 // Pure, server-safe month blocked-time grouping. Lives in a plain (.ts)
-// module — not MonthView.tsx — so it is unit-testable without a JSX transform
+// module (not MonthView.tsx) so it is unit-testable without a JSX transform
 // and callable from the server-rendered calendar page. Mirrors the week view's
 // block sources: full-day blockouts, one-off timed blocks, recurring breaks.
 

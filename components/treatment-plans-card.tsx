@@ -63,7 +63,7 @@ type Props = {
   deleteStageAction: TreatmentScheduleAction;
   practitionerNames: Record<string, string>;
   // Deep-link from an appointment (create_plan=1): open the create form on mount
-  // and focus its first field. Opening the form creates NOTHING — only Save does.
+  // and focus its first field. Opening the form creates NOTHING, only Save does.
   autoOpenCreate?: boolean;
   // Validated internal "/calendar/<uuid>" back link, or null (nothing rendered).
   returnTo?: string | null;
@@ -922,7 +922,7 @@ function PlannedVsActualBlock({
   const hasAnything =
     hasEstimate || pva.actualLoggedMinutes > 0 || pva.actualSessionCount > 0;
 
-  // Nothing to show at all — no estimate, no logged time. Keep the card
+  // Nothing to show at all, no estimate, no logged time. Keep the card
   // quiet rather than rendering an empty block.
   if (!hasAnything) return null;
 
@@ -986,7 +986,7 @@ function PlannedVsActualBlock({
         </>
       ) : (
         <>
-          {/* No estimate yet — show the actual side alone so practitioners
+          {/* No estimate yet: show the actual side alone so practitioners
               can still see time invested. */}
           {pva.actualLoggedMinutes > 0 && (
             <p className="text-xs text-neutral-700 dark:text-neutral-300 tabular-nums">

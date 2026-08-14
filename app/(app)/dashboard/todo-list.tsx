@@ -8,7 +8,7 @@ import {
 } from "@/lib/dashboard/todo-model";
 
 // ===========================================================================
-// Dashboard V2 Part 2B — the ONE To-do list.
+// Dashboard V2 Part 2B, the ONE To-do list.
 // ===========================================================================
 //
 // Replaces four independent visible sub-sections (Action needed, Follow-up
@@ -21,7 +21,7 @@ import {
 //     WHO/WHAT    WHY        WHAT NEXT
 //
 // There is exactly one empty state, not four. Presentational only: no loader,
-// no query, no clock — `items` is already ordered and deduplicated.
+// no query, no clock: `items` is already ordered and deduplicated.
 
 export function DashboardTodoList({ todo }: { todo: DashboardTodo }) {
   // DASH-TRUTH-02: the list used to end with the non-interactive text
@@ -96,7 +96,7 @@ export function DashboardTodoList({ todo }: { todo: DashboardTodo }) {
               )}
             </div>
             {/* WHAT the practitioner can do next. Always a real, existing
-                route — this list never renders a dead CTA. */}
+                route: this list never renders a dead CTA. */}
             <Link
               href={item.action.href}
               className="self-center shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
@@ -121,7 +121,7 @@ export function DashboardTodoList({ todo }: { todo: DashboardTodo }) {
     )}
     {/* A safety scan cap can still mean the studio has older unresolved work
         this list never scanned. Say so plainly rather than implying the list
-        is exhaustive — but never as a control, because there is nothing more
+        is exhaustive, but never as a control, because there is nothing more
         to reveal in place. */}
     {todo.moreCount > 0 && (
       <p className="mt-2 text-xs text-neutral-500">

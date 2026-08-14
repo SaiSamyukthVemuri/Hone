@@ -1,8 +1,8 @@
-// TEMPORARY CONTAINMENT — the whole-session "Copy areas and settings from last
+// TEMPORARY CONTAINMENT: the whole-session "Copy areas and settings from last
 // session" control is paused while it is upgraded to preserve complete settings
 // safely (the previous version persisted real blocks before today's treatment
 // was explicitly saved, which read as performed treatment). This renders a
-// truthful, NON-INTERACTIVE notice — it does not call the server action. The
+// truthful, NON-INTERACTIVE notice. It does not call the server action. The
 // in-form "Copy settings" control inside each treatment area is unaffected.
 //
 // This is a server component (no client interactivity) so it ships no action

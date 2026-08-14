@@ -1,7 +1,7 @@
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { PostcareSendButton } from "@/app/(app)/calendar/PostcareSendButton";
 
-// THE postcare preview + send/status surface — one implementation, two mounts.
+// THE postcare preview + send/status surface, one implementation, two mounts.
 //
 // Extracted from the calendar appointment page so the charting page's "Finish
 // appointment" workflow renders the SAME thing rather than a lookalike. Every
@@ -44,8 +44,8 @@ export function PostcareSection(props: {
   // neither surface can quietly drop it.
   clientEmail?: string | null;
   // B8 / 0177: the appointment's lifecycle status, server-derived by both
-  // callers. The DATABASE is the authority — claim_postcare_send refuses any
-  // status other than 'completed' — so this exists to keep the SURFACE
+  // callers. The DATABASE is the authority: claim_postcare_send refuses any
+  // status other than 'completed', so this exists to keep the SURFACE
   // truthful, not to enforce anything. Offering an enabled Send that the
   // command will refuse is a worse experience than not offering it.
   //
@@ -93,13 +93,13 @@ export function PostcareSection(props: {
           data-testid="postcare-no-client-email"
           className="text-sm text-neutral-700 dark:text-neutral-300"
         >
-          Postcare unavailable — no client email
+          Postcare unavailable: no client email
         </p>
       ) : aftercareConfigured && props.appointmentStatus !== "completed" ? (
         // B8 / 0177. Postcare is completed-only, and this branch FAILS CLOSED.
         //
         // An earlier version read `appointmentStatus != null && !== "completed"`,
-        // which let a NULL status fall through to an enabled Send — the exact
+        // which let a NULL status fall through to an enabled Send: the exact
         // opposite of what its own test claimed. A status the surface could not
         // resolve is not evidence that the visit is finished, so anything that
         // is not literally "completed" (null, a failed context read, a

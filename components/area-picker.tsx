@@ -8,7 +8,7 @@ import { CUSTOM_AREA_MAX, canCommitCustomArea } from "@/lib/sessions/area-input"
 const PRIMARY_AREA_MAX = CUSTOM_AREA_MAX;
 
 // Canonical iff the value is in the FLAT AREAS list (incl. "Full face"/"Other"),
-// case-insensitive — NOT AREA_REGIONS alone, which decomposes "Full face" and
+// case-insensitive, NOT AREA_REGIONS alone, which decomposes "Full face" and
 // would wrongly route a legitimate "Full face" value into the Other input.
 function isCanonicalArea(value: string): boolean {
   return isCanonicalTreatmentArea(value);
@@ -27,11 +27,11 @@ function isCanonicalArea(value: string): boolean {
 // ----------------------------------------------
 // `customCommit` decides what the free-text "Other" input does:
 //
-//   "live" (DEFAULT, unchanged legacy contract) — every keystroke calls
+//   "live" (DEFAULT, unchanged legacy contract), every keystroke calls
 //     `onChange`. Correct when the parent holds ONE controlled area value and
 //     wants live editing (a single-area field).
 //
-//   "explicit" — keystrokes NEVER call `onChange`. The text is local draft
+//   "explicit", keystrokes NEVER call `onChange`. The text is local draft
 //     state; the practitioner commits it with the "Add area" button or Enter,
 //     which calls `onCommitCustom` exactly once. This is REQUIRED by any parent
 //     that treats a callback as "append a new area", because a live per-
@@ -72,7 +72,7 @@ export function AreaPicker({
 
   function pickOther() {
     // Explicit mode: revealing the input is NOT a commit, so it must not call
-    // onChange — doing so would append the (possibly partial) draft.
+    // onChange, doing so would append the (possibly partial) draft.
     if (explicit) {
       setOtherSelected((open) => !open);
       return;

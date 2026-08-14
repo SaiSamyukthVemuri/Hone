@@ -4,15 +4,15 @@
 //
 // Previously this lived privately inside app/intake/[token]/IntakeWizard.tsx.
 // It moved here when the practitioner-assisted editor was added so the two
-// surfaces render identical controls — same field types, same option order,
+// surfaces render identical controls: same field types, same option order,
 // same "none of the above" exclusivity, same required marker, same follow-up
-// notes rule — rather than becoming a fourth independent transcription of
+// notes rule: rather than becoming a fourth independent transcription of
 // INTAKE_STEPS (the repo already carries the read-only settings preview and
 // the practitioner review grid).
 //
 // This move is deliberately behaviour-preserving: every branch below is
 // transcribed verbatim from the wizard as it shipped in PR #518. In
-// particular `const checked = value === true;` is load-bearing — nothing here
+// particular `const checked = value === true;` is load-bearing, nothing here
 // may ever default a checkbox to checked, because the acknowledgement
 // checkboxes are client-owned first-person statements. The guard that pins
 // that now points at this file (see
@@ -230,14 +230,14 @@ function renderControl(
   if (q.type === "checkbox") {
     // Unchecked unless the stored answer is exactly `true`. Nothing here
     // defaults a checkbox to checked, and no code path ticks it on the
-    // client's behalf — opening the step or continuing past an earlier one
+    // client's behalf: opening the step or continuing past an earlier one
     // never marks an acknowledgement accepted. The practitioner-assisted
     // editor never renders this step at all; the server additionally strips
     // every client-owned key from an assisted save.
     const checked = value === true;
     // A checkbox is the one control type this component renders without the
     // top label block, so before this it was the only one with no `id`, no
-    // required marker and no help text at all — required-ness was
+    // required marker and no help text at all: required-ness was
     // discoverable only by pressing Continue and failing. The wrapping
     // <label> already names the input; what was missing is the required
     // signal, the help text, and a programmatic tie to the error.

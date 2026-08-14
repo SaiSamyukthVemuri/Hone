@@ -23,7 +23,7 @@ function fail(message: string): never {
 // service-role writes the operator performs by hand in docs/20 §2.1/§2.2:
 //   1. insert studios(name, owner_email, slug, timezone)
 //   2. insert pending_invitations(studio_id, email, role 'owner', display_name)
-// The owner practitioner row is NEVER inserted here — it is created by the
+// The owner practitioner row is NEVER inserted here. It is created by the
 // existing handle_new_user() trigger (migration 0081) on the owner's first
 // invited sign-in, which stamps terms/privacy acceptance. No Stripe, no fee
 // columns, no email automation, no services/availability seeding.
@@ -99,7 +99,7 @@ export async function createStudioWithOwnerInvite(
 
   // Case-insensitive exact match (the DB unique index is on lower(email), and
   // existing invites may be stored mixed-case). Escape ILIKE wildcards (% and
-  // _) so an email whose local part contains them — e.g. first_last@x.com —
+  // _) so an email whose local part contains them: e.g. first_last@x.com,
   // cannot over-match unrelated invitations.
   const ownerEmailPattern = input.ownerEmail.replace(/[\\%_]/g, "\\$&");
   const { data: dupInvite, error: dupErr } = await admin
@@ -201,7 +201,7 @@ export async function createStudioWithOwnerInvite(
   });
 
   // Product-funnel entry event. Studio actor (no owner practitioner UUID exists
-  // yet — created later by handle_new_user on first sign-in). Non-blocking,
+  // yet: created later by handle_new_user on first sign-in). Non-blocking,
   // post-response, only the already-allowlisted studio_id property. This is
   // operator/product telemetry, independent of the per-studio onboarding flag.
   captureServerEvent({
@@ -211,7 +211,7 @@ export async function createStudioWithOwnerInvite(
   });
 
   // Onboarding v2 only: send the ONE truthful invitation email + seed
-  // studio_onboarding. Best-effort — the studio + invite already succeeded, and
+  // studio_onboarding. Best-effort, the studio + invite already succeeded, and
   // deliverWelcomeEmail never throws (studio creation must not depend on email).
   // No account-variant is inferred: at this point the owner has been INVITED,
   // not added; membership + acceptance happen when they sign in and consent.

@@ -32,7 +32,7 @@ export default async function PaymentsSettingsPage() {
   // get_studio_payment_settings_display is the display-safe read RPC
   // (display columns only, no Stripe IDs). RLS is enforced inside the
   // RPC via is_studio_owner(). Mode-scoped (migration 0103): only the
-  // CURRENT deployment mode's row is returned — in live mode a studio with
+  // CURRENT deployment mode's row is returned: in live mode a studio with
   // only a test binding gets zero rows, which renders the not-connected /
   // Connect-with-Stripe state instead of the other mode's stale status.
   const supabase = await createClient();
@@ -85,7 +85,7 @@ export default async function PaymentsSettingsPage() {
     (studio.no_show_policy_text ?? "").trim().length > 0;
 
   // Shared payment-status presenter (PR A): ALL status copy on this page is
-  // derived server-side and passed down as plain strings — the client
+  // derived server-side and passed down as plain strings: the client
   // component makes no claims of its own. Runtime mode comes from the
   // deployment (inferStripeLivemode()), never from the nullable row.
   const runtimeMode = currentRuntimeMode();

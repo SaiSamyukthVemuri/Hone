@@ -17,7 +17,7 @@ import { MobileDayTimeline } from "./MobileDayTimeline";
 import type { DayAvailability } from "./DayColumn";
 
 // Per-day slice of the week's data the calendar page already loaded. Passed as
-// plain JSON to this client component — NO new/divergent query is introduced.
+// plain JSON to this client component, NO new/divergent query is introduced.
 export type MobileDayData = {
   date: string;
   weekdayShort: string;
@@ -85,7 +85,7 @@ export function CalendarMobileDayView({
     null,
   );
   // "+" opens a chooser (Book appointment / Block time); the chosen action then
-  // opens the existing QuickBook / QuickBlock drawers — same model as desktop
+  // opens the existing QuickBook / QuickBlock drawers: same model as desktop
   // DayColumn (no mobile-only model). Block-time create mirrors the desktop
   // calendar block-create authorization (available to active practitioners);
   // edit/delete stays owner-gated via TimedBlockEditDrawer below.
@@ -124,7 +124,7 @@ export function CalendarMobileDayView({
 
   // Floating "+" default time: on today within working hours, the next rounded
   // 30-min mark; otherwise the first visible working time (HOUR_START). Never
-  // Willow-specific — derived purely from the visible-hours constants. Opens the
+  // Willow-specific, derived purely from the visible-hours constants. Opens the
   // Book/Block chooser prefilled with a 60-min default range for the selected day.
   function openPlusChooser() {
     let minutes = HOUR_START * 60;
@@ -183,9 +183,9 @@ export function CalendarMobileDayView({
           </div>
         </div>
 
-        {/* Weekday/date strip — tap a day to switch within the loaded week (no
+        {/* Weekday/date strip: tap a day to switch within the loaded week (no
             fetch). Horizontally scrollable on narrow screens (min-width per pill;
-            flex-1 fills on wider ones) — the container scrolls, never the page.
+            flex-1 fills on wider ones), the container scrolls, never the page.
             The selected pill is scrolled into view (see effect above). Today keeps
             a high-contrast ring so it stays identifiable even when selected. */}
         <div ref={stripRef} className="mt-2 flex gap-1 overflow-x-auto pb-1">
@@ -215,7 +215,7 @@ export function CalendarMobileDayView({
               >
                 <span className="font-medium uppercase">{d.weekdayShort}</span>
                 <span className="tabular-nums">{dateNum}</span>
-                {/* Appointment indicator dot — visible with contrast in both the
+                {/* Appointment indicator dot: visible with contrast in both the
                     selected (black) and normal pill states. */}
                 <span
                   aria-hidden
@@ -271,7 +271,7 @@ export function CalendarMobileDayView({
         +
       </button>
 
-      {/* "+" chooser — reuses the desktop drag-action chooser (Book / Block). */}
+      {/* "+" chooser: reuses the desktop drag-action chooser (Book / Block). */}
       <DragActionChooser
         open={chooserDraft !== null}
         draft={chooserDraft}
@@ -298,7 +298,7 @@ export function CalendarMobileDayView({
         }}
       />
 
-      {/* Reused drawers — identical props/behaviour to the desktop DayColumn. */}
+      {/* Reused drawers: identical props/behaviour to the desktop DayColumn. */}
       <QuickBookDrawer
         open={draft !== null}
         draft={draft}
@@ -312,7 +312,7 @@ export function CalendarMobileDayView({
         currentPractitionerName={currentPractitionerName}
         onClose={() => setDraft(null)}
       />
-      {/* Block-time create — the same block-create drawer the desktop DayColumn
+      {/* Block-time create: the same block-create drawer the desktop DayColumn
           uses (available to active practitioners). */}
       <QuickBlockDrawer
         open={blockDraft !== null}

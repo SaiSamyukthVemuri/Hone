@@ -6,6 +6,7 @@ import {
   filterProbeLotOptions,
   resolveInventoryAutofill,
   probeLotOptionLabel,
+  PROBE_LOT_LABEL_DELIMITER,
   type ProbeLotInventoryRow,
 } from "@/lib/record-keeping/probe-lot-inventory";
 
@@ -150,5 +151,49 @@ describe("filterProbeLotOptions + label", () => {
     expect(probeLotOptionLabel(a)).toContain("expires 2026-12-01");
     expect(probeLotOptionLabel(e)).toContain("EXPIRED 2025-01-01");
     expect(probeLotOptionLabel(n)).toContain("no expiry");
+  });
+
+  // The lot-number prefix delimiter is a CONTRACT between this producer and
+  // components/probe-lot-select.tsx, which strips the prefix so the row can
+  // show the description beside the lot number it already renders. When the
+  // em-dash cleanup changed the delimiter, changing only one side would have
+  // left the prefix visible with nothing failing. Both now import one exported
+  // constant, so they cannot disagree — and these pins prove the stripping
+  // behaviour rather than the punctuation.
+  it("the lot label prefix is stripped by the delimiter the producer actually uses", () => {
+    const [o] = buildProbeLotOptions(
+      [row({ id: "x", lotNumber: "460941", itemDescription: "Sterex Gold F3", expiryDate: null })],
+      TODAY,
+    );
+    const label = probeLotOptionLabel(o);
+    expect(label.startsWith(`460941${PROBE_LOT_LABEL_DELIMITER}`)).toBe(true);
+
+    // Exactly what the component renders beside the lot number.
+    const shown = label
+      .replace(`${o.lotNumber}${PROBE_LOT_LABEL_DELIMITER}`, "")
+      .replace(`${o.lotNumber} · `, "");
+    expect(shown).toBe("Sterex Gold F3 · no expiry");
+    expect(shown.startsWith("460941")).toBe(false); // no leftover lot prefix
+  });
+
+  it("an option with no description still strips cleanly", () => {
+    const [o] = buildProbeLotOptions(
+      [row({ id: "y", lotNumber: "770022", itemDescription: "", expiryDate: null })],
+      TODAY,
+    );
+    const label = probeLotOptionLabel(o);
+    const shown = label
+      .replace(`${o.lotNumber}${PROBE_LOT_LABEL_DELIMITER}`, "")
+      .replace(`${o.lotNumber} · `, "");
+    expect(shown).toBe("no expiry");
+    expect(shown).not.toContain("770022");
+  });
+
+  it("no typographic em dash remains in the rendered label", () => {
+    const [o] = buildProbeLotOptions(
+      [row({ id: "z", lotNumber: "1", itemDescription: "Probe", expiryDate: null })],
+      TODAY,
+    );
+    expect(probeLotOptionLabel(o)).not.toContain("\u2014");
   });
 });

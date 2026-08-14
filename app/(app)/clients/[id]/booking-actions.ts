@@ -9,15 +9,15 @@ import {
 } from "@/lib/booking/slots";
 
 function logBookingSlotError(stage: string, code: string | undefined): void {
-  // Bounded PHI-free marker only — never the raw DB/PostgREST message.
+  // Bounded PHI-free marker only, never the raw DB/PostgREST message.
   console.error(`booking_slot_db_error:${stage}:${code ?? "unknown"}`);
 }
 
 // Part 4 Item 6: target-aware internal slot loader. An OWNER of a capacity-ON
 // studio may request another practitioner's slots (params.practitionerId); every
 // other caller (member, or capacity OFF) gets their OWN timeline. A forged or
-// non-owner practitionerId is IGNORED here (resolved to self) — exactly the rule
-// bookAppointmentForClientAction enforces — and the DB command remains the final
+// non-owner practitionerId is IGNORED here (resolved to self), exactly the rule
+// bookAppointmentForClientAction enforces, and the DB command remains the final
 // authority at booking time.
 export type SlotResult =
   | { ok: true; slots: Slot[] }
@@ -65,7 +65,7 @@ export async function fetchSlotsForClientBookingAction(params: {
       logBookingSlotError("target_lookup", tErr.code);
       return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
     }
-    // Fixed copy — never reveals whether a FOREIGN id exists.
+    // Fixed copy, never reveals whether a FOREIGN id exists.
     if (!t) return { ok: false, error: "That practitioner isn't available.", code: "invalid_practitioner" };
 
     const { data: elig, error: eligErr } = await supabase
@@ -107,10 +107,10 @@ export async function fetchSlotsForClientBookingAction(params: {
 
 export type EligiblePractitioner = { id: string; displayName: string };
 
-// Part 4 Item 6: the owner-only practitioner selector's option list — the ACTIVE,
+// Part 4 Item 6: the owner-only practitioner selector's option list: the ACTIVE,
 // same-studio practitioners ELIGIBLE for the chosen service. Returns an EMPTY list
 // for a member or a capacity-OFF studio (no selector is shown there). Display
-// names only — never email/ids/metadata. RLS-scoped reads (service_practitioners
+// names only, never email/ids/metadata. RLS-scoped reads (service_practitioners
 // member_select + studio-scoped practitioners); the target is revalidated in the
 // DB command regardless.
 export async function fetchEligiblePractitionersAction(

@@ -7,7 +7,7 @@ import {
 } from "@/components/last-session-summary";
 import type { LastSessionSummary } from "@/lib/sessions/clinical-summary";
 
-// "Last visit / what we did last time" — a scannable, retrospective
+// "Last visit / what we did last time", a scannable, retrospective
 // recap at the TOP of the client Overview tab (Chloe: "on the client
 // overview I want to clearly see what we did last time").
 //
@@ -108,7 +108,7 @@ export function LastVisitCard({
               </Link>
             </div>
 
-            {/* Aftercare status — clinical, already loaded (0085 stamp).
+            {/* Aftercare status: clinical, already loaded (0085 stamp).
                 Read-only signal; never a re-send or a write. */}
             <div className="mt-3">
               {aftercareExplainedAt ? (
@@ -122,7 +122,7 @@ export function LastVisitCard({
               )}
             </div>
 
-            {/* Areas treated — the SAME single-last-session summary the
+            {/* Areas treated: the SAME single-last-session summary the
                 charting + Sessions-tab surfaces render. Reused, never
                 recomputed. Legacy/laser sessions without treatment areas
                 fall back to a quiet pointer; the full per-entry detail

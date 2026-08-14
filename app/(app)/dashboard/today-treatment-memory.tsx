@@ -6,14 +6,14 @@ import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memo
 import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 
 // ===========================================================================
-// Dashboard V2 Part 2A — the previous treatment, in place, on the Today row.
+// Dashboard V2 Part 2A, the previous treatment, in place, on the Today row.
 // ===========================================================================
 //
 // WHAT THIS IS. Progressive disclosure over the EXISTING #517 model. Compact by
 // default so Today stays calm; expanded it renders
 // <AppointmentPrepMemoryCard>, unchanged, which is the same component the
 // calendar appointment page uses and which already covers every field family
-// #517 records — areas, modality, machine settings, probe + lot, observations,
+// #517 records: areas, modality, machine settings, probe + lot, observations,
 // skin response/tolerance, additional notes, session notes, caution, and the
 // next-visit note.
 //
@@ -24,9 +24,9 @@ import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 // WHY A BUTTON AND NOT <details>. <details>/<summary> is tempting and cheaper,
 // but its open state is not controllable across a server re-render and its
 // summary swallows nested interactive content inconsistently across browsers.
-// The repo already has one disclosure idiom — a real button carrying
+// The repo already has one disclosure idiom: a real button carrying
 // aria-expanded + aria-controls, next to the region it owns
-// (components/signed-consent-viewer.tsx) — and this follows it so keyboard and
+// (components/signed-consent-viewer.tsx), and this follows it so keyboard and
 // screen-reader behaviour stays uniform.
 
 export function TodayTreatmentMemory({
@@ -39,7 +39,7 @@ export function TodayTreatmentMemory({
   clientName: string;
   /** Built by the page from the batched loader. Null when nothing is charted. */
   memory: AppointmentPrepMemory | null;
-  /** A read failed, or the batch window was truncated — NOT "no history". */
+  /** A read failed, or the batch window was truncated, NOT "no history". */
   unavailable: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -74,7 +74,7 @@ export function TodayTreatmentMemory({
 
       {/* "For next visit" is the SAME field as the row's "Remember" line
           (sessions.next_session_note) whenever both are present, so it is not
-          repeated here — printing one note twice under two labels is a bug this
+          repeated here: printing one note twice under two labels is a bug this
           row has already had once. It always renders inside the expanded card,
           under its own heading, with the visit it belongs to. */}
 

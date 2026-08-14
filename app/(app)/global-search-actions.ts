@@ -32,7 +32,7 @@ import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
 //     no exposure incident content, no audit payloads.
 //   * Every href is app-internal.
 //   * V2-A: navigation/settings results are resolved from the static
-//     registry against a SERVER-DERIVED context — the practitioner's real
+//     registry against a SERVER-DERIVED context: the practitioner's real
 //     role and the studio's real feature flags, never anything supplied by
 //     the browser. Search advertises only what its caller could already
 //     open; it grants nothing.
@@ -57,25 +57,25 @@ const MEMORY_CHILD_CANDIDATE_CAP = MEMORY_CAP * 5;
 
 // Selected once and reused by BOTH memory paths (direct text match and the
 // parent fetch for child-area matches). Sharing the literal is what lets the two
-// result sets be merged as interchangeable rows — if they drifted, a block found
+// result sets be merged as interchangeable rows, if they drifted, a block found
 // only via its child area could render a different subtitle from the same block
 // found directly.
 // `!inner` is load-bearing, not decoration. A plain embed filters the EMBED, not
 // the parent: with `session:sessions(...)` a block whose session is soft-deleted
-// or void still comes back, just with `session: null` — which then renders an
+// or void still comes back, just with `session: null`, which then renders an
 // href of `/clients/undefined/sessions/…`. Measured against the local stack:
 //   session_blocks, no filter ................................. 283
 //   `!inner` + session.record_status=neq.void ................. 280  ← parents dropped
 //   plain embed + session.record_status=neq.void .............. 283  ← nothing dropped
 // So the inner join is what makes the parent-session filters below actually
-// remove rows, and it removes them in the DATABASE — before ordering and before
-// the cap — so an inactive record can never occupy one of the four slots.
+// remove rows, and it removes them in the DATABASE: before ordering and before
+// the cap, so an inactive record can never occupy one of the four slots.
 const MEMORY_BLOCK_SELECT =
   "id, session_id, primary_area, side, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions!inner(client_id, started_at, deleted_at, record_status, client:clients(name))";
 
 // A treatment record is SEARCHABLE only while its parent session is active.
 // `sessions.record_status` is `text NOT NULL check (record_status in ('draft',
-// 'finalized','void'))`, so `neq` is safe here — a NULL would make `<>` yield
+// 'finalized','void'))`, so `neq` is safe here: a NULL would make `<>` yield
 // NULL and silently drop the row, and the column cannot be NULL.
 // 'void' is the retired/withdrawn record; 'draft' and 'finalized' are both live.
 const SESSION_ACTIVE_FILTERS = {
@@ -117,7 +117,7 @@ export async function globalSearchAction(
   rawQuery: string,
 ): Promise<{ ok: true; results: SearchResult[] } | { ok: false }> {
   let studioId: string;
-  // Navigation visibility is derived HERE, from the resolved session — the
+  // Navigation visibility is derived HERE, from the resolved session: the
   // same source that scopes every data query below. There is no code path
   // that lets a caller state its own role or flags.
   let navContext: NavSearchContext;
@@ -125,8 +125,8 @@ export async function globalSearchAction(
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
     // Both checks are written as positive equality against the privileged
-    // value, so anything unexpected — missing, null, a renamed role, a flag
-    // that is undefined because the column has not been read — resolves to
+    // value, so anything unexpected: missing, null, a renamed role, a flag
+    // that is undefined because the column has not been read: resolves to
     // the LEAST privileged view rather than the most. Fail closed.
     navContext = {
       isOwner: practitioner?.role === "owner",
@@ -167,7 +167,7 @@ export async function globalSearchAction(
       .select(MEMORY_BLOCK_SELECT)
       .eq("studio_id", studioId)
       .is("deleted_at", null)
-      // The block being live is not enough — a live block can hang off a session
+      // The block being live is not enough: a live block can hang off a session
       // that was soft-deleted or voided, and surfacing it would expose treatment
       // history the studio logically removed AND hand back a link that 404s.
       .is(SESSION_ACTIVE_FILTERS.deletedAt, null)
@@ -181,11 +181,11 @@ export async function globalSearchAction(
     // Structured treatment areas (migration 0128). The block columns above
     // only carry the LEGACY primary_area, so a block charted as
     // "Left Cheek · Right Sideburn" is stored with primary_area "Cheek" and
-    // searching "Sideburn" matched nothing — the secondary area was displayed
+    // searching "Sideburn" matched nothing: the secondary area was displayed
     // correctly but was unreachable. This is a bounded id-only probe; the
     // parent blocks themselves are fetched in the next wave under the SAME
-    // rules as the direct path — studio scope, live block, and an ACTIVE
-    // non-void parent session — so a stale, foreign or withdrawn child can
+    // rules as the direct path: studio scope, live block, and an ACTIVE
+    // non-void parent session, so a stale, foreign or withdrawn child can
     // never become a result on its own. session_block_areas has no soft-delete
     // column of its own: it cascades with the parent, so every liveness
     // decision belongs to the parent fetch.
@@ -233,8 +233,8 @@ export async function globalSearchAction(
   const status = statusForQuery(query);
   // Parent blocks for the child-area matches: ONE bounded query for all matching
   // child block ids (never one query per area row, and never one area query per
-  // block). Every integrity check the direct path applies is re-applied here —
-  // explicit studio scoping, soft-delete exclusion, and RLS as the backstop —
+  // block). Every integrity check the direct path applies is re-applied here,
+  // explicit studio scoping, soft-delete exclusion, and RLS as the backstop,
   // because a child row is only ever a POINTER; the parent is what is allowed to
   // become a result.
   const childBlockIds = [
@@ -282,7 +282,7 @@ export async function globalSearchAction(
           .select(MEMORY_BLOCK_SELECT)
           .eq("studio_id", studioId)
           .is("deleted_at", null)
-          // Identical liveness rules to the direct path — a child area must not
+          // Identical liveness rules to the direct path: a child area must not
           // be a back door to a record the direct path would refuse.
           .is(SESSION_ACTIVE_FILTERS.deletedAt, null)
           .neq(SESSION_ACTIVE_FILTERS.recordStatus, VOID_RECORD_STATUS)
@@ -340,7 +340,7 @@ export async function globalSearchAction(
 
   // Merge the two memory paths into one result set. Deduplication by block id
   // happens BEFORE the cap, so a block that matched both directly and through a
-  // child area consumes one slot rather than two — capping first would let a
+  // child area consumes one slot rather than two: capping first would let a
   // duplicate hide a distinct treatment. Ordering stays the existing newest-first
   // clinical-memory order.
   const memoryBlockRows = mergeMemoryBlockRows<MemoryBlockRow>(
@@ -350,7 +350,7 @@ export async function globalSearchAction(
   );
 
   // Migration 0128: resolve the full multi-area label per matched block so a
-  // memory result shows every treated area + laterality, not just the first —
+  // memory result shows every treated area + laterality, not just the first,
   // including for a block found ONLY through a secondary area, which is the
   // whole point of the child-area path above.
   const searchAreasByBlock = await getSessionBlockAreasByBlockIds(
@@ -361,7 +361,7 @@ export async function globalSearchAction(
     const session = Array.isArray(b.session) ? b.session[0] : b.session;
     // Belt and braces behind the inner join. If a parent ever arrives missing,
     // malformed, or (impossibly, given `!inner`) inactive, DROP the row rather
-    // than emit `/clients/undefined/sessions/…` — a link that 404s is worse
+    // than emit `/clients/undefined/sessions/…`, a link that 404s is worse
     // than no result, and a defensive render must not resurrect what the
     // database filters were written to remove.
     if (

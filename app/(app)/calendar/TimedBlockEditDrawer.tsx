@@ -16,10 +16,10 @@ import {
 
 // Edit/delete a one-off timed block from the calendar (PR C). REUSES the
 // existing owner-gated Settings actions (updateTimedBlockAction /
-// deleteTimedBlockAction) — no new server action, no migration, no RLS change.
+// deleteTimedBlockAction), no new server action, no migration, no RLS change.
 // Owner-only edit/delete (the actions enforce assertOwnerWithStudio server-side
 // AND owner-only RLS); non-owners see a read-only detail panel. Recurring breaks
-// are NOT edited here — only one-off studio_timed_blocks.
+// are NOT edited here, only one-off studio_timed_blocks.
 
 // Machine-value formatters (24h HH:MM + YYYY-MM-DD in the studio tz), matching
 // the Settings block editor so updateTimedBlockAction receives the same shape.
@@ -108,7 +108,7 @@ export function TimedBlockEditDrawer({
     fd.set("category", category);
     fd.set("private_note", privateNote);
     // Preserve/convert all-day. Scope (practitioner_id) is intentionally NOT
-    // sent — updateTimedBlockAction loads the existing row and preserves it.
+    // sent: updateTimedBlockAction loads the existing row and preserves it.
     if (allDay) fd.set("all_day", "true");
     startTransition(async () => {
       const r = await updateTimedBlockAction(fd);
@@ -174,7 +174,7 @@ export function TimedBlockEditDrawer({
         {!isOwner ? (
           // Read-only for non-owners: the server actions are owner-gated
           // (assertOwnerWithStudio + owner-only RLS), so edit/delete are never
-          // exposed here — they would be rejected.
+          // exposed here. They would be rejected.
           <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
             Only studio owners can edit or remove blocked time. Your studio owner
             can manage blocks in Settings → Availability.

@@ -126,7 +126,7 @@ export function ClientPinnedNotesCard({
         <ul className="mt-3 flex flex-col gap-2">
           {notes.map((n) =>
             editingId === n.id ? (
-              // Inline editor — full-width fields that wrap on narrow (iPhone)
+              // Inline editor: full-width fields that wrap on narrow (iPhone)
               // widths so nothing overflows horizontally.
               <li
                 key={n.id}

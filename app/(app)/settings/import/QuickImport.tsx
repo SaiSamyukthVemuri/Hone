@@ -263,7 +263,7 @@ function ImportSummaryView({
         <Stat label="Not imported" value={summary.rowsNotImported} />
       </div>
       <p className="text-xs text-neutral-500">
-        Imported history is recorded as imported memory — not charted live in
+        Imported history is recorded as imported memory, not charted live in
         Hone.
       </p>
       {summary.createdClients.length > 0 ? (

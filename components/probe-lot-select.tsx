@@ -5,6 +5,7 @@ import { useId, useMemo, useState } from "react";
 import {
   filterProbeLotOptions,
   probeLotOptionLabel,
+  PROBE_LOT_LABEL_DELIMITER,
   type ProbeLotOption,
 } from "@/lib/record-keeping/probe-lot-inventory";
 
@@ -14,8 +15,8 @@ import {
 //
 // Contract:
 //   * MANUAL ENTRY is always available and a typed value is never silently
-//     replaced — typing calls onManualChange and clears any inventory link.
-//   * Selecting a row calls onSelectInventory(option) — the durable link is the
+//     replaced: typing calls onManualChange and clears any inventory link.
+//   * Selecting a row calls onSelectInventory(option), the durable link is the
 //     inventory row `id`, never the lot number. Selected identity + React keys
 //     use the id, so two rows sharing a lot number stay distinct.
 //   * The dropdown lists ACTIVE (non-expired) lots by default; typing searches
@@ -125,7 +126,7 @@ export function ProbeLotSelect({
                     </span>
                     <span className="text-xs text-neutral-500">
                       {probeLotOptionLabel(o)
-                        .replace(`${o.lotNumber} — `, "")
+                        .replace(`${o.lotNumber}${PROBE_LOT_LABEL_DELIMITER}`, "")
                         .replace(`${o.lotNumber} · `, "")}
                     </span>
                   </button>
@@ -149,7 +150,7 @@ export function ProbeLotSelect({
             data-testid="probe-lot-manual"
             className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
           >
-            Manual entry — not linked to inventory
+            Manual entry, not linked to inventory
           </span>
         )}
         <Link

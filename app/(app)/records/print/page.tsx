@@ -307,7 +307,7 @@ async function DisinfectantsPrint({
   // PR #295: read-time discard / replace-by status, computed against the
   // studio's "today" (the same deterministic todayInTz the in-app Records
   // screen uses) so the printed inspection log matches what staff see on
-  // screen. Display-only — nothing is stored or sent.
+  // screen. Display-only, nothing is stored or sent.
   const today = todayInTz(timezone);
   return (
     <ul className="flex flex-col divide-y divide-neutral-300 text-sm">
@@ -436,7 +436,7 @@ async function ProceduresPrint({
       </p>
     );
   // PR #318: an unfiltered (studio-wide) pull is capped at the most recent N.
-  // When that cap is hit, say so plainly — otherwise the inspection artifact
+  // When that cap is hit, say so plainly: otherwise the inspection artifact
   // silently looks complete. Filtering by client raises the cap to 200.
   const cappedUnfiltered =
     !filter.clientId && records.length >= UNFILTERED_PROCEDURE_RECORD_LIMIT;

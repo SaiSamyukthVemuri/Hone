@@ -6,14 +6,14 @@ import type { SessionBlockSide } from "@/lib/types/database";
 // from migration 0092) plus the attached session block's structured area
 // fields (primary_area / side / custom_area_detail, migration 0039) into
 // human-facing context tags. These NEVER expose raw IDs, storage paths, bucket
-// names, or signed URLs — only labels. No DB/schema/security change.
+// names, or signed URLs, only labels. No DB/schema/security change.
 //
 // Migration 0128: a photo is attached to ONE settings block, which may treat
 // several areas. The area tag now shows EVERY treated area + laterality via the
 // shared resolver ("Left cheek · Right sideburn"), never just the first.
 
 // Chloe pilot feedback: the card said "Block photo" while the upload selector
-// said "Treatment area photo" — one consistent, practitioner-friendly label.
+// said "Treatment area photo", one consistent, practitioner-friendly label.
 export type PhotoScopeLabel =
   | "Client photo"
   | "Session photo"
@@ -53,7 +53,7 @@ export function treatmentPhotoScopeLabel(input: {
   return "Client photo";
 }
 
-// Area tag — only meaningful when a session block is attached:
+// Area tag, only meaningful when a session block is attached:
 //   - "Treatment area: <area · side · detail>" when an area was recorded
 //   - "Area not recorded" when the block is attached but has no area
 //   - null when there is no attached block (no area tag at all)
@@ -71,7 +71,7 @@ export function treatmentPhotoAreaLabel(
 // PR #284. Concise label for a session-block option in the attach-at-upload
 // context selector (no "Treatment area:" prefix). Same area/side/detail
 // composition as treatmentPhotoAreaLabel; "Area not recorded" when blank.
-// Pure + display-only — the option's VALUE carries the id, never shown text.
+// Pure + display-only, the option's VALUE carries the id, never shown text.
 export function sessionBlockOptionLabel(block: SessionBlockAreaInput): string {
   return composeBlockAreaText(block) ?? "Area not recorded";
 }

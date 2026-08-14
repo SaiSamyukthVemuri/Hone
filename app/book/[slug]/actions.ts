@@ -161,7 +161,7 @@ export async function fetchPublicSlotsAction(params: {
   // Self-serve publish soft-gate: refuse slot probes for studios that
   // aren't publicly bookable yet (no active services OR no open
   // availability day). Identical sanitized message regardless of which
-  // piece is missing — never disclose internal setup state to a public
+  // piece is missing, never disclose internal setup state to a public
   // caller. Public page renders the same copy in app/book/[slug]/page.tsx.
   const ready = await loadPublicReadiness(admin, studio.id);
   if (!ready.bookable) {
@@ -332,7 +332,7 @@ export async function fetchNextAvailableDateAction(params: {
 
 // BOOK-01 Tranche 1. A COMMITTED booking now returns the client's management
 // URL and the TRUE confirmation-email outcome, so the browser that created the
-// appointment always leaves with a working path to it — exactly the contract
+// appointment always leaves with a working path to it, exactly the contract
 // the reschedule surface has carried since the 0171 amendment
 // (app/reschedule/[token]/actions.ts:598-617).
 //
@@ -343,7 +343,7 @@ export async function fetchNextAvailableDateAction(params: {
 //
 // SCOPE, STATED HONESTLY: this closes the case where the appointment commits
 // and the provider then fails or is switched off. It does NOT cover the process
-// dying after COMMIT but before this response reaches the browser — there is no
+// dying after COMMIT but before this response reaches the browser. There is no
 // response in that case. That case remains covered by the existing recovery
 // paths (the authenticated client portal, which mints its own HMAC management
 // token per appointment, and the 24h/2h reminder passes, whose window query
@@ -436,7 +436,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   // Rate limit (v1) BEFORE any DB read/write or email send. Stricter than
   // slot fetch: 5/10min per (IP, slug) + 3/hour per (email, slug). Fails
-  // open when Upstash is unconfigured or down — a limiter outage must never
+  // open when Upstash is unconfigured or down: a limiter outage must never
   // block a real booking. No appointment is created and no email is sent
   // when limited.
   const bookGate = await limitPublicBooking({
@@ -783,7 +783,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   // BOOK-01 P2-B. REQUIRED CONFIGURATION IS RESOLVED BEFORE THE DURABILITY
   // BOUNDARY. `getRequiredAppOrigin()` THROWS by design when
-  // NEXT_PUBLIC_APP_ORIGIN is absent in production (lib/app-origin.ts:38-46) —
+  // NEXT_PUBLIC_APP_ORIGIN is absent in production (lib/app-origin.ts:38-46),
   // it deliberately offers no hone.care or localhost fallback, because a
   // wrong-domain link mailed to a real client is worse than a refusal. This
   // call used to sit ~250 lines BELOW the command, so a missing origin threw
@@ -813,7 +813,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // created by one command, in one transaction. Previously this route inserted
   // the appointment here and the audit row ~80 lines later in a second
   // statement whose error was discarded, so a confirmed public booking could
-  // exist with no audit trail — production carries exactly one such row.
+  // exist with no audit trail: production carries exactly one such row.
   //
   // Everything authoritative is derived inside the command from current
   // database state: duration from the LOCKED service row, end time from that
@@ -854,7 +854,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // `time_unavailable`, so there is no separate `buffer_conflict` to map.
     //
     // `not_a_public_slot` belongs HERE, not in the operator bucket below. It
-    // means the submitted instant is no longer an offered slot — which is
+    // means the submitted instant is no longer an offered slot, which is
     // exactly what a visitor sees when a conflict is cancelled between this
     // action's slot re-check and the command taking the studio lock, removing an
     // after-conflict anchor. That visitor should be told to pick another time,
@@ -906,7 +906,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // sqlstate 23P01 = exclusion_violation (actual-overlap GiST). HB001 =
     // migration 0152's soft-buffer trigger (public booking never bypasses the
     // buffer; the slot generator already filters buffer-proximate times, so this
-    // only fires on a rare race). Both map to the SAME safe copy — never the raw
+    // only fires on a rare race). Both map to the SAME safe copy, never the raw
     // DB message or SQLSTATE. A rejected booking must NOT trigger a confirmation
     // email, so we return before any send path.
     if (rpcErr?.code === "23P01" || rpcErr?.code === "HB001") {
@@ -948,7 +948,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // own return rather than by re-reading the row.
   //
   // This is deliberate. An earlier revision re-read the row and gated the sends
-  // on that read succeeding — which meant one transient SELECT failure would
+  // on that read succeeding, which meant one transient SELECT failure would
   // silently skip the confirmation email. The raw `appointmentToken` lives only
   // in memory and only its SHA-256 is persisted (`cancellation_token_hash`), so
   // the send must depend on nothing that can fail after the commit.
@@ -961,7 +961,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // client portal and the 24h/2h reminder passes, both of which mint a stateless
   // HMAC management token from the appointment id (lib/booking/tokens.ts) that
   // /manage, /cancel and /reschedule all accept. Delivering the email still
-  // matters — it is the client's durable copy — but a provider failure is no
+  // matters (it is the client's durable copy) but a provider failure is no
   // longer a dead end.
   const created = {
     id: createdId,
@@ -989,7 +989,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //
   // SECRECY. Never `err.message`. A template, provider or URL-parsing error can
   // carry the recipient address or a management URL that embeds the RAW token.
-  // Only the error's NAME — a fixed class like "TypeError" — plus ids we already
+  // Only the error's NAME (a fixed class like "TypeError") plus ids we already
   // own are recorded.
   //
   // SCOPE. This contains unexpected APPLICATION EXCEPTIONS. It cannot contain
@@ -1009,7 +1009,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       return await fn();
     } catch (err) {
       // `errorClass` (not `errorName`) because the PII guard bans any key or
-      // expression matching /\w*[nN]ame\w*/ in a booking log payload — a
+      // expression matching /\w*[nN]ame\w*/ in a booking log payload: a
       // deliberately blunt rule that catches clientName/practitionerName, and
       // widening it to admit an exception would weaken it. The CLASS is
       // extracted here so no `err.name` expression appears inside the logged
@@ -1037,7 +1037,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // practitioner B while every notification still named and emailed A. That is
   // an attribution and privacy defect, so the pre-fetch is gone.
   //
-  // Metadata is re-read by EXACT (id, studio_id) — never by "current active
+  // Metadata is re-read by EXACT (id, studio_id), never by "current active
   // owner", which could resolve to someone else if activity changed again right
   // after commit. This read is best-effort: the appointment is already
   // committed and nothing here may fail the booking.
@@ -1106,7 +1106,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // Fire-and-forget marketing/analytics consent capture. The appointment is
   // already committed, so this NEVER fails or delays the booking (a failed
   // insert only logs a safe, PII-free signal). Records exactly one
-  // booking_tracking_consents row (migration 0106) — consent bookkeeping only,
+  // booking_tracking_consents row (migration 0106), consent bookkeeping only,
   // separate from clinical/payment consent. No provider is contacted and no
   // data is sent anywhere; this only stores whether the client opted in.
   void (async () => {
@@ -1136,12 +1136,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // it inside create_public_appointment, in the same transaction as the
   // appointment, so it cannot be skipped or silently fail. Its shape is
   // unchanged: actor_type 'client', actor_id null, action 'created', details
-  // { source: 'public_booking', email, notes } — with the email read from the
+  // { source: 'public_booking', email, notes }, with the email read from the
   // client row inside the command rather than passed across the boundary.
 
   // Fire-and-forget provider-agnostic conversion tracking (booking_confirmed).
   // Fully gated inside dispatchBookingConversion: sends NOTHING unless the
-  // studio has an enabled provider config AND its token decrypts — so this is
+  // studio has an enabled provider config AND its token decrypts, so this is
   // inert in production today. Never throws; a confirmed booking must not fail
   // because tracking failed. No clinical data / no raw email/phone is logged.
   void dispatchBookingConversion({
@@ -1182,8 +1182,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //
   // BOOK-01 P2-A: the helper already returns null for EXPECTED read/insert
   // errors, but it carries no outer try/catch, so an unexpected throw would
-  // have escaped. A null fallback degrades exactly one thing — the email and
-  // SMS omit the intake link — and never a committed booking. Deliberately ONE
+  // have escaped. A null fallback degrades exactly one thing: the email and
+  // SMS omit the intake link, and never a committed booking. Deliberately ONE
   // attempt: no retry inside this response path.
   const intake = await postCommit<{ id: string; url: string } | null>(
     "public_booking_intake_threw",
@@ -1203,13 +1203,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // timestamp unconditionally, which falsely advertised delivery.
   //
   // BOOK-01 Tranche 1: that same verdict is now REPORTED to the caller.
-  // `disabled` is the honest default — the studio switched confirmations off,
+  // `disabled` is the honest default: the studio switched confirmations off,
   // which is a configuration rather than a failure, and still returns the
   // management URL. Only a provider success may move it to `sent`.
   let confirmationEmailStatus: ConfirmationEmailStatus = "disabled";
   if (studio.send_confirmation_emails) {
     // BOOK-01 P2-A: the treatment-time enrichment is the one dependency here
-    // that throws OUTRIGHT rather than returning an error —
+    // that throws OUTRIGHT rather than returning an error,
     // `getTreatmentTimeContextForEmail` raises on any read failure
     // (lib/treatment-time/queries.ts:256-258). A null line degrades the email's
     // optional context and nothing else, so the confirmation still goes out.
@@ -1227,7 +1227,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       : null;
     // BOOK-01 P2-A: `sendEmailSafely` returns `{ ok: false }` rather than
     // throwing, so a provider refusal already lands on the truthful path below.
-    // What is NOT proven throw-free is everything around it — subject/HTML/text
+    // What is NOT proven throw-free is everything around it: subject/HTML/text
     // composition and the ICS builder. An unexpected throw there resolves to the
     // same shape as a refusal, so it reports `failed`: we do not know the client
     // received anything, and claiming otherwise would be a lie.
@@ -1256,7 +1256,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // The status reflects the PROVIDER, not the bookkeeping write below: if
     // recording the attempt fails, the client still did (or did not) get the
     // email, and what we report must match what actually happened. This is set
-    // BEFORE the write for exactly that reason — the write cannot upgrade a
+    // BEFORE the write for exactly that reason: the write cannot upgrade a
     // refusal to `sent`, nor downgrade a real send to `failed`.
     confirmationEmailStatus = result.ok ? "sent" : "failed";
     await postCommit("public_booking_email_attempt_write_threw", undefined, () =>
@@ -1285,7 +1285,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // await so the serverless function does not exit before the Twilio
   // POST resolves; the helper bounds itself with a 15-second timeout.
   //
-  // BOOK-01 P2-A: verified — `sendOne` wraps the provider call in try/catch and
+  // BOOK-01 P2-A: verified: `sendOne` wraps the provider call in try/catch and
   // returns a result object, so the documented "never throws" holds for the send
   // itself. It is NOT total: the consent/toggle gate and the `claim_sms_send`
   // race guard run BEFORE that try. Contained at the boundary rather than by
@@ -1311,12 +1311,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // behavior. Client confirmation email above is gated separately
   // via send_confirmation_emails and is NOT affected by this toggle.
   // Only the AUTHORITATIVE assigned practitioner may receive this. A null
-  // practitioner, or a failed metadata read, sends nothing — never a stale owner.
+  // practitioner, or a failed metadata read, sends nothing, never a stale owner.
   if (
     assignedPractitioner?.email &&
     studio.notify_practitioner_on_new_booking !== false
   ) {
-    // BOOK-01 P2-A: secondary by definition — the CLIENT's booking must not
+    // BOOK-01 P2-A: secondary by definition: the CLIENT's booking must not
     // depend on notifying staff. Recipients and enablement logic are unchanged.
     await postCommit("public_booking_practitioner_email_threw", undefined, () =>
       sendBookingNotificationToPractitioner({
@@ -1353,7 +1353,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // `captureServerEvent` is already non-blocking and documented never to throw
   // (lib/analytics/server.ts:110-117 wraps `after()` in try/catch), but the
   // property allowlisting runs synchronously first, so it is contained too.
-  // The payload carries studio scope only — never a token, URL or client id.
+  // The payload carries studio scope only, never a token, URL or client id.
   await postCommit("public_booking_analytics_threw", undefined, () =>
     captureServerEvent({
       actor: { kind: "studio", id: studio.id },
@@ -1363,7 +1363,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   );
 
   // THE BOOKING IS COMMITTED, and the client leaves with a usable path to it
-  // whatever the email did. `manageUrl` goes ONLY to this authorised browser —
+  // whatever the email did. `manageUrl` goes ONLY to this authorised browser,
   // it is never persisted, logged, alerted on or reported.
   return {
     ok: true,

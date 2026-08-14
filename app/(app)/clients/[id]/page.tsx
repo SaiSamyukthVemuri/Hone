@@ -21,7 +21,7 @@ import { buildBeforeToday } from "@/lib/sessions/before-today";
 import { getImportedTreatmentMemoriesForClient } from "@/lib/imported-treatment-memory";
 import { attachStructuredAreas } from "@/lib/supabase/queries";
 
-// PR #259: display cap for imported treatment memory in Before Today — show
+// PR #259: display cap for imported treatment memory in Before Today: show
 // the latest few so the briefing stays scannable; "Showing the latest N of M"
 // surfaces when more exist. The helper still returns an honest totalFound.
 const BEFORE_TODAY_IMPORTED_CAP = 5;
@@ -272,7 +272,7 @@ export default async function ClientCheatSheetPage({
     // history from Quick Import) for the Before Today briefing. RLS-backed,
     // studio+client-scoped, voided rows excluded, newest-first, capped for
     // display. Surfaced as a labelled "Imported treatment memory" section in
-    // BeforeTodayCard — never mixed with live charted history.
+    // BeforeTodayCard, never mixed with live charted history.
     getImportedTreatmentMemoriesForClient(studio.id, client.id, {
       limit: BEFORE_TODAY_IMPORTED_CAP,
     }),
@@ -404,7 +404,7 @@ export default async function ClientCheatSheetPage({
     ? sessionPerformerName(lastTreatment, practitioners)
     : null;
 
-  // Overview "Last visit" card — derived from the SINGLE last session
+  // Overview "Last visit" card: derived from the SINGLE last session
   // that is already loaded above (no new query, no new summary). Total
   // minutes sums the last session's own blocks; the aftercare stamp
   // (0085) and "is this the very latest session" flag are read from the
@@ -667,7 +667,7 @@ export default async function ClientCheatSheetPage({
             {/* CANONICAL ACTION, ABOVE THE LEGACY TEXT (Chloe Session 1A).
                 The append-only skin/hair-analysis record lives on the
                 Consultation tab, while the retired legacy column renders here
-                on the default Overview tab — so without this the legacy text
+                on the default Overview tab, so without this the legacy text
                 was the only skin surface a practitioner ever saw, and it
                 visually outranked the real clinical record. This link makes the
                 canonical path the obvious one and is deliberately rendered
@@ -686,7 +686,7 @@ export default async function ClientCheatSheetPage({
                 hidden, but it is explicitly labelled as legacy profile text and
                 is no longer the place to record a skin/hair observation. The
                 canonical, attributed record is the "Consultation & skin/hair"
-                section, which is NOT on this tab — it renders behind the
+                section, which is NOT on this tab. It renders behind the
                 Consultation tab. Saying "below" (as this comment and the
                 helper copy both once did) sends a practitioner scrolling for
                 a form that is not here, and the legacy text is then the
@@ -699,8 +699,8 @@ export default async function ClientCheatSheetPage({
                 <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
                   {client.skin_notes}
                 </p>
-                {/* The canonical form is NOT on this tab — it lives behind
-                    Consultation — so "below" was untrue. The action rendered
+                {/* The canonical form is NOT on this tab. It lives behind
+                    Consultation, so "below" was untrue. The action rendered
                     directly ABOVE this block is the real path, and the tab is
                     named as the fallback. */}
                 <p className="mt-2 text-xs text-neutral-500">
@@ -718,7 +718,7 @@ export default async function ClientCheatSheetPage({
               single last completed session, high on Overview (after the
               safety-first pinned notes / allergies / skin). Pure reuse
               of the already-loaded last-treatment data + the shared
-              buildLastSessionSummary render helpers — no new query, no
+              buildLastSessionSummary render helpers, no new query, no
               new clinical model, no AI, clinical-first (no price). The
               forward-looking BeforeToday prep card is separate and
               unchanged; the Sessions-tab "Last treatment" card (fuller,
@@ -942,7 +942,7 @@ export default async function ClientCheatSheetPage({
               plan). Below Client info, above Pricing. */}
           <TreatmentIntelligenceCard intelligence={treatmentIntelligence} />
 
-          {/* Pricing moved to the end of Overview — it's billing, not
+          {/* Pricing moved to the end of Overview: it's billing, not
               clinical caution. Same fields, same actions (unchanged),
               same delete button; only the surrounding section markup
               changed. */}
@@ -1061,7 +1061,7 @@ export default async function ClientCheatSheetPage({
               dedicated intake page first. The CTA creates that row (no email)
               and opens the existing assisted editor. Gated on !intake, so a
               submitted or reviewed record is never a reason to start another
-              — that path stays Send a new intake form. */}
+              that path stays Send a new intake form. */}
           {!intake && (
             <div className="mt-2 flex flex-col gap-3">
               <p className="text-sm text-neutral-500">

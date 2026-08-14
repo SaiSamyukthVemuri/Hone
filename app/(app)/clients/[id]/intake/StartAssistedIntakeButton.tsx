@@ -4,11 +4,11 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { startAssistedIntakeAction } from "./actions";
 
-// "Start intake with client" — the Health & Forms entry point into the
+// "Start intake with client", the Health & Forms entry point into the
 // practitioner-assisted workflow, shown only when the client has no intake on
 // file at all.
 //
-// One click: the server creates a blank in-progress intake (no email — the
+// One click: the server creates a blank in-progress intake (no email: the
 // client is in the room) and this navigates straight into the existing #525
 // assisted editor. Everything after that point is unchanged: the practitioner
 // records steps 1-4, then hands the device over for the client's own
@@ -16,10 +16,10 @@ import { startAssistedIntakeAction } from "./actions";
 //
 // THE DESTINATION IS THE AUTHENTICATED ROUTE. `/clients/<id>/intake/assist` is
 // the practitioner's surface. The client's tokenized `/intake/<token>` link is
-// reached only through Hand to client, at the end of the questionnaire — and
+// reached only through Hand to client, at the end of the questionnaire, and
 // this component could not navigate there if it tried: the action returns an
 // intake id and no URL.
-// Shown only when the action itself faults — a transport failure, or a server
+// Shown only when the action itself faults: a transport failure, or a server
 // error thrown rather than returned. There is no server-authored message in
 // that case, so this matches the shape of the ones there are: calm, bounded,
 // naming no provider detail, and retryable.
@@ -50,7 +50,7 @@ export function StartAssistedIntakeButton({ clientId }: { clientId: string }) {
       try {
         const res = await startAssistedIntakeAction(fd);
         if (!res.ok) {
-          // The server result is the only authority — nothing is created
+          // The server result is the only authority, nothing is created
           // optimistically, and a refusal leaves us on Health & Forms.
           setError(res.error);
           return;

@@ -21,7 +21,7 @@ function str(v: FormDataEntryValue | null, max = 2000): string {
 
 // Migration 0155: an optional structured probe classification on a sterile item.
 // Empty = clears to NULL. A non-empty value MUST validate against the code
-// catalog (lib/probes.ts) — an arbitrary client-supplied key is rejected. We
+// catalog (lib/probes.ts), an arbitrary client-supplied key is rejected. We
 // never infer probe_key from item_description.
 function resolveProbeKeyField(
   formData: FormData,
@@ -45,7 +45,7 @@ function dateStr(v: FormDataEntryValue | null): string {
 // server-side, so it stays accurate); otherwise it is a free-text "Other"
 // operator (falling back to the current user's name when left blank). The
 // practitioner lookup is studio-scoped + RLS-guarded, so a cross-studio id can
-// never attach — it simply falls through to the free-text path.
+// never attach: it simply falls through to the free-text path.
 const OTHER_OPERATOR = "__other__";
 
 async function resolveOperator(

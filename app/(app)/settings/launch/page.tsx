@@ -149,7 +149,7 @@ export default async function LaunchChecklistPage() {
       title: "Card-on-file",
       status: "manual",
       detail:
-        "Clients save a card in the client portal after signing the card authorization; readiness and live/test status are shown on the Payments page. Booking-time card collection is off — clients can still book without entering a card.",
+        "Clients save a card in the client portal after signing the card authorization; readiness and live/test status are shown on the Payments page. Booking-time card collection is off: clients can still book without entering a card.",
       cta: { label: "Open Payments", href: "/settings/payments" },
     },
     {

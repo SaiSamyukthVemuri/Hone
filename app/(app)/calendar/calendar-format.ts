@@ -35,7 +35,7 @@ const MONTHS_SHORT = [
 
 // Two-line day header (Google/Fresha style): "Tue" on line 1, "May 26"
 // on line 2. Split into two formatters so the header can stack them.
-// Pure string formatting — no Date construction, so it can't drift across
+// Pure string formatting, no Date construction, so it can't drift across
 // timezones.
 export function weekdayLabel(dowIndex: number): string {
   return DAY_LABELS[dowIndex] ?? "";
@@ -129,7 +129,7 @@ export function displayBlockoutLabel(reason: string | null | undefined): string 
 
 // Compact appointment time range for a calendar card: two "HH:MM" (24-hour)
 // local labels → "9:00–10:00" (leading zero on the hour stripped, en dash, no
-// AM/PM to stay dense). Pure string formatting — no Date construction, so it
+// AM/PM to stay dense). Pure string formatting, no Date construction, so it
 // can't drift across timezones (callers pass already-localized labels). Falls
 // back to just the start when the end is missing/blank.
 export function timeRangeLabel(

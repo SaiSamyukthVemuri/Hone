@@ -1,6 +1,6 @@
 // Compact receipt-status line for the practitioner card. Keeps payment success
 // separate from receipt-delivery status: a paid charge whose receipt failed
-// still reads "Paid", with "Receipt not sent" + a retry slot below — the charge
+// still reads "Paid", with "Receipt not sent" + a retry slot below: the charge
 // is never made to look failed because delivery failed. Never shows the full
 // email (masking happens in the presenter); the `children` slot carries the
 // existing retry action, unchanged.

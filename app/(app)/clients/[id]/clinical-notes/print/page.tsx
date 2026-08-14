@@ -1,5 +1,5 @@
 // Clinical-notes EXPORT / PRINT view (migration 0126). Authenticated
-// practitioner route only — it lives under app/(app) so the same studio-member
+// practitioner route only. It lives under app/(app) so the same studio-member
 // auth + RLS that guards the profile guards this page. It is NOT reachable from
 // the client portal, public booking, receipts, email, or SMS.
 //
@@ -66,7 +66,7 @@ export default async function ClinicalNotesPrintPage({
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 print:px-0 print:py-0">
       <header className="flex items-start justify-between gap-4 border-b border-neutral-300 pb-4 print:border-black">
         <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-semibold">Clinical notes — {client.name}</h1>
+          <h1 className="text-lg font-semibold">Clinical notes: {client.name}</h1>
           <p className="text-xs text-neutral-500">
             {studio.name} · exported {formatDate(new Date().toISOString())}
           </p>

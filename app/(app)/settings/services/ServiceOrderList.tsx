@@ -1,6 +1,6 @@
 "use client";
 
-// Service menu order — the interactive list (Chloe: "Move up / Move down feels
+// Service menu order: the interactive list (Chloe: "Move up / Move down feels
 // strange; the service I want first cannot reliably reach the top").
 //
 // WHAT THIS COMPONENT OWNS
@@ -9,15 +9,15 @@
 //     phone connection.
 //   * Rollback: if the server refuses the move (including the migration-0161
 //     stale-position guard), the previous order is restored and the reason is
-//     shown in place — no error boundary, no lost scroll position.
+//     shown in place, no error boundary, no lost scroll position.
 //   * A single-flight lock: while one move is in flight EVERY move control is
 //     disabled, so interleaved taps can never start two read-modify-write
 //     cycles against the same list.
 //
 // WHAT IT DOES NOT OWN
-//   * Position arithmetic — that lives in lib/booking/service-order.ts and is
+//   * Position arithmetic: that lives in lib/booking/service-order.ts and is
 //     the same arithmetic migration 0161's RPC performs.
-//   * Each row's expanded/collapsed state — that stays inside its own
+//   * Each row's expanded/collapsed state: that stays inside its own
 //     ServiceAccordionItem, keyed by service id, so reordering rows preserves
 //     which ones are open.
 //
@@ -63,7 +63,7 @@ export function ServiceOrderList({ rows }: { rows: ReadonlyArray<OrderRow> }) {
   //
   // The ref advances ONLY when the sync is actually applied. Advancing it while
   // a move was in flight would mark that server order as "already seen" and it
-  // would never be adopted — the list would keep showing a stale order until a
+  // would never be adopted: the list would keep showing a stale order until a
   // full page load.
   const incoming = rows.map((r) => r.id).join(",");
   if (incoming !== serverOrderRef.current && !pending) {
@@ -129,7 +129,7 @@ export function ServiceOrderList({ rows }: { rows: ReadonlyArray<OrderRow> }) {
           const position = visibleIds.indexOf(row.id);
           const moves = availableMoves(position, visibleIds.length);
           return (
-            // A real layout box, NOT display:contents — an element with no box
+            // A real layout box, NOT display:contents, an element with no box
             // is "not being rendered" per spec, which drops list semantics for
             // assistive tech and gives the row a zero bounding rect.
             <li
@@ -140,7 +140,7 @@ export function ServiceOrderList({ rows }: { rows: ReadonlyArray<OrderRow> }) {
               {row.node}
               {row.active && visibleIds.length > 1 && (
                 <div className="flex flex-wrap items-center gap-1.5 px-1">
-                  {/* The position as a NUMBER — the single source of truth for
+                  {/* The position as a NUMBER: the single source of truth for
                       "where am I in the order", and never conveyed by colour or
                       arrow placement alone. */}
                   <span className="text-[11px] tabular-nums text-neutral-500">

@@ -58,8 +58,8 @@ export default async function NewSessionPage({
   // The candidate used to be the newest session ROW (`order started_at desc
   // limit 1`), which is wrong here more often than anywhere else in the app:
   // tapping a modality on THIS page creates an empty session immediately, so an
-  // abandoned attempt — or a newer administrative row, or a laser session for a
-  // client mid-transition — permanently won the lookup and rendered a
+  // abandoned attempt, or a newer administrative row, or a laser session for a
+  // client mid-transition, permanently won the lookup and rendered a
   // "Previous session context" heading over an empty body while the real
   // treatment sat one row below. It is now the newest CHARTED session
   // (lib/sessions/charted-session.ts), the same definition the live charting
@@ -78,12 +78,12 @@ export default async function NewSessionPage({
   let previousMeta: { startedAt: string; modality: string; sessionId: string } | null =
     null;
   // Non-null when the selected treatment is genuinely charted but carries NO
-  // settings blocks — a LASER visit (which charts into laser_entries) or
+  // settings blocks: a LASER visit (which charts into laser_entries) or
   // pre-0019 legacy electrolysis (which charted straight into entries).
   //
   // The selector deliberately accepts both, and it is right to: a laser visit
   // IS the last treatment for a client mid-transition. But every block-shaped
-  // summary is empty for them — buildLastSessionSummary still returns a TRUTHY
+  // summary is empty for them: buildLastSessionSummary still returns a TRUTHY
   // object with `areas: []`, so this panel used to render its heading and date
   // over nothing at all. It now says what the record actually is, using the
   // SAME copy the charting screen's memory card uses.

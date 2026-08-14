@@ -36,7 +36,7 @@ export function WalkthroughCTA({ title, body }: { title: string; body: ReactNode
 
 // A ruled desktop feature matrix (title + body). Edge-aligned columns, row and
 // column dividers at lg, and a shared title min-height so bodies align across
-// each row — a designed desktop table, not floating cards.
+// each row: a designed desktop table, not floating cards.
 const featureCell =
   "flex flex-col border-b border-[color:var(--color-hairline)] py-7 lg:py-9 sm:px-6 lg:px-9 " +
   "lg:[&:nth-child(3n+1)]:pl-0 lg:[&:nth-child(3n)]:pr-0 " +

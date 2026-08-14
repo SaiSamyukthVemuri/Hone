@@ -62,7 +62,7 @@ async function maybeMarkAppointmentCompletedOnSessionStart(args: {
         }),
       );
     } else {
-      // Migration 0110: appointment is now completed — auto-send postcare if the
+      // Migration 0110: appointment is now completed: auto-send postcare if the
       // studio opted in. Fail-soft + idempotent (never throws), so a postcare
       // failure never blocks session start or completion.
       const { autoSendPostcareOnComplete } = await import(
@@ -181,7 +181,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // L18 Phase 3: the coalesce lookup, the appointment-link promotion and the
   // insert are now ONE transaction via start_session (migration 0167).
   //
-  // The old sequence read a recent session and then INSERTed if it found none —
+  // The old sequence read a recent session and then INSERTed if it found none,
   // a read-then-write window in which two concurrent "Start session" clicks
   // could both miss and create DUPLICATE sessions for a single visit. The
   // command takes the lookup FOR UPDATE, so the second caller blocks and then
@@ -192,8 +192,8 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // with it, so neither can drift from the write.
   //
   // 0181: p_studio_id is the EXPLICIT selected studio. It comes ONLY from
-  // getCurrentPractitionerWithStudio() above — the server-side resolver that
-  // honours the user's validated studio selection — and never from FormData,
+  // getCurrentPractitionerWithStudio() above: the server-side resolver that
+  // honours the user's validated studio selection, and never from FormData,
   // searchParams or any other browser-supplied value. The browser does not
   // choose tenant scope.
   //
@@ -214,7 +214,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
 
   // REVERSE-SKEW FLOOR. 0181 keeps the four-argument signature so an OLD app
   // survives a NEW database. This handles the other direction: a NEW app
-  // against an OLD database — a rolled-back migration, or a deploy that
+  // against an OLD database: a rolled-back migration, or a deploy that
   // outran the apply. There the five-argument command does not exist and
   // PostgREST answers PGRST202, which would fail EVERY session start for
   // EVERY practitioner, including the single-studio majority this incident
@@ -222,12 +222,12 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   //
   // SAFE TO RETRY, and only because of what PGRST202 means: the function was
   // never RESOLVED, so nothing executed. There is no partial write to
-  // duplicate. Exactly one retry, and ONLY on this code — any other error is
+  // duplicate. Exactly one retry, and ONLY on this code: any other error is
   // a real command outcome and is rethrown untouched.
   //
   // HONEST ABOUT WHAT THE FALLBACK IS: on a pre-0181 database the four-arg
   // signature is still 0167's, unordered `limit 1` and all. This does not fix
-  // the defect there — it degrades to EXACTLY today's production behaviour
+  // the defect there: it degrades to EXACTLY today's production behaviour
   // (correct for single-studio, the pre-existing bug for multi-studio)
   // instead of a total outage. It is a floor, not a fix. The event below is
   // the operational signal that the database is behind the application.
@@ -235,7 +235,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     console.error(
       JSON.stringify({
         event: "start_session_studio_aware_signature_missing",
-        // Structural only — no client, no practitioner, no studio identity.
+        // Structural only, no client, no practitioner, no studio identity.
         errorClass: "PGRST202",
         modality,
         hadAppointmentContext: appointmentId !== null,

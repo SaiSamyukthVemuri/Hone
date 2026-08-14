@@ -46,11 +46,11 @@ function formatDateInTz(iso: string, tz: string): string {
 // PR B 3E-7 + §10: resource-aware, PII-safe conflict description. The two
 // SECURITY DEFINER RPCs (find_scoped_calendar_conflict / find_recurring_break_
 // conflict, migration 0139) filter to the resource set that actually reserves
-// the proposed source — so an appointment for practitioner A never produces a
-// conflict message for a B-only block — and return ONLY source kind + interval
+// the proposed source, so an appointment for practitioner A never produces a
+// conflict message for a B-only block, and return ONLY source kind + interval
 // + resource_key. They are service_role-only, so these run on the admin client.
 // The rendered message exposes only the conflicting item's KIND and studio-local
-// date/time — never a client, service, note, practitioner name, or token.
+// date/time, never a client, service, note, practitioner name, or token.
 type ConflictRow = {
   source_kind: string;
   starts_at: string;
@@ -171,7 +171,7 @@ function nullable(value: FormDataEntryValue | null): string | null {
 // (studio_id, practitioner_id) rejects a cross-tenant practitioner (23503),
 // and guard_scoped_source_capacity rejects assigning a scope while capacity
 // is OFF (42501) or to an inactive practitioner (23514). We never interpret
-// a missing field as a reset to studio-wide — that would silently widen a
+// a missing field as a reset to studio-wide, that would silently widen a
 // scoped source. `existing` is undefined for CREATE (no prior row), so an
 // absent field there resolves to studio-wide, the correct Legacy default.
 function resolveSubmittedScope(
@@ -185,7 +185,7 @@ function resolveSubmittedScope(
 
 // Maps the scope-guard sqlstates raised by the DB into owner-facing copy.
 // Returns null when the code is not a scope-guard violation so the caller
-// falls through to its generic error branch. No PII — codes only.
+// falls through to its generic error branch. No PII: codes only.
 function scopeGuardMessage(code: string | undefined): string | null {
   switch (code) {
     case "42501":
@@ -369,7 +369,7 @@ export async function deleteOverrideAction(formData: FormData): Promise<void> {
 }
 
 // ===========================================================================
-// PR B Part 2 — per-practitioner (scoped) availability actions. Every action:
+// PR B Part 2, per-practitioner (scoped) availability actions. Every action:
 // derives the studio from the authenticated OWNER (never a client-supplied
 // studio id), requires role owner, validates any target practitioner as ACTIVE
 // + same-studio, requires the capacity flag ON for practitioner-scoped writes
@@ -459,7 +459,7 @@ export async function upsertScopedDayDefaultAction(
   return { ok: true };
 }
 
-// Reset ONE practitioner weekday to the studio default — deletes ONLY that
+// Reset ONE practitioner weekday to the studio default: deletes ONLY that
 // practitioner's scoped row for that weekday; never touches the studio-wide row.
 export async function resetPractitionerDayAction(
   formData: FormData,
@@ -490,7 +490,7 @@ export async function resetPractitionerDayAction(
   return { ok: true };
 }
 
-// Customize a practitioner's FULL week from the studio default — copies each
+// Customize a practitioner's FULL week from the studio default: copies each
 // studio-wide weekday into a scoped practitioner row (upsert; idempotent).
 export async function customizePractitionerWeekAction(
   formData: FormData,
@@ -546,7 +546,7 @@ export async function customizePractitionerWeekAction(
   return { ok: true };
 }
 
-// Reset a practitioner's FULL week — one atomic DELETE of all their weekly rows.
+// Reset a practitioner's FULL week, one atomic DELETE of all their weekly rows.
 export async function resetPractitionerWeekAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
@@ -613,7 +613,7 @@ export async function upsertScopedOverrideAction(
   return { ok: true };
 }
 
-// Reset a practitioner date override — deletes ONLY the (studio, practitioner,
+// Reset a practitioner date override: deletes ONLY the (studio, practitioner,
 // date) row; the studio-wide date override for that date is untouched.
 export async function resetPractitionerOverrideAction(
   formData: FormData,
@@ -826,7 +826,7 @@ export async function createTimedBlockAction(
     return { ok: false, error: "Blocked time must end in the future." };
   }
 
-  // A timed block — including a whole-day one — may be studio-wide (NULL) or
+  // A timed block (including a whole-day one) may be studio-wide (NULL) or
   // scoped to one practitioner. A practitioner-scoped all-day block takes that
   // practitioner's entire day off without closing the studio for anyone else
   // (the synchronizer keys the reservation to the practitioner, not the
@@ -975,7 +975,7 @@ export async function deleteTimedBlockAction(
 ): Promise<BlockActionResult> {
   // Returns a BlockActionResult (not void) so a delete that fails the lock
   // trigger or RLS surfaces inline instead of a masked production throw.
-  // Deleting a scoped block is always permitted — the lock/dormancy triggers
+  // Deleting a scoped block is always permitted: the lock/dormancy triggers
   // fire, but no scope guard blocks removal, so a block whose practitioner
   // later went inactive can still be cleaned up.
   const { studio } = await assertOwnerWithStudio();
@@ -1009,7 +1009,7 @@ export async function deleteTimedBlockAction(
 // whitelist (lunch/break/admin/other) was relaxed to a length-only
 // check on the column. The action validates length here so the
 // practitioner sees a friendly error rather than an opaque CHECK
-// violation. Labels are private to the studio — clients only see the
+// violation. Labels are private to the studio: clients only see the
 // slot as unavailable on the booking page.
 const RECURRING_BREAK_LABEL_MAX_LENGTH = 60;
 
@@ -1067,7 +1067,7 @@ export async function createRecurringBreakRuleAction(
   // admin client below.
   const { studio, practitioner } = await assertOwnerWithStudio();
   // Migration 0037: preserve practitioner-supplied capitalization
-  // (e.g. "Dinner") instead of lowercasing — the label is private,
+  // (e.g. "Dinner") instead of lowercasing: the label is private,
   // displayed verbatim on the practitioner calendar, and the DB
   // CHECK is now length-based, not enum-based.
   const label = trimmed(formData.get("label"));

@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { AcceptForm } from "./AcceptForm";
 
 export const metadata: Metadata = {
-  title: "Accept invitation — Hone",
+  title: "Accept invitation: Hone",
   robots: { index: false, follow: false },
 };
 

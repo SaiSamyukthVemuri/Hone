@@ -6,7 +6,7 @@ import type {
 } from "@/lib/intake/consent-forms";
 
 // The studio's real live consent forms, rendered as the final phase of the
-// client's own intake — after step 5, before Submit.
+// client's own intake: after step 5, before Submit.
 //
 // The text below is the STUDIO'S, passed down from the server. This component
 // hard-codes no consent wording and must never acquire any: it renders
@@ -15,7 +15,7 @@ import type {
 //
 // NO TYPED NAME. NO SIGN BUTTON. A treatment consent is a checkbox; a photo
 // consent is an Accept/Deny radio pair. Nothing here is an electronic
-// signature and no copy may say otherwise — the portal's signing ceremony is
+// signature and no copy may say otherwise: the portal's signing ceremony is
 // a separate system.
 
 export type RenderedConsentForm = {
@@ -49,7 +49,7 @@ type Props = {
 // Build the claims the wizard sends alongside the answers: which form, what
 // the browser believes it rendered, the canonical hash of the exact text it
 // displayed, and the client's choice. Every one of these is a comparand the
-// server re-checks against its own row — none of it is authority.
+// server re-checks against its own row, none of it is authority.
 export function buildIntakeConsentClaims(
   forms: RenderedConsentForm[],
   answers: Record<string, IntakeConsentResponse>,
@@ -80,7 +80,7 @@ export function findIncompleteConsentForms(
 ): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const form of forms) {
-    // Already completed in the portal — nothing is required of the client.
+    // Already completed in the portal, nothing is required of the client.
     if (form.portalCompletion) continue;
     const response = answers[form.templateId];
     if (form.formType === "treatment_consent") {
@@ -132,7 +132,7 @@ export function IntakeConsentForms({
               The studio's own consent text, verbatim. `whitespace-pre-wrap`
               preserves the studio's paragraphing; `break-words` stops a long
               unbroken string from forcing horizontal scroll at 390px. There
-              is deliberately NO line-clamp, max-height or character cap — a
+              is deliberately NO line-clamp, max-height or character cap: a
               client must be able to read the whole form they are agreeing to.
             */}
             <div
@@ -154,9 +154,9 @@ export function IntakeConsentForms({
               >
                 {form.formType === "photo_consent"
                   ? form.portalCompletion.response === "accepted"
-                    ? "Already answered: Accepted. You completed this form previously — no need to answer again."
-                    : "Already answered: Denied. You completed this form previously — no need to answer again."
-                  : "Already agreed. You completed this form previously — no need to agree again."}
+                    ? "Already answered: Accepted. You completed this form previously, no need to answer again."
+                    : "Already answered: Denied. You completed this form previously, no need to answer again."
+                  : "Already agreed. You completed this form previously, no need to agree again."}
               </p>
             ) : form.formType === "treatment_consent" ? (
               <label className="flex min-h-[44px] cursor-pointer items-start gap-3 py-1 text-sm text-neutral-800">

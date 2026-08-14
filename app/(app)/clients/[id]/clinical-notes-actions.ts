@@ -3,8 +3,8 @@
 // Dedicated CONSULTATION notes + SKIN/HAIR ANALYSIS clinical records
 // (migration 0126). These are the ONLY authenticated write surfaces for
 // client_clinical_notes. Two operations:
-//   * addClinicalNoteAction     — create a new dated note of a kind.
-//   * reviseClinicalNoteAction  — record a revision that supersedes a saved
+//   * addClinicalNoteAction    , create a new dated note of a kind.
+//   * reviseClinicalNoteAction , record a revision that supersedes a saved
 //                                 note (append-only correction; the original
 //                                 is never overwritten).
 //
@@ -16,7 +16,7 @@
 //     signed-in practitioner (attribution cannot be spoofed).
 //   * After the insert the action performs a SEPARATE read-back of the
 //     persisted row and only reports success once it is confirmed stored with
-//     the expected body/kind/client — a false "saved" can never be shown.
+//     the expected body/kind/client, a false "saved" can never be shown.
 //   * A revision races on the (supersedes_note_id) partial-unique index; a
 //     second concurrent revision surfaces as a distinct `stale_revision`
 //     conflict rather than a silent duplicate. The failure path NEVER retries
@@ -55,7 +55,7 @@ function readKind(value: FormDataEntryValue | null): ClinicalNoteKind | null {
 }
 
 function readBody(value: FormDataEntryValue | null): string {
-  // Do NOT trim for storage — practitioners structure notes with leading
+  // Do NOT trim for storage: practitioners structure notes with leading
   // whitespace. Emptiness is judged on the trimmed length (mirrors the DB
   // check constraint length(btrim(body)) > 0).
   return typeof value === "string" ? value : "";
@@ -102,7 +102,7 @@ const SELECT_COLS =
 // Postgres/PostgREST message.
 //
 // The failure mode this closes: these results are RETURNED as data, not thrown,
-// so Next.js server-action error redaction does not apply to them — and
+// so Next.js server-action error redaction does not apply to them, and
 // ClinicalNotesSection renders `state.message` verbatim. An RLS denial or a
 // constraint violation would therefore print table, policy and constraint names
 // (and, in a constraint detail, row values) straight onto Chloe's screen.
@@ -115,7 +115,7 @@ const CLIENT_LOOKUP_FAILED_COPY =
 
 // Operator-side signal. Structured, non-PHI: the event, a safe SQLSTATE/code,
 // the note KIND, and the ids we already own. Never the note body, never the
-// areas (which can carry clinical detail), never the raw database message —
+// areas (which can carry clinical detail), never the raw database message,
 // a constraint detail can echo row values.
 function logNoteFailure(
   event: string,

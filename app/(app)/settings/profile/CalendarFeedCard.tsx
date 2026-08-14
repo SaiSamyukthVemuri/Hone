@@ -14,7 +14,7 @@ import {
 // action just returned. Renders:
 //   - never created (!active): "Generate calendar feed URL" CTA.
 //   - active, link just shown (fresh token): URL + Copy + Regenerate + Disable.
-//   - active, link not in view (existing feed, raw not stored): "active — the
+//   - active, link not in view (existing feed, raw not stored): "active: the
 //     link is shown only once; regenerate to get a new one" + Regenerate +
 //     Disable. The existing subscription keeps working.
 //
@@ -146,7 +146,7 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
                 {feedUrl(appOrigin, token)}
               </code>
               <span className="text-xs text-neutral-500">
-                Copy this now — for your security Hone stores only a hashed
+                Copy this now: for your security Hone stores only a hashed
                 copy, so the link is shown only this once.
               </span>
             </div>
@@ -154,7 +154,7 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
             <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
               Your calendar feed is active and any existing subscription keeps
               working. For your security the link is shown only once, when you
-              generate or regenerate it — Hone does not store the link itself.
+              generate or regenerate it: Hone does not store the link itself.
               Regenerate to get a new link (this replaces the old one), or
               disable the feed.
             </p>

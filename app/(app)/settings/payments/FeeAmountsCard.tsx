@@ -61,7 +61,7 @@ export function FeeAmountsCard({
         </p>
         <p className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           Live manual fee charging is currently on hold for this launch. Fee
-          amounts here are configuration only — saving never charges anyone,
+          amounts here are configuration only: saving never charges anyone,
           and no-show / late-cancellation fees cannot be charged in live mode
           unless manual fees are explicitly approved. Session payments are
           unaffected.

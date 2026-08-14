@@ -1,4 +1,4 @@
-// APPOINTMENT BOUNDARY B4 — the shared contract for the repair surfaces.
+// APPOINTMENT BOUNDARY B4, the shared contract for the repair surfaces.
 //
 // WHY THIS FILE EXISTS AS A SEPARATE MODULE
 // A `"use server"` module may export ONLY async functions: Next.js turns every
@@ -7,7 +7,7 @@
 // actions and the client components, so they live here, in an ordinary module
 // with no directive, and both sides import from it.
 //
-// These values MIRROR migration 0173 — they do not define it. The database is
+// These values MIRROR migration 0173. They do not define it. The database is
 // the authority and re-checks every one of them; these exist so the form can
 // hint before spending a round-trip, and so the detail page can compute display
 // state. `tests/app/calendar/appointment-repair-source.test.ts` pins each value
@@ -17,10 +17,10 @@
 export const REVERTIBLE_STATUSES = ["completed", "no_show", "cancelled"] as const;
 export type RevertibleStatus = (typeof REVERTIBLE_STATUSES)[number];
 
-/** Mirrors `c_min_reason` in 0173 — measured AFTER the SQL-side btrim. */
+/** Mirrors `c_min_reason` in 0173, measured AFTER the SQL-side btrim. */
 export const MIN_REPAIR_REASON_LENGTH = 10;
 
-/** Mirrors `c_max_notes` in 0173 — measured AFTER the SQL-side btrim. */
+/** Mirrors `c_max_notes` in 0173, measured AFTER the SQL-side btrim. */
 export const MAX_APPOINTMENT_NOTES_LENGTH = 2000;
 
 /** Mirrors the 72-hour repair window in 0173, for display gating only. */

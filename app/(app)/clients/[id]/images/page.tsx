@@ -26,7 +26,7 @@ import { photoConsentSummary } from "@/lib/consent/signed-record";
 
 // PR #271. Practitioner-only treatment images. Gated by the app shell's
 // requirePractitionerWithStudio layout; data is loaded with the RLS client
-// scoped to the resolved studio. Image bytes are NEVER served here — only
+// scoped to the resolved studio. Image bytes are NEVER served here, only
 // metadata; viewing mints a short-TTL signed URL via a server action.
 export const dynamic = "force-dynamic";
 
@@ -51,7 +51,7 @@ export default async function ClientImagesPage({
   // PR #274: also select the existing context links (session_id /
   // session_block_id) and embed the attached session block's structured area
   // fields (primary_area / side / custom_area_detail) so each card can show
-  // treatment-context tags. Display-only — no schema change; raw IDs are turned
+  // treatment-context tags. Display-only, no schema change; raw IDs are turned
   // into labels server-side and never sent to the client.
   const { data: images, error: imgErr } = await supabase
     .from("treatment_images")
@@ -69,7 +69,7 @@ export default async function ClientImagesPage({
 
   // PR #273: server-side preview signing. Ownership is already verified (the
   // RLS client load above is scoped to this studio + client). Short-TTL signed
-  // URLs are returned ONLY in this response — never stored in the DB, never
+  // URLs are returned ONLY in this response, never stored in the DB, never
   // public. storage_path stays server-side; only the signed URL reaches the
   // client. A failed sign yields previewUrl=null → the card shows
   // "Image not available" but keeps the date label + context tags + Archive.

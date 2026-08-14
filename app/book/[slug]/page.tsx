@@ -35,7 +35,7 @@ export default async function PublicBookingPage({
   const admin = createAdminClient();
   const [{ data: servicesData }, { data: availabilityData }] =
     await Promise.all([
-      // THE canonical visible order: (sort_order, name, id) — byte-identical to
+      // THE canonical visible order: (sort_order, name, id), byte-identical to
       // the ordering inside migration 0161's reorder_studio_service RPC and to
       // lib/booking/service-order.ts. The trailing `id` term is what makes it
       // total: without it, services sharing a sort_order came back in heap
@@ -68,7 +68,7 @@ export default async function PublicBookingPage({
 
   // Public soft-gate: render the same calm copy for any incomplete
   // studio (no active services OR no open availability day). Identical
-  // wording is intentional — never disclose which piece is missing to
+  // wording is intentional, never disclose which piece is missing to
   // a public visitor. The booking actions enforce the same gate.
   const bookable = isPubliclyBookable({
     activeServicesCount: services.length,

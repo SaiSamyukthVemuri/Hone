@@ -6,7 +6,7 @@ import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 // Settings → Integrations. Owner-only surface for connecting the studio to outside
 // services. Today: Google Calendar (connection + status only). This page REUSES
 // the audited Google Calendar OAuth/connection engine (lib/google-calendar/*) and
-// the existing GoogleCalendarCard — it adds no event sync and touches no worker,
+// the existing GoogleCalendarCard: it adds no event sync and touches no worker,
 // outbound flag, outbox, or calendar link. Synchronization stays OFF.
 //
 // Authorization is server-derived and defense-in-depth: this page redirects
@@ -37,7 +37,7 @@ export default async function IntegrationsSettingsPage() {
         </p>
       </div>
 
-      {/* Dormancy banner — synchronization is OFF. Do not imply appointments sync. */}
+      {/* Dormancy banner: synchronization is OFF. Do not imply appointments sync. */}
       <div
         role="note"
         data-testid="integrations-sync-off"

@@ -12,11 +12,11 @@ import { utcInstantFromLocal, localTimeString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { notifyAppointmentMoved, type MoveNotificationStatus } from "@/lib/email/notify-appointment-moved";
 
-// Practitioner Move appointment — the ONE shared backend workflow used by mobile,
+// Practitioner Move appointment: the ONE shared backend workflow used by mobile,
 // tablet and desktop. Two typed server actions:
-//   * loadMoveSlotsAction  — authorized available times for the SAME appointment
+//   * loadMoveSlotsAction , authorized available times for the SAME appointment
 //     (own-reservation excluded server-side; every other conflict still applies).
-//   * moveAppointmentAction — the atomic same-record move via the 0133 RPC.
+//   * moveAppointmentAction, the atomic same-record move via the 0133 RPC.
 // Both resolve practitioner + studio SERVER-SIDE via getCurrentPractitionerWithStudio
 // (which requires an active practitioner) and NEVER trust a browser-supplied studio_id
 // or practitioner_id. The admin (service-role) client is used only after that resolve.
@@ -50,7 +50,7 @@ export type LoadMoveSlotsResult =
 // Active, same-studio practitioners ELIGIBLE for the appointment's service. A NULL
 // service (rare) means the command applies no eligibility filter, so mirror that:
 // every active practitioner is a valid target. Returns null on a lookup error
-// (fail closed). Display names only — never email / user id / metadata.
+// (fail closed). Display names only, never email / user id / metadata.
 async function loadEligiblePractitioners(
   admin: SupabaseClient,
   studioId: string,
@@ -79,7 +79,7 @@ async function loadEligiblePractitioners(
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
-// The StudioRow the slot generator needs — always built from the SERVER-resolved
+// The StudioRow the slot generator needs, always built from the SERVER-resolved
 // studio, never from anything the browser sent.
 function studioRow(studio: {
   id: string;
@@ -119,7 +119,7 @@ export async function loadMoveSlotsAction(input: {
   // Resolve the practitioner + studio server-side (also asserts an active membership).
   // canUseCustomTime is derived ONLY from the live server-resolved role; the browser
   // never supplies isOwner/role/studioId. The UI may use this flag solely to decide
-  // whether to SHOW the custom-time option — the server action re-authorizes on submit.
+  // whether to SHOW the custom-time option: the server action re-authorizes on submit.
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const canUseCustomTime = practitioner.role === "owner";
   const { createAdminClient } = await import("@/lib/supabase/admin-server");
@@ -153,7 +153,7 @@ export async function loadMoveSlotsAction(input: {
 
   // Resolve the slot target. Owner + a requested target must be validated; an
   // unresolved target (current is inactive/ineligible + nothing chosen) yields NO
-  // slots (reassignment is required — never a silent self/first fallback).
+  // slots (reassignment is required, never a silent self/first fallback).
   let slotTarget: string | null = appt.practitioner_id;
   if (reassignEnabled) {
     if (requestedTarget) {
@@ -208,7 +208,7 @@ export type MoveAppointmentResult =
   | { ok: false; error: string; code?: "conflict" | "stale" | "no_change" };
 
 // Move mode is a CLOSED contract. "available_slot" is the default: the target
-// must be one of the currently generated available slots (verified server-side —
+// must be one of the currently generated available slots (verified server-side,
 // browser state is not proof). "custom_time" is an OWNER-ONLY override that may be
 // outside published operating hours but still cannot bypass any real reservation.
 export type MoveMode = "available_slot" | "custom_time";
@@ -233,7 +233,7 @@ export async function moveAppointmentAction(input: {
       ? input.targetPractitionerId
       : null;
   // NEVER accept role/isOwner/canUseCustomTime/allowOutsideAvailability/studioId/
-  // practitionerId/duration/endTime as browser authority — none are read here.
+  // practitionerId/duration/endTime as browser authority, none are read here.
   // outsideAvailabilityConfirmed is a user ACKNOWLEDGEMENT only; the owner ROLE is
   // re-checked server-side below.
   const outsideAvailabilityConfirmed = input?.outsideAvailabilityConfirmed === true;
@@ -319,7 +319,7 @@ export async function moveAppointmentAction(input: {
 
   // §8: available-slot mode MUST match a currently-offered generated slot. The
   // slot list is recomputed server-side (same studio/duration/own-exclusion as
-  // loadMoveSlotsAction) and matched by START INSTANT — a crafted request that was
+  // loadMoveSlotsAction) and matched by START INSTANT: a crafted request that was
   // never offered cannot reach the RPC. Custom mode intentionally skips this so the
   // owner can pick a studio-local time outside published operating hours.
   if (mode === "available_slot") {

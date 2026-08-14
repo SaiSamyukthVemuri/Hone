@@ -3,12 +3,12 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { ClinicalDate } from "@/components/clinical-date";
 import type { PointOfCareMemory } from "@/lib/sessions/point-of-care-memory";
 
-// "Last treatment" — point-of-care treatment memory, rendered ON the live
+// "Last treatment", point-of-care treatment memory, rendered ON the live
 // charting screen.
 //
 // Chloe's complaint: while she is treating, everything she needs to reproduce
-// last time's setup — the frequency, the probe LOT, whether numbing was used,
-// how many hairs came out, how the skin responded — lived on the client
+// last time's setup: the frequency, the probe LOT, whether numbing was used,
+// how many hairs came out, how the skin responded: lived on the client
 // Overview tab or inside the previous session's own chart. Two or three
 // navigations away from the screen where she is standing over the client.
 //
@@ -18,8 +18,8 @@ import type { PointOfCareMemory } from "@/lib/sessions/point-of-care-memory";
 // so it reads identically to the saved-record display directly below it.
 //
 // LAYOUT CONTRACT
-//   * The clinical headline — date, areas + laterality, response, tolerance,
-//     total minutes, watch/plan — requires ZERO taps at every viewport.
+//   * The clinical headline: date, areas + laterality, response, tolerance,
+//     total minutes, watch/plan, requires ZERO taps at every viewport.
 //   * The setup detail is a <details open>: expanded by default on iPad and
 //     desktop AND on a 390px phone, so nothing is hidden behind a tap; the
 //     disclosure exists so she can collapse it once she has read it.
@@ -97,7 +97,7 @@ export function LastTreatmentMemoryCard({
       </header>
 
       {/* A prior visit can be genuinely charted and still carry no settings
-          blocks — a LASER visit charts into laser_entries, and pre-0019 legacy
+          blocks: a LASER visit charts into laser_entries, and pre-0019 legacy
           electrolysis charted straight into entries. Saying "Area not
           recorded / Not recorded" there would be a false negative about a
           visit that really did happen, so the card says what it actually
@@ -142,7 +142,7 @@ export function LastTreatmentMemoryCard({
                   {a.areaLabel}
                 </span>
                 <span className="text-neutral-700 dark:text-neutral-300">
-                  {a.responseLine && ` — ${a.responseLine}`}
+                  {a.responseLine && `: ${a.responseLine}`}
                   {a.toleranceLine && ` · Tolerance ${a.toleranceLine}`}
                 </span>
                 {/* Kept whole. The compact pre-treatment summary drops a
@@ -292,7 +292,7 @@ function NoteRow({
       >
         {/* A clinical note's occurred_at is a CALENDAR DATE, not an instant.
             <FormattedDateTime> would convert it into the viewer's zone and show
-            the previous day in every negative UTC offset — and would take the
+            the previous day in every negative UTC offset, and would take the
             viewer's LOCALE too, so the server and browser renders could differ.
             <ClinicalDate> pins both (en-CA + UTC). The session's own start time,
             above, is a real instant and deliberately still follows the viewer. */}

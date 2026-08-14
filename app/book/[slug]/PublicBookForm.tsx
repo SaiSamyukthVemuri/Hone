@@ -52,7 +52,7 @@ type Props = {
 
 // BOOK-01 Tranche 1. The success state carries the appointment's MANAGEMENT URL
 // and the TRUE confirmation-email outcome, so the card never tells the client
-// their cancel/reschedule links are in an email the provider refused — and the
+// their cancel/reschedule links are in an email the provider refused, and the
 // client always leaves with a usable path to the booking they just made.
 type Confirmation = {
   when: string;
@@ -198,7 +198,7 @@ export function PublicBookForm({
   const [noneInHorizon, setNoneInHorizon] = useState(false);
   // PR A (prev/next availability nav): client-side stack of the dates the
   // visitor jumped AWAY FROM via "Next available", so they can step back to a
-  // prior suggested day. Purely local state — no DB, no new server action.
+  // prior suggested day. Purely local state, no DB, no new server action.
   // Stepping back re-runs the normal slot fetch for that day (fresh slots +
   // normal validation, never a stale/cached slot). Reset when the service
   // changes, since availability is service-specific.
@@ -268,7 +268,7 @@ export function PublicBookForm({
   }, [slug, serviceId, date, clientType]);
 
   // Availability is service-specific, so a prior service's "next available"
-  // history is meaningless after a service switch — reset it. (Runs on mount
+  // history is meaningless after a service switch: reset it. (Runs on mount
   // too, which is a no-op since it starts empty.) Not tied to `date`, so a
   // normal next/previous jump never wipes the stack.
   useEffect(() => {
@@ -343,7 +343,7 @@ export function PublicBookForm({
 
   // Step back to the previously-suggested availability. Pops the history stack
   // and re-selects that date; the slot-fetch effect above then refreshes that
-  // day's slots (so a returned day is always shown with live, validated slots —
+  // day's slots (so a returned day is always shown with live, validated slots,
   // never a stale one). No booking happens here.
   function onPrevious() {
     const { previous, rest } = popAvailabilityHistory(dateHistory);
@@ -1033,7 +1033,7 @@ function Field({
 }
 
 // Bold the client's own address wherever a step names it, so a mistyped email
-// is easy to spot — the emphasis the pre-Tranche-1 card carried on that line.
+// is easy to spot: the emphasis the pre-Tranche-1 card carried on that line.
 // Purely derived from data already on screen: it reads the address, never the
 // email STATUS, so no status decision returns to the JSX. A step that does not
 // mention the address renders unchanged.
@@ -1049,7 +1049,7 @@ function emphasiseEmail(step: string, email: string): React.ReactNode {
   );
 }
 
-// Public booking confirmation surface. Pure display — no actions, no
+// Public booking confirmation surface. Pure display, no actions, no
 // fetches, no side effects. The booking has already been created and
 // the confirmation email already dispatched by the server action by
 // the time this renders.
@@ -1163,7 +1163,7 @@ function ConfirmationView({
           // card is client-side state and a refresh returns to the empty
           // booking form. Only the link survives.
           <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
-            Save that link — it&rsquo;s how you manage this appointment.
+            Save that link: it&rsquo;s how you manage this appointment.
           </p>
         )}
       </div>
@@ -1172,7 +1172,7 @@ function ConfirmationView({
           login page reads ?studio=<slug> to scope the sign-in to THIS studio
           (app/portal/login/page.tsx), and the portal itself mints a fresh
           management token per upcoming appointment. Deliberately quiet and
-          deliberately not required — the in-band link above is primary, and
+          deliberately not required: the in-band link above is primary, and
           nothing here asks the client to sign in to manage this booking. */}
       <div className="flex flex-col gap-2">
         <a
