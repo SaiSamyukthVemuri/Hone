@@ -1,0 +1,13 @@
+# Vendored font assets (app/_fonts). See FONTS.md.
+
+# The .woff2 files are the exact bytes the previous next/font/google build
+# served. Mark them binary explicitly so no future core.autocrlf or diff
+# setting can rewrite a byte and silently corrupt a face.
+*.woff2 binary
+
+# The OFL 1.1 notices must stay byte-for-byte as their upstream projects
+# publish them - undercasetype/Fraunces ships a line with a trailing space.
+# `git diff --check` (which this repo runs in verify:prepush) would flag it,
+# and "fixing" it would mean editing a licence text to satisfy a linter.
+# Exempt them from the whitespace check instead, and keep them verbatim.
+app/_fonts/LICENSE-*.txt -whitespace

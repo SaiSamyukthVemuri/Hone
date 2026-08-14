@@ -79,10 +79,23 @@ dependency: the offline build described below passes with both hosts blocked.
 Both families are licensed under the **SIL Open Font License 1.1**, which permits
 redistribution of the font files:
 
-| Family | Copyright | Upstream |
-|---|---|---|
-| Inter | © The Inter Project Authors | <https://github.com/rsms/inter> |
-| Fraunces | © The Fraunces Project Authors | <https://github.com/undercasetype/Fraunces> |
+| Family | Copyright | Upstream | Licence file |
+|---|---|---|---|
+| Inter | Copyright (c) 2016 The Inter Project Authors | <https://github.com/rsms/inter> | `app/_fonts/LICENSE-Inter.txt` |
+| Fraunces | Copyright 2018 The Fraunces Project Authors | <https://github.com/undercasetype/Fraunces> | `app/_fonts/LICENSE-Fraunces.txt` |
+
+**Naming the licence is not enough — the notice has to travel with the files.**
+OFL 1.1 clause 2 permits redistribution "provided that each copy contains the
+above copyright notice and this license", and allows that to be satisfied by
+"stand-alone text files". So the full upstream licence text for each family sits
+next to the binaries in `app/_fonts/`, fetched verbatim from each project's own
+repository (`rsms/inter/LICENSE.txt`, `undercasetype/Fraunces/OFL.txt`). Both are
+the complete OFL 1.1 (Version 1.1 - 26 February 2007) carrying that family's own
+copyright line; the two bodies differ only in known upstream formatting variants.
+
+**If these fonts are ever moved, renamed or re-vendored, the two `LICENSE-*.txt`
+files must move with them.** `tests/source-guards/self-hosted-fonts-guards.test.ts`
+fails if either goes missing or stops being a real OFL 1.1 notice.
 
 The vendored `.woff2` files in `app/_fonts/` are **the exact bytes the previous
 `next/font/google` build downloaded from Google Fonts** and served from

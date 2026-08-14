@@ -208,6 +208,28 @@ describe("the faces are loaded from local files", () => {
     expect(missing).toEqual([]);
   });
 
+  it("ships the OFL notice alongside the binaries, per family", () => {
+    // OFL 1.1 clause 2 allows redistribution only if "each copy contains the
+    // above copyright notice and this license". Naming the licence in a doc is
+    // NOT enough - the notice has to travel with the files, which the licence
+    // lets us satisfy with stand-alone text files. If the fonts are ever moved
+    // or re-vendored and these are left behind, the binaries ship unlicensed.
+    for (const [file, holder] of [
+      ["LICENSE-Inter.txt", "The Inter Project Authors"],
+      ["LICENSE-Fraunces.txt", "The Fraunces Project Authors"],
+    ]) {
+      const full = path.join(ROOT, "app/_fonts", file);
+      expect(existsSync(full), `${file} is missing`).toBe(true);
+      const text = readFileSync(full, "utf8");
+      expect(text).toContain(holder);
+      // Pin that it is the real licence body, not a stub naming the licence.
+      expect(text).toContain("SIL OPEN FONT LICENSE Version 1.1");
+      expect(text).toContain(
+        "contains the above copyright notice and this license",
+      );
+    }
+  });
+
   it("the vendored files are real WOFF2 binaries, not placeholders", () => {
     const fonts = readdirSync(path.join(ROOT, "app/_fonts")).filter((f) =>
       f.endsWith(".woff2"),
