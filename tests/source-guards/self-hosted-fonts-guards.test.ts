@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 // SOURCE GUARDS - self-hosted Inter + Fraunces.
 //
@@ -19,6 +20,17 @@ import path from "node:path";
 // The second thing pinned here is the FACE CONTRACT: which weights and styles
 // each surface declares. Those are easy to "tidy" into a variable weight range,
 // which looks equivalent and is not - see the assertions below.
+//
+// WHY THE TYPESCRIPT PARSER AND NOT A REGEX. Source text legitimately NAMES
+// `next/font/google` in comments - this file does, app/_fonts/*.ts do, and
+// lib/security/headers.ts does - so the scan has to ignore comments. A
+// line-oriented comment filter is not good enough, and its failure mode is
+// silent: `import { Inter } from /* why */ "next/font/google"` survives a
+// `from\s*"..."` regex, and a line STARTING with a block comment gets discarded
+// whole, taking a real import on that same line with it. Both forms restore the
+// build-time network dependency while leaving a hand-rolled guard green. So
+// imports come from ts.preProcessFile, and the host scan runs over
+// scanner-stripped text that keeps string literals intact.
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -45,17 +57,41 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-// Comments legitimately NAME next/font/google - this file does it repeatedly,
-// and so do app/_fonts/*.ts and lib/security/headers.ts when they explain why
-// the dependency is gone. Every "this is absent" assertion therefore runs
-// against code lines only, or a comment would satisfy the guard it is meant to
-// trip. Block-comment bodies conventionally start with `*` in this codebase.
-function codeOnly(src: string): string {
-  return src
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\/\*|\*|\{\/\*)/.test(line))
-    .join("\n");
+/** Every module specifier the file imports or re-exports, comments ignored. */
+function moduleSpecifiers(src: string): string[] {
+  return ts.preProcessFile(src, true, true).importedFiles.map((f) => f.fileName);
 }
+
+/** Source text with comments removed and string literals preserved. */
+function codeOnly(src: string): string {
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    /* skipTrivia */ true,
+    ts.LanguageVariant.JSX,
+    src,
+  );
+  let out = "";
+  let token = scanner.scan();
+  while (token !== ts.SyntaxKind.EndOfFileToken) {
+    out += scanner.getTokenText() + " ";
+    token = scanner.scan();
+  }
+  return out;
+}
+
+const GOOGLE_FONT_HOST = /fonts\.(googleapis|gstatic)\.com/;
+
+// The only files allowed to name the Google Fonts hosts in CODE. Both do it to
+// assert the hosts are ABSENT, which is the same property this file protects; a
+// guard that could not tell "asserts absence" from "reintroduces it" would
+// punish the tests defending it. Everything else in the repository is scanned,
+// including build-path files such as next.config.ts and scripts/*.mjs, because
+// `npm run build` executes those too - a fetch added there would recreate the
+// network-dependent build just as effectively as an import in app/.
+const MAY_NAME_GOOGLE_FONT_HOSTS = new Set([
+  path.join("tests", "lib", "security", "headers.test.ts"),
+  path.join("tests", "source-guards", "self-hosted-fonts-guards.test.ts"),
+]);
 
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -66,35 +102,72 @@ const MARKETING_FONTS = read(MARKETING_FONTS_PATH);
 const LAYOUT = read("app/layout.tsx");
 const MARKETING_ENTRY = read("app/_components/marketing/fonts.ts");
 
-const ALL_SOURCE = sourceFiles(ROOT).map((file) => ({
-  rel: path.relative(ROOT, file),
-  code: codeOnly(readFileSync(file, "utf8")),
-}));
+const ALL_SOURCE = sourceFiles(ROOT).map((file) => {
+  const text = readFileSync(file, "utf8");
+  return {
+    rel: path.relative(ROOT, file),
+    specifiers: moduleSpecifiers(text),
+    code: codeOnly(text),
+  };
+});
 
-// The host-name scan runs against APPLICATION source only. Test files
-// legitimately name the Google hosts in order to assert their ABSENCE -
-// tests/lib/security/headers.test.ts pins that the CSP does not allow them -
-// and a guard that cannot tell "asserts absence" from "reintroduces it" would
-// punish exactly the tests protecting the same property.
-const APP_ROOTS = ["app", "components", "lib", "hooks", "middleware.ts"];
-const APP_SOURCE = ALL_SOURCE.filter(({ rel }) =>
-  APP_ROOTS.some((root) => rel === root || rel.startsWith(root + path.sep)),
-);
+describe("the comment handling this guard depends on", () => {
+  // If these break, every "is absent" assertion below can pass vacuously.
+  it("sees an import hidden behind an inline block comment", () => {
+    expect(
+      moduleSpecifiers('import { Inter } from /* why */ "next/font/google";'),
+    ).toContain("next/font/google");
+  });
+
+  it("sees an import on a line that STARTS with a block comment", () => {
+    expect(
+      moduleSpecifiers('/* lead */ import { Inter } from "next/font/google";'),
+    ).toContain("next/font/google");
+  });
+
+  it("sees a require() and a re-export, not just a bare import", () => {
+    expect(moduleSpecifiers('require("next/font/google");')).toContain(
+      "next/font/google",
+    );
+    expect(
+      moduleSpecifiers('export { Inter } from "next/font/google";'),
+    ).toContain("next/font/google");
+  });
+
+  it("does NOT count a genuinely commented-out import", () => {
+    expect(
+      moduleSpecifiers('// import { Inter } from "next/font/google";'),
+    ).toEqual([]);
+    expect(
+      moduleSpecifiers('/* import { Inter } from "next/font/google"; */'),
+    ).toEqual([]);
+  });
+
+  it("keeps a host inside a string but drops one inside a comment", () => {
+    // The naive fix - deleting from `//` to end of line - would eat the host
+    // out of "https://fonts.gstatic.com" and hide a real reference.
+    expect(codeOnly('const u = "https://fonts.gstatic.com/x";')).toMatch(
+      GOOGLE_FONT_HOST,
+    );
+    expect(codeOnly("// we never call https://fonts.gstatic.com now")).not.toMatch(
+      GOOGLE_FONT_HOST,
+    );
+  });
+});
 
 describe("the build never depends on Google Fonts", () => {
   it("no source file imports next/font/google", () => {
-    const offenders = ALL_SOURCE.filter(({ code }) =>
-      /from\s*["']next\/font\/google["']|require\(\s*["']next\/font\/google["']\s*\)/.test(
-        code,
-      ),
+    const offenders = ALL_SOURCE.filter(({ specifiers }) =>
+      specifiers.includes("next/font/google"),
     ).map(({ rel }) => rel);
 
     expect(offenders).toEqual([]);
   });
 
-  it("no application source file references the Google Fonts hosts", () => {
-    const offenders = APP_SOURCE.filter(({ code }) =>
-      /fonts\.(googleapis|gstatic)\.com/.test(code),
+  it("no source file references the Google Fonts hosts", () => {
+    const offenders = ALL_SOURCE.filter(
+      ({ rel, code }) =>
+        !MAY_NAME_GOOGLE_FONT_HOSTS.has(rel) && GOOGLE_FONT_HOST.test(code),
     ).map(({ rel }) => rel);
 
     expect(offenders).toEqual([]);
@@ -102,19 +175,21 @@ describe("the build never depends on Google Fonts", () => {
 
   it("guards against a scan that silently walks nothing", () => {
     // A walker that returned [] would make every assertion above pass
-    // vacuously. Pin that both scans really did reach real source.
-    expect(ALL_SOURCE.length).toBeGreaterThan(200);
-    expect(APP_SOURCE.length).toBeGreaterThan(100);
-    expect(ALL_SOURCE.map(({ rel }) => rel)).toContain("app/layout.tsx");
-    expect(APP_SOURCE.map(({ rel }) => rel)).toContain("app/layout.tsx");
-    expect(APP_SOURCE.map(({ rel }) => rel)).toContain(APP_FONTS_PATH);
+    // vacuously. Pin that it really reached the application source AND the
+    // build-path files, which are the ones a narrower scan would have missed.
+    const paths = ALL_SOURCE.map(({ rel }) => rel);
+    expect(ALL_SOURCE.length).toBeGreaterThan(500);
+    expect(paths).toContain("app/layout.tsx");
+    expect(paths).toContain(APP_FONTS_PATH);
+    expect(paths).toContain("next.config.ts");
+    expect(paths).toContain(path.join("scripts", "check-production-env-gates.mjs"));
   });
 });
 
 describe("the faces are loaded from local files", () => {
   it("both font modules use next/font/local", () => {
-    expect(APP_FONTS).toMatch(/import localFont from "next\/font\/local"/);
-    expect(MARKETING_FONTS).toMatch(/import localFont from "next\/font\/local"/);
+    expect(moduleSpecifiers(APP_FONTS)).toContain("next/font/local");
+    expect(moduleSpecifiers(MARKETING_FONTS)).toContain("next/font/local");
   });
 
   it("every referenced .woff2 exists in the repository", () => {
@@ -155,18 +230,16 @@ describe("the CSS variable contract is unchanged", () => {
   });
 
   it("the root layout applies both variables to <html>", () => {
-    expect(LAYOUT).toMatch(
-      /import \{ fraunces, inter \} from "\.\/_fonts\/app-fonts"/,
-    );
-    expect(codeOnly(LAYOUT)).toMatch(
-      /className=\{`\$\{fraunces\.variable\} \$\{inter\.variable\}`\}/,
-    );
+    expect(moduleSpecifiers(LAYOUT)).toContain("./_fonts/app-fonts");
+    expect(codeOnly(LAYOUT)).toMatch(/fraunces\s*\.\s*variable/);
+    expect(codeOnly(LAYOUT)).toMatch(/inter\s*\.\s*variable/);
   });
 
   it("the marketing surface still gets its face from the marketing entry point", () => {
-    expect(MARKETING_ENTRY).toMatch(
-      /export \{ marketingSans \} from "@\/app\/_fonts\/marketing-fonts"/,
+    expect(moduleSpecifiers(MARKETING_ENTRY)).toContain(
+      "@/app/_fonts/marketing-fonts",
     );
+    expect(MARKETING_ENTRY).toMatch(/export \{ marketingSans \}/);
   });
 });
 
@@ -205,7 +278,9 @@ describe("the declared faces match what production rendered", () => {
       "400",
       "700",
     ]);
-    expect(APP_FONTS).toMatch(/"\.\/fraunces-italic-latin\.woff2", weight: "400", style: "italic"/);
+    expect(APP_FONTS).toMatch(
+      /"\.\/fraunces-italic-latin\.woff2", weight: "400", style: "italic"/,
+    );
   });
 
   it("no face is declared as a variable weight RANGE", () => {
@@ -236,7 +311,7 @@ describe("the marketing faces stay out of the authenticated app", () => {
   });
 
   it("the root layout does not import the marketing font module", () => {
-    expect(codeOnly(LAYOUT)).not.toMatch(/marketing-fonts/);
-    expect(codeOnly(APP_FONTS)).not.toMatch(/marketing-fonts/);
+    expect(moduleSpecifiers(LAYOUT).join(" ")).not.toMatch(/marketing-fonts/);
+    expect(moduleSpecifiers(APP_FONTS).join(" ")).not.toMatch(/marketing-fonts/);
   });
 });
