@@ -10,4 +10,11 @@
 # `git diff --check` (which this repo runs in verify:prepush) would flag it,
 # and "fixing" it would mean editing a licence text to satisfy a linter.
 # Exempt them from the whitespace check instead, and keep them verbatim.
-app/_fonts/LICENSE-*.txt -whitespace
+#
+# They live in public/ because they must reach the BROWSER, not just the
+# checkout: OFL 1.1 clause 2 requires the licence to accompany each distributed
+# copy of the Font Software, and the served .woff2 subsets carry only the
+# copyright (name ID 0) and a licence URL (name ID 14) - Google's subsetting
+# strips the licence body (name ID 13). Next serves public/ verbatim, so these
+# are reachable at /fonts/LICENSE-*.txt in the deployed app. See FONTS.md.
+public/fonts/LICENSE-*.txt -whitespace

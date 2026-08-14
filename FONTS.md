@@ -79,31 +79,48 @@ dependency: the offline build described below passes with both hosts blocked.
 Both families are licensed under the **SIL Open Font License 1.1**, which permits
 redistribution of the font files:
 
-| Family | Copyright | Upstream | Licence file |
-|---|---|---|---|
-| Inter | Copyright (c) 2016 The Inter Project Authors | <https://github.com/rsms/inter> | `app/_fonts/LICENSE-Inter.txt` |
-| Fraunces | Copyright 2018 The Fraunces Project Authors | <https://github.com/undercasetype/Fraunces> | `app/_fonts/LICENSE-Fraunces.txt` |
+| Family | Copyright | Upstream | Licence file | Served at |
+|---|---|---|---|---|
+| Inter | Copyright (c) 2016 The Inter Project Authors | <https://github.com/rsms/inter> | `public/fonts/LICENSE-Inter.txt` | `/fonts/LICENSE-Inter.txt` |
+| Fraunces | Copyright 2018 The Fraunces Project Authors | <https://github.com/undercasetype/Fraunces> | `public/fonts/LICENSE-Fraunces.txt` | `/fonts/LICENSE-Fraunces.txt` |
 
-**Naming the licence is not enough — the notice has to travel with the files.**
+**Naming the licence is not enough, and neither is a copy in the source tree.**
 OFL 1.1 clause 2 permits redistribution "provided that each copy contains the
-above copyright notice and this license", and allows that to be satisfied by
-"stand-alone text files". So the full upstream licence text for each family sits
-next to the binaries in `app/_fonts/`, fetched verbatim from each project's own
-repository (`rsms/inter/LICENSE.txt`, `undercasetype/Fraunces/OFL.txt`). Both are
-the complete OFL 1.1 (Version 1.1 - 26 February 2007) carrying that family's own
-copyright line; the two bodies differ only in known upstream formatting variants.
+above copyright notice and this license". The copies that matter are the ones a
+**browser** receives, and `next/font/local` emits only the `.woff2` into
+`.next/static/media/` — it copies no sibling text file. The notices therefore
+live under `public/`, which Next serves verbatim, so they are reachable in the
+deployed app at the URLs above.
 
-**If these fonts are ever moved, renamed or re-vendored, the two `LICENSE-*.txt`
-files must move with them.** `tests/source-guards/self-hosted-fonts-guards.test.ts`
-fails if either goes missing or stops being a real OFL 1.1 notice.
+Both files were fetched verbatim from each project's own repository
+(`rsms/inter/LICENSE.txt`, `undercasetype/Fraunces/OFL.txt`) and are the complete
+OFL 1.1 (Version 1.1 - 26 February 2007) carrying that family's own copyright
+line; the two bodies differ only in known upstream formatting variants.
+
+**There is deliberately exactly ONE copy of each notice.** Keeping a second copy
+beside the binaries in `app/_fonts/` would satisfy both "next to the fonts" and
+"served to the browser", and is precisely how one of them silently stops matching
+upstream. `tests/source-guards/self-hosted-fonts-guards.test.ts` fails if a
+notice goes missing, if it is replaced by a stub that merely names the licence,
+or if a second copy reappears under `app/_fonts/`.
+
+> **Putting a file in `public/` does not mean it is served.** The first attempt
+> at this did exactly that and the notices were still unreachable: the Supabase
+> session middleware in `middleware.ts` matches every path it does not
+> explicitly exclude, so `GET /fonts/LICENSE-Inter.txt` answered
+> **307 → /login**. `middleware.ts` now excludes `fonts/` for the same reason it
+> excludes `_next/static` — a static asset directory is not an authenticated
+> resource. Verified against a real `next start`: both notices return **200**
+> with bytes identical to the repository, while `/dashboard` and `/calendar`
+> still redirect to `/login`. The guard pins both halves of that, so neither
+> over- nor under-exclusion can creep back.
 
 ### What the BROWSER receives
 
-The `.txt` notices stay in the repository — Next emits only the `.woff2` files
-into `.next/static/media/`, and it does not copy sibling text files. That is not
-a gap, because clause 2 also accepts the notice "in the appropriate
-machine-readable metadata fields within text or binary files", and these subsets
-carry it. Read out of the shipped binaries:
+The served `.woff2` files carry part of the notice themselves. Clause 2 accepts
+the notice "in the appropriate machine-readable metadata fields within text or
+binary files", and these subsets populate some of those fields. Read out of the
+shipped binaries:
 
 | name ID | Field | Inter | Fraunces |
 |---|---|---|---|
@@ -111,13 +128,24 @@ carry it. Read out of the shipped binaries:
 | 14 | License Info URL | `https://openfontlicense.org` | `https://scripts.sil.org/OFL` |
 | 13 | License Description | **absent** | **absent** |
 
-So every served copy carries its own copyright notice and a pointer to the
-licence. Name ID 13, which would carry the licence *body*, is stripped by
-Google's subsetting — which is precisely why the full text is vendored as
-`LICENSE-*.txt` as well. Note this is **unchanged from before self-hosting**:
-`next/font/google` downloaded and served these same subsetted bytes, with no
-licence text anywhere in the repository at all. Vendoring improves the position
-rather than weakening it.
+So every served copy carries its own **copyright notice** (name ID 0) and a
+**pointer** to the licence (name ID 14) — but name ID 13, the field that would
+carry the licence *body*, is stripped by Google's subsetting.
+
+**A pointer is not the licence.** Clause 2 requires each copy to contain the
+copyright notice *and this license*, so the metadata alone does not satisfy it.
+That is the reason the full text is served from `public/fonts/LICENSE-*.txt`
+rather than only kept in the source tree: together, the binary's own copyright
+field and the served licence text cover both halves of the clause.
+
+Embedding the licence body into name ID 13 would also satisfy it, and was
+rejected: it would mean rewriting every `.woff2`, which would break the property
+this whole change rests on — that the bytes are exactly what `next/font/google`
+served, verified by the sha256 values above.
+
+For context, the deployed-notice position was **worse before self-hosting**:
+`next/font/google` downloaded and served these same subsetted bytes with no
+licence text anywhere in the repository at all.
 
 The guard asserts name IDs 0, 1 and 14 on **every** vendored `.woff2` by parsing
 the WOFF2 name table (`tests/source-guards/woff2-name-table.ts`), so a future

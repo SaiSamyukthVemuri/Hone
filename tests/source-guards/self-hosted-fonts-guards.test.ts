@@ -82,6 +82,11 @@ function codeOnly(src: string): string {
 
 const GOOGLE_FONT_HOST = /fonts\.(googleapis|gstatic)\.com/;
 
+// The OFL notices must reach the browser, not just the checkout, so they live
+// under public/ (served verbatim by Next at /fonts/LICENSE-*.txt) rather than
+// beside the binaries in app/_fonts.
+const LICENSE_DIR = path.join("public", "fonts");
+
 // The only files allowed to name the Google Fonts hosts in CODE. Both do it to
 // assert the hosts are ABSENT, which is the same property this file protects; a
 // guard that could not tell "asserts absence" from "reintroduces it" would
@@ -209,18 +214,25 @@ describe("the faces are loaded from local files", () => {
     expect(missing).toEqual([]);
   });
 
-  it("ships the OFL notice alongside the binaries, per family", () => {
+  it("serves the full OFL notice from the DEPLOYED artifact", () => {
     // OFL 1.1 clause 2 allows redistribution only if "each copy contains the
-    // above copyright notice and this license". Naming the licence in a doc is
-    // NOT enough - the notice has to travel with the files, which the licence
-    // lets us satisfy with stand-alone text files. If the fonts are ever moved
-    // or re-vendored and these are left behind, the binaries ship unlicensed.
+    // above copyright notice and this license".
+    //
+    // A notice sitting in the source tree does not satisfy that for the copies
+    // a BROWSER receives. next/font/local emits only the .woff2 into
+    // .next/static/media and copies no sibling text file, and the served
+    // subsets carry the copyright (name ID 0) and a licence URL (name ID 14)
+    // but NOT the licence body - Google's subsetting strips name ID 13. A URL
+    // is a pointer to the licence, not the licence.
+    //
+    // So the notices live in public/, which Next serves verbatim, making them
+    // reachable at /fonts/LICENSE-*.txt in the deployed app.
     for (const [file, holder] of [
       ["LICENSE-Inter.txt", "The Inter Project Authors"],
       ["LICENSE-Fraunces.txt", "The Fraunces Project Authors"],
     ]) {
-      const full = path.join(ROOT, "app/_fonts", file);
-      expect(existsSync(full), `${file} is missing`).toBe(true);
+      const full = path.join(ROOT, LICENSE_DIR, file);
+      expect(existsSync(full), `${file} must be under ${LICENSE_DIR}`).toBe(true);
       const text = readFileSync(full, "utf8");
       expect(text).toContain(holder);
       // Pin that it is the real licence body, not a stub naming the licence.
@@ -228,7 +240,52 @@ describe("the faces are loaded from local files", () => {
       expect(text).toContain(
         "contains the above copyright notice and this license",
       );
+      // The clauses that make it a usable licence rather than an excerpt.
+      expect(text).toContain("PERMISSION");
+      expect(text).toContain("TERMINATION");
+      expect(text).toContain("DISCLAIMER");
+      expect(text.length).toBeGreaterThan(3500);
     }
+  });
+
+  it("the auth middleware does not intercept the served notices", () => {
+    // Putting the notices under public/ is NOT sufficient on its own. The
+    // Supabase session middleware matches every path that is not explicitly
+    // excluded, and it redirects unauthenticated requests to /login. Before the
+    // `fonts/` exclusion, GET /fonts/LICENSE-Inter.txt answered 307 -> /login,
+    // so the licence was not reachable in the deployed app at all. Files being
+    // present in public/ says nothing about them being served.
+    const middleware = read("middleware.ts");
+    const matcher = middleware.match(/matcher:\s*\[\s*"([^"]+)"/)?.[1];
+    expect(matcher, "could not read the middleware matcher").toBeTruthy();
+    const pattern = new RegExp(`^${matcher!.replace(/\\\\/g, "\\")}$`);
+
+    for (const licencePath of [
+      "/fonts/LICENSE-Inter.txt",
+      "/fonts/LICENSE-Fraunces.txt",
+    ]) {
+      expect(
+        pattern.test(licencePath),
+        `${licencePath} must NOT be matched by the auth middleware`,
+      ).toBe(false);
+    }
+    // ...and the exclusion must not have swallowed the authenticated app.
+    for (const appPath of ["/dashboard", "/settings/data", "/calendar"]) {
+      expect(
+        pattern.test(appPath),
+        `${appPath} MUST still run through the auth middleware`,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps exactly ONE copy of each notice, so they cannot drift", () => {
+    // The obvious way to satisfy both "next to the fonts" and "served to the
+    // browser" is to keep two copies. Two copies of a licence is how one of
+    // them silently stops matching upstream.
+    const strays = readdirSync(path.join(ROOT, "app/_fonts")).filter((f) =>
+      /LICENSE|OFL/i.test(f),
+    );
+    expect(strays).toEqual([]);
   });
 
   it("every SERVED binary carries its own copyright and OFL pointer", () => {

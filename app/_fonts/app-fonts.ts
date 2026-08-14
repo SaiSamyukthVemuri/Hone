@@ -7,8 +7,11 @@ import localFont from "next/font/local";
 //
 // The .woff2 files in this directory are the EXACT bytes the previous
 // next/font/google build downloaded and served from /_next/static/media, so
-// rendering is unchanged rather than merely similar. Provenance, licence and
-// per-file sha256 are recorded in FONTS.md.
+// rendering is unchanged rather than merely similar. Provenance and per-file
+// sha256 are recorded in FONTS.md. Both families are SIL OFL 1.1; the full
+// notices are served from public/fonts/LICENSE-*.txt, because clause 2 requires
+// the licence to accompany the copies a BROWSER receives and only the .woff2
+// files are emitted here.
 //
 // WHY ONE CALL PER SUBSET: Google serves one variable .woff2 per
 // unicode-range subset, and `next/font/local` applies `declarations` to
