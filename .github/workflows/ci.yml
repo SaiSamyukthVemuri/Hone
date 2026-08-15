@@ -329,9 +329,36 @@ jobs:
     # minutes is still too slow and should be investigated, but it now reports
     # its own result instead of being cut mid-run.
     #
+    # The EXTENDED ceiling was raised 12 -> 18 after run 31852791688 cancelled
+    # shard 3 at 12m15s with ZERO test failures: 60 of 81 assigned tests ran and
+    # ALL 60 passed. The same shard had passed in 9m11s on the immediately prior
+    # head, where it was assigned 60 tests rather than 81 - the extended suite
+    # grew by a spec and Playwright redistributed, so the shard inherited +35%
+    # work and walked into a ceiling it had been sitting just under.
+    #
+    # The ceiling has to clear the whole job, not just the tests, and the job is
+    # NOT a fixed cost - it straddled the ceiling. The same 81 tests, measured on
+    # two runners:
+    #
+    #   run 31852791688  508s before the first test executes, 3.8s per test
+    #                    -> ~13m34s projected, CANCELLED at 12m with 60/81 run
+    #   run 31855800146  266s before the first test executes, 3.6s per test
+    #                    -> 9m18s actual, all 81 passed
+    #
+    # Per-test speed is stable; what varies is everything BEFORE the first test -
+    # Supabase stack, full migration chain from scratch, Playwright, and the
+    # `next build` inside Playwright's webServer - which swung 266s -> 508s
+    # between runners. A 12 min ceiling sits inside that spread, so the lane
+    # passed or was cancelled depending on which runner it drew, with test health
+    # identical either way. 18 clears the slow end instead of moving the cliff.
+    #
+    # This does NOT relax the performance target. A shard needing more than ~10
+    # minutes is still too slow and still worth investigating; it now reports
+    # its own result instead of being cut mid-run and misread as a test failure.
+    #
     #   targeted  : target <10 min,          hard timeout 15 min
-    #   extended  : target <10 min per shard, hard timeout 12 min  (unchanged)
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 12 || 15 }}
+    #   extended  : target <10 min per shard, hard timeout 18 min
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}
     strategy:
       fail-fast: false
       matrix:
