@@ -115,6 +115,20 @@ describe("payment status copy comes from the shared presenter layer", () => {
   it("dashboard payment counts stay mode-scoped; admin status comes from the admin helper", () => {
     const metrics = readFileSync(path.join(ROOT, "lib/dashboard/practice-metrics.ts"), "utf8");
     expect(metrics).toMatch(/\.eq\("stripe_livemode", inferStripeLivemode\(\)\)/);
+    // R-05 / REL-005. The batched checkout-cell loader reads the SAME ledger and
+    // must be scoped the same way. 0105 lets a TEST and a LIVE attempt coexist
+    // for one session, and deriveAppointmentPaymentState never looks at mode, so
+    // an unscoped read lets pre-launch test history decide a live badge and
+    // suppress Checkout. Behavioural proof lives in
+    // tests/lib/billing/appointment-payment-state.test.ts (M1-M14).
+    const apptState = readFileSync(
+      path.join(ROOT, "lib/billing/appointment-payment-state.ts"),
+      "utf8",
+    );
+    expect(apptState).toMatch(/\.eq\("stripe_livemode", inferStripeLivemode\(\)\)/);
+    expect(apptState).toMatch(
+      /from "@\/lib\/stripe\/server"/,
+    );
     const adminHome = readFileSync(path.join(ROOT, "app/admin/page.tsx"), "utf8");
     expect(adminHome).toMatch(/loadPlatformPaymentSummary/);
     const detail = readFileSync(path.join(ROOT, "app/admin/studios/[id]/page.tsx"), "utf8");
