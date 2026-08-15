@@ -72,6 +72,34 @@ type Args = {
   sessionId: string;
 };
 
+// PAY-READ-01 PR D. A Supabase query ERROR is not a business fact. PostgREST
+// leaves `data` null on failure, which is exactly what a successful empty read
+// looks like, so every read below used to answer a failure with a confident
+// claim about the studio or the client ("no card on file", "not found") - or,
+// for attempt history, with TRUSTED EMPTY HISTORY that silently removed
+// duplicate protection.
+//
+// A read failure means one thing only: eligibility could not be verified.
+// It must block, and it must say so honestly. Clean zero rows keep their
+// existing specific, actionable copy - blocking safely is not the same as
+// blocking usefully, and replacing good copy with this generic line would be
+// its own regression.
+//
+// The identical constant lives in manual-fee-eligibility.ts. The two helpers
+// share no module, and tests/lib/billing/eligibility-read-failure-source.test.ts
+// pins the strings equal so they cannot drift apart.
+export const ELIGIBILITY_READ_FAILED_REASON =
+  "Payment eligibility could not be verified. Refresh and try again.";
+
+// At most ONE read-failure reason, however many reads failed. Several failing
+// reads are still a single fact - Hone could not verify eligibility - and
+// repeating the line would read like several independent problems.
+function pushReadFailure(reasons: string[]) {
+  if (!reasons.includes(ELIGIBILITY_READ_FAILED_REASON)) {
+    reasons.push(ELIGIBILITY_READ_FAILED_REASON);
+  }
+}
+
 export async function getSessionPaymentEligibility(
   args: Args,
 ): Promise<SessionPaymentEligibility> {
@@ -82,7 +110,7 @@ export async function getSessionPaymentEligibility(
   //    appointment row so we can read its status without a second
   //    query; sessions.appointment_id is nullable so the row may
   //    not exist and the join key is the FK.
-  const { data: sessionRow } = await admin
+  const { data: sessionRow, error: sessionErr } = await admin
     .from("sessions")
     .select(
       "id, studio_id, client_id, modality, started_at, ended_at, price_paid_cents, appointment_id, appointments(id, status, starts_at)",
@@ -95,7 +123,11 @@ export async function getSessionPaymentEligibility(
   let appointmentSummary: SessionPaymentAppointmentSummary | null = null;
   let clientId: string | null = null;
 
-  if (!sessionRow) {
+  if (sessionErr) {
+    // NOT "session not found". clientId stays null below, so the dependent
+    // card read is skipped rather than adding a second, invented reason.
+    pushReadFailure(reasons);
+  } else if (!sessionRow) {
     reasons.push("Session not found in this studio.");
   } else {
     sessionSummary = {
@@ -155,7 +187,7 @@ export async function getSessionPaymentEligibility(
   let stripePaymentMethodIdFromCard: string | null = null;
   const livemode = inferStripeLivemode();
   if (clientId) {
-    const { data: cardRow } = await admin
+    const { data: cardRow, error: cardErr } = await admin
       .from("client_payment_methods")
       .select(
         "id, brand, last4, exp_month, exp_year, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_method_id, card_authorization_signature_id",
@@ -165,7 +197,12 @@ export async function getSessionPaymentEligibility(
       .eq("status", "active")
       .eq("stripe_livemode", livemode)
       .maybeSingle();
-    if (!cardRow) {
+    if (cardErr) {
+      // A failed read is not an absent card. Telling a practitioner the client
+      // has no card when one may well be on file is the confident wrong fact
+      // this PR exists to remove.
+      pushReadFailure(reasons);
+    } else if (!cardRow) {
       reasons.push(
         "Client must add a card on file before a session payment can be prepared.",
       );
@@ -261,7 +298,7 @@ export async function getSessionPaymentEligibility(
   // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
   // eligibility verifies against the CURRENT deployment mode's row only
   // (the stripe_livemode !== livemode belt below stays as defense-in-depth).
-  const { data: settings } = await admin
+  const { data: settings, error: settingsErr } = await admin
     .from("studio_payment_settings")
     .select(
       "stripe_account_id, stripe_account_status, stripe_livemode",
@@ -269,7 +306,11 @@ export async function getSessionPaymentEligibility(
     .eq("studio_id", args.studioId)
     .eq("stripe_livemode", livemode)
     .maybeSingle();
-  if (!settings) {
+  if (settingsErr) {
+    // Not "your studio is not configured" - that accuses the studio of an
+    // onboarding gap on the strength of a timeout.
+    pushReadFailure(reasons);
+  } else if (!settings) {
     reasons.push(
       "Studio payment settings are not configured. Complete Stripe onboarding in Settings before preparing a session payment.",
     );
@@ -327,7 +368,7 @@ export async function getSessionPaymentEligibility(
     // deployment mode only: a test attempt must never masquerade as (or
     // block) a live one, and vice versa. The 0105 partial unique enforces
     // the same per-mode invariant structurally.
-    const { data: attemptRows } = await admin
+    const { data: attemptRows, error: attemptsErr } = await admin
       .from("payment_charge_attempts")
       .select(
         "id, status, amount_cents, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, receipt_status, receipt_sent_at, receipt_email_to, receipt_failure_code, receipt_failure_message_safe, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, refund_failure_code, refund_failure_message_safe",
@@ -337,6 +378,15 @@ export async function getSessionPaymentEligibility(
       .eq("charge_reason", "session_payment")
       .eq("stripe_livemode", livemode)
       .order("created_at", { ascending: false });
+    // ATTEMPT HISTORY IS LOAD-BEARING. `?? []` turned a failed read into
+    // TRUSTED EMPTY HISTORY, so the duplicate block below silently vanished
+    // and a second attempt could be prepared for a session that already had
+    // one. The 0105 partial unique index remains defense in depth, but it is
+    // not the semantic contract - eligibility must not authorize a duplicate
+    // on the strength of history it could not read.
+    if (attemptsErr) {
+      pushReadFailure(reasons);
+    }
     existingAttempts = (attemptRows ?? []).map((row) => ({
       id: row.id as string,
       status: row.status as string,

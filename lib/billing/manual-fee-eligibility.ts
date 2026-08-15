@@ -80,6 +80,30 @@ type Args = {
 // can all be read in one server call without bumping into the
 // authenticated user's row visibility for those rows in particular
 // (the appointment detail page already verified studio membership).
+// PAY-READ-01 PR D. See the twin block in session-payment-eligibility.ts.
+// A Supabase query ERROR looks exactly like a successful empty read, so every
+// read below used to answer a failure with a confident claim - "No card on
+// file", "template is no longer live", "Studio not found" - and the two
+// attempt-history sources used `?? []`, turning a failed read into trusted
+// empty history that removed duplicate protection.
+//
+// A read failure means only: eligibility could not be verified.
+//
+// This string is duplicated from session-payment-eligibility.ts deliberately -
+// the two helpers share no module and this PR is scoped to them - and
+// tests/lib/billing/eligibility-read-failure-source.test.ts pins them equal so
+// they cannot drift.
+export const ELIGIBILITY_READ_FAILED_REASON =
+  "Payment eligibility could not be verified. Refresh and try again.";
+
+// At most ONE read-failure reason however many reads failed: several failing
+// reads are still the single fact that eligibility could not be verified.
+function pushReadFailure(reasons: string[]) {
+  if (!reasons.includes(ELIGIBILITY_READ_FAILED_REASON)) {
+    reasons.push(ELIGIBILITY_READ_FAILED_REASON);
+  }
+}
+
 export async function getManualFeeChargeEligibility(
   args: Args,
 ): Promise<ManualFeeEligibility> {
@@ -87,7 +111,7 @@ export async function getManualFeeChargeEligibility(
   const reasons: string[] = [];
 
   // 1) Appointment + service join.
-  const { data: apptRow } = await admin
+  const { data: apptRow, error: apptErr } = await admin
     .from("appointments")
     .select(
       "id, studio_id, client_id, status, starts_at, cancelled_at, created_at, service:services(name), client:clients(id, name)",
@@ -112,7 +136,11 @@ export async function getManualFeeChargeEligibility(
   let clientSummary: EligibilityClientSummary | null = null;
   let clientId: string | null = null;
   const serverChargeType: ManualFeeChargeType = args.chargeType;
-  if (!appt) {
+  if (apptErr) {
+    // Not "appointment not found". clientId stays null, so every dependent
+    // read below is skipped instead of inventing further reasons.
+    pushReadFailure(reasons);
+  } else if (!appt) {
     reasons.push("Appointment not found for this studio.");
   } else {
     clientId = appt.client_id;
@@ -174,7 +202,7 @@ export async function getManualFeeChargeEligibility(
     reasons.push(liveHold);
   }
   if (clientId) {
-    const { data: cardRow } = await admin
+    const { data: cardRow, error: cardErr } = await admin
       .from("client_payment_methods")
       .select(
         "id, brand, last4, exp_month, exp_year, status, stripe_livemode, card_authorization_signature_id",
@@ -184,7 +212,11 @@ export async function getManualFeeChargeEligibility(
       .eq("status", "active")
       .eq("stripe_livemode", livemode)
       .maybeSingle();
-    if (!cardRow) {
+    if (cardErr) {
+      // A failed read is not an absent card, and the clean-zero copy below
+      // tells the client to go add one they may already have.
+      pushReadFailure(reasons);
+    } else if (!cardRow) {
       // PR #158. Practitioner-actionable copy. Chloe was seeing the
       // older terse "No active card on file" line and asking "what
       // do I do?" The new copy tells her exactly what to say to the
@@ -229,7 +261,7 @@ export async function getManualFeeChargeEligibility(
   let cardAuthorizationSummary: EligibilityCardAuthorizationSummary | null =
     null;
   if (cardSignatureId && clientId) {
-    const { data: sigRow } = await admin
+    const { data: sigRow, error: sigErr } = await admin
       .from("client_consent_signatures")
       .select(
         "id, signed_at, signature_name, template_title_snapshot, template_id, template_version, studio_id, client_id",
@@ -238,7 +270,11 @@ export async function getManualFeeChargeEligibility(
       .eq("studio_id", args.studioId)
       .eq("client_id", clientId)
       .maybeSingle();
-    if (!sigRow) {
+    if (sigErr) {
+      // Never claim a signature is missing because the read failed - that
+      // sends a client who HAS signed into a re-sign they do not need.
+      pushReadFailure(reasons);
+    } else if (!sigRow) {
       reasons.push(
         "Card authorization signature missing or not scoped to this client.",
       );
@@ -246,7 +282,7 @@ export async function getManualFeeChargeEligibility(
       // PR #170. Current-version gate. Read the live template's
       // current version and compare to the signature's stored
       // template_version (snapshot field from migration 0057).
-      const { data: liveTemplate } = await admin
+      const { data: liveTemplate, error: liveTemplateErr } = await admin
         .from("consent_form_templates")
         .select("id, version")
         .eq("id", sigRow.template_id)
@@ -255,7 +291,11 @@ export async function getManualFeeChargeEligibility(
         .eq("status", "active")
         .eq("form_type", "card_authorization")
         .maybeSingle();
-      if (!liveTemplate) {
+      if (liveTemplateErr) {
+        // Not "the template is no longer live" - that accuses the studio of an
+        // archived template on the strength of a timeout.
+        pushReadFailure(reasons);
+      } else if (!liveTemplate) {
         // The template the signature points at is no longer live
         // (archived, draft, or deleted). The client needs to
         // sign the current live template before any fee can
@@ -283,7 +323,7 @@ export async function getManualFeeChargeEligibility(
   let policyAckId: string | null = null;
   let policySnapshotHash: string | null = null;
   if (clientId) {
-    const { data: ackRow } = await admin
+    const { data: ackRow, error: ackErr } = await admin
       .from("appointment_policy_acknowledgements")
       .select("id, acknowledged_at, policy_snapshot_hash")
       .eq("studio_id", args.studioId)
@@ -292,7 +332,9 @@ export async function getManualFeeChargeEligibility(
       .order("acknowledged_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (!ackRow) {
+    if (ackErr) {
+      pushReadFailure(reasons);
+    } else if (!ackRow) {
       reasons.push(
         "No policy acknowledgement found for this appointment.",
       );
@@ -313,12 +355,14 @@ export async function getManualFeeChargeEligibility(
   //    onto the row).
   let amountCents: number | null = null;
   let currency: string | null = null;
-  const { data: studioRow } = await admin
+  const { data: studioRow, error: studioErr } = await admin
     .from("studios")
     .select("late_cancel_fee_cents, no_show_fee_cents")
     .eq("id", args.studioId)
     .maybeSingle();
-  if (!studioRow) {
+  if (studioErr) {
+    pushReadFailure(reasons);
+  } else if (!studioRow) {
     reasons.push("Studio not found.");
   } else {
     const cents =
@@ -361,7 +405,17 @@ export async function getManualFeeChargeEligibility(
   // a test fee attempt must never block (or display as) a live one, and
   // vice versa. The legacy table's rows are pinned test-mode by its CHECK,
   // so in live mode the legacy list is empty by construction.
-  const [{ data: canonicalRows }, { data: legacyRows }] = await Promise.all([
+  // BOTH history sources are load-bearing, and each carries its own error.
+  // Destructuring only `data` here discarded two errors at once, and the
+  // `?? []` below then presented the result as complete history - so a failure
+  // on EITHER source silently removed the duplicate-attempt block.
+  //
+  // Explicit decision on partial history: when one source succeeds and the
+  // other fails we still map what we have, because a found active attempt is a
+  // true fact worth surfacing. What partial history may NEVER do is prove
+  // ABSENCE - so the read-failure reason blocks regardless of what the
+  // surviving source returned.
+  const [canonicalRes, legacyRes] = await Promise.all([
     admin
       .from("payment_charge_attempts")
       .select(
@@ -382,6 +436,11 @@ export async function getManualFeeChargeEligibility(
       .eq("stripe_livemode", livemode)
       .order("created_at", { ascending: false }),
   ]);
+  const canonicalRows = canonicalRes.data;
+  const legacyRows = legacyRes.data;
+  if (canonicalRes.error || legacyRes.error) {
+    pushReadFailure(reasons);
+  }
   const reasonToType = (reason: string): ManualFeeChargeType =>
     reason === "no_show_fee" ? "no_show" : "late_cancel";
   const existingAttempts: EligibilityExistingAttemptSummary[] = [
