@@ -97,15 +97,38 @@ function codeOnly(src: string): string {
 /**
  * Percent-decoded view of the same text. `fonts.google%61pis.com` is normalised
  * by Node to the real host, so a scan that only sees the literal spelling
- * misses it. Decoding can throw on malformed sequences; a file that cannot be
- * decoded is simply scanned undecoded rather than skipped.
+ * misses it.
+ *
+ * Decoded ESCAPE BY ESCAPE, not whole-file. `decodeURIComponent` on the whole
+ * text throws on the first malformed sequence - and a bare `"100%"` or a `%`
+ * modulo operator is malformed - which would abandon normalisation for the
+ * entire file and let a real `%61` host in that same file through.
  */
 function percentDecoded(text: string): string {
-  try {
-    return decodeURIComponent(text);
-  } catch {
-    return text;
-  }
+  return text.replace(/%[0-9A-Fa-f]{2}/g, (escape) => {
+    try {
+      return decodeURIComponent(escape);
+    } catch {
+      return escape;
+    }
+  });
+}
+
+/**
+ * The same text with `+` concatenation collapsed, so a host split across
+ * literals is still seen: `"https://fonts." + "googleapis.com/css2"` scans as
+ * `fonts. + googleapis.com` and would otherwise pass.
+ *
+ * LIMIT, stated rather than implied: this catches literals joined by `+`. It
+ * does NOT constant-fold variables, template substitutions, `String.fromCharCode`
+ * or base64 - a static scan cannot, in general. That residue is covered at a
+ * different level: the build is proven offline by blocking the hosts at
+ * node:http/node:https, which denies a constructed URL just as readily as a
+ * literal one. This guard is the cheap always-on half; the blocked build is the
+ * half that does not care how the string was spelled.
+ */
+function concatenationCollapsed(text: string): string {
+  return text.replace(/\s*\+\s*/g, "");
 }
 
 /**
@@ -168,8 +191,10 @@ const ALL_SOURCE = sourceFiles(ROOT).map((file) => {
     specifiers: moduleSpecifiers(text),
     code,
     // What the host scan actually reads: comments stripped, string escapes
-    // decoded, then percent-decoded.
-    scanned: percentDecoded(code),
+    // decoded, percent-escapes decoded, and `+` concatenation collapsed so a
+    // host split across literals is still seen.
+    scanned:
+      percentDecoded(code) + "\n" + concatenationCollapsed(percentDecoded(code)),
   };
 });
 
@@ -454,14 +479,26 @@ describe("the faces are loaded from local files", () => {
     // TypeScript string literal escaping a regex dot), which is the same
     // reduction used to build the patterns above.
     const normalised = entries.map((e) => e.replace(/\\\\/g, "\\"));
-    expect(normalised[0]).toContain("fonts/LICENSE-Inter\\.txt$");
-    expect(normalised[0]).toContain("fonts/LICENSE-Fraunces\\.txt$");
-    for (const e of normalised) {
-      expect(
-        /\|fonts\/(?!LICENSE)/.test(e),
-        "middleware must not exempt a bare `fonts/` prefix",
-      ).toBe(false);
-    }
+
+    // Enumerate EVERY `/fonts` alternative and compare against the exact
+    // allowlist, rather than probing for shapes that look wrong.
+    //
+    // The previous probe asked "is there a `fonts/` alternative not followed by
+    // LICENSE" - which explicitly permitted ANY `LICENSE...` filename. Adding
+    // `|fonts/LICENSE-Other.txt$` would have kept one entry, kept both required
+    // substrings, matched none of the sampled paths, and passed the probe,
+    // while exempting a third path from authentication. Only two notices exist;
+    // anything else under /fonts is a boundary change and must be re-derived by
+    // a human, not waved through by a pattern that happens to spell LICENSE.
+    const fontsAlternatives = normalised.flatMap((e) =>
+      [...e.matchAll(/fonts\/[^|)]+/g)].map((m) => m[0]),
+    );
+    expect(fontsAlternatives.sort()).toEqual(
+      [
+        "fonts/LICENSE-Fraunces\\.txt$",
+        "fonts/LICENSE-Inter\\.txt$",
+      ].sort(),
+    );
   });
 
   it("keeps app/fonts/ free as namespace hygiene (NOT the security boundary)", () => {
