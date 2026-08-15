@@ -63,7 +63,15 @@ function moduleSpecifiers(src: string): string[] {
   return ts.preProcessFile(src, true, true).importedFiles.map((f) => f.fileName);
 }
 
-/** Source text with comments removed and string literals preserved. */
+/**
+ * Source text with comments removed and string literals DECODED.
+ *
+ * Decoded, not merely preserved: `"https://fonts.googleapis.com/css2"` is
+ * a real request to the real host, but its source TOKEN spells the escape, so
+ * a scan of raw token text sees a string that does not contain the hostname.
+ * `getTokenValue()` returns the value the runtime actually gets, which is the
+ * thing the invariant is about.
+ */
 function codeOnly(src: string): string {
   const scanner = ts.createScanner(
     ts.ScriptTarget.Latest,
@@ -74,10 +82,43 @@ function codeOnly(src: string): string {
   let out = "";
   let token = scanner.scan();
   while (token !== ts.SyntaxKind.EndOfFileToken) {
-    out += scanner.getTokenText() + " ";
+    const isStringish =
+      token === ts.SyntaxKind.StringLiteral ||
+      token === ts.SyntaxKind.NoSubstitutionTemplateLiteral ||
+      token === ts.SyntaxKind.TemplateHead ||
+      token === ts.SyntaxKind.TemplateMiddle ||
+      token === ts.SyntaxKind.TemplateTail;
+    out += (isStringish ? scanner.getTokenValue() : scanner.getTokenText()) + " ";
     token = scanner.scan();
   }
   return out;
+}
+
+/**
+ * Percent-decoded view of the same text. `fonts.google%61pis.com` is normalised
+ * by Node to the real host, so a scan that only sees the literal spelling
+ * misses it. Decoding can throw on malformed sequences; a file that cannot be
+ * decoded is simply scanned undecoded rather than skipped.
+ */
+function percentDecoded(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * EVERY string in middleware.ts's `matcher` array.
+ *
+ * Next treats the entries as alternatives - middleware runs if ANY of them
+ * matches - so reading only the first entry would let a later, broader entry
+ * silently re-expose a path this guard claims is protected.
+ */
+function middlewareMatchers(): string[] {
+  const block = read("middleware.ts").match(/matcher:\s*\[([\s\S]*?)\]/)?.[1];
+  if (!block) return [];
+  return [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 }
 
 // CASE-INSENSITIVE on purpose. Hostnames are case-insensitive in DNS and Node
@@ -121,12 +162,33 @@ const MARKETING_ENTRY = read("app/_components/marketing/fonts.ts");
 
 const ALL_SOURCE = sourceFiles(ROOT).map((file) => {
   const text = readFileSync(file, "utf8");
+  const code = codeOnly(text);
   return {
     rel: path.relative(ROOT, file),
     specifiers: moduleSpecifiers(text),
-    code: codeOnly(text),
+    code,
+    // What the host scan actually reads: comments stripped, string escapes
+    // decoded, then percent-decoded.
+    scanned: percentDecoded(code),
   };
 });
+
+// Build-time inputs that are NOT source files. `package.json` defines
+// `npm run build` itself, so a Google Fonts request embedded in that command
+// would restore the network-dependent build while every code-extension scan
+// stayed green. Scanned whole (no comment stripping - JSON has none).
+const BUILD_MANIFESTS = ["package.json"]
+  .filter((rel) => existsSync(path.join(ROOT, rel)))
+  .map((rel) => ({
+    rel,
+    scanned: percentDecoded(readFileSync(path.join(ROOT, rel), "utf8")),
+  }));
+
+/** Everything the "no Google host anywhere" invariant must cover. */
+const HOST_SCAN_TARGETS = [
+  ...ALL_SOURCE.map(({ rel, scanned }) => ({ rel, scanned })),
+  ...BUILD_MANIFESTS,
+];
 
 describe("the comment handling this guard depends on", () => {
   // If these break, every "is absent" assertion below can pass vacuously.
@@ -221,13 +283,24 @@ describe("the build never depends on Google Fonts", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("no source file references the Google Fonts hosts", () => {
-    const offenders = ALL_SOURCE.filter(
-      ({ rel, code }) =>
-        !MAY_NAME_GOOGLE_FONT_HOSTS.has(rel) && GOOGLE_FONT_HOST.test(code),
+  it("no build-time input references the Google Fonts hosts", () => {
+    // Covers source files AND package.json, over text that has had string
+    // escapes and percent-encoding decoded - so `a` and `%61` spellings
+    // of the hostname are caught, not just the literal one.
+    const offenders = HOST_SCAN_TARGETS.filter(
+      ({ rel, scanned }) =>
+        !MAY_NAME_GOOGLE_FONT_HOSTS.has(rel) && GOOGLE_FONT_HOST.test(scanned),
     ).map(({ rel }) => rel);
 
     expect(offenders).toEqual([]);
+  });
+
+  it("the host scan reaches package.json, not just code files", () => {
+    // Vacuity check for the line above: package.json is not a code extension,
+    // so it is added explicitly and could silently fall out.
+    expect(HOST_SCAN_TARGETS.map(({ rel }) => rel)).toContain("package.json");
+    const manifest = HOST_SCAN_TARGETS.find(({ rel }) => rel === "package.json");
+    expect(manifest!.scanned).toContain('"build"');
   });
 
   it("guards against a scan that silently walks nothing", () => {
@@ -316,17 +389,22 @@ describe("the faces are loaded from local files", () => {
     // is not one of the two exact licence filenames must still run the
     // middleware, including deeper paths, suffixed paths, and near-miss
     // prefixes.
-    const matcher = read("middleware.ts").match(/matcher:\s*\[\s*"([^"]+)"/)?.[1];
-    expect(matcher, "could not read the middleware matcher").toBeTruthy();
-    const pattern = new RegExp(`^${matcher!.replace(/\\\\/g, "\\")}$`);
+    // EVERY matcher entry, not just the first. Next treats the array as
+    // alternatives, so middleware runs if ANY entry matches. Reading only
+    // entry [0] would let a later `/fonts/:path*` re-expose the licence URLs
+    // to updateSession while these assertions still passed.
+    const entries = middlewareMatchers();
+    expect(entries.length, "no middleware matcher entries found").toBeGreaterThan(0);
+    const runsMiddleware = (p: string) =>
+      entries.some((e) => new RegExp(`^${e.replace(/\\\\/g, "\\")}$`).test(p));
 
     for (const exempt of [
       "/fonts/LICENSE-Inter.txt",
       "/fonts/LICENSE-Fraunces.txt",
     ]) {
       expect(
-        pattern.test(exempt),
-        `${exempt} must NOT be matched by the auth middleware`,
+        runsMiddleware(exempt),
+        `${exempt} must NOT be matched by ANY middleware matcher entry`,
       ).toBe(false);
     }
 
@@ -348,7 +426,7 @@ describe("the faces are loaded from local files", () => {
       "/settings/data",
     ]) {
       expect(
-        pattern.test(guarded),
+        runsMiddleware(guarded),
         `${guarded} MUST still run through the auth middleware`,
       ).toBe(true);
     }
@@ -358,17 +436,32 @@ describe("the faces are loaded from local files", () => {
     // Stated separately from the case list so the REASON survives: a bare
     // `fonts/` alternative would re-open the grouped-route hole, and the
     // trailing `$` on each alternative is what prevents it.
-    const matcher = read("middleware.ts").match(/matcher:\s*\[\s*"([^"]+)"/)?.[1]!;
+    // EXACTLY ONE entry, and this is the load-bearing assertion rather than a
+    // tidiness preference. The per-entry evaluation above treats each string as
+    // a REGEX, which is not how Next parses path-to-regexp syntax: an added
+    // entry like "/fonts/:path*" would be a real, broad matcher that this file
+    // would evaluate as a regex and misjudge. Rather than reimplement
+    // path-to-regexp to grade a second entry correctly, refuse to have one -
+    // any addition, in any syntax, trips here and forces a human to re-derive
+    // the boundary.
+    const entries = middlewareMatchers();
+    expect(
+      entries.length,
+      "middleware must declare exactly one matcher entry; a second entry in " +
+        "path-to-regexp syntax cannot be graded correctly by this guard",
+    ).toBe(1);
     // Normalise the source-level escaping first: the file contains `\\.` (a
     // TypeScript string literal escaping a regex dot), which is the same
-    // reduction used to build the pattern above.
-    const normalised = matcher.replace(/\\\\/g, "\\");
-    expect(normalised).toContain("fonts/LICENSE-Inter\\.txt$");
-    expect(normalised).toContain("fonts/LICENSE-Fraunces\\.txt$");
-    expect(
-      /\|fonts\/(?!LICENSE)/.test(normalised),
-      "middleware must not exempt a bare `fonts/` prefix",
-    ).toBe(false);
+    // reduction used to build the patterns above.
+    const normalised = entries.map((e) => e.replace(/\\\\/g, "\\"));
+    expect(normalised[0]).toContain("fonts/LICENSE-Inter\\.txt$");
+    expect(normalised[0]).toContain("fonts/LICENSE-Fraunces\\.txt$");
+    for (const e of normalised) {
+      expect(
+        /\|fonts\/(?!LICENSE)/.test(e),
+        "middleware must not exempt a bare `fonts/` prefix",
+      ).toBe(false);
+    }
   });
 
   it("keeps app/fonts/ free as namespace hygiene (NOT the security boundary)", () => {
