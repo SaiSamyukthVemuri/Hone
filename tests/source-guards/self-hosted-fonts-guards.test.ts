@@ -278,6 +278,24 @@ describe("the faces are loaded from local files", () => {
     }
   });
 
+  it("no APP ROUTE may live under /fonts, or it would skip auth", () => {
+    // The middleware exemption is a path PREFIX, not a file list. Today
+    // /fonts/* resolves only to the static notices under public/fonts and
+    // anything else 404s. But if someone later adds app/fonts/<x>/page.tsx or
+    // route.ts, that route would answer on an exempted path and silently never
+    // run updateSession - an authenticated surface with no auth, introduced by
+    // a file addition nowhere near this middleware config.
+    //
+    // Nothing lives there now, so pin that rather than leave it incidental.
+    const appFontsDir = path.join(ROOT, "app", "fonts");
+    expect(
+      existsSync(appFontsDir),
+      "app/fonts/ must not exist: routes there would bypass the auth middleware " +
+        "via the `fonts/` exemption in middleware.ts. Serve static font assets " +
+        "from public/fonts/ instead.",
+    ).toBe(false);
+  });
+
   it("keeps exactly ONE copy of each notice, so they cannot drift", () => {
     // The obvious way to satisfy both "next to the fonts" and "served to the
     // browser" is to keep two copies. Two copies of a licence is how one of
