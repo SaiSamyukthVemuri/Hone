@@ -80,7 +80,18 @@ function codeOnly(src: string): string {
   return out;
 }
 
-const GOOGLE_FONT_HOST = /fonts\.(googleapis|gstatic)\.com/;
+// CASE-INSENSITIVE on purpose. Hostnames are case-insensitive in DNS and Node
+// normalises them, so `https://FONTS.GOOGLEAPIS.COM/css2` is a perfectly valid
+// request that would restore the build-time dependency. A case-sensitive guard
+// would stay green while it did. The offline block harness has always used the
+// `i` flag; this guard did not, and that asymmetry is exactly the shape of hole
+// worth closing - the harness would have refused the request while the guard
+// reported the source clean.
+const GOOGLE_FONT_HOST = /fonts\.(googleapis|gstatic)\.com/i;
+
+/** `next/font/google` in any casing - module specifiers resolve case-insensitively
+ *  on macOS/Windows filesystems, so the same reasoning applies. */
+const NEXT_FONT_GOOGLE = /^next\/font\/google$/i;
 
 // The OFL notices must reach the browser, not just the checkout, so they live
 // under public/ (served verbatim by Next at /fonts/LICENSE-*.txt) rather than
@@ -149,6 +160,46 @@ describe("the comment handling this guard depends on", () => {
     ).toEqual([]);
   });
 
+  it("detects the Google hosts in ANY casing", () => {
+    // Hostnames are case-insensitive in DNS and Node normalises them, so all of
+    // these are valid requests that would restore the build-time dependency.
+    // A case-sensitive guard reports the source clean while the build fetches.
+    for (const host of [
+      "https://fonts.googleapis.com/css2",
+      "https://FONTS.GOOGLEAPIS.COM/css2",
+      "https://Fonts.GoogleApis.Com/css2",
+      "https://fonts.GSTATIC.com/s/inter.woff2",
+    ]) {
+      expect(
+        GOOGLE_FONT_HOST.test(codeOnly(`const u = "${host}";`)),
+        `${host} must be detected`,
+      ).toBe(true);
+    }
+  });
+
+  it("detects a next/font/google import in ANY casing", () => {
+    // Module specifiers resolve case-insensitively on macOS and Windows
+    // filesystems, so a mis-cased import can still be a live dependency.
+    for (const spec of [
+      "next/font/google",
+      "NEXT/FONT/GOOGLE",
+      "Next/Font/Google",
+    ]) {
+      expect(
+        moduleSpecifiers(`import { Inter } from "${spec}";`).some((s) =>
+          NEXT_FONT_GOOGLE.test(s),
+        ),
+        `${spec} must be detected`,
+      ).toBe(true);
+    }
+    // ...but a genuinely different module must not trip it.
+    expect(
+      moduleSpecifiers('import x from "next/font/local";').some((s) =>
+        NEXT_FONT_GOOGLE.test(s),
+      ),
+    ).toBe(false);
+  });
+
   it("keeps a host inside a string but drops one inside a comment", () => {
     // The naive fix - deleting from `//` to end of line - would eat the host
     // out of "https://fonts.gstatic.com" and hide a real reference.
@@ -164,7 +215,7 @@ describe("the comment handling this guard depends on", () => {
 describe("the build never depends on Google Fonts", () => {
   it("no source file imports next/font/google", () => {
     const offenders = ALL_SOURCE.filter(({ specifiers }) =>
-      specifiers.includes("next/font/google"),
+      specifiers.some((s) => NEXT_FONT_GOOGLE.test(s)),
     ).map(({ rel }) => rel);
 
     expect(offenders).toEqual([]);
