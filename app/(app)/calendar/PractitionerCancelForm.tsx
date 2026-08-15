@@ -12,9 +12,17 @@ import { cancelAppointmentAction } from "./actions";
 
 export type PractitionerCancelFormProps = {
   appointmentId: string;
+  // Optional: notified after a successful cancellation so an enclosing surface
+  // can dismiss itself. The calendar preview drawer uses it — once the row is
+  // cancelled the drawer's own summary is stale, and leaving it open would keep
+  // offering actions the command now refuses. router.refresh() always runs.
+  onCancelled?: () => void;
 };
 
-export function PractitionerCancelForm({ appointmentId }: PractitionerCancelFormProps) {
+export function PractitionerCancelForm({
+  appointmentId,
+  onCancelled,
+}: PractitionerCancelFormProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +44,7 @@ export function PractitionerCancelForm({ appointmentId }: PractitionerCancelForm
         return;
       }
       router.refresh();
+      onCancelled?.();
     });
   }
 

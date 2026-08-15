@@ -49,6 +49,48 @@ Bare click on an empty slot opens `QuickBookDrawer`:
 - Cancelled section (PR #144): reason label, client note, follow-up-okay badge, "Cancelled N minutes after booking" hint if applicable.
 - Manual cancellation/no-show fee card (PR #145 + #146): renders only for `cancelled` / `no_show` status. Test-mode banner. Per-status panels (ready / pending_stripe / succeeded / failed / cancelled).
 
+### Appointment preview drawer (desktop week grid)
+
+Clicking a card on the desktop week grid opens `AppointmentPreviewDrawer` in place —
+the URL stays on `/calendar`. It is the practitioner's **prep workspace**: enough to
+walk into the room and take the usual next action without navigating away.
+
+Sections: summary (client / date-time / service / status), allergies, **prep for this
+client**, **intake**, **appointment notes**, then **actions**.
+
+**It owns no business logic.** Every fact and action belongs to an authority that
+already exists, and the drawer only arranges them:
+
+| Concern | Owner |
+|---|---|
+| Last treatment | `loadLastChartedTreatmentForClient` — the shared newest-charted-treatment rule; rendered by the same `TodayTreatmentMemory` / `AppointmentPrepMemoryCard` pair the dashboard uses |
+| Intake | `practitionerIntakeReviewHref` — the authenticated `/clients/<id>/intake` route, never the client's `/intake/<token>` page |
+| Notes | `AppointmentNotesEditor` + the governed 0173 `set_appointment_notes` command |
+| Reschedule | the shared `MoveAppointmentButton`, relabelled through its `label` prop (the dialog keeps its own "Move appointment" identity) |
+| Cancel | `PractitionerCancelForm` → `practitioner_cancel_appointment` |
+| Cancel/Move visibility | `isAppointmentCancelable` (`lib/calendar/appointment-actionability.ts`) — the ONE predicate, shared with `/calendar/[id]`, which previously held a second, slightly different copy |
+
+**Performance.** The week RSC payload carries no clinical or prep data. Loading prep
+for every appointment on screen to serve the one that gets clicked would be an N+1, so
+the drawer issues **one bounded load for the clicked appointment, on open**
+(`loadAppointmentPreviewAction` → `lib/calendar/appointment-preview-detail.ts`). Cost is
+constant in the size of the week: one studio-scoped appointment read, then a parallel
+wave of the intake read and the shared last-treatment authority.
+
+**Authority.** The action re-derives practitioner + studio server-side on every call.
+The browser supplies only an appointment id, and it is a pointer, never authority — an
+id from another studio resolves to "not found in this studio". The read is RLS-scoped
+(`createClient()`), never service-role.
+
+**Freshness and races.** Action gating uses the **re-read** status, not the possibly
+stale week payload, so an appointment cancelled in another tab is not still offered
+Cancel. Because two loads can be in flight at once and responses are unordered, every
+response must satisfy `shouldApplyPreviewResponse` (`app/(app)/calendar/preview-request.ts`):
+it must be the newest request issued **and** describe the appointment currently open.
+Without it, appointment A's late payload would render under appointment B's name.
+
+The mobile day view is unchanged: it still navigates to `/calendar/[id]`.
+
 ## Move appointment (practitioner) — migration 0133
 
 A practitioner can move a `confirmed`, still-future appointment to a new time. Unlike the

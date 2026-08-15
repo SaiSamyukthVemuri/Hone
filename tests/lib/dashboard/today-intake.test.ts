@@ -23,6 +23,10 @@ const APPOINTMENT = readFileSync(
   join(process.cwd(), "app/(app)/calendar/[id]/page.tsx"),
   "utf8",
 );
+const DRAWER = readFileSync(
+  join(process.cwd(), "app/(app)/calendar/AppointmentPreviewDrawer.tsx"),
+  "utf8",
+);
 const HELPER = readFileSync(
   join(process.cwd(), "lib/dashboard/today-intake.ts"),
   "utf8",
@@ -326,5 +330,51 @@ describe("appointment prep surface", () => {
     // not have absorbed or reshaped the previous-treatment memory.
     expect(APPOINTMENT).toMatch(/<IntakeStatusLine intake=\{intake\} clientId=\{client\.id\} \/>/);
     expect(APPOINTMENT).toMatch(/getLatestIntakeForClient\(studio\.id, clientId\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The calendar preview drawer — the THIRD practitioner intake surface.
+//
+// Every guard above is source-pinned to a specific file, so a NEW surface is
+// invisible to all of them: nothing here would have failed if the drawer had
+// hand-written /intake/<token>. This section closes that gap by naming the
+// drawer in the same file that owns the routing contract, where anyone
+// changing intake navigation will actually look.
+// ---------------------------------------------------------------------------
+describe("calendar preview drawer", () => {
+  it("uses the shared canonical href helper, not a hand-written path", () => {
+    expect(DRAWER).toMatch(/practitionerIntakeReviewHref\(detail\.clientId\)/);
+    expect(DRAWER).not.toMatch(/href=\{`\/clients\/\$\{[^}]+\}\/intake`\}/);
+  });
+
+  it("no state can produce the public /intake/<token> route", () => {
+    expect(DRAWER).not.toMatch(/href=\{`\/intake\//);
+    expect(DRAWER).not.toMatch(/["'`]\/intake\//);
+    expect(DRAWER).not.toMatch(/generateIntakeLinkUrl|generateIntakeToken|mintIntake/);
+  });
+
+  it("links on exactly the two reviewable states, and names the task", () => {
+    // submitted -> Review intake; reviewed -> View intake. Both point at the
+    // authenticated route; neither invents a second destination.
+    expect(DRAWER).toMatch(/>\s*Review intake\s*</);
+    expect(DRAWER).toMatch(/>\s*View intake\s*</);
+    expect(DRAWER.match(/practitionerIntakeReviewHref\(/g) ?? []).toHaveLength(2);
+  });
+
+  it("offers no review link for in-progress or absent intake", () => {
+    const inProgress = DRAWER.slice(
+      DRAWER.indexOf('=== "in_progress"'),
+      DRAWER.indexOf("No intake on file."),
+    );
+    expect(inProgress).toMatch(/Started, not yet submitted/);
+    expect(inProgress).not.toMatch(/<Link/);
+  });
+
+  it("distinguishes an unreadable intake from an absent one", () => {
+    // A failed read must not render as "No intake on file" — that is an
+    // affirmative denial the data does not support.
+    expect(DRAWER).toMatch(/intakeUnavailable/);
+    expect(DRAWER).toMatch(/Intake status could not be loaded\./);
   });
 });

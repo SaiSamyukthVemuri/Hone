@@ -1,26 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
+import { practitionerIntakeReviewHref } from "@/lib/dashboard/today-intake";
+import { TodayTreatmentMemory } from "@/app/(app)/dashboard/today-treatment-memory";
+import { isAppointmentCancelable } from "@/lib/calendar/appointment-actionability";
+import type { AppointmentPreviewDetail } from "@/lib/calendar/appointment-preview-detail";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import { timeRangeLabel, weekdayLabel, monthDayLabel } from "./calendar-format";
 import { MoveAppointmentButton } from "./MoveAppointmentButton";
+import { AppointmentNotesEditor } from "./AppointmentNotesEditor";
+import { PractitionerCancelForm } from "./PractitionerCancelForm";
+import { loadAppointmentPreviewAction } from "./appointment-preview-actions";
+import { shouldApplyPreviewResponse } from "./preview-request";
 
-// In-context appointment PREVIEW (desktop PR C-lite). Opened from an appointment
-// card on the desktop week grid so a practitioner can inspect a booking WITHOUT
-// navigating away: the on-grid equivalent of clicking a Google/Apple Calendar
-// event. It shows only safe summary fields the calendar page already loaded
-// (client name, service, date/time, status), plus an "Open full details" deep
-// link to the unchanged /calendar/[id] route. It runs NO new query of its own.
+// In-context appointment PREP WORKSPACE, opened from a card on the desktop week
+// grid. The question it answers is "what do I need to know about this visit,
+// and what do I usually do next" — without leaving the calendar.
 //
-// The ONE deliberate action here is Move appointment (confirmed + future only):
-// it mounts the SHARED MoveAppointmentButton → MoveAppointmentDialog, which owns
-// its own server-side-authorized actions. The drawer adds no mutation logic and
-// still issues no query; every other edit/lifecycle action stays on the detail
-// route. Moving from here is the desktop in-grid equivalent of drag-to-reschedule
-// and uses the exact same shared workflow as the detail page.
+// It owns NO business logic. Every fact and every action below belongs to an
+// authority that already exists, and this file only arranges them:
+//
+//   last treatment  -> loadLastChartedTreatmentForClient (the shared
+//                      newest-charted-treatment rule, via the lazy loader)
+//   intake          -> practitionerIntakeReviewHref, the authenticated
+//                      practitioner surface; never the client's /intake/<token>
+//   notes           -> AppointmentNotesEditor + the governed 0173
+//                      set_appointment_notes command
+//   reschedule      -> the shared MoveAppointmentButton / dialog, relabelled
+//                      through its `label` prop, not forked
+//   cancel          -> PractitionerCancelForm -> practitioner_cancel_appointment
+//   the cancel/move -> isAppointmentCancelable, the one predicate the detail
+//   visibility gate    page uses
+//
+// PERFORMANCE. The week grid still carries no clinical or prep data, and the
+// RSC payload is unchanged. This drawer issues ONE bounded load for the ONE
+// appointment that was clicked, when it is clicked. Nothing here scales with
+// the number of appointments on screen.
+//
+// FRESHNESS. The summary header renders instantly from the row the grid already
+// had. Everything that gates an ACTION is re-read from the server first: a week
+// payload can be minutes old, and an appointment cancelled or completed in
+// another tab must not still offer Cancel here. So actions appear with the
+// loaded detail, never from the stale copy.
 
 type Props = {
   appointment: AppointmentWithPractitionerColor | null;
@@ -30,6 +54,8 @@ type Props = {
   returnTo: string;
   onClose: () => void;
 };
+
+type LoadState = "idle" | "loading" | "error";
 
 // Weekday + month/day for a studio-local instant (display only).
 function dayLabel(iso: string, tz: string): string {
@@ -44,6 +70,14 @@ function dayLabel(iso: string, tz: string): string {
   return `${weekdayLabel(dow)}, ${monthDayLabel(local)}`;
 }
 
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+      {children}
+    </h3>
+  );
+}
+
 export function AppointmentPreviewDrawer({
   appointment,
   studioTimezone,
@@ -51,6 +85,58 @@ export function AppointmentPreviewDrawer({
   returnTo,
   onClose,
 }: Props) {
+  const [detail, setDetail] = useState<AppointmentPreviewDetail | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("idle");
+  // The drawer owns the mutable sequence; the decision itself is pure and
+  // lives in ./preview-request so it can be tested directly.
+  const requestSeq = useRef(0);
+
+  const appointmentId = appointment?.id ?? null;
+
+  const load = useCallback((id: string) => {
+    const seq = ++requestSeq.current;
+    setLoadState("loading");
+    void loadAppointmentPreviewAction(id)
+      .then((res) => {
+        if (!res.ok) {
+          if (seq !== requestSeq.current) return;
+          setLoadState("error");
+          return;
+        }
+        // A response for appointment A must never populate appointment B.
+        if (
+          !shouldApplyPreviewResponse({
+            responseAppointmentId: res.detail.appointmentId,
+            requestSeq: seq,
+            currentSeq: requestSeq.current,
+            openAppointmentId: id,
+          })
+        ) {
+          return;
+        }
+        setDetail(res.detail);
+        setLoadState("idle");
+      })
+      .catch(() => {
+        if (seq !== requestSeq.current) return;
+        setLoadState("error");
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!appointmentId) {
+      // Closing invalidates any in-flight response.
+      requestSeq.current += 1;
+      setDetail(null);
+      setLoadState("idle");
+      return;
+    }
+    // Clicking a different appointment must not show the previous one's prep
+    // while the new one loads.
+    setDetail(null);
+    load(appointmentId);
+  }, [appointmentId, load]);
+
   useEffect(() => {
     if (!appointment) return;
     function onKey(e: KeyboardEvent) {
@@ -73,7 +159,13 @@ export function AppointmentPreviewDrawer({
   const serviceName = a.service?.name?.trim() || null;
   const modality = a.service?.modality?.trim() || null;
 
-  const ds = appointmentDisplayStatus(a.status, a.ends_at);
+  // Prefer the freshly re-read row once it arrives. The week payload can be
+  // minutes old, and a drawer that labels a cancelled appointment "Upcoming"
+  // while offering it no actions is the confusing half-truth this avoids.
+  const ds = appointmentDisplayStatus(
+    detail?.status ?? a.status,
+    detail?.endsAt ?? a.ends_at,
+  );
   const statusLabel =
     ds === "done"
       ? "Done"
@@ -83,11 +175,16 @@ export function AppointmentPreviewDrawer({
           ? "No-show"
           : "Upcoming";
 
-  // Move is offered only for a confirmed, still-future appointment: the same
-  // gate the detail page uses. A confirmed-but-started ("done") booking is not
-  // movable, so the entry is hidden rather than opening a dialog that rejects.
-  const canMove =
-    a.status === "confirmed" && new Date(a.starts_at).getTime() > Date.now();
+  // Gated on the SERVER-READ status, not the week payload's copy, and on the
+  // one shared predicate. Cancel and Reschedule share it exactly as they share
+  // one `isCancelable` on the detail page.
+  const canAct =
+    detail !== null
+    && isAppointmentCancelable({
+      status: detail.status,
+      startsAt: detail.startsAt,
+      nowMs: Date.now(),
+    });
 
   return (
     <div
@@ -103,7 +200,7 @@ export function AppointmentPreviewDrawer({
         className="absolute inset-0 bg-black/30 backdrop-blur-[1px]"
       />
       <div
-        className="relative z-10 flex w-full max-w-sm flex-col gap-4 overflow-y-auto bg-white p-6 shadow-xl dark:bg-neutral-950"
+        className="relative z-10 flex w-full max-w-md flex-col gap-4 overflow-y-auto bg-white p-6 shadow-xl dark:bg-neutral-950"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-start justify-between gap-3">
@@ -144,26 +241,164 @@ export function AppointmentPreviewDrawer({
           </div>
         </dl>
 
-        {/* Move appointment: the single shared workflow, gated to confirmed +
-            future. On success the drawer closes and the calendar refreshes. */}
-        {canMove && (
-          <MoveAppointmentButton
-            appointment={{
-              id: a.id,
-              startsAt: a.starts_at,
-              endsAt: a.ends_at,
-              durationMinutes: a.duration_minutes,
-              clientName: a.client?.name ?? null,
-              serviceName: a.service?.name ?? null,
-            }}
-            studioTimezone={studioTimezone}
-            timeFormat={timeFormat}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            onMoved={onClose}
-          />
+        {/* Allergies: the one client-safety fact worth carrying here, and it
+            comes free with the appointment read. Never summarised or truncated
+            into something that could read as reassurance. */}
+        {detail?.allergies?.trim() && (
+          <div
+            aria-label="Allergies"
+            className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-100"
+          >
+            <span className="font-semibold">Allergies: </span>
+            {detail.allergies}
+          </div>
         )}
 
-        {/* The full editor + every other appointment action live on the
+        {loadState === "loading" && (
+          <p className="text-sm text-neutral-500" role="status">
+            Loading appointment details…
+          </p>
+        )}
+
+        {loadState === "error" && (
+          <p
+            className="text-sm text-red-700 dark:text-red-400"
+            data-testid="preview-load-error"
+          >
+            Could not load this appointment&apos;s details. Open full details
+            below, or close and try again.
+          </p>
+        )}
+
+        {detail && (
+          <>
+            {/* 1. PREP FOR THIS CLIENT ------------------------------------ */}
+            <section
+              className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800"
+              data-testid="preview-prep"
+            >
+              <SectionHeading>Prep for this client</SectionHeading>
+              {/* The SAME component the dashboard's Today row uses: a compact
+                  one-line identity of the previous visit, expandable in place
+                  to the canonical <AppointmentPrepMemoryCard>. Reused rather
+                  than re-rendered here so there is exactly one definition of
+                  what "last treatment" looks like, and one truthful handling
+                  of the unavailable state. It is imported across feature
+                  folders for the same reason the detail page imports
+                  practitionerIntakeReviewHref from @/lib/dashboard. */}
+              {!detail.lastTreatmentUnavailable && !detail.prepMemory ? (
+                <p className="text-sm text-neutral-500">
+                  No previous treatment charted for this client.
+                </p>
+              ) : (
+                detail.clientId && (
+                  <TodayTreatmentMemory
+                    clientId={detail.clientId}
+                    clientName={clientName}
+                    memory={detail.prepMemory}
+                    unavailable={detail.lastTreatmentUnavailable}
+                  />
+                )
+              )}
+            </section>
+
+            {/* 2. INTAKE -------------------------------------------------- */}
+            <section
+              className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800"
+              data-testid="preview-intake"
+            >
+              <SectionHeading>Intake</SectionHeading>
+              {detail.intakeUnavailable ? (
+                <p className="text-sm text-neutral-500">
+                  Intake status could not be loaded.
+                </p>
+              ) : detail.intakeStatus === "submitted" ? (
+                <>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                    Awaiting review
+                  </p>
+                  {detail.clientId && (
+                    <Link
+                      href={practitionerIntakeReviewHref(detail.clientId)}
+                      data-testid="preview-review-intake"
+                      className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                    >
+                      Review intake
+                    </Link>
+                  )}
+                </>
+              ) : detail.intakeStatus === "reviewed" ? (
+                <>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                    Reviewed
+                  </p>
+                  {detail.clientId && (
+                    <Link
+                      href={practitionerIntakeReviewHref(detail.clientId)}
+                      data-testid="preview-view-intake"
+                      className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                    >
+                      View intake
+                    </Link>
+                  )}
+                </>
+              ) : detail.intakeStatus === "in_progress" ? (
+                // Deliberately no action: an unsubmitted form is not reviewable,
+                // and offering to review it would be a lie.
+                <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                  Started, not yet submitted.
+                </p>
+              ) : (
+                <p className="text-sm text-neutral-500">No intake on file.</p>
+              )}
+            </section>
+
+            {/* 3. APPOINTMENT NOTES --------------------------------------- */}
+            {/* The governed 0173 writer, not a second one. onSaved re-reads
+                this drawer's own copy: router.refresh() re-runs the RSC but
+                cannot refresh a client-held lazy load. */}
+            {/* key: the editor seeds its draft from `notes` on MOUNT. One
+                drawer instance serves every appointment in its column, so
+                without this, clicking A then B would carry A's unsaved draft
+                into B's editor. */}
+            <AppointmentNotesEditor
+              key={a.id}
+              appointmentId={a.id}
+              notes={detail.notes}
+              onSaved={() => load(a.id)}
+            />
+
+            {/* 4. ACTIONS ------------------------------------------------- */}
+            {canAct && (
+              <>
+                <MoveAppointmentButton
+                  appointment={{
+                    id: a.id,
+                    startsAt: a.starts_at,
+                    endsAt: a.ends_at,
+                    durationMinutes: a.duration_minutes,
+                    clientName: a.client?.name ?? null,
+                    serviceName: a.service?.name ?? null,
+                  }}
+                  studioTimezone={studioTimezone}
+                  timeFormat={timeFormat}
+                  label="Reschedule"
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                  onMoved={onClose}
+                />
+                {/* key: same reason as the notes editor — the form holds a
+                    `reason` draft that must not follow A into B. */}
+                <PractitionerCancelForm
+                  key={a.id}
+                  appointmentId={a.id}
+                  onCancelled={onClose}
+                />
+              </>
+            )}
+          </>
+        )}
+
+        {/* The full record and every other appointment action live on the
             unchanged detail route, never duplicated here. */}
         <Link
           href={`/calendar/${a.id}${returnTo}`}

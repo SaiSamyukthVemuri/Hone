@@ -10,6 +10,7 @@ import { getTreatmentPlansForClient } from "@/lib/treatment-plans/queries";
 import { FITZPATRICK_TYPES } from "@/lib/constants";
 import { referralSourceLabel } from "@/lib/booking/referral-source";
 import { resolveTimeFormat } from "@/lib/booking/tz";
+import { isAppointmentCancelable } from "@/lib/calendar/appointment-actionability";
 import { MoveAppointmentButton } from "../MoveAppointmentButton";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { loadLastChartedTreatmentForClient } from "@/lib/sessions/last-treatment-loader";
@@ -214,11 +215,15 @@ export default async function AppointmentDetailPage({
   // Workflow fix 3 (preserved): cancel surface only for confirmed +
   // future. Past/in-progress confirmed appointments expose Mark
   // complete / Mark no-show only.
-  const startsAtMs = new Date(data.starts_at).getTime();
-  const isCancelable =
-    typedStatus === "confirmed"
-    && Number.isFinite(startsAtMs)
-    && startsAtMs > Date.now();
+  //
+  // The rule itself now lives in lib/calendar/appointment-actionability.ts so
+  // this page and the calendar's preview drawer cannot drift apart; they had
+  // already started to. Move shares this gate, exactly as before.
+  const isCancelable = isAppointmentCancelable({
+    status: typedStatus,
+    startsAt: data.starts_at,
+    nowMs: Date.now(),
+  });
 
   // Display-derived status (DB row unchanged). A past confirmed appointment
   // reads as "Done"; the stored status stays confirmed so Mark no-show stays

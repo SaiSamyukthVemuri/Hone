@@ -31,11 +31,18 @@ import { MAX_APPOINTMENT_NOTES_LENGTH } from "./appointment-repair-contract";
 export type AppointmentNotesEditorProps = {
   appointmentId: string;
   notes: string | null;
+  // Optional: notified after a successful save so an enclosing surface that
+  // holds its own copy of the notes can re-read it. router.refresh() always
+  // runs regardless, but it only re-runs SERVER components — a client-held
+  // lazy load (the calendar preview drawer) is untouched by it and would go on
+  // rendering the pre-save text.
+  onSaved?: () => void;
 };
 
 export function AppointmentNotesEditor({
   appointmentId,
   notes,
+  onSaved,
 }: AppointmentNotesEditorProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -59,6 +66,7 @@ export function AppointmentNotesEditor({
       }
       setOpen(false);
       router.refresh();
+      onSaved?.();
     });
   }
 
