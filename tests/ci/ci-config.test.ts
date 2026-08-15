@@ -274,13 +274,19 @@ describe("PR CI — path-aware lane selection", () => {
     // their <10 min targets. Parsed, not line-matched, so reformatting the
     // workflow cannot silently break this guard.
     //
-    // The extended ceiling exceeds the targeted one because an extended shard
-    // pays the same ~8.5 min of setup (Supabase stack, full migration chain,
-    // Playwright) as any browser job and THEN runs its share of a suite that
-    // grows over time. The upper bounds here are a brake on ceilings drifting
-    // upward instead of slow lanes being investigated, so they stay tight
-    // enough to notice: a shard that needs more than 18 minutes is a problem to
-    // fix, not a number to raise again.
+    // The extended ceiling exceeds the targeted one because setup is NOT a
+    // fixed cost. Everything before the first test - Supabase stack, full
+    // migration chain from scratch, Playwright, and the `next build` inside
+    // Playwright's webServer - was measured at 266s on one runner and 508s on
+    // another for the SAME 81 tests, while per-test execution barely moved
+    // (3.6s vs 3.8s). A ceiling has to clear that observed runner spread PLUS
+    // test execution, or the lane passes or is cancelled according to which
+    // runner it drew rather than according to test health.
+    //
+    // The upper bounds here are a brake on ceilings drifting upward instead of
+    // slow lanes being investigated, so they stay tight enough to notice: a
+    // shard that needs more than 18 minutes is a problem to fix, not a number
+    // to raise again.
     const b = shardTimeoutBudgets();
     expect(b.targeted).toBeGreaterThan(10);
     expect(b.extended).toBeGreaterThan(10);
