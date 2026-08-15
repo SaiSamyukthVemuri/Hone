@@ -198,6 +198,21 @@ export async function getSessionPaymentEligibility(
       clientId,
     });
     switch (status.kind) {
+      case "authorization_unverified":
+        // PAY-READ-01 PR B. A read that establishes card authorization FAILED,
+        // so authority is UNKNOWN. Refuse explicitly rather than relying on the
+        // `cardAuthSummary &&` conjunct further down: that would still block
+        // PREPARE, but only incidentally, and it would surface the generic
+        // fallback copy instead of the truth.
+        //
+        // The copy is deliberately operational and RETRYABLE. It must not
+        // accuse the studio of a missing template or the client of not having
+        // signed - neither is known to be true - and it must not send anyone
+        // into a re-sign they may not need.
+        reasons.push(
+          "Card authorization could not be verified. Refresh and try again.",
+        );
+        break;
       case "no_live_template":
         reasons.push(
           "Card authorization template is not configured. Set it up in Settings before preparing a session payment.",

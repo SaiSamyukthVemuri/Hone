@@ -135,6 +135,23 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
     studioId: session.studioId,
     clientId: session.clientId,
   });
+  // PAY-READ-01 PR B. A read that establishes authorization FAILED, so we do
+  // not know the client's state. This is a REMEDIATION surface, so the failure
+  // mode that matters is telling the client something false about themselves:
+  // "you have not signed" or "please re-sign" would send them to repair a
+  // problem they may not have, and on a signature-read failure they cannot
+  // succeed anyway.
+  //
+  // ERR_TRY_AGAIN is reused deliberately - it is already the portal's
+  // retryable, claim-free copy. The client recovers normally as soon as the
+  // transient read succeeds; nothing here is a dead end.
+  //
+  // It still fails CLOSED: a current signed authorization is a prerequisite for
+  // the SetupIntent below, which reads cardAuth.signatureId. Unknown authority
+  // must not mint one.
+  if (cardAuth.kind === "authorization_unverified") {
+    return { ok: false, error: ERR_TRY_AGAIN };
+  }
   if (cardAuth.kind === "no_live_template") {
     return { ok: false, error: ERR_NO_AUTHORIZATION_TEMPLATE };
   }
