@@ -329,9 +329,27 @@ jobs:
     # minutes is still too slow and should be investigated, but it now reports
     # its own result instead of being cut mid-run.
     #
+    # The EXTENDED ceiling was raised 12 -> 18 after run 31852791688 cancelled
+    # shard 3 at 12m15s with ZERO test failures: 60 of 81 assigned tests ran and
+    # ALL 60 passed. The same shard had passed in 9m11s on the immediately prior
+    # head, where it was assigned 60 tests rather than 81 - the extended suite
+    # grew by a spec and Playwright redistributed, so the shard inherited +35%
+    # work and walked into a ceiling it had been sitting just under.
+    #
+    # The ceiling has to clear the whole job, not just the tests. Measured on
+    # that run: ~8.5 min of setup (Supabase stack, full migration chain from
+    # scratch, Playwright cache) before the first test executes, then ~5 min for
+    # 81 tests at the observed rate. That is ~13.5 min of real work against a 12
+    # min ceiling, which is why it could not finish however healthy the tests
+    # were. 18 restores genuine margin instead of moving the cliff by a minute.
+    #
+    # This does NOT relax the performance target. A shard needing more than ~10
+    # minutes is still too slow and still worth investigating; it now reports
+    # its own result instead of being cut mid-run and misread as a test failure.
+    #
     #   targeted  : target <10 min,          hard timeout 15 min
-    #   extended  : target <10 min per shard, hard timeout 12 min  (unchanged)
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 12 || 15 }}
+    #   extended  : target <10 min per shard, hard timeout 18 min
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}
     strategy:
       fail-fast: false
       matrix:

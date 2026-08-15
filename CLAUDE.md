@@ -219,15 +219,25 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
 `30767725631` set both to 10 minutes, so two extended shards were *cancelled*
 at exactly their target — shard 2 had completed 72/90 tests with **zero
 failures**. A budget problem was reported as a test failure. Targets and hard
-timeouts are now separate numbers:
+timeouts are now separate numbers.
+
+This has now recurred **three times**, always the same way: a lane sitting just
+under its ceiling, a small workload increase, then a cancellation with zero test
+failures that reads like a broken diff. Run `30814919019` took the targeted lane
+(10 → 15). Run `31852791688` took extended shard 3 (12 → 18) — it ran 60 of 81
+assigned tests, **all 60 passed**, and was cut at 12m15s after the suite gained
+a spec and Playwright handed that shard +35% work. **A ceiling must clear SETUP
+plus tests**: an extended shard spends ~8.5 min on the Supabase stack, the full
+migration chain and Playwright before the first test runs. When a shard is
+cancelled, check what it completed before assuming the diff broke something.
 
 | Job | Budget |
 |---|---|
 | changed-path detection | 2 min |
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
-| targeted browser lane | target ~6 min · **hard timeout 10 min** |
-| extended browser shard (×4) | target <10 min · **hard timeout 12 min** |
+| targeted browser lane | target ~6 min · **hard timeout 15 min** |
+| extended browser shard (×4) | target <10 min · **hard timeout 18 min** |
 | nightly browser shard (×4) | hard timeout 15 min |
 | payment / Google / mobile | 10 min each |
 
