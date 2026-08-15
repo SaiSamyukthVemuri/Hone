@@ -108,12 +108,33 @@ or if a second copy reappears under `app/_fonts/`.
 > at this did exactly that and the notices were still unreachable: the Supabase
 > session middleware in `middleware.ts` matches every path it does not
 > explicitly exclude, so `GET /fonts/LICENSE-Inter.txt` answered
-> **307 → /login**. `middleware.ts` now excludes `fonts/` for the same reason it
-> excludes `_next/static` — a static asset directory is not an authenticated
-> resource. Verified against a real `next start`: both notices return **200**
-> with bytes identical to the repository, while `/dashboard` and `/calendar`
-> still redirect to `/login`. The guard pins both halves of that, so neither
-> over- nor under-exclusion can creep back.
+> **307 → /login**.
+>
+> **The fix for that was itself wrong, in a way worth recording.** Excluding the
+> whole `fonts/` **prefix** made the notices reachable and opened an auth hole:
+> Next **route groups do not appear in the URL**, so
+> `app/(app)/fonts/private/page.tsx` serves `/fonts/private` — a genuine
+> authenticated route that the prefix exempted from `updateSession`. Nothing
+> named `app/fonts/…` would exist, so a guard watching that directory stays
+> green while the route answers anonymously. Found by review, not by tests.
+>
+> `middleware.ts` therefore excludes **exactly two paths**, anchored with `$`:
+> `fonts/LICENSE-Inter.txt` and `fonts/LICENSE-Fraunces.txt`. Nothing else under
+> `/fonts/` is exempt, and the `.woff2` assets need no exemption at all — Next
+> emits them under `/_next/static/media`, already covered by `_next/static`.
+>
+> Verified against a real `next start`, unauthenticated: both notices **200**
+> with bytes identical to the repository; `/fonts/private`, `/fonts/anything`,
+> `/fonts/LICENSE-Inter.txt/extra` and `/fonts` all **307 → /login**; every
+> traversal, encoded-traversal and prefix-confusion variant **307**; the
+> authenticated app **307**; public marketing routes **200**.
+>
+> The security boundary is the **matcher**, and the guard pins it in both
+> directions. The separate "`app/fonts/` must not exist" check is **namespace
+> hygiene only** — it is explicitly not the protection, because chasing route
+> groups, parallel routes, interception routes and dynamic segments with a
+> filesystem guard would mean reimplementing Next's route resolution and being
+> wrong about any one of them would reopen the hole silently.
 
 ### What the BROWSER receives
 

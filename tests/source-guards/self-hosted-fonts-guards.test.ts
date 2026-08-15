@@ -248,51 +248,96 @@ describe("the faces are loaded from local files", () => {
     }
   });
 
-  it("the auth middleware does not intercept the served notices", () => {
-    // Putting the notices under public/ is NOT sufficient on its own. The
-    // Supabase session middleware matches every path that is not explicitly
-    // excluded, and it redirects unauthenticated requests to /login. Before the
-    // `fonts/` exclusion, GET /fonts/LICENSE-Inter.txt answered 307 -> /login,
-    // so the licence was not reachable in the deployed app at all. Files being
-    // present in public/ says nothing about them being served.
-    const middleware = read("middleware.ts");
-    const matcher = middleware.match(/matcher:\s*\[\s*"([^"]+)"/)?.[1];
+  it("ONLY the two exact licence URLs bypass the auth middleware", () => {
+    // THE SECURITY INVARIANT. Putting the notices under public/ is not enough
+    // on its own - the Supabase session middleware matches every path it does
+    // not explicitly exclude, and before any exclusion existed
+    // GET /fonts/LICENSE-Inter.txt answered 307 -> /login, so the licence was
+    // unreachable in the deployed app.
+    //
+    // The first fix excluded the whole `fonts/` PREFIX, and that was an auth
+    // hole: Next route groups do not appear in the URL, so
+    // `app/(app)/fonts/private/page.tsx` serves `/fonts/private` - a genuine
+    // authenticated route that the prefix exempted from updateSession, with no
+    // file named `app/fonts/...` anywhere to give it away.
+    //
+    // So the boundary is the MATCHER, pinned in both directions. Anything that
+    // is not one of the two exact licence filenames must still run the
+    // middleware, including deeper paths, suffixed paths, and near-miss
+    // prefixes.
+    const matcher = read("middleware.ts").match(/matcher:\s*\[\s*"([^"]+)"/)?.[1];
     expect(matcher, "could not read the middleware matcher").toBeTruthy();
     const pattern = new RegExp(`^${matcher!.replace(/\\\\/g, "\\")}$`);
 
-    for (const licencePath of [
+    for (const exempt of [
       "/fonts/LICENSE-Inter.txt",
       "/fonts/LICENSE-Fraunces.txt",
     ]) {
       expect(
-        pattern.test(licencePath),
-        `${licencePath} must NOT be matched by the auth middleware`,
+        pattern.test(exempt),
+        `${exempt} must NOT be matched by the auth middleware`,
       ).toBe(false);
     }
-    // ...and the exclusion must not have swallowed the authenticated app.
-    for (const appPath of ["/dashboard", "/settings/data", "/calendar"]) {
+
+    for (const guarded of [
+      // A grouped route resolves here: app/(app)/fonts/private/page.tsx
+      "/fonts/private",
+      "/fonts/anything",
+      // Suffixes must not ride on an exact filename.
+      "/fonts/LICENSE-Inter.txt/extra",
+      "/fonts/LICENSE-Fraunces.txt/extra",
+      // Near-miss prefixes and case.
+      "/fonts",
+      "/fontsx/dashboard",
+      "/xfonts/dashboard",
+      "/FONTS/LICENSE-Inter.txt",
+      // The authenticated app itself.
+      "/dashboard",
+      "/calendar",
+      "/settings/data",
+    ]) {
       expect(
-        pattern.test(appPath),
-        `${appPath} MUST still run through the auth middleware`,
+        pattern.test(guarded),
+        `${guarded} MUST still run through the auth middleware`,
       ).toBe(true);
     }
   });
 
-  it("no APP ROUTE may live under /fonts, or it would skip auth", () => {
-    // The middleware exemption is a path PREFIX, not a file list. Today
-    // /fonts/* resolves only to the static notices under public/fonts and
-    // anything else 404s. But if someone later adds app/fonts/<x>/page.tsx or
-    // route.ts, that route would answer on an exempted path and silently never
-    // run updateSession - an authenticated surface with no auth, introduced by
-    // a file addition nowhere near this middleware config.
-    //
-    // Nothing lives there now, so pin that rather than leave it incidental.
-    const appFontsDir = path.join(ROOT, "app", "fonts");
+  it("the exemption is exact-path, not a prefix", () => {
+    // Stated separately from the case list so the REASON survives: a bare
+    // `fonts/` alternative would re-open the grouped-route hole, and the
+    // trailing `$` on each alternative is what prevents it.
+    const matcher = read("middleware.ts").match(/matcher:\s*\[\s*"([^"]+)"/)?.[1]!;
+    // Normalise the source-level escaping first: the file contains `\\.` (a
+    // TypeScript string literal escaping a regex dot), which is the same
+    // reduction used to build the pattern above.
+    const normalised = matcher.replace(/\\\\/g, "\\");
+    expect(normalised).toContain("fonts/LICENSE-Inter\\.txt$");
+    expect(normalised).toContain("fonts/LICENSE-Fraunces\\.txt$");
     expect(
-      existsSync(appFontsDir),
-      "app/fonts/ must not exist: routes there would bypass the auth middleware " +
-        "via the `fonts/` exemption in middleware.ts. Serve static font assets " +
-        "from public/fonts/ instead.",
+      /\|fonts\/(?!LICENSE)/.test(normalised),
+      "middleware must not exempt a bare `fonts/` prefix",
+    ).toBe(false);
+  });
+
+  it("keeps app/fonts/ free as namespace hygiene (NOT the security boundary)", () => {
+    // NAMESPACE HYGIENE ONLY. This is deliberately NOT what protects the auth
+    // boundary, and must never be described as if it were: it checks a literal
+    // directory, while Next route groups are invisible in the URL, so
+    // `app/(app)/fonts/private/page.tsx` serves /fonts/private without ever
+    // creating `app/fonts/`. Chasing that with a guard would mean
+    // reimplementing route-group, parallel-route, interception-route and
+    // dynamic-route resolution, and being wrong about any one of them would
+    // reopen the hole silently.
+    //
+    // The actual protection is the exact-path matcher above, which is safe
+    // regardless of where a route is declared. This assertion only keeps the
+    // obvious collision out of the tree so the two ideas are not confused.
+    expect(
+      existsSync(path.join(ROOT, "app", "fonts")),
+      "app/fonts/ must not exist: serve static font assets from public/fonts/. " +
+        "Note this is hygiene, not protection - the auth boundary is the " +
+        "exact-path matcher in middleware.ts.",
     ).toBe(false);
   });
 
