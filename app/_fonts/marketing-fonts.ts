@@ -5,10 +5,30 @@ import localFont from "next/font/local";
 // MarketingSurface wrapper. Headings render at 600, a weight the root
 // layout deliberately does not load.
 //
-// This is a SEPARATE module from app-fonts.ts on purpose. Importing these
-// faces from the root layout would put Inter 600/700 on every
-// authenticated route, where bold is currently synthesised from the 500
-// face. See app-fonts.ts for the full rationale and licence pointer.
+// This is a SEPARATE module from app-fonts.ts on purpose: importing these faces
+// from the root layout would put Inter 600/700 into every authenticated
+// route's CSS, where bold is otherwise synthesised from the 500 face.
+//
+// SEPARATION IS NOT ISOLATION, and it is worth being precise about what it does
+// buy. These faces declare the SAME `font-family: Inter` as the root loader -
+// as they did under next/font/google - so once the marketing stylesheet is in
+// the document its 600/700 join root-family matching. On a client-side
+// navigation (marketing footer -> /login) the App Router retains that
+// stylesheet, and /login's heading then resolves to a REAL 700 instead of the
+// synthesised bold it gets on a direct load.
+//
+// Measured, not theorised: after clicking through from /, family Inter reports
+// weights 400/500/600/700 present with Inter/700 actually LOADED, and the login
+// <h1> computes 700, where a direct load synthesises bold from 500.
+//
+// PRE-EXISTING and reproduced on the production base too: the previous
+// next/font/google build emitted the same single `Inter` family for both
+// loaders (--font-inter and --font-marketing-sans both resolved to
+// "Inter","Inter Fallback"). This change neither causes nor worsens it, and
+// deliberately does not fix it - giving marketing its own family identity is a
+// real typography change and belongs in its own PR. See FONTS.md.
+//
+// See app-fonts.ts for the full rationale and licence pointer.
 
 
 export const marketingInterLatin = localFont({

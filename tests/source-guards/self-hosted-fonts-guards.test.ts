@@ -756,10 +756,22 @@ describe("the declared faces match what production rendered", () => {
   });
 });
 
-describe("the marketing faces stay out of the authenticated app", () => {
+describe("the marketing faces are declared in a separate module", () => {
+  // NOT "stay out of the authenticated app" - that would overclaim. Module
+  // separation controls which CSS a route loads INITIALLY. It does not isolate
+  // font matching: both loaders declare the same `font-family: Inter`, so once
+  // the marketing stylesheet is in the document - which App Router client
+  // navigation retains - its 600/700 participate in root-family matching.
+  // Reproduced: after clicking through from / to /login, Inter/700 is loaded
+  // and the login <h1> computes 700, where a direct load synthesises bold from
+  // 500. That is pre-existing, identical under the previous next/font/google
+  // build, and deferred to a dedicated PR. See FONTS.md.
+  //
+  // The assertion below is still worth having: it keeps the ROOT module from
+  // declaring 600/700, so a direct authenticated load is unaffected.
   it("app-fonts.ts does not declare Inter 600 or 700", () => {
-    // Merging the two modules would put real 600/700 on every authenticated
-    // route, where bold is currently synthesised from the 500 face.
+    // Merging the two modules would put real 600/700 into every authenticated
+    // route's own CSS, affecting even a direct load.
     const interWeights = new Set<string>();
     for (const m of APP_FONTS.matchAll(
       /path:\s*"\.\/inter-[^"]+\.woff2",\s*weight:\s*"([^"]+)"/g,

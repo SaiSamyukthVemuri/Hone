@@ -231,12 +231,57 @@ drove the shape, and each one is a way this could have silently drifted:
    visual change smuggled in under a build fix.
 
 3. **The marketing module is never imported by the root layout.** Merging them
-   would put Inter 600/700 on every authenticated route, with the same
-   consequence as (2).
+   would put Inter 600/700 into every authenticated route's own CSS, with the
+   same consequence as (2) even on a direct load.
+
+   **Separation is not isolation** — see the pre-existing defect recorded below.
+   It controls which CSS a route loads initially; it does not stop marketing's
+   600/700 from participating in font matching once that stylesheet is in the
+   document.
 
 The metric-adjusted fallback pairing is preserved: Inter falls back to **Arial**,
 Fraunces to **Times New Roman** (`adjustFontFallback`), matching what
 `next/font/google` generated from its own metrics table.
+
+## Pre-existing defect: marketing Inter 600/700 can reach authenticated routes
+
+Found by review while verifying this change. **Real, pre-existing, not
+introduced or worsened here, and deliberately not fixed here.**
+
+Both loaders declare the same CSS family identity, `font-family: Inter` — as
+they did under `next/font/google`, where `--font-inter` and
+`--font-marketing-sans` both resolved to `"Inter","Inter Fallback"`. Module
+separation therefore governs which CSS a route loads *initially*, not which
+faces can participate in matching once loaded.
+
+App Router **client navigation retains** the marketing stylesheet. So:
+
+| Route to `/login` | Faces available under `Inter` | `<h1>` renders |
+|---|---|---|
+| direct load | 400, 500 | synthesised bold from 500 |
+| client nav from a marketing page | 400, 500, **600, 700** | **real 700** |
+
+Measured on this branch: after clicking the marketing footer's "Sign in",
+`document.fonts` reports `Inter/700` **loaded** and the login `<h1>` computes
+`700`. The same mechanism exists on the production base — the pre-self-hosting
+build emitted one shared `Inter` family across both loaders, and the
+inconsistency reproduces there too.
+
+**Why it is not fixed in this change.** Giving marketing a distinct family is a
+deliberate typography change: `/login` reached via marketing would stop
+rendering real 700. That is almost certainly the original intent, but this
+change's contract is to remove the Google Fonts build dependency while
+preserving rendering, and diverging from production here would undo the point of
+proving equivalence. It is deferred to a dedicated PR:
+
+> **fix(fonts): isolate marketing Inter faces from authenticated routes** —
+> give marketing its own family identity, preserve marketing 400/500/600/700 and
+> authenticated 400/500 + synthesised bold, and prove `/login` renders
+> identically whether loaded directly or reached by client navigation, with a
+> browser-level negative control showing the shared-family version leaks.
+
+**No test pins the current behaviour**, deliberately: it is a defect, not an
+invariant, and pinning it would obstruct the fix.
 
 ## Pre-existing defect found while verifying: Fraunces never actually renders
 
