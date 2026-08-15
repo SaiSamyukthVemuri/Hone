@@ -977,8 +977,16 @@ describe("internal surfaces all opt in", () => {
   const CALENDAR = read("app/(app)/calendar/actions.ts");
   const CLIENT_BOOKING = read("app/(app)/clients/[id]/booking-actions.ts");
 
-  it("the calendar quick-book precheck packs", () => {
-    expect(CALENDAR).toMatch(/INTERNAL_SLOT_PACKING/);
+  it("the calendar booking action no longer generates slots at all", () => {
+    // It used to regenerate the packed suggestion set and demand exact
+    // millisecond membership, which is how "not one of the suggestions" came to
+    // be reported as an availability violation. The precheck is now a real
+    // working-hours check (classifyRequestedTime), so there is no packing
+    // decision left to make here — and no slot list for a manual time to be
+    // measured against.
+    expect(CALENDAR).not.toMatch(/getAvailableSlots\(/);
+    expect(CALENDAR).not.toMatch(/INTERNAL_SLOT_PACKING/);
+    expect(CALENDAR).toMatch(/classifyRequestedTime\(/);
   });
 
   it("the client-page booking list packs", () => {
@@ -997,12 +1005,14 @@ describe("internal surfaces all opt in", () => {
 
   it("every internal getAvailableSlots call site is accounted for", () => {
     // Guard against a NEW internal surface being added without a packing
-    // decision: the three files above are the complete internal set today.
+    // decision. The invariant is "every call site passes the packing options",
+    // expressed as one named import plus one argument per call. A file with no
+    // call sites imports nothing and satisfies it with 0 === 0, which is how the
+    // calendar booking action reads now that it no longer generates slots.
     for (const src of [MOVE, CALENDAR, CLIENT_BOOKING]) {
       const calls = (src.match(/getAvailableSlots\(/g) ?? []).length;
       const packs = (src.match(/INTERNAL_SLOT_PACKING/g) ?? []).length;
-      // one import + one per call site
-      expect(packs).toBe(calls + 1);
+      expect(packs).toBe(calls === 0 ? 0 : calls + 1);
     }
   });
 });

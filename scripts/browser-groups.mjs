@@ -112,6 +112,11 @@ export const BROWSER_GROUPS = {
     description: "public booking and appointment lifecycle",
     specs: [
       "client-booking-outside-hours.spec.ts",
+      // The calm counterpart to the spec above: a manual time INSIDE working
+      // hours must book with no outside-hours language and must NOT stamp
+      // booked_outside_availability. The pair proves the same control produces
+      // opposite outcomes based on the real availability window.
+      "manual-time-inside-availability.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",

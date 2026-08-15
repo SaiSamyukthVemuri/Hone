@@ -7,9 +7,9 @@ import {
   utcInstantFromLocal,
 } from "./tz";
 import {
-  getStudioWideDaySafe,
-  getStudioWideOverrideDaySafe,
-} from "./studio-wide-availability";
+  readFullDayBlockout,
+  resolveAvailabilityWindow,
+} from "./availability-window";
 
 export type Slot = {
   start: string; // ISO UTC
@@ -63,19 +63,6 @@ type StudioRow = {
   practitioner_capacity_enabled?: boolean;
 };
 
-type DefaultRow = {
-  day_of_week: number;
-  is_open: boolean;
-  open_time: string | null;
-  close_time: string | null;
-};
-
-type OverrideRow = {
-  is_open: boolean;
-  open_time: string | null;
-  close_time: string | null;
-};
-
 // Migration 0030: slots now reads the unified shadow table
 // studio_calendar_reservations, which holds protected intervals for
 // confirmed appointments (with trailing buffer), one-off timed
@@ -107,11 +94,6 @@ type ReservationRow = {
 export type ReservationExclusion = {
   sourceKind: "appointment";
   sourceId: string;
-};
-
-type BlockoutRow = {
-  starts_on: string;
-  ends_on: string;
 };
 
 // Smart/packed scheduling. Slots are no longer a fixed every-15-minute grid
@@ -207,12 +189,6 @@ export const INTERNAL_SLOT_PACKING: SlotPackingOptions = Object.freeze({
   packAgainstClosingEdge: true,
 });
 
-// Strips seconds from a "HH:MM:SS" coming back from a postgres time column.
-function trimTime(t: string | null): string | null {
-  if (!t) return null;
-  return t.slice(0, 5);
-}
-
 export async function getAvailableSlots(
   supabase: SupabaseClient,
   studio: StudioRow,
@@ -237,92 +213,42 @@ export async function getAvailableSlots(
   const duration =
     serviceDurationMinutes ?? studio.default_appointment_duration_minutes ?? 60;
 
-  // Blockout?
-  const { data: blockouts } = await supabase
-    .from("studio_blockouts")
-    .select("starts_on, ends_on")
-    .eq("studio_id", studio.id)
-    .lte("starts_on", dateStr)
-    .gte("ends_on", dateStr);
-  if (blockouts && (blockouts as BlockoutRow[]).length > 0) {
-    return [];
-  }
+  // Blockout. Policy PRESERVED EXACTLY: a blockout row yields no slots, and a
+  // FAILED read is discarded (generation continues as though there were none),
+  // which is what this code has always done. This function feeds the PUBLIC
+  // booking and reschedule pages, so hardening that read here would be an
+  // unrelated behaviour change to public surfaces. The new manual-time check
+  // fails closed instead; see readFullDayBlockout.
+  const blockout = await readFullDayBlockout(supabase, studio.id, dateStr);
+  if (blockout.blocked) return [];
 
-  // Determine open window: override wins over default. When ON, a
-  // practitioner-specific row (0135) wins over the studio-wide fallback.
-  let openTime: string | null = null;
-  let closeTime: string | null = null;
-  let isOpen = false;
-  const applyWindow = (row: OverrideRow | DefaultRow) => {
-    isOpen = row.is_open;
-    openTime = trimTime(row.open_time);
-    closeTime = trimTime(row.close_time);
-  };
-
-  if (capacityOn) {
-    // ON: practitioner-specific override, else studio-wide (practitioner_id NULL);
-    // then default the same way. Two maybeSingle probes keep each unique.
-    const pOverride = (
-      await supabase
-        .from("studio_availability_overrides")
-        .select("is_open, open_time, close_time")
-        .eq("studio_id", studio.id)
-        .eq("effective_date", dateStr)
-        .eq("practitioner_id", practitionerId)
-        .maybeSingle()
-    ).data as OverrideRow | null;
-    const override =
-      pOverride ??
-      ((
-        await supabase
-          .from("studio_availability_overrides")
-          .select("is_open, open_time, close_time")
-          .eq("studio_id", studio.id)
-          .eq("effective_date", dateStr)
-          .is("practitioner_id", null)
-          .maybeSingle()
-      ).data as OverrideRow | null);
-    if (override) {
-      applyWindow(override);
-    } else {
-      const pDefault = (
-        await supabase
-          .from("studio_availability_default")
-          .select("is_open, open_time, close_time")
-          .eq("studio_id", studio.id)
-          .eq("day_of_week", dow)
-          .eq("practitioner_id", practitionerId)
-          .maybeSingle()
-      ).data as DefaultRow | null;
-      const def =
-        pDefault ??
-        ((
-          await supabase
-            .from("studio_availability_default")
-            .select("is_open, open_time, close_time")
-            .eq("studio_id", studio.id)
-            .eq("day_of_week", dow)
-            .is("practitioner_id", null)
-            .maybeSingle()
-        ).data as DefaultRow | null);
-      if (def) applyWindow(def);
-    }
-  } else {
-    // OFF: studio-wide window only. The migration-order-safe loaders filter
-    // practitioner_id IS NULL, so a rolled-back studio's retained practitioner
-    // rows are ignored (and never make maybeSingle throw on a doubled weekday);
-    // they fall back to the exact legacy query only if the 0135 column is
-    // genuinely absent (pre-apply).
-    const override = await getStudioWideOverrideDaySafe(supabase, studio.id, dateStr);
-    if (override) {
-      applyWindow(override);
-    } else {
-      const def = await getStudioWideDaySafe(supabase, studio.id, dow);
-      if (def) applyWindow(def);
-    }
-  }
-
-  if (!isOpen || !openTime || !closeTime) return [];
+  // The open window now comes from the SHARED resolver in
+  // lib/booking/availability-window.ts, which holds the single implementation
+  // of the default/override precedence (studio-wide for capacity OFF;
+  // practitioner-specific winning over studio-wide for capacity ON, matching
+  // validate_appointment_availability's `order by (practitioner_id is not null)
+  // desc limit 1` pair in migration 0152).
+  //
+  // It used to live inline here, which meant the ONLY code that knew a
+  // practitioner's real working hours was the code that generates packed
+  // suggestions. Anything else that needed the window -- notably "is this
+  // manually chosen time actually inside your hours?" -- had no way to ask, and
+  // the internal booking action ended up substituting "is it one of the
+  // suggestions?" instead. Extracting it is what lets a second caller ask the
+  // real question without building a second, subtly different booking calendar.
+  //
+  // Generation semantics are unchanged: a closed or absent window yields NO
+  // slots, exactly as `if (!isOpen || !openTime || !closeTime) return []` did.
+  const window = await resolveAvailabilityWindow(
+    supabase,
+    studio,
+    dateStr,
+    practitionerId,
+    dow,
+  );
+  if (window.kind !== "open") return [];
+  const openTime: string = window.openTime;
+  const closeTime: string = window.closeTime;
 
   // Load every reservation whose interval overlaps the day's
   // availability window. The shadow holds appointment protected

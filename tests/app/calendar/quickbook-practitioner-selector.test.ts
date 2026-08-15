@@ -29,15 +29,15 @@ describe("QuickBookDrawer — owner selector, target-aware slots, member/Legacy"
   });
   it("submits practitioner_id on BOTH paths, and the failure refetch keeps the target", () => {
     expect(DRAWER).toMatch(/if \(showSelector && target\) fd\.set\("practitioner_id", target\)/);
-    // The practitioner_id is appended once, before the override/normal branch, so
-    // both paths carry it (idx-order check: service_id set, then practitioner_id,
-    // then the override branch).
+    // The practitioner_id is appended once, before the manual/suggestion branch,
+    // so both paths carry it (idx-order check: service_id set, then
+    // practitioner_id, then the branch).
     const svc = DRAWER.indexOf('fd.set("service_id", serviceId)');
     const prac = DRAWER.indexOf('fd.set("practitioner_id", target)');
-    const branch = DRAWER.indexOf("if (overrideEnabled) {", svc);
+    const branch = DRAWER.indexOf("if (manualTimeEnabled) {", svc);
     expect(svc).toBeGreaterThan(0);
     expect(prac).toBeGreaterThan(svc);
-    expect(branch).toBeGreaterThan(prac); // practitioner_id set BEFORE the override/normal split
+    expect(branch).toBeGreaterThan(prac); // practitioner_id set BEFORE the manual/suggestion split
     // The failure refetch is scoped to the current target.
     expect(DRAWER).toMatch(/practitionerId: showSelector \? target : undefined,[\s\S]{0,60}if \(refetch\.ok\)/);
   });

@@ -7,6 +7,11 @@ import {
   INTERNAL_SLOT_PACKING,
   type Slot,
 } from "@/lib/booking/slots";
+import {
+  readFullDayBlockout,
+  resolveAvailabilityWindow,
+  type AvailabilityWindow,
+} from "@/lib/booking/availability-window";
 
 function logBookingSlotError(stage: string, code: string | undefined): void {
   // Bounded PHI-free marker only, never the raw DB/PostgREST message.
@@ -19,8 +24,25 @@ function logBookingSlotError(stage: string, code: string | undefined): void {
 // non-owner practitionerId is IGNORED here (resolved to self), exactly the rule
 // bookAppointmentForClientAction enforces, and the DB command remains the final
 // authority at booking time.
+// The suggestion list AND the actual availability window for the same
+// (studio, practitioner, date). They are returned together, and deliberately
+// kept as two separate fields, because they answer two different questions:
+//
+//   slots   the packed SUGGESTIONS -- a small, efficient subset
+//   window  the practitioner's REAL working hours that day
+//
+// The window travels to the browser so a manually typed time can be classified
+// with the SAME pure predicate the server uses when it accepts the booking
+// (classifyAgainstWindow). The alternative -- letting the browser infer "inside
+// hours" from the suggestion list -- is exactly the conflation this change
+// exists to remove, and would have re-created it one layer up.
+//
+// The browser's verdict decides COPY ONLY. It is never sent back and never
+// trusted: bookAppointmentForClientAction independently re-resolves the window
+// server-side from the server-resolved studio and target before accepting
+// anything.
 export type SlotResult =
-  | { ok: true; slots: Slot[] }
+  | { ok: true; slots: Slot[]; window: AvailabilityWindow }
   | { ok: false; error: string; code?: string };
 
 export async function fetchSlotsForClientBookingAction(params: {
@@ -102,7 +124,34 @@ export async function fetchSlotsForClientBookingAction(params: {
     capacityOn ? target : null,
     INTERNAL_SLOT_PACKING,
   );
-  return { ok: true, slots };
+
+  // The real availability window for the SAME (studio, target, date) the slots
+  // were generated for. Resolved through the shared resolver, so the window the
+  // browser renders copy from and the window the booking action enforces are
+  // one implementation.
+  //
+  // A blockout is reported as a CLOSED window: on a blocked-out day there is no
+  // manual time to offer, and the booking action independently refuses it. A
+  // failed blockout read also resolves to closed here, matching the fail-closed
+  // policy of the booking action rather than the slot engine's older
+  // continue-anyway behaviour -- the cost of being wrong is a manual-time field
+  // that stays hidden, never a booking on a day off.
+  const blockout = await readFullDayBlockout(supabase, studio.id, params.date);
+  const window: AvailabilityWindow =
+    blockout.blocked || blockout.readFailed
+      ? { kind: "closed" }
+      : await resolveAvailabilityWindow(
+          supabase,
+          {
+            id: studio.id,
+            timezone: studio.timezone,
+            practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
+          },
+          params.date,
+          capacityOn ? target : null,
+        );
+
+  return { ok: true, slots, window };
 }
 
 export type EligiblePractitioner = { id: string; displayName: string };

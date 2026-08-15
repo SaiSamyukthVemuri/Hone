@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
+import { classifyRequestedTime } from "@/lib/booking/availability-window";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import {
@@ -92,17 +92,24 @@ export async function bookAppointmentForClientAction(
   const serviceId = formDataStr(formData, "service_id");
   const startsAt = formDataStr(formData, "starts_at");
   const notes = formDataStrOrNull(formData, "notes");
-  // Internal-only override. Public booking lives in a separate file
-  // (app/book/[slug]/actions.ts) that does not read this flag, so a
-  // public caller cannot use it to bypass published availability.
-  // When true, this action SKIPS the JS-side getAvailableSlots
-  // membership check below; every other safety primitive remains:
+  // Internal-only override, and it now means ONE thing: this booking is
+  // genuinely OUTSIDE the practitioner's working hours. It is no longer the
+  // route to any time that merely isn't one of the smart suggestions -- those
+  // are ordinary bookings and travel the normal path with this flag FALSE.
+  //
+  // Public booking lives in a separate file (app/book/[slug]/actions.ts) that
+  // does not read this flag, so a public caller cannot use it to bypass
+  // published availability.
+  //
+  // When true, this action skips the working-hours check below; every other
+  // safety primitive remains:
   //   * authenticated-practitioner gate
+  //   * owner-only authorization (below), re-checked again in the DB command
   //   * past-time guard
   //   * service / client / studio ownership checks
-  //   * DB exclusion constraints from migrations 0029 + 0030, which
-  //     unconditionally reject overlap, buffer violation, and any
-  //     overlap with a blockout / recurring-break reservation row.
+  //   * DB exclusion constraints from migrations 0029 + 0030 + 0134, which
+  //     unconditionally reject overlap, and any overlap with a timed block,
+  //     recurring-break occurrence or full-day blockout reservation row.
   const allowOutsideAvailability =
     formDataStr(formData, "allow_outside_availability") === "true";
 
@@ -249,48 +256,75 @@ export async function bookAppointmentForClientAction(
     durationOverride ?? service.default_duration_minutes;
   const end = new Date(start.getTime() + effectiveDurationMinutes * 60_000);
 
-  // Re-verify the slot is still available (race-safe). Use the
-  // studio's local date, not the UTC date, so a late-evening booking
-  // does not look up the next day's slots.
+  // AVAILABILITY, not suggestion membership.
   //
-  // Override branch: when the practitioner explicitly ticked the
-  // "Outside your regular availability" toggle on the drawer (and
-  // the confirmation checkbox), this membership check is skipped.
-  // The DB exclusion constraints from migrations 0029 + 0030 still
-  // run on the INSERT below, so conflict / buffer / blockout / break
-  // protection is preserved without any change to those rules.
+  // This check used to regenerate the SMART SUGGESTION set and demand exact
+  // millisecond membership in it. That conflated two different things:
+  //
+  //   a packed suggestion  is one of a small set of efficient anchor times
+  //   actual availability  is the window the practitioner genuinely works
+  //
+  // A practitioner who deliberately chose 15:30 on a 09:00-17:00 day, with a
+  // 15:10 suggestion and nothing booked near it, was told "that time is no
+  // longer available" -- which was false -- and the only route to 15:30 was a
+  // control meaning `allow_outside_availability`. That flag is not cosmetic: it
+  // is persisted to appointments.booked_outside_availability, stamped into the
+  // audit row, attributed to an authorising owner (migration 0174), and it
+  // permanently disables the buffer trigger for that appointment (0152). An
+  // ordinary working time was being filed as an out-of-hours exception.
+  //
+  // So the question asked here is now the real one: is this instant inside the
+  // practitioner's working-hours window? Nothing else moved.
+  //
+  // WHY THIS DOES NOT WEAKEN ANYTHING. Every OTHER rule the membership check
+  // incidentally enforced is already enforced authoritatively by the database,
+  // in BOTH capacity modes, and none of them can be bypassed from here:
+  //
+  //   actual collision with an appointment, a timed block, a recurring-break
+  //     occurrence or a full-day blockout -> the per-resource GiST exclusion on
+  //     studio_calendar_reservations (0134). Never bypassable, not even by the
+  //     override. Surfaced as 23P01 below.
+  //   trailing buffer / gap -> appointment_buffer_conflict, which 0152 runs for
+  //     BOTH capacity modes whenever this flag is false, plus the row trigger.
+  //     Returned as 'buffer_conflict' and mapped to fixed copy.
+  //   past time, service/client tenancy, booking pause, target validity,
+  //     eligibility, duration -> already checked above and re-checked inside
+  //     create_internal_appointment_v2.
+  //
+  // WHY THIS CHECK MUST EXIST AT ALL, and must be here rather than left to the
+  // database. validate_appointment_availability fences its ENTIRE working-hours
+  // block behind `if v_cap then` (0152). A capacity-OFF studio therefore gets no
+  // hours enforcement from Postgres whatsoever -- it would accept 03:00. Until
+  // this change the JS suggestion-membership check was, by accident, the only
+  // thing standing in for it. Replacing one server-side authority with another
+  // server-side authority keeps that guarantee at exactly the same layer and the
+  // same strength; deleting it outright would have opened a real hole.
   if (!allowOutsideAvailability) {
-    const dateStr = localDateString(start, studio.timezone);
-    // Part 4 Item 3: the precheck must run against the EXACT practitioner the DB
-    // command will book (targetPractitionerId), not a studio-wide timeline. When
-    // capacity is ON, getAvailableSlots reads that practitioner's own hours +
-    // resource_key reservations, so A's calendar never advertises/consumes B's
-    // slots. Legacy (flag off) ignores the practitioner id → studio-wide, as today.
-    const slots = await getAvailableSlots(
+    // Part 4 Item 3: resolved against the EXACT practitioner the DB command will
+    // book (targetPractitionerId), never a studio-wide timeline, so A's hours
+    // can never authorise a booking on B. Legacy (flag off) ignores the
+    // practitioner dimension and resolves studio-wide, exactly as before.
+    const verdict = await classifyRequestedTime(
       supabase,
       {
         id: studio.id,
         timezone: studio.timezone,
-        default_appointment_duration_minutes:
-          studio.default_appointment_duration_minutes,
-        buffer_minutes: studio.buffer_minutes,
         practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
       },
-      dateStr,
+      start,
+      // The authoritative length for a non-override booking is always the
+      // service default: a custom duration REQUIRES the override and is
+      // rejected above. This is the same number create_internal_appointment_v2
+      // derives from the locked service row, so the window is measured against
+      // the interval that will actually be written.
       service.default_duration_minutes,
-      undefined,
       targetPractitionerId,
-      INTERNAL_SLOT_PACKING,
     );
-    const isFree = slots.some(
-      (s) => new Date(s.start).getTime() === start.getTime(),
-    );
-    if (!isFree) {
-      return {
-        ok: false,
-        error:
-          "That time is no longer available. Please choose another time.",
-      };
+    if (verdict === "practitioner_closed") {
+      return { ok: false, error: bookingResultMessage("practitioner_closed") };
+    }
+    if (verdict === "outside_availability") {
+      return { ok: false, error: bookingResultMessage("outside_availability") };
     }
   }
 

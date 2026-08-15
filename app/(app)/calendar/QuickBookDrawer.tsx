@@ -25,7 +25,15 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
-import { utcInstantFromLocal, formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
+import {
+  utcInstantFromLocal,
+  formatClockLabel,
+  type TimeFormat,
+} from "@/lib/booking/tz";
+import {
+  decideManualTime,
+  type AvailabilityWindow,
+} from "@/lib/booking/availability-window";
 import {
   fetchSlotsForClientBookingAction,
   fetchEligiblePractitionersAction,
@@ -191,22 +199,36 @@ export function QuickBookDrawer({
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickedSlot, setPickedSlot] = useState<Slot | null>(null);
   const [notes, setNotes] = useState("");
-  // Override toggle. Defaults off so the standard slot flow stays
-  // identical to today. When on:
-  //   - the slot picker is replaced by a free-form HH:MM input that
-  //     defaults to the drag-time the practitioner clicked.
-  //   - a confirmation checkbox must be ticked before Save enables.
-  //   - the form posts allow_outside_availability=true and a UTC
-  //     instant computed from the local time + studio timezone.
-  const [overrideEnabled, setOverrideEnabled] = useState(false);
-  const [overrideConfirmed, setOverrideConfirmed] = useState(false);
-  const [overrideLocalTime, setOverrideLocalTime] = useState<string>("");
+  // "Choose another time". Defaults off so the suggestion flow stays identical.
+  // When on, the suggestion list is replaced by a free-form HH:MM input seeded
+  // with the time the practitioner clicked.
+  //
+  // Turning this on is NOT, by itself, an availability override. What the typed
+  // time IS gets decided against the real working-hours window (below):
+  //
+  //   inside the window  -> an ordinary booking. No warning, no acknowledgement,
+  //                         and allow_outside_availability is NOT posted.
+  //   outside the window -> the existing owner-only outside-hours path, with its
+  //                         warning and its explicit acknowledgement.
+  //
+  // Before this split there was only the second branch, so deliberately picking
+  // 15:30 on a 09:00-17:00 day made a practitioner assert something false and
+  // recorded the booking as an out-of-hours exception.
+  const [manualTimeEnabled, setManualTimeEnabled] = useState(false);
+  const [outsideHoursConfirmed, setOutsideHoursConfirmed] = useState(false);
+  const [manualLocalTime, setManualLocalTime] = useState<string>("");
+  // The REAL availability window for the loaded (service, date, target),
+  // resolved server-side and returned alongside the suggestions. null until the
+  // first successful load, and reset on every failure so an unknown window is
+  // never mistaken for an open one.
+  const [availabilityWindow, setAvailabilityWindow] =
+    useState<AvailabilityWindow | null>(null);
   // Drag-derived duration (minutes). Empty string when the drawer was
   // opened by a bare click; the override duration input is hidden in
   // that case and the booking uses the service default. When the
   // practitioner drags out a range, this is pre-filled and the input
   // is shown so the duration is editable before save.
-  const [overrideDurationMinutes, setOverrideDurationMinutes] =
+  const [manualDurationMinutes, setManualDurationMinutes] =
     useState<string>("");
   // Soft-vs-explicit override tracking (PR #128). A drag-opened drawer
   // auto-enables the override path because a custom drag duration
@@ -221,9 +243,9 @@ export function QuickBookDrawer({
   // the confirmation) promotes the override to "explicit" so the
   // drop-out logic stops touching it. Ref-backed so the slot-fetch
   // effect can read the current value without re-running on toggles.
-  const autoOverrideRef = useRef(false);
-  function markOverrideExplicit() {
-    autoOverrideRef.current = false;
+  const autoManualTimeRef = useRef(false);
+  function markManualTimeExplicit() {
+    autoManualTimeRef.current = false;
   }
   const [error, setError] = useState<string | null>(null);
   const [loadingSlots, startLoadingSlots] = useTransition();
@@ -252,11 +274,11 @@ export function QuickBookDrawer({
       setEligible([]);
       setEligibleError(null);
       setTarget(currentPractitionerId);
-      setOverrideEnabled(false);
-      setOverrideConfirmed(false);
-      setOverrideLocalTime("");
-      setOverrideDurationMinutes("");
-      autoOverrideRef.current = false;
+      setManualTimeEnabled(false);
+      setOutsideHoursConfirmed(false);
+      setManualLocalTime("");
+      setManualDurationMinutes("");
+      autoManualTimeRef.current = false;
     }
   }, [open, firstServiceId, currentPractitionerId]);
 
@@ -266,52 +288,72 @@ export function QuickBookDrawer({
   // flow ignores this value.
   useEffect(() => {
     if (open && draft?.localTime) {
-      setOverrideLocalTime(draft.localTime);
+      setManualLocalTime(draft.localTime);
     }
   }, [open, draft?.localTime]);
 
-  // Drag-to-create: when the draft carries a durationMinutes value
-  // (always 15-min granular from DayColumn), the override flow is
-  // soft-enabled and the duration field pre-filled because a custom
-  // duration cannot match the service-default slot list up front.
-  // autoOverrideRef tracks that the enable was a drag hint, not the
-  // practitioner's choice; the slot-fetch effect and the service-
-  // change effect (PR #128) can drop back out when a standard slot
-  // covers the same start time or when the picked service implies a
-  // different duration. The confirmation checkbox is NOT pre-ticked:
-  // even in true override mode the practitioner must explicitly
-  // acknowledge they are booking outside published availability
-  // before the Save button enables. A bare click leaves both flags
-  // off and the duration field empty. Effect runs only on draft
-  // identity so toggling the override checkbox manually is not undone
-  // by a re-render.
+  // Drag-to-create: when the draft carries a durationMinutes value (always
+  // 15-min granular from DayColumn) the manual-time flow is soft-enabled and
+  // the duration field pre-filled, because a dragged length cannot be matched
+  // against the service-default suggestion list up front.
+  //
+  // Soft-enabling the manual TIME is no longer the same thing as asserting the
+  // booking is outside availability: the drag start is classified against the
+  // real window like any other manual time, so a drag inside working hours books
+  // calmly. What still forces the override is a genuinely CUSTOM LENGTH, which
+  // is owner-only in the database and out of scope to change here.
+  //
+  // autoManualTimeRef tracks that the enable was a drag hint, not the
+  // practitioner's choice; the slot-fetch effect and the service-change effect
+  // (PR #128) can drop back out when a suggestion covers the same start time or
+  // when the picked service implies a different duration. The acknowledgement is
+  // never pre-ticked. A bare click leaves both flags off and the duration field
+  // empty. Effect runs only on draft identity so toggling the manual-time
+  // checkbox by hand is not undone by a re-render.
   useEffect(() => {
     if (!open) return;
     const dragMinutes = draft?.durationMinutes;
     if (dragMinutes && dragMinutes > 0) {
-      setOverrideDurationMinutes(String(dragMinutes));
-      setOverrideEnabled(true);
-      setOverrideConfirmed(false);
-      autoOverrideRef.current = true;
+      setManualDurationMinutes(String(dragMinutes));
+      setManualTimeEnabled(true);
+      setOutsideHoursConfirmed(false);
+      autoManualTimeRef.current = true;
     } else {
       // Bare click on a NEW slot: the outside-availability override must start
       // OFF for each new booking attempt. It is never sticky across slots
       // (Chloe feedback). A drag soft-enables above; a plain click resets.
-      setOverrideDurationMinutes("");
-      setOverrideEnabled(false);
-      setOverrideConfirmed(false);
-      autoOverrideRef.current = false;
+      setManualDurationMinutes("");
+      setManualTimeEnabled(false);
+      setOutsideHoursConfirmed(false);
+      autoManualTimeRef.current = false;
     }
     // This effect keys on the DRAFT identity, so a new slot always resets the
     // override above. Within the SAME draft it does not re-fire, so a manual
     // override toggle sticks until the slot changes or the drawer closes: we
-    // intentionally do NOT add overrideEnabled / overrideConfirmed to the deps.
+    // intentionally do NOT add manualTimeEnabled / outsideHoursConfirmed to the deps.
   }, [open, draft?.localDate, draft?.localTime, draft?.durationMinutes]);
+
+  // A dragged length that EQUALS the service default is not a custom length.
+  // Dropping the hint here is what lets an ordinary drag -- say 15:30 to 16:30
+  // for a 60-minute service, inside working hours -- book calmly instead of
+  // being pushed through the owner-only override for a length that is not
+  // actually custom. Only fires while the manual-time state is still the drag's
+  // soft hint; an explicitly typed duration is left alone.
+  const draftDragMinutes = draft?.durationMinutes;
+  useEffect(() => {
+    if (!open) return;
+    if (!autoManualTimeRef.current) return;
+    if (!draftDragMinutes || draftDragMinutes <= 0) return;
+    const svc = services.find((s) => s.id === serviceId);
+    if (svc && svc.default_duration_minutes === draftDragMinutes) {
+      setManualDurationMinutes("");
+    }
+  }, [open, draftDragMinutes, serviceId, services]);
 
   // Service change after a drag (PR #128, Part 2). A drag of 105 min
   // followed by picking a 60-minute service should book at the
   // service duration, not at 105 minutes. When the soft override is
-  // still active (autoOverrideRef.current) and the practitioner
+  // still active (autoManualTimeRef.current) and the practitioner
   // changes serviceId, we drop the drag-derived duration hint so the
   // service default takes over. The slot-fetch effect below will then
   // re-evaluate against the new service and, if a standard slot
@@ -320,8 +362,8 @@ export function QuickBookDrawer({
   // explicit-promote in the input onChange disables this snap.
   useEffect(() => {
     if (!open) return;
-    if (autoOverrideRef.current) {
-      setOverrideDurationMinutes("");
+    if (autoManualTimeRef.current) {
+      setManualDurationMinutes("");
     }
     // Intentionally deps on serviceId only (plus open as a render
     // gate); the snap should fire when the practitioner picks a
@@ -389,17 +431,17 @@ export function QuickBookDrawer({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Fetch slots whenever (serviceId, draft.localDate) changes. The
-  // clicked time from Phase A is only a hint: we preselect it if it
-  // matches an available slot exactly, otherwise the practitioner picks
-  // from the offered slots. We never send an arbitrary time to the
-  // booking action.
+  // Fetch the suggestions AND the real availability window whenever
+  // (serviceId, draft.localDate, target) changes. The clicked time is only a
+  // hint: it is preselected when a suggestion falls on exactly that instant,
+  // otherwise the practitioner picks a suggestion or chooses their own time.
   useEffect(() => {
     // Fail closed: when the owner selector is shown but no eligible target is
     // resolved (empty/failed lookup), do NOT fetch self slots as a fallback.
     if (!open || !draft || !serviceId || (showSelector && !target)) {
       setSlots([]);
       setPickedSlot(null);
+      setAvailabilityWindow(null);
       return;
     }
     let cancelled = false;
@@ -419,9 +461,15 @@ export function QuickBookDrawer({
         setError(r.error);
         setSlots([]);
         setPickedSlot(null);
+        // An unknown window must never read as an open one: with no window the
+        // manual path treats every time as outside hours, which is the safe
+        // direction (it asks for the owner override rather than waving a
+        // booking through).
+        setAvailabilityWindow(null);
         return;
       }
       setError(null);
+      setAvailabilityWindow(r.window);
       // Display-only past-time guard for the internal calendar: never offer a
       // slot whose start instant is already in the past (today's earlier
       // hours). Absolute UTC comparison on the ISO slot.start. The shared
@@ -432,23 +480,40 @@ export function QuickBookDrawer({
         (s) => new Date(s.start).getTime() > nowMs,
       );
       setSlots(futureSlots);
-      const exact = futureSlots.find((s) => s.startLabel === targetHint);
-      // PR #128 Part 1. If the picked service has an exact-match
-      // standard slot at the drag's start time AND the override path
-      // was only soft-enabled by the drag (not explicitly chosen by
-      // the practitioner), drop back to standard mode and preselect
-      // that slot. This is the false-positive fix: drag 12:00 to
-      // 1:45, then pick a 60-min service whose 12:00 slot is inside
-      // availability, and the drawer no longer shows the outside-
-      // availability warning, no longer posts allow_outside, and
-      // books at the service duration. True override (no standard
-      // slot at the drag start, or practitioner explicitly toggled
-      // override) is untouched.
-      if (exact && autoOverrideRef.current) {
-        setOverrideEnabled(false);
-        setOverrideConfirmed(false);
-        setOverrideDurationMinutes("");
-        autoOverrideRef.current = false;
+      // Match on the INSTANT, not on the rendered label.
+      //
+      // This compared `slot.startLabel === targetHint`, and those two values are
+      // in different formats and always have been: startLabel is the 12-hour
+      // client-facing label from localTimeString12h ("3:10 PM") while
+      // draft.localTime is the 24-hour machine value from the calendar grid
+      // ("15:10"). The comparison could therefore never be true for any input,
+      // which silently disabled three things: the clicked time was never
+      // preselected even when an exact suggestion existed, the highlight below
+      // never rendered, and the PR #128 drag drop-out immediately after this
+      // could never fire -- so every drag stayed on the override path and showed
+      // the outside-availability warning even when the drag landed exactly on a
+      // suggestion. Comparing the UTC instants removes the format question
+      // entirely.
+      const hintMs = utcInstantFromLocal(
+        targetDate,
+        targetHint,
+        studioTimezone,
+      ).getTime();
+      const exact = futureSlots.find(
+        (s) => new Date(s.start).getTime() === hintMs,
+      );
+      // PR #128 Part 1. If the picked service has an exact-match suggestion at
+      // the drag's start time AND the manual path was only soft-enabled by the
+      // drag (not explicitly chosen by the practitioner), drop back to the
+      // suggestion flow and preselect that slot: drag 12:00 to 1:45, then pick a
+      // 60-min service whose 12:00 suggestion is inside availability, and the
+      // drawer books the suggestion at the service duration. An explicit choice,
+      // or a drag with no matching suggestion, is untouched.
+      if (exact && autoManualTimeRef.current) {
+        setManualTimeEnabled(false);
+        setOutsideHoursConfirmed(false);
+        setManualDurationMinutes("");
+        autoManualTimeRef.current = false;
       }
       setPickedSlot(exact ?? null);
     });
@@ -508,23 +573,43 @@ export function QuickBookDrawer({
     ? 0
     : allClients.filter((c) => matchClient(c, queryLower)).length;
 
-  // Save-enabled rule: standard flow needs a picked slot; override
-  // flow needs a typed HH:MM AND the explicit confirmation
-  // checkbox; if the duration field is shown (drag-to-create flow)
-  // it must parse to a 15-min multiple in [15, 360]. Override and
-  // standard cannot both be active because the slot picker is hidden
-  // when overrideEnabled is true.
-  const overrideTimeValid = /^\d{2}:\d{2}$/.test(overrideLocalTime);
-  const parsedOverrideDuration = (() => {
-    if (!overrideDurationMinutes) return null;
-    const n = parseInt(overrideDurationMinutes, 10);
+  // Save-enabled rule: the suggestion flow needs a picked slot; the manual flow
+  // needs a typed HH:MM, a valid duration if the field is shown (drag-to-create),
+  // and -- ONLY when the chosen time genuinely needs the outside-hours override
+  // -- the explicit acknowledgement. Manual and suggestion flows cannot both be
+  // active because the picker is hidden when manualTimeEnabled is true.
+  const parsedManualDuration = (() => {
+    if (!manualDurationMinutes) return null;
+    const n = parseInt(manualDurationMinutes, 10);
     if (!Number.isFinite(n)) return null;
     if (n < 15 || n > 360) return null;
     if (n % 15 !== 0) return null;
     return n;
   })();
-  const overrideDurationValid =
-    overrideDurationMinutes === "" || parsedOverrideDuration != null;
+  const manualDurationValid =
+    manualDurationMinutes === "" || parsedManualDuration != null;
+
+  // WHAT THE TYPED TIME ACTUALLY IS, via the ONE shared decision function.
+  //
+  // decideManualTime wraps classifyAgainstWindow -- the same pure predicate the
+  // booking action applies server-side before it accepts anything -- and is
+  // shared with the client-profile Book form, so the two internal surfaces
+  // cannot drift into different laws again.
+  //
+  // The verdict decides COPY ONLY. The server re-resolves the window itself and
+  // is the authority; nothing here is sent back as a claim.
+  const selectedService = services.find((s) => s.id === serviceId) ?? null;
+  const manualDecision = decideManualTime({
+    window: availabilityWindow,
+    localTime: manualLocalTime,
+    serviceDurationMinutes: selectedService?.default_duration_minutes ?? null,
+    customDurationMinutes: parsedManualDuration,
+  });
+  const manualVerdict = manualDecision.verdict;
+  const manualTimeValid = manualDecision.timeValid;
+  const requiresOutsideOverride =
+    manualTimeEnabled && manualDecision.requiresOutsideOverride;
+
   // Item 6: when the owner selector is shown, the current target MUST be a
   // resolved eligible practitioner (fail closed: empty/failed lookup → "").
   const targetValid = !showSelector || eligible.some((p) => p.id === target);
@@ -533,8 +618,10 @@ export function QuickBookDrawer({
     ? (eligible.find((p) => p.id === target)?.displayName ?? "")
     : currentPractitionerName;
   const canBook = !booking && !!selectedClient && !!serviceId && targetValid && (
-    overrideEnabled
-      ? overrideTimeValid && overrideConfirmed && overrideDurationValid
+    manualTimeEnabled
+      ? manualTimeValid &&
+        manualDurationValid &&
+        (!requiresOutsideOverride || outsideHoursConfirmed)
       : !!pickedSlot
   );
 
@@ -572,8 +659,12 @@ export function QuickBookDrawer({
     if (!selectedClient || !serviceId) return;
     // Item 6: an owner selector with no resolved eligible target blocks booking.
     if (showSelector && !eligible.some((p) => p.id === target)) return;
-    if (overrideEnabled) {
-      if (!overrideTimeValid || !overrideConfirmed) return;
+    if (manualTimeEnabled) {
+      if (!manualTimeValid) return;
+      // The acknowledgement is required ONLY for a time that genuinely needs the
+      // outside-hours override. An ordinary working time is not asked to confirm
+      // something untrue.
+      if (requiresOutsideOverride && !outsideHoursConfirmed) return;
     } else if (!pickedSlot) {
       return;
     }
@@ -585,26 +676,41 @@ export function QuickBookDrawer({
     // normal-slot and outside-hours paths; the server re-validates it. Members /
     // Legacy send none → the server books the acting practitioner.
     if (showSelector && target) fd.set("practitioner_id", target);
-    if (overrideEnabled) {
+    if (manualTimeEnabled) {
       // Compute the UTC instant from the practitioner's typed time
       // interpreted in the studio's timezone. DST-safe via the
       // existing utcInstantFromLocal helper; we never use naive
       // browser-local Date math.
       const utc = utcInstantFromLocal(
         draft!.localDate,
-        overrideLocalTime,
+        manualLocalTime,
         studioTimezone,
       );
       fd.set("starts_at", utc.toISOString());
-      fd.set("allow_outside_availability", "true");
-      // Drag-to-create duration override (only sent when present).
-      // The booking action validates the value server-side; an
-      // unsupplied or empty field falls through to service default.
-      if (parsedOverrideDuration != null) {
-        fd.set(
-          "duration_minutes_override",
-          String(parsedOverrideDuration),
-        );
+      // THE FLAG IS POSTED ONLY WHEN IT IS TRUE.
+      //
+      // allow_outside_availability is not a UI mode, it is an assertion about
+      // the world that the database persists: booked_outside_availability on the
+      // appointment row, an outside_availability entry in the audit record, an
+      // authorising owner stamped alongside it (0174), and the buffer trigger
+      // permanently disabled for that appointment (0152). Sending it for a time
+      // the practitioner genuinely works would file an ordinary booking as an
+      // out-of-hours exception forever.
+      //
+      // The server does not take our word for it either: it re-resolves the
+      // window itself and refuses an out-of-hours time that arrives without the
+      // flag. This decides what we ASK for, never what is allowed.
+      if (requiresOutsideOverride) {
+        fd.set("allow_outside_availability", "true");
+        // Drag-to-create custom length. Only ever sent alongside the flag,
+        // because the server (and the DB command) refuse a custom duration
+        // without it, and a custom length is owner-only.
+        if (parsedManualDuration != null) {
+          fd.set(
+            "duration_minutes_override",
+            String(parsedManualDuration),
+          );
+        }
       }
     } else {
       fd.set("starts_at", pickedSlot!.start);
@@ -619,15 +725,15 @@ export function QuickBookDrawer({
         // stuck on for the next attempt (Chloe feedback). Reset it off; the
         // practitioner must explicitly re-check it to retry outside
         // availability. The error copy stays visible so the reason is clear.
-        setOverrideEnabled(false);
-        setOverrideConfirmed(false);
-        autoOverrideRef.current = false;
+        setManualTimeEnabled(false);
+        setOutsideHoursConfirmed(false);
+        autoManualTimeRef.current = false;
         // Race-safe UX: if the booking server tells us the slot was
         // taken (or any failure), refetch slots so the picker reflects
         // current availability without reloading the page. Skip the
         // refetch when override was used; those slots are not the
         // source of truth for the override flow.
-        if (!overrideEnabled) {
+        if (!manualTimeEnabled) {
           const refetch = await fetchSlotsForClientBookingAction({
             serviceId,
             date: targetDate,
@@ -977,41 +1083,45 @@ export function QuickBookDrawer({
 
         {/* Step 3: time */}
         <section className="flex flex-col gap-2">
+          {/* SUGGESTED, not "available". This list is a deliberately packed
+              subset of the times that are legal to book -- opening edge, the
+              boundary either side of each existing reservation, an hourly
+              fallback, the closing edge. Calling it "Available times" told the
+              practitioner that everything else was unavailable, which is what
+              sent an ordinary 15:30 down the outside-hours path. */}
           <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-            Available times
+            Suggested times
           </span>
-          {/* Override toggle. Default off; when on, the slot picker
-              hides and a free-form time field appears below with a
-              confirmation checkbox. Public booking does not have or
-              read this flag. */}
+          {/* Choose another time. Default off; when on, the suggestion list
+              hides and a free-form time field appears. This is NOT an
+              availability override on its own -- what the typed time IS gets
+              decided below against the real working-hours window. Public
+              booking has neither this control nor the flag. */}
           <label className="flex cursor-pointer items-start gap-2 rounded-md border border-neutral-200 p-3 text-xs dark:border-neutral-800">
             <input
               type="checkbox"
-              checked={overrideEnabled}
+              checked={manualTimeEnabled}
               onChange={(e) => {
-                setOverrideEnabled(e.target.checked);
+                setManualTimeEnabled(e.target.checked);
                 if (!e.target.checked) {
-                  setOverrideConfirmed(false);
+                  setOutsideHoursConfirmed(false);
                 }
                 // Explicit toggle (either direction) means the
-                // practitioner owns the override state from here on.
+                // practitioner owns the manual-time state from here on.
                 // The soft-drag drop-out logic stops touching it.
-                markOverrideExplicit();
+                markManualTimeExplicit();
               }}
               className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
             />
             <span>
-              <span className="font-medium">
-                Outside your regular availability
-              </span>
+              <span className="font-medium">Choose another time</span>
               <span className="block text-neutral-500">
-                Book at a time outside your published hours. Public booking
-                stays unchanged.
+                Book any time you are working, not just the suggestions.
               </span>
             </span>
           </label>
 
-          {overrideEnabled ? (
+          {manualTimeEnabled ? (
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-3">
                 <label className="flex flex-col gap-1">
@@ -1026,15 +1136,15 @@ export function QuickBookDrawer({
                     aria-labelledby="override-time-label"
                     type="time"
                     step={900}
-                    value={overrideLocalTime}
+                    value={manualLocalTime}
                     onChange={(e) => {
-                      setOverrideLocalTime(e.target.value);
-                      markOverrideExplicit();
+                      setManualLocalTime(e.target.value);
+                      markManualTimeExplicit();
                     }}
                     className="w-40 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
                   />
                 </label>
-                {overrideDurationMinutes !== "" && (
+                {manualDurationMinutes !== "" && (
                   <label className="flex flex-col gap-1">
                     <span
                       className="text-xs text-neutral-600 dark:text-neutral-400"
@@ -1049,51 +1159,67 @@ export function QuickBookDrawer({
                       min={15}
                       max={360}
                       step={15}
-                      value={overrideDurationMinutes}
+                      value={manualDurationMinutes}
                       onChange={(e) => {
-                        setOverrideDurationMinutes(e.target.value);
-                        markOverrideExplicit();
+                        setManualDurationMinutes(e.target.value);
+                        markManualTimeExplicit();
                       }}
                       className="w-28 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
                     />
                   </label>
                 )}
               </div>
-              {overrideDurationMinutes !== "" && !overrideDurationValid && (
+              {manualDurationMinutes !== "" && !manualDurationValid && (
                 <p className="text-[11px] text-red-700 dark:text-red-400">
                   Duration must be a 15-minute multiple between 15 and 360.
                 </p>
               )}
-              {/* Drag-to-book explanatory line. Renders only when the
-                  drawer was opened via drag (overrideDurationMinutes
-                  is pre-filled). Tells the practitioner why the
-                  override path lit up and what they need to do next.
-                  Manual override (checkbox clicked, no drag) keeps the
-                  shorter amber warning below as its sole explanation. */}
-              {overrideDurationMinutes !== "" && (
+              {/* Drag-to-book explanatory line. Renders only when the drawer
+                  was opened via drag (manualDurationMinutes is pre-filled) AND
+                  that custom length is what forces the override path. A custom
+                  length is owner-only in the database, so this stays as-is. */}
+              {manualDurationMinutes !== "" && parsedManualDuration != null && (
                 <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
                   This custom duration uses the internal override. Confirm
                   before booking.
                 </p>
               )}
-              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
-                This appointment will be booked outside your published
-                availability. Public booking remains unchanged.
-              </div>
-              <label className="flex items-start gap-2 text-xs text-neutral-700 dark:text-neutral-300">
-                <input
-                  type="checkbox"
-                  checked={overrideConfirmed}
-                  onChange={(e) => {
-                    setOverrideConfirmed(e.target.checked);
-                    markOverrideExplicit();
-                  }}
-                  className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
-                />
-                <span>
-                  I understand this is outside my normal availability.
-                </span>
-              </label>
+              {/* THE WARNING IS CONDITIONAL NOW.
+                  It renders only when the chosen time genuinely needs the
+                  outside-hours override. A time inside the practitioner's real
+                  working hours gets the calm confirmation line instead: no
+                  amber, no acknowledgement, and no allow_outside_availability
+                  on submit. */}
+              {requiresOutsideOverride ? (
+                <>
+                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+                    {manualVerdict === "practitioner_closed"
+                      ? "You are not working on this day. Booking here needs the outside-hours override, and public booking remains unchanged."
+                      : "This appointment will be booked outside your published availability. Public booking remains unchanged."}
+                  </div>
+                  <label className="flex items-start gap-2 text-xs text-neutral-700 dark:text-neutral-300">
+                    <input
+                      type="checkbox"
+                      checked={outsideHoursConfirmed}
+                      onChange={(e) => {
+                        setOutsideHoursConfirmed(e.target.checked);
+                        markManualTimeExplicit();
+                      }}
+                      className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
+                    />
+                    <span>
+                      I understand this is outside my normal availability.
+                    </span>
+                  </label>
+                </>
+              ) : (
+                manualTimeValid && (
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                    {formatClockLabel(manualLocalTime, timeFormat)} is inside
+                    your working hours. Booking normally.
+                  </p>
+                )
+              )}
             </div>
           ) : loadingSlots ? (
             <p className="text-sm text-neutral-500">Loading slots…</p>
@@ -1103,13 +1229,23 @@ export function QuickBookDrawer({
             </p>
           ) : slots.length === 0 ? (
             <p className="text-sm text-neutral-500">
-              No availability on that day.
+              No suggested times on that day. Use “Choose another time” to book
+              a time you are working.
             </p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {slots.map((slot) => {
                 const picked = pickedSlot?.start === slot.start;
-                const isHint = slot.startLabel === draft.localTime;
+                // The clicked-grid highlight, matched on the INSTANT. It used to
+                // compare a 12-hour label against a 24-hour machine value, so it
+                // never rendered. See the preselect note in the fetch effect.
+                const isHint =
+                  new Date(slot.start).getTime() ===
+                  utcInstantFromLocal(
+                    draft.localDate,
+                    draft.localTime,
+                    studioTimezone,
+                  ).getTime();
                 return (
                   <button
                     key={slot.start}

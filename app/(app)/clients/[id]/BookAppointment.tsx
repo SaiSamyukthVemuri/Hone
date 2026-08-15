@@ -14,6 +14,10 @@ import {
 } from "./booking-actions";
 import { bookAppointmentForClientAction } from "../../calendar/actions";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
+import {
+  decideManualTime,
+  type AvailabilityWindow,
+} from "@/lib/booking/availability-window";
 
 type Slot = { start: string; end: string; startLabel: string };
 
@@ -33,8 +37,6 @@ type Props = {
   currentPractitionerId: string;
   currentPractitionerName: string;
 };
-
-const OVERRIDE_TIME_RE = /^\d{2}:\d{2}$/;
 
 export function BookAppointment({
   clientId,
@@ -58,13 +60,20 @@ export function BookAppointment({
   const [error, setError] = useState<string | null>(null);
   const [loading, startLoading] = useTransition();
   const [booking, startBooking] = useTransition();
-  // Owner-only override: same contract as the calendar Quick Book drawer,
-  // allow_outside_availability=true + a UTC instant from the local time. Off by
-  // default; requires an explicit confirmation.
-  const [overrideEnabled, setOverrideEnabled] = useState(false);
-  const [overrideTime, setOverrideTime] = useState("");
-  const [overrideConfirmed, setOverrideConfirmed] = useState(false);
-  const overrideTimeValid = OVERRIDE_TIME_RE.test(overrideTime);
+  // "Choose another time": same contract as the calendar Quick Book drawer.
+  // Turning it on is not itself an availability override -- the typed time is
+  // classified against the real working-hours window, and only a time genuinely
+  // outside that window takes the owner-only outside-hours path with its
+  // acknowledgement and allow_outside_availability=true.
+  const [manualTimeEnabled, setManualTimeEnabled] = useState(false);
+  const [manualTime, setManualTime] = useState("");
+  const [outsideHoursConfirmed, setOutsideHoursConfirmed] = useState(false);
+  // The REAL availability window for the loaded (service, date, target),
+  // resolved server-side and returned with the suggestions. null until a
+  // successful load and cleared on every failure, so an unknown window is never
+  // mistaken for an open one.
+  const [availabilityWindow, setAvailabilityWindow] =
+    useState<AvailabilityWindow | null>(null);
 
   // Item 6: owner practitioner selector. The selector is shown ONLY when capacity
   // is ON and the actor is an owner; members and Legacy studios always book the
@@ -105,9 +114,13 @@ export function BookAppointment({
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
+        // Fail closed: with no window every manual time classifies as outside
+        // hours, which asks for the override rather than waving anything through.
+        setAvailabilityWindow(null);
         return;
       }
       setSlots(r.slots);
+      setAvailabilityWindow(r.window);
     });
   }
 
@@ -131,6 +144,7 @@ export function BookAppointment({
         setTarget("");
         setSlots([]);
         setPickedSlot(null);
+        setAvailabilityWindow(null);
         return;
       }
       const list = r.practitioners;
@@ -141,6 +155,7 @@ export function BookAppointment({
         // Empty eligible list → do NOT request slots; booking is blocked.
         setSlots([]);
         setPickedSlot(null);
+        setAvailabilityWindow(null);
         return;
       }
       loadSlots(nextServiceId, nextDate, nextTarget);
@@ -166,15 +181,42 @@ export function BookAppointment({
     if (serviceId && date) loadSlots(serviceId, date, v);
   }
 
-  // Owner override is usable only when the toggle is on, the time is valid, and
-  // the owner has confirmed. Otherwise a normal slot must be picked. When the
-  // selector is shown, the current target MUST be present in the eligible list
-  // (fail closed: an empty/failed lookup leaves target "" → booking blocked).
+  // When the selector is shown, the current target MUST be present in the
+  // eligible list (fail closed: an empty/failed lookup leaves target "" →
+  // booking blocked).
   const targetValid = !showSelector || eligible.some((p) => p.id === target);
-  const overrideActive = isOwner && overrideEnabled;
+
+  // "Choose another time" is available to EVERY active practitioner, not just
+  // the owner. It used to be gated on isOwner, which meant a member had no way
+  // at all to book a perfectly ordinary working time that was not one of the
+  // suggestions. What stays owner-only is the genuine outside-hours override
+  // below, enforced by the server and again by the DB command.
+  const manualTimeActive = manualTimeEnabled;
+
+  // WHAT THE TYPED TIME ACTUALLY IS. The SAME shared decision function the
+  // calendar Quick Book drawer uses, over the same server-resolved window, so
+  // the two internal surfaces cannot run different laws. Decides COPY ONLY; the
+  // server re-resolves the window and is the authority.
+  //
+  // This surface has no drag-to-create, so there is never a custom length here.
+  const selectedService = services.find((s) => s.id === serviceId) ?? null;
+  const manualDecision = decideManualTime({
+    window: availabilityWindow,
+    localTime: manualTime,
+    serviceDurationMinutes: selectedService?.default_duration_minutes ?? null,
+    customDurationMinutes: null,
+  });
+  const manualVerdict = manualDecision.verdict;
+  const manualTimeValid = manualDecision.timeValid;
+  const requiresOutsideOverride =
+    manualTimeActive && manualDecision.requiresOutsideOverride;
+
   const canConfirm =
     targetValid &&
-    (overrideActive ? overrideTimeValid && overrideConfirmed : !!pickedSlot);
+    (manualTimeActive
+      ? manualTimeValid &&
+        (!requiresOutsideOverride || (isOwner && outsideHoursConfirmed))
+      : !!pickedSlot);
 
   // The practitioner this booking will be assigned to (for the confirmation line).
   const assignedName = showSelector
@@ -192,13 +234,19 @@ export function BookAppointment({
     // re-validates it (active, same-studio, eligible). Members/Legacy send no
     // practitioner_id → the server books the acting practitioner.
     if (showSelector && target) fd.set("practitioner_id", target);
-    if (overrideActive) {
-      // Same contract as the calendar Quick Book override: a UTC instant from
-      // the studio-local date + time, plus allow_outside_availability=true. The
-      // server re-checks owner permission and every DB scheduling constraint.
-      const utc = utcInstantFromLocal(date, overrideTime, timezone);
+    if (manualTimeActive) {
+      // Same contract as the calendar Quick Book drawer: a UTC instant from the
+      // studio-local date + time. allow_outside_availability is posted ONLY when
+      // the chosen time is genuinely outside the working-hours window, because
+      // that flag is persisted on the appointment row, stamped into the audit
+      // record with an authorising owner, and disables the buffer trigger for
+      // that appointment. The server re-resolves the window, re-checks owner
+      // permission, and enforces every DB scheduling constraint regardless.
+      const utc = utcInstantFromLocal(date, manualTime, timezone);
       fd.set("starts_at", utc.toISOString());
-      fd.set("allow_outside_availability", "true");
+      if (requiresOutsideOverride) {
+        fd.set("allow_outside_availability", "true");
+      }
     } else {
       if (!pickedSlot) return;
       fd.set("starts_at", pickedSlot.start);
@@ -321,14 +369,19 @@ export function BookAppointment({
       )}
 
       <div className="flex flex-col gap-2">
+        {/* SUGGESTED, not "available": a packed subset of the legal times.
+            Calling it "Available times" implied everything else was
+            unavailable, which is what pushed ordinary manual times through the
+            outside-hours override. */}
         <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-          Available times
+          Suggested times
         </span>
         {loading ? (
           <p className="text-sm text-neutral-500">Loading slots…</p>
         ) : slots.length === 0 ? (
           <p className="text-sm text-neutral-500">
-            No availability on that date.
+            No suggested times on that date. Use “Choose another time” to book a
+            time you are working.
           </p>
         ) : (
           <div className="flex flex-wrap gap-2">
@@ -353,52 +406,71 @@ export function BookAppointment({
         )}
       </div>
 
-      {/* Owner-only outside-hours override (parity with the calendar Quick Book
-          drawer). Non-owners never see this; the server enforces owner-only. */}
-      {isOwner && (
-        <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
-          <label className="flex items-center gap-2 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={overrideEnabled}
-              onChange={(e) => {
-                setOverrideEnabled(e.target.checked);
-                if (!e.target.checked) setOverrideConfirmed(false);
-              }}
-              className="h-4 w-4"
-            />
-            Book outside your normal availability
-          </label>
-          {overrideEnabled && (
-            <div className="flex flex-col gap-2">
-              <p className="text-xs text-amber-800 dark:text-amber-300">
-                This time is outside your normal availability. Double-booking,
-                buffer and time-off rules are still enforced.
-              </p>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                  Time (on {date})
-                </span>
-                <input
-                  type="time"
-                  value={overrideTime}
-                  onChange={(e) => setOverrideTime(e.target.value)}
-                  className="min-h-[44px] max-w-[10rem] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-                />
-              </label>
-              <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={overrideConfirmed}
-                  onChange={(e) => setOverrideConfirmed(e.target.checked)}
-                  className="h-4 w-4"
-                />
-                I confirm I want to book this out-of-hours time.
-              </label>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Choose another time. Available to EVERY active practitioner, and the
+          container is NEUTRAL: turning it on is not an admission of anything.
+          The amber treatment and the acknowledgement appear only once the typed
+          time is genuinely outside the working-hours window, which is also the
+          only case that is owner-only. Parity with the calendar Quick Book
+          drawer; the server enforces both rules regardless. */}
+      <div className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={manualTimeEnabled}
+            onChange={(e) => {
+              setManualTimeEnabled(e.target.checked);
+              if (!e.target.checked) setOutsideHoursConfirmed(false);
+            }}
+            className="h-4 w-4"
+          />
+          Choose another time
+        </label>
+        {manualTimeEnabled && (
+          <div className="flex flex-col gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Time (on {date})
+              </span>
+              <input
+                type="time"
+                value={manualTime}
+                onChange={(e) => setManualTime(e.target.value)}
+                className="min-h-[44px] max-w-[10rem] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+              />
+            </label>
+            {requiresOutsideOverride ? (
+              <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+                <p className="text-xs text-amber-800 dark:text-amber-300">
+                  {manualVerdict === "practitioner_closed"
+                    ? "You are not working on this date. Double-booking, buffer and time-off rules are still enforced."
+                    : "This time is outside your normal availability. Double-booking, buffer and time-off rules are still enforced."}
+                </p>
+                {isOwner ? (
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={outsideHoursConfirmed}
+                      onChange={(e) => setOutsideHoursConfirmed(e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                    I confirm I want to book this out-of-hours time.
+                  </label>
+                ) : (
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    Only the studio owner can book outside normal availability.
+                  </p>
+                )}
+              </div>
+            ) : (
+              manualTimeValid && (
+                <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                  That time is inside your working hours. Booking normally.
+                </p>
+              )
+            )}
+          </div>
+        )}
+      </div>
 
       <label className="flex flex-col gap-1.5">
         <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
@@ -425,7 +497,13 @@ export function BookAppointment({
             disabled={!canConfirm || booking}
             className="rounded-md bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
-            {booking ? "Booking…" : overrideActive ? "Book out-of-hours" : "Confirm"}
+            {/* The button only says "out-of-hours" when it genuinely is. A
+                manual time inside working hours is an ordinary Confirm. */}
+            {booking
+              ? "Booking…"
+              : requiresOutsideOverride
+                ? "Book out-of-hours"
+                : "Confirm"}
           </button>
           {error && (
             <span className="text-sm text-red-600 dark:text-red-400">{error}</span>
