@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import ts from "typescript";
 import { NAME_ID, readWoff2NameTable } from "./woff2-name-table";
@@ -122,10 +123,15 @@ function percentDecoded(text: string): string {
  * LIMIT, stated rather than implied: this catches literals joined by `+`. It
  * does NOT constant-fold variables, template substitutions, `String.fromCharCode`
  * or base64 - a static scan cannot, in general. That residue is covered at a
- * different level: the build is proven offline by blocking the hosts at
- * node:http/node:https, which denies a constructed URL just as readily as a
- * literal one. This guard is the cheap always-on half; the blocked build is the
- * half that does not care how the string was spelled.
+ * different level: scripts/block-google-fonts.cjs denies the hosts on
+ * node:http, node:https AND global fetch, so it refuses a constructed URL just
+ * as readily as a literal one, and CI loads it on the build.
+ *
+ * Both surfaces are needed and assuming otherwise was a real hole: global fetch
+ * goes through undici and touches neither http nor https, so an earlier version
+ * of that preload let a base64-constructed `fetch` complete. This guard is the
+ * cheap always-on half; the preload is the half that does not care how the
+ * string was spelled - but only because it now covers fetch too.
  */
 function concatenationCollapsed(text: string): string {
   return text.replace(/\s*\+\s*/g, "");
@@ -372,9 +378,6 @@ describe("the build never depends on Google Fonts", () => {
     // CI build step must load it.
     const blocker = path.join(ROOT, "scripts", "block-google-fonts.cjs");
     expect(existsSync(blocker), "the block preload must exist").toBe(true);
-    const blockerSource = readFileSync(blocker, "utf8");
-    expect(blockerSource).toMatch(/node:https/);
-    expect(blockerSource).toMatch(/BLOCKED_GOOGLE_FONTS/);
 
     const ci = read(".github/workflows/ci.yml");
     const buildStep = ci.match(/- name: Build\n[\s\S]*?\n\n/)?.[0] ?? "";
@@ -383,6 +386,42 @@ describe("the build never depends on Google Fonts", () => {
       buildStep,
       "the CI Build step must load scripts/block-google-fonts.cjs via NODE_OPTIONS",
     ).toMatch(/NODE_OPTIONS:\s*--require \.\/scripts\/block-google-fonts\.cjs/);
+  });
+
+  it("the preload actually BLOCKS, on both request stacks", () => {
+    // BEHAVIOUR, not marker text. Asserting that the file mentions
+    // BLOCKED_GOOGLE_FONTS proves nothing: if the patch were reverted to call
+    // through to the original, the strings would survive and this suite would
+    // stay green, because a correctly self-hosted build makes no forbidden
+    // request that would expose the dead gate. CI could then carry a
+    // non-functional denial indefinitely and miss the regression it exists for.
+    //
+    // So run it. Both stacks matter and they are genuinely different code
+    // paths: node:https is what next/font uses, and global fetch is undici,
+    // which neither http/https patch touches. A base64-constructed hostname is
+    // used deliberately - that is the case the static scan cannot see, and the
+    // whole justification for having an execution-level layer at all.
+    const preload = path.join(ROOT, "scripts", "block-google-fonts.cjs");
+    const probe = [
+      "const host = Buffer.from('Zm9udHMuZ29vZ2xlYXBpcy5jb20=','base64').toString();",
+      "let viaHttps = 'NOT_BLOCKED';",
+      "try { require('node:https').request('https://' + host + '/css2'); }",
+      "catch (e) { if (/BLOCKED_GOOGLE_FONTS/.test(e.message)) viaHttps = 'BLOCKED'; }",
+      "fetch('https://' + host + '/css2').then(",
+      "  () => console.log(viaHttps + ' FETCH_NOT_BLOCKED'),",
+      "  (e) => console.log(viaHttps + (/BLOCKED_GOOGLE_FONTS/.test(String(e)) ? ' FETCH_BLOCKED' : ' FETCH_OTHER'))",
+      ");",
+    ].join("\n");
+
+    const result = spawnSync(process.execPath, ["--require", preload, "-e", probe], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    const out = `${result.stdout ?? ""}`;
+
+    expect(out, "node:https path was not blocked").toContain("BLOCKED");
+    expect(out, "global fetch path was not blocked").toContain("FETCH_BLOCKED");
+    expect(out).not.toContain("NOT_BLOCKED");
   });
 
   it("the host scan reaches package.json, not just code files", () => {

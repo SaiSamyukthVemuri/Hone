@@ -15,13 +15,21 @@
  * The two layers answer different questions. The guard says "nobody wrote it
  * down"; this says "nothing asked for it". Neither implies the other.
  *
- * Scope is deliberately NARROW - only node:http / node:https `request` and
- * `get`. `next/font` reaches the network through node:https.request (see
- * next/dist/compiled/@next/font/dist/google/fetch-resource.js), and a negative
- * control against a tree that still imported next/font/google confirmed that is
- * the live path. An earlier version also patched dns.lookup and globalThis.fetch;
- * that broader patch hung `next build` partway through the client compile, so
- * the blast radius is not worth it.
+ * Covers node:http / node:https `request` and `get` AND the global `fetch`.
+ *
+ * BOTH are required, and assuming otherwise was a real hole. `next/font` itself
+ * reaches the network through node:https.request (see
+ * next/dist/compiled/@next/font/dist/google/fetch-resource.js), so that path
+ * catches the regression this repo actually hit. But global `fetch` goes
+ * through undici and touches NEITHER http nor https export - measured, with an
+ * earlier version of this file loaded, a base64-constructed
+ * `fetch("https://" + host)` completed successfully. A preload that misses
+ * fetch cannot honestly be described as covering constructed hostnames, which
+ * is precisely the job it exists to do.
+ *
+ * dns.lookup is deliberately NOT patched: an earlier version did, and that
+ * broader patch hung `next build` partway through the client compile. http,
+ * https and fetch are the request-issuing surfaces; dns was blast radius.
  *
  * Hostnames are matched CASE-INSENSITIVELY: DNS is case-insensitive and Node
  * normalises, so FONTS.GOOGLEAPIS.COM is the same host.
@@ -62,4 +70,35 @@ for (const mod of ["node:http", "node:https"]) {
       return original.apply(this, args);
     };
   }
+}
+
+// Global fetch (undici) - a separate stack that neither patch above touches.
+if (typeof globalThis.fetch === "function") {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = function (input, init) {
+    let host = null;
+    try {
+      const url =
+        typeof input === "string" || input instanceof URL
+          ? input
+          : input && typeof input.url === "string"
+            ? input.url
+            : null;
+      if (url) host = new URL(url).hostname;
+    } catch {
+      host = null;
+    }
+    if (typeof host === "string" && BLOCKED.test(host.split(":")[0])) {
+      console.error(
+        `\n[block-google-fonts] BLOCKED fetch -> ${host}\n` +
+          "This build tried to reach Google Fonts. The fonts are self-hosted in\n" +
+          "app/_fonts; see FONTS.md. Do not re-add next/font/google.\n",
+      );
+      return Promise.reject(
+        new Error(`BLOCKED_GOOGLE_FONTS: refused fetch to ${host}`),
+      );
+    }
+    // Forward without rebinding `this`: undici rejects an unexpected receiver.
+    return originalFetch(input, init);
+  };
 }
