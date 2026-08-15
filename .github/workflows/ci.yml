@@ -185,7 +185,20 @@ jobs:
         run: npm run lint
 
       - name: Build
+        # OFFLINE-FONT GATE. The preload refuses any request to
+        # fonts.googleapis.com / fonts.gstatic.com at node:http/node:https, so a
+        # build that reaches for Google Fonts FAILS HERE instead of succeeding
+        # on a network-enabled runner and failing wherever the network is
+        # restricted. That asymmetry is the whole defect this repo kept hitting:
+        # deterministic commits going red for reasons unrelated to the commit.
+        #
+        # It also covers what the source guard provably cannot - a hostname
+        # assembled from a variable, a template substitution, String.fromCharCode
+        # or base64 is invisible to a static scan but still makes a real request.
+        # See scripts/block-google-fonts.cjs and FONTS.md.
         run: npm run build
+        env:
+          NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs
 
       - name: Unit tests
         run: npm test
