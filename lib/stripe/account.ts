@@ -283,12 +283,45 @@ export async function refreshAccountStatusFromStripe(params: {
   // (when the stored timestamp is still null) writes a real value.
   // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
   // read the CURRENT deployment mode's row only.
-  const { data: existingSettings } = await admin
+  const { data: existingSettings, error: existingSettingsErr } = await admin
     .from("studio_payment_settings")
     .select("stripe_onboarding_completed_at")
     .eq("studio_id", params.studioId)
     .eq("stripe_livemode", livemode)
     .maybeSingle();
+  // PAY-READ-01 R-32. A FAILED READ IS NOT "no first completion recorded".
+  // PostgREST leaves `data` null on failure, so the `!= null` test below could
+  // not tell a timeout from a studio that has never onboarded, and answered
+  // both by sending the CURRENT snapshot timestamp into the RPC. Because the
+  // RPC coalesces, that OVERWRITES the stored value: the studio's historical
+  // first-completion date silently became "now". This is the same collapse
+  // #582 closed in the webhook route's equivalent block.
+  //
+  // We THROW rather than defaulting to null. Sending null would be safe against
+  // overwriting, but it is not correct: when the stored value genuinely is null
+  // and this refresh is the first observation of charges_enabled, null would
+  // SUPPRESS a legitimate first-completion write and lose the fact entirely.
+  // Neither branch of the conditional is answerable without a successful read,
+  // so the only honest outcome is to refuse and let the caller retry.
+  //
+  // Nothing has been written at this point - the RPC below is the only writer -
+  // so refusing here leaves local state stale, never corrupted.
+  //
+  // The message is deliberately generic and carries no database text. It is
+  // also deliberately absent from SAFE_USER_FACING_MESSAGES in
+  // app/(app)/settings/payments/actions.ts, so `sanitizeForUser` collapses it
+  // to the existing retryable GENERIC_STRIPE_ERROR copy, exactly as it already
+  // does for the two sibling throws in this function.
+  if (existingSettingsErr) {
+    logInternalStripeError("studio_payment_settings_preserve_read_failed", {
+      code: existingSettingsErr.code,
+      message: existingSettingsErr.message,
+      studioId: params.studioId,
+    });
+    throw new Error(
+      "Stripe status refresh could not verify local onboarding state. Try again.",
+    );
+  }
   const onboardingCompletedAtForRpc =
     existingSettings?.stripe_onboarding_completed_at != null
       ? null
