@@ -226,10 +226,16 @@ under its ceiling, a small workload increase, then a cancellation with zero test
 failures that reads like a broken diff. Run `30814919019` took the targeted lane
 (10 → 15). Run `31852791688` took extended shard 3 (12 → 18) — it ran 60 of 81
 assigned tests, **all 60 passed**, and was cut at 12m15s after the suite gained
-a spec and Playwright handed that shard +35% work. **A ceiling must clear SETUP
-plus tests**: an extended shard spends ~8.5 min on the Supabase stack, the full
-migration chain and Playwright before the first test runs. When a shard is
-cancelled, check what it completed before assuming the diff broke something.
+a spec and Playwright handed that shard +35% work.
+
+**A ceiling must clear SETUP plus tests, and setup is not a fixed cost.** The
+same 81 tests spent **508s** before the first test executed on one runner and
+**266s** on another, while per-test speed barely moved (3.8s vs 3.6s) — so the
+shard passed in 9m18s or was cancelled at 12m depending purely on which runner
+it drew. Everything before the first test varies: the Supabase stack, the full
+migration chain from scratch, Playwright, and the `next build` inside
+Playwright's webServer. **When a shard is cancelled, check what it completed
+before assuming the diff broke something.**
 
 | Job | Budget |
 |---|---|

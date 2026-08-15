@@ -336,12 +336,21 @@ jobs:
     # grew by a spec and Playwright redistributed, so the shard inherited +35%
     # work and walked into a ceiling it had been sitting just under.
     #
-    # The ceiling has to clear the whole job, not just the tests. Measured on
-    # that run: ~8.5 min of setup (Supabase stack, full migration chain from
-    # scratch, Playwright cache) before the first test executes, then ~5 min for
-    # 81 tests at the observed rate. That is ~13.5 min of real work against a 12
-    # min ceiling, which is why it could not finish however healthy the tests
-    # were. 18 restores genuine margin instead of moving the cliff by a minute.
+    # The ceiling has to clear the whole job, not just the tests, and the job is
+    # NOT a fixed cost - it straddled the ceiling. The same 81 tests, measured on
+    # two runners:
+    #
+    #   run 31852791688  508s before the first test executes, 3.8s per test
+    #                    -> ~13m34s projected, CANCELLED at 12m with 60/81 run
+    #   run 31855800146  266s before the first test executes, 3.6s per test
+    #                    -> 9m18s actual, all 81 passed
+    #
+    # Per-test speed is stable; what varies is everything BEFORE the first test -
+    # Supabase stack, full migration chain from scratch, Playwright, and the
+    # `next build` inside Playwright's webServer - which swung 266s -> 508s
+    # between runners. A 12 min ceiling sits inside that spread, so the lane
+    # passed or was cancelled depending on which runner it drew, with test health
+    # identical either way. 18 clears the slow end instead of moving the cliff.
     #
     # This does NOT relax the performance target. A shard needing more than ~10
     # minutes is still too slow and still worth investigating; it now reports

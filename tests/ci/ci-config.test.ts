@@ -164,14 +164,19 @@ describe("PR CI — path-aware lane selection", () => {
   });
 
   it("the ceiling clears SETUP plus tests, not just tests", () => {
-    // The reason 12 was not survivable had nothing to do with test health: on
-    // run 31852791688 roughly 8.5 of the 12 minutes were spent before the first
-    // test executed (Supabase stack, full migration chain from scratch,
-    // Playwright), leaving under 4 minutes for 81 tests. A ceiling that only
-    // covers the test phase will keep cancelling healthy shards, so the
-    // measurement that justifies it has to stay in the file.
-    expect(CI).toMatch(/8\.5 min of setup/i);
+    // The reason 12 was not survivable had nothing to do with test health, and
+    // it is not a fixed cost either - the job STRADDLED the ceiling. The same
+    // 81 tests took 508s before the first test on one runner and 266s on
+    // another; per-test speed barely moved (3.8s vs 3.6s). So the lane passed
+    // or was cancelled depending on which runner it drew.
+    //
+    // Both halves have to stay in the file: a ceiling justified only by test
+    // duration will keep cancelling healthy shards, and one justified by a
+    // single observation invites shaving it back to just above that number.
     expect(CI).toMatch(/before the first test executes/i);
+    expect(CI).toMatch(/508s/);
+    expect(CI).toMatch(/266s/);
+    expect(CI).toMatch(/straddled the ceiling/i);
   });
 
   it("records the evidence for the extended-ceiling correction", () => {
