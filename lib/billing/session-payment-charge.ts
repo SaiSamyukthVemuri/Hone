@@ -825,6 +825,28 @@ export async function runSessionPaymentCharge(args: {
     studioId: attemptRow.studio_id,
     clientId: attemptRow.client_id,
   });
+  // PAY-READ-01 PR B. Authority is UNKNOWN because a read failed. The
+  // catch-all below would already refuse (its condition is
+  // `!== "signed_current"`), so this branch is not what makes execute fail
+  // closed - it is what stops the refusal LYING. The catch-all message says
+  // "Card authorization is no longer current. Ask the client to re-sign",
+  // which on a database timeout is false twice over: nothing is known to be
+  // out of date, and sending the client to re-sign is a repair for a problem
+  // they do not have.
+  //
+  // The outcome code stays `authorization_not_current` deliberately. It is an
+  // internal classification meaning "not permitted to charge", already mapped
+  // to "blocked" by the manual-fee caller, which surfaces this message
+  // verbatim. Minting a new outcome would ripple into that consumer and its
+  // pinned tests for no safety gain.
+  if (cardAuth.kind === "authorization_unverified") {
+    return {
+      ok: false,
+      outcome: "authorization_not_current",
+      message:
+        "Card authorization could not be verified. Refresh and try again.",
+    };
+  }
   if (cardAuth.kind === "signed_current_but_card_pointer_stale") {
     return {
       ok: false,

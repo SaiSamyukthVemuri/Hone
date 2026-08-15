@@ -40,6 +40,29 @@ import { inferStripeLivemode } from "@/lib/stripe/server";
 
 export type CardAuthorizationStatus =
   | {
+      // A read that establishes authorization FAILED, so authorization is
+      // UNKNOWN. This is not a business fact about the studio or the client:
+      // it says only that Hone could not verify authority right now.
+      //
+      // PAY-READ-01 PR B. Every read below previously captured `data` and
+      // discarded `error`, which made a database failure indistinguishable
+      // from a clean empty result and silently converted it into one:
+      //
+      //   template read fails  -> "no_live_template"  (studio has no template)
+      //   signature read fails -> "unsigned"          (client never signed)
+      //   card read fails      -> signed_current      (AUTHORIZED)
+      //
+      // The third was a P1: a database failure became a successful
+      // authorization. READ FAILURE IS NOT ABSENCE, NOT UNSIGNED, AND
+      // CERTAINLY NOT AUTHORIZED.
+      //
+      // Deliberately carries NO payload. Charge-authority callers must refuse,
+      // and remediation surfaces must offer a plain retry - neither needs the
+      // PostgREST code, and keeping it out of the type keeps raw database text
+      // away from practitioner- and client-facing copy by construction.
+      kind: "authorization_unverified";
+    }
+  | {
       // The studio has no is_live=true, status='active'
       // card_authorization template at all. The portal Add Card
       // surface stays hidden; the manual fee eligibility check
@@ -99,7 +122,7 @@ export async function getCardAuthorizationStatus(args: {
   // tiebreaker). The PR #167 CHECK constraint guarantees is_live
   // implies status='active', but we keep the status filter for
   // defense-in-depth as the rest of the consent surface does.
-  const { data: template } = await admin
+  const { data: template, error: templateErr } = await admin
     .from("consent_form_templates")
     .select("id, version")
     .eq("studio_id", args.studioId)
@@ -109,6 +132,13 @@ export async function getCardAuthorizationStatus(args: {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  // A FAILED READ IS NOT AN ABSENT TEMPLATE. Checked before `!template`
+  // because a failed read also leaves `template` null, and answering
+  // "no_live_template" would tell the studio its template is missing on the
+  // strength of a timeout.
+  if (templateErr) {
+    return { kind: "authorization_unverified" };
+  }
   if (!template) {
     return { kind: "no_live_template" };
   }
@@ -117,7 +147,7 @@ export async function getCardAuthorizationStatus(args: {
   // snapshot model on client_consent_signatures (migration 0057)
   // stores template_version at sign time; this is the field that
   // tells us whether the signature is current.
-  const { data: signature } = await admin
+  const { data: signature, error: signatureErr } = await admin
     .from("client_consent_signatures")
     .select("id, template_version, signed_at")
     .eq("studio_id", args.studioId)
@@ -126,6 +156,12 @@ export async function getCardAuthorizationStatus(args: {
     .order("signed_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  // A FAILED READ IS NOT AN UNSIGNED CLIENT. Telling a client who HAS signed
+  // that they have not, and routing them into a re-sign they do not need, is
+  // the deadlock this branch exists to avoid.
+  if (signatureErr) {
+    return { kind: "authorization_unverified" };
+  }
   if (!signature) {
     return {
       kind: "unsigned",
@@ -221,6 +257,10 @@ export async function getCardAuthorizationStatus(args: {
 // the pointer check is moot when there is no row to point.
 
 export type ChargeReadyCardAuthorizationStatus =
+  // Either the base helper could not verify authority, or the active-card read
+  // below failed. Both mean the same thing to a caller: authorization is
+  // UNKNOWN, so no charge authority may be inferred.
+  | { kind: "authorization_unverified" }
   | { kind: "no_live_template" }
   | {
       kind: "unsigned";
@@ -273,7 +313,7 @@ export async function getChargeReadyCardAuthorizationStatus(args: {
 
   const admin = createAdminClient();
   const livemode = inferStripeLivemode();
-  const { data: card } = await admin
+  const { data: card, error: cardErr } = await admin
     .from("client_payment_methods")
     .select("id, card_authorization_signature_id")
     .eq("studio_id", args.studioId)
@@ -283,6 +323,17 @@ export async function getChargeReadyCardAuthorizationStatus(args: {
     .is("removed_at", null)
     .maybeSingle();
 
+  // THE P1 (PAY-READ-01 R-01). This guard must come BEFORE the `!card`
+  // passthrough below, because a failed read also leaves `card` null and would
+  // otherwise fall into it and `return base` - and here `base` is
+  // signed_current. A database timeout would have been answered as a valid
+  // card authorization.
+  //
+  // The zero-row passthrough underneath is legitimate and unchanged; what was
+  // wrong was letting a FAILURE borrow it.
+  if (cardErr) {
+    return { kind: "authorization_unverified" };
+  }
   if (!card) {
     // No active card row to inspect. The caller's "no card on file"
     // surface handles this branch via its own reason string; here
