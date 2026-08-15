@@ -156,11 +156,38 @@ describe("PR CI — path-aware lane selection", () => {
     // misreported as test failures.
     const b = shardTimeoutBudgets();
     expect(b.targeted, "targeted hard timeout").toBe(15);
-    expect(b.extended, "extended hard timeout").toBe(12);
+    expect(b.extended, "extended hard timeout").toBe(18);
     expect(CI).toMatch(/hard timeout 15 min/i);
-    expect(CI).toMatch(/hard timeout 12 min/i);
+    expect(CI).toMatch(/hard timeout 18 min/i);
     expect(CI).toMatch(/target <10 min per shard/i);
     expect(CI).toMatch(/FAILURE CEILING, not a performance target/i);
+  });
+
+  it("the ceiling clears SETUP plus tests, not just tests", () => {
+    // The reason 12 was not survivable had nothing to do with test health, and
+    // it is not a fixed cost either - the job STRADDLED the ceiling. The same
+    // 81 tests took 508s before the first test on one runner and 266s on
+    // another; per-test speed barely moved (3.8s vs 3.6s). So the lane passed
+    // or was cancelled depending on which runner it drew.
+    //
+    // Both halves have to stay in the file: a ceiling justified only by test
+    // duration will keep cancelling healthy shards, and one justified by a
+    // single observation invites shaving it back to just above that number.
+    expect(CI).toMatch(/before the first test executes/i);
+    expect(CI).toMatch(/508s/);
+    expect(CI).toMatch(/266s/);
+    expect(CI).toMatch(/straddled the ceiling/i);
+  });
+
+  it("records the evidence for the extended-ceiling correction", () => {
+    // Run 31852791688 cancelled shard 3 at 12m15s having run 60 of its 81
+    // assigned tests with every one of them passing. The same shard passed in
+    // 9m11s on the prior head with 60 tests assigned: the extended suite grew
+    // and Playwright redistributed, handing that shard +35% work.
+    expect(CI).toMatch(/31852791688/);
+    expect(CI).toMatch(/60 of 81/);
+    expect(CI).toMatch(/ALL 60 passed/);
+    expect(CI).toMatch(/9m11s/);
   });
 
   it("records the evidence for the targeted-ceiling correction", () => {
@@ -243,14 +270,28 @@ describe("PR CI — path-aware lane selection", () => {
     expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("google-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
-    // Targeted hard timeout 15, extended shard hard timeout 12 — both above
+    // Targeted hard timeout 15, extended shard hard timeout 18 — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
     // workflow cannot silently break this guard.
+    //
+    // The extended ceiling exceeds the targeted one because setup is NOT a
+    // fixed cost. Everything before the first test - Supabase stack, full
+    // migration chain from scratch, Playwright, and the `next build` inside
+    // Playwright's webServer - was measured at 266s on one runner and 508s on
+    // another for the SAME 81 tests, while per-test execution barely moved
+    // (3.6s vs 3.8s). A ceiling has to clear that observed runner spread PLUS
+    // test execution, or the lane passes or is cancelled according to which
+    // runner it drew rather than according to test health.
+    //
+    // The upper bounds here are a brake on ceilings drifting upward instead of
+    // slow lanes being investigated, so they stay tight enough to notice: a
+    // shard that needs more than 18 minutes is a problem to fix, not a number
+    // to raise again.
     const b = shardTimeoutBudgets();
     expect(b.targeted).toBeGreaterThan(10);
     expect(b.extended).toBeGreaterThan(10);
     expect(b.targeted).toBeLessThanOrEqual(15);
-    expect(b.extended).toBeLessThanOrEqual(12);
+    expect(b.extended).toBeLessThanOrEqual(18);
   });
 
   it("every job declares an explicit timeout", () => {
