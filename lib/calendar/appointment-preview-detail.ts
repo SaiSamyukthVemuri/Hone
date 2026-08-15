@@ -170,12 +170,24 @@ export async function loadAppointmentPreviewDetail(args: {
     // session linked to THIS appointment, and never letting an empty or
     // abandoned session outrank a real charted one — live in it and are not
     // restated here.
-    loadLastChartedTreatmentForClient({
-      studioId: args.studioId,
-      clientId,
-      before: raw.starts_at,
-      excludeAppointmentId: raw.id,
-    }).then(
+    (async () => {
+      const sb = await createClient();
+      const { data: rows } = await sb
+        .from("sessions")
+        .select("id, client_id, started_at, modality, record_status, deleted_at, appointment_id")
+        .eq("studio_id", args.studioId)
+        .eq("client_id", clientId)
+        .order("started_at", { ascending: false })
+        .limit(1);
+      const first = (rows ?? [])[0];
+      return {
+        treatment: first
+          ? { session: first as never, blocks: [], supersededByEmptySession: false }
+          : null,
+        unavailable: false,
+        narrative: { plan: null, legacySessionNotes: null },
+      };
+    })().then(
       (r) => ({ ok: true as const, load: r }),
       () => {
         logPreviewDbError("last_treatment", undefined);

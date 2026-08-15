@@ -16,9 +16,12 @@ import { loginAsOwner } from "./helpers/flows";
 // Runtime proof for the properties source greps cannot see: that the drawer
 // opens without leaving /calendar, that it shows a returning client's last
 // treatment, that intake links to the AUTHENTICATED practitioner route, that
-// lifecycle actions appear only when the server would honour them, and — the
-// one that matters most — that a slow response for appointment A can never
-// populate appointment B.
+// lifecycle actions appear only when the server would honour them, and that
+// switching appointments never leaves the previous one's prep on screen.
+//
+// See the long comment above the switching test for what that last one does
+// and does NOT establish — the response-ordering half is proved in
+// tests/app/calendar/preview-request.test.ts, not here.
 //
 // The week grid is desktop-only (`hidden md:block`), so every test here runs at
 // a desktop viewport; the default Desktop Chrome project already provides one.
@@ -27,7 +30,9 @@ const T = 20_000;
 
 async function openWeek(page: Page): Promise<void> {
   await page.goto("/calendar?view=week");
-  await expect(page.getByRole("button", { name: /Today/ }).first()).toBeVisible({
+  // The step nav renders as LINKS, not buttons, and is `hidden md:flex` — so
+  // this also confirms we are on the desktop week grid, not the mobile view.
+  await expect(page.getByRole("link", { name: "Today" }).first()).toBeVisible({
     timeout: T,
   });
 }
@@ -220,12 +225,37 @@ test("a completed appointment offers neither Cancel nor Reschedule", async ({
   await expect(d.getByRole("link", { name: "Open full details" })).toBeVisible();
 });
 
-test("A's late response can never populate B", async ({ page }) => {
+// Switching appointments must never leave the previous one's prep on screen.
+//
+// WHAT THIS PROVES, HONESTLY. This is a behavioural REGRESSION assertion, not a
+// mutation-detected proof, and it is labelled that way because it was measured:
+// no single mutation to the drawer turns it red. Three separate mechanisms have
+// to fail together, and the architecture prevents that today.
+//
+//   * Removing the switch-time clear does not flip it — closing the drawer
+//     already clears the cached detail on its own.
+//   * Removing BOTH clears does not flip it — the response guard then rejects
+//     appointment A's superseded payload (issued seq 1, current seq 3).
+//   * Removing the GUARD does not flip it either — Next.js serializes
+//     server-action requests, so B is not dispatched until A settles and B
+//     therefore always resolves LAST, correcting the state. Measured while
+//     deliberately delaying A: A's response at 663ms, B's at 4971ms. Delaying
+//     at the Playwright route layer is worse still: route handlers dispatch
+//     serially, so holding A holds B behind it.
+//
+// So the ordering guard is defence in depth against a Next.js implementation
+// detail that is not a documented contract, and its LOGIC is proved directly in
+// tests/app/calendar/preview-request.test.ts. This test is kept because it goes
+// live the moment that architecture changes — move the load to a route handler
+// and real concurrency appears — and because the end-state it asserts is the
+// thing a practitioner would actually see go wrong.
+test("switching from A to B ends on B's data, never A's", async ({ page }) => {
   const seed = await seedE2eStudio();
   const tz = await getStudioTimezone(seed.studioId);
   const ownerId = await getOwnerPractitionerId(seed.studioId);
 
-  // A: a returning client with charted history. B: a brand-new client with none.
+  // A: a returning client with charted history and a submitted intake.
+  // B: a brand-new client with neither. Any A content under B is unmistakable.
   const { clientId: clientA } = await seedE2eClientWithPreviousAreas(seed);
   const { clientId: clientB } = await seedE2eClient(seed);
   const apptA = await seedFutureAppointmentAt(seed.studioId, ownerId, clientA, tz, "09:00");
@@ -233,44 +263,31 @@ test("A's late response can never populate B", async ({ page }) => {
   await seedE2eIntake(seed.studioId, clientA, "submitted");
 
   await loginAsOwner(page, seed);
-
-  // Hold A's detail response back so it is guaranteed to land AFTER B's.
-  let held = 0;
-  await page.route("**/calendar**", async (route) => {
-    const req = route.request();
-    if (req.method() === "POST" && held === 0) {
-      held = 1;
-      await new Promise((r) => setTimeout(r, 4000));
-    }
-    await route.continue();
-  });
-
   await openWeek(page);
+
   const nameA = await clientNameOf(apptA);
   const nameB = await clientNameOf(apptB);
 
+  // Open A and let its prep arrive, so there is genuinely something cached to
+  // leak before switching away.
   await card(page, nameA).click();
-  const d = drawer(page);
-  await expect(d).toBeVisible({ timeout: T });
+  const dA = drawer(page);
+  await expect(dA.getByTestId("today-memory-compact")).toBeVisible({ timeout: T });
 
-  // Switch to B before A's response returns.
+  // Switch to B as fast as the UI allows.
   await page.keyboard.press("Escape");
   await card(page, nameB).click();
-  await expect(drawer(page).getByRole("heading", { name: nameB })).toBeVisible({
+
+  const dB = drawer(page);
+  await expect(dB.getByRole("heading", { name: nameB })).toBeVisible({ timeout: T });
+  await expect(dB.getByText("No previous treatment charted for this client.")).toBeVisible({
     timeout: T,
   });
 
-  // Let A's held response land.
-  await page.waitForTimeout(6000);
-
-  const dB = drawer(page);
-  // B is a fresh client: no charted history, no intake. If A's payload had been
-  // applied, A's compact treatment line and A's Review intake control would
-  // appear under B's name.
-  await expect(dB.getByRole("heading", { name: nameB })).toBeVisible();
+  // None of A's clinical content is present under B's name.
   await expect(dB.getByTestId("today-memory-compact")).toHaveCount(0);
   await expect(dB.getByTestId("preview-review-intake")).toHaveCount(0);
-  await expect(dB.getByText("No previous treatment charted for this client.")).toBeVisible();
+  await expect(dB.getByRole("heading", { name: nameA })).toHaveCount(0);
 });
 
 test("opening the week issues no per-appointment detail load", async ({ page }) => {
