@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Fraunces, Inter } from "next/font/google";
+import { fraunces, inter } from "./_fonts/app-fonts";
 import "./globals.css";
 
 // PR #142. Vercel Analytics + SpeedInsights are NOT mounted in the
@@ -13,20 +13,10 @@ import "./globals.css";
 // marketing leaf pages). See PR #142 for the audit + structural
 // reasoning.
 
-const fraunces = Fraunces({
-  subsets: ["latin"],
-  weight: ["400", "700"],
-  style: ["normal", "italic"],
-  display: "swap",
-  variable: "--font-fraunces",
-});
-
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  display: "swap",
-  variable: "--font-inter",
-});
+// Fraunces (--font-fraunces) and Inter (--font-inter) are self-hosted in
+// app/_fonts. They used to be next/font/google calls here, which made every
+// build depend on reaching fonts.googleapis.com; the CSS variable contract and
+// the rendered faces are unchanged. See app/_fonts/app-fonts.ts and FONTS.md.
 
 // Title and description lead with the public category phrase
 // ("Treatment Memory for Electrologists") and the concrete surfaces

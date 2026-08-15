@@ -77,6 +77,12 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   ...(process.env.HONE_E2E_FAKE_RESEND === "1"
     ? { HONE_E2E_FAKE_RESEND: "1" }
     : {}),
+  // REL-001 route fault injection. Server-only marker; the module's own guard
+  // (lib/reliability/e2e-route-fault.ts) refuses it in any deployed runtime and
+  // the fault page 404s without it, so it is safe to arm unconditionally for
+  // this hardcoded-to-127.0.0.1 lane. Set here rather than passed through from
+  // the outer process because webServer.env REPLACES process.env.
+  HONE_E2E_ROUTE_FAULT: "1",
   NEXT_PUBLIC_APP_ORIGIN: E2E_APP_ORIGIN,
   NEXT_PUBLIC_SUPABASE_URL: LOCAL_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: LOCAL_ANON_KEY,
