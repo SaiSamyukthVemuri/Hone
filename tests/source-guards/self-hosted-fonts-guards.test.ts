@@ -132,16 +132,51 @@ function concatenationCollapsed(text: string): string {
 }
 
 /**
- * EVERY string in middleware.ts's `matcher` array.
+ * EVERY string in middleware.ts's `matcher` array, read from the TypeScript AST.
  *
  * Next treats the entries as alternatives - middleware runs if ANY of them
  * matches - so reading only the first entry would let a later, broader entry
  * silently re-expose a path this guard claims is protected.
+ *
+ * AST, NOT A REGEX OVER THE SOURCE TEXT. A text scan cannot tell code from a
+ * comment or from a different quote style, so a commented-out copy of the old
+ * pattern sitting above an active single-quoted `'/fonts/:path*'` would feed
+ * this guard the STALE pattern: every boundary assertion would grade the
+ * commented matcher and pass, while Next applied the broad live one. Verified
+ * against exactly that shape - the text regex returned the commented entry.
+ *
+ * Returns each literal's VALUE, so escaping is already resolved: the source
+ * `"...\\.txt$"` yields `...\.txt$`, which is the regex Next actually compiles.
  */
 function middlewareMatchers(): string[] {
-  const block = read("middleware.ts").match(/matcher:\s*\[([\s\S]*?)\]/)?.[1];
-  if (!block) return [];
-  return [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const source = ts.createSourceFile(
+    "middleware.ts",
+    read("middleware.ts"),
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+  );
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      ((ts.isIdentifier(node.name) && node.name.text === "matcher") ||
+        (ts.isStringLiteral(node.name) && node.name.text === "matcher")) &&
+      ts.isArrayLiteralExpression(node.initializer)
+    ) {
+      for (const element of node.initializer.elements) {
+        if (ts.isStringLiteral(element) || ts.isNoSubstitutionTemplateLiteral(element)) {
+          found.push(element.text);
+        } else {
+          // A computed or spread entry cannot be graded here; surface it rather
+          // than silently ignoring an entry that Next will still apply.
+          found.push(`<non-literal:${ts.SyntaxKind[element.kind]}>`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
 // CASE-INSENSITIVE on purpose. Hostnames are case-insensitive in DNS and Node
@@ -198,11 +233,16 @@ const ALL_SOURCE = sourceFiles(ROOT).map((file) => {
   };
 });
 
-// Build-time inputs that are NOT source files. `package.json` defines
-// `npm run build` itself, so a Google Fonts request embedded in that command
-// would restore the network-dependent build while every code-extension scan
-// stayed green. Scanned whole (no comment stripping - JSON has none).
-const BUILD_MANIFESTS = ["package.json"]
+// Build-time inputs that are NOT source files.
+//
+// `package.json` defines `npm run build` itself. `vercel.json` can define a
+// `buildCommand`, which Vercel runs INSTEAD of that - so a fetch added there
+// would restore a production font-host dependency while GitHub CI kept running
+// `npm run build` and every code-extension scan stayed green. The two files
+// disagreeing about how production is built is precisely the gap.
+//
+// Scanned whole (no comment stripping - JSON has none).
+const BUILD_MANIFESTS = ["package.json", "vercel.json"]
   .filter((rel) => existsSync(path.join(ROOT, rel)))
   .map((rel) => ({
     rel,
@@ -320,6 +360,31 @@ describe("the build never depends on Google Fonts", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("CI runs the execution-level host denial on the build", () => {
+    // THE OTHER HALF OF THE INVARIANT, and the half the scan above cannot
+    // provide. A hostname built from a variable, a template substitution,
+    // String.fromCharCode or base64 is invisible to any static scan but still
+    // issues a real request. Without this wired into CI, a network-enabled
+    // runner stays green while the same commit fails wherever the network is
+    // restricted - which is the exact asymmetry this PR exists to remove.
+    //
+    // Pinned so it cannot be quietly dropped: the preload must exist, and the
+    // CI build step must load it.
+    const blocker = path.join(ROOT, "scripts", "block-google-fonts.cjs");
+    expect(existsSync(blocker), "the block preload must exist").toBe(true);
+    const blockerSource = readFileSync(blocker, "utf8");
+    expect(blockerSource).toMatch(/node:https/);
+    expect(blockerSource).toMatch(/BLOCKED_GOOGLE_FONTS/);
+
+    const ci = read(".github/workflows/ci.yml");
+    const buildStep = ci.match(/- name: Build\n[\s\S]*?\n\n/)?.[0] ?? "";
+    expect(buildStep, "CI has no Build step").toContain("npm run build");
+    expect(
+      buildStep,
+      "the CI Build step must load scripts/block-google-fonts.cjs via NODE_OPTIONS",
+    ).toMatch(/NODE_OPTIONS:\s*--require \.\/scripts\/block-google-fonts\.cjs/);
+  });
+
   it("the host scan reaches package.json, not just code files", () => {
     // Vacuity check for the line above: package.json is not a code extension,
     // so it is added explicitly and could silently fall out.
@@ -421,7 +486,7 @@ describe("the faces are loaded from local files", () => {
     const entries = middlewareMatchers();
     expect(entries.length, "no middleware matcher entries found").toBeGreaterThan(0);
     const runsMiddleware = (p: string) =>
-      entries.some((e) => new RegExp(`^${e.replace(/\\\\/g, "\\")}$`).test(p));
+      entries.some((e) => new RegExp(`^${e}$`).test(p));
 
     for (const exempt of [
       "/fonts/LICENSE-Inter.txt",
@@ -478,7 +543,8 @@ describe("the faces are loaded from local files", () => {
     // Normalise the source-level escaping first: the file contains `\\.` (a
     // TypeScript string literal escaping a regex dot), which is the same
     // reduction used to build the patterns above.
-    const normalised = entries.map((e) => e.replace(/\\\\/g, "\\"));
+    // Values come from the AST, so escaping is already resolved.
+    const normalised = entries;
 
     // Enumerate EVERY `/fonts` alternative and compare against the exact
     // allowlist, rather than probing for shapes that look wrong.
