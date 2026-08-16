@@ -52,6 +52,12 @@ export type AppointmentPreviewDetail = {
   status: string;
   startsAt: string;
   endsAt: string;
+  // The STORED duration, carried as its own fact and never reconstructed from
+  // endsAt - startsAt. Nothing in the schema ties the two together (0010 gives
+  // duration_minutes only a 5..480 range check), and the move command preserves
+  // THIS column while computing a new end from it, so a surface that derives it
+  // from the span can state a number the command will not honour.
+  durationMinutes: number;
   notes: string | null;
   allergies: string | null;
 
@@ -84,6 +90,7 @@ type ApptRow = {
   status: string;
   starts_at: string;
   ends_at: string;
+  duration_minutes: number;
   notes: string | null;
   client_id: string | null;
   client: { id: string; name: string | null; allergies: string | null } | null;
@@ -104,7 +111,7 @@ export async function loadAppointmentPreviewDetail(args: {
   const { data, error } = await supabase
     .from("appointments")
     .select(
-      "id, status, starts_at, ends_at, notes, client_id, client:clients(id, name, allergies)",
+      "id, status, starts_at, ends_at, duration_minutes, notes, client_id, client:clients(id, name, allergies)",
     )
     .eq("studio_id", args.studioId)
     .eq("id", appointmentId)
@@ -131,6 +138,7 @@ export async function loadAppointmentPreviewDetail(args: {
     status: raw.status,
     startsAt: raw.starts_at,
     endsAt: raw.ends_at,
+    durationMinutes: raw.duration_minutes,
     notes: raw.notes ?? null,
     allergies: client?.allergies ?? null,
   };

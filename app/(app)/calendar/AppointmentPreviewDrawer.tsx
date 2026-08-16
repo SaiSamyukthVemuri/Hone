@@ -372,12 +372,14 @@ export function AppointmentPreviewDrawer({
             {/* 4. ACTIONS ------------------------------------------------- */}
             {canAct && (
               <>
-                {/* The RE-READ schedule, not the week payload's copy. These
-                    values become 0133's p_expected_starts_at/ends_at, so a
-                    stale pair does not merely look wrong — it makes a
+                {/* The RE-READ appointment version, not the week payload's copy.
+                    startsAt/endsAt become 0133's p_expected_starts_at/ends_at,
+                    so a stale pair does not merely look wrong — it makes a
                     legitimate move impossible for as long as the drawer stays
-                    open. Same preference the action gate above already applies.
-                    See ./move-dialog-schedule. */}
+                    open. durationMinutes is carried as its OWN stored fact,
+                    never reconstructed from the span, because 0133 preserves
+                    that column and computes the new end from it. All three come
+                    from one version; see ./move-dialog-schedule. */}
                 <MoveAppointmentButton
                   appointment={{
                     id: a.id,
@@ -387,7 +389,11 @@ export function AppointmentPreviewDrawer({
                         endsAt: a.ends_at,
                         durationMinutes: a.duration_minutes,
                       },
-                      detail: { startsAt: detail.startsAt, endsAt: detail.endsAt },
+                      detail: {
+                        startsAt: detail.startsAt,
+                        endsAt: detail.endsAt,
+                        durationMinutes: detail.durationMinutes,
+                      },
                     }),
                     clientName: a.client?.name ?? null,
                     serviceName: a.service?.name ?? null,

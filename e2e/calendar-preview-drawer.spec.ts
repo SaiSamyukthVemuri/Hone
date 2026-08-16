@@ -67,12 +67,17 @@ async function seedAppointmentNextWeek(
   clientId: string,
   tz: string,
   localHHMM: string,
+  // The TIMESTAMP span only. seedConfirmedAppointment always stores
+  // duration_minutes = 60, so passing anything else here produces a row whose
+  // span and stored duration disagree — which the schema permits (0010 gives
+  // duration_minutes only a 5..480 range check and says nothing about the span).
+  spanMinutes = 60,
 ): Promise<{ id: string; date: string }> {
   const rows = await sql<{ startu: string; endu: string; d: string }>(
     `select (to_char((now() at time zone $1)::date + 7, 'YYYY-MM-DD') || ' ' || $2)::timestamp at time zone $1 as startu,
-            ((to_char((now() at time zone $1)::date + 7, 'YYYY-MM-DD') || ' ' || $2)::timestamp + interval '60 min') at time zone $1 as endu,
+            ((to_char((now() at time zone $1)::date + 7, 'YYYY-MM-DD') || ' ' || $2)::timestamp + ($3 || ' min')::interval) at time zone $1 as endu,
             to_char((now() at time zone $1)::date + 7, 'YYYY-MM-DD') as d`,
-    [tz, localHHMM],
+    [tz, localHHMM, String(spanMinutes)],
   );
   const id = await seedConfirmedAppointment(
     studioId,
@@ -598,6 +603,75 @@ test("Reschedule uses the refreshed schedule, not the stale week-grid copy", asy
   expect(finalLocal.time).toBe("10:00");
 });
 
+// The dialog must state the STORED duration, and the command must honour it.
+//
+// `duration_minutes` and `ends_at - starts_at` are different facts. The schema
+// keeps them independent (0010 range-checks the column and says nothing about
+// the span), and 0133 preserves the stored column while computing the new end
+// from it, never trusting a caller-supplied end. So on a row where they
+// disagree, a drawer that reconstructs the duration from the span announces a
+// number the command has already decided to ignore.
+//
+// This seeds exactly that row — a 90 minute span with a stored duration of 60 —
+// and pins both halves: what the dialog SAYS before the move, and what the
+// command DOES to the row.
+test("Reschedule states the stored duration, and the move preserves it", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  const tz = await getStudioTimezone(seed.studioId);
+  const ownerId = await getOwnerPractitionerId(seed.studioId);
+  // 13:00 -> 14:30 on the clock, but duration_minutes stays 60.
+  const { id: apptId, date } = await seedAppointmentNextWeek(
+    seed.studioId,
+    ownerId,
+    clientId,
+    tz,
+    "13:00",
+    90,
+  );
+
+  // The mismatch is the whole premise, so assert it rather than assume the
+  // seeding helper produced it.
+  const before = await scheduleFactsOf(apptId);
+  expect(before.durationMinutes).toBe(60);
+  expect(before.spanMinutes).toBe(90);
+
+  await loginAsOwner(page, seed);
+  await openWeekOf(page, date);
+  await card(page, await clientNameOf(apptId)).click();
+
+  const d = drawer(page);
+  await expect(d).toBeVisible({ timeout: T });
+  await d.getByRole("button", { name: "Reschedule" }).click();
+
+  const dlg = page.getByRole("dialog", { name: "Move appointment" });
+  await expect(dlg).toBeVisible({ timeout: T });
+  await dlg.getByRole("button", { name: "Custom time" }).click();
+  const target = futureYmd(31);
+  await dlg.locator('input[type="date"]').fill(target);
+  await dlg.locator('input[type="time"]').fill("11:00");
+
+  // WHAT IT SAYS. 60 is the stored fact; 90 is the span a reconstruction would
+  // have produced, and it must appear nowhere.
+  await expect(dlg.getByText("Duration unchanged: 60 min")).toBeVisible({ timeout: T });
+  await expect(dlg.getByText("Duration unchanged: 90 min")).toHaveCount(0);
+
+  await dlg.getByRole("checkbox").check();
+  await dlg.getByRole("button", { name: /^Move appointment$/ }).click();
+  await expect(dlg).toHaveCount(0, { timeout: T });
+
+  // WHAT IT DOES. 0133 rebuilt ends_at from the stored 60, so the moved row is
+  // 60 minutes long — the number the dialog promised, not the 90 it displaced.
+  const after = await scheduleFactsOf(apptId);
+  expect(after.durationMinutes).toBe(60);
+  expect(after.spanMinutes).toBe(60);
+  const moved = await localDateTimeOf(apptId, tz);
+  expect(moved.date).toBe(target);
+  expect(moved.time).toBe("11:00");
+});
+
 // --- helpers ---------------------------------------------------------------
 
 async function clientNameOf(appointmentId: string): Promise<string> {
@@ -626,6 +700,19 @@ async function shiftAppointmentMinutes(
     [appointmentId, String(minutes)],
   );
   return rows[0].starts_at;
+}
+
+// The two schedule facts, read separately so a test can prove they disagree.
+async function scheduleFactsOf(
+  appointmentId: string,
+): Promise<{ durationMinutes: number; spanMinutes: number }> {
+  const rows = await sql<{ dur: number; span: number }>(
+    `select duration_minutes as dur,
+            (extract(epoch from (ends_at - starts_at)) / 60)::int as span
+       from public.appointments where id = $1`,
+    [appointmentId],
+  );
+  return { durationMinutes: Number(rows[0].dur), spanMinutes: Number(rows[0].span) };
 }
 
 // The appointment's start as the STUDIO sees it, so the assertion is not written

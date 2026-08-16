@@ -1,36 +1,42 @@
-// Which schedule Reschedule is allowed to call "the current one".
+// Which appointment VERSION Reschedule is allowed to describe.
 //
 // The week grid is rendered once and then sits on screen. If the appointment
 // moves — another tab, another practitioner, a drag on another device — that
 // payload is stale, and the drawer's own re-read is the only fresh copy the page
 // has. The drawer ALREADY prefers the re-read row for the action gate, which is
-// why Cancel and Reschedule correctly appear and disappear; this is the same
-// decision applied to the values those actions carry.
+// why Cancel and Reschedule correctly appear and disappear; this applies the
+// same preference to the values those actions carry.
 //
-// It is not a display preference. MoveAppointmentDialog forwards startsAt/endsAt
-// as p_expected_starts_at / p_expected_ends_at, and 0133 refuses ANY drift with
-// `stale_appointment` — deliberately, because that expected-version check is
-// what stops two practitioners silently overwriting each other's move. Handing
-// it the grid's copy therefore does not merely look wrong: it makes the move
-// impossible, and it STAYS impossible for as long as the drawer is open, because
-// the props never change while it is. The practitioner sees "This appointment
-// changed in another window. Refresh and try again." on every retry, from a
-// drawer that had just read the truth and then argued with it.
+// TWO DISTINCT FACTS, NEITHER DERIVED FROM THE OTHER.
 //
-// So: prefer the re-read row whenever one has arrived, and fall back to the grid
-// only before it does (the actions are not offered then anyway — `canAct`
-// requires a loaded detail — so the fallback is a type-level courtesy, not a
-// live path).
+//   expected version   starts_at + ends_at. MoveAppointmentDialog forwards these
+//                      as 0133's p_expected_starts_at / p_expected_ends_at, and
+//                      0133 refuses ANY drift with `stale_appointment` —
+//                      deliberately, because that check is what stops two
+//                      practitioners silently overwriting each other's move.
 //
-// Duration is DERIVED from whichever pair won, never carried across from the
-// other, so the dialog's "Duration unchanged: N min" cannot end up describing a
-// span that neither timestamp supports.
+//   duration           duration_minutes, the STORED column. 0133 preserves it
+//                      from the LOCKED row and computes the new end from it:
+//                        v_new_ends_at := p_new_starts_at
+//                                         + make_interval(mins => v_appt.duration_minutes)
+//                      It never trusts a caller-supplied end.
 //
-// Pure: no React, no clock, no I/O. Lives here rather than inline in the drawer
-// for the same reason shouldApplyPreviewResponse does — a rule that can only be
-// exercised through a rendered component is a rule nobody re-checks.
-
-const MS_PER_MINUTE = 60_000;
+// Reconstructing the duration as `ends_at - starts_at` looks equivalent and is
+// not. `duration_minutes` carries only a range check (0010: between 5 and 480);
+// nothing in the schema ties it to the span, so a row where they disagree is
+// valid. On such a row a reconstructed value makes the dialog announce
+// "Duration unchanged: 90 min" over an operation that will preserve 60 — the UI
+// stating a number the command has already decided to ignore.
+//
+// ALL OR NOTHING. Whichever source wins supplies all three values. A fresh pair
+// of timestamps married to the grid's duration is a hybrid that never described
+// any real appointment version, and it is exactly the shape that reads as
+// "mostly fresh" while being wrong. So the fallback is total, not per-field.
+//
+// Pure: no React, no clock, no I/O. It lives here rather than inline in the
+// drawer for the same reason shouldApplyPreviewResponse does — this repo's
+// vitest runs `environment: "node"` with no DOM, so a rule left inside a
+// component is a rule no unit test can reach.
 
 export type MoveDialogSchedule = {
   startsAt: string;
@@ -42,31 +48,41 @@ export type MoveDialogScheduleInput = {
   // The week-grid payload's copy, which may be arbitrarily old.
   grid: MoveDialogSchedule;
   // The drawer's re-read of the same appointment, or null before it lands.
-  detail: { startsAt: string; endsAt: string } | null;
+  detail: MoveDialogSchedule | null;
 };
 
-function instantOf(value: string | null | undefined): number | null {
-  if (typeof value !== "string") return null;
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : null;
+function isInstant(value: string | null | undefined): boolean {
+  return typeof value === "string" && Number.isFinite(new Date(value).getTime());
+}
+
+function isDuration(value: number | null | undefined): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 export function moveDialogSchedule(
   input: MoveDialogScheduleInput,
 ): MoveDialogSchedule {
-  const startMs = instantOf(input.detail?.startsAt);
-  const endMs = instantOf(input.detail?.endsAt);
+  const d = input.detail;
 
-  // An unparseable pair is not fresher than the grid, it is just unusable. Fail
-  // back rather than forward an expected value the server is certain to reject.
-  if (startMs === null || endMs === null) return input.grid;
+  // No re-read yet. In practice unreachable from the drawer — `canAct` requires
+  // a loaded detail before either action is offered — but the type permits it
+  // and a total fallback is the honest answer.
+  if (!d) return input.grid;
 
-  const derived = Math.round((endMs - startMs) / MS_PER_MINUTE);
+  // An unusable re-read is not fresher than the grid, it is just unusable.
+  // Fail BACK to a coherent older version rather than forward an expected value
+  // the server is certain to reject, or a duration it will not honour.
+  if (!isInstant(d.startsAt) || !isInstant(d.endsAt) || !isDuration(d.durationMinutes)) {
+    return input.grid;
+  }
+
+  // One version, reported as stored. Note that a span disagreeing with
+  // durationMinutes is NOT corrected here: both are facts about the same row,
+  // and the move command reads the duration, so silently "fixing" either one
+  // would be inventing a version to make the two agree.
   return {
-    startsAt: input.detail!.startsAt,
-    endsAt: input.detail!.endsAt,
-    // A non-positive span is not a duration. Keep the grid's number rather than
-    // render "0 min" next to two timestamps that plainly disagree with it.
-    durationMinutes: derived > 0 ? derived : input.grid.durationMinutes,
+    startsAt: d.startsAt,
+    endsAt: d.endsAt,
+    durationMinutes: d.durationMinutes,
   };
 }
