@@ -8,6 +8,8 @@ import {
   type Slot,
 } from "@/lib/booking/slots";
 import {
+  classifyAgainstWindow,
+  localInterval,
   readFullDayBlockout,
   resolveAvailabilityWindow,
   type AvailabilityWindow,
@@ -157,7 +159,48 @@ export async function fetchSlotsForClientBookingAction(params: {
           capacityOn ? target : null,
         );
 
-  return { ok: true, slots, window };
+  // ONE RESPONSE MAY NOT ASSERT CONTRADICTORY BOOKING FACTS.
+  //
+  // `slots` and `window` come from TWO INDEPENDENT read sequences: the slot
+  // engine does its own blockout + availability reads, and the strict companion
+  // resolution above does them again. Nothing reconciled them, so a single
+  // response could say "availability could not be verified" while handing the
+  // practitioner bookable suggestions produced moments earlier -- and the
+  // suggestion path needs no window at all to submit.
+  //
+  // The companion resolution is the STRICTER, later read, so it is the
+  // presentation authority. The response is made coherent HERE, on the server,
+  // before React ever sees it -- a UI check alone would leave the contradictory
+  // payload available to any other caller.
+  //
+  //   unknown -> [] : we could not verify; offer nothing.
+  //   closed  -> [] : the day is closed; there is nothing to offer.
+  //   open    -> every surviving slot must still fit THAT window.
+  //
+  // The open case matters as much as the unknown one: the window can also have
+  // NARROWED between the two reads, which would otherwise leave a stale late
+  // suggestion sitting next to a window that no longer contains it. Judged with
+  // the SAME shared classifier the booking action and both surfaces use --
+  // there is deliberately no second hours algorithm here.
+  //
+  // This changes PRESENTATION only. The database remains the final booking
+  // authority, and appointment overlap / buffer races are still its job.
+  const coherentSlots =
+    window.kind === "open"
+      ? slots.filter(
+          (s) =>
+            classifyAgainstWindow(
+              window,
+              localInterval(
+                new Date(s.start),
+                service.default_duration_minutes,
+                studio.timezone,
+              ),
+            ) === "inside_availability",
+        )
+      : [];
+
+  return { ok: true, slots: coherentSlots, window };
 }
 
 export type EligiblePractitioner = { id: string; displayName: string };

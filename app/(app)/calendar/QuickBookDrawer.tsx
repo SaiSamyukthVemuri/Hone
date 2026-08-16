@@ -728,7 +728,10 @@ export function QuickBookDrawer({
         manualTimeValid &&
         manualDurationValid &&
         (!requiresOutsideOverride || outsideHoursConfirmed)
-      : !!pickedSlot
+      : // Same invariant as the client page: a suggestion is submittable only
+        // against a KNOWN window. The fetch now returns no slots when the
+        // window is unknown, so this is the surface-side half of that.
+        (windowKnown && !!pickedSlot)
   );
 
   function handleCreateClient() {

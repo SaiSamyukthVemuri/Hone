@@ -364,9 +364,13 @@ export function BookAppointment({
         windowKnown &&
         manualTimeValid &&
         (!requiresOutsideOverride || (isOwner && outsideHoursConfirmed))
-      : // A suggestion is submittable only while it still belongs to the date
-        // on the form. The synchronous clear above normally makes this moot;
-        // it is here so no future path can reintroduce a cross-date submit.
+      : // A suggestion is submittable only while (a) the availability window is
+        // KNOWN -- the server now returns no slots at all when it is not, and
+        // this is the surface-side half of that same invariant -- and (b) it
+        // still belongs to the date on the form. The synchronous clear above
+        // normally makes the second moot; it is here so no future path can
+        // reintroduce a cross-date submit.
+        windowKnown &&
         selectedSlotMatchesDate({
           startsAtIso: pickedSlot?.start ?? null,
           formDate: date,

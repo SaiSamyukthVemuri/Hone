@@ -437,3 +437,39 @@ describe("LAW 2 / P2-C — the capacity-OFF branch cannot throw past the contrac
     expect(AW).toMatch(/availability_window_read_failed:/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SLOT/WINDOW COHERENCE — the surface-side half.
+//
+// The server now reconciles the response (no slots for an unknown or closed
+// window; open-window slots re-validated against that window). These pin that
+// neither surface can submit a suggestion against a window it does not know,
+// so a contradictory payload from any future caller still cannot be booked.
+// The behavioural proof of the server invariant is in
+// tests/app/clients/slot-window-coherence.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("no suggestion may be submitted against an unknown window", () => {
+  it("the client page gates its suggestion branch on windowKnown", () => {
+    expect(BOOK).toMatch(/windowKnown &&\s*\n\s*selectedSlotMatchesDate\(\{/);
+  });
+
+  it("the drawer gates its suggestion branch on windowKnown", () => {
+    const DRAWER4 = read("app/(app)/calendar/QuickBookDrawer.tsx");
+    expect(DRAWER4).toMatch(/\(windowKnown && !!pickedSlot\)/);
+    // The bare form must not come back.
+    expect(DRAWER4).not.toMatch(/: !!pickedSlot\s*\n\s*\);/);
+  });
+
+  it("the fetch action reconciles slots against the companion window", () => {
+    const ACTIONS3 = read("app/(app)/clients/[id]/booking-actions.ts");
+    expect(ACTIONS3).toMatch(/const coherentSlots =/);
+    expect(ACTIONS3).toMatch(/window\.kind === "open"/);
+    // Judged by the SHARED classifier -- no second hours algorithm.
+    expect(ACTIONS3).toMatch(/classifyAgainstWindow\(/);
+    expect(ACTIONS3).toMatch(/=== "inside_availability"/);
+    expect(ACTIONS3).toMatch(/return \{ ok: true, slots: coherentSlots, window \};/);
+    // The unreconciled return must be gone.
+    expect(ACTIONS3).not.toMatch(/return \{ ok: true, slots, window \};/);
+  });
+});
