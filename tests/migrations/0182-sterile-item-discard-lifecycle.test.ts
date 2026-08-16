@@ -79,7 +79,7 @@ const measuredCountClaims = (text: string): string[] =>
 // record legitimately fails it, which is the point.
 // ---------------------------------------------------------------------------
 const CURRENT_0182_NOTE_SHA =
-  "a6053039a86eeb278fe7fd91c781423ab63ea2b88a88a2af32fabc303b066627";
+  "e86e4d8cfaff2560120f8d53d782855ad15b331f1f713913f1ae1f09ddd3bdfd";
 
 function assertCurrent0182NotePinned(note: string) {
   const sha = createHash("sha256").update(note, "utf8").digest("hex");
@@ -343,7 +343,7 @@ describe("0182 — the recorded apply evidence stays honest", () => {
     expect(
       sha,
       "the frozen 0182 evidence section changed — if that was deliberate, update this pin in the same review",
-    ).toBe("64b3eb89a020873c386e7766c53a073c304188513d09ca2071be8119658ba39c");
+    ).toBe("be0277c882fc1cdec265f5fc6b45efeae9548e737ef1359770adbc8f94834be9");
   });
 
   it("states no measured count in the wordings the helper does cover", () => {

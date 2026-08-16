@@ -76,9 +76,12 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > 2. **NO ROW-COUNT PROOF.** No pre/post business-row count was captured for any table, so **no
 >    zero-row-mutation claim is made from measurement.** What *is* asserted is a claim about the
 >    migration **text**, which any reader can re-check against the frozen bytes: 0182's only
->    executable statements are one `alter table … add column if not exists date_discarded date` and
->    one `comment on column`, inside a single `begin;`/`commit;` — no `UPDATE`, `INSERT`, `DELETE`,
->    backfill, index, constraint, policy, grant, trigger, function or view. That is pinned by
+>    SCHEMA-AFFECTING statements are one `alter table … add column if not exists date_discarded
+>    date` and one `comment on column`. The migration also executes `set local lock_timeout = '5s'`
+>    inside the transaction — a session-local guard that touches no object and no row. Those three
+>    statements sit inside a single `begin;`/`commit;`, and there is no `UPDATE`, `INSERT`,
+>    `DELETE`, backfill, index, constraint, policy, grant, trigger, function or view. That is
+>    pinned by
 >    `tests/migrations/0182-sterile-item-discard-lifecycle.test.ts`, which also pins the raw
 >    checksum above.
 > 3. **NO DIRECT SQL VERIFICATION.** `supabase db query --linked` was **unavailable** — the
