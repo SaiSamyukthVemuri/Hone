@@ -84,7 +84,14 @@ export type AvailabilityStudio = {
 // stricter policy. Two functions make the difference impossible to miss.
 export type AvailabilityWindow =
   | { kind: "open"; openTime: string; closeTime: string } // "HH:MM"
-  | { kind: "closed" };
+  // The practitioner genuinely does not work then. This is KNOWLEDGE.
+  | { kind: "closed" }
+  // The configuration could not be READ. This is the ABSENCE of knowledge, and
+  // it is not the same fact as "closed". Collapsing the two let a transient
+  // failure on a practitioner-specific probe fall through to a broader,
+  // narrower-hours row and report a working time as out-of-hours -- which an
+  // owner could then acknowledge, persisting a false exception.
+  | { kind: "unknown" };
 
 export type FullDayBlockoutRead = {
   // A blockout row covers this date.
@@ -118,6 +125,18 @@ type WindowRow = {
 function trimTime(t: string | null): string | null {
   if (!t) return null;
   return t.slice(0, 5);
+}
+
+// One scoped precedence read. Separates READ FAILURE from ABSENCE so the
+// caller can stop rather than fall through.
+async function probe(
+  q: PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<{ failed: boolean; row: WindowRow | null }> {
+  const { data, error } = await (
+    q as unknown as { maybeSingle: () => Promise<{ data: unknown; error: unknown }> }
+  ).maybeSingle();
+  if (error) return { failed: true, row: null };
+  return { failed: false, row: (data as WindowRow | null) ?? null };
 }
 
 function toWindow(row: WindowRow | null): AvailabilityWindow {
@@ -166,49 +185,56 @@ export async function resolveAvailabilityWindow(
 
   // ON: practitioner-specific row wins over the studio-wide fallback, overrides
   // win over defaults. Two maybeSingle probes per level keep each read unique.
-  const pOverride = (
-    await supabase
+  //
+  // EVERY probe distinguishes THREE outcomes, not two:
+  //   error            -> UNKNOWN. Stop resolving. Precedence must not continue,
+  //                       because falling through would convert "we could not
+  //                       read your hours" into "you have no hours of your own".
+  //   no row, no error -> legitimate absence; continue to the next level.
+  //   row              -> use it.
+  const pOverride = await probe(
+    supabase
       .from("studio_availability_overrides")
       .select("is_open, open_time, close_time")
       .eq("studio_id", studio.id)
       .eq("effective_date", dateStr)
-      .eq("practitioner_id", practitionerId)
-      .maybeSingle()
-  ).data as WindowRow | null;
-  if (pOverride) return toWindow(pOverride);
+      .eq("practitioner_id", practitionerId),
+  );
+  if (pOverride.failed) return { kind: "unknown" };
+  if (pOverride.row) return toWindow(pOverride.row);
 
-  const sOverride = (
-    await supabase
+  const sOverride = await probe(
+    supabase
       .from("studio_availability_overrides")
       .select("is_open, open_time, close_time")
       .eq("studio_id", studio.id)
       .eq("effective_date", dateStr)
-      .is("practitioner_id", null)
-      .maybeSingle()
-  ).data as WindowRow | null;
-  if (sOverride) return toWindow(sOverride);
+      .is("practitioner_id", null),
+  );
+  if (sOverride.failed) return { kind: "unknown" };
+  if (sOverride.row) return toWindow(sOverride.row);
 
-  const pDefault = (
-    await supabase
+  const pDefault = await probe(
+    supabase
       .from("studio_availability_default")
       .select("is_open, open_time, close_time")
       .eq("studio_id", studio.id)
       .eq("day_of_week", dow)
-      .eq("practitioner_id", practitionerId)
-      .maybeSingle()
-  ).data as WindowRow | null;
-  if (pDefault) return toWindow(pDefault);
+      .eq("practitioner_id", practitionerId),
+  );
+  if (pDefault.failed) return { kind: "unknown" };
+  if (pDefault.row) return toWindow(pDefault.row);
 
-  const sDefault = (
-    await supabase
+  const sDefault = await probe(
+    supabase
       .from("studio_availability_default")
       .select("is_open, open_time, close_time")
       .eq("studio_id", studio.id)
       .eq("day_of_week", dow)
-      .is("practitioner_id", null)
-      .maybeSingle()
-  ).data as WindowRow | null;
-  return toWindow(sDefault);
+      .is("practitioner_id", null),
+  );
+  if (sDefault.failed) return { kind: "unknown" };
+  return toWindow(sDefault.row);
 }
 
 // What a requested time IS, relative to actual availability. Deliberately NOT a
@@ -217,7 +243,10 @@ export async function resolveAvailabilityWindow(
 export type RequestedTimeVerdict =
   | "inside_availability"
   | "outside_availability"
-  | "practitioner_closed";
+  | "practitioner_closed"
+  // The window could not be read. NOT a fact about the practitioner's day --
+  // callers must refuse rather than describe this as closed or out-of-hours.
+  | "availability_unknown";
 
 // PURE. Mirrors `validate_appointment_availability` (migration 0152) exactly:
 //
@@ -287,6 +316,8 @@ export function classifyAgainstWindow(
   window: AvailabilityWindow,
   interval: LocalInterval,
 ): RequestedTimeVerdict {
+  // UNKNOWN is checked FIRST and never collapses into a factual verdict.
+  if (window.kind === "unknown") return "availability_unknown";
   if (window.kind === "closed") return "practitioner_closed";
   const open = localMinutesSinceMidnight(window.openTime);
   const close = localMinutesSinceMidnight(window.closeTime);
@@ -359,6 +390,70 @@ export function classifyAgainstWindow(
 // asking them to affirm it is a false statement about their own schedule --
 // the same class of lie this module exists to remove. `overrideReason` carries
 // the factual reason so each surface can say the true thing.
+// A CUSTOM DURATION IS A SEMANTIC DIFFERENCE, NOT A POPULATED FIELD.
+//
+// The drag-to-create flow leaves a duration input on screen. If the
+// practitioner edits it back to the selected service's own default length, the
+// appointment is an ordinary one: a 60-minute service booked for 60 minutes.
+// Treating "the field has a value" as "this is a custom length" told the owner
+// a standard booking needed an exception, and posted the persistent flag for it.
+//
+// Normalise ONCE, here, and use the result for BOTH the decision and the
+// submitted payload -- otherwise the UI can say "ordinary" while the request
+// still carries duration_minutes_override, which the server refuses without the
+// flag.
+export function normalizeDurationOverride(
+  chosenMinutes: number | null,
+  serviceDefaultMinutes: number | null,
+): number | null {
+  if (chosenMinutes == null) return null;
+  if (serviceDefaultMinutes != null && chosenMinutes === serviceDefaultMinutes) {
+    return null;
+  }
+  return chosenMinutes;
+}
+
+// THE IDENTITY OF ONE BOOKING CANDIDATE.
+//
+// A server-issued exception (today: buffer_conflict) is an answer about ONE
+// appointment. It may only be honoured while that exact appointment is still
+// the one on screen, so the identity has to name every dimension whose change
+// makes this a different booking:
+//
+//   client        Quick Book can swap the client with nothing else changing.
+//                 Omitting it let an approval for client A authorise client B.
+//   service       fixes the length and the eligibility question.
+//   practitioner  whose calendar the buffer is a property of.
+//   instant       the appointment itself; carries the date.
+//   duration      an EFFECTIVE (normalised) length, so an edit back to the
+//                 service default is not a different candidate.
+//
+// Returns null when the candidate is not fully determined. A null identity can
+// never equal a stored one, so an incomplete form cannot inherit an approval.
+export function bookingCandidateKey(input: {
+  clientId: string | null;
+  serviceId: string | null;
+  practitionerId: string | null;
+  startsAtIso: string | null;
+  effectiveDurationMinutes: number | null;
+}): string | null {
+  if (
+    !input.clientId ||
+    !input.serviceId ||
+    !input.practitionerId ||
+    !input.startsAtIso
+  ) {
+    return null;
+  }
+  return [
+    input.clientId,
+    input.serviceId,
+    input.practitionerId,
+    input.startsAtIso,
+    input.effectiveDurationMinutes ?? "",
+  ].join("|");
+}
+
 export type OverrideReason =
   // The practitioner does not work that day at all.
   | "practitioner_closed"
@@ -397,7 +492,15 @@ export function decideManualTime(input: {
   customDurationMinutes: number | null;
 }): ManualTimeDecision {
   const timeValid = MANUAL_TIME_RE.test(input.localTime);
-  const duration = input.customDurationMinutes ?? input.serviceDurationMinutes;
+  // NORMALISE FIRST. A caller-supplied length equal to the service's own
+  // default is not a custom length, and must not drag the booking onto the
+  // owner-only exception path. Done HERE as well as at the call site so the
+  // decision is correct for any caller, not only the ones that remembered.
+  const customDurationMinutes = normalizeDurationOverride(
+    input.customDurationMinutes,
+    input.serviceDurationMinutes,
+  );
+  const duration = customDurationMinutes ?? input.serviceDurationMinutes;
   const resolvable =
     timeValid &&
     input.window !== null &&
@@ -417,11 +520,14 @@ export function decideManualTime(input: {
       )
     : null;
   const requiresOutsideOverride =
-    input.customDurationMinutes != null || verdict !== "inside_availability";
+    customDurationMinutes != null || verdict !== "inside_availability";
   // Precedence: a genuinely out-of-hours time is reported as such even when a
   // custom length is also in play, because that is the more serious fact and
   // the one the acknowledgement is really about. "custom_duration" is reserved
   // for a time that is otherwise perfectly ordinary.
+  // `availability_unknown` deliberately yields NO reason: there is nothing
+  // truthful to say, so the surfaces render their "could not verify" state
+  // instead of an out-of-hours claim.
   const overrideReason: OverrideReason | null = !requiresOutsideOverride
     ? null
     : verdict === "practitioner_closed"
@@ -433,7 +539,9 @@ export function decideManualTime(input: {
           : null;
   return {
     timeValid,
-    windowKnown: input.window !== null,
+    // An UNREADABLE window is no more "known" than an unloaded one. Both must
+    // block the manual path rather than be described to the practitioner.
+    windowKnown: input.window !== null && input.window.kind !== "unknown",
     verdict,
     requiresOutsideOverride,
     overrideReason,

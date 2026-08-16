@@ -333,6 +333,16 @@ export async function bookAppointmentForClientAction(
       service.default_duration_minutes,
       targetPractitionerId,
     );
+    if (verdict === "availability_unknown") {
+      // The window could not be READ. That is not evidence the practitioner is
+      // closed, and it must not be reported as such -- nor may it wave the
+      // booking through, since a capacity-OFF studio has no second opinion.
+      return {
+        ok: false,
+        error:
+          "We could not check your working hours just now. Please try again.",
+      };
+    }
     if (verdict === "practitioner_closed") {
       return { ok: false, error: bookingResultMessage("practitioner_closed") };
     }

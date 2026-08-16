@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  bookingCandidateKey,
   classifyAgainstWindow,
   decideManualTime,
   localInterval,
+  normalizeDurationOverride,
   readFullDayBlockout,
   resolveAvailabilityWindow,
   type AvailabilityWindow,
@@ -627,5 +629,216 @@ describe("P2-5 — the override REASON is factual, not the permission answer", (
     expect(d.requiresOutsideOverride).toBe(true);
     expect(d.windowKnown).toBe(false);
     expect(d.overrideReason).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECOND-ROUND P2s (Codex, exact head d5ce3b08). A, C and D; B lives in
+// tests/lib/booking/eligible-selection.test.ts where the async ordering can
+// actually be driven.
+// ---------------------------------------------------------------------------
+
+describe("P2-A — the booking candidate identity includes the client", () => {
+  const base = {
+    clientId: "client-a",
+    serviceId: "svc-1",
+    practitionerId: "prac-1",
+    startsAtIso: "2099-07-06T18:30:00.000Z",
+    effectiveDurationMinutes: null as number | null,
+  };
+
+  it("changing ONLY the client changes the identity", () => {
+    // Quick Book can swap the client with service, practitioner, time and
+    // duration all untouched. Omitting the client let an approval issued for
+    // client A authorise a booking for client B.
+    const a = bookingCandidateKey(base);
+    const b = bookingCandidateKey({ ...base, clientId: "client-b" });
+    expect(a).not.toBeNull();
+    expect(a).not.toBe(b);
+  });
+
+  it("every other dimension is also load-bearing", () => {
+    const a = bookingCandidateKey(base);
+    for (const changed of [
+      { serviceId: "svc-2" },
+      { practitionerId: "prac-2" },
+      { startsAtIso: "2099-07-06T19:00:00.000Z" },
+      { effectiveDurationMinutes: 45 },
+    ]) {
+      expect(bookingCandidateKey({ ...base, ...changed })).not.toBe(a);
+    }
+  });
+
+  it("the identical candidate yields the identical key", () => {
+    expect(bookingCandidateKey(base)).toBe(bookingCandidateKey({ ...base }));
+  });
+
+  it("an incomplete candidate has NO identity, so it can inherit nothing", () => {
+    // null never equals a stored key, so a half-filled form cannot pick up an
+    // approval issued for something else.
+    for (const missing of [
+      { clientId: null },
+      { serviceId: null },
+      { practitionerId: null },
+      { startsAtIso: null },
+    ]) {
+      expect(bookingCandidateKey({ ...base, ...missing })).toBeNull();
+    }
+  });
+});
+
+describe("P2-C — a duration equal to the service default is not custom", () => {
+  const TZ3 = "America/Toronto";
+  const DAY3 = "2026-06-15";
+  const OPEN = OPEN_9_17 as AvailabilityWindow | null;
+  const base = {
+    window: OPEN,
+    localDate: DAY3,
+    localTime: "10:00",
+    timezone: TZ3,
+    serviceDurationMinutes: 60,
+    customDurationMinutes: null as number | null,
+  };
+
+  it("normalizeDurationOverride collapses a default-length edit to null", () => {
+    expect(normalizeDurationOverride(60, 60)).toBeNull();
+    expect(normalizeDurationOverride(45, 60)).toBe(45);
+    expect(normalizeDurationOverride(null, 60)).toBeNull();
+    // Unknown service length: cannot claim equality, so keep the value.
+    expect(normalizeDurationOverride(60, null)).toBe(60);
+  });
+
+  it("C1: default 60 + custom field 60, in hours -> ORDINARY booking", () => {
+    const d = decideManualTime({ ...base, customDurationMinutes: 60 });
+    expect(d.verdict).toBe("inside_availability");
+    expect(d.requiresOutsideOverride).toBe(false);
+    expect(d.overrideReason).toBeNull();
+  });
+
+  it("C2: default 60 + custom 45 remains a genuine custom-duration exception", () => {
+    const d = decideManualTime({ ...base, customDurationMinutes: 45 });
+    expect(d.requiresOutsideOverride).toBe(true);
+    expect(d.overrideReason).toBe("custom_duration");
+  });
+
+  it("C3: a default-equivalent length out of hours reports the FACTUAL reason", () => {
+    const d = decideManualTime({
+      ...base,
+      localTime: "18:00",
+      customDurationMinutes: 60,
+    });
+    expect(d.overrideReason).toBe("outside_availability");
+  });
+
+  it("the normalisation is inside the decision, not only at the call site", () => {
+    // A future caller passing raw values must still get the right answer.
+    const d = decideManualTime({ ...base, customDurationMinutes: 60 });
+    expect(d.requiresOutsideOverride).toBe(false);
+  });
+});
+
+describe("P2-D — an unreadable window is UNKNOWN, never a fallback fact", () => {
+  type Probe = { data: unknown; error: unknown };
+  // Drives one specific precedence level into failure while the others behave.
+  function stub(onProbe: (table: string, scopedToPractitioner: boolean) => Probe) {
+    return {
+      from(table: string) {
+        let scoped = false;
+        const b: Record<string, unknown> = {};
+        for (const op of ["eq", "is", "lte", "gte"]) {
+          b[op] = (col: string, val: unknown) => {
+            if (col === "practitioner_id") scoped = typeof val === "string";
+            return b;
+          };
+        }
+        b.select = () => b;
+        b.maybeSingle = () => Promise.resolve(onProbe(table, scoped));
+        b.then = (f: (v: unknown) => unknown) =>
+          Promise.resolve({ data: [], error: null }).then(f);
+        return b;
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+  }
+  const STUDIO = {
+    id: "s1",
+    timezone: "America/Toronto",
+    practitioner_capacity_enabled: true,
+  };
+  const OPEN_ROW = { is_open: true, open_time: "09:00:00", close_time: "17:00:00" };
+  const ERR = { data: null, error: { code: "PGRST301" } };
+  const NONE = { data: null, error: null };
+
+  const LEVELS: [string, (t: string, s: boolean) => boolean][] = [
+    ["practitioner override", (t, s) => t === "studio_availability_overrides" && s],
+    ["studio-wide override", (t, s) => t === "studio_availability_overrides" && !s],
+    ["practitioner default", (t, s) => t === "studio_availability_default" && s],
+    ["studio-wide default", (t, s) => t === "studio_availability_default" && !s],
+  ];
+
+  for (const [label, matches] of LEVELS) {
+    it(`D1: a read error at the ${label} level yields unknown, with NO fallback`, async () => {
+      const w = await resolveAvailabilityWindow(
+        stub((t, s) => (matches(t, s) ? ERR : NONE)),
+        STUDIO,
+        "2026-06-15",
+        "prac-1",
+      );
+      expect(w.kind).toBe("unknown");
+    });
+  }
+
+  it("D2: absence (null data, null error) still falls through normally", async () => {
+    const w = await resolveAvailabilityWindow(
+      stub((t, s) =>
+        t === "studio_availability_default" && !s
+          ? { data: OPEN_ROW, error: null }
+          : NONE,
+      ),
+      STUDIO,
+      "2026-06-15",
+      "prac-1",
+    );
+    expect(w).toEqual({ kind: "open", openTime: "09:00", closeTime: "17:00" });
+  });
+
+  it("D3: a valid scoped row still wins over the broader levels", async () => {
+    const w = await resolveAvailabilityWindow(
+      stub((t, s) =>
+        t === "studio_availability_overrides" && s
+          ? { data: { is_open: true, open_time: "11:00:00", close_time: "12:00:00" }, error: null }
+          : { data: OPEN_ROW, error: null },
+      ),
+      STUDIO,
+      "2026-06-15",
+      "prac-1",
+    );
+    expect(w).toEqual({ kind: "open", openTime: "11:00", closeTime: "12:00" });
+  });
+
+  it("UNKNOWN is classified distinctly and is NOT practitioner_closed", async () => {
+    const iv = localInterval(
+      utcInstantFromLocal("2026-06-15", "10:00", "America/Toronto"),
+      60,
+      "America/Toronto",
+    );
+    expect(classifyAgainstWindow({ kind: "unknown" }, iv)).toBe("availability_unknown");
+    expect(classifyAgainstWindow({ kind: "closed" }, iv)).toBe("practitioner_closed");
+  });
+
+  it("UNKNOWN cannot become an acknowledged out-of-hours booking", async () => {
+    // The surfaces gate the manual path on windowKnown, and there is no
+    // truthful reason to render -- so no acknowledgement can be offered.
+    const d = decideManualTime({
+      window: { kind: "unknown" },
+      localDate: "2026-06-15",
+      localTime: "10:00",
+      timezone: "America/Toronto",
+      serviceDurationMinutes: 60,
+      customDurationMinutes: null,
+    });
+    expect(d.windowKnown).toBe(false);
+    expect(d.requiresOutsideOverride).toBe(true); // fails closed
+    expect(d.overrideReason).toBeNull(); // ...but asserts nothing
   });
 });

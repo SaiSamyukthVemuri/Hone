@@ -31,7 +31,9 @@ import {
   type TimeFormat,
 } from "@/lib/booking/tz";
 import {
+  bookingCandidateKey,
   decideManualTime,
+  normalizeDurationOverride,
   type AvailabilityWindow,
 } from "@/lib/booking/availability-window";
 import {
@@ -632,6 +634,19 @@ export function QuickBookDrawer({
   })();
   const manualDurationValid =
     manualDurationMinutes === "" || parsedManualDuration != null;
+  const selectedService = services.find((s) => s.id === serviceId) ?? null;
+  // A DRAG EDITED BACK TO THE SERVICE'S OWN LENGTH IS NOT A CUSTOM LENGTH.
+  //
+  // The duration field stays on screen after a drag. Editing it to 60 for a
+  // 60-minute service produces an ordinary appointment, but the raw value is
+  // still non-null -- which made the UI announce a custom-duration exception
+  // and post the persistent flag for a completely standard booking. Normalise
+  // here, once, so the decision, the candidate identity and the submitted
+  // payload all agree.
+  const effectiveDurationOverride = normalizeDurationOverride(
+    parsedManualDuration,
+    selectedService?.default_duration_minutes ?? null,
+  );
 
   // WHAT THE TYPED TIME ACTUALLY IS, via the ONE shared decision function.
   //
@@ -642,7 +657,6 @@ export function QuickBookDrawer({
   //
   // The verdict decides COPY ONLY. The server re-resolves the window itself and
   // is the authority; nothing here is sent back as a claim.
-  const selectedService = services.find((s) => s.id === serviceId) ?? null;
   const manualDecision = decideManualTime({
     window: availabilityWindow,
     // The date and zone are required so the END is derived from the real UTC
@@ -652,7 +666,7 @@ export function QuickBookDrawer({
     localTime: manualLocalTime,
     timezone: studioTimezone,
     serviceDurationMinutes: selectedService?.default_duration_minutes ?? null,
-    customDurationMinutes: parsedManualDuration,
+    customDurationMinutes: effectiveDurationOverride,
   });
   // The FACTUAL reason an override is required, which is not the same question
   // as whether one is required. Copy must follow this, never the boolean.
@@ -679,10 +693,17 @@ export function QuickBookDrawer({
       ? utcInstantFromLocal(draft.localDate, manualLocalTime, studioTimezone).toISOString()
       : null
     : (pickedSlot?.start ?? null);
-  const candidateKey =
-    candidateStartsAt && serviceId
-      ? `${serviceId}|${showSelector ? target : currentPractitionerId}|${candidateStartsAt}|${parsedManualDuration ?? ""}`
-      : null;
+  // Built by the SHARED identity function. THE CLIENT PARTICIPATES: Quick Book
+  // is the one surface where it can change with service, practitioner, time and
+  // duration all untouched, and omitting it let an approval issued for client A
+  // authorise a booking for client B.
+  const candidateKey = bookingCandidateKey({
+    clientId: selectedClient?.id ?? null,
+    serviceId: serviceId || null,
+    practitionerId: (showSelector ? target : currentPractitionerId) || null,
+    startsAtIso: candidateStartsAt,
+    effectiveDurationMinutes: effectiveDurationOverride,
+  });
   // Derived, never stored: the approval applies only while the candidate it was
   // issued for is still the one being booked.
   const bufferOverrideOffered =
@@ -796,8 +817,11 @@ export function QuickBookDrawer({
       // because the server (and the DB command) refuse a custom duration
       // without it, and a custom length is owner-only. A custom length always
       // forces requiresOutsideOverride, so the flag below is guaranteed set.
-      if (requiresOutsideOverride && parsedManualDuration != null) {
-        fd.set("duration_minutes_override", String(parsedManualDuration));
+      // Only a genuinely different length is sent. Posting the service's own
+      // duration as an "override" would force the owner-only exception path for
+      // an ordinary booking, and the server would refuse it without the flag.
+      if (requiresOutsideOverride && effectiveDurationOverride != null) {
+        fd.set("duration_minutes_override", String(effectiveDurationOverride));
       }
     } else {
       fd.set("starts_at", pickedSlot!.start);

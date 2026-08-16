@@ -120,6 +120,9 @@ export const BROWSER_GROUPS = {
       // A buffer approval is scoped to ONE candidate: approving it for 14:30
       // and then booking 11:00 must not carry the flag to 11:00.
       "buffer-override-candidate-scope.spec.ts",
+      // ...and the CLIENT dimension of that same scope: approving for client A
+      // must not authorise client B when nothing else changed.
+      "buffer-override-client-scope.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",

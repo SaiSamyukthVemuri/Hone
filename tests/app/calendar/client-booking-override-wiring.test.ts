@@ -225,9 +225,12 @@ describe("P2-3 — a date change invalidates in-flight practitioner lookups", ()
   });
 
   it("the generation guard it depends on is still present", () => {
-    // The fix is only as good as the guard it leans on.
+    // The fix is only as good as the guard it leans on. The eligible-side guard
+    // moved INTO resolveEligibleSelection (which checks it after the await, and
+    // is behaviourally tested there); the slot-side guard is still inline.
     expect(BOOK).toMatch(/const req = \+\+eligibleReq\.current;/);
-    expect(BOOK).toMatch(/if \(req !== eligibleReq\.current\) return;/);
+    expect(BOOK).toMatch(/generation: req,/);
+    expect(BOOK).toMatch(/isCurrent: \(g\) => g === eligibleReq\.current/);
     expect(BOOK).toMatch(/if \(req !== slotReq\.current\) return;/);
   });
 });
@@ -256,10 +259,12 @@ describe("P2-4 — a buffer approval is scoped to ONE booking candidate", () => 
         );
       });
 
-      it("the candidate identity covers instant + service + practitioner", () => {
-        expect(SRC).toMatch(/const candidateKey =/);
-        expect(SRC).toMatch(/\$\{serviceId\}\|/);
-        expect(SRC).toMatch(/candidateStartsAt/);
+      it("the candidate identity covers client + service + practitioner + instant", () => {
+        expect(SRC).toMatch(/const candidateKey = bookingCandidateKey\(\{/);
+        expect(SRC).toMatch(/clientId:/);
+        expect(SRC).toMatch(/serviceId:/);
+        expect(SRC).toMatch(/practitionerId:/);
+        expect(SRC).toMatch(/startsAtIso: candidateStartsAt/);
       });
 
       it("the refusal scopes the offer to the candidate that was refused", () => {
@@ -274,9 +279,9 @@ describe("P2-4 — a buffer approval is scoped to ONE booking candidate", () => 
     });
   }
 
-  it("the drawer's candidate also covers the drag length", () => {
+  it("the drawer's candidate also covers the (normalised) drag length", () => {
     const DRAWER2 = read("app/(app)/calendar/QuickBookDrawer.tsx");
-    expect(DRAWER2).toMatch(/parsedManualDuration \?\? ""/);
+    expect(DRAWER2).toMatch(/effectiveDurationMinutes: effectiveDurationOverride/);
   });
 });
 
@@ -300,4 +305,86 @@ describe("P2-5 — override copy states the FACTUAL reason", () => {
       expect(SRC).not.toMatch(/manualVerdict === "practitioner_closed"/);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// SECOND-ROUND P2s — surface wiring. The semantics are proved behaviourally in
+// tests/lib/booking/availability-window.test.ts and
+// tests/lib/booking/eligible-selection.test.ts; these pin that the surfaces
+// actually route through those, rather than re-deriving the rules locally.
+// ---------------------------------------------------------------------------
+
+describe("P2-A/C — both surfaces use the SHARED candidate identity", () => {
+  const SURFACES: [string, string][] = [
+    ["client-profile Book form", "app/(app)/clients/[id]/BookAppointment.tsx"],
+    ["calendar Quick Book drawer", "app/(app)/calendar/QuickBookDrawer.tsx"],
+  ];
+
+  for (const [label, rel] of SURFACES) {
+    it(`${label}: builds the key via bookingCandidateKey, with a client`, () => {
+      const SRC = read(rel);
+      expect(SRC).toMatch(/bookingCandidateKey\(\{/);
+      expect(SRC).toMatch(/clientId:/);
+      // The hand-rolled template-literal key must be gone from both surfaces:
+      // two local spellings of "the same appointment" is how the client came to
+      // be missing from one of them.
+      expect(SRC).not.toMatch(/`\$\{serviceId\}\|/);
+    });
+  }
+
+  it("Quick Book passes the SELECTED client, not a constant", () => {
+    const DRAWER3 = read("app/(app)/calendar/QuickBookDrawer.tsx");
+    expect(DRAWER3).toMatch(/clientId: selectedClient\?\.id \?\? null/);
+  });
+
+  it("Quick Book normalises the drag length before deciding AND before posting", () => {
+    const DRAWER3 = read("app/(app)/calendar/QuickBookDrawer.tsx");
+    expect(DRAWER3).toMatch(
+      /const effectiveDurationOverride = normalizeDurationOverride\(/,
+    );
+    // The decision, the identity and the payload must all read the SAME value.
+    expect(DRAWER3).toMatch(/customDurationMinutes: effectiveDurationOverride/);
+    expect(DRAWER3).toMatch(/effectiveDurationMinutes: effectiveDurationOverride/);
+    expect(DRAWER3).toMatch(
+      /effectiveDurationOverride != null\) \{\s*\n\s*fd\.set\("duration_minutes_override", String\(effectiveDurationOverride\)\)/,
+    );
+    // ...and the raw parsed value must no longer reach the payload.
+    expect(DRAWER3).not.toMatch(
+      /fd\.set\("duration_minutes_override", String\(parsedManualDuration\)\)/,
+    );
+  });
+});
+
+describe("P2-B — the client page resolves eligibility through the ordering helper", () => {
+  it("uses resolveEligibleSelection and reads the target through a callback", () => {
+    // Capturing `target` at call time is what let a date refresh revert a later
+    // explicit choice. The callback is read after the await.
+    expect(BOOK).toMatch(/resolveEligibleSelection\(\{/);
+    expect(BOOK).toMatch(/readCurrentTarget: \(\) => targetRef\.current/);
+    expect(BOOK).toMatch(/isCurrent: \(g\) => g === eligibleReq\.current/);
+  });
+
+  it("the local default-target helper is gone (one implementation, not two)", () => {
+    expect(BOOK).not.toMatch(/function resolveDefaultTarget\(/);
+  });
+
+  it("every target write goes through the ref-syncing setter", () => {
+    // A bare setTargetState would desynchronise the ref the async resolve reads.
+    expect(BOOK).toMatch(/function setTarget\(v: string\) \{\s*\n\s*targetRef\.current = v;/);
+    expect(BOOK.match(/setTargetState\(/g)?.length).toBe(1);
+  });
+});
+
+describe("P2-D — an unreadable window is refused, never described", () => {
+  it("the action refuses availability_unknown with a distinct, non-factual message", () => {
+    expect(ACTIONS).toMatch(/verdict === "availability_unknown"/);
+    expect(ACTIONS).toMatch(/could not check your working hours/i);
+    // It must not be reported as a fact about the practitioner's day.
+    const unknownBranch = ACTIONS.slice(
+      ACTIONS.indexOf('verdict === "availability_unknown"'),
+      ACTIONS.indexOf('verdict === "practitioner_closed"'),
+    );
+    expect(unknownBranch).not.toMatch(/isn't working/i);
+    expect(unknownBranch).not.toMatch(/outside the practitioner/i);
+  });
 });

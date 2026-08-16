@@ -15,9 +15,11 @@ import {
 import { bookAppointmentForClientAction } from "../../calendar/actions";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 import {
+  bookingCandidateKey,
   decideManualTime,
   type AvailabilityWindow,
 } from "@/lib/booking/availability-window";
+import { resolveEligibleSelection } from "@/lib/booking/eligible-selection";
 
 type Slot = { start: string; end: string; startLabel: string };
 
@@ -115,24 +117,25 @@ export function BookAppointment({
   const showSelector = practitionerCapacityEnabled && isOwner;
   const [eligible, setEligible] = useState<EligiblePractitioner[]>([]);
   const [eligibleError, setEligibleError] = useState<string | null>(null);
-  const [target, setTarget] = useState<string>(currentPractitionerId);
+  const [target, setTargetState] = useState<string>(currentPractitionerId);
+  // The live target, readable from inside an async continuation. An eligibility
+  // request must never treat the value it CAPTURED at call time as current
+  // authority: doing so let a date refresh silently snap the selector back to
+  // the practitioner the owner had just moved away from.
+  const targetRef = useRef<string>(currentPractitionerId);
+  function setTarget(v: string) {
+    targetRef.current = v;
+    setTargetState(v);
+  }
   const [loadingPractitioners, startLoadingPractitioners] = useTransition();
   // Item 6 (1C): latest-request-wins guards. A stale eligible/slot response from
   // an earlier service/date/practitioner must never overwrite the current state.
   const eligibleReq = useRef(0);
   const slotReq = useRef(0);
 
-  // Default-target rule (documented): preserve an already-selected valid target;
-  // otherwise prefer the current owner when eligible; otherwise the first
-  // eligible practitioner. Never silently keep an ineligible target.
-  function resolveDefaultTarget(
-    list: EligiblePractitioner[],
-    current: string,
-  ): string {
-    if (list.some((p) => p.id === current)) return current;
-    if (list.some((p) => p.id === currentPractitionerId)) return currentPractitionerId;
-    return list[0]?.id ?? "";
-  }
+  // The default-target rule (preserve a still-eligible selection -> prefer the
+  // acting practitioner -> first eligible) now lives in resolveEligibleSelection,
+  // together with the ORDERING guarantees it depends on.
 
   function loadSlots(nextServiceId: string, nextDate: string, nextTarget: string) {
     setError(null);
@@ -187,10 +190,20 @@ export function BookAppointment({
     // it now rather than after the round trip, for the same reason as loadSlots.
     setAvailabilityWindow(null);
     startLoadingPractitioners(async () => {
-      const r = await fetchEligiblePractitionersAction(nextServiceId);
-      if (req !== eligibleReq.current) return; // stale service response
-      if (!r.ok) {
-        setEligibleError(r.error);
+      // Ordering lives in resolveEligibleSelection, which reads the CURRENT
+      // target through the callback instead of capturing it. That is what lets
+      // a date refresh invalidate stale work without also revoking a later
+      // explicit practitioner choice.
+      const outcome = await resolveEligibleSelection({
+        generation: req,
+        isCurrent: (g) => g === eligibleReq.current,
+        fetchEligible: () => fetchEligiblePractitionersAction(nextServiceId),
+        readCurrentTarget: () => targetRef.current,
+        preferredFallback: currentPractitionerId,
+      });
+      if (outcome.kind === "superseded") return;
+      if (outcome.kind === "failed") {
+        setEligibleError(outcome.error);
         setEligible([]);
         setTarget("");
         setSlots([]);
@@ -198,18 +211,17 @@ export function BookAppointment({
         setAvailabilityWindow(null);
         return;
       }
-      const list = r.practitioners;
-      setEligible(list);
-      const nextTarget = resolveDefaultTarget(list, target);
-      setTarget(nextTarget);
-      if (!nextTarget) {
-        // Empty eligible list → do NOT request slots; booking is blocked.
+      setEligible(outcome.list);
+      if (outcome.kind === "empty") {
+        // No eligible practitioners → do NOT request slots; booking is blocked.
+        setTarget("");
         setSlots([]);
         setPickedSlot(null);
         setAvailabilityWindow(null);
         return;
       }
-      loadSlots(nextServiceId, nextDate, nextTarget);
+      setTarget(outcome.target);
+      loadSlots(nextServiceId, nextDate, outcome.target);
     });
   }
 
@@ -294,10 +306,18 @@ export function BookAppointment({
       ? utcInstantFromLocal(date, manualTime, timezone).toISOString()
       : null
     : (pickedSlot?.start ?? null);
-  const candidateKey =
-    candidateStartsAt && serviceId
-      ? `${serviceId}|${showSelector ? target : currentPractitionerId}|${candidateStartsAt}`
-      : null;
+  // Built by the SHARED identity function, including the client. This surface
+  // fixes the client by route, but it participates explicitly rather than being
+  // assumed immutable -- symmetry with Quick Book is what stops the two
+  // surfaces drifting into different notions of "the same appointment".
+  const candidateKey = bookingCandidateKey({
+    clientId,
+    serviceId: serviceId || null,
+    practitionerId: (showSelector ? target : currentPractitionerId) || null,
+    startsAtIso: candidateStartsAt,
+    // No drag-to-create on this surface, so the length is always the service's.
+    effectiveDurationMinutes: null,
+  });
   // Derived, never stored: the approval applies only while the candidate it was
   // issued for is still the one being booked. Changing slot, time, date,
   // service or practitioner therefore revokes it with no clear() call at all.

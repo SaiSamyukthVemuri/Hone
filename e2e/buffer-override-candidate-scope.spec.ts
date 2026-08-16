@@ -3,12 +3,13 @@ import {
   seedE2eStudio,
   seedE2eClient,
   setStudioBufferMinutes,
-  seedFutureAppointmentAt,
+  seedConfirmedAppointment,
   getOwnerPractitionerId,
   getStudioTimezone,
   sql,
 } from "./helpers/seed";
 import { loginByMagicLink } from "./helpers/flows";
+import { addDays, todayInTz, utcInstantFromLocal } from "../lib/booking/tz";
 
 // A BUFFER APPROVAL BELONGS TO EXACTLY ONE BOOKING CANDIDATE.
 //
@@ -45,12 +46,25 @@ test("a buffer approval for one time does not travel to another", async ({
   const { clientId } = await seedE2eClient(seed);
   const ownerId = await getOwnerPractitionerId(seed.studioId);
   const tz = await getStudioTimezone(seed.studioId);
-  await seedFutureAppointmentAt(seed.studioId, ownerId, clientId, tz, "15:00");
+  // DATE DISCIPLINE: pin an explicit future date instead of "today at 15:00".
+  // A today-relative fixture passes all morning and fails once the chosen hour
+  // has passed, which makes the suite's greenness a function of when CI runs.
+  const targetDate = addDays(todayInTz(tz), 7);
+  const nStart = utcInstantFromLocal(targetDate, "15:00", tz);
+  await seedConfirmedAppointment(
+    seed.studioId,
+    ownerId,
+    clientId,
+    nStart.toISOString(),
+    new Date(nStart.getTime() + 60 * 60_000).toISOString(),
+  );
 
   await loginByMagicLink(page, seed.ownerEmail);
   await page.goto(`/clients/${clientId}`);
   await page.getByRole("button", { name: /\+ Book appointment/i }).click();
 
+  // Book on the pinned date, not on today.
+  await page.locator('input[type="date"]').fill(targetDate);
   await page.getByLabel(/Choose another time/i).check();
   const timeInput = page.locator('input[type="time"]');
   await expect(timeInput).toBeVisible({ timeout: 20_000 });

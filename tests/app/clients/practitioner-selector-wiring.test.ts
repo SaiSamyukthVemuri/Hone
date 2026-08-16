@@ -53,10 +53,14 @@ describe("target-aware slot loader + eligible-practitioners action", () => {
 
 describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6 1B/1C)", () => {
   it("1B: an eligible-lookup error clears target/slots and never falls back to self slots", () => {
-    expect(BOOK).toMatch(/setEligibleError\(r\.error\)/);
+    // The error and empty-list outcomes are now DISTINCT results from
+    // resolveEligibleSelection rather than inline branches, so a failed lookup
+    // can never be mistaken for "no eligible practitioners" (or vice versa).
+    expect(BOOK).toMatch(/outcome\.kind === "failed"/);
+    expect(BOOK).toMatch(/setEligibleError\(outcome\.error\)/);
     expect(BOOK).toMatch(/setTarget\(""\)/);
     // Empty eligible list → no slot request.
-    expect(BOOK).toMatch(/if \(!nextTarget\) \{[\s\S]{0,220}return;/);
+    expect(BOOK).toMatch(/outcome\.kind === "empty"[\s\S]{0,260}return;/);
     // Confirmation requires the target to be in the eligible list.
     expect(BOOK).toMatch(/const targetValid = !showSelector \|\| eligible\.some\(\(p\) => p\.id === target\)/);
     expect(BOOK).toMatch(/canConfirm =\s*\n?\s*targetValid &&/);
@@ -65,7 +69,11 @@ describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6
     expect(BOOK).toMatch(/const eligibleReq = useRef\(0\)/);
     expect(BOOK).toMatch(/const slotReq = useRef\(0\)/);
     expect(BOOK).toMatch(/if \(req !== slotReq\.current\) return/);
-    expect(BOOK).toMatch(/if \(req !== eligibleReq\.current\) return/);
+    // The eligible-side guard moved into resolveEligibleSelection, which checks
+    // it AFTER the await; the component supplies the generation + predicate.
+    expect(BOOK).toMatch(/generation: req,/);
+    expect(BOOK).toMatch(/isCurrent: \(g\) => g === eligibleReq\.current/);
+    expect(BOOK).toMatch(/outcome\.kind === "superseded"/);
   });
 });
 
@@ -87,10 +95,20 @@ describe("BookAppointment — owner selector, member self-only, confirmation", (
     expect(BOOK).toMatch(/if \(showSelector && target\) fd\.set\("practitioner_id", target\)/);
   });
   it("documents + implements the default-target rule (preserve valid → current owner → first eligible)", () => {
-    expect(BOOK).toMatch(/function resolveDefaultTarget/);
-    expect(BOOK).toMatch(/if \(list\.some\(\(p\) => p\.id === current\)\) return current/);
-    expect(BOOK).toMatch(/if \(list\.some\(\(p\) => p\.id === currentPractitionerId\)\) return currentPractitionerId/);
-    expect(BOOK).toMatch(/return list\[0\]\?\.id \?\? ""/);
+    // The rule moved into lib/booking/eligible-selection.ts, together with the
+    // ordering guarantee it depends on: the current selection is read AFTER the
+    // await, so a refresh in flight cannot revert a later explicit choice.
+    // Behaviourally proved in tests/lib/booking/eligible-selection.test.ts.
+    const HELPER = readFileSync(
+      path.resolve(__dirname, "../../../lib/booking/eligible-selection.ts"),
+      "utf8",
+    );
+    expect(BOOK).toMatch(/resolveEligibleSelection\(\{/);
+    expect(BOOK).toMatch(/preferredFallback: currentPractitionerId/);
+    expect(HELPER).toMatch(/const current = input\.readCurrentTarget\(\);/);
+    expect(HELPER).toMatch(/if \(list\.some\(\(p\) => p\.id === current\)\)/);
+    expect(HELPER).toMatch(/input\.preferredFallback/);
+    expect(HELPER).toMatch(/const first = list\[0\]\?\.id;/);
   });
   it("confirmation shows the assigned practitioner (display name)", () => {
     expect(BOOK).toMatch(/With \{assignedName\}/);
