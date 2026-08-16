@@ -466,16 +466,24 @@ export function BookAppointment({
                 className="min-h-[44px] max-w-[10rem] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
               />
             </label>
-            {/* An UNKNOWN window is not an outside-hours time and must not
-                borrow that copy or its acknowledgement. Confirm stays disabled
-                until the real window arrives. */}
+            {/* NOTHING IS ASSERTED UNTIL THERE IS SOMETHING TO ASSERT ABOUT.
+                An UNKNOWN window is not an outside-hours time, and neither is
+                an EMPTY time field -- decideManualTime reports
+                requiresOutsideOverride for both (it fails closed), which is the
+                right answer for "may this be booked?" and the wrong one for
+                "what is this time?". Rendering the amber off it told the
+                practitioner a blank field was outside their availability, and
+                handed an owner an acknowledgement for no time at all. Confirm
+                is already blocked in both states (canConfirm requires
+                windowKnown AND manualTimeValid), so this is purely about not
+                claiming something untrue. */}
             {!windowKnown ? (
               <p className="text-xs text-neutral-600 dark:text-neutral-400">
                 {loading || loadingPractitioners
                   ? "Checking your working hours…"
                   : "Could not load your working hours, so this time cannot be checked. Refresh and try again."}
               </p>
-            ) : requiresOutsideOverride ? (
+            ) : !manualTimeValid ? null : requiresOutsideOverride ? (
               <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
                 <p className="text-xs text-amber-800 dark:text-amber-300">
                   {manualVerdict === "practitioner_closed"
@@ -499,11 +507,10 @@ export function BookAppointment({
                 )}
               </div>
             ) : (
-              manualTimeValid && (
-                <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                  That time is inside your working hours. Booking normally.
-                </p>
-              )
+              // manualTimeValid is already guaranteed by the branch above.
+              <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                That time is inside your working hours. Booking normally.
+              </p>
             )}
           </div>
         )}

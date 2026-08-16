@@ -409,6 +409,41 @@ describe("F/H — collisions and buffer remain authoritative for a manual time",
   });
 });
 
+describe("E2 — practitioner/service eligibility stays the command's call", () => {
+  // The action deliberately does NOT re-implement eligibility: it is decided by
+  // create_internal_appointment_v2 (and, for capacity ON, by
+  // validate_appointment_availability's service_practitioners check). What must
+  // hold after this change is that a manual inside-hours time gets NO special
+  // treatment on the way there — it reaches the command like any other booking
+  // and the command's refusal is surfaced with the eligibility copy, never
+  // swallowed or re-labelled as an availability problem.
+  it("an ineligible target is refused with the eligibility reason, not an availability one", () => {
+    scenario.rpcResult = "not_eligible";
+    return book({ starts_at: MANUAL_INSIDE }).then((r) => {
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.error).toMatch(/isn't set up to perform this service/i);
+      expect(!r.ok && r.error).not.toMatch(/outside the practitioner's availability/i);
+      // It reached the command — the app layer did not pre-empt the decision.
+      expect(rpcCalls).toHaveLength(1);
+    });
+  });
+
+  it("an invalid/inactive target is refused by the command too", async () => {
+    scenario.rpcResult = "invalid_practitioner";
+    const r = await book({ starts_at: MANUAL_INSIDE });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toMatch(/isn't available for new bookings/i);
+    expect(rpcCalls).toHaveLength(1);
+  });
+
+  it("a paused studio still blocks a manual inside-hours booking", async () => {
+    scenario.rpcResult = "booking_paused";
+    const r = await book({ starts_at: MANUAL_INSIDE });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toMatch(/bookings are paused/i);
+  });
+});
+
 describe("G — blockouts and closed days refuse a manual time", () => {
   it("a full-day blockout refuses the manual time before the command runs", async () => {
     scenario.blockouts = [{ starts_on: DATE, ends_on: DATE }];

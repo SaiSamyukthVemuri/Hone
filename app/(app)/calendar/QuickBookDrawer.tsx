@@ -1220,10 +1220,16 @@ export function QuickBookDrawer({
                   amber, no acknowledgement, and no allow_outside_availability
                   on submit.
 
-                  An UNKNOWN window is neither of those. It is not an
-                  outside-hours time, so it must not borrow that copy or its
-                  acknowledgement; Save stays disabled until the real window
-                  arrives. */}
+                  An UNKNOWN window is neither of those, and neither is an
+                  EMPTY time field. decideManualTime reports
+                  requiresOutsideOverride for both because it fails closed --
+                  the right answer for "may this be booked?" and the wrong one
+                  for "what is this time?". Rendering the amber off it told the
+                  practitioner a blank field was outside their availability and
+                  offered an acknowledgement for no time at all. Save is already
+                  blocked in both states (canBook requires windowKnown AND
+                  manualTimeValid), so this is purely about not claiming
+                  something untrue. */}
               {!windowKnown ? (
                 <p className="text-xs text-neutral-600 dark:text-neutral-400">
                   {loadingSlots
@@ -1232,7 +1238,7 @@ export function QuickBookDrawer({
                       ? "Pick a service to check this time against your working hours."
                       : "Could not load your working hours, so this time cannot be checked. Refresh and try again."}
                 </p>
-              ) : requiresOutsideOverride ? (
+              ) : !manualTimeValid ? null : requiresOutsideOverride ? (
                 <>
                   <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
                     {manualVerdict === "practitioner_closed"
@@ -1255,12 +1261,11 @@ export function QuickBookDrawer({
                   </label>
                 </>
               ) : (
-                manualTimeValid && (
-                  <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                    {formatClockLabel(manualLocalTime, timeFormat)} is inside
-                    your working hours. Booking normally.
-                  </p>
-                )
+                // manualTimeValid is already guaranteed by the branch above.
+                <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                  {formatClockLabel(manualLocalTime, timeFormat)} is inside your
+                  working hours. Booking normally.
+                </p>
               )}
             </div>
           ) : loadingSlots ? (

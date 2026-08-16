@@ -134,10 +134,24 @@ describe("an unknown availability window blocks the manual path on BOTH surfaces
       });
 
       it("the outside-hours warning and acknowledgement do NOT render for an unknown window", () => {
-        // The amber block must sit on the FALSE branch of a windowKnown test,
-        // so an unknown window can never borrow out-of-hours copy.
-        expect(SRC).toMatch(/\{!windowKnown \? \([\s\S]*?\) : requiresOutsideOverride \? \(/);
+        // The amber block must sit behind a windowKnown test, so an unknown
+        // window can never borrow out-of-hours copy.
+        expect(SRC).toMatch(
+          /\{!windowKnown \? \([\s\S]*?\) : !manualTimeValid \? null : requiresOutsideOverride \? \(/,
+        );
         expect(SRC).toMatch(/Checking your working hours/);
+      });
+
+      it("nor for an EMPTY time field", () => {
+        // decideManualTime fails closed on an unparseable time too, so the same
+        // conflation showed the amber -- and, for an owner, an acknowledgement
+        // checkbox -- about a field that had not been filled in. Nothing may be
+        // asserted until there is a parseable time to assert about.
+        expect(SRC).toMatch(/: !manualTimeValid \? null :/);
+        // ...and the calm "inside your working hours" line must be on the plain
+        // else branch, not re-guarded, so the three states stay exhaustive and
+        // mutually exclusive rather than overlapping.
+        expect(SRC).not.toMatch(/\) : \(\s*\n\s*manualTimeValid && \(/);
       });
 
       it("a stale window is dropped BEFORE the refetch, never held across it", () => {

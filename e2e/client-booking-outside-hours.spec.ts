@@ -32,8 +32,30 @@ test("owner books an out-of-hours appointment from the client page", async ({ pa
   const chooseAnother = page.getByLabel(/Choose another time/i);
   await expect(chooseAnother).toBeVisible({ timeout: 20_000 });
   await chooseAnother.check();
+
+  // THIS ABSENCE HAS TO BE EARNED, IN TWO STEPS. toHaveCount(0) passes on its
+  // first poll, so it goes green for any reason the element is not there yet --
+  // which made the original assertion (straight after .check()) prove nothing.
+  //
+  // Step 1: the panel must exist. The time input lives only inside it.
+  const timeInput = page.locator('input[type="time"]');
+  await expect(timeInput).toBeVisible({ timeout: 20_000 });
+  // Step 2: the availability window must have LOADED. Until it does, the panel
+  // renders "Checking your working hours..." and suppresses the warning for the
+  // wrong reason entirely -- a negative control (removing the empty-time guard
+  // from BookAppointment and re-running this spec) still passed at step 1 alone,
+  // because the slot fetch had not resolved by then. Waiting for that line to
+  // clear is what pins windowKnown === true, so from here the absence of the
+  // warning is a statement about an EMPTY TIME and nothing else.
+  await expect(page.getByText(/Checking your working hours/i)).toHaveCount(0, {
+    timeout: 20_000,
+  });
   await expect(
     page.getByText(/This time is outside your normal availability/i),
+  ).toHaveCount(0);
+  // Nor is an acknowledgement demanded for a field that is still empty.
+  await expect(
+    page.getByLabel(/I confirm I want to book this out-of-hours time/i),
   ).toHaveCount(0);
 
   // A future date + an out-of-hours time (23:30, outside the seeded
