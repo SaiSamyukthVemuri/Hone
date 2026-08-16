@@ -31,6 +31,11 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const PAGE_PATH = "app/(app)/calendar/[id]/page.tsx";
 const PAGE = read(PAGE_PATH);
 const CARD = read("components/appointment-prep-memory-card.tsx");
+// PriorNarrative was a local function inside the appointment detail page until
+// the calendar preview drawer needed the SAME renderer. It moved verbatim to a
+// shared component rather than being reimplemented, so the guards below follow
+// it: every property they pin still holds, at its real location.
+const RENDERER = read("components/prep-prior-narrative.tsx");
 const MODEL = read("lib/sessions/appointment-prep-memory.ts");
 const LOADER = read("lib/sessions/last-treatment-loader.ts");
 const SELECTOR = read("lib/sessions/charted-session.ts");
@@ -46,6 +51,7 @@ function codeOnly(src: string): string {
 
 const PAGE_CODE = codeOnly(PAGE);
 const CARD_CODE = codeOnly(CARD);
+const RENDERER_CODE = codeOnly(RENDERER);
 const LOADER_CODE = codeOnly(LOADER);
 
 describe("the appointment page uses the SHARED last-treatment authority", () => {
@@ -562,7 +568,17 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
 
   it("the page renders narrative in the unavailable, no-treatment AND card states", () => {
     expect((PAGE_CODE.match(/<PriorNarrative /g) ?? []).length).toBe(3);
-    expect(PAGE_CODE).toMatch(/data-testid="prep-prior-narrative"/);
+    expect(RENDERER_CODE).toMatch(/data-testid="prep-prior-narrative"/);
+  });
+
+  it("the page uses the SHARED renderer and does not re-declare its own", () => {
+    // The extraction must stay an extraction. A second local PriorNarrative
+    // would let the detail page and the calendar drawer drift apart on
+    // attribution, which is the whole thing these guards exist to prevent.
+    expect(PAGE_CODE).toMatch(
+      /import \{ PriorNarrative \} from "@\/components\/prep-prior-narrative"/,
+    );
+    expect(PAGE_CODE).not.toMatch(/function PriorNarrative\(/);
   });
 
   it("ownership is decided by the pure helper, not by JSX position", () => {
@@ -597,22 +613,22 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
   it("chronology is stated in BOTH directions, never one", () => {
     // The blocker: only the "after" clause existed, so an OLDER plan rendered
     // undated and that silence read as "written at the treatment above".
-    expect(PAGE_CODE).toMatch(/after_selected_treatment/);
-    expect(PAGE_CODE).toMatch(/before_selected_treatment/);
-    expect(PAGE_CODE).toMatch(/, after the treatment above/);
-    expect(PAGE_CODE).toMatch(/, before the treatment above/);
+    expect(RENDERER_CODE).toMatch(/after_selected_treatment/);
+    expect(RENDERER_CODE).toMatch(/before_selected_treatment/);
+    expect(RENDERER_CODE).toMatch(/, after the treatment above/);
+    expect(RENDERER_CODE).toMatch(/, before the treatment above/);
     // Never an inference the data cannot support — scoped to the narrative
     // renderer, since "completed" is also an appointment STATUS elsewhere.
-    const block = functionBody(PAGE_CODE, "PriorNarrative");
+    const block = functionBody(RENDERER_CODE, "PriorNarrative");
     expect(block).toMatch(/item\.chronology/); // proves we sliced the renderer
     expect(block).not.toMatch(/still applies|supersedes|resolved|completed/i);
   });
 
   it("every fallback item is dated — provenance, never a session id", () => {
-    expect(PAGE_CODE).toMatch(/data-testid="prep-prior-date"/);
-    expect(PAGE_CODE).toMatch(/<FormattedDateTime iso=\{item\.startedAt\}/);
+    expect(RENDERER_CODE).toMatch(/data-testid="prep-prior-date"/);
+    expect(RENDERER_CODE).toMatch(/<FormattedDateTime iso=\{item\.startedAt\}/);
     // A raw session id must never reach the UI.
-    expect(PAGE_CODE).not.toMatch(/\{item\.sessionId\}/);
+    expect(RENDERER_CODE).not.toMatch(/\{item\.sessionId\}/);
   });
 
   it("a note-only row is never called a treatment", () => {
@@ -622,7 +638,7 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
   });
 
   it("fallback narrative is full text — pre-wrap, break-words, no clamp", () => {
-    const block = functionBody(PAGE_CODE, "PriorNarrative");
+    const block = functionBody(RENDERER_CODE, "PriorNarrative");
     expect(block).toMatch(/item\.text/); // proves we sliced the renderer
     expect((block.match(/whitespace-pre-wrap break-words/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(block).not.toMatch(/line-clamp|\.slice\(|substring/);
