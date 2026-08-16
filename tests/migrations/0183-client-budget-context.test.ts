@@ -194,6 +194,46 @@ describe("0183: studio_id is derived, never caller-authored", () => {
     expect(fn.slice(0, 300)).toContain("set search_path = pg_catalog, pg_temp");
   });
 
+  it("freezes client_id on UPDATE, and REJECTS rather than silently correcting", () => {
+    expect(CODE).toMatch(
+      /create trigger client_budget_context_client_id_immutable\s*\n\s*before update on public\.client_budget_context/,
+    );
+    const fn = CODE.slice(
+      CODE.indexOf("function public.client_budget_context_client_id_immutable()"),
+    ).slice(0, 900);
+    expect(fn).toContain("new.client_id is distinct from old.client_id");
+    expect(fn).toContain("raise exception");
+    // A silent reset would conceal both a caller bug and an attack.
+    expect(fn).not.toMatch(/new\.client_id\s*:=\s*old\.client_id/);
+    expect(fn).toContain("set search_path = pg_catalog, pg_temp");
+  });
+
+  it("the immutability trigger sorts BEFORE the studio-derivation trigger", () => {
+    // Same-timing triggers fire in NAME order. The move must be refused
+    // before studio_id is re-derived from a client the row must never
+    // belong to.
+    expect(
+      "client_budget_context_client_id_immutable" <
+        "client_budget_context_set_studio_id",
+    ).toBe(true);
+  });
+
+  it("does NOT freeze the fields that are meant to change", () => {
+    // Correcting a budget is the entire point of the table; only identity is
+    // frozen. A blanket "no updates" trigger would break the product.
+    const fn = CODE.slice(
+      CODE.indexOf("function public.client_budget_context_client_id_immutable()"),
+    ).slice(0, 900);
+    for (const mutable of [
+      "budget_level",
+      "budget_notes",
+      "updated_by_practitioner_id",
+      "updated_at",
+    ]) {
+      expect(fn).not.toContain(`new.${mutable}`);
+    }
+  });
+
   it("maintains updated_at by trigger, not by the caller", () => {
     expect(CODE).toMatch(
       /create trigger client_budget_context_set_updated_at\s*\n\s*before update on public\.client_budget_context/,

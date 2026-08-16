@@ -164,6 +164,49 @@ create trigger client_budget_context_set_updated_at
   before update on public.client_budget_context
   for each row execute function public.set_updated_at();
 
+-- CLIENT IDENTITY IS IMMUTABLE.
+--
+-- client_id is the primary key, and PostgreSQL permits updating a primary
+-- key. Without this guard an authenticated member could PATCH an existing row
+-- with a different client_id and MOVE the record: the studio trigger below
+-- would helpfully re-derive studio_id from the NEW client, the update policy's
+-- USING would pass on the old row and its WITH CHECK on the new one, and both
+-- composite FKs would then be satisfied. The source client silently loses its
+-- budget and one client's financial notes reappear on another client's record.
+--
+-- That is not an edit, it is data corruption, so it is REJECTED rather than
+-- silently corrected back to OLD.client_id — a silent correction would hide
+-- both a caller bug and an attack.
+--
+-- This trigger is named to sort BEFORE client_budget_context_set_studio_id:
+-- same-timing triggers fire in name order, so the move is refused before the
+-- studio is re-derived from a client this row must never belong to.
+--
+-- Deliberately NARROW. budget_level, budget_notes, updated_by_practitioner_id
+-- and updated_at all remain mutable — correcting a budget is the entire point
+-- of the table. Only the row's identity is frozen.
+create or replace function public.client_budget_context_client_id_immutable()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if new.client_id is distinct from old.client_id then
+    raise exception
+      'client_budget_context.client_id is immutable; a budget record cannot be moved between clients (attempted % -> %)',
+      old.client_id, new.client_id
+      using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists client_budget_context_client_id_immutable
+  on public.client_budget_context;
+create trigger client_budget_context_client_id_immutable
+  before update on public.client_budget_context
+  for each row execute function public.client_budget_context_client_id_immutable();
+
 -- Studio-id consistency. Same idea as client_personal_notes_set_studio_id
 -- (0035), but fired on EVERY insert and update rather than only on `update of
 -- client_id`. The narrower form leaves a real hole: an UPDATE that touches

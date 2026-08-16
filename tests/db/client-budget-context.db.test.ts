@@ -451,6 +451,181 @@ describe("0183: attribution authority (authenticated writes)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// CLIENT IDENTITY IMMUTABILITY
+//
+// The row's identity is frozen after INSERT. Without this, a member could
+// PATCH client_id and MOVE a budget record between clients: the studio trigger
+// re-derives studio_id from the new client, the update policy passes on both
+// sides, and both composite FKs are then satisfied. The source client loses
+// its budget and one client's financial notes land on another's record.
+//
+// ANTI-VACUITY: dropping the immutability trigger must turn the SAME-STUDIO
+// and DUAL-STUDIO cases red. Neither is refused by any other rule — in the
+// same-studio case BOTH clients are fully accessible to the actor, which is
+// exactly why it is the load-bearing proof.
+// ---------------------------------------------------------------------------
+
+describe("0183: client_id is immutable", () => {
+  let secondClientA: string;
+
+  beforeAll(async () => {
+    secondClientA = randomUUID();
+    await adminQuery(
+      "insert into public.clients (id, studio_id, name) values ($1, $2, 'Second client A')",
+      [secondClientA, a.studioId],
+    );
+  });
+
+  it("A. a SAME-STUDIO move is refused, and neither client is disturbed", async () => {
+    await seedBudget(a, {
+      level: "severely_limited",
+      notes: "sensitive note belonging to client one",
+    });
+    await adminQuery(
+      "delete from public.client_budget_context where client_id = $1",
+      [secondClientA],
+    );
+
+    await expect(
+      userQuery(
+        a.userId,
+        "update public.client_budget_context set client_id = $2 where client_id = $1",
+        [a.clientId, secondClientA],
+      ),
+    ).rejects.toThrow(/immutable/i);
+
+    // The source keeps its row, contents untouched.
+    const src = await budgetRow(a.clientId);
+    expect(src).toBeTruthy();
+    expect(src.budget_level).toBe("severely_limited");
+    expect(src.budget_notes).toBe("sensitive note belonging to client one");
+    // And nothing was attached to the destination.
+    const dst = await adminQuery(
+      "select 1 from public.client_budget_context where client_id = $1",
+      [secondClientA],
+    );
+    expect(dst.rows).toHaveLength(0);
+  });
+
+  it("A2. the move is refused even for the SERVICE ROLE (not merely an RLS artifact)", async () => {
+    await seedBudget(a, { notes: "still client one" });
+    await expect(
+      adminQuery(
+        "update public.client_budget_context set client_id = $2 where client_id = $1",
+        [a.clientId, secondClientA],
+      ),
+    ).rejects.toThrow(/immutable/i);
+    expect((await budgetRow(a.clientId)).budget_notes).toBe("still client one");
+  });
+
+  it("B. a DUAL-STUDIO move to the other studio's client is refused", async () => {
+    await seedBudget(a, { notes: "studio A budget", actor: dual.inA });
+    await adminQuery(
+      "delete from public.client_budget_context where client_id = $1",
+      [b.clientId],
+    );
+
+    // Same human, valid identities in both studios, supplying the destination
+    // studio's practitioner id — the shape that would otherwise satisfy every
+    // remaining check.
+    await expect(
+      userQuery(
+        dual.userId,
+        `update public.client_budget_context
+            set client_id = $2, updated_by_practitioner_id = $3
+          where client_id = $1`,
+        [a.clientId, b.clientId, dual.inB],
+      ),
+    ).rejects.toThrow(/immutable/i);
+
+    expect((await budgetRow(a.clientId)).budget_notes).toBe("studio A budget");
+    const moved = await adminQuery(
+      "select 1 from public.client_budget_context where client_id = $1",
+      [b.clientId],
+    );
+    expect(moved.rows).toHaveLength(0);
+  });
+
+  it("C. an ORDINARY update of level and notes still works", async () => {
+    await seedBudget(a, { level: "somewhat_limited", notes: "before" });
+    const res = await userQuery(
+      a.userId,
+      `update public.client_budget_context
+          set budget_level = 'no_stated_limit',
+              budget_notes = 'after',
+              updated_by_practitioner_id = $2
+        where client_id = $1`,
+      [a.clientId, a.practitionerId],
+    );
+    expect(res.rowCount).toBe(1);
+    expect(await budgetRow(a.clientId)).toMatchObject({
+      budget_level: "no_stated_limit",
+      budget_notes: "after",
+    });
+  });
+
+  it("C2. re-stating the SAME client_id in the SET list is not a move", async () => {
+    // The guard compares values, not whether the column was mentioned, so a
+    // caller that harmlessly re-sends its own client_id is unaffected.
+    await seedBudget(a, { notes: "unchanged identity" });
+    const res = await userQuery(
+      a.userId,
+      `update public.client_budget_context
+          set client_id = $1, budget_notes = 'edited'
+        where client_id = $1`,
+      [a.clientId],
+    );
+    expect(res.rowCount).toBe(1);
+    expect((await budgetRow(a.clientId)).budget_notes).toBe("edited");
+  });
+
+  it("D. the application's UPSERT on the same client still works", async () => {
+    // This is the shape the server action issues: insert the full row with
+    // ON CONFLICT (client_id) DO UPDATE. The conflicting row has the same
+    // client_id by definition, so the guard must not fire.
+    await seedBudget(a, { level: "somewhat_limited", notes: "first" });
+    const res = await userQuery(
+      a.userId,
+      `insert into public.client_budget_context
+         (client_id, studio_id, budget_level, budget_notes, updated_by_practitioner_id)
+       values ($1, $2, 'severely_limited', 'upserted', $3)
+       on conflict (client_id) do update set
+         client_id = excluded.client_id,
+         studio_id = excluded.studio_id,
+         budget_level = excluded.budget_level,
+         budget_notes = excluded.budget_notes,
+         updated_by_practitioner_id = excluded.updated_by_practitioner_id`,
+      [a.clientId, a.studioId, a.practitionerId],
+    );
+    expect(res.rowCount).toBe(1);
+    expect(await budgetRow(a.clientId)).toMatchObject({
+      budget_level: "severely_limited",
+      budget_notes: "upserted",
+    });
+  });
+
+  it("E. a fresh INSERT for a client with no row is unaffected", async () => {
+    await adminQuery(
+      "delete from public.client_budget_context where client_id = $1",
+      [secondClientA],
+    );
+    const res = await userQuery(
+      a.userId,
+      `insert into public.client_budget_context
+         (client_id, studio_id, budget_notes, updated_by_practitioner_id)
+       values ($1, $2, 'brand new', $3)`,
+      [secondClientA, a.studioId, a.practitionerId],
+    );
+    expect(res.rowCount).toBe(1);
+    expect((await budgetRow(secondClientA)).budget_notes).toBe("brand new");
+    await adminQuery(
+      "delete from public.client_budget_context where client_id = $1",
+      [secondClientA],
+    );
+  });
+});
+
 describe("0183: RLS read/write scoping", () => {
   it("a member reads their OWN studio's budget context", async () => {
     await seedBudget(a, { level: "no_stated_limit", notes: "mine" });
