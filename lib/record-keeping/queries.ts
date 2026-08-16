@@ -3,6 +3,7 @@ import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   normalizeProbeLabel,
+  chartedLifecycleStatus,
   type ProbeLotSuggestion,
   type ProbeLotSuggestions,
 } from "@/lib/record-keeping/probe-lot-suggestion";
@@ -46,6 +47,19 @@ export async function getSterileItemRecords(
 // "Supplies expiring" attention card. Studio-scoped (RLS + explicit .eq);
 // `today` is passed in so callers stay deterministic. Returns only safe display
 // fields (no lot_number, the card never needs it).
+//
+// MIGRATION 0182 — DISCARDED STOCK IS FILTERED OUT HERE, DELIBERATELY. This is
+// a purely CURRENT surface: it exists only to prompt action on supplies still
+// on the shelf, and it has exactly one caller (the dashboard). Stock the
+// practitioner recorded as physically thrown away cannot need replacing, so the
+// gate belongs in the query. This is the precise line that stops Hone telling
+// Chloe to replace probes she has already binned.
+//
+// This is NOT the forbidden global filter. The foundational reads —
+// getSterileItemRecords (the historical log), getProbeLotInventory (the
+// inventory the charting form and every historical link resolve through) and
+// getLotTraceability — are DIFFERENT functions and are deliberately left
+// unfiltered. Current inventory is not historical record existence.
 export async function getExpiringSterileItems(
   studioId: string,
   todayIso: string,
@@ -63,6 +77,7 @@ export async function getExpiringSterileItems(
     .from("record_keeping_sterile_items")
     .select("id, item_description, manufacturer_name, expiry_date")
     .eq("studio_id", studioId)
+    .is("date_discarded", null) // 0182: discarded stock is not current stock
     .not("expiry_date", "is", null)
     .lte("expiry_date", horizon)
     .order("expiry_date", { ascending: true })
@@ -91,6 +106,10 @@ export async function getLatestProbeLotSuggestion(
     .eq("studio_id", studioId)
     .not("lot_number", "is", null)
     .ilike("item_description", "%probe%")
+    // Migration 0182: never suggest stock the practitioner recorded as
+    // discarded. This function suggests the CURRENT lot to chart against, so
+    // discarded rows are excluded here alongside the existing expiry gate.
+    .is("date_discarded", null)
     .or(`expiry_date.is.null,expiry_date.gte.${today}`)
     .order("date_purchased", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
@@ -107,6 +126,15 @@ export async function getLatestProbeLotSuggestion(
 // RLS). Expired lots ARE returned (a historical value must stay selectable) but
 // are classified isExpired and sorted last by buildProbeLotOptions. Manual entry
 // always remains available in the form; this only powers suggestions/search.
+//
+// MIGRATION 0182 — DISCARDED ROWS ARE RETURNED, NOT FILTERED. This is the
+// FOUNDATIONAL inventory read, and filtering it on date_discarded would be a
+// defect: a historical session's probe_inventory_item_id link, the edit chooser
+// for that old record, and lot traceability all resolve through this list, so a
+// row that vanishes here takes retrospective truth with it. date_discarded is
+// SELECTED and carried onto each option as isDiscarded; the CURRENT-stock gate
+// lives in activeProbeLotOptionsForProbe / resolveInventoryAutofill. Current
+// inventory is not historical record existence.
 export async function getProbeLotInventory(
   studioId: string,
 ): Promise<ProbeLotOption[]> {
@@ -119,7 +147,9 @@ export async function getProbeLotInventory(
   // unclassified rows (probe_key null) never appear as an exact probe match.
   const { data } = await supabase
     .from("record_keeping_sterile_items")
-    .select("id, probe_key, lot_number, item_description, manufacturer_name, expiry_date")
+    .select(
+      "id, probe_key, lot_number, item_description, manufacturer_name, expiry_date, date_discarded",
+    )
     .eq("studio_id", studioId)
     .not("probe_key", "is", null)
     .not("lot_number", "is", null)
@@ -133,6 +163,7 @@ export async function getProbeLotInventory(
     item_description: string | null;
     manufacturer_name: string | null;
     expiry_date: string | null;
+    date_discarded: string | null;
   }>).map((r) => ({
     id: r.id,
     probeKey: r.probe_key,
@@ -140,6 +171,7 @@ export async function getProbeLotInventory(
     itemDescription: r.item_description ?? "",
     manufacturerName: r.manufacturer_name ?? null,
     expiryDate: r.expiry_date,
+    dateDiscarded: r.date_discarded,
   }));
   return buildProbeLotOptions(rows, today);
 }
@@ -236,6 +268,8 @@ export async function getProbeLotSuggestions(
         inventoryItemId,
         lastConfirmedInventoryItemId: null,
         lastCharted: "",
+        lastChartedInventoryItemId: null,
+        lastChartedLifecycle: null,
       };
     }
     if (
@@ -256,11 +290,15 @@ export async function getProbeLotSuggestions(
     slot: string,
     lot: string,
     createdAt: string,
+    // 0182: the inventory id of THIS row, kept in lockstep with lastCharted so
+    // the auto-fill guard can check that exact item's lifecycle by identity.
+    inventoryItemId: string | null,
   ) => {
     const previous = seenAt[slot];
     if (previous !== undefined && previous >= createdAt) return;
     seenAt[slot] = createdAt;
     map[slot].lastCharted = lot;
+    map[slot].lastChartedInventoryItemId = inventoryItemId;
   };
   const lastChartedAtByKey: Record<string, string> = {};
   const lastChartedAtByLabel: Record<string, string> = {};
@@ -274,15 +312,114 @@ export async function getProbeLotSuggestions(
     const key = (row.probe_key as string | null)?.trim();
     if (key) {
       seedFirst(byKey, key, lot, confirmed, inventoryItemId);
-      seedLastCharted(byKey, lastChartedAtByKey, key, lot, createdAt);
+      seedLastCharted(
+        byKey,
+        lastChartedAtByKey,
+        key,
+        lot,
+        createdAt,
+        inventoryItemId,
+      );
     }
     const label = normalizeProbeLabel(row.probe_label as string | null);
     if (label) {
       seedFirst(byLabel, label, lot, confirmed, inventoryItemId);
-      seedLastCharted(byLabel, lastChartedAtByLabel, label, lot, createdAt);
+      seedLastCharted(
+        byLabel,
+        lastChartedAtByLabel,
+        label,
+        lot,
+        createdAt,
+        inventoryItemId,
+      );
+    }
+  }
+
+  // Migration 0182: resolve the lifecycle of every EXACT item a last-charted
+  // row pointed at, through the identity-complete authority read rather than
+  // the picker projection. One bounded, studio-scoped query for the whole set.
+  const chartedIds = [...Object.values(byKey), ...Object.values(byLabel)]
+    .map((s) => s.lastChartedInventoryItemId)
+    .filter((id): id is string => !!id);
+  if (chartedIds.length > 0) {
+    const today = new Date().toISOString().slice(0, 10);
+    const lifecycle = await getInventoryLifecycleByIds(studioId, chartedIds);
+    for (const s of [...Object.values(byKey), ...Object.values(byLabel)]) {
+      const id = s.lastChartedInventoryItemId;
+      if (!id) continue; // manual row: no item, so no lifecycle. Not "unknown".
+      // A failed read yields "unknown" for every id, NOT "current": the
+      // auto-fill guard must fail closed rather than treat an unanswered
+      // question as permission.
+      s.lastChartedLifecycle = lifecycle.ok
+        ? chartedLifecycleStatus(lifecycle.byId.get(id), today)
+        : "unknown";
     }
   }
   return { byKey, byLabel };
+}
+
+// Migration 0182 — THE IDENTITY-COMPLETE LIFECYCLE AUTHORITY.
+//
+// Resolves the lifecycle of EXACT sterile-item ids. It exists because
+// getProbeLotInventory is deliberately a FILTERED, BOUNDED projection built for
+// the charting picker — it requires a non-null probe_key, its option builder
+// drops blank lot numbers, and it caps at 500 rows. A historically linked item
+// can be legitimately absent from that list while still existing and still
+// being discarded, so looking an id up in it made "absent" indistinguishable
+// from "not inventory" and the auto-fill guard failed OPEN.
+//
+// This read applies NONE of those filters. It is keyed on id alone, so it is
+// truthful for an unclassified row, a blank-lot row, or a row far outside any
+// picker bound.
+//
+// AUTHORITY POSTURE:
+//   * studio-scoped: explicit .eq("studio_id") on top of the 0085
+//     is_studio_member RLS SELECT policy, so a cross-studio id resolves to
+//     NOTHING and is reported as unresolved (never as another studio's data);
+//   * bounded by the caller's id set, never a whole-table scan;
+//   * user-scoped client — NO service role, no elevated read;
+//   * returns ONLY the lifecycle columns the decision mechanically needs.
+//
+// FAIL-CLOSED CONTRACT: a read error returns { ok: false }. Callers must map
+// that to "unknown" and refuse to auto-fill, never to "current". Silence is not
+// evidence that stock still exists.
+export type InventoryLifecycleFact = {
+  id: string;
+  expiryDate: string | null;
+  dateDiscarded: string | null;
+};
+
+export async function getInventoryLifecycleByIds(
+  studioId: string,
+  ids: ReadonlyArray<string>,
+): Promise<
+  { ok: true; byId: Map<string, InventoryLifecycleFact> } | { ok: false }
+> {
+  const unique = [...new Set(ids.map((i) => (i ?? "").trim()).filter(Boolean))];
+  if (unique.length === 0) return { ok: true, byId: new Map() };
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("record_keeping_sterile_items")
+    .select("id, expiry_date, date_discarded")
+    .eq("studio_id", studioId)
+    .in("id", unique);
+  // Do NOT fall back to an empty map here: an empty map is indistinguishable
+  // from "every id resolved as missing", which is a legitimate state. The
+  // caller must be able to tell a failed read from a truthful absence.
+  if (error) return { ok: false };
+  const byId = new Map<string, InventoryLifecycleFact>();
+  for (const r of (data ?? []) as Array<{
+    id: string;
+    expiry_date: string | null;
+    date_discarded: string | null;
+  }>) {
+    byId.set(r.id, {
+      id: r.id,
+      expiryDate: r.expiry_date,
+      dateDiscarded: r.date_discarded,
+    });
+  }
+  return { ok: true, byId };
 }
 
 export async function getDisinfectantRecords(

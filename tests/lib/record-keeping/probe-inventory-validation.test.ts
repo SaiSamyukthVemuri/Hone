@@ -318,3 +318,94 @@ describe("expired-lot policy (#15)", () => {
     if (r.ok) expect(r.probeLotNumber).toBe("OLD-LOT");
   });
 });
+
+// Migration 0182 — the discarded-lot policy, at the ONLY server-side authority
+// boundary for an inventory link. Deliberately shaped as the exact mirror of
+// the expired-lot pair above, because the policy IS the same policy: a discard
+// changes selectability-by-default, not existence.
+describe("discarded-lot policy (0182)", () => {
+  // NOT expired — the discard alone must carry the decision, or a
+  // discarded-but-in-date box still reads as usable.
+  const discardedRow = {
+    id: ITEM,
+    studio_id: STUDIO,
+    lot_number: "BINNED-LOT",
+    probe_key: F3,
+    expiry_date: TOMORROW,
+    date_discarded: "2026-07-10",
+  };
+
+  it("a DISCARDED lot is REJECTED when not explicitly confirmed", async () => {
+    const r = await resolveProbeInventorySelection(
+      fakeSupabase(discardedRow),
+      STUDIO,
+      { ...base, probeLotConfirmed: false },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/discarded/i);
+  });
+
+  it("a DISCARDED lot is ALLOWED (retrospective) with explicit confirmation", async () => {
+    // Contract #4/#5. Chloe bins a box on 10 July, then on 15 July writes up a
+    // session she performed on 1 July — before the discard. That treatment
+    // really did use that box, so it must still link with full traceability. A
+    // hard reject here would force real historical work onto the unlinked
+    // manual path and quietly destroy the lineage, punishing her for keeping an
+    // honest discard log.
+    const r = await resolveProbeInventorySelection(
+      fakeSupabase(discardedRow),
+      STUDIO,
+      { ...base, probeLotConfirmed: true },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.probeLotNumber).toBe("BINNED-LOT"); // snapshot derived from the DB row
+      expect(r.probeInventoryItemId).toBe(ITEM);
+      expect(r.linked).toBe(true);
+    }
+  });
+
+  it("POSITIVE CONTROL: an identical NON-discarded lot links with no confirmation", async () => {
+    // Without this the reject above would pass just as well if the resolver
+    // had been broken to refuse everything. The two rows differ ONLY by
+    // date_discarded.
+    const r = await resolveProbeInventorySelection(
+      fakeSupabase({ ...discardedRow, date_discarded: null }),
+      STUDIO,
+      { ...base, probeLotConfirmed: false },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.probeInventoryItemId).toBe(ITEM);
+  });
+
+  it("a legacy row with NO date_discarded key behaves exactly as before", async () => {
+    // Contract #11 at this boundary: the column is absent from the fixture
+    // entirely, as it is for every pre-0182 row, and nothing changes.
+    const { date_discarded, ...legacy } = discardedRow;
+    void date_discarded;
+    const r = await resolveProbeInventorySelection(fakeSupabase(legacy), STUDIO, {
+      ...base,
+      probeLotConfirmed: false,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("the UNCHANGED historical link bypasses the discard gate entirely", async () => {
+    // THE contract-#4 guarantee. A block that already stored this link, whose
+    // probe has not changed, re-saves without ANY live re-validation — so a
+    // later discard can never block an unrelated edit to a historical record.
+    // The fake returns NO row at all, proving the resolver never even queried.
+    const r = await resolveProbeInventorySelection(fakeSupabase(null), STUDIO, {
+      ...base,
+      probeLotConfirmed: false,
+      existingProbeKey: F3,
+      existingInventoryItemId: ITEM,
+      existingSnapshot: "BINNED-LOT",
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.probeInventoryItemId).toBe(ITEM);
+      expect(r.probeLotNumber).toBe("BINNED-LOT");
+    }
+  });
+});

@@ -108,6 +108,11 @@ export async function addSterileItemRecordAction(
     amount_purchased: str(formData.get("amount_purchased"), 100),
     lot_number: str(formData.get("lot_number"), 120),
     expiry_date: expiry || null,
+    // Migration 0182. Present on CREATE for the same reason the disinfectant
+    // form has it: a logbook is often written up after the fact, so recording a
+    // box that has already been used up and thrown away must be possible in one
+    // step. Normally left blank, which is "not discarded".
+    date_discarded: dateStr(formData.get("date_discarded")) || null,
     notes: str(formData.get("notes")) || null,
     probe_key: probeKey.value,
     created_by_practitioner_id: practitionerId,
@@ -282,6 +287,22 @@ export async function updateSterileItemRecordAction(
       amount_purchased: str(formData.get("amount_purchased"), 100),
       lot_number: str(formData.get("lot_number"), 120),
       expiry_date: expiry || null,
+      // Migration 0182: the structured discard. This is the ONLY way an item
+      // leaves current inventory, and it is an ORDINARY FIELD EDIT — writing a
+      // date discards it, clearing the field (empty -> null) UNDISCARDS it.
+      //
+      // Reversibility is deliberate and is inherited, not invented: this is
+      // exactly how record_keeping_disinfectants.date_discarded has behaved
+      // since 0085. A logbook must accept a correction, and the alternative
+      // (an irreversible one-way flag) would mean a single mis-click
+      // permanently retired a real box of stock with no way back. Audit truth
+      // is NOT weakened by allowing the reversal: the 0086 trigger diffs every
+      // column generically, so BOTH transitions are recorded with old/new
+      // values and the acting practitioner — "discarded on the 10th, undone on
+      // the 11th by Sam" is fully reconstructable, and the audit trail itself
+      // stays append-only. Nothing here deletes a row; there is no delete path
+      // in this module by design.
+      date_discarded: dateStr(formData.get("date_discarded")) || null,
       notes: str(formData.get("notes")) || null,
       probe_key: probeKey.value,
     })

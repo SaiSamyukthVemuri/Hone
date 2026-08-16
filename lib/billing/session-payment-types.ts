@@ -29,6 +29,13 @@ export const SESSION_PAYMENT_AMOUNT_CEILING_CENTS = 200_000;
 // session that produced it, any discount applied, etc.).
 export const SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH = 1000;
 
+// F-PAY-002. The practitioner's short explanation for a final charge that
+// differs from the booked reference price ("Client discount", "Aftercare
+// product"). It is audit context, not a structured discount or product
+// record, so it is bounded well below the note cap: the two share the one
+// internal_note column and both must fit in it together.
+export const SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH = 200;
+
 // Summary shapes mirror lib/billing/manual-fee-types.ts so the UI
 // can render the same blocked / ready states without dragging a
 // second style.

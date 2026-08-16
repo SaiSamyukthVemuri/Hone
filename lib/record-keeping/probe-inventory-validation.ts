@@ -11,7 +11,7 @@ import { isUuid } from "@/lib/sessions/probe-lot-validation";
 // (a) exists, (b) belongs to the caller's OWN studio (RLS-scoped query: a
 // cross-studio id returns no row), (c) has a nonblank lot number, (d) is
 // classified for the NEWLY-selected probe, and (e) satisfies the expired-lot
-// policy. The lot-number snapshot is DERIVED FROM THE DATABASE ROW: client
+// AND discarded-lot policies. The lot-number snapshot is DERIVED FROM THE DATABASE ROW: client
 // text is never trusted for the linked path. On any failure we return an error
 // and write nothing (never fall back to client text).
 //
@@ -20,8 +20,11 @@ import { isUuid } from "@/lib/sessions/probe-lot-validation";
 // (values loaded server-side from the block row, never claimed by the client),
 // the frozen snapshot is preserved with NO live re-validation. The link was
 // validated when first written and is still protected by the same-studio FK, so
-// a later inventory lot-number edit, expiry change, or probe RECLASSIFICATION
-// must never block an unrelated edit to a historical record (contract #4/#7).
+// a later inventory lot-number edit, expiry change, probe RECLASSIFICATION or
+// DISCARD (0182) must never block an unrelated edit to a historical record
+// (contract #4/#7). This is the path that keeps a treatment performed BEFORE a
+// discard fully re-saveable AFTER it: the row still exists, the link still
+// resolves, and no lifecycle re-check runs.
 //
 // The dormant probe_lots table and electrolysis_entries.probe_lot_id are not
 // touched. Manual path: probe_inventory_item_id is NULL; the trimmed free-text
@@ -128,7 +131,7 @@ export async function resolveProbeInventorySelection(
   // then derive a FRESH snapshot from the DB row (client text is never trusted).
   const { data, error } = await supabase
     .from("record_keeping_sterile_items")
-    .select("id, studio_id, lot_number, probe_key, expiry_date")
+    .select("id, studio_id, lot_number, probe_key, expiry_date, date_discarded")
     .eq("id", rawId)
     .eq("studio_id", studioId)
     .maybeSingle();
@@ -158,6 +161,28 @@ export async function resolveProbeInventorySelection(
   const lot = ((data.lot_number as string | null) ?? "").trim();
   if (!lot) {
     return { ok: false, error: "That inventory item has no lot number." };
+  }
+
+  // Migration 0182: stock the practitioner recorded as physically discarded is
+  // not CURRENT inventory, so it is never offered and never auto-filled (the
+  // chooser and every auto-fill path gate on isCurrentStock upstream).
+  //
+  // It is deliberately NOT a hard reject here, and the reason is retrospective
+  // charting. Chloe discards a box on the 10th and on the 15th writes up a
+  // session from the 1st that legitimately used it. A hard reject would force
+  // that real, already-performed treatment onto the manual free-text path and
+  // DESTROY its inventory traceability — punishing her for having kept an
+  // honest discard log. So discard follows the EXACT policy expiry already
+  // follows: excluded from current stock, linkable only on an explicit package
+  // confirmation. That is the difference between "not current" and "never
+  // happened", which is the whole point of this change.
+  const discardedOn = (data.date_discarded as string | null) ?? null;
+  if (discardedOn != null && !input.probeLotConfirmed) {
+    return {
+      ok: false,
+      error:
+        "That inventory lot is recorded as discarded. Confirm the package to record it for a past treatment, or choose a current lot.",
+    };
   }
 
   const expiry = (data.expiry_date as string | null) ?? null;

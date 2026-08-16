@@ -112,6 +112,11 @@ const CRITICAL_COLUMNS = [
   // Migration 0155: durable inventory-backed probe-lot linkage.
   ["session_blocks", "probe_inventory_item_id"],
   ["record_keeping_sterile_items", "probe_key"],
+  // Migration 0182: the structured discard lifecycle. Pinned because the whole
+  // current-vs-historical split reads this one column — if the hand-maintained
+  // type ever drifts from the database, discarded stock silently returns to
+  // current inventory.
+  ["record_keeping_sterile_items", "date_discarded"],
   // Migration 0156: conditional numbing notes.
   ["session_blocks", "numbing_notes"],
   ["session_blocks", "tolerance_rating"],

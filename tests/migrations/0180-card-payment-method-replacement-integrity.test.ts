@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import {
+  countVersion,
+  isRepoMax,
+  migrationState,
+  versionsAbove,
+} from "./helpers/migration-state";
 
 // 0180 — card-on-file replacement integrity. STATIC contract.
 //
@@ -61,12 +66,17 @@ describe("0180 — production truth: APPLIED (CURRENT STATE — moves on the nex
     expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeGreaterThanOrEqual(180);
   });
 
-  // 0181 is authored but NOT YET APPLIED, so repo and hosted deliberately
-  // disagree until the migration-first rollout runs. Asserting parity here
-  // would make an intentional pre-apply state look like a defect; the pending
-  // set is asserted in 0181's own test instead.
+  // The invariant here is "production never claims a migration the repository
+  // does not have" — hosted <= repo. It used to be pinned to the literal 181
+  // because 0181 was then authored but unapplied, so repo and hosted
+  // deliberately disagreed. 0181 and then 0182 have both since been applied,
+  // and a hard-coded ceiling would go red on every future apply for no reason
+  // connected to 0180 — the exact tripwire this suite removed. Derive the bound
+  // from the repository instead, and the assertion stays true forever.
   it("hosted has not moved past the repository", () => {
-    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeLessThanOrEqual(181);
+    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeLessThanOrEqual(
+      migrationState().repo_migration_max_number,
+    );
   });
 });
 

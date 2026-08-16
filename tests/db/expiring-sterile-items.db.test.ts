@@ -16,13 +16,19 @@ import { randomUUID } from "node:crypto";
 // the RLS + `expiry_date is not null` + `<= horizon` + studio-scope semantics
 // the function depends on. Deterministic: `today`/`horizon` are fixed here.
 
+// Migration 0182 adds `.is("date_discarded", null)` to that filter: stock the
+// practitioner has recorded as physically thrown away is no longer CURRENT
+// inventory, so it must raise no expiry warning. This is Chloe's actual
+// complaint — Hone kept telling her to replace probes she had already binned.
+//
 // The function's filter, verbatim in SQL (mirrors:
-//   .eq(studio_id).not(expiry_date is null).lte(expiry_date, horizon)
-//   .order(expiry_date asc)):
+//   .eq(studio_id).is(date_discarded, null).not(expiry_date is null)
+//   .lte(expiry_date, horizon).order(expiry_date asc)):
 const FILTER_SQL = `
   select id, expiry_date
   from public.record_keeping_sterile_items
   where studio_id = $1
+    and date_discarded is null
     and expiry_date is not null
     and expiry_date <= $2
   order by expiry_date asc
@@ -43,6 +49,12 @@ const ids = {
   boundary: randomUUID(), // == horizon (today+30) → in horizon (<=)
   future: randomUUID(), // beyond horizon → EXCLUDED
   noExpiry: randomUUID(), // null expiry → EXCLUDED
+  // 0182. Both are EXPIRED and inside the horizon, so before the discard gate
+  // both warned. They differ ONLY by date_discarded, which makes them a matched
+  // positive/negative control pair: `discardedExpired` proves the gate fires,
+  // `expired` (above, identical expiry) proves it did not over-fire and silence
+  // genuine warnings.
+  discardedExpired: randomUUID(), // expired BUT discarded → EXCLUDED
 };
 const bId = randomUUID(); // Studio B, expired → EXCLUDED for A (cross-studio)
 
@@ -50,12 +62,13 @@ async function insertSterile(
   studio: SeededStudio,
   id: string,
   expiry: string | null,
+  discarded: string | null = null,
 ) {
   await adminQuery(
     `insert into public.record_keeping_sterile_items
-       (id, studio_id, date_purchased, item_description, expiry_date)
-     values ($1,$2,'2026-01-01','probe box',$3)`,
-    [id, studio.studioId, expiry],
+       (id, studio_id, date_purchased, item_description, expiry_date, date_discarded)
+     values ($1,$2,'2026-01-01','probe box',$3,$4)`,
+    [id, studio.studioId, expiry, discarded],
   );
 }
 
@@ -68,6 +81,8 @@ beforeAll(async () => {
   await insertSterile(a, ids.boundary, HORIZON);
   await insertSterile(a, ids.future, "2026-09-15");
   await insertSterile(a, ids.noExpiry, null);
+  // 0182: same expiry as ids.expired, but recorded as thrown away.
+  await insertSterile(a, ids.discardedExpired, "2026-06-01", "2026-06-20");
   await insertSterile(b, bId, "2026-06-01"); // B expired, must not leak to A
 });
 
@@ -89,6 +104,64 @@ describe("getExpiringSterileItems filter on the real migrated DB (RLS-scoped)", 
       q(FILTER_SQL, [a.studioId, HORIZON]),
     );
     expect(res.rows.map((r) => r.id)).not.toContain(ids.noExpiry);
+  });
+
+  // ---- Migration 0182: the discard gate --------------------------------
+  it("excludes an EXPIRED item once it is recorded as discarded (0182)", async () => {
+    const res = await asUser(a.userId, (q) =>
+      q(FILTER_SQL, [a.studioId, HORIZON]),
+    );
+    expect(res.rows.map((r) => r.id)).not.toContain(ids.discardedExpired);
+  });
+
+  it("POSITIVE CONTROL: the identically-expired UNdiscarded item still warns", async () => {
+    // Without this the test above would pass just as well if the gate were
+    // over-broad and silenced every expiry warning. ids.expired and
+    // ids.discardedExpired share the expiry date 2026-06-01 and differ ONLY by
+    // date_discarded, so the pair isolates the new predicate exactly.
+    const res = await asUser(a.userId, (q) =>
+      q(FILTER_SQL, [a.studioId, HORIZON]),
+    );
+    expect(res.rows.map((r) => r.id)).toContain(ids.expired);
+  });
+
+  it("NEGATIVE CONTROL: the row still EXISTS and is readable — discard is not deletion", async () => {
+    // The whole architecture rests on this: the warning stops, the record does
+    // not. Historical record keeping, traceability, export and search all read
+    // the row through exactly this path.
+    const res = await asUser(a.userId, (q) =>
+      q(
+        `select id, expiry_date, date_discarded
+           from public.record_keeping_sterile_items
+          where id = $1`,
+        [ids.discardedExpired],
+      ),
+    );
+    expect(res.rowCount).toBe(1);
+    expect(res.rows[0].date_discarded).not.toBeNull();
+  });
+
+  it("a CLEARED discard restores the warning (undiscard is reversible, 0182)", async () => {
+    // Correction path: an accidental discard is undone by clearing the field,
+    // and the item returns to current inventory. Restored afterwards so the
+    // other cases in this file keep their fixture.
+    await adminQuery(
+      "update public.record_keeping_sterile_items set date_discarded = null where id = $1",
+      [ids.discardedExpired],
+    );
+    const back = await asUser(a.userId, (q) =>
+      q(FILTER_SQL, [a.studioId, HORIZON]),
+    );
+    expect(back.rows.map((r) => r.id)).toContain(ids.discardedExpired);
+
+    await adminQuery(
+      "update public.record_keeping_sterile_items set date_discarded = '2026-06-20' where id = $1",
+      [ids.discardedExpired],
+    );
+    const gone = await asUser(a.userId, (q) =>
+      q(FILTER_SQL, [a.studioId, HORIZON]),
+    );
+    expect(gone.rows.map((r) => r.id)).not.toContain(ids.discardedExpired);
   });
 
   it("excludes a future expiry beyond the horizon", async () => {

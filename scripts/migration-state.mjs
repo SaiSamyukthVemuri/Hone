@@ -148,6 +148,13 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     hosted_migration_max: record.hosted_migration_max,
     hosted_migration_max_number: hostedMaxNumber,
     hosted_applied_at: record.hosted_applied_at,
+    // Travels WITH hosted_applied_at, never separately. That field is not
+    // guaranteed to be a full instant: 0182's apply was reported with no clock
+    // reading attached, so it carries a calendar DATE. Emitting the bare date
+    // without this qualifier is exactly how a machine consumer ends up parsing
+    // it as the fabricated instant the qualifier exists to prevent. Null when
+    // the record declares an unqualified value.
+    hosted_applied_at_precision: record.hosted_applied_at_precision ?? null,
     hosted_note: record.hosted_note,
     repo_equals_hosted: repoMaxNumber === hostedMaxNumber,
     pending_migrations: pending,
@@ -174,6 +181,10 @@ if (process.argv[1] && process.argv[1].endsWith("migration-state.mjs")) {
   } else {
     console.log(`repo max            ${state.repo_migration_max}`);
     console.log(`hosted max          ${state.hosted_migration_max}`);
+    console.log(
+      `hosted applied at   ${state.hosted_applied_at}` +
+        (state.hosted_applied_at_precision ? ` (precision qualified — see the canonical record)` : ""),
+    );
     console.log(`next free           ${state.next_free_migration}`);
     console.log(`total in repo       ${state.total_migrations_in_repo}`);
     console.log(`permanently skipped ${state.permanently_skipped.join(", ") || "(none)"}`);

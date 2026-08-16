@@ -1,5 +1,6 @@
 import {
   activeProbeLotOptionsForProbe,
+  isCurrentStock,
   probeLotOptionsForProbe,
   resolveInventoryAutofill,
   type ProbeLotOption,
@@ -48,9 +49,10 @@ import {
 //      auto-confirmed, because nothing was scanned off a package today. Uses
 //      `lastCharted` (recency ONLY), NOT `lot`, which is confirmed-first and
 //      would pin one old confirmed row forever, since auto-fill never confirms.
-//      A number matching an EXPIRED inventory lot is refused here and falls to
-//      `choose`: the server only enforces the expiry rule on the LINKED path,
-//      so auto-filling it as free text would route around that rule entirely.
+//      A number matching an inventory lot that is not CURRENT STOCK — expired,
+//      or discarded (0182) — is refused here and falls to `choose`: the server
+//      only enforces those rules on the LINKED path, so auto-filling it as free
+//      text would route around them entirely.
 //   5. `none`          , nothing known. Leave the field blank for manual entry.
 //
 // Studio isolation and probe matching are enforced upstream: `options` are
@@ -104,15 +106,60 @@ export function resolveProbeLotAutofill(args: {
   const suggestion = resolveProbeLotSuggestion(probeKey, suggestions);
   const lot = (suggestion?.lastCharted ?? "").trim();
   if (lot) {
-    // The studio DOES stock this probe, but every lot has expired, and the last
+    // The studio DOES stock this probe, but no lot is usable now, and the last
     // one charted is one of them. Auto-filling it as free text would bypass the
-    // server's expired-lot gate (which only runs on the linked path) and hide
-    // the expiry from her entirely. Send her to the picker, where the lot still
-    // appears, flagged Expired, and can only be recorded by confirming it.
-    const expired = probeLotOptionsForProbe(inventory, probeKey).some(
-      (o) => o.isExpired && sameLot(o.lotNumber, lot),
+    // server's linked-path gate (which only runs on the linked path) and hide
+    // the reason from her entirely. Send her to the picker, where the lot still
+    // appears, flagged, and can only be recorded by confirming it.
+    //
+    // Migration 0182 — this covers DISCARDED as well as EXPIRED, and the discard
+    // case is the sharper one. Chloe threw the box away; if the number were
+    // auto-filled as free text she would be handed back the exact lot she just
+    // discarded, unlinked and unflagged, which is the original complaint wearing
+    // a different hat. Both states mean "not usable now", so both route to the
+    // picker rather than into the field.
+    //
+    // Guard 1 — BY PROBE + LOT NUMBER. Unchanged pre-existing behaviour, now
+    // reading `!isCurrentStock` so it covers discarded as well as expired. It
+    // stays scoped to THIS probe deliberately: lot numbers are explicitly not
+    // unique, and another probe's same-numbered lot must never block this
+    // probe's history (pinned by "an expired lot for ANOTHER probe never blocks
+    // this probe's history").
+    const notCurrentForProbe = probeLotOptionsForProbe(inventory, probeKey).some(
+      (o) => !isCurrentStock(o) && sameLot(o.lotNumber, lot),
     );
-    if (expired) return { kind: "choose" };
+    if (notCurrentForProbe) return { kind: "choose" };
+
+    // Guard 2 — BY IDENTITY, against the AUTHORITY read, and FAIL CLOSED.
+    //
+    // Guard 1 matches on the row's CURRENT probe classification, so it misses
+    // an item charted under probe P and later RECLASSIFIED to Q, or one whose
+    // classification was CLEARED entirely: the suggestion still truthfully
+    // reports the lot under the historical probe P, but the row is no longer in
+    // P's option list. Reclassifying a box does not put it back on the shelf.
+    //
+    // The lot NUMBER cannot answer this either (see Guard 1's uniqueness note),
+    // so the question is asked of the exact inventory id the charted row
+    // pointed at. Critically, it is answered by `lastChartedLifecycle`, which
+    // comes from getInventoryLifecycleByIds — an identity-complete,
+    // studio-scoped read — and NOT by looking the id up in `inventory`. That
+    // list is a filtered, bounded picker projection (needs a probe_key, drops
+    // blank lots, capped), so a real discarded item can be absent from it, and
+    // an absence-based check silently failed OPEN.
+    //
+    //   null          -> the charted row was manual/free-text. No item exists,
+    //                    so there is no lifecycle to check and nothing to block.
+    //   "current"     -> proceed with the history suggestion.
+    //   "not-current" -> discarded and/or expired: send her to the picker.
+    //   "unknown"     -> the item could not be resolved, or the read failed.
+    //                    REFUSE. "I cannot tell whether this stock still
+    //                    exists" is not permission to auto-fill it for NEW
+    //                    work; manual entry remains available either way, so
+    //                    the cost of failing closed is one extra tap.
+    const chartedId = (suggestion?.lastChartedInventoryItemId ?? "").trim();
+    if (chartedId && suggestion?.lastChartedLifecycle !== "current") {
+      return { kind: "choose" };
+    }
     return { kind: "from-history", lotNumber: lot };
   }
 

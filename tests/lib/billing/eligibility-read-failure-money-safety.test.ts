@@ -258,6 +258,11 @@ function sessionForm() {
   // "zero money" assertion in this file pass without ever reaching eligibility.
   fd.set("session_id", SESSION);
   fd.set("expected_amount_cents", "12000");
+  // F-PAY-002. The operator-confirmed final charge, equal to the reference
+  // here so this fixture exercises the ordinary path. Omitting it would make
+  // the action refuse on a blank amount and, exactly as the note above warns,
+  // every "zero money" assertion in this file would pass for the wrong reason.
+  fd.set("final_amount_dollars", "120.00");
   fd.set("internal_note", "note");
   return fd;
 }

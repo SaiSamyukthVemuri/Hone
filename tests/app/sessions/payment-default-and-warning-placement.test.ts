@@ -133,22 +133,41 @@ describe("Session payment prepare form wiring", () => {
     expect(pageCode).not.toMatch(/from\("client_pricing"\)/);
   });
 
-  it("the amount is rendered by the server decision, never editable", () => {
+  it("the REFERENCE is rendered by the server decision and is not itself editable", () => {
+    // F-PAY-002. The editable control is the FINAL CHARGE, a separate field.
+    // What stays true here is that the reference — the booked/client-specific
+    // price the server resolved — is rendered, not typed into, and is
+    // submitted back only as a stale-display check.
     expect(CARD).toMatch(/formatCadFromCents\(amount\.amountCents\)/);
     const amountRegion = CARD.slice(
       CARD.indexOf('data-testid="authoritative-amount"') - 400,
       CARD.indexOf('data-testid="authoritative-amount"') + 400,
     );
     expect(amountRegion).toMatch(/data-testid="authoritative-amount"/);
-    // No input at all — not editable, not merely disabled.
-    expect(amountRegion).not.toMatch(/name="amount_dollars"/);
+    expect(amountRegion).not.toMatch(/<input(?![^>]*type="hidden")/);
+    // The legacy unguarded field name never returns.
+    expect(CARD).not.toMatch(/name="amount_dollars"/);
     expect(CARD).not.toMatch(/aria-label="Amount in Canadian dollars"/);
     // Submitted only as a stale-display check.
     expect(CARD).toMatch(/name="expected_amount_cents"/);
   });
 
+  it("the final charge sits BELOW the reference, so the reminder reads first", () => {
+    // Chloe's words: "It needs to 'soft' show the price of the service so I am
+    // reminded what they booked but I also need to be able to change it."
+    // Order carries that meaning; a final-charge box above an unexplained
+    // number would not.
+    const reference = CARD.indexOf('data-testid="authoritative-amount"');
+    const finalCharge = CARD.indexOf('name="final_amount_dollars"');
+    expect(reference).toBeGreaterThan(-1);
+    expect(finalCharge).toBeGreaterThan(reference);
+    // And the note field still comes after both.
+    expect(CARD.indexOf('name="internal_note"')).toBeGreaterThan(finalCharge);
+  });
+
   it("source copy names the client-specific or booked-service price truthfully", () => {
-    expect(CARD).toMatch(/Booked service: \{amount\.serviceName\}/);
+    expect(CARD).toMatch(/Booked service/);
+    expect(CARD).toMatch(/\{amount\.serviceName\}/);
     expect(CARD).toMatch(/Client-specific price for this service\./);
     expect(CARD).toMatch(/Booked service price\./);
     expect(CARD).toMatch(/Custom pricing reminder:/);
