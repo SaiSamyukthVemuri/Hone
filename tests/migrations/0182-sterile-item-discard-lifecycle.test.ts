@@ -37,6 +37,37 @@ const EXEC = SQL.split("\n")
 // LOGIC run against this; assertions about the documentation run against SQL.
 const LOGIC = EXEC.replace(/comment on [\s\S]*?';/gi, "");
 
+// ---------------------------------------------------------------------------
+// THE ONE measured-count contradiction expression.
+//
+// It is defined ONCE and shared by both places that need it — the frozen 0182
+// ledger section and the current `hosted_note` — because maintaining two copies
+// is precisely how they drifted: the current-note copy silently lost the
+// `row-count:` alternative, so `row-count: 181` could be appended to the record
+// with "NO ROW-COUNT PROOF" left intact and the guard stayed green.
+//
+// The purpose is narrow and is NOT natural-language understanding: stop an
+// UNSUPPORTED POSITIVE measured row-count claim from coexisting with the
+// explicit truth that no pre/post business-row count was ever captured.
+//
+// Held as a SOURCE STRING and compiled fresh on every call — a shared /g RegExp
+// object carries `lastIndex` between callers and would skip matches.
+const MEASURED_COUNT_CLAIM_SOURCE = [
+  // "181 rows", "181 records", "181 entries", "1,024 tuples" — but never a
+  // four-digit migration id: "the 0181 record" is a chain link, not a tally.
+  String.raw`\b(?!0\d{3}\b)\d+(?:,\d{3})*\s+(?:rows?|records?|entries|entry|tuples?)\b`,
+  // "count(*) = 181"
+  String.raw`\bcount\(\*\)`,
+  // "measured total of 181" / "measured total was 181"
+  String.raw`\bmeasured total (?:of|was|=)\s*\d+(?:,\d{3})*`,
+  // "row-count: 181", "row-count = 181", "row count: 181", "row counted = 181"
+  String.raw`\brow[- ]count(?:ed)?\s*[:=]\s*\d+(?:,\d{3})*`,
+].join("|");
+
+/** Every measured-count claim in `text`. Empty when the text asserts none. */
+const measuredCountClaims = (text: string): string[] =>
+  text.match(new RegExp(MEASURED_COUNT_CLAIM_SOURCE, "gi")) ?? [];
+
 describe("0182 — migration state", () => {
   it("is the current repository maximum and consumes exactly one number", () => {
     expect(isRepoMax("0182")).toBe(true);
@@ -103,10 +134,8 @@ describe("0182 — migration state", () => {
     );
     expect(REC.hosted_note).toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/);
     expect(REC.hosted_note).toMatch(/NO ROW-COUNT PROOF/);
-    const COUNT_CLAIM =
-      /\b(?!0\d{3}\b)\d+(?:,\d{3})*\s+(?:rows?|records?|entries|entry|tuples?)\b|\bcount\(\*\)|\bmeasured total (?:of|was|=)\s*\d+(?:,\d{3})*/gi;
     expect(
-      REC.hosted_note.match(COUNT_CLAIM) ?? [],
+      measuredCountClaims(REC.hosted_note),
       "the canonical note states a measured count that was never captured for 0182",
     ).toEqual([]);
   });
@@ -295,12 +324,59 @@ describe("0182 — the recorded apply evidence stays honest", () => {
     // labelling 181 an INFERENCE for 0182. Any additional match is a new count
     // claim. The leading (?!0\d{3}) keeps four-digit MIGRATION IDS from reading
     // as counts — "the 0181 record" is a chain link, not a tally.
-    const COUNT_CLAIM =
-      /\b(?!0\d{3}\b)\d+(?:,\d{3})*\s+(?:rows?|records?|entries|entry|tuples?)\b|\bcount\(\*\)|\bmeasured total (?:of|was|=)\s*\d+(?:,\d{3})*|\brow[- ]count(?:ed)?\s*[:=]\s*\d/gi;
     expect(
-      SECTION.match(COUNT_CLAIM) ?? [],
+      measuredCountClaims(SECTION),
       "the frozen 0182 section states a measured count that was never captured",
     ).toEqual(["measured total was 180"]);
+  });
+
+  it("the shared count guard catches every fabrication form it claims to", () => {
+    // ANTI-VACUITY. Each of these is the same unsupported claim in different
+    // clothes, and every one of them must fail the guard. The `row-count:`
+    // family is listed explicitly because it is the family that silently fell
+    // out of the current-note copy while the frozen copy kept it.
+    for (const fabrication of [
+      "the history table contained 181 rows",
+      "181 records were present after apply",
+      "a measured total of 181 entries",
+      "post-apply measured total of 181",
+      "count(*) = 181",
+      "row-count: 181",
+      "row-count = 181",
+      "row count: 181",
+      "row counted = 181",
+    ]) {
+      expect(
+        measuredCountClaims(fabrication),
+        `a fabricated measured count slipped past the guard: ${fabrication}`,
+      ).not.toEqual([]);
+    }
+
+    // And the other half of the contract: truthful text that asserts NO count
+    // must stay clean, including the negative phrasings the real record uses
+    // and the chain links, which are migration ids and not tallies.
+    expect(
+      measuredCountClaims(
+        "NO ROW-COUNT PROOF. No pre/post business-row count was captured for any " +
+          "table, and the history table was not row-counted. PUSH EXIT CODE WAS NOT " +
+          "CAPTURED. The 0181 record and the 0180 record remain in the chain.",
+      ),
+      "truthful no-count text must not trip the guard",
+    ).toEqual([]);
+  });
+
+  it("keeps ONE count-guard definition, so the two checks cannot drift apart", () => {
+    // The defect this repair closes was not a bad regex — it was TWO regexes.
+    // The frozen-section check and the current-note check must keep routing
+    // through the single shared source; a second copy is the drift itself.
+    const self = readFileSync(
+      join(ROOT, "tests/migrations/0182-sterile-item-discard-lifecycle.test.ts"),
+      "utf8",
+    );
+    expect(
+      self.match(/rows\?\|records\?/g) ?? [],
+      "the count-claim pattern is defined more than once — both checks must share one definition",
+    ).toHaveLength(1);
   });
 
   it("records 0182's permanent evidence from the FROZEN section", () => {
