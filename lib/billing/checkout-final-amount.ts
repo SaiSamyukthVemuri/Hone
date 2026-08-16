@@ -67,7 +67,76 @@ export const OWNER_ONLY_AMOUNT_ERROR =
   "Only the studio owner can change the final charge. Prepare at the booked price, or ask the owner to apply the adjustment.";
 
 export const ADJUSTMENT_REASON_REQUIRED_ERROR =
-  "Add a short reason for the adjustment, for example a client discount or an aftercare product.";
+  "Add a short reason for the adjustment in words, for example a client discount or an aftercare product.";
+
+// Blank/filler code points whose Unicode General_Category MISLEADINGLY reports
+// Letter or Symbol. Every one renders as nothing.
+//
+//   U+2800 BRAILLE PATTERN BLANK          So  — a Symbol that draws no dots
+//   U+115F HANGUL CHOSEONG FILLER         Lo
+//   U+1160 HANGUL JUNGSEONG FILLER        Lo
+//   U+3164 HANGUL FILLER                  Lo  — NFKC folds to U+1160
+//   U+FFA0 HALFWIDTH HANGUL FILLER        Lo  — NFKC folds to U+1160
+//
+// HONEST ABOUT ITS OWN REDUNDANCY. Against today's Unicode data this list
+// changes no outcome, and the mutation harness says so: delete it and every
+// test still passes. Both halves are already covered elsewhere —
+//
+//   U+2800 is a Symbol, so the letter-or-number narrowing below rejects it;
+//   the four Hangul fillers are Default_Ignorable, so the sweep removes them.
+//
+// It is kept as defence in depth against a narrowing of that sweep, and the
+// Unicode facts it leans on are pinned in
+// tests/lib/billing/checkout-final-amount.test.ts ("the assumptions that make
+// the filler list redundant today") so that an ICU change which makes this list
+// load-bearing fails loudly instead of silently.
+const BLANK_FILLERS = /[⠀ᅟᅠㅤﾠ]/gu;
+
+// Everything that carries no semantic content on its own. `\p{M}` removes
+// combining marks, which is safe for real writing systems: a Devanagari or
+// Arabic word keeps its base letters and still matches below, while a string of
+// bare marks collapses to nothing.
+const NON_CONTENT = /[\p{White_Space}\p{Default_Ignorable_Code_Point}\p{Cc}\p{Cf}\p{M}]/gu;
+
+/**
+ * Is this string a sufficient reason for changing what a client is charged?
+ *
+ * THIS IS NOT A GENERAL-PURPOSE "IS THIS GLYPH VISIBLE?" FUNCTION, and it must
+ * never grow into one. It answers one product question: does this text carry
+ * enough semantic content to justify an adjusted charge to somebody reading the
+ * ledger a year from now?
+ *
+ * At least one Unicode LETTER OR NUMBER is a stable, auditable approximation of
+ * that. Punctuation, symbols and emoji alone are deliberately INSUFFICIENT —
+ * "🙂" and "---" are not explanations — which is a narrowing, chosen on purpose
+ * after two rounds of the alternative.
+ *
+ * WHY NOT A WIDER CATEGORY TEST. Requiring one of \p{L}\p{N}\p{P}\p{S} was the
+ * previous rule and it leaked twice, because General_Category is a proxy for
+ * "renders as content" and an unfaithful one in both directions: format
+ * characters that are invisible, and Letters/Symbols that are also invisible.
+ * Narrowing to L or N, then subtracting the known blank fillers, removes both
+ * leaks with one rule instead of a blocklist that grows every review round.
+ *
+ * NO FONT OR RENDERING DETECTION. No canvas, no measurement, no "looks blank on
+ * my machine" heuristics. Classification is pure string work so it is
+ * deterministic on every runtime.
+ *
+ * CLASSIFICATION ONLY. The caller stores the practitioner's ORIGINAL text; NFKC
+ * and the strips below exist to decide sufficiency and never reach the audit
+ * note. That separation is what lets "Courtesy 👨‍👩‍👧" pass on the strength of
+ * "Courtesy" while the family emoji survives intact in the record.
+ */
+export function hasMeaningfulAdjustmentReason(reason: string): boolean {
+  const classified = reason
+    // NFKC first: it folds compatibility forms (fullwidth Ｃｌｉｅｎｔ becomes
+    // Client, and U+3164/U+FFA0 become U+1160) so a single classification pass
+    // sees one canonical shape instead of a family of look-alikes.
+    .normalize("NFKC")
+    .replace(BLANK_FILLERS, "")
+    .replace(NON_CONTENT, "");
+  return /[\p{L}\p{N}]/u.test(classified);
+}
 
 export const ADJUSTMENT_REASON_TOO_LONG_ERROR =
   `Keep the adjustment reason under ${SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH} characters.`;
@@ -208,35 +277,22 @@ export function decideCheckoutFinalAmount(input: {
   // but a machine-written line should stay one line, and collapsing costs
   // nothing. Interior runs of whitespace become one space; her words survive.
   const reason = adjustmentReasonRaw.replace(/\s+/g, " ").trim();
-  // VISIBLE CONTENT, not `length > 0`.
+  // MEANINGFUL CONTENT, not `length > 0` and not a category grab-bag.
   //
-  // `trim()` and `\s` are whitespace tests, not visibility tests. Neither
-  // covers the zero-width and format characters, so a reason built only from
-  // them used to have a positive length, satisfy "non-empty", and produce an
-  // audit line reading "Reason: " with nothing after it that a human can see.
-  // Measured against the previous rule, 16 distinct invisible-only inputs were
-  // accepted, spanning Cf (U+200B/C/D, U+2060, U+00AD, U+180E, U+061C, the bidi
-  // controls), Cc (NUL, BEL, ESC) and Mn (bare combining marks). U+FEFF was the
-  // lone accident that already failed, because `\s` happens to include it.
-  //
-  // Enumerating those characters would be the wrong shape: the next unnamed
-  // format character reopens it. The rule is POSITIVE instead — the reason must
-  // contain at least one character that actually renders as content — so
-  // anything outside those four categories is insufficient by construction,
-  // including categories nobody has thought of yet.
-  //
-  // NOT an ASCII validator and NOT English-only: `\p{L}` covers 値引き and خصم
-  // and Réduction, `\p{N}` covers a bare "10", `\p{P}` a bare "-", `\p{S}` an
-  // emoji. Only invisible input fails.
-  if (!/[\p{L}\p{N}\p{P}\p{S}]/u.test(reason)) {
+  // Two review rounds landed here. `trim()` and `\s` let 16 invisible-only
+  // inputs through (Cf, Cc, Mn). Requiring one of \p{L}\p{N}\p{P}\p{S} closed
+  // those and let 5 blank FILLERS through, because U+2800 is a Symbol and the
+  // Hangul fillers are Letters. The rule now asks the product question directly
+  // — see hasMeaningfulAdjustmentReason above.
+  if (!hasMeaningfulAdjustmentReason(reason)) {
     return { kind: "reject", error: ADJUSTMENT_REASON_REQUIRED_ERROR };
   }
-  // DELIBERATELY NOT STRIPPED. Requiring visible content is enough to close the
-  // hole, and removing format characters would be a broad Unicode sanitizer
-  // with real casualties: U+200D is what joins 👨‍👩‍👧 into one family emoji, and
-  // the bidi marks are load-bearing in legitimate Arabic and Hebrew text. Once
-  // one visible character is required, invisible companions can no longer make
-  // the reason blank — they can only decorate a reason that already reads.
+  // NOTHING IS STRIPPED FROM THE STORED REASON. The classification above works
+  // on a throwaway copy. Sanitising the real text would have casualties: U+200D
+  // is what joins 👨‍👩‍👧 into one family emoji, the bidi marks are load-bearing
+  // in legitimate Arabic and Hebrew, and NFKC would rewrite a practitioner's
+  // fullwidth typing. Once one letter or number is required, invisible
+  // companions can only decorate a reason that already reads.
   if (reason.length > SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH) {
     return { kind: "reject", error: ADJUSTMENT_REASON_TOO_LONG_ERROR };
   }

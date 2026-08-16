@@ -692,6 +692,49 @@ describe("adjustment audit context and the internal note share one column", () =
     expect(inserted[0].internal_note).toBeNull();
   });
 
+  // F-PAY-002 / Codex P2 round 2. THE SERVER decides sufficiency, and a blank
+  // FILLER is the case that survived the first repair: U+2800 is a Symbol and
+  // the Hangul fillers are Letters, so a category-based rule waved them
+  // through. Proved here through the REAL action, with zero rows as the oracle.
+  const BLANK_FILLER_REASONS: Array<[string, string]> = [
+    ["U+2800 braille pattern blank", "\u2800"],
+    ["U+3164 hangul filler", "\u3164"],
+    ["U+FFA0 halfwidth hangul filler", "\uFFA0"],
+    ["U+115F + U+1160 hangul fillers", "\u115F\u1160"],
+    ["fillers mixed with zero-width", "\u200B\u2800\u200D"],
+    ["a bare emoji", "\u{1F642}"],
+    ["a bare hyphen", "-"],
+  ];
+
+  for (const [label, reason] of BLANK_FILLER_REASONS) {
+    it(`refuses a direct post whose reason is only ${label}`, async () => {
+      const res = await prepareSessionPaymentChargeAction(
+        form({ final: "100.00", reason }),
+      );
+      expect(res.ok).toBe(false);
+      expect(inserted).toHaveLength(0);
+    });
+  }
+
+  it("still accepts a real reason, so the filler guard is not refusing everything", async () => {
+    const res = await prepareSessionPaymentChargeAction(
+      form({ final: "100.00", reason: "Client discount" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].amount_cents).toBe(10_000);
+    expect(String(inserted[0].internal_note)).toContain("Client discount");
+  });
+
+  it("accepts real words carrying an emoji, and stores the emoji intact", async () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const res = await prepareSessionPaymentChargeAction(
+      form({ final: "100.00", reason: `Courtesy ${family}` }),
+    );
+    expect(res.ok).toBe(true);
+    expect(String(inserted[0].internal_note)).toContain(family);
+  });
+
   it("bounds the adjustment reason itself", async () => {
     const res = await prepareSessionPaymentChargeAction(
       form({ final: "100.00", reason: "y".repeat(5000) }),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ADJUSTMENT_REASON_REQUIRED_ERROR,
+  hasMeaningfulAdjustmentReason,
   ADJUSTMENT_REASON_TOO_LONG_ERROR,
   NOTE_AND_REASON_TOO_LONG_ERROR,
   NO_CHARGE_REQUIRED_MESSAGE,
@@ -248,9 +249,11 @@ describe("a changed total needs an explanation", () => {
     ["accented French", "R\u00E9duction client"],
     ["Japanese", "\u5024\u5f15\u304d"],
     ["Arabic", "\u062E\u0635\u0645"],
-    ["ZWJ emoji sequence", "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"],
     ["digits only", "10"],
-    ["punctuation only", "-"],
+    // A BARE ZWJ emoji used to be a positive control here. The round-2
+    // contract narrowed deliberately — emoji alone is not an explanation —
+    // so it now lives in VISIBLE_BUT_MEANINGLESS below, and "Courtesy <emoji>"
+    // covers the case that actually matters: words plus an emoji.
     ["visible text with leading zero-width", "\u200B\u200BClient discount"],
     ["visible text with trailing zero-width", "Client discount\u200B"],
   ];
@@ -280,6 +283,130 @@ describe("a changed total needs an explanation", () => {
   it("does not require a reason at all when the amount is unchanged", () => {
     // The visible-content rule must not leak into the ordinary checkout.
     for (const reason of ["", "\u200B", "\u0000", "   "]) {
+      expect(
+        decide({ requestedFinalRaw: "120.00", adjustmentReasonRaw: reason }),
+      ).toMatchObject({ kind: "prepare", amountCents: 12_000 });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // F-PAY-002 / Codex P2 round 2: "Reject blank letters and symbols too".
+  //
+  // The first repair required one character from \p{L}\p{N}\p{P}\p{S}. That
+  // closed the Cf/Cc/Mn hole and opened a narrower one, because General_Category
+  // is a proxy for "renders as content" and an unfaithful one in BOTH
+  // directions: U+2800 BRAILLE PATTERN BLANK is a Symbol, and U+115F, U+1160,
+  // U+3164, U+FFA0 are Letters, yet all five render blank. Measured: all five
+  // were accepted.
+  //
+  // Chasing that with a longer allow-list of categories is what produced two
+  // rounds of residuals, so the CONTRACT changed rather than the blocklist. A
+  // payment adjustment reason must now carry at least one Unicode LETTER or
+  // NUMBER after classification. Punctuation, symbols and emoji ALONE are
+  // deliberately insufficient: "🙂" is not a justification for changing what a
+  // client is charged. This is a narrowing, and it is intentional.
+  // -------------------------------------------------------------------------
+  const BLANK_FILLERS: Array<[string, string]> = [
+    ["U+2800 braille pattern blank", "\u2800"],
+    ["U+3164 hangul filler", "\u3164"],
+    ["U+FFA0 halfwidth hangul filler", "\uFFA0"],
+    ["U+115F hangul choseong filler", "\u115F"],
+    ["U+1160 hangul jungseong filler", "\u1160"],
+    ["U+2800 repeated", "\u2800\u2800\u2800"],
+    ["fillers mixed together", "\u2800\u3164\uFFA0\u115F\u1160"],
+    ["fillers padded with spaces", "  \u2800 \u3164  "],
+    ["fillers plus zero-width", "\u200B\u2800\u200D"],
+    ["fillers plus combining marks", "\u3164\u0301"],
+    ["fillers plus punctuation", "\u2800-\u2800"],
+    ["fillers plus emoji", "\u2800\u{1F642}"],
+  ];
+
+  for (const [label, reason] of BLANK_FILLERS) {
+    it(`refuses a reason that is only ${label}`, () => {
+      expect(
+        decide({ requestedFinalRaw: "100.00", adjustmentReasonRaw: reason }),
+      ).toEqual({ kind: "reject", error: ADJUSTMENT_REASON_REQUIRED_ERROR });
+    });
+  }
+
+  // The deliberate narrowing. Each of these is VISIBLE and still insufficient,
+  // because none of them says anything about why a charge changed.
+  const VISIBLE_BUT_MEANINGLESS: Array<[string, string]> = [
+    ["a bare smiley", "\u{1F642}"],
+    ["a bare money emoji", "\u{1F4B0}"],
+    ["a ZWJ family emoji alone", "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"],
+    ["a bare hyphen", "-"],
+    ["three hyphens", "---"],
+    ["an ellipsis", "..."],
+    ["a bare plus sign", "+"],
+    ["punctuation and symbols only", "-.!?$%"],
+  ];
+
+  for (const [label, reason] of VISIBLE_BUT_MEANINGLESS) {
+    it(`refuses ${label} as an adjustment reason`, () => {
+      expect(
+        decide({ requestedFinalRaw: "100.00", adjustmentReasonRaw: reason }),
+      ).toEqual({ kind: "reject", error: ADJUSTMENT_REASON_REQUIRED_ERROR });
+    });
+  }
+
+  // Real reasons in real writing systems. The rule must never become
+  // ASCII-only or English-only, and an emoji BESIDE real words is fine — the
+  // words carry the meaning.
+  const REAL_REASONS: Array<[string, string]> = [
+    ["English", "Client discount"],
+    ["percent", "50% promo"],
+    ["English + emoji", "Courtesy \u{1F642}"],
+    ["English + ZWJ family emoji", "Courtesy \u{1F468}\u200D\u{1F469}\u200D\u{1F467}"],
+    ["French", "R\u00E9duction client"],
+    ["German + number", "Rabatt 10%"],
+    ["Arabic", "\u062E\u0635\u0645 \u0644\u0644\u0639\u0645\u064A\u0644"],
+    ["Chinese", "\u5BA2\u6237\u6298\u6263"],
+    ["Korean", "\uACE0\uAC1D \uD560\uC778"],
+    ["Japanese", "\u5024\u5F15\u304D"],
+    ["Hindi", "\u0917\u094D\u0930\u093E\u0939\u0915 \u091B\u0942\u091F"],
+    ["digits only", "10"],
+    ["words after a stray filler", "\u2800Client discount"],
+  ];
+
+  for (const [label, reason] of REAL_REASONS) {
+    it(`accepts a ${label} reason`, () => {
+      expect(
+        decide({ requestedFinalRaw: "100.00", adjustmentReasonRaw: reason }),
+      ).toMatchObject({ kind: "prepare", amountCents: 10_000 });
+    });
+  }
+
+  it("stores the legitimate reason unchanged, emoji and all", () => {
+    // Classification normalization and the STORED value are separate concerns.
+    // NFKC and the ignorable-stripping exist only to decide sufficiency; they
+    // must not reach the audit note and shatter a family emoji into three
+    // unrelated people.
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const d = decide({
+      requestedFinalRaw: "100.00",
+      adjustmentReasonRaw: `Courtesy ${family}`,
+    });
+    expect(d.kind).toBe("prepare");
+    const note = (d as { internalNote: string }).internalNote;
+    expect(note).toContain(family);
+    expect(note).toContain("Courtesy");
+  });
+
+  it("does not NFKC-fold the stored reason", () => {
+    // A fullwidth-typed reason is the practitioner's text; classification may
+    // fold it, storage may not.
+    const fullwidth = "\uFF23\uFF4C\uFF49\uFF45\uFF4E\uFF54"; // "Client" fullwidth
+    const d = decide({
+      requestedFinalRaw: "100.00",
+      adjustmentReasonRaw: fullwidth,
+    });
+    expect(d.kind).toBe("prepare");
+    expect((d as { internalNote: string }).internalNote).toContain(fullwidth);
+  });
+
+  it("leaves the unchanged-amount path free of the meaningful-content rule", () => {
+    for (const reason of ["", "\u2800", "\u3164", "\u{1F642}", "-", "   "]) {
       expect(
         decide({ requestedFinalRaw: "120.00", adjustmentReasonRaw: reason }),
       ).toMatchObject({ kind: "prepare", amountCents: 12_000 });
@@ -512,5 +639,97 @@ describe("no decision path can emit an unchargeable amount", () => {
       const d = decide({ requestedFinalRaw: raw, actorIsOwner: false, adjustmentReasonRaw: "Discount" });
       if (d.kind === "prepare") expect(d.amountCents).toBe(REFERENCE);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHY THE GUARD HAS BELT *AND* BRACES, and how we know which is which.
+//
+// The mutation harness reports something worth writing down: deleting the
+// explicit BLANK_FILLERS list, or deleting the NFKC normalization, changes NO
+// behaviour today. Both are redundant against the CURRENT Unicode data, for two
+// separate reasons:
+//
+//   * U+2800 BRAILLE PATTERN BLANK is category So. The narrowing to L-or-N
+//     rejects it without any list.
+//   * U+115F, U+1160, U+3164 and U+FFA0 are Default_Ignorable_Code_Point, so
+//     the ignorable sweep removes them without any list, and NFKC folding
+//     U+3164/U+FFA0 into U+1160 is not needed to get there.
+//
+// That redundancy is deliberate defence in depth, but code no test can falsify
+// is exactly what these reviews keep catching. So this block pins the UNICODE
+// FACTS the redundancy rests on instead. If a future ICU update moves any of
+// them, these fail loudly — and that is precisely the moment the explicit list
+// stops being belt and starts being the only thing holding.
+// ---------------------------------------------------------------------------
+describe("the assumptions that make the filler list redundant today", () => {
+  const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
+  const LETTER_OR_NUMBER = /[\p{L}\p{N}]/u;
+
+  it("U+2800 is NOT default-ignorable, and is caught only by the L/N narrowing", () => {
+    expect(DEFAULT_IGNORABLE.test("\u2800")).toBe(false);
+    expect(LETTER_OR_NUMBER.test("\u2800")).toBe(false);
+  });
+
+  it("every Hangul filler IS default-ignorable, which is why the sweep catches them", () => {
+    for (const c of ["\u115F", "\u1160", "\u3164", "\uFFA0"]) {
+      expect(DEFAULT_IGNORABLE.test(c), c).toBe(true);
+      // ...and each is ALSO a Letter, which is exactly why a category-only rule
+      // let them through in the first place.
+      expect(LETTER_OR_NUMBER.test(c), c).toBe(true);
+    }
+  });
+
+  it("NFKC folds the halfwidth/compatibility fillers onto U+1160", () => {
+    expect("\u3164".normalize("NFKC")).toBe("\u1160");
+    expect("\uFFA0".normalize("NFKC")).toBe("\u1160");
+  });
+
+  it("the engine supports every Unicode property the classifier relies on", () => {
+    for (const src of [
+      "\\p{White_Space}",
+      "\\p{Default_Ignorable_Code_Point}",
+      "\\p{Cc}",
+      "\\p{Cf}",
+      "\\p{M}",
+      "\\p{L}",
+      "\\p{N}",
+    ]) {
+      expect(() => new RegExp(`[${src}]`, "u"), src).not.toThrow();
+    }
+  });
+});
+
+describe("hasMeaningfulAdjustmentReason, exercised directly", () => {
+  it("rejects every blank or invisible form", () => {
+    for (const s of [
+      "", "   ", "\u200B", "\u200C\u200D", "\u2060", "\u0000", "\u0301\u0308",
+      "\u2800", "\u3164", "\uFFA0", "\u115F", "\u1160", "\u2800\u3164\uFFA0",
+    ]) {
+      expect(hasMeaningfulAdjustmentReason(s), JSON.stringify(s)).toBe(false);
+    }
+  });
+
+  it("rejects symbols and punctuation standing alone, by design", () => {
+    for (const s of ["\u{1F642}", "-", "---", "...", "+", "$", "%"]) {
+      expect(hasMeaningfulAdjustmentReason(s), JSON.stringify(s)).toBe(false);
+    }
+  });
+
+  it("accepts one letter or number, in any writing system", () => {
+    for (const s of [
+      "a", "1", "Client discount", "R\u00E9duction", "\u5024\u5F15\u304D",
+      "\u062E\u0635\u0645", "\uACE0\uAC1D \uD560\uC778", "\u5BA2\u6237\u6298\u6263",
+      "\u0917\u094D\u0930\u093E\u0939\u0915", "50% promo", "Courtesy \u{1F642}",
+    ]) {
+      expect(hasMeaningfulAdjustmentReason(s), JSON.stringify(s)).toBe(true);
+    }
+  });
+
+  it("is pure: it never mutates or returns its input", () => {
+    const original = "Courtesy \u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const copy = String(original);
+    hasMeaningfulAdjustmentReason(original);
+    expect(original).toBe(copy);
   });
 });
