@@ -32,6 +32,9 @@ export const BROWSER_GROUPS = {
     description: "sessions / treatment-memory charting",
     specs: [
       "charting-usability-polish.spec.ts",
+      // Budget context is a peer section of the Consultation & Skin/Hair
+      // surface, so it belongs with the clinical-notes coverage.
+      "client-budget-context.spec.ts",
       "clinical-notes.spec.ts",
       "conditional-numbing-notes.spec.ts",
       "copy-settings-machine-readings.spec.ts",

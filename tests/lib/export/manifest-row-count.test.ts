@@ -129,8 +129,9 @@ describe("the export derives manifest counts from rows, never from bytes", () =>
 
   it("every CSV written goes through the counting wrapper", () => {
     // A file written with a bare rowsToCsv would be missing from the manifest.
+    // 15 as of migration 0183, which added client_budget_context.csv.
     const zipCsvWrites = ACTIONS.match(/zip\.file\(\n\s+[^\n]+,\n\s+countedCsv\(/g) ?? [];
-    expect(zipCsvWrites.length).toBe(14);
+    expect(zipCsvWrites.length).toBe(15);
     // No CSV may bypass it.
     expect(ACTIONS).not.toMatch(/zip\.file\(\n\s+[^\n]+,\n\s+rowsToCsv\(/);
   });

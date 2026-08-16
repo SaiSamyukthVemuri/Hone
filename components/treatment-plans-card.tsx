@@ -583,8 +583,14 @@ function PlanCard({
   );
 }
 
-// Practitioner-only budget + clinical notes for a treatment plan.
-// budget_notes, practitioner_notes, treatment_areas, and
+// Practitioner-only clinical notes for a treatment plan.
+//
+// Budget is NO LONGER edited here: it is client-level context on the
+// Consultation & Skin/Hair tab (public.client_budget_context, migration
+// 0183). A pre-existing legacy treatment_plans.budget_notes value still
+// renders READ-ONLY above when non-empty, and this editor never writes it.
+//
+// practitioner_notes, treatment_areas, and
 // timeline-months are nullable columns on treatment_plans (migrations
 // 0034, 0038, 0051). Closed plans render the notes read-only (or omit
 // if empty). Active plans show an Edit toggle that opens a compact
@@ -609,7 +615,6 @@ function PlanNotesEditor({
   editing: boolean;
   setEditing: (next: boolean) => void;
 }) {
-  const [budget, setBudget] = useState(plan.budget_notes ?? "");
   const [practitioner, setPractitioner] = useState(
     plan.practitioner_notes ?? "",
   );
@@ -664,7 +669,8 @@ function PlanNotesEditor({
     const fd = new FormData();
     fd.set("plan_id", plan.id);
     fd.set("client_id", clientId);
-    fd.set("budget_notes", budget);
+    // No budget_notes field: this editor has no authority over budget and
+    // the action ignores the key entirely, leaving the legacy column intact.
     fd.set("practitioner_notes", practitioner);
     // Multi-area: always send treatment_areas so the action takes the
     // multi-area path (and clears both columns when areasDraft is
@@ -701,7 +707,6 @@ function PlanNotesEditor({
   }
 
   function cancel() {
-    setBudget(plan.budget_notes ?? "");
     setPractitioner(plan.practitioner_notes ?? "");
     setAreasDraft(
       plan.treatment_areas && plan.treatment_areas.length > 0
@@ -743,13 +748,24 @@ function PlanNotesEditor({
         </div>
         {hasNotes ? (
           <div className="flex flex-col gap-2 text-xs">
+            {/* LEGACY, READ-ONLY. Budget is now client-level context on the
+                Consultation & Skin/Hair tab. Values written under the old
+                plan-scoped contract are preserved and still shown so no
+                practitioner loses sight of them, but they are never edited
+                here and were deliberately NOT copied forward: a historical
+                plan note is plan-specific, may be obsolete, and two plans
+                may disagree. Renders only when non-empty. */}
             {plan.budget_notes && (
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-neutral-500">
-                  Client budget notes
+                  Legacy plan budget note
                 </p>
                 <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
                   {plan.budget_notes}
+                </p>
+                <p className="mt-0.5 text-[11px] text-neutral-500">
+                  Read-only. Current budget lives under Consultation &amp;
+                  Skin/Hair.
                 </p>
               </div>
             )}
@@ -828,22 +844,10 @@ function PlanNotesEditor({
         </span>
       </div>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Client budget notes
-        </span>
-        <textarea
-          rows={2}
-          value={budget}
-          onChange={(e) => setBudget(e.target.value)}
-          placeholder="e.g. $50/week; unlimited budget; tighten schedule if cost is a concern."
-          className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-        />
-        <span className="text-[11px] text-neutral-500">
-          What the client says they can spend or tolerate financially, like
-          &ldquo;$50/week&rdquo; or &ldquo;unlimited budget.&rdquo;
-        </span>
-      </label>
+      {/* The editable "Client budget notes" control lived here. Budget is
+          now client-level context edited on the Consultation & Skin/Hair
+          tab, so a plan no longer claims authority over it. The legacy
+          column is untouched — this editor sends no budget field at all. */}
 
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">

@@ -90,10 +90,14 @@ function assertCurrent0182NotePinned(note: string) {
 }
 
 describe("0182 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0182")).toBe(true);
-    expect(versionsAbove("0182")).toEqual([]);
+  it("consumes exactly one number", () => {
+    // 0182 is NO LONGER the repository maximum — 0183 (client budget context)
+    // now is, and per CLAUDE.md only the CURRENT maximum's own test may assert
+    // isRepoMax. The "nothing above me" tripwire is served centrally by
+    // tests/migrations/0183-client-budget-context.test.ts; re-asserting it here
+    // is exactly the mechanical sweep that turned 0163, 0164 and 0165 red.
     expect(countVersion("0182")).toBe(1);
+    expect(isRepoMax("0182")).toBe(false);
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {
@@ -114,12 +118,12 @@ describe("0182 — migration state", () => {
     // claim below is the DECLARED one, read from docs/production/migration-state.json.
     const state = migrationState();
     expect(state.hosted_migration_max).toBe("0182");
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.repo_equals_hosted).toBe(true);
-  });
-
-  it("leaves 0183 as the next free number, available but unclaimed", () => {
-    expect(migrationState().next_free_migration).toBe("0183");
+    // 0182 itself is applied, so it must never appear as pending. The repo as
+    // a whole is no longer equal to hosted — 0183 is authored and awaiting its
+    // own separate apply authorization — so `repo_equals_hosted` is NOT
+    // asserted here any more. That claim belongs to whichever migration is
+    // currently the maximum, not to 0182 permanently.
+    expect(state.pending_migrations).not.toContain("0182");
   });
 
   it("stamps the CURRENT apply at date precision, and says so machine-readably", () => {

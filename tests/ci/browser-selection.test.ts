@@ -88,9 +88,11 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     expect([...mapped].sort()).toEqual([...onDisk].sort());
     // The exact selection that was cancelled twice at the old 10-minute
     // ceiling (28), plus ONE spec from #565 and ONE from #564, both of which
-    // joined `sessions` — and now ONE more from the 0181 multi-studio
-    // session-start regression, which also joined `sessions`. Hence 31.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(31);
+    // joined `sessions`, ONE more from the 0181 multi-studio session-start
+    // regression, and now ONE from 0183 client budget context — the Budget
+    // card is a peer section of Consultation & Skin/Hair, so it also joined
+    // `sessions`. Hence 32.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(32);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

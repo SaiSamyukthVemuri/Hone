@@ -460,12 +460,19 @@ export async function updateTreatmentPlanNotesAction(
   const check = await verifyPlanForCurrentStudio(planId, clientId, true);
   if (!check.ok) return check;
 
-  // budget_notes / practitioner_notes: empty string clears the column to
-  // null so the UI's "empty textarea" reads as "no notes" rather than as
-  // an empty-but-present value.
-  const budgetRaw = trimmed(formData.get("budget_notes"));
+  // practitioner_notes: empty string clears the column to null so the UI's
+  // "empty textarea" reads as "no notes" rather than as an empty-but-present
+  // value.
+  //
+  // budget_notes is DELIBERATELY ABSENT from this action. Budget moved to
+  // client-level context (public.client_budget_context, migration 0183) and
+  // this writer no longer has any authority over it — one concept, one
+  // writer. The legacy treatment_plans.budget_notes column is retained and
+  // rendered read-only, so it must be LEFT ALONE rather than cleared: if the
+  // column were still listed in the update object below it would read as an
+  // absent form field, resolve to null, and silently erase every historical
+  // plan budget note on the next unrelated plan edit.
   const practitionerRaw = trimmed(formData.get("practitioner_notes"));
-  const budget = budgetRaw.length === 0 ? null : budgetRaw;
   const practitioner = practitionerRaw.length === 0 ? null : practitionerRaw;
 
   // Optional override. Empty string clears to null. Out-of-range rejected
@@ -567,8 +574,9 @@ export async function updateTreatmentPlanNotesAction(
   }
 
   const supabase = await createClient();
+  // NOTE: no budget_notes key. See the comment above — omitting it is what
+  // preserves the legacy historical value.
   const update: {
-    budget_notes: string | null;
     practitioner_notes: string | null;
     treatment_goal_minutes_override: number | null;
     primary_area?: string | null;
@@ -576,7 +584,6 @@ export async function updateTreatmentPlanNotesAction(
     estimated_timeline_months_min?: number | null;
     estimated_timeline_months_max?: number | null;
   } = {
-    budget_notes: budget,
     practitioner_notes: practitioner,
     treatment_goal_minutes_override: override,
   };

@@ -131,6 +131,9 @@ import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
 import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 import { ClinicalNotesSummary } from "@/components/clinical-notes-summary";
+import { updateClientBudgetContextAction } from "./budget-context-actions";
+import { getClientBudgetContext } from "@/lib/budget/queries";
+import { ClientBudgetCard } from "@/components/client-budget-card";
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
@@ -300,6 +303,14 @@ export default async function ClientCheatSheetPage({
   const clinicalNoteSections =
     activeTab === "consultation"
       ? await buildClinicalNoteSections(client.id, { historyLimit: 25 })
+      : null;
+  // Migration 0183: CURRENT client budget context — practitioner-held client
+  // context, NOT a clinical note kind. Loaded alongside the clinical notes on
+  // the same tab so other tabs pay no cost. Fails soft to the empty state
+  // (no row yet, or 0183 not yet applied), so the tab never 500s.
+  const budgetContext =
+    activeTab === "consultation"
+      ? await getClientBudgetContext(client.id)
       : null;
   // Read-only latest-of-each-kind summary for the overview appointment-prep
   // briefing. Two light reads; only on the default overview tab.
@@ -1005,6 +1016,21 @@ export default async function ClientCheatSheetPage({
           addAction={addClinicalNoteAction}
           reviseAction={reviseClinicalNoteAction}
           printHref={`/clients/${client.id}/clinical-notes/print`}
+        />
+      )}
+
+      {/* Chloe pilot feedback: budget belongs with consultation, not with a
+          treatment plan. Renders as a peer of the two clinical sections but
+          is deliberately separate from them — mutable current context, not an
+          append-only clinical record, and not a client_clinical_notes kind. */}
+      {activeTab === "consultation" && budgetContext && (
+        <ClientBudgetCard
+          clientId={client.id}
+          initial={{
+            budgetLevel: budgetContext.budgetLevel,
+            budgetNotes: budgetContext.budgetNotes,
+          }}
+          action={updateClientBudgetContextAction}
         />
       )}
 
