@@ -88,6 +88,11 @@ describe("refund owner-only gate (PR #296)", () => {
       [HELPER, "payment_refund_helper_not_owner"],
       [ACTION, "payment_refund_denied_not_owner"],
       [FEE_ACTION, "payment_refund_denied_not_owner"],
+      // F-PAY-002. The prepare action's owner gate for an operator-authored
+      // final charge logs a denial the same way, so it is held to the same
+      // no-PII standard as the refund denials rather than inheriting it by
+      // resemblance.
+      [ACTION, "session_payment_amount_change_denied_not_owner"],
     ] as const) {
       const idx = src.indexOf(event);
       expect(idx, event).toBeGreaterThan(-1);

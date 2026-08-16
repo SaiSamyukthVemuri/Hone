@@ -59,25 +59,62 @@ describe('prepare action: "use server" + auth gate', () => {
 });
 
 describe("prepare action: amount + note validation", () => {
-  it("F-PAY-001: the browser amount is NOT read; the server resolves it", () => {
-    // The action used to read amount_dollars and insert it verbatim, so a
-    // tampered form decided what the client was charged.
+  it("F-PAY-002: the browser REQUESTS a total; the server decides it", () => {
+    // The pre-F-PAY-001 action read `amount_dollars` and inserted it verbatim,
+    // so a tampered form decided what the client was charged. F-PAY-001 removed
+    // the field entirely and, with it, Chloe's ability to discount or add a
+    // product. The field is back under a new name and a real gate: the value
+    // reaches the row only through decideCheckoutFinalAmount, which owns the
+    // stale check, strict parsing, the owner rule and the reason requirement.
     const code = ACTION.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     expect(code).not.toMatch(/formData\.get\("amount_dollars"\)/);
     expect(code).toMatch(/formData\.get\("expected_amount_cents"\)/);
+    expect(code).toMatch(/formData\.get\("final_amount_dollars"\)/);
     expect(code).toMatch(/getAuthoritativeSessionPaymentAmount\(/);
-    expect(code).toMatch(/amount_cents: authoritativeCents,/);
-    expect(ACTION).toMatch(/Math\.round\(asNumber \* 100\)/);
+    expect(code).toMatch(/decideCheckoutFinalAmount\(\{/);
+    expect(code).toMatch(/amount_cents: decision\.amountCents,/);
   });
 
-  it("rejects amount <= 0", () => {
-    expect(ACTION).toMatch(/AMOUNT_INVALID_ERROR/);
-    expect(ACTION).toMatch(/Enter an amount greater than \$0\.00/);
+  it("does no money parsing of its own, and delegates to the strict parser", () => {
+    // The old parser lived HERE and did `Number(trimmed)` then
+    // `Math.round(asNumber * 100)`, which accepted "1e2" and rounded "10.999"
+    // up into a real charge. It is gone, so asserting its absence in this file
+    // is nearly free — the assertion that carries weight is that the action
+    // reaches the strict parser through the decision module, and that the
+    // parser itself contains no float arithmetic (pinned in
+    // tests/lib/billing/cad-amount.test.ts).
+    const code = ACTION.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toMatch(/Math\.round\(/);
+    expect(code).not.toMatch(/Math\.min\(/);
+    expect(code).not.toMatch(/parseFloat\(/);
+    expect(code).not.toMatch(/Number\(/);
+    expect(code).toMatch(/decideCheckoutFinalAmount\(/);
+    const DECISION = readFileSync(
+      path.resolve(__dirname, "../../../lib/billing/checkout-final-amount.ts"),
+      "utf8",
+    );
+    expect(DECISION).toMatch(
+      /import \{[\s\S]{0,120}parseCadAmountToCents[\s\S]{0,80}\} from "@\/lib\/billing\/cad-amount"/,
+    );
+    expect(DECISION).toMatch(/parseCadAmountToCents\(requestedFinalRaw, ceilingCents\)/);
+  });
+
+  it("rejects a zero total as a NO-CHARGE outcome, not an attempt", () => {
+    expect(ACTION).toMatch(/decision\.kind === "no_charge_required"/);
+    expect(ACTION).toMatch(/noChargeRequired: true/);
+    // The no-charge branch returns BEFORE createAdminClient is reached.
+    const noCharge = ACTION.indexOf('decision.kind === "no_charge_required"');
+    const admin = ACTION.indexOf("const admin = createAdminClient()");
+    expect(noCharge).toBeGreaterThan(-1);
+    expect(admin).toBeGreaterThan(noCharge);
   });
 
   it("rejects amount > 200000 cents (matches table CHECK and SESSION_PAYMENT_AMOUNT_CEILING_CENTS)", () => {
     expect(ACTION).toMatch(/SESSION_PAYMENT_AMOUNT_CEILING_CENTS/);
-    expect(ACTION).toMatch(/AMOUNT_TOO_LARGE_ERROR/);
+    expect(ACTION).toMatch(/AUTHORITATIVE_AMOUNT_TOO_LARGE_ERROR/);
+    // The authored total's ceiling is the parser's, exercised in
+    // tests/lib/billing/cad-amount.test.ts.
+    expect(ACTION).toMatch(/ceilingCents: SESSION_PAYMENT_AMOUNT_CEILING_CENTS/);
   });
 
   it("treats the internal note as OPTIONAL (no note-required error at all)", () => {
@@ -90,10 +127,24 @@ describe("prepare action: amount + note validation", () => {
   });
 
   it("stores a blank/whitespace-only note as NULL (no fabricated placeholder)", () => {
-    // strOrEmpty already trims, so whitespace-only collapses to "" and is
-    // written as null; a real note is preserved verbatim.
+    // The blank-to-null rule moved into the decision module along with the
+    // adjustment-audit composition, because the two now share one column and
+    // deciding them apart is what would let one silently truncate the other.
+    expect(ACTION).toMatch(/internal_note: decision\.internalNote,/);
+    const DECISION = readFileSync(
+      path.resolve(__dirname, "../../../lib/billing/checkout-final-amount.ts"),
+      "utf8",
+    );
+    expect(DECISION).toMatch(
+      /internalNote: internalNote\.length > 0 \? internalNote : null/,
+    );
+  });
+
+  it("owner-gates a CHANGED total and logs the denial with safe IDs only", () => {
+    expect(ACTION).toMatch(/actorIsOwner = practitioner\.role === "owner"/);
+    expect(ACTION).toMatch(/actorIsOwner,/);
     expect(ACTION).toMatch(
-      /internal_note:\s*internalNote\.length > 0 \? internalNote : null/,
+      /logInternal\("session_payment_amount_change_denied_not_owner", \{\s*studioId,\s*practitionerId,\s*\}\)/,
     );
   });
 

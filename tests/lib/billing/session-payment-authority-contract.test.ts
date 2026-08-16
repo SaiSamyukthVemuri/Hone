@@ -63,35 +63,79 @@ describe("the retired display-default resolver is gone", () => {
   });
 });
 
-describe("the browser has no amount authority", () => {
-  it("the prepare action never reads amount_dollars", () => {
-    expect(codeOnly(ACTION)).not.toMatch(/amount_dollars/);
+describe("the browser has no LINEAGE authority, and only bounded amount authority", () => {
+  // F-PAY-002 restated the boundary rather than moving it. The browser may
+  // REQUEST one number — the operator-authored final total — and that request
+  // is authorised, bounded and audited by ONE pure decision. It may not supply
+  // the studio, the practitioner, the practitioner's ROLE, the client, the
+  // card, the consent signature, or any Stripe identifier. Those pins are
+  // below and are unchanged.
+
+  it("the legacy unguarded amount_dollars field is never read", () => {
+    // The exact pre-F-PAY-001 spelling, which was inserted verbatim.
+    expect(codeOnly(ACTION)).not.toMatch(/formData\.get\("amount_dollars"\)/);
+    expect(codeOnly(CARD)).not.toMatch(/name="amount_dollars"/);
   });
 
-  it("the action inserts ONLY the server-resolved amount", () => {
-    expect(ACTION).toMatch(/amount_cents: authoritativeCents,/);
+  it("the requested total reaches the row ONLY through the decision module", () => {
+    expect(ACTION).toMatch(/amount_cents: decision\.amountCents,/);
+    expect(ACTION).toMatch(/decideCheckoutFinalAmount\(\{/);
+    // The raw form value is never inserted, and never coerced on the way past.
+    const code = codeOnly(ACTION);
+    expect(code).not.toMatch(/amount_cents: finalAmountRaw/);
+    expect(code).not.toMatch(/amount_cents:\s*Number\(/);
+    expect(code).not.toMatch(/amount_cents:\s*parse/);
+    expect(code).not.toMatch(/Math\.round\(/);
+  });
+
+  it("the REFERENCE is still re-resolved server-side, with no fallback", () => {
     expect(ACTION).toMatch(/getAuthoritativeSessionPaymentAmount\(/);
-    // expected_amount_cents can only reject, never supply a value.
-    expect(ACTION).toMatch(/expected\.cents !== authoritativeCents/);
-    expect(codeOnly(ACTION)).not.toMatch(/amount_cents: expected/);
-    // The authoritative value is taken straight from the resolver result, with
-    // no `??` fallback smuggled in beside it.
-    expect(ACTION).toMatch(
-      /const authoritativeCents = priced\.result\.amountCents;/,
-    );
+    expect(ACTION).toMatch(/const referenceCents = priced\.result\.amountCents;/);
+    expect(codeOnly(ACTION)).not.toMatch(/referenceCents\s*=\s*[^;]*\?\?/);
   });
 
-  it("no session-payment UI submits an amount field", () => {
-    expect(CARD).not.toMatch(/name="amount_dollars"/);
+  it("the stale-display comparison exists and compares the two references", () => {
+    const DECISION = read("lib/billing/checkout-final-amount.ts");
+    expect(DECISION).toMatch(/expectedCents !== referenceCents/);
+    // Nothing may substitute the browser's claim for the resolved reference.
+    expect(codeOnly(DECISION)).not.toMatch(/referenceCents\s*=\s*expectedCents/);
+  });
+
+  it("the owner fact is derived from the authenticated practitioner", () => {
+    expect(ACTION).toMatch(/actorIsOwner = practitioner\.role === "owner"/);
+    // There is no form field that could vote on it.
+    const code = codeOnly(ACTION);
+    expect(code).not.toMatch(/formData\.get\("is_owner"\)/);
+    expect(code).not.toMatch(/formData\.get\("isOwner"\)/);
+    expect(code).not.toMatch(/formData\.get\("role"\)/);
+    expect(code).not.toMatch(/formData\.get\("practitioner_role"\)/);
+    // ...and the decision module cannot read one either: it is pure and takes
+    // the decided boolean as an argument.
+    const DECISION = read("lib/billing/checkout-final-amount.ts");
+    expect(codeOnly(DECISION)).not.toMatch(/formData|FormData|createClient|supabase/);
+  });
+
+  it("the session-payment UI still submits the reference as a hidden check", () => {
     expect(CARD).toMatch(/name="expected_amount_cents"/);
     expect(CARD).toMatch(/type="hidden"/);
   });
 
-  it("the ceiling is applied to the AUTHORITATIVE amount and never clamps", () => {
+  it("both ceilings reject and never clamp", () => {
+    // The CONFIGURED reference...
     expect(ACTION).toMatch(
-      /authoritativeCents > SESSION_PAYMENT_AMOUNT_CEILING_CENTS/,
+      /referenceCents > SESSION_PAYMENT_AMOUNT_CEILING_CENTS/,
     );
-    expect(codeOnly(ACTION)).not.toMatch(/Math\.min\(/);
+    // ...and the AUTHORED total, inside the parser.
+    const PARSER = read("lib/billing/cad-amount.ts");
+    expect(PARSER).toMatch(/reason: "above_ceiling"/);
+    for (const [name, src] of [
+      ["action", ACTION],
+      ["decision", read("lib/billing/checkout-final-amount.ts")],
+      ["parser", PARSER],
+    ] as const) {
+      expect(codeOnly(src), `${name} must not clamp`).not.toMatch(/Math\.min\(/);
+      expect(codeOnly(src), `${name} must not clamp`).not.toMatch(/Math\.max\(/);
+    }
   });
 
   it("no historical session price is a pricing authority", () => {

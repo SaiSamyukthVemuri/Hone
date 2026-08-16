@@ -186,9 +186,12 @@ imply self-service live activation.
 | Payment receipts (email) | LIVE_WITH_GUIDED_SETUP | QUALIFIER | Email a receipt for each card payment. |
 | Refunds (full-amount, owner-only) | LIVE_WITH_GUIDED_SETUP | QUALIFIER | Issue a full refund on a card payment (owner only). |
 | Quick checkout (reduced-click modal) | LIVE_WITH_GUIDED_SETUP | QUALIFIER | Take payment in a couple of clicks while the client is with you. |
+| Adjust the final charge at checkout (owner-only, reason required) | LIVE_WITH_GUIDED_SETUP | QUALIFIER | The booked price fills in the total; as the owner you can change it for a discount or an add-on, with a short reason recorded on the payment. |
 | Manual cancellation/no-show fee | DEPLOYED_DEFAULT_OFF | OMIT | Live charging HARD-HELD to `session_payment` only. |
 | Card-required-at-booking | DORMANT_CONTROLLED | **NEVER** | Never flipped; no runtime path. |
 | Deposits / packages / partial payments / partial refunds | NOT_BUILT | OMIT | Not built. |
+| Product catalog / inventory / itemized receipts / tax engine | NOT_BUILT | OMIT | Adjusting the final charge records ONE total and a free-text reason. It is not line-item accounting; nothing infers a product, a discount rate or a tax treatment from it. |
+| Zero-dollar / fully-comped session as a financial event | NOT_BUILT | OMIT | A $0.00 checkout prepares nothing and says so; no comped-visit record is written. |
 | Automatic live cancel/no-show charges | NOT_BUILT | **NEVER** | Every charge is an explicit manual action; never auto-charge. |
 | Self-service live-payment activation | NOT_BUILT | **NEVER** | Supervised, env/approval-gated operator process — not a product feature. |
 

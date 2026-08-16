@@ -175,16 +175,44 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
   await checkoutButton.click();
   const modal = page.getByTestId("quick-checkout-modal");
   await expect(modal).toBeVisible();
-  // The amount is the SERVER's decision, rendered and not editable.
+  // The booked REFERENCE price is the SERVER's decision, rendered and never
+  // typed into. The editable Final charge is asserted separately below.
   await expect(modal.getByTestId("authoritative-amount")).toHaveText("$225.00");
   await expect(modal.getByTestId("amount-source")).toHaveText("Booked service price.");
+  // Scoped to the payment CARD: the modal's own header line also names the
+  // booked service, so an unscoped match resolves to two elements and would be
+  // asserting the modal chrome rather than the card's booked-service reminder.
   await expect(
-    modal.getByText(/Booked service: Mobile Completion Service/),
+    modal
+      .getByRole("region", { name: "Session payment" })
+      .getByText(/Mobile Completion Service/),
   ).toBeVisible();
-  await expect(modal.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+  // The legacy unguarded field never returns.
   await expect(modal.locator('input[name="amount_dollars"]')).toHaveCount(0);
   await expect(modal.locator('input[name="expected_amount_cents"]')).toHaveValue("22500");
   await expect(modal.getByTestId("pricing-blocked")).toHaveCount(0);
+
+  // F-PAY-002. The FINAL charge is editable ON A PHONE, with a real touch
+  // target and a decimal keyboard — this is the control Chloe uses with a
+  // client in the chair, so the mobile ergonomics are asserted here and not
+  // inferred from the desktop layout.
+  const finalCharge = modal.getByTestId("final-charge-input");
+  await expect(finalCharge).toBeVisible();
+  await expect(finalCharge).toBeEnabled();
+  await expect(finalCharge).toHaveValue("225.00");
+  expect(await finalCharge.getAttribute("inputmode")).toBe("decimal");
+  const finalBox = await finalCharge.boundingBox();
+  expect(finalBox!.height).toBeGreaterThanOrEqual(44);
+  // Typing on the phone reveals the reason field at a usable size too.
+  await finalCharge.fill("200.00");
+  const reason = modal.getByTestId("adjustment-reason-input");
+  await expect(reason).toBeVisible();
+  const reasonBox = await reason.boundingBox();
+  expect(reasonBox!.height).toBeGreaterThanOrEqual(44);
+  // This journey charges the booked price; put it back before preparing.
+  await finalCharge.fill("225.00");
+  await expect(reason).toHaveCount(0);
+
   const prepareCta = modal.getByRole("button", { name: /prepare session payment/i });
   await expect(prepareCta).toBeVisible();
   const ctaBox = await prepareCta.boundingBox();
