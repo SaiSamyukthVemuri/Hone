@@ -11,6 +11,7 @@ import {
   fetchSlotsForClientBookingAction,
   fetchEligiblePractitionersAction,
   type EligiblePractitioner,
+  type SlotResult,
 } from "./booking-actions";
 import { bookAppointmentForClientAction } from "../../calendar/actions";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
@@ -22,9 +23,11 @@ import {
 } from "@/lib/booking/availability-window";
 import { resolveEligibleSelection } from "@/lib/booking/eligible-selection";
 import {
-  loadForCandidate,
-  sameSlotCandidate,
-  type SlotCandidateIdentity,
+  eligibleFetchIdentity,
+  fetchForIdentity,
+  slotFetchIdentity,
+  type EligibleFetchInput,
+  type SlotFetchInput,
 } from "@/lib/booking/slot-request";
 
 type Slot = { start: string; end: string; startLabel: string };
@@ -135,7 +138,7 @@ export function BookAppointment({
   // window to its identity -- the same trick that made a stale SLOT unusable --
   // kills that class structurally instead of depending on every mutation site
   // bumping the right counter.
-  const [windowFor, setWindowFor] = useState<SlotCandidateIdentity | null>(null);
+  const [windowFor, setWindowFor] = useState<string | null>(null);
 
   // Item 6: owner practitioner selector. The selector is shown ONLY when capacity
   // is ON and the actor is an owner; members and Legacy studios always book the
@@ -167,12 +170,26 @@ export function BookAppointment({
   // loadSlots always did; loadForService did not, which is how a suggestion
   // picked on the previous date stayed selected (and submittable) for the whole
   // duration of the eligibility round trip.
-  // The identity the CURRENT form describes.
-  function liveIdentity(): SlotCandidateIdentity {
+  // THE REQUEST THE CURRENT FORM WOULD MAKE.
+  //
+  // Built from the same expressions the fetch uses for its arguments --
+  // including `showSelector ? target : undefined` collapsed to null -- so the
+  // recorded identity is provably the identity of the data that comes back.
+  // Recording adjacent STATE instead is what let a capacity flip leave a stale
+  // window looking current: the selected target did not change, but the
+  // argument (and the window's source) did.
+  function liveSlotRequest(): SlotFetchInput {
     return {
       serviceId: serviceRef.current,
       date: dateRef.current,
-      targetPractitionerId: targetRef.current,
+      practitionerId: showSelector ? (targetRef.current || null) : null,
+      capacityMode: practitionerCapacityEnabled,
+    };
+  }
+  function liveEligibleRequest(): EligibleFetchInput {
+    return {
+      serviceId: serviceRef.current,
+      capacityMode: practitionerCapacityEnabled,
     };
   }
 
@@ -199,26 +216,27 @@ export function BookAppointment({
     // slots, window and buffer approval, AND invalidate the outstanding slot
     // generation. Anything still in flight now belongs to nobody.
     invalidateSelection();
-    // The identity THIS request answers for. Compared against the live identity
-    // after the await -- a response is not authoritative merely because it is
-    // the last to resolve.
-    const captured: SlotCandidateIdentity = {
+    // THE REQUEST OWNS ITS IDENTITY. This one object is both the argument list
+    // and the thing the identity is derived from, so the two cannot diverge.
+    const request: SlotFetchInput = {
       serviceId: nextServiceId,
       date: nextDate,
-      targetPractitionerId: nextTarget,
+      practitionerId: showSelector ? (nextTarget || null) : null,
+      capacityMode: practitionerCapacityEnabled,
     };
     const req = slotReq.current;
     startLoading(async () => {
-      const decision = await loadForCandidate({
+      const decision = await fetchForIdentity<SlotFetchInput, SlotResult>({
+        request,
+        identityOf: slotFetchIdentity,
+        readCurrentRequest: liveSlotRequest,
         generation: req,
         isCurrentGeneration: (g) => g === slotReq.current,
-        captured,
-        readCurrentIdentity: liveIdentity,
-        fetch: () =>
+        fetch: (r) =>
           fetchSlotsForClientBookingAction({
-            serviceId: nextServiceId,
-            date: nextDate,
-            practitionerId: showSelector ? nextTarget : undefined,
+            serviceId: r.serviceId,
+            date: r.date,
+            practitionerId: r.practitionerId ?? undefined,
           }),
       });
       // Superseded, or answering for a candidate that is no longer on screen.
@@ -238,8 +256,8 @@ export function BookAppointment({
       }
       setSlots(r.slots);
       setAvailabilityWindow(r.window);
-      // Stamp the window with the candidate it describes.
-      setWindowFor(captured);
+      // Stamp the window with the identity of the request it came from.
+      setWindowFor(slotFetchIdentity(request));
     });
   }
 
@@ -259,15 +277,23 @@ export function BookAppointment({
     // candidate -- selected slot, window and any buffer approval -- is stale
     // from this instant, not from whenever the round trip happens to finish.
     invalidateSelection();
+    // The eligible LIST depends on the service and the capacity mode -- and on
+    // nothing else. Which practitioner is SELECTED is user state, and is
+    // handled separately below: resolveEligibleSelection reads it at resolve
+    // time so a later explicit choice is never overwritten by an older result.
+    const eligibleRequest: EligibleFetchInput = {
+      serviceId: nextServiceId,
+      capacityMode: practitionerCapacityEnabled,
+    };
     startLoadingPractitioners(async () => {
-      // Ordering lives in resolveEligibleSelection, which reads the CURRENT
-      // target through the callback instead of capturing it. That is what lets
-      // a date refresh invalidate stale work without also revoking a later
-      // explicit practitioner choice.
       const outcome = await resolveEligibleSelection({
         generation: req,
-        isCurrent: (g) => g === eligibleReq.current,
-        fetchEligible: () => fetchEligiblePractitionersAction(nextServiceId),
+        isCurrent: (g) =>
+          g === eligibleReq.current &&
+          // ...and the list must still answer for the current service/mode.
+          eligibleFetchIdentity(eligibleRequest) ===
+            eligibleFetchIdentity(liveEligibleRequest()),
+        fetchEligible: () => fetchEligiblePractitionersAction(eligibleRequest.serviceId),
         readCurrentTarget: () => targetRef.current,
         preferredFallback: currentPractitionerId,
       });
@@ -354,11 +380,8 @@ export function BookAppointment({
   // which the decision already treats as "not loaded": manual path blocked,
   // truthful checking copy, no acknowledgement, no flag. Loading never becomes
   // "outside hours".
-  const windowIsCurrent = sameSlotCandidate(windowFor, {
-    serviceId,
-    date,
-    targetPractitionerId: showSelector ? target : currentPractitionerId,
-  });
+  const windowIsCurrent =
+    windowFor !== null && windowFor === slotFetchIdentity(liveSlotRequest());
   const manualDecision = decideManualTime({
     window: windowIsCurrent ? availabilityWindow : null,
     // The date and zone are required so the END is derived from the real UTC
@@ -397,8 +420,11 @@ export function BookAppointment({
     serviceId: serviceId || null,
     practitionerId: (showSelector ? target : currentPractitionerId) || null,
     startsAtIso: candidateStartsAt,
-    // No drag-to-create on this surface, so the length is always the service's.
-    effectiveDurationMinutes: null,
+    // The buffer depends on the COMPLETE interval. There is no drag-to-create
+    // here, but the SERVICE's default length still defines that interval, and a
+    // default changed under the same service id between the refusal and the
+    // retry would otherwise keep a matching approval for a different booking.
+    effectiveDurationMinutes: selectedService?.default_duration_minutes ?? null,
   });
   // Derived, never stored: the approval applies only while the candidate it was
   // issued for is still the one being booked. Changing slot, time, date,

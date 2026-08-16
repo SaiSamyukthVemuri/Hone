@@ -37,9 +37,15 @@ import {
   type AvailabilityWindow,
 } from "@/lib/booking/availability-window";
 import {
+  fetchForIdentity,
+  slotFetchIdentity,
+  type SlotFetchInput,
+} from "@/lib/booking/slot-request";
+import {
   fetchSlotsForClientBookingAction,
   fetchEligiblePractitionersAction,
   type EligiblePractitioner,
+  type SlotResult,
 } from "../clients/[id]/booking-actions";
 import {
   bookAppointmentForClientAction,
@@ -249,6 +255,11 @@ export function QuickBookDrawer({
   // through the outside-hours override; see the note on ManualTimeDecision.
   const [availabilityWindow, setAvailabilityWindow] =
     useState<AvailabilityWindow | null>(null);
+  // WHICH REQUEST THE WINDOW CAME FROM. The drawer's effect cleanup cancels a
+  // superseded response, but cancellation is not authority: it cannot speak to
+  // a response whose inputs simply moved on. Stamping the window with its
+  // request identity is the same guarantee the client-profile form has.
+  const [windowFor, setWindowFor] = useState<string | null>(null);
   // Drag-derived duration (minutes). Empty string when the drawer was
   // opened by a bare click; the override duration input is hidden in
   // that case and the booking uses the service default. When the
@@ -460,6 +471,19 @@ export function QuickBookDrawer({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // THE REQUEST THE DRAWER WOULD MAKE RIGHT NOW. Built from the same
+  // expressions the effect uses for its arguments, so the recorded identity is
+  // provably the identity of the data that comes back.
+  function liveSlotRequest(): SlotFetchInput | null {
+    if (!open || !draft || !serviceId || (showSelector && !target)) return null;
+    return {
+      serviceId,
+      date: draft.localDate,
+      practitionerId: showSelector ? (target || null) : null,
+      capacityMode: practitionerCapacityEnabled,
+    };
+  }
+
   // Fetch the suggestions AND the real availability window whenever
   // (serviceId, draft.localDate, target) changes. The clicked time is only a
   // hint: it is preselected when a suggestion falls on exactly that instant,
@@ -488,19 +512,36 @@ export function QuickBookDrawer({
     // state. Unknown is the honest value here; the manual path is blocked
     // until the real window lands.
     setAvailabilityWindow(null);
+    setWindowFor(null);
     // A new (service, date, target) is a different booking; a buffer refusal
     // for the previous one says nothing about it.
     clearBufferOverride();
+    // THE REQUEST OWNS ITS IDENTITY -- one object is both the argument list and
+    // the thing the identity derives from, so they cannot diverge.
+    const request: SlotFetchInput = {
+      serviceId,
+      date: targetDate,
+      // Item 6: the EXACT target drives the slots, recorded as the ARGUMENT
+      // actually sent rather than as adjacent state.
+      practitionerId: showSelector ? (target || null) : null,
+      capacityMode: practitionerCapacityEnabled,
+    };
     startLoadingSlots(async () => {
-      const r = await fetchSlotsForClientBookingAction({
-        serviceId,
-        date: targetDate,
-        // Item 6: the EXACT target drives the slots. Changing target re-runs this
-        // effect (cleanup cancels the old response), so an A slot is never treated
-        // as valid for B and the picked time is recomputed for the new target.
-        practitionerId: showSelector ? target : undefined,
+      const decision = await fetchForIdentity<SlotFetchInput, SlotResult>({
+        request,
+        identityOf: slotFetchIdentity,
+        readCurrentRequest: liveSlotRequest,
+        fetch: (q) =>
+          fetchSlotsForClientBookingAction({
+            serviceId: q.serviceId,
+            date: q.date,
+            practitionerId: q.practitionerId ?? undefined,
+          }),
       });
       if (cancelled) return;
+      // Superseded, or answering for inputs that are no longer current.
+      if (decision.kind === "discard") return;
+      const r = decision.result;
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
@@ -516,6 +557,7 @@ export function QuickBookDrawer({
       }
       setError(null);
       setAvailabilityWindow(r.window);
+      setWindowFor(slotFetchIdentity(request));
       // Display-only past-time guard for the internal calendar: never offer a
       // slot whose start instant is already in the past (today's earlier
       // hours). Absolute UTC comparison on the ISO slot.start. The shared
@@ -657,8 +699,17 @@ export function QuickBookDrawer({
   //
   // The verdict decides COPY ONLY. The server re-resolves the window itself and
   // is the authority; nothing here is sent back as a claim.
+  // THE WINDOW MUST DESCRIBE THE REQUEST THE DRAWER WOULD MAKE NOW. A window
+  // from another (service, date, target, capacity mode) is handed over as null,
+  // which the shared decision already treats as "not loaded": manual path
+  // blocked, truthful checking copy, no acknowledgement, no flag.
+  const liveRequestNow = liveSlotRequest();
+  const windowIsCurrent =
+    windowFor !== null &&
+    liveRequestNow !== null &&
+    windowFor === slotFetchIdentity(liveRequestNow);
   const manualDecision = decideManualTime({
-    window: availabilityWindow,
+    window: windowIsCurrent ? availabilityWindow : null,
     // The date and zone are required so the END is derived from the real UTC
     // instant, exactly as the database derives it. Wall-clock addition
     // disagreed with the validator by an hour on DST-transition days.
@@ -702,7 +753,15 @@ export function QuickBookDrawer({
     serviceId: serviceId || null,
     practitionerId: (showSelector ? target : currentPractitionerId) || null,
     startsAtIso: candidateStartsAt,
-    effectiveDurationMinutes: effectiveDurationOverride,
+    // The buffer depends on the COMPLETE interval, so the identity carries the
+    // effective length -- the drag override when there is one, otherwise the
+    // service's own default. Passing null for the standard path meant a service
+    // whose default duration changed under the same id between the refusal and
+    // the retry kept a matching approval for a different interval.
+    effectiveDurationMinutes:
+      effectiveDurationOverride ??
+      selectedService?.default_duration_minutes ??
+      null,
   });
   // Derived, never stored: the approval applies only while the candidate it was
   // issued for is still the one being booked.

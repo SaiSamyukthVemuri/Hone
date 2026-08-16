@@ -72,12 +72,16 @@ describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6
     // generation AND the identity the request was issued for. The counter alone
     // could not reject a response whose candidate had moved on underneath it.
     expect(BOOK).toMatch(/isCurrentGeneration: \(g\) => g === slotReq\.current/);
-    expect(BOOK).toMatch(/readCurrentIdentity: liveIdentity/);
+    expect(BOOK).toMatch(/readCurrentRequest: liveSlotRequest/);
+    expect(BOOK).toMatch(/identityOf: slotFetchIdentity/);
     expect(BOOK).toMatch(/decision\.kind === "discard"/);
     // The eligible-side guard moved into resolveEligibleSelection, which checks
     // it AFTER the await; the component supplies the generation + predicate.
     expect(BOOK).toMatch(/generation: req,/);
-    expect(BOOK).toMatch(/isCurrent: \(g\) => g === eligibleReq\.current/);
+    // The eligible guard now also requires the list to still answer for the
+    // current service/capacity mode, not merely to be the newest generation.
+    expect(BOOK).toMatch(/g === eligibleReq\.current &&/);
+    expect(BOOK).toMatch(/eligibleFetchIdentity\(eligibleRequest\) ===/);
     expect(BOOK).toMatch(/outcome\.kind === "superseded"/);
   });
 });
@@ -94,7 +98,10 @@ describe("BookAppointment — owner selector, member self-only, confirmation", (
     expect(BOOK).toMatch(/loadSlots\(serviceId, date, v\)/);
     expect(BOOK).toMatch(/setPickedSlot\(null\)/);
     // The slot fetch passes the target only when the selector is active.
-    expect(BOOK).toMatch(/practitionerId: showSelector \? nextTarget : undefined/);
+    // The request object now carries the argument; the fetch reads it from there,
+    // so the identity and the arguments provably cannot diverge.
+    expect(BOOK).toMatch(/practitionerId: showSelector \? \(nextTarget \|\| null\) : null/);
+    expect(BOOK).toMatch(/practitionerId: r\.practitionerId \?\? undefined/);
   });
   it("submits practitioner_id only when a capacity-ON owner has a target; members send none", () => {
     expect(BOOK).toMatch(/if \(showSelector && target\) fd\.set\("practitioner_id", target\)/);

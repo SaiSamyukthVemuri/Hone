@@ -230,13 +230,16 @@ describe("P2-3 — a date change invalidates in-flight practitioner lookups", ()
     // is behaviourally tested there); the slot-side guard is still inline.
     expect(BOOK).toMatch(/const req = \+\+eligibleReq\.current;/);
     expect(BOOK).toMatch(/generation: req,/);
-    expect(BOOK).toMatch(/isCurrent: \(g\) => g === eligibleReq\.current/);
-    // The slot-side guard moved into loadForCandidate, which checks the
-    // generation AND the captured identity after the await. A counter alone
-    // could not see a response whose identity had simply moved on underneath
-    // it, which is the race this replaced.
+    // The eligible guard now checks the generation AND that the list still
+    // answers for the current service/capacity mode.
+    expect(BOOK).toMatch(/g === eligibleReq\.current &&/);
+    expect(BOOK).toMatch(/eligibleFetchIdentity\(eligibleRequest\) ===/);
+    expect(BOOK).toMatch(/eligibleFetchIdentity\(liveEligibleRequest\(\)\)/);
+    // The slot-side guard is fetchForIdentity: generation AND a DERIVED
+    // identity, compared after the await. A counter alone cannot see a response
+    // whose inputs simply moved on underneath it.
     expect(BOOK).toMatch(/isCurrentGeneration: \(g\) => g === slotReq\.current/);
-    expect(BOOK).toMatch(/readCurrentIdentity: liveIdentity/);
+    expect(BOOK).toMatch(/readCurrentRequest: liveSlotRequest/);
   });
 });
 
@@ -286,7 +289,7 @@ describe("P2-4 — a buffer approval is scoped to ONE booking candidate", () => 
 
   it("the drawer's candidate also covers the (normalised) drag length", () => {
     const DRAWER2 = read("app/(app)/calendar/QuickBookDrawer.tsx");
-    expect(DRAWER2).toMatch(/effectiveDurationMinutes: effectiveDurationOverride/);
+    expect(DRAWER2).toMatch(/effectiveDurationMinutes:\s*\n?\s*effectiveDurationOverride \?\?/);
   });
 });
 
@@ -349,7 +352,10 @@ describe("P2-A/C — both surfaces use the SHARED candidate identity", () => {
     );
     // The decision, the identity and the payload must all read the SAME value.
     expect(DRAWER3).toMatch(/customDurationMinutes: effectiveDurationOverride/);
-    expect(DRAWER3).toMatch(/effectiveDurationMinutes: effectiveDurationOverride/);
+    expect(DRAWER3).toMatch(/effectiveDurationMinutes:\s*\n?\s*effectiveDurationOverride \?\?/);
+    // ...and it falls back to the SERVICE default, so a standard booking's
+    // interval is still part of the buffer identity.
+    expect(DRAWER3).toMatch(/selectedService\?\.default_duration_minutes/);
     expect(DRAWER3).toMatch(
       /effectiveDurationOverride != null\) \{\s*\n\s*fd\.set\("duration_minutes_override", String\(effectiveDurationOverride\)\)/,
     );
@@ -366,7 +372,7 @@ describe("P2-B — the client page resolves eligibility through the ordering hel
     // explicit choice. The callback is read after the await.
     expect(BOOK).toMatch(/resolveEligibleSelection\(\{/);
     expect(BOOK).toMatch(/readCurrentTarget: \(\) => targetRef\.current/);
-    expect(BOOK).toMatch(/isCurrent: \(g\) => g === eligibleReq\.current/);
+    expect(BOOK).toMatch(/g === eligibleReq\.current &&/);
   });
 
   it("the local default-target helper is gone (one implementation, not two)", () => {
@@ -516,34 +522,38 @@ describe("slot/window results commit only to the current candidate", () => {
 
   it("loadSlots invalidates synchronously BEFORE issuing the request", () => {
     const inval = BOOK.indexOf("invalidateSelection();");
-    const issue = BOOK.indexOf("const captured: SlotCandidateIdentity");
+    const issue = BOOK.indexOf("const request: SlotFetchInput");
     expect(inval).toBeGreaterThan(-1);
     expect(inval).toBeLessThan(issue);
   });
 
   it("the result is committed through the identity-checked helper", () => {
-    expect(BOOK).toMatch(/loadForCandidate\(\{/);
+    expect(BOOK).toMatch(/fetchForIdentity<SlotFetchInput, SlotResult>\(\{/);
+    expect(BOOK).toMatch(/identityOf: slotFetchIdentity/);
     expect(BOOK).toMatch(/isCurrentGeneration: \(g\) => g === slotReq\.current/);
-    expect(BOOK).toMatch(/readCurrentIdentity: liveIdentity/);
+    expect(BOOK).toMatch(/readCurrentRequest: liveSlotRequest/);
     expect(BOOK).toMatch(/if \(decision\.kind === "discard"\) return;/);
     // The generation-only guard must not survive alongside it.
     expect(BOOK).not.toMatch(/if \(req !== slotReq\.current\) return;/);
   });
 
-  it("the live identity is read from refs, never captured state", () => {
-    expect(BOOK).toMatch(/function liveIdentity\(\): SlotCandidateIdentity/);
+  it("the live request is read from refs, never captured state", () => {
+    expect(BOOK).toMatch(/function liveSlotRequest\(\): SlotFetchInput/);
     expect(BOOK).toMatch(/serviceId: serviceRef\.current/);
     expect(BOOK).toMatch(/date: dateRef\.current/);
-    expect(BOOK).toMatch(/targetPractitionerId: targetRef\.current/);
+    expect(BOOK).toMatch(/targetRef\.current/);
+    // The ARGUMENT is recorded, not adjacent state -- that divergence is what
+    // let a capacity flip leave a stale window looking current.
+    expect(BOOK).toMatch(/capacityMode: practitionerCapacityEnabled/);
   });
 
   it("the manual verdict uses the window ONLY if it describes this candidate", () => {
     // A window resolved for another candidate is handed over as null, which the
     // shared decision already treats as "not loaded" -- so loading can never
     // present itself as "outside hours".
-    expect(BOOK).toMatch(/const windowIsCurrent = sameSlotCandidate\(windowFor, \{/);
+    expect(BOOK).toMatch(/windowFor === slotFetchIdentity\(liveSlotRequest\(\)\)/);
     expect(BOOK).toMatch(/window: windowIsCurrent \? availabilityWindow : null,/);
-    // The window is stamped with the candidate it describes when it commits.
-    expect(BOOK).toMatch(/setWindowFor\(captured\);/);
+    // The window is stamped with the identity of the request it came from.
+    expect(BOOK).toMatch(/setWindowFor\(slotFetchIdentity\(request\)\);/);
   });
 });
