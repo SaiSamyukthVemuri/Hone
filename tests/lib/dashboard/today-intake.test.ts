@@ -344,7 +344,10 @@ describe("appointment prep surface", () => {
 // ---------------------------------------------------------------------------
 describe("calendar preview drawer", () => {
   it("uses the shared canonical href helper, not a hand-written path", () => {
-    expect(DRAWER).toMatch(/practitionerIntakeReviewHref\(detail\.clientId\)/);
+    // The client id now reaches the helper through the held detail's payload
+    // (detail.value.clientId), so this pins the CALL rather than one spelling of
+    // its argument — while still forbidding any hand-written path.
+    expect(DRAWER).toMatch(/practitionerIntakeReviewHref\(\s*detail\.value\.clientId\s*\)/);
     expect(DRAWER).not.toMatch(/href=\{`\/clients\/\$\{[^}]+\}\/intake`\}/);
   });
 

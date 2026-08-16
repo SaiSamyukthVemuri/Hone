@@ -39,10 +39,19 @@
 // existed. That hybrid is the shape that reads as "mostly fresh" while being
 // wrong, so the fallback is total, not per-field.
 //
-// `fresh` is the discriminator callers gate on: it means the re-read row
-// supplied every value below. It is deliberately NOT "a read was attempted" —
-// an unusable re-read yields the grid snapshot with fresh === false, so a caller
-// can never mistake a fallback for verified truth.
+// `fresh` is the discriminator callers gate on. It means BOTH that the re-read
+// row supplied every value below AND that the read is still the current one. It
+// is deliberately NOT "a read was attempted", and NOT "a read once succeeded":
+//
+//   * an unusable re-read yields the grid snapshot with fresh === false;
+//   * a detail held from an OLDER generation — because a refresh is in flight,
+//     or because the current refresh failed — keeps supplying the DISPLAY (it is
+//     still newer than the week grid) but reports fresh === false, so it can no
+//     longer authorize Cancel or Reschedule.
+//
+// That second case is the difference between showing the last thing we saw and
+// claiming it is true now. A failed refresh must never leave a supposedly
+// verified version behind it.
 //
 // Pure: no React, no clock, no I/O.
 
@@ -63,6 +72,10 @@ export type PreviewAppointmentVersionInput = {
   grid: PreviewAppointmentFacts;
   // The drawer's re-read of the same appointment, or null before it lands.
   detail: PreviewAppointmentFacts | null;
+  // Whether that detail came from the NEWEST read generation issued. Required,
+  // not defaulted: a caller that forgets it is exactly the caller that would
+  // hand stale data action authority.
+  detailIsCurrent: boolean;
 };
 
 function isInstant(value: string | null | undefined): boolean {
@@ -102,11 +115,14 @@ export function previewAppointmentVersion(
   // One version, reported as stored. A span that disagrees with durationMinutes
   // is NOT a reason to reject it: both are facts about the same row, and
   // "correcting" either would be inventing a version to make them agree.
+  //
+  // `fresh` carries the currency question, and only that: a superseded detail
+  // still DISPLAYS (it beats the grid) while authorizing nothing.
   return {
     startsAt: d.startsAt,
     endsAt: d.endsAt,
     durationMinutes: d.durationMinutes,
     status: d.status,
-    fresh: true,
+    fresh: input.detailIsCurrent,
   };
 }

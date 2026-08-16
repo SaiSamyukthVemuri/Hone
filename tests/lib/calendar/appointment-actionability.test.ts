@@ -123,10 +123,18 @@ describe("both surfaces route through this one predicate", () => {
   });
 
   it("the drawer gates on the SERVER-READ status, never the week payload's copy", () => {
-    // `detail` is the lazily re-read row. Gating on `a.status` would let a
-    // stale grid payload offer Cancel on an appointment already cancelled in
-    // another tab.
-    expect(DRAWER).toMatch(/status:\s*detail\.status/);
-    expect(DRAWER).toMatch(/startsAt:\s*detail\.startsAt/);
+    // `version` is the lazily re-read row — and only while that read is still
+    // the CURRENT one, which is strictly stronger than reading `detail`
+    // directly: a failed refresh can leave a detail object behind that nobody
+    // has re-verified. Gating on `a.status` would let a stale grid payload offer
+    // Cancel on an appointment already cancelled in another tab.
+    expect(DRAWER).toMatch(/status:\s*version\.status/);
+    expect(DRAWER).toMatch(/startsAt:\s*version\.startsAt/);
+    expect(DRAWER).toMatch(/version\.fresh/);
+
+    // And the gate itself must not reach for the grid row.
+    const gate = DRAWER.slice(DRAWER.indexOf("isAppointmentCancelable({"), 300 + DRAWER.indexOf("isAppointmentCancelable({"));
+    expect(gate).not.toMatch(/\ba\.status\b/);
+    expect(gate).not.toMatch(/\ba\.starts_at\b/);
   });
 });

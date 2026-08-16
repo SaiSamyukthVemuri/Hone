@@ -14,7 +14,11 @@ import { MoveAppointmentButton } from "./MoveAppointmentButton";
 import { AppointmentNotesEditor } from "./AppointmentNotesEditor";
 import { PractitionerCancelForm } from "./PractitionerCancelForm";
 import { loadAppointmentPreviewAction } from "./appointment-preview-actions";
-import { shouldApplyPreviewResponse } from "./preview-request";
+import {
+  shouldApplyPreviewResponse,
+  shouldApplyPreviewFailure,
+  detailRemainsCurrent,
+} from "./preview-request";
 import { previewAppointmentVersion } from "./preview-appointment-version";
 
 // In-context appointment PREP WORKSPACE, opened from a card on the desktop week
@@ -89,21 +93,39 @@ export function AppointmentPreviewDrawer({
   returnTo,
   onClose,
 }: Props) {
-  const [detail, setDetail] = useState<AppointmentPreviewDetail | null>(null);
+  // The detail is held WITH the generation that produced it. Freshness is a
+  // statement about the newest read, not a badge the object keeps: see
+  // detailRemainsCurrent in ./preview-request.
+  const [detail, setDetail] =
+    useState<{ value: AppointmentPreviewDetail; seq: number } | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
-  // The drawer owns the mutable sequence; the decision itself is pure and
-  // lives in ./preview-request so it can be tested directly.
+  // The drawer owns the mutable sequence; the decisions themselves are pure and
+  // live in ./preview-request so they can be tested directly. `issuedSeq`
+  // mirrors the ref into state so RENDER has a reactive view of it — a ref read
+  // during render would not re-run this component when it changes.
   const requestSeq = useRef(0);
+  const [issuedSeq, setIssuedSeq] = useState(0);
 
   const appointmentId = appointment?.id ?? null;
 
   const load = useCallback((id: string) => {
     const seq = ++requestSeq.current;
+    // Issuing the read is itself the event that withdraws currency from
+    // whatever is held: from here until this read succeeds, nobody is asserting
+    // the row. The held copy stays on screen, but stops authorizing actions.
+    setIssuedSeq(seq);
     setLoadState("loading");
     void loadAppointmentPreviewAction(id)
       .then((res) => {
         if (!res.ok) {
-          if (seq !== requestSeq.current) return;
+          // A superseded failure must not report a stale problem over a newer
+          // verified result.
+          if (!shouldApplyPreviewFailure({ requestSeq: seq, currentSeq: requestSeq.current })) {
+            return;
+          }
+          // The held detail is deliberately NOT discarded — it is still the best
+          // thing to show — but `issuedSeq` has moved past it, so it no longer
+          // reads as current and the actions disappear with the error.
           setLoadState("error");
           return;
         }
@@ -118,11 +140,13 @@ export function AppointmentPreviewDrawer({
         ) {
           return;
         }
-        setDetail(res.detail);
+        setDetail({ value: res.detail, seq });
         setLoadState("idle");
       })
       .catch(() => {
-        if (seq !== requestSeq.current) return;
+        if (!shouldApplyPreviewFailure({ requestSeq: seq, currentSeq: requestSeq.current })) {
+          return;
+        }
         setLoadState("error");
       });
   }, []);
@@ -130,7 +154,8 @@ export function AppointmentPreviewDrawer({
   useEffect(() => {
     if (!appointmentId) {
       // Closing invalidates any in-flight response.
-      requestSeq.current += 1;
+      const seq = ++requestSeq.current;
+      setIssuedSeq(seq);
       setDetail(null);
       setLoadState("idle");
       return;
@@ -168,12 +193,16 @@ export function AppointmentPreviewDrawer({
     },
     detail: detail
       ? {
-          startsAt: detail.startsAt,
-          endsAt: detail.endsAt,
-          durationMinutes: detail.durationMinutes,
-          status: detail.status,
+          startsAt: detail.value.startsAt,
+          endsAt: detail.value.endsAt,
+          durationMinutes: detail.value.durationMinutes,
+          status: detail.value.status,
         }
       : null,
+    detailIsCurrent: detailRemainsCurrent({
+      detailSeq: detail?.seq ?? null,
+      issuedSeq,
+    }),
   });
 
   const start = new Date(version.startsAt);
@@ -280,13 +309,13 @@ export function AppointmentPreviewDrawer({
         {/* Allergies: the one client-safety fact worth carrying here, and it
             comes free with the appointment read. Never summarised or truncated
             into something that could read as reassurance. */}
-        {detail?.allergies?.trim() && (
+        {detail?.value.allergies?.trim() && (
           <div
             aria-label="Allergies"
             className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-100"
           >
             <span className="font-semibold">Allergies: </span>
-            {detail.allergies}
+            {detail.value.allergies}
           </div>
         )}
 
@@ -322,17 +351,17 @@ export function AppointmentPreviewDrawer({
                   of the unavailable state. It is imported across feature
                   folders for the same reason the detail page imports
                   practitionerIntakeReviewHref from @/lib/dashboard. */}
-              {!detail.lastTreatmentUnavailable && !detail.prepMemory ? (
+              {!detail.value.lastTreatmentUnavailable && !detail.value.prepMemory ? (
                 <p className="text-sm text-neutral-500">
                   No previous treatment charted for this client.
                 </p>
               ) : (
-                detail.clientId && (
+                detail.value.clientId && (
                   <TodayTreatmentMemory
-                    clientId={detail.clientId}
+                    clientId={detail.value.clientId}
                     clientName={clientName}
-                    memory={detail.prepMemory}
-                    unavailable={detail.lastTreatmentUnavailable}
+                    memory={detail.value.prepMemory}
+                    unavailable={detail.value.lastTreatmentUnavailable}
                   />
                 )
               )}
@@ -344,18 +373,18 @@ export function AppointmentPreviewDrawer({
               data-testid="preview-intake"
             >
               <SectionHeading>Intake</SectionHeading>
-              {detail.intakeUnavailable ? (
+              {detail.value.intakeUnavailable ? (
                 <p className="text-sm text-neutral-500">
                   Intake status could not be loaded.
                 </p>
-              ) : detail.intakeStatus === "submitted" ? (
+              ) : detail.value.intakeStatus === "submitted" ? (
                 <>
                   <p className="text-sm text-neutral-600 dark:text-neutral-400">
                     Awaiting review
                   </p>
-                  {detail.clientId && (
+                  {detail.value.clientId && (
                     <Link
-                      href={practitionerIntakeReviewHref(detail.clientId)}
+                      href={practitionerIntakeReviewHref(detail.value.clientId)}
                       data-testid="preview-review-intake"
                       className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                     >
@@ -363,14 +392,14 @@ export function AppointmentPreviewDrawer({
                     </Link>
                   )}
                 </>
-              ) : detail.intakeStatus === "reviewed" ? (
+              ) : detail.value.intakeStatus === "reviewed" ? (
                 <>
                   <p className="text-sm text-neutral-600 dark:text-neutral-400">
                     Reviewed
                   </p>
-                  {detail.clientId && (
+                  {detail.value.clientId && (
                     <Link
-                      href={practitionerIntakeReviewHref(detail.clientId)}
+                      href={practitionerIntakeReviewHref(detail.value.clientId)}
                       data-testid="preview-view-intake"
                       className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
                     >
@@ -378,7 +407,7 @@ export function AppointmentPreviewDrawer({
                     </Link>
                   )}
                 </>
-              ) : detail.intakeStatus === "in_progress" ? (
+              ) : detail.value.intakeStatus === "in_progress" ? (
                 // Deliberately no action: an unsubmitted form is not reviewable,
                 // and offering to review it would be a lie.
                 <p className="text-sm text-neutral-600 dark:text-neutral-400">
@@ -400,7 +429,7 @@ export function AppointmentPreviewDrawer({
             <AppointmentNotesEditor
               key={a.id}
               appointmentId={a.id}
-              notes={detail.notes}
+              notes={detail.value.notes}
               onSaved={() => load(a.id)}
             />
 

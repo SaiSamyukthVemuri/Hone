@@ -32,7 +32,7 @@ const FRESH = {
 
 describe("the re-read row wins, in full", () => {
   it("selects the DETAIL schedule when the appointment moved under the grid", () => {
-    const r = previewAppointmentVersion({ grid: GRID, detail: FRESH });
+    const r = previewAppointmentVersion({ grid: GRID, detail: FRESH, detailIsCurrent: true });
     expect(r.startsAt).toBe(FRESH.startsAt);
     expect(r.endsAt).toBe(FRESH.endsAt);
     expect(r.fresh).toBe(true);
@@ -47,6 +47,7 @@ describe("the re-read row wins, in full", () => {
     const r = previewAppointmentVersion({
       grid: GRID,
       detail: { ...FRESH, status: "cancelled" },
+      detailIsCurrent: true,
     });
     expect(r.status).toBe("cancelled");
     expect(r.status).not.toBe(GRID.status);
@@ -65,7 +66,7 @@ describe("the re-read row wins, in full", () => {
       durationMinutes: 45,
       status: "completed",
     };
-    const r = previewAppointmentVersion({ grid: GRID, detail });
+    const r = previewAppointmentVersion({ grid: GRID, detail, detailIsCurrent: true });
     expect(r.startsAt).toBe(GRID.startsAt);
     expect(r.durationMinutes).toBe(45);
     expect(r.status).toBe("completed");
@@ -88,7 +89,7 @@ describe("stored duration is a FACT, never reconstructed from the span", () => {
   };
 
   it("reports the stored 60, not the 90 minute span", () => {
-    const r = previewAppointmentVersion({ grid: GRID, detail: MISMATCH });
+    const r = previewAppointmentVersion({ grid: GRID, detail: MISMATCH, detailIsCurrent: true });
     expect(r.durationMinutes).toBe(60);
     const spanMinutes =
       (new Date(MISMATCH.endsAt).getTime() - new Date(MISMATCH.startsAt).getTime()) / 60_000;
@@ -97,14 +98,14 @@ describe("stored duration is a FACT, never reconstructed from the span", () => {
   });
 
   it("a span disagreeing with the stored duration is NOT a reason to fall back", () => {
-    const r = previewAppointmentVersion({ grid: GRID, detail: MISMATCH });
+    const r = previewAppointmentVersion({ grid: GRID, detail: MISMATCH, detailIsCurrent: true });
     expect(r.fresh).toBe(true);
     expect(r.startsAt).toBe(MISMATCH.startsAt);
     expect(r.endsAt).toBe(MISMATCH.endsAt);
   });
 
   it("never forces the span and the duration into agreement", () => {
-    const r = previewAppointmentVersion({ grid: GRID, detail: MISMATCH });
+    const r = previewAppointmentVersion({ grid: GRID, detail: MISMATCH, detailIsCurrent: true });
     expect(r.endsAt).toBe(MISMATCH.endsAt);
     expect(r.durationMinutes).toBe(MISMATCH.durationMinutes);
   });
@@ -112,19 +113,19 @@ describe("stored duration is a FACT, never reconstructed from the span", () => {
 
 describe("fail BACK, never forward, and never into a hybrid", () => {
   it("falls back to the grid before any detail has loaded", () => {
-    const r = previewAppointmentVersion({ grid: GRID, detail: null });
+    const r = previewAppointmentVersion({ grid: GRID, detail: null, detailIsCurrent: true });
     expect(r).toEqual({ ...GRID, fresh: false });
   });
 
   it("marks the fallback NOT fresh, so callers cannot mistake it for verified", () => {
     // `fresh` is what the drawer gates lifecycle actions on. A grid snapshot is
     // not a verified current state.
-    expect(previewAppointmentVersion({ grid: GRID, detail: null }).fresh).toBe(false);
+    expect(previewAppointmentVersion({ grid: GRID, detail: null, detailIsCurrent: true }).fresh).toBe(false);
   });
 
   it("falls back when a timestamp does not parse, rather than sending garbage", () => {
     const detail = { ...FRESH, startsAt: "not-a-date" };
-    const r = previewAppointmentVersion({ grid: GRID, detail });
+    const r = previewAppointmentVersion({ grid: GRID, detail, detailIsCurrent: true });
     expect(r).toEqual({ ...GRID, fresh: false });
   });
 
@@ -133,14 +134,14 @@ describe("fail BACK, never forward, and never into a hybrid", () => {
     // pairing them with the grid's duration would describe a version that never
     // existed. Fallback is per-VERSION, not per-field.
     const detail = { ...FRESH, durationMinutes: 0 };
-    const r = previewAppointmentVersion({ grid: GRID, detail });
+    const r = previewAppointmentVersion({ grid: GRID, detail, detailIsCurrent: true });
     expect(r).toEqual({ ...GRID, fresh: false });
     expect(r.startsAt).not.toBe(FRESH.startsAt);
   });
 
   it("falls back when the status is blank, which would have rendered as Upcoming", () => {
     const detail = { ...FRESH, status: "   " };
-    const r = previewAppointmentVersion({ grid: GRID, detail });
+    const r = previewAppointmentVersion({ grid: GRID, detail, detailIsCurrent: true });
     expect(r).toEqual({ ...GRID, fresh: false });
   });
 });
@@ -184,5 +185,64 @@ describe("the drawer routes ALL of it through this one rule", () => {
     expect(LOADER).toMatch(/duration_minutes/);
     expect(LOADER).toMatch(/durationMinutes:\s*raw\.duration_minutes/);
     expect(LOADER).toMatch(/status:\s*raw\.status/);
+  });
+});
+
+describe("currency is required for ACTION AUTHORITY, not just presence", () => {
+  // A detail that was read successfully at some point is not thereby current
+  // forever. When a refresh is in flight, or has failed, the held copy is the
+  // last thing we saw — not the thing we are asserting. It may still be the
+  // best DISPLAY we have; it may not authorize Cancel or Reschedule.
+  it("a held detail that is no longer current is not fresh", () => {
+    const r = previewAppointmentVersion({
+      grid: GRID,
+      detail: FRESH,
+      detailIsCurrent: false,
+    });
+    expect(r.fresh).toBe(false);
+  });
+
+  it("still DISPLAYS the held detail — it is newer than the grid", () => {
+    // "Loses authority" is not "is discarded". The grid is older still, and the
+    // drawer renders its load-error line alongside, so showing the last
+    // successful read is the honest fallback rather than reverting further back.
+    const r = previewAppointmentVersion({
+      grid: GRID,
+      detail: FRESH,
+      detailIsCurrent: false,
+    });
+    expect(r.startsAt).toBe(FRESH.startsAt);
+    expect(r.endsAt).toBe(FRESH.endsAt);
+  });
+
+  it("a stale CANCELLED detail cannot authorize actions", () => {
+    // Requirement 3, at the rule level: whatever the status, a non-current read
+    // is not the basis for offering a lifecycle action.
+    const r = previewAppointmentVersion({
+      grid: GRID,
+      detail: { ...FRESH, status: "cancelled" },
+      detailIsCurrent: false,
+    });
+    expect(r.fresh).toBe(false);
+  });
+
+  it("a stale MOVED schedule cannot become the action authority", () => {
+    // Requirement 4. These timestamps would otherwise be sent as 0133's
+    // expected version on a row nobody has re-verified.
+    const r = previewAppointmentVersion({
+      grid: GRID,
+      detail: { ...FRESH, startsAt: "2026-08-20T20:00:00.000Z" },
+      detailIsCurrent: false,
+    });
+    expect(r.fresh).toBe(false);
+  });
+
+  it("currency alone does not rescue an unusable detail", () => {
+    const r = previewAppointmentVersion({
+      grid: GRID,
+      detail: { ...FRESH, durationMinutes: 0 },
+      detailIsCurrent: true,
+    });
+    expect(r).toEqual({ ...GRID, fresh: false });
   });
 });
