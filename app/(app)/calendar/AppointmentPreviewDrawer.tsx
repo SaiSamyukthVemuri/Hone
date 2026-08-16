@@ -17,6 +17,7 @@ import { loadAppointmentPreviewAction } from "./appointment-preview-actions";
 import {
   shouldApplyPreviewResponse,
   shouldApplyPreviewFailure,
+  shouldStartPreviewLoad,
   detailRemainsCurrent,
 } from "./preview-request";
 import { previewAppointmentVersion } from "./preview-appointment-version";
@@ -108,7 +109,20 @@ export function AppointmentPreviewDrawer({
 
   const appointmentId = appointment?.id ?? null;
 
+  // The appointment actually open, readable from an async callback. A child's
+  // callback can outlive the appointment it belongs to — the notes editor keeps
+  // its save promise after the drawer has closed and reopened on someone else —
+  // so "which appointment is this for" has to be answered at CALL time and
+  // again at COMMIT time, never from the id the closure captured.
+  const openIdRef = useRef<string | null>(appointmentId);
+
   const load = useCallback((id: string) => {
+    // A callback from an appointment that is no longer open is inert. Returning
+    // BEFORE taking a sequence is deliberate: issuing the request would bump the
+    // generation and strip the open appointment of currency it legitimately has.
+    if (!shouldStartPreviewLoad({ requestedAppointmentId: id, openAppointmentId: openIdRef.current })) {
+      return;
+    }
     const seq = ++requestSeq.current;
     // Issuing the read is itself the event that withdraws currency from
     // whatever is held: from here until this read succeeds, nobody is asserting
@@ -120,7 +134,14 @@ export function AppointmentPreviewDrawer({
         if (!res.ok) {
           // A superseded failure must not report a stale problem over a newer
           // verified result.
-          if (!shouldApplyPreviewFailure({ requestSeq: seq, currentSeq: requestSeq.current })) {
+          if (
+            !shouldApplyPreviewFailure({
+              requestSeq: seq,
+              currentSeq: requestSeq.current,
+              requestedAppointmentId: id,
+              openAppointmentId: openIdRef.current,
+            })
+          ) {
             return;
           }
           // The held detail is deliberately NOT discarded — it is still the best
@@ -133,9 +154,11 @@ export function AppointmentPreviewDrawer({
         if (
           !shouldApplyPreviewResponse({
             responseAppointmentId: res.detail.appointmentId,
+            requestedAppointmentId: id,
             requestSeq: seq,
             currentSeq: requestSeq.current,
-            openAppointmentId: id,
+            // Read LIVE. `id` is what we asked for; this is what is on screen.
+            openAppointmentId: openIdRef.current,
           })
         ) {
           return;
@@ -144,7 +167,14 @@ export function AppointmentPreviewDrawer({
         setLoadState("idle");
       })
       .catch(() => {
-        if (!shouldApplyPreviewFailure({ requestSeq: seq, currentSeq: requestSeq.current })) {
+        if (
+          !shouldApplyPreviewFailure({
+            requestSeq: seq,
+            currentSeq: requestSeq.current,
+            requestedAppointmentId: id,
+            openAppointmentId: openIdRef.current,
+          })
+        ) {
           return;
         }
         setLoadState("error");
@@ -152,6 +182,9 @@ export function AppointmentPreviewDrawer({
   }, []);
 
   useEffect(() => {
+    // Publish what is open BEFORE anything can read it, including the load
+    // started immediately below.
+    openIdRef.current = appointmentId;
     if (!appointmentId) {
       // Closing invalidates any in-flight response.
       const seq = ++requestSeq.current;

@@ -168,7 +168,11 @@ describe("the week grid still pays nothing (no N+1)", () => {
     expect(DAYCOL).not.toMatch(/loadAppointmentPreviewAction/);
   });
   it("the load is triggered by an open drawer, keyed on the clicked appointment", () => {
-    expect(PREVIEW).toMatch(/useEffect\(\(\) => \{[\s\S]{0,400}load\(appointmentId\)/);
+    // Both properties are unchanged: the lazy load lives in an effect and is
+    // keyed on the clicked appointment. The character window is wider only
+    // because that effect now also publishes the live open-appointment id
+    // before anything can read it.
+    expect(PREVIEW).toMatch(/useEffect\(\(\) => \{[\s\S]{0,900}load\(appointmentId\)/);
     expect(PREVIEW).toMatch(/\}, \[appointmentId, load\]\)/);
   });
 });

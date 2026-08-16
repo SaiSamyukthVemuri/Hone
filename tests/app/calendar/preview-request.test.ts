@@ -6,6 +6,7 @@ import {
   shouldApplyPreviewResponse,
   detailRemainsCurrent,
   shouldApplyPreviewFailure,
+  shouldStartPreviewLoad,
 } from "@/app/(app)/calendar/preview-request";
 
 // The A -> B race. A practitioner scanning a week clicks fast; server actions
@@ -25,6 +26,7 @@ describe("shouldApplyPreviewResponse — the happy path is genuinely reachable",
     expect(
       shouldApplyPreviewResponse({
         responseAppointmentId: A,
+        requestedAppointmentId: A,
         requestSeq: 7,
         currentSeq: 7,
         openAppointmentId: A,
@@ -39,6 +41,7 @@ describe("shouldApplyPreviewResponse — sequence", () => {
     expect(
       shouldApplyPreviewResponse({
         responseAppointmentId: A,
+        requestedAppointmentId: A,
         requestSeq: 1,
         currentSeq: 2,
         openAppointmentId: B,
@@ -53,6 +56,7 @@ describe("shouldApplyPreviewResponse — sequence", () => {
     expect(
       shouldApplyPreviewResponse({
         responseAppointmentId: A,
+        requestedAppointmentId: A,
         requestSeq: 3,
         currentSeq: 4,
         openAppointmentId: A,
@@ -68,6 +72,7 @@ describe("shouldApplyPreviewResponse — identity", () => {
     expect(
       shouldApplyPreviewResponse({
         responseAppointmentId: A,
+        requestedAppointmentId: A,
         requestSeq: 5,
         currentSeq: 5,
         openAppointmentId: B,
@@ -81,6 +86,7 @@ describe("shouldApplyPreviewResponse — closed drawer", () => {
     expect(
       shouldApplyPreviewResponse({
         responseAppointmentId: A,
+        requestedAppointmentId: A,
         requestSeq: 9,
         currentSeq: 9,
         openAppointmentId: null,
@@ -98,7 +104,13 @@ describe("the drawer actually uses the rule", () => {
   it("routes every successful response through shouldApplyPreviewResponse", () => {
     expect(DRAWER).toMatch(/shouldApplyPreviewResponse\(\{/);
     expect(DRAWER).toMatch(/responseAppointmentId: res\.detail\.appointmentId/);
-    expect(DRAWER).toMatch(/openAppointmentId: id/);
+    // NOT `openAppointmentId: id`. That spelling was the defect: it compares the
+    // response to the id the CALLER captured, which for a late callback from a
+    // closed appointment compares A to A and agrees. The open appointment must
+    // be read live, from the ref.
+    expect(DRAWER).toMatch(/openAppointmentId: openIdRef\.current/);
+    expect(DRAWER).toMatch(/requestedAppointmentId: id/);
+    expect(DRAWER).not.toMatch(/openAppointmentId: id,/);
   });
 
   it("takes a fresh sequence per request and closing invalidates in-flight work", () => {
@@ -127,6 +139,33 @@ describe("the drawer actually uses the rule", () => {
 
   it("holds the detail WITH the generation that produced it", () => {
     expect(DRAWER).toMatch(/setDetail\(\{ value: res\.detail, seq \}\)/);
+  });
+
+  it("refuses to START a load for an appointment that is not the open one", () => {
+    expect(DRAWER).toMatch(/shouldStartPreviewLoad\(\{/);
+    const body = DRAWER.slice(DRAWER.indexOf("const load = useCallback"));
+    const guardAt = body.indexOf("shouldStartPreviewLoad");
+    const seqAt = body.indexOf("++requestSeq.current");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(seqAt).toBeGreaterThan(-1);
+    // ORDER IS THE POINT. Bailing out AFTER taking a sequence would still bump
+    // the generation and strip the open appointment of its currency, so a
+    // no-op callback would silently disable Cancel/Reschedule on someone else.
+    expect(guardAt).toBeLessThan(seqAt);
+  });
+
+  it("publishes the open appointment id before the load that reads it", () => {
+    const eff = DRAWER.slice(DRAWER.indexOf("openIdRef.current = appointmentId"));
+    expect(eff).toMatch(/openIdRef\.current = appointmentId/);
+    expect(eff.indexOf("load(appointmentId)")).toBeGreaterThan(0);
+  });
+
+  it("binds EVERY decision to the appointment actually open", () => {
+    const matches = DRAWER.match(/openAppointmentId: openIdRef\.current/g) ?? [];
+    // Four decisions read it live: the start guard, the !ok failure branch, the
+    // success commit, and the rejection branch. A single one of them falling
+    // back to the captured `id` reopens the cross-identity race.
+    expect(matches.length).toBe(4);
   });
 
   it("clears the previous appointment's detail before loading the next", () => {
@@ -176,12 +215,152 @@ describe("detail currency is scoped to the newest read generation", () => {
 
 describe("a superseded failure may not disturb a newer success", () => {
   it("applies a failure only when it belongs to the newest generation", () => {
-    expect(shouldApplyPreviewFailure({ requestSeq: 2, currentSeq: 2 })).toBe(true);
+    expect(
+      shouldApplyPreviewFailure({
+        requestSeq: 2,
+        currentSeq: 2,
+        requestedAppointmentId: A,
+        openAppointmentId: A,
+      }),
+    ).toBe(true);
   });
 
   it("IGNORES generation N's failure once N+1 has been issued", () => {
     // Requirement 5. N+1 may already have succeeded; N arriving late and
     // errorless-ly clearing state would undo a verified newer read.
-    expect(shouldApplyPreviewFailure({ requestSeq: 1, currentSeq: 2 })).toBe(false);
+    expect(
+      shouldApplyPreviewFailure({
+        requestSeq: 1,
+        currentSeq: 2,
+        requestedAppointmentId: A,
+        openAppointmentId: A,
+      }),
+    ).toBe(false);
+  });
+});
+
+// A RESULT BELONGS TO AN APPOINTMENT, NOT JUST TO A GENERATION.
+//
+// THE RACE. Notes are saved for A; before that save resolves the practitioner
+// closes A and opens B; B loads and is current. Then A's save completes and its
+// onSaved fires `load(A)` — which, being issued LAST, takes the NEWEST
+// generation. Sequence alone therefore endorses it, and comparing the response
+// to the id captured when load was called compares A to A and agrees. A's
+// detail commits while B is on screen.
+//
+// The drawer's header comes from the appointment PROP (B) while everything
+// inside the loaded block comes from the detail (A), so the result is B's name
+// above A's allergies, A's treatment memory, A's notes, A's intake state and A's
+// schedule — and lifecycle controls targeting B gated on A's actionability.
+// That is a cross-client clinical mis-attribution, which is why identity has to
+// be re-read at COMMIT time from what is actually open, never from what the
+// caller remembered.
+describe("a result may only commit to the appointment that is STILL open", () => {
+  it("CASE A — the save/close/switch race: A's late refresh never starts", () => {
+    // A's onSaved fires after B is open. The request must not even be issued:
+    // issuing it would bump the generation and strip B of its currency.
+    expect(
+      shouldStartPreviewLoad({ requestedAppointmentId: "A", openAppointmentId: "B" }),
+    ).toBe(false);
+  });
+
+  it("CASE B — a callback firing while the drawer is CLOSED is inert", () => {
+    expect(
+      shouldStartPreviewLoad({ requestedAppointmentId: "A", openAppointmentId: null }),
+    ).toBe(false);
+  });
+
+  it("CASE E — the appointment still open may refresh itself (positive control)", () => {
+    // Without this the rule could satisfy every case above by refusing
+    // everything, which would silently break the notes-save refresh.
+    expect(
+      shouldStartPreviewLoad({ requestedAppointmentId: "B", openAppointmentId: "B" }),
+    ).toBe(true);
+  });
+
+  it("CASE C — A's response is refused even when it OWNS the newest generation", () => {
+    // The heart of it. Generation is satisfied here; only identity refuses.
+    expect(
+      shouldApplyPreviewResponse({
+        responseAppointmentId: "A",
+        requestedAppointmentId: "A",
+        requestSeq: 2,
+        currentSeq: 2,
+        openAppointmentId: "B",
+      }),
+    ).toBe(false);
+  });
+
+  it("CASE C — and refused when it is merely superseded", () => {
+    expect(
+      shouldApplyPreviewResponse({
+        responseAppointmentId: "A",
+        requestedAppointmentId: "A",
+        requestSeq: 1,
+        currentSeq: 2,
+        openAppointmentId: "B",
+      }),
+    ).toBe(false);
+  });
+
+  it("commits when response, request and the OPEN appointment all agree", () => {
+    expect(
+      shouldApplyPreviewResponse({
+        responseAppointmentId: "B",
+        requestedAppointmentId: "B",
+        requestSeq: 2,
+        currentSeq: 2,
+        openAppointmentId: "B",
+      }),
+    ).toBe(true);
+  });
+
+  it("refuses a response describing an appointment nobody requested", () => {
+    // Structural backstop: the server echoing a different row than we asked for
+    // is unrenderable regardless of what is open.
+    expect(
+      shouldApplyPreviewResponse({
+        responseAppointmentId: "C",
+        requestedAppointmentId: "B",
+        requestSeq: 2,
+        currentSeq: 2,
+        openAppointmentId: "B",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("CASE D — a late failure may not damage the appointment now open", () => {
+  it("A's failure does not put B into error, even owning the newest generation", () => {
+    expect(
+      shouldApplyPreviewFailure({
+        requestSeq: 2,
+        currentSeq: 2,
+        requestedAppointmentId: "A",
+        openAppointmentId: "B",
+      }),
+    ).toBe(false);
+  });
+
+  it("a failure arriving after the drawer closed is inert", () => {
+    expect(
+      shouldApplyPreviewFailure({
+        requestSeq: 2,
+        currentSeq: 2,
+        requestedAppointmentId: "A",
+        openAppointmentId: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("B's OWN current failure is still reported (positive control)", () => {
+    expect(
+      shouldApplyPreviewFailure({
+        requestSeq: 2,
+        currentSeq: 2,
+        requestedAppointmentId: "B",
+        openAppointmentId: "B",
+      }),
+    ).toBe(true);
   });
 });

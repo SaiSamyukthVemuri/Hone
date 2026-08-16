@@ -31,13 +31,45 @@
 
 export type PreviewResponseDecision = {
   responseAppointmentId: string;
+  // The appointment `load()` was CALLED with. Distinct from the one currently
+  // open: a callback held by an unmounted child can ask for an appointment the
+  // practitioner has already navigated away from.
+  requestedAppointmentId: string;
   // The sequence this response's request was issued with.
   requestSeq: number;
   // The newest sequence issued by the drawer so far.
   currentSeq: number;
-  // The appointment the drawer has open now, or null when it is closed.
+  // The appointment the drawer has open RIGHT NOW, read at commit time from a
+  // live ref — never the value captured when the request was issued. That
+  // distinction is the whole point; see shouldStartPreviewLoad below.
   openAppointmentId: string | null;
 };
+
+// May this load even BEGIN?
+//
+// THE RACE THIS CLOSES. Notes are saved for A; the practitioner closes A and
+// opens B before the save resolves; A's onSaved then fires `load(A)`. Because it
+// is issued LAST it takes the NEWEST generation, so every sequence check
+// endorses it — and comparing the response to the id the caller captured
+// compares A to A and agrees too. A's detail commits while B is on screen.
+//
+// The drawer's header comes from the appointment PROP while the loaded block
+// comes from the detail, so the result is B's name above A's allergies, A's
+// treatment memory, A's notes and A's intake state, with lifecycle controls
+// targeting B gated on A's actionability. A cross-client clinical
+// mis-attribution, not a cosmetic glitch.
+//
+// Refusing at START is what keeps it harmless: issuing the request at all would
+// bump the generation and strip B of the currency it legitimately holds. A
+// callback from a closed or superseded appointment must not be able to redefine
+// what "current" means simply by asking.
+export function shouldStartPreviewLoad(input: {
+  requestedAppointmentId: string;
+  openAppointmentId: string | null;
+}): boolean {
+  if (input.openAppointmentId === null) return false;
+  return input.requestedAppointmentId === input.openAppointmentId;
+}
 
 // FRESHNESS HAS A LIFETIME. It belongs to a successful CURRENT read generation,
 // and it is not a property the retained detail object keeps for ever.
@@ -73,7 +105,14 @@ export function detailRemainsCurrent(input: {
 export function shouldApplyPreviewFailure(input: {
   requestSeq: number;
   currentSeq: number;
+  // Failures are bound to an appointment for the same reason successes are: a
+  // delayed failure for A must not put B into error, blank B's load state, or
+  // withdraw the authority B's own verified read earned.
+  requestedAppointmentId: string;
+  openAppointmentId: string | null;
 }): boolean {
+  if (input.openAppointmentId === null) return false;
+  if (input.requestedAppointmentId !== input.openAppointmentId) return false;
   return input.requestSeq === input.currentSeq;
 }
 
@@ -84,7 +123,11 @@ export function shouldApplyPreviewResponse(
   if (input.openAppointmentId === null) return false;
   // Superseded by a newer request.
   if (input.requestSeq !== input.currentSeq) return false;
-  // Describes a different appointment than the one on screen.
-  if (input.responseAppointmentId !== input.openAppointmentId) return false;
+  // The server answered a question we did not ask.
+  if (input.responseAppointmentId !== input.requestedAppointmentId) return false;
+  // THE identity check that sequence cannot make. The request may legitimately
+  // own the newest generation and still belong to an appointment the
+  // practitioner has navigated away from.
+  if (input.requestedAppointmentId !== input.openAppointmentId) return false;
   return true;
 }
