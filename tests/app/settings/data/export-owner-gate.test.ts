@@ -107,6 +107,27 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
     expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_audit_events\.csv"/);
   });
 
+  // Migration 0182: the discard lifecycle must reach the inspection export.
+  it("the sterile-items export SELECTS and EMITS date_discarded, and filters nothing", () => {
+    // Scoped to the sterile load + its CSV writer. The export uses an EXPLICIT
+    // column list in both places, so a new column reaches the inspector only if
+    // it is named twice — this pin is the reason that cannot be half-done.
+    const from = CODE.indexOf('.from("record_keeping_sterile_items")');
+    expect(from).toBeGreaterThan(-1);
+    const load = CODE.slice(from, from + 500);
+    expect(load).toMatch(/date_discarded/);
+    // HISTORICAL surface: a discarded row must still be exported. A lifecycle
+    // predicate here would silently drop stock from a health-inspection record.
+    expect(load).not.toMatch(/\.is\("date_discarded"/);
+    expect(load).not.toMatch(/\.not\("date_discarded"/);
+
+    const writer = CODE.indexOf('"record_keeping_sterile_items.csv"');
+    expect(writer).toBeGreaterThan(-1);
+    const header = CODE.slice(writer, writer + 700);
+    expect(header).toMatch(/"date_discarded"/);
+    expect(header).toMatch(/"expiry_date"/);
+  });
+
   it("reads each record-keeping table via the RLS client, studio-scoped", () => {
     for (const table of [
       "record_keeping_sterile_items",

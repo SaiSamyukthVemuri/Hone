@@ -19,7 +19,10 @@ import {
   disinfectantStatusLabel,
   isDisinfectantAlert,
 } from "@/lib/record-keeping/disinfectant-status";
-import { supplyExpiryPrintMarker } from "@/lib/record-keeping/expiry";
+import {
+  isSupplyDiscarded,
+  supplyExpiryPrintMarker,
+} from "@/lib/record-keeping/expiry";
 import { todayInTz } from "@/lib/booking/tz";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
@@ -263,15 +266,29 @@ async function SterilePrint({
           <FieldLine label="Lot #" value={notRecorded(r.lot_number)} />
           {/* PR #317: plain-text expiry marker so a printed/exported inspection
               record flags expired / expires-today / expires-soon (color won't
-              print). Only appended when an expiry date is recorded. */}
+              print). Only appended when an expiry date is recorded.
+
+              Migration 0182: the ACTION marker is suppressed once the stock is
+              recorded as discarded. The marker exists to flag supplies that
+              need attention, and an inspector reading "(expired)" against a box
+              that was thrown away weeks ago would be chasing a resolved item.
+              The expiry DATE itself is still printed — no fact is hidden — and
+              the discard line below states what happened to it. The record
+              itself is never omitted from the printed log. */}
           <FieldLine
             label="Expiry date"
             value={
-              r.expiry_date
+              r.expiry_date && !isSupplyDiscarded(r.date_discarded)
                 ? `${dateOnly(r.expiry_date)}${supplyExpiryPrintMarker(r.expiry_date, today)}`
                 : dateOnly(r.expiry_date)
             }
           />
+          {isSupplyDiscarded(r.date_discarded) && (
+            <FieldLine
+              label="Date discarded"
+              value={dateOnly(r.date_discarded)}
+            />
+          )}
           {r.notes && <FieldLine label="Notes" value={r.notes} />}
           <p className="text-[11px] text-neutral-500">
             Recorded {utcStamp(new Date(r.created_at))}

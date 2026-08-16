@@ -538,8 +538,10 @@ export function BlockSetupForm({
     // the package.
     const firstEntry = firstLiveEntry(source.electrolysis_entries);
     // The lot travels with the probe. Its inventory LINK is carried only when
-    // the source's item is still an ACTIVE lot for the copied probe, so a copy
-    // can never resurrect a link to an expired, archived or reclassified row.
+    // the source's item is still CURRENT STOCK for the copied probe, so a copy
+    // can never resurrect a link to an expired, reclassified or (migration
+    // 0182) DISCARDED row. "Archived" was always the intent here; the discard
+    // lifecycle finally makes it a structural fact rather than a hope.
     const linkable = new Set(
       activeProbeLotOptionsForProbe(
         probeLotInventory,

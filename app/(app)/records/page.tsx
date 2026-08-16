@@ -24,6 +24,7 @@ import {
   FILTERED_PROCEDURE_RECORD_LIMIT,
 } from "@/lib/record-keeping/queries";
 import {
+  isSupplyDiscarded,
   summarizeSupplyExpiry,
   supplyExpiryLabel,
   supplyExpiryState,
@@ -393,7 +394,17 @@ async function SterileItemsSection({
         ) : (
           <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {records.map((r) => {
-              const expiry = supplyExpiryState(r.expiry_date, today);
+              // Migration 0182. A discarded item STAYS IN THIS LIST — this is
+              // the historical record-keeping log and nothing may disappear
+              // from it. What changes is that it stops shouting: the expiry
+              // state is suppressed, so no red "Expired" badge and no red row
+              // for stock that is already in the bin. It carries a neutral
+              // "Discarded" badge instead, which is the honest reading of the
+              // row and the answer to "does Hone think I'm still using these?".
+              const discarded = isSupplyDiscarded(r.date_discarded);
+              const expiry = discarded
+                ? "neutral"
+                : supplyExpiryState(r.expiry_date, today);
               const expiryLabel = supplyExpiryLabel(expiry);
               const rowCls =
                 expiry === "expired"
@@ -415,6 +426,13 @@ async function SterileItemsSection({
                         className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${badgeCls}`}
                       >
                         {expiryLabel}
+                      </span>
+                    )}
+                    {/* 0182: neutral, not alarming. "Discarded" is a completed
+                        action, not an outstanding task. */}
+                    {discarded && (
+                      <span className="inline-flex items-center rounded-full bg-neutral-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                        Discarded
                       </span>
                     )}
                   </span>
@@ -443,6 +461,15 @@ async function SterileItemsSection({
                       {dateOnly(r.expiry_date) ?? "Not recorded"}
                     </span>
                   </span>
+                  {/* 0182: the discard date is part of the inspection record. */}
+                  {discarded && (
+                    <span>
+                      Discarded:{" "}
+                      <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                        {dateOnly(r.date_discarded) ?? "Not recorded"}
+                      </span>
+                    </span>
+                  )}
                   {r.manufacturer_name && (
                     <span>Manufacturer: {r.manufacturer_name}</span>
                   )}
