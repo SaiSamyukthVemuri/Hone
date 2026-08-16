@@ -231,7 +231,12 @@ describe("P2-3 — a date change invalidates in-flight practitioner lookups", ()
     expect(BOOK).toMatch(/const req = \+\+eligibleReq\.current;/);
     expect(BOOK).toMatch(/generation: req,/);
     expect(BOOK).toMatch(/isCurrent: \(g\) => g === eligibleReq\.current/);
-    expect(BOOK).toMatch(/if \(req !== slotReq\.current\) return;/);
+    // The slot-side guard moved into loadForCandidate, which checks the
+    // generation AND the captured identity after the await. A counter alone
+    // could not see a response whose identity had simply moved on underneath
+    // it, which is the race this replaced.
+    expect(BOOK).toMatch(/isCurrentGeneration: \(g\) => g === slotReq\.current/);
+    expect(BOOK).toMatch(/readCurrentIdentity: liveIdentity/);
   });
 });
 
@@ -471,5 +476,74 @@ describe("no suggestion may be submitted against an unknown window", () => {
     expect(ACTIONS3).toMatch(/return \{ ok: true, slots: coherentSlots, window \};/);
     // The unreconciled return must be gone.
     expect(ACTIONS3).not.toMatch(/return \{ ok: true, slots, window \};/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ASYNC-STATE LAW — a slot/window result may commit only to the exact current
+// booking candidate identity it was requested for.
+//
+// Three consecutive repairs of this component each relied on a generation
+// counter and each left one more piece of state stale. The counter remains as
+// cancellation machinery; the IDENTITY is the semantic authority. Behavioural
+// proof (deferred-promise interleavings) lives in
+// tests/lib/booking/slot-request.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("slot/window results commit only to the current candidate", () => {
+  it("invalidateSelection bumps the slot generation synchronously", () => {
+    // Clearing stored state was not enough: an in-flight loadSlots kept a
+    // generation that was still "current", passed its own guard, and
+    // reinstalled the previous candidate's window.
+    expect(BOOK).toMatch(
+      /function invalidateSelection\(\) \{\s*\n\s*slotReq\.current \+= 1;/,
+    );
+    // ...and it clears every piece of prior-candidate state with it.
+    const block = BOOK.slice(
+      BOOK.indexOf("function invalidateSelection()"),
+      BOOK.indexOf("function invalidateSelection()") + 400,
+    );
+    for (const cleared of [
+      "setPickedSlot(null)",
+      "setSlots([])",
+      "setAvailabilityWindow(null)",
+      "setWindowFor(null)",
+      "clearBufferOverride()",
+    ]) {
+      expect(block).toContain(cleared);
+    }
+  });
+
+  it("loadSlots invalidates synchronously BEFORE issuing the request", () => {
+    const inval = BOOK.indexOf("invalidateSelection();");
+    const issue = BOOK.indexOf("const captured: SlotCandidateIdentity");
+    expect(inval).toBeGreaterThan(-1);
+    expect(inval).toBeLessThan(issue);
+  });
+
+  it("the result is committed through the identity-checked helper", () => {
+    expect(BOOK).toMatch(/loadForCandidate\(\{/);
+    expect(BOOK).toMatch(/isCurrentGeneration: \(g\) => g === slotReq\.current/);
+    expect(BOOK).toMatch(/readCurrentIdentity: liveIdentity/);
+    expect(BOOK).toMatch(/if \(decision\.kind === "discard"\) return;/);
+    // The generation-only guard must not survive alongside it.
+    expect(BOOK).not.toMatch(/if \(req !== slotReq\.current\) return;/);
+  });
+
+  it("the live identity is read from refs, never captured state", () => {
+    expect(BOOK).toMatch(/function liveIdentity\(\): SlotCandidateIdentity/);
+    expect(BOOK).toMatch(/serviceId: serviceRef\.current/);
+    expect(BOOK).toMatch(/date: dateRef\.current/);
+    expect(BOOK).toMatch(/targetPractitionerId: targetRef\.current/);
+  });
+
+  it("the manual verdict uses the window ONLY if it describes this candidate", () => {
+    // A window resolved for another candidate is handed over as null, which the
+    // shared decision already treats as "not loaded" -- so loading can never
+    // present itself as "outside hours".
+    expect(BOOK).toMatch(/const windowIsCurrent = sameSlotCandidate\(windowFor, \{/);
+    expect(BOOK).toMatch(/window: windowIsCurrent \? availabilityWindow : null,/);
+    // The window is stamped with the candidate it describes when it commits.
+    expect(BOOK).toMatch(/setWindowFor\(captured\);/);
   });
 });

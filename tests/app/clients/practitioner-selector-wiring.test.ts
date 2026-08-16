@@ -68,7 +68,12 @@ describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6
   it("1C: latest-request-wins guards on both eligible + slot requests", () => {
     expect(BOOK).toMatch(/const eligibleReq = useRef\(0\)/);
     expect(BOOK).toMatch(/const slotReq = useRef\(0\)/);
-    expect(BOOK).toMatch(/if \(req !== slotReq\.current\) return/);
+    // The slot-side guard now lives in loadForCandidate, which checks the
+    // generation AND the identity the request was issued for. The counter alone
+    // could not reject a response whose candidate had moved on underneath it.
+    expect(BOOK).toMatch(/isCurrentGeneration: \(g\) => g === slotReq\.current/);
+    expect(BOOK).toMatch(/readCurrentIdentity: liveIdentity/);
+    expect(BOOK).toMatch(/decision\.kind === "discard"/);
     // The eligible-side guard moved into resolveEligibleSelection, which checks
     // it AFTER the await; the component supplies the generation + predicate.
     expect(BOOK).toMatch(/generation: req,/);

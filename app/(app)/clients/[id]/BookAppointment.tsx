@@ -21,6 +21,11 @@ import {
   type AvailabilityWindow,
 } from "@/lib/booking/availability-window";
 import { resolveEligibleSelection } from "@/lib/booking/eligible-selection";
+import {
+  loadForCandidate,
+  sameSlotCandidate,
+  type SlotCandidateIdentity,
+} from "@/lib/booking/slot-request";
 
 type Slot = { start: string; end: string; startLabel: string };
 
@@ -55,8 +60,20 @@ export function BookAppointment({
   const [open, setOpen] = useState(false);
   const groups = useMemo(() => groupServicesByModality(services), [services]);
   const firstServiceId = groups[0]?.services[0]?.id ?? "";
-  const [serviceId, setServiceId] = useState(firstServiceId);
-  const [date, setDate] = useState(defaultDate);
+  const [serviceId, setServiceIdState] = useState(firstServiceId);
+  const [date, setDateState] = useState(defaultDate);
+  // The LIVE identity components, readable after an await. State alone is
+  // captured by closures; these are not.
+  const serviceRef = useRef(firstServiceId);
+  const dateRef = useRef(defaultDate);
+  function setServiceId(v: string) {
+    serviceRef.current = v;
+    setServiceIdState(v);
+  }
+  function setDate(v: string) {
+    dateRef.current = v;
+    setDateState(v);
+  }
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickedSlot, setPickedSlot] = useState<Slot | null>(null);
   const [notes, setNotes] = useState("");
@@ -111,6 +128,14 @@ export function BookAppointment({
   // outside-hours override; see the note on ManualTimeDecision.
   const [availabilityWindow, setAvailabilityWindow] =
     useState<AvailabilityWindow | null>(null);
+  // WHICH CANDIDATE THE WINDOW DESCRIBES.
+  //
+  // `windowKnown` alone could not tell a window resolved for the date on screen
+  // from one resolved for the date the practitioner just left. Binding the
+  // window to its identity -- the same trick that made a stale SLOT unusable --
+  // kills that class structurally instead of depending on every mutation site
+  // bumping the right counter.
+  const [windowFor, setWindowFor] = useState<SlotCandidateIdentity | null>(null);
 
   // Item 6: owner practitioner selector. The selector is shown ONLY when capacity
   // is ON and the actor is an owner; members and Legacy studios always book the
@@ -142,34 +167,63 @@ export function BookAppointment({
   // loadSlots always did; loadForService did not, which is how a suggestion
   // picked on the previous date stayed selected (and submittable) for the whole
   // duration of the eligibility round trip.
+  // The identity the CURRENT form describes.
+  function liveIdentity(): SlotCandidateIdentity {
+    return {
+      serviceId: serviceRef.current,
+      date: dateRef.current,
+      targetPractitionerId: targetRef.current,
+    };
+  }
+
+  // EVERY identity change runs this FIRST, synchronously, before any await.
+  //
+  // It now also INVALIDATES THE SLOT GENERATION. Clearing the stored state was
+  // not enough: an in-flight loadSlots kept a generation that was still
+  // "current", so it passed its own guard and reinstalled the previous
+  // candidate's window and slots -- after which an ordinary time on the new
+  // date could be classified against the old window, acknowledged, and
+  // persisted as a false outside-availability exception.
   function invalidateSelection() {
+    slotReq.current += 1;
     setPickedSlot(null);
+    setSlots([]);
     setAvailabilityWindow(null);
+    setWindowFor(null);
     clearBufferOverride();
   }
 
   function loadSlots(nextServiceId: string, nextDate: string, nextTarget: string) {
     setError(null);
-    setPickedSlot(null);
-    // DROP THE PREVIOUS WINDOW BEFORE REFETCHING. It belongs to the OLD
-    // (target, date); keeping it while the new one is in flight would classify
-    // the typed time against a practitioner or a day this booking is no longer
-    // for. If the stale window said "closed" and the new one is open, the form
-    // would show the outside-hours warning and post
-    // allow_outside_availability for an ordinary working time -- the original
-    // defect, re-entered through stale state.
-    setAvailabilityWindow(null);
-    // A new (date, target) is a different booking; a buffer refusal for the old
-    // one says nothing about it.
-    clearBufferOverride();
-    const req = ++slotReq.current;
+    // Synchronous, before any await: drop the previous candidate's selection,
+    // slots, window and buffer approval, AND invalidate the outstanding slot
+    // generation. Anything still in flight now belongs to nobody.
+    invalidateSelection();
+    // The identity THIS request answers for. Compared against the live identity
+    // after the await -- a response is not authoritative merely because it is
+    // the last to resolve.
+    const captured: SlotCandidateIdentity = {
+      serviceId: nextServiceId,
+      date: nextDate,
+      targetPractitionerId: nextTarget,
+    };
+    const req = slotReq.current;
     startLoading(async () => {
-      const r = await fetchSlotsForClientBookingAction({
-        serviceId: nextServiceId,
-        date: nextDate,
-        practitionerId: showSelector ? nextTarget : undefined,
+      const decision = await loadForCandidate({
+        generation: req,
+        isCurrentGeneration: (g) => g === slotReq.current,
+        captured,
+        readCurrentIdentity: liveIdentity,
+        fetch: () =>
+          fetchSlotsForClientBookingAction({
+            serviceId: nextServiceId,
+            date: nextDate,
+            practitionerId: showSelector ? nextTarget : undefined,
+          }),
       });
-      if (req !== slotReq.current) return; // stale: a newer request superseded this
+      // Superseded, or answering for a candidate that is no longer on screen.
+      if (decision.kind === "discard") return;
+      const r = decision.result;
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
@@ -179,10 +233,13 @@ export function BookAppointment({
         // allow_outside_availability for a time that may well be inside working
         // hours -- the very defect this split exists to remove.
         setAvailabilityWindow(null);
+        setWindowFor(null);
         return;
       }
       setSlots(r.slots);
       setAvailabilityWindow(r.window);
+      // Stamp the window with the candidate it describes.
+      setWindowFor(captured);
     });
   }
 
@@ -290,8 +347,20 @@ export function BookAppointment({
   //
   // This surface has no drag-to-create, so there is never a custom length here.
   const selectedService = services.find((s) => s.id === serviceId) ?? null;
+  // THE WINDOW MUST BELONG TO THE CANDIDATE ON SCREEN.
+  //
+  // A window resolved for a different (service, date, practitioner) is not
+  // knowledge about this booking, so it is handed to the decision as `null` --
+  // which the decision already treats as "not loaded": manual path blocked,
+  // truthful checking copy, no acknowledgement, no flag. Loading never becomes
+  // "outside hours".
+  const windowIsCurrent = sameSlotCandidate(windowFor, {
+    serviceId,
+    date,
+    targetPractitionerId: showSelector ? target : currentPractitionerId,
+  });
   const manualDecision = decideManualTime({
-    window: availabilityWindow,
+    window: windowIsCurrent ? availabilityWindow : null,
     // The date and zone are required so the END is derived from the real UTC
     // instant, exactly as the database derives it. Wall-clock addition
     // disagreed with the validator by an hour on DST-transition days.
