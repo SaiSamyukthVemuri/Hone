@@ -19,6 +19,21 @@
 // "Active" = not past its expiry date (a null expiry never expires). Expired
 // lots are still SELECTABLE for truthful retrospective charting, but never sort
 // first and are never auto-filled.
+//
+// Migration 0182 adds a SECOND, INDEPENDENT reason a lot is not current stock:
+// the practitioner recorded a structured discard (date_discarded). Expiry is a
+// property of the package; discard is an assertion about the PHYSICAL stock
+// ("I threw this away"). They are orthogonal — an unexpired box can be
+// discarded, and an expired box can still be sitting on the shelf unlogged — so
+// they are carried as two flags and never collapsed into one.
+//
+// CRITICAL ARCHITECTURE RULE. Discarded rows are NOT removed here, exactly as
+// expired rows are not removed here. `buildProbeLotOptions` is the FOUNDATIONAL
+// read: a historical session's inventory link must still resolve through it
+// after the stock is discarded, or traceability and retrospective editing break.
+// The discard is carried on the option as `isDiscarded` and gated ONLY at the
+// CURRENT-stock boundary (`activeProbeLotOptionsForProbe` / auto-fill). Current
+// inventory is not historical record existence.
 
 export type ProbeLotInventoryRow = {
   id: string;
@@ -28,6 +43,8 @@ export type ProbeLotInventoryRow = {
   manufacturerName: string | null;
   // ISO "YYYY-MM-DD" or null (null = never expires).
   expiryDate: string | null;
+  // Migration 0182: ISO "YYYY-MM-DD" or null (null = not discarded).
+  dateDiscarded: string | null;
 };
 
 export type ProbeLotOption = {
@@ -38,7 +55,18 @@ export type ProbeLotOption = {
   manufacturerName: string | null;
   expiryDate: string | null;
   isExpired: boolean;
+  // Migration 0182: the practitioner recorded this physical stock as discarded.
+  dateDiscarded: string | null;
+  isDiscarded: boolean;
 };
+
+// The single definition of "usable as CURRENT stock", so the server selectors
+// and the client chooser cannot drift apart. An option is current stock when it
+// is neither expired nor discarded. Every "offer this for NEW work" surface
+// must go through this predicate; no historical surface may.
+export function isCurrentStock(option: ProbeLotOption): boolean {
+  return !option.isExpired && !option.isDiscarded;
+}
 
 // null expiry (never expires) is the "most current"; between two dated lots the
 // later expiry is more current. Returns <0 when a should sort before b.
@@ -69,10 +97,21 @@ export function buildProbeLotOptions(
       manufacturerName: (r.manufacturerName ?? "").trim() || null,
       expiryDate: r.expiryDate,
       isExpired: r.expiryDate != null && r.expiryDate < todayIso,
+      dateDiscarded: r.dateDiscarded,
+      // Migration 0182. Presence of the date IS the assertion; the date itself
+      // is never compared against today. A discard recorded with a future or
+      // back-dated date is still a discard — the practitioner said the stock is
+      // gone, and stock does not un-vanish when the calendar rolls over. (This
+      // is the deliberate difference from expiry, which IS a date comparison.)
+      isDiscarded: r.dateDiscarded != null,
     });
   }
   return options.sort((a, b) => {
-    if (a.isExpired !== b.isExpired) return a.isExpired ? 1 : -1; // active first
+    // Current stock first. Discarded sorts with expired: both are "not usable
+    // now", so neither may sit at the top of a chooser.
+    const aCurrent = isCurrentStock(a);
+    const bCurrent = isCurrentStock(b);
+    if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
     const e = compareExpiryDesc(a.expiryDate, b.expiryDate);
     if (e !== 0) return e;
     const l = a.lotNumber.localeCompare(b.lotNumber);
@@ -80,20 +119,25 @@ export function buildProbeLotOptions(
   });
 }
 
-// Only the non-expired options for a specific probe (the default chooser set
+// Only the CURRENT-stock options for a specific probe (the default chooser set
 // after a probe is selected). probeKey must match exactly; a null probeKey on an
 // option (unclassified inventory) never matches a chosen probe.
+//
+// This is the CURRENT-inventory boundary. Migration 0182: a discarded lot is
+// excluded here — the physical stock is gone, so it is not usable now — exactly
+// as an expired lot is excluded. It remains present in the full list below.
 export function activeProbeLotOptionsForProbe(
   options: ReadonlyArray<ProbeLotOption>,
   probeKey: string | null | undefined,
 ): ProbeLotOption[] {
   const key = (probeKey ?? "").trim();
   if (!key) return [];
-  return options.filter((o) => !o.isExpired && o.probeKey === key);
+  return options.filter((o) => isCurrentStock(o) && o.probeKey === key);
 }
 
-// All (active + expired) options for a specific probe: used when EDITING a
-// historical linked record so an expired linked lot stays visible.
+// All (current + expired + discarded) options for a specific probe: used when
+// EDITING a historical linked record so an expired or since-discarded linked lot
+// stays visible. HISTORICAL surface — it must never gate on lifecycle state.
 export function probeLotOptionsForProbe(
   options: ReadonlyArray<ProbeLotOption>,
   probeKey: string | null | undefined,
@@ -125,8 +169,12 @@ export type ProbeLotAutofill =
   | { kind: "choose" };
 
 // Inventory-backed auto-fill for a probe (Chloe item #9 AUTO-FILL RULES). Only
-// ACTIVE inventory rows for THIS probe_key are considered. Never auto-fills an
-// expired lot; never chooses arbitrarily among multiple active lots. Every
+// CURRENT-STOCK inventory rows for THIS probe_key are considered, so migration
+// 0182's discard gate applies here for free: a discarded lot is absent from
+// `active`, which means rule 1 cannot match it even when it IS the last
+// confirmed selection, and it can never be the sole "only-active" pick. Never
+// auto-fills an expired or discarded lot; never chooses arbitrarily among
+// multiple current lots. Every
 // auto-fill is UNCONFIRMED (the caller resets confirmation).
 //   1. If the last confirmed prior selection references one of these exact
 //      active inventory ids → auto-fill that item ("last-confirmed").
@@ -154,6 +202,12 @@ export function resolveInventoryAutofill(
 //   "460941: Sterex Gold F3 · expires 2026-12-01"
 //   "460941: Sterex Gold F3 · no expiry"
 //   "460941: Sterex Gold F3 · EXPIRED 2025-01-01"
+//   "460941: Sterex Gold F3 · DISCARDED 2026-07-10"   (0182)
+//
+// Migration 0182: a discard is the stronger statement — an expired box may
+// still be on the shelf, but a discarded one is gone — so when both apply the
+// label reports the discard. The expiry is still on the option for any caller
+// that needs it.
 //
 // The lot-number prefix delimiter is a CONTRACT with probe-lot-select.tsx,
 // which strips it to show the description alone beside the lot number it
@@ -164,10 +218,12 @@ export function probeLotOptionLabel(o: ProbeLotOption): string {
   const head = o.itemDescription
     ? `${o.lotNumber}${PROBE_LOT_LABEL_DELIMITER}${o.itemDescription}`
     : o.lotNumber;
-  const status = o.expiryDate
-    ? o.isExpired
-      ? `EXPIRED ${o.expiryDate}`
-      : `expires ${o.expiryDate}`
-    : "no expiry";
+  const status = o.isDiscarded
+    ? `DISCARDED ${o.dateDiscarded}`
+    : o.expiryDate
+      ? o.isExpired
+        ? `EXPIRED ${o.expiryDate}`
+        : `expires ${o.expiryDate}`
+      : "no expiry";
   return `${head} · ${status}`;
 }

@@ -222,8 +222,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("record_keeping_sterile_items")
+        // 0182: date_discarded is part of the inspection record. The export is
+        // HISTORICAL and is deliberately NOT filtered on it — a discarded item
+        // stays in the export, now carrying the lifecycle fact that explains
+        // why an expired row needs no action.
         .select(
-          "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, notes, created_by_practitioner_id, created_at, updated_at",
+          "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, date_discarded, notes, created_by_practitioner_id, created_at, updated_at",
         )
         .eq("studio_id", studio.id)
         .order("date_purchased", { ascending: false })
@@ -817,6 +821,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "amount_purchased",
         "lot_number",
         "expiry_date",
+        "date_discarded",
         "notes",
         "created_by_practitioner_id",
         "created_at",
@@ -1092,7 +1097,7 @@ Files included:
 - appointments.csv: One row per appointment with client, practitioner, and service (IDs plus readable names), start/end times, duration, status, appointment notes, and cancellation details.
 - treatment_plans.csv: One row per treatment plan with client, name, primary area, all treatment areas (pipe-joined), estimated timeline months window, status, estimated visit count, treatment-goal minutes override, and plan/budget notes.
 - treatment_plan_stages.csv: Schedule stages for treatment plans (cadence, visit length, stage length, notes), with the parent plan and client for reference.
-- record_keeping_sterile_items.csv: Sterile-supply inspection log: item, manufacturer, amount, lot number, purchase/expiry dates, notes. Expiry status is derivable from the expiry_date column (a date on or before today is expired); the in-app Records list and the print view flag expired / expires-today / expires-soon items.
+- record_keeping_sterile_items.csv: Sterile-supply inspection log: item, manufacturer, amount, lot number, purchase/expiry/discarded dates, notes. Expiry status is derivable from the expiry_date column (a date on or before today is expired); the in-app Records list and the print view flag expired / expires-today / expires-soon items. A date_discarded value means the practitioner recorded that this stock was physically thrown away on that date: it is then no longer current inventory (it raises no expiry reminder and is not offered as a probe lot), but the record and every treatment that used it are kept in full. An empty date_discarded means no discard was recorded.
 - record_keeping_disinfectants.csv: Disinfectant preparation log: name, concentration, prepared/discarded/discard-due dates, operator, notes.
 - record_keeping_exposure_incidents.csv: Exposure-incident log (OWNER-ONLY). Contains sensitive personal information about the exposed person (name, address, phone) and incident details.
 - record_keeping_audit_events.csv: Record-keeping change history: record type/id, action, which fields changed, who made the change, and when. (Reduced: it does not include the before/after value snapshots.)

@@ -58,14 +58,36 @@ export function supplyExpiryPrintMarker(
   return label ? ` (${label.toLowerCase()})` : "";
 }
 
+// Migration 0182: a structured discard. Presence of the date IS the assertion
+// (it is never compared against today) — the practitioner said the physical
+// stock is gone, and stock does not come back when the calendar rolls over.
+//
+// This is the CURRENT-inventory gate for every expiry-warning surface. It never
+// hides the record itself: the Records list still renders a discarded item, and
+// history, traceability, export and search are untouched. It only stops Hone
+// telling Chloe to act on a box she has already thrown away.
+export function isSupplyDiscarded(
+  dateDiscarded: string | null | undefined,
+): boolean {
+  return dateDiscarded != null && dateDiscarded !== "";
+}
+
 // Counts for the Records summary banner + the dashboard card.
 export function summarizeSupplyExpiry(
-  items: ReadonlyArray<{ expiry_date: string | null }>,
+  items: ReadonlyArray<{
+    expiry_date: string | null;
+    // 0182. Optional so callers that legitimately have no lifecycle column
+    // (and any pre-existing fixture) keep their exact current behaviour.
+    date_discarded?: string | null;
+  }>,
   todayIso: string,
 ): { expired: number; expiring: number } {
   let expired = 0;
   let expiring = 0;
   for (const it of items) {
+    // 0182: discarded stock is not current stock, so it cannot contribute to a
+    // "replace these now" banner.
+    if (isSupplyDiscarded(it.date_discarded)) continue;
     const s = supplyExpiryState(it.expiry_date, todayIso);
     // "today" counts toward "expiring within 30 days" for the banner (it IS
     // within 30 days and not yet expired); the badge/print show it distinctly.

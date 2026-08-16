@@ -78,6 +78,85 @@ describe("Sterile Items", () => {
   });
 });
 
+// Migration 0182 — the structured discard WRITE path.
+//
+// These pins are deliberately SCOPED to the sterile form/action bodies. A
+// whole-file `FORMS.toMatch(/name="date_discarded"/)` proves nothing here: the
+// disinfectant forms have carried that exact field since 0085, so a file-wide
+// match stays green even if the sterile field is deleted outright. Without
+// scoping, the ONLY way a practitioner can record a discard could be removed
+// and the whole suite would still pass.
+describe("Sterile Items — structured discard (0182)", () => {
+  // Slice one exported function's body: from its declaration to the next
+  // top-level `export ` / `}` boundary that starts a sibling declaration.
+  function bodyOf(src: string, decl: string): string {
+    const start = src.indexOf(decl);
+    expect(start, `${decl} must exist`).toBeGreaterThan(-1);
+    const rest = src.slice(start + decl.length);
+    const end = rest.search(/\nexport (async )?function |\ntype |\nexport type /);
+    return rest.slice(0, end === -1 ? undefined : end);
+  }
+
+  it("the ADD form offers the field", () => {
+    expect(bodyOf(FORMS, "export function AddSterileItemForm")).toMatch(
+      /name="date_discarded"/,
+    );
+  });
+
+  it("the EDIT form offers the field AND round-trips the stored value", () => {
+    const body = bodyOf(FORMS, "export function EditSterileItemForm");
+    expect(body).toMatch(/name="date_discarded"/);
+    expect(body).toMatch(/defaultValue=\{record\.date_discarded\?\.slice\(0, 10\)\}/);
+  });
+
+  it("BOTH server actions persist the field, validated as a date", () => {
+    for (const decl of [
+      "export async function addSterileItemRecordAction",
+      "export async function updateSterileItemRecordAction",
+    ]) {
+      expect(bodyOf(ACTIONS, decl)).toMatch(
+        /date_discarded: dateStr\(formData\.get\("date_discarded"\)\) \|\| null/,
+      );
+    }
+  });
+
+  it("the update is studio-scoped — a discard cannot cross a tenant boundary", () => {
+    const body = bodyOf(ACTIONS, "export async function updateSterileItemRecordAction");
+    expect(body).toMatch(/\.eq\("id", recordId\)/);
+    expect(body).toMatch(/\.eq\("studio_id", studioId\)/);
+  });
+
+  it("clearing the field is an UNDISCARD, not a no-op (reversibility)", () => {
+    // `dateStr` returns "" for empty/invalid input and `"" || null` is null, so
+    // submitting a blank date writes NULL and returns the item to current
+    // inventory. This is the correction path; it only works because the write
+    // is unconditional rather than a "only set when present" patch.
+    expect(ACTIONS).toMatch(/const s = str\(v, 10\);\s*\n\s*return \/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(s\) \? s : "";/);
+  });
+
+  it("copy-last NEVER carries a discard date onto a new purchase", () => {
+    // Same rule as lot_number: each purchase has its own lifecycle. Copying a
+    // discard date onto a freshly-bought box would assert that new stock was
+    // already thrown away — a false compliance record that would also hide the
+    // new stock from current inventory immediately.
+    const t = bodyOf(FORMS, "export type SterileCopyLast");
+    expect(t).not.toMatch(/date_discarded/);
+    expect(t).not.toMatch(/lot_number/);
+  });
+
+  it("the records list surfaces the discard instead of an expiry alarm", () => {
+    expect(PAGE).toMatch(/isSupplyDiscarded\(r\.date_discarded\)/);
+    expect(PAGE).toMatch(/Discarded/);
+  });
+
+  it("no delete/archive affordance was introduced anywhere in the module", () => {
+    // Discard is a lifecycle field on a health-inspection record. If it ever
+    // becomes a deletion, historical treatment lineage goes with it.
+    expect(ACTIONS).not.toMatch(/\.delete\(\)/);
+    expect(ACTIONS).not.toMatch(/deleteSterileItem/i);
+  });
+});
+
 describe("Disinfectants", () => {
   it("form has the BodySafe fields", () => {
     for (const f of [

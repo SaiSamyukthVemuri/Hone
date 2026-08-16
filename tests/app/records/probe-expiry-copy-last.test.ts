@@ -97,6 +97,34 @@ describe("dashboard 'Supplies expiring' card is studio-scoped", () => {
     expect(body).toMatch(/\.not\("expiry_date", "is", null\)/);
     expect(body).toMatch(/\.lte\("expiry_date", horizon\)/);
     expect(body).not.toMatch(/lot_number/);
+    // Migration 0182: this CURRENT-warning query drops stock recorded as
+    // physically discarded, so Chloe stops being told to replace probes she
+    // already threw away.
+    expect(body).toMatch(/\.is\("date_discarded", null\)/);
+  });
+
+  it("(0182) the discard gate is on the CURRENT query ONLY, never the historical reads", () => {
+    // The architecture law, pinned. getSterileItemRecords (the historical log),
+    // getProbeLotInventory (the foundational inventory read every historical
+    // link resolves through) and getLotTraceability must NEVER filter on
+    // date_discarded — doing so would delete retrospective truth from the UI.
+    for (const fn of [
+      "getSterileItemRecords",
+      "getProbeLotInventory",
+      "getLotTraceability",
+    ]) {
+      const start = QUERIES.indexOf(`export async function ${fn}`);
+      expect(start, `${fn} must exist`).toBeGreaterThan(-1);
+      const body = QUERIES.slice(start, start + 1800);
+      const code = body
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("//"))
+        .join("\n");
+      expect(
+        code,
+        `${fn} is a historical/foundational read and must not filter on date_discarded`,
+      ).not.toMatch(/\.is\("date_discarded"|date_discarded\s+is\s+null/);
+    }
   });
   it("dashboard fetches it scoped to the current studio + feeds the To-do model", () => {
     expect(DASH).toMatch(/getExpiringSterileItems\(studio\.id, todayLocal\)/);
@@ -118,8 +146,17 @@ describe("PR #317: print expiry marker + export note", () => {
     expect(PRINT).toMatch(/supplyExpiryPrintMarker\(r\.expiry_date, today\)/);
     expect(PRINT).toMatch(/const today = todayInTz\(timezone\)/);
     expect(PRINT).toMatch(/<SterilePrint[\s\S]{0,120}timezone=\{studio\.timezone\}/);
-    // Marker only when an expiry date is recorded (no marker for null).
-    expect(PRINT).toMatch(/r\.expiry_date\s*\?\s*`\$\{dateOnly\(r\.expiry_date\)\}\$\{supplyExpiryPrintMarker/);
+    // Marker only when an expiry date is recorded (no marker for null), and —
+    // migration 0182 — only while the stock has NOT been recorded as discarded.
+    // The action marker flags supplies needing attention; a box already thrown
+    // away needs none. The expiry DATE is still printed either way.
+    expect(PRINT).toMatch(
+      /r\.expiry_date && !isSupplyDiscarded\(r\.date_discarded\)\s*\?\s*`\$\{dateOnly\(r\.expiry_date\)\}\$\{supplyExpiryPrintMarker/,
+    );
+    // The printed inspection log NEVER drops a discarded record, and it states
+    // the discard explicitly.
+    expect(PRINT).toMatch(/label="Date discarded"/);
+    expect(PRINT).not.toMatch(/records\s*\.filter\([^)]*date_discarded/);
   });
   it("the export README notes expiry is derivable from expiry_date (no CSV schema change)", () => {
     expect(EXPORT).toMatch(/Expiry status is derivable from the expiry_date column/);
