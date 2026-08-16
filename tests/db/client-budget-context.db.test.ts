@@ -104,7 +104,8 @@ async function seedBudget(
 
 async function budgetRow(clientId: string) {
   const res = await adminQuery(
-    `select budget_level, budget_notes, studio_id, updated_by_practitioner_id
+    `select budget_level, budget_notes, studio_id, updated_by_practitioner_id,
+            created_at, updated_at
        from public.client_budget_context where client_id = $1`,
     [clientId],
   );
@@ -493,7 +494,7 @@ describe("0183: client_id is immutable", () => {
         "update public.client_budget_context set client_id = $2 where client_id = $1",
         [a.clientId, secondClientA],
       ),
-    ).rejects.toThrow(/immutable/i);
+    ).rejects.toThrow(/client_id is immutable/i);
 
     // The source keeps its row, contents untouched.
     const src = await budgetRow(a.clientId);
@@ -515,7 +516,7 @@ describe("0183: client_id is immutable", () => {
         "update public.client_budget_context set client_id = $2 where client_id = $1",
         [a.clientId, secondClientA],
       ),
-    ).rejects.toThrow(/immutable/i);
+    ).rejects.toThrow(/client_id is immutable/i);
     expect((await budgetRow(a.clientId)).budget_notes).toBe("still client one");
   });
 
@@ -537,7 +538,7 @@ describe("0183: client_id is immutable", () => {
           where client_id = $1`,
         [a.clientId, b.clientId, dual.inB],
       ),
-    ).rejects.toThrow(/immutable/i);
+    ).rejects.toThrow(/client_id is immutable/i);
 
     expect((await budgetRow(a.clientId)).budget_notes).toBe("studio A budget");
     const moved = await adminQuery(
@@ -623,6 +624,153 @@ describe("0183: client_id is immutable", () => {
       "delete from public.client_budget_context where client_id = $1",
       [secondClientA],
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TIMESTAMP INTEGRITY
+//
+// created_at and updated_at are database-controlled evidence, not caller-
+// authored values. `default now()` alone is NOT a guarantee: a default applies
+// only when the caller omits the column, and an authenticated caller issuing
+// PostgREST directly can simply supply it. Measured before these guards, a
+// direct INSERT supplying both stored BOTH verbatim, and a direct UPDATE
+// rewrote created_at.
+//
+// ANTI-VACUITY: dropping the INSERT guard turns C and D red; dropping the
+// immutability trigger turns A (and the client_id cases) red.
+// ---------------------------------------------------------------------------
+
+describe("0183: timestamps are database-controlled", () => {
+  const FORGED = "2001-01-01T00:00:00Z";
+  const forgedYear = 2001;
+
+  function yearOf(v: unknown): number {
+    return new Date(v as string).getUTCFullYear();
+  }
+
+  it("A. UPDATE cannot rewrite created_at — it is REJECTED, not silently reset", async () => {
+    await seedBudget(a, { notes: "original" });
+    const before = await budgetRow(a.clientId);
+    await expect(
+      userQuery(
+        a.userId,
+        `update public.client_budget_context
+            set created_at = $2, updated_by_practitioner_id = $3
+          where client_id = $1`,
+        [a.clientId, FORGED, a.practitionerId],
+      ),
+    ).rejects.toThrow(/created_at is immutable/i);
+    const after = await budgetRow(a.clientId);
+    expect(after.created_at).toEqual(before.created_at);
+    expect(yearOf(after.created_at)).not.toBe(forgedYear);
+  });
+
+  it("B. UPDATE cannot forge updated_at — set_updated_at wins", async () => {
+    await seedBudget(a, { notes: "original" });
+    const res = await userQuery(
+      a.userId,
+      `update public.client_budget_context
+          set updated_at = $2, budget_notes = 'edited',
+              updated_by_practitioner_id = $3
+        where client_id = $1`,
+      [a.clientId, FORGED, a.practitionerId],
+    );
+    expect(res.rowCount).toBe(1);
+    // The statement is allowed, but the caller's value does not survive.
+    expect(yearOf((await budgetRow(a.clientId)).updated_at)).not.toBe(
+      forgedYear,
+    );
+  });
+
+  it("C. INSERT cannot forge created_at — the default is not the guarantee", async () => {
+    await clearBudget(a.clientId);
+    const res = await userQuery(
+      a.userId,
+      `insert into public.client_budget_context
+         (client_id, studio_id, budget_notes, updated_by_practitioner_id, created_at)
+       values ($1, $2, 'n', $3, $4)`,
+      [a.clientId, a.studioId, a.practitionerId, FORGED],
+    );
+    expect(res.rowCount).toBe(1);
+    expect(yearOf((await budgetRow(a.clientId)).created_at)).not.toBe(
+      forgedYear,
+    );
+  });
+
+  it("D. INSERT cannot forge updated_at", async () => {
+    await clearBudget(a.clientId);
+    await userQuery(
+      a.userId,
+      `insert into public.client_budget_context
+         (client_id, studio_id, budget_notes, updated_by_practitioner_id, created_at, updated_at)
+       values ($1, $2, 'n', $3, $4, $4)`,
+      [a.clientId, a.studioId, a.practitionerId, FORGED],
+    );
+    const row = await budgetRow(a.clientId);
+    expect(yearOf(row.created_at)).not.toBe(forgedYear);
+    expect(yearOf(row.updated_at)).not.toBe(forgedYear);
+  });
+
+  it("E. an ORDINARY update leaves created_at alone and advances updated_at", async () => {
+    await clearBudget(a.clientId);
+    await userQuery(
+      a.userId,
+      `insert into public.client_budget_context
+         (client_id, studio_id, budget_level, budget_notes, updated_by_practitioner_id)
+       values ($1, $2, 'somewhat_limited', 'before', $3)`,
+      [a.clientId, a.studioId, a.practitionerId],
+    );
+    const before = await budgetRow(a.clientId);
+
+    const res = await userQuery(
+      a.userId,
+      `update public.client_budget_context
+          set budget_level = 'no_stated_limit',
+              budget_notes = 'after',
+              updated_by_practitioner_id = $2
+        where client_id = $1`,
+      [a.clientId, a.practitionerId],
+    );
+    expect(res.rowCount).toBe(1);
+
+    const after = await budgetRow(a.clientId);
+    expect(after.budget_level).toBe("no_stated_limit");
+    expect(after.budget_notes).toBe("after");
+    expect(after.created_at).toEqual(before.created_at);
+    expect(
+      new Date(after.updated_at as string).getTime(),
+    ).toBeGreaterThanOrEqual(new Date(before.updated_at as string).getTime());
+  });
+
+  it("F. the application UPSERT works on BOTH the insert and the update path", async () => {
+    // Exactly the payload updateClientBudgetContextAction sends: no
+    // timestamps at all, ON CONFLICT (client_id).
+    const upsert = (notes: string) =>
+      userQuery(
+        a.userId,
+        `insert into public.client_budget_context
+           (client_id, studio_id, budget_level, budget_notes, updated_by_practitioner_id)
+         values ($1, $2, 'somewhat_limited', $4, $3)
+         on conflict (client_id) do update set
+           studio_id = excluded.studio_id,
+           budget_level = excluded.budget_level,
+           budget_notes = excluded.budget_notes,
+           updated_by_practitioner_id = excluded.updated_by_practitioner_id`,
+        [a.clientId, a.studioId, a.practitionerId, notes],
+      );
+
+    await clearBudget(a.clientId);
+    // INSERT path.
+    expect((await upsert("first")).rowCount).toBe(1);
+    const created = (await budgetRow(a.clientId)).created_at;
+    expect((await budgetRow(a.clientId)).budget_notes).toBe("first");
+
+    // UPDATE path — must not trip either immutability guard.
+    expect((await upsert("second")).rowCount).toBe(1);
+    const after = await budgetRow(a.clientId);
+    expect(after.budget_notes).toBe("second");
+    expect(after.created_at).toEqual(created);
   });
 });
 

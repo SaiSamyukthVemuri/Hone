@@ -31,6 +31,19 @@ const CODE = SQL.split("\n")
   .filter((line) => !/^\s*--/.test(line))
   .join("\n");
 
+/**
+ * The body of one `create or replace function`, bounded at its own `$$;`
+ * terminator. A fixed-length slice runs past the function into the next one,
+ * which silently changes what an assertion is really counting.
+ */
+function fnBody(name: string): string {
+  const start = CODE.indexOf(`function public.${name}()`);
+  expect(start, `${name} must be defined`).toBeGreaterThan(-1);
+  const end = CODE.indexOf("$$;", start);
+  expect(end, `${name} must terminate`).toBeGreaterThan(start);
+  return CODE.slice(start, end);
+}
+
 describe("0183: file and numbering", () => {
   it("is the repository maximum and carries the version exactly once", () => {
     expect(isRepoMax(VERSION)).toBe(true);
@@ -177,9 +190,7 @@ describe("0183: studio_id is derived, never caller-authored", () => {
   });
 
   it("the trigger reads studio_id from the parent clients row", () => {
-    const fn = CODE.slice(
-      CODE.indexOf("function public.client_budget_context_set_studio_id()"),
-    );
+    const fn = fnBody("client_budget_context_set_studio_id");
     expect(fn).toMatch(
       /select studio_id into new\.studio_id\s*\n\s*from public\.clients\s*\n\s*where id = new\.client_id;/,
     );
@@ -188,50 +199,76 @@ describe("0183: studio_id is derived, never caller-authored", () => {
   });
 
   it("pins the trigger function's search_path", () => {
-    const fn = CODE.slice(
-      CODE.indexOf("function public.client_budget_context_set_studio_id()"),
-    );
+    const fn = fnBody("client_budget_context_set_studio_id");
     expect(fn.slice(0, 300)).toContain("set search_path = pg_catalog, pg_temp");
   });
 
-  it("freezes client_id on UPDATE, and REJECTS rather than silently correcting", () => {
+  it("freezes client_id AND created_at on UPDATE, REJECTING rather than silently correcting", () => {
     expect(CODE).toMatch(
-      /create trigger client_budget_context_client_id_immutable\s*\n\s*before update on public\.client_budget_context/,
+      /create trigger client_budget_context_immutable_fields\s*\n\s*before update on public\.client_budget_context/,
     );
-    const fn = CODE.slice(
-      CODE.indexOf("function public.client_budget_context_client_id_immutable()"),
-    ).slice(0, 900);
+    const fn = fnBody("client_budget_context_immutable_fields");
     expect(fn).toContain("new.client_id is distinct from old.client_id");
-    expect(fn).toContain("raise exception");
+    expect(fn).toContain("new.created_at is distinct from old.created_at");
+    expect(fn.match(/raise exception/g) ?? []).toHaveLength(2);
     // A silent reset would conceal both a caller bug and an attack.
     expect(fn).not.toMatch(/new\.client_id\s*:=\s*old\.client_id/);
+    expect(fn).not.toMatch(/new\.created_at\s*:=\s*old\.created_at/);
     expect(fn).toContain("set search_path = pg_catalog, pg_temp");
   });
 
-  it("the immutability trigger sorts BEFORE the studio-derivation trigger", () => {
-    // Same-timing triggers fire in NAME order. The move must be refused
-    // before studio_id is re-derived from a client the row must never
-    // belong to.
-    expect(
-      "client_budget_context_client_id_immutable" <
-        "client_budget_context_set_studio_id",
-    ).toBe(true);
+  it("drops the superseded narrower trigger and function by name", () => {
+    // A database that ran an earlier revision of this file must not keep both.
+    expect(CODE).toContain(
+      "drop trigger if exists client_budget_context_client_id_immutable",
+    );
+    expect(CODE).toContain(
+      "drop function if exists public.client_budget_context_client_id_immutable()",
+    );
+  });
+
+  it("forces BOTH timestamps on INSERT — `default now()` is not the guarantee", () => {
+    // A default applies only when the caller OMITS the column. Measured on
+    // this schema before the guard: a direct INSERT supplying created_at and
+    // updated_at stored both verbatim.
+    expect(CODE).toMatch(
+      /create trigger client_budget_context_server_timestamps\s*\n\s*before insert on public\.client_budget_context/,
+    );
+    const fn = fnBody("client_budget_context_server_timestamps");
+    expect(fn).toMatch(/new\.created_at\s*:=\s*now\(\)/);
+    expect(fn).toMatch(/new\.updated_at\s*:=\s*now\(\)/);
+    expect(fn).toContain("set search_path = pg_catalog, pg_temp");
+  });
+
+  it("the immutability trigger sorts BEFORE the derivation triggers", () => {
+    // Same-timing triggers fire in NAME order, so a rejected mutation is
+    // refused before studio_id is re-derived or updated_at is stamped.
+    for (const later of [
+      "client_budget_context_set_studio_id",
+      "client_budget_context_set_updated_at",
+    ]) {
+      expect("client_budget_context_immutable_fields" < later).toBe(true);
+    }
   });
 
   it("does NOT freeze the fields that are meant to change", () => {
-    // Correcting a budget is the entire point of the table; only identity is
-    // frozen. A blanket "no updates" trigger would break the product.
-    const fn = CODE.slice(
-      CODE.indexOf("function public.client_budget_context_client_id_immutable()"),
-    ).slice(0, 900);
+    // Correcting a budget is the entire point of the table; only identity and
+    // creation time are frozen. A blanket "no updates" trigger would break the
+    // product.
+    const fn = fnBody("client_budget_context_immutable_fields");
     for (const mutable of [
       "budget_level",
       "budget_notes",
       "updated_by_practitioner_id",
-      "updated_at",
     ]) {
       expect(fn).not.toContain(`new.${mutable}`);
     }
+    // updated_at must NOT be frozen — set_updated_at() advances it on UPDATE.
+    expect(fn).not.toContain("new.updated_at is distinct from old.updated_at");
+  });
+
+  it("leaves public.set_updated_at() as the UPDATE-side updated_at authority", () => {
+    expect(CODE).toContain("execute function public.set_updated_at()");
   });
 
   it("maintains updated_at by trigger, not by the caller", () => {

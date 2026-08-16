@@ -164,7 +164,42 @@ create trigger client_budget_context_set_updated_at
   before update on public.client_budget_context
   for each row execute function public.set_updated_at();
 
--- CLIENT IDENTITY IS IMMUTABLE.
+-- TIMESTAMPS ARE DATABASE-CONTROLLED, NOT CALLER-AUTHORED.
+--
+-- `default now()` is not a guarantee: a default only applies when the caller
+-- OMITS the column, and an authenticated caller issuing PostgREST directly can
+-- simply supply it. Measured on this exact schema before this guard existed, a
+-- direct INSERT supplying created_at AND updated_at stored BOTH verbatim
+-- (2001-01-01). So both are forced here rather than defaulted.
+--
+-- On INSERT the values are OVERWRITTEN rather than rejected — there is no
+-- prior value to protect and this mirrors how studio_id is derived. On UPDATE
+-- the asymmetry is deliberate: created_at is REJECTED (see the immutability
+-- trigger below), because rewriting a stored historical fact should be loud,
+-- not silently corrected.
+--
+-- updated_at on UPDATE is already handled by public.set_updated_at() (0015),
+-- which overwrites any caller value; that was verified rather than assumed and
+-- is deliberately left alone.
+create or replace function public.client_budget_context_server_timestamps()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  new.created_at := now();
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists client_budget_context_server_timestamps
+  on public.client_budget_context;
+create trigger client_budget_context_server_timestamps
+  before insert on public.client_budget_context
+  for each row execute function public.client_budget_context_server_timestamps();
+
+-- ROW IDENTITY AND CREATION TIME ARE IMMUTABLE.
 --
 -- client_id is the primary key, and PostgreSQL permits updating a primary
 -- key. Without this guard an authenticated member could PATCH an existing row
@@ -178,14 +213,19 @@ create trigger client_budget_context_set_updated_at
 -- silently corrected back to OLD.client_id — a silent correction would hide
 -- both a caller bug and an attack.
 --
--- This trigger is named to sort BEFORE client_budget_context_set_studio_id:
--- same-timing triggers fire in name order, so the move is refused before the
--- studio is re-derived from a client this row must never belong to.
+-- created_at is the second frozen field: it is creation EVIDENCE, exported in
+-- client_budget_context.csv, and a caller that can rewrite it can misrepresent
+-- when a record was made.
+--
+-- This trigger is named to sort BEFORE client_budget_context_set_studio_id and
+-- client_budget_context_set_updated_at: same-timing triggers fire in name
+-- order, so a rejected mutation is refused before the studio is re-derived
+-- from a client this row must never belong to.
 --
 -- Deliberately NARROW. budget_level, budget_notes, updated_by_practitioner_id
 -- and updated_at all remain mutable — correcting a budget is the entire point
--- of the table. Only the row's identity is frozen.
-create or replace function public.client_budget_context_client_id_immutable()
+-- of the table. Only identity and creation time are frozen.
+create or replace function public.client_budget_context_immutable_fields()
 returns trigger
 language plpgsql
 set search_path = pg_catalog, pg_temp
@@ -197,15 +237,27 @@ begin
       old.client_id, new.client_id
       using errcode = 'check_violation';
   end if;
+  if new.created_at is distinct from old.created_at then
+    raise exception
+      'client_budget_context.created_at is immutable; creation time cannot be rewritten (attempted % -> %)',
+      old.created_at, new.created_at
+      using errcode = 'check_violation';
+  end if;
   return new;
 end;
 $$;
 
+-- The previous, narrower trigger/function name is dropped so a database that
+-- ran an earlier revision of this file does not keep both.
 drop trigger if exists client_budget_context_client_id_immutable
   on public.client_budget_context;
-create trigger client_budget_context_client_id_immutable
+drop function if exists public.client_budget_context_client_id_immutable();
+
+drop trigger if exists client_budget_context_immutable_fields
+  on public.client_budget_context;
+create trigger client_budget_context_immutable_fields
   before update on public.client_budget_context
-  for each row execute function public.client_budget_context_client_id_immutable();
+  for each row execute function public.client_budget_context_immutable_fields();
 
 -- Studio-id consistency. Same idea as client_personal_notes_set_studio_id
 -- (0035), but fired on EVERY insert and update rather than only on `update of
