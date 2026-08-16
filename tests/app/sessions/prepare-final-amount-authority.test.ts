@@ -639,6 +639,59 @@ describe("adjustment audit context and the internal note share one column", () =
     expect(inserted).toHaveLength(0);
   });
 
+  // F-PAY-002 / Codex P2. THE SERVER is the authority on "a reason was given".
+  //
+  // The form's `required` attribute is satisfied by a zero-width character, so
+  // this is not merely a crafted-POST concern — pasting one into the real field
+  // reaches the action too. These run the REAL action and assert the oracle
+  // that matters: zero rows.
+  const INVISIBLE_ONLY_REASONS: Array<[string, string]> = [
+    ["U+200B zero width space", "\u200B"],
+    ["U+200C + U+200D", "\u200C\u200D"],
+    ["U+2060 word joiner", "\u2060"],
+    ["spaces around zero-width", "  \u200B  "],
+    ["U+0000 NUL", "\u0000"],
+    ["combining marks only", "\u0301\u0308"],
+    ["bidi isolate only", "\u2066\u2069"],
+  ];
+
+  for (const [label, reason] of INVISIBLE_ONLY_REASONS) {
+    it(`refuses a direct post whose reason is only ${label}`, async () => {
+      const res = await prepareSessionPaymentChargeAction(
+        form({ final: "100.00", reason }),
+      );
+      expect(res.ok).toBe(false);
+      expect(inserted).toHaveLength(0);
+    });
+  }
+
+  it("still accepts a real reason, so the guard is not simply refusing everything", async () => {
+    const res = await prepareSessionPaymentChargeAction(
+      form({ final: "100.00", reason: "Client discount" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].amount_cents).toBe(10_000);
+    expect(String(inserted[0].internal_note)).toContain("Client discount");
+  });
+
+  it("still accepts a non-English reason", async () => {
+    const res = await prepareSessionPaymentChargeAction(
+      form({ final: "100.00", reason: "R\u00E9duction client" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(String(inserted[0].internal_note)).toContain("R\u00E9duction client");
+  });
+
+  it("leaves the unchanged-amount path free of any reason requirement", async () => {
+    const res = await prepareSessionPaymentChargeAction(
+      form({ final: "120.00", reason: "\u200B" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(inserted[0].amount_cents).toBe(12_000);
+    expect(inserted[0].internal_note).toBeNull();
+  });
+
   it("bounds the adjustment reason itself", async () => {
     const res = await prepareSessionPaymentChargeAction(
       form({ final: "100.00", reason: "y".repeat(5000) }),

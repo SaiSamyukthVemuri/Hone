@@ -208,9 +208,35 @@ export function decideCheckoutFinalAmount(input: {
   // but a machine-written line should stay one line, and collapsing costs
   // nothing. Interior runs of whitespace become one space; her words survive.
   const reason = adjustmentReasonRaw.replace(/\s+/g, " ").trim();
-  if (reason.length === 0) {
+  // VISIBLE CONTENT, not `length > 0`.
+  //
+  // `trim()` and `\s` are whitespace tests, not visibility tests. Neither
+  // covers the zero-width and format characters, so a reason built only from
+  // them used to have a positive length, satisfy "non-empty", and produce an
+  // audit line reading "Reason: " with nothing after it that a human can see.
+  // Measured against the previous rule, 16 distinct invisible-only inputs were
+  // accepted, spanning Cf (U+200B/C/D, U+2060, U+00AD, U+180E, U+061C, the bidi
+  // controls), Cc (NUL, BEL, ESC) and Mn (bare combining marks). U+FEFF was the
+  // lone accident that already failed, because `\s` happens to include it.
+  //
+  // Enumerating those characters would be the wrong shape: the next unnamed
+  // format character reopens it. The rule is POSITIVE instead — the reason must
+  // contain at least one character that actually renders as content — so
+  // anything outside those four categories is insufficient by construction,
+  // including categories nobody has thought of yet.
+  //
+  // NOT an ASCII validator and NOT English-only: `\p{L}` covers 値引き and خصم
+  // and Réduction, `\p{N}` covers a bare "10", `\p{P}` a bare "-", `\p{S}` an
+  // emoji. Only invisible input fails.
+  if (!/[\p{L}\p{N}\p{P}\p{S}]/u.test(reason)) {
     return { kind: "reject", error: ADJUSTMENT_REASON_REQUIRED_ERROR };
   }
+  // DELIBERATELY NOT STRIPPED. Requiring visible content is enough to close the
+  // hole, and removing format characters would be a broad Unicode sanitizer
+  // with real casualties: U+200D is what joins 👨‍👩‍👧 into one family emoji, and
+  // the bidi marks are load-bearing in legitimate Arabic and Hebrew text. Once
+  // one visible character is required, invisible companions can no longer make
+  // the reason blank — they can only decorate a reason that already reads.
   if (reason.length > SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH) {
     return { kind: "reject", error: ADJUSTMENT_REASON_TOO_LONG_ERROR };
   }

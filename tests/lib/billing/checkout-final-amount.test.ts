@@ -192,6 +192,100 @@ describe("a changed total needs an explanation", () => {
     ).toEqual({ kind: "reject", error: ADJUSTMENT_REASON_REQUIRED_ERROR });
   });
 
+  // -------------------------------------------------------------------------
+  // F-PAY-002 / Codex P2 "Reject visually empty adjustment reasons".
+  //
+  // `trim()` and `\s` are NOT a visibility test. Neither covers the zero-width
+  // and format characters, so a reason built only from them had a positive
+  // length, passed the non-empty check, and produced an audit line reading
+  // "Reason: " with nothing visible after it — defeating the one control that
+  // justifies letting an owner author an amount at all.
+  //
+  // Measured on the pre-fix rule: 16 distinct invisible-only inputs were
+  // accepted, spanning Cf (format), Cc (control) and Mn (combining marks).
+  // U+FEFF was the sole accident that already failed, because `\s` happens to
+  // include it. So the rule is a POSITIVE visible-content test, not a longer
+  // blocklist of the characters someone happened to name.
+  // -------------------------------------------------------------------------
+  const INVISIBLE_ONLY: Array<[string, string]> = [
+    ["U+200B zero width space", "\u200B"],
+    ["U+200B repeated", "\u200B\u200B\u200B"],
+    ["U+200C zero width non-joiner", "\u200C\u200C"],
+    ["U+200D zero width joiner", "\u200D"],
+    ["U+2060 word joiner", "\u2060"],
+    ["U+200C + U+200D", "\u200C\u200D"],
+    ["spaces around zero-width", "   \u200B \u200B  "],
+    ["U+00AD soft hyphen", "\u00AD"],
+    ["U+180E Mongolian vowel separator", "\u180E"],
+    ["U+061C Arabic letter mark", "\u061C"],
+    ["U+202A/U+202C bidi embedding", "\u202A\u202C"],
+    ["U+2066/U+2069 bidi isolate", "\u2066\u2069"],
+    ["U+034F combining grapheme joiner", "\u034F"],
+    ["U+0000 NUL", "\u0000"],
+    ["U+0007 BEL", "\u0007"],
+    ["U+001B ESC", "\u001B"],
+    ["combining marks only", "\u0301\u0308"],
+    ["tab + newline + zero-width", "\t\n\u200B"],
+  ];
+
+  for (const [label, reason] of INVISIBLE_ONLY) {
+    it(`refuses a reason that is only ${label}`, () => {
+      expect(
+        decide({ requestedFinalRaw: "100.00", adjustmentReasonRaw: reason }),
+      ).toEqual({ kind: "reject", error: ADJUSTMENT_REASON_REQUIRED_ERROR });
+    });
+  }
+
+  // The rule must not become an ASCII validator. Every one of these is a real
+  // thing a practitioner might type, and each must still be accepted.
+  const VISIBLE_REASONS: Array<[string, string]> = [
+    ["plain English", "Client discount"],
+    ["product", "Aftercare product"],
+    ["package", "Package adjustment"],
+    ["percent sign", "50% promo"],
+    ["hyphenated", "Adjustment - consultation"],
+    ["emoji", "Courtesy \u{1F642}"],
+    ["accented French", "R\u00E9duction client"],
+    ["Japanese", "\u5024\u5f15\u304d"],
+    ["Arabic", "\u062E\u0635\u0645"],
+    ["ZWJ emoji sequence", "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"],
+    ["digits only", "10"],
+    ["punctuation only", "-"],
+    ["visible text with leading zero-width", "\u200B\u200BClient discount"],
+    ["visible text with trailing zero-width", "Client discount\u200B"],
+  ];
+
+  for (const [label, reason] of VISIBLE_REASONS) {
+    it(`accepts a ${label} reason`, () => {
+      const d = decide({
+        requestedFinalRaw: "100.00",
+        adjustmentReasonRaw: reason,
+      });
+      expect(d.kind).toBe("prepare");
+    });
+  }
+
+  it("keeps a legitimate ZWJ emoji sequence intact in the audit line", () => {
+    // The fix must not strip U+200D to defeat the bypass: that would silently
+    // shatter a family emoji into three unrelated people.
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const d = decide({
+      requestedFinalRaw: "100.00",
+      adjustmentReasonRaw: `Courtesy ${family}`,
+    });
+    expect(d.kind).toBe("prepare");
+    expect((d as { internalNote: string }).internalNote).toContain(family);
+  });
+
+  it("does not require a reason at all when the amount is unchanged", () => {
+    // The visible-content rule must not leak into the ordinary checkout.
+    for (const reason of ["", "\u200B", "\u0000", "   "]) {
+      expect(
+        decide({ requestedFinalRaw: "120.00", adjustmentReasonRaw: reason }),
+      ).toMatchObject({ kind: "prepare", amountCents: 12_000 });
+    }
+  });
+
   it("accepts a reason at exactly the length bound", () => {
     expect(
       decide({
