@@ -288,6 +288,11 @@ test.describe("mobile calendar Quick Book (capacity ON)", () => {
     await openMobileQuickBook(page);
     const d = DRAWER(page);
 
+    // Submit-locking, pinned where it does NOT depend on a preselect: with no
+    // client chosen, submission is impossible whatever the slot state. See the
+    // note further down for why the old "no slot picked yet" anchor was unsound.
+    await expect(d.getByRole("button", { name: /^Book appointment$/ })).toBeDisabled();
+
     await pickClient(page, seed.runId);
     await pickService(page, serviceId);
 
@@ -296,9 +301,19 @@ test.describe("mobile calendar Quick Book (capacity ON)", () => {
     await selector.selectOption(B.practitionerId);
     await expect(d.getByTestId("assigned-practitioner")).toContainText(B.displayName);
 
-    // Submit-locking: no slot picked yet → the button is disabled.
+    // Submit-locking. This used to assert "no slot picked yet → disabled", which
+    // only held because the exact-match preselect was DEAD CODE: it compared a
+    // 12-hour label ("3:10 PM") against a 24-hour machine value ("15:10") and so
+    // could never be true. That comparison is fixed, and the mobile FAB seeds
+    // the draft at the current time rounded up to 30 minutes while the slot
+    // fallback grid is hourly — so whenever that rounding lands on :00 the
+    // drawer now legitimately preselects the matching suggestion and the button
+    // is enabled. The old assertion therefore passed or failed on the wall
+    // clock.
+    //
+    // The invariant worth pinning is the one that does not depend on a
+    // preselect: with NO CLIENT chosen, submission is impossible regardless.
     const submit = d.getByRole("button", { name: /^Book appointment$/ });
-    await expect(submit).toBeDisabled();
 
     const slot = d.getByRole("button", { name: SLOT });
     await expect(slot.first()).toBeVisible({ timeout: 20_000 });

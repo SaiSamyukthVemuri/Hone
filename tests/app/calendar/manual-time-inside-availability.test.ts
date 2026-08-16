@@ -407,6 +407,61 @@ describe("F/H — collisions and buffer remain authoritative for a manual time",
     expect(r.ok).toBe(false);
     expect(!r.ok && r.error).toMatch(/within the buffer around another appointment/i);
   });
+
+  it("the buffer refusal is TAGGED so a surface can offer the owner override", async () => {
+    // The soft buffer (0152) is the one refusal an owner may legitimately
+    // override, and it is NOT decidable from the availability window — a time
+    // can be squarely inside working hours and still sit in a neighbour's gap.
+    // The code is what lets the surfaces offer "book it anyway" instead of
+    // leaving the owner at a dead end, which is what happened when the control
+    // named in the old copy stopped existing.
+    scenario.rpcResult = "buffer_conflict";
+    const r = await book({ starts_at: MANUAL_INSIDE });
+    expect(!r.ok && r.code).toBe("buffer_conflict");
+    // And the copy no longer directs them to a control that was renamed away.
+    expect(!r.ok && r.error).not.toMatch(/Outside your regular availability/i);
+    expect(!r.ok && r.error).not.toMatch(/turn on/i);
+  });
+
+  it("no OTHER refusal is tagged as overridable", async () => {
+    // Only the buffer is soft. Tagging anything else would offer an override
+    // for something the server will refuse again — or worse, invite the flag
+    // for a reason it does not bypass.
+    for (const result of [
+      "not_eligible",
+      "invalid_practitioner",
+      "booking_paused",
+      "invalid_duration",
+    ]) {
+      rpcCalls.length = 0;
+      mock = createBookingSupabaseMock(resolver);
+      scenario.rpcResult = result;
+      const r = await book({ starts_at: MANUAL_INSIDE });
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.code, `${result} must not be overridable`).toBeUndefined();
+    }
+  });
+
+  it("an overlap (23P01) is NOT tagged as overridable — it is never bypassable", async () => {
+    scenario.rpcError = { code: "23P01" };
+    const r = await book({ starts_at: OVERLAPPING });
+    expect(!r.ok && r.code).toBe("slot_taken");
+    expect(!r.ok && r.code).not.toBe("buffer_conflict");
+  });
+
+  it("an owner CAN carry the flag for a buffer-proximate in-hours time", async () => {
+    // The capability migration 0152 exists for, and which the suggestion list
+    // deliberately hides. With the flag the server skips the hours check and
+    // the DB skips the buffer trigger, so the command is reached and the flag
+    // arrives TRUE.
+    scenario.rpcResult = "created";
+    const r = await book({
+      starts_at: MANUAL_INSIDE,
+      allow_outside_availability: "true",
+    });
+    expect(r.ok).toBe(true);
+    expect(lastRpc().args.p_allow_outside_availability).toBe(true);
+  });
 });
 
 describe("E2 — practitioner/service eligibility stays the command's call", () => {

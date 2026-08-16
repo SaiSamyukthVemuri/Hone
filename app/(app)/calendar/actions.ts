@@ -30,7 +30,12 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 export type BookResult =
   | { ok: true; appointmentId: string }
-  | { ok: false; error: string; code?: "slot_taken" };
+  // `buffer_conflict` is surfaced as a CODE, not just copy, because it is the
+  // one refusal an owner can legitimately act on: the soft buffer (0152) is
+  // bypassable by the same flag that bypasses working hours, so the surfaces
+  // offer an explicit "book it anyway" and re-submit. Without the code they
+  // would have to string-match the message to know when to offer it.
+  | { ok: false; error: string; code?: "slot_taken" | "buffer_conflict" };
 
 // Part 4: the canonical booking command's result row + safe owner-facing copy.
 type BookingRpcRow = {
@@ -64,9 +69,17 @@ function bookingResultMessage(result: string | undefined): string {
       return "That time is outside the practitioner's availability.";
     case "buffer_conflict":
       // Soft buffer/gap (migration 0152). Only reachable on the NON-override
-      // path: the owner override bypasses the buffer server-side. Guide the
-      // practitioner to the override rather than expose any DB detail.
-      return "That time is within the buffer around another appointment. Turn on “Outside your regular availability” to book it anyway.";
+      // path: the owner override bypasses the buffer server-side.
+      //
+      // This copy used to say 'Turn on "Outside your regular availability"'.
+      // That control was renamed to the neutral "Choose another time" when
+      // smart suggestions were split from availability, and it now appears only
+      // for a time genuinely OUTSIDE working hours -- so for a buffer-proximate
+      // time that is INSIDE hours it named a control the practitioner could not
+      // find and could not reach. The surfaces now offer the override in
+      // response to this exact refusal (see the buffer_conflict code on
+      // BookResult), so the copy states the fact and stops giving directions.
+      return "That time is within the buffer around another appointment.";
     case "studio_not_found":
     case "invalid_studio":
       return "Could not create the appointment. Please try again.";
@@ -383,6 +396,16 @@ export async function bookAppointmentForClientAction(
   }
   const outcome = (rpcRows as BookingRpcRow[] | null)?.[0];
   if (!outcome || outcome.result !== "created" || !outcome.appointment_id) {
+    // The buffer refusal is tagged so the caller can offer the owner-only
+    // "book it anyway". Every other refusal stays copy-only: none of them is
+    // something the practitioner may override from here.
+    if (outcome?.result === "buffer_conflict") {
+      return {
+        ok: false,
+        error: bookingResultMessage("buffer_conflict"),
+        code: "buffer_conflict",
+      };
+    }
     return { ok: false, error: bookingResultMessage(outcome?.result) };
   }
   const createdId = outcome.appointment_id;

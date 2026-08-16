@@ -217,6 +217,19 @@ export function QuickBookDrawer({
   const [manualTimeEnabled, setManualTimeEnabled] = useState(false);
   const [outsideHoursConfirmed, setOutsideHoursConfirmed] = useState(false);
   const [manualLocalTime, setManualLocalTime] = useState<string>("");
+  // THE BUFFER OVERRIDE, offered only in response to the server refusing.
+  // Same contract as the client-profile Book form: the soft buffer (0152) is
+  // not an availability fact and cannot be decided from the window, so the
+  // database is the one that says `buffer_conflict`. Reaching a buffer-proximate
+  // time is a real capability -- the suggestion list hides those times by
+  // design, so the override is the only route -- and it is offered AFTER the
+  // refusal so the flag stays a deliberate opt-in with a reason on screen.
+  const [bufferOverrideOffered, setBufferOverrideOffered] = useState(false);
+  const [bufferOverrideConfirmed, setBufferOverrideConfirmed] = useState(false);
+  function clearBufferOverride() {
+    setBufferOverrideOffered(false);
+    setBufferOverrideConfirmed(false);
+  }
   // The REAL availability window for the loaded (service, date, target),
   // resolved server-side and returned alongside the suggestions. null until the
   // first successful load, cleared before every refetch, and reset on every
@@ -280,6 +293,7 @@ export function QuickBookDrawer({
       setManualTimeEnabled(false);
       setOutsideHoursConfirmed(false);
       setManualLocalTime("");
+      clearBufferOverride();
       setManualDurationMinutes("");
       autoManualTimeRef.current = false;
     }
@@ -320,6 +334,7 @@ export function QuickBookDrawer({
       setManualDurationMinutes(String(dragMinutes));
       setManualTimeEnabled(true);
       setOutsideHoursConfirmed(false);
+      clearBufferOverride();
       autoManualTimeRef.current = true;
     } else {
       // Bare click on a NEW slot: the outside-availability override must start
@@ -329,6 +344,7 @@ export function QuickBookDrawer({
       setManualTimeEnabled(false);
       setOutsideHoursConfirmed(false);
       autoManualTimeRef.current = false;
+      clearBufferOverride();
     }
     // This effect keys on the DRAFT identity, so a new slot always resets the
     // override above. Within the SAME draft it does not re-fire, so a manual
@@ -462,6 +478,9 @@ export function QuickBookDrawer({
     // state. Unknown is the honest value here; the manual path is blocked
     // until the real window lands.
     setAvailabilityWindow(null);
+    // A new (service, date, target) is a different booking; a buffer refusal
+    // for the previous one says nothing about it.
+    clearBufferOverride();
     startLoadingSlots(async () => {
       const r = await fetchSlotsForClientBookingAction({
         serviceId,
@@ -637,7 +656,16 @@ export function QuickBookDrawer({
   const assignedName = showSelector
     ? (eligible.find((p) => p.id === target)?.displayName ?? "")
     : currentPractitionerName;
-  const canBook = !booking && !!selectedClient && !!serviceId && targetValid && (
+  // The flag is posted for EITHER reason the server accepts it for: a time
+  // genuinely outside working hours, or an owner deliberately overriding the
+  // soft buffer after the database refused. Both are explicit; neither fires
+  // on its own.
+  const postsOutsideAvailability =
+    requiresOutsideOverride || (bufferOverrideOffered && bufferOverrideConfirmed);
+  const canBook = !booking && !!selectedClient && !!serviceId && targetValid &&
+    // An outstanding buffer refusal blocks re-submission until the owner
+    // acknowledges it; re-submitting unchanged would just be refused again.
+    (!bufferOverrideOffered || (isOwner && bufferOverrideConfirmed)) && (
     manualTimeEnabled
       ? // An unknown window blocks the manual path outright rather than
         // routing it through the override. Booking here would either wave a
@@ -684,6 +712,9 @@ export function QuickBookDrawer({
     if (!selectedClient || !serviceId) return;
     // Item 6: an owner selector with no resolved eligible target blocks booking.
     if (showSelector && !eligible.some((p) => p.id === target)) return;
+    // An outstanding buffer refusal must be acknowledged by an owner before a
+    // re-submit; the button is a hint, this is the gate.
+    if (bufferOverrideOffered && !(isOwner && bufferOverrideConfirmed)) return;
     if (manualTimeEnabled) {
       if (!manualTimeValid) return;
       // No window, no submission. allow_outside_availability below is an
@@ -729,20 +760,21 @@ export function QuickBookDrawer({
       // The server does not take our word for it either: it re-resolves the
       // window itself and refuses an out-of-hours time that arrives without the
       // flag. This decides what we ASK for, never what is allowed.
-      if (requiresOutsideOverride) {
-        fd.set("allow_outside_availability", "true");
-        // Drag-to-create custom length. Only ever sent alongside the flag,
-        // because the server (and the DB command) refuse a custom duration
-        // without it, and a custom length is owner-only.
-        if (parsedManualDuration != null) {
-          fd.set(
-            "duration_minutes_override",
-            String(parsedManualDuration),
-          );
-        }
+      // Drag-to-create custom length. Only ever sent alongside the flag,
+      // because the server (and the DB command) refuse a custom duration
+      // without it, and a custom length is owner-only. A custom length always
+      // forces requiresOutsideOverride, so the flag below is guaranteed set.
+      if (requiresOutsideOverride && parsedManualDuration != null) {
+        fd.set("duration_minutes_override", String(parsedManualDuration));
       }
     } else {
       fd.set("starts_at", pickedSlot!.start);
+    }
+    // ONE posting site, covering both acknowledged reasons. It sits outside the
+    // manual/suggestion branch because a suggested slot can hit the buffer too
+    // if it went stale between fetch and submit.
+    if (postsOutsideAvailability) {
+      fd.set("allow_outside_availability", "true");
     }
     if (notes.trim().length > 0) fd.set("notes", notes);
     const targetDate = draft!.localDate;
@@ -750,6 +782,17 @@ export function QuickBookDrawer({
       const r = await bookAppointmentForClientAction(fd);
       if (!r.ok) {
         setError(r.error);
+        if (r.code === "buffer_conflict") {
+          // THE ONE REFUSAL AN OWNER MAY ACT ON. Offer the override instead of
+          // resetting: wiping the manual time here would throw away the very
+          // time they are being asked about, leaving no way to accept the
+          // offer. The acknowledgement is never pre-ticked, and the reset below
+          // still applies to every other failure.
+          setBufferOverrideOffered(true);
+          setBufferOverrideConfirmed(false);
+          return;
+        }
+        clearBufferOverride();
         // A failed attempt must NOT leave the outside-availability override
         // stuck on for the next attempt (Chloe feedback). Reset it off; the
         // practitioner must explicitly re-check it to retry outside
@@ -1168,6 +1211,7 @@ export function QuickBookDrawer({
                     value={manualLocalTime}
                     onChange={(e) => {
                       setManualLocalTime(e.target.value);
+                      clearBufferOverride();
                       markManualTimeExplicit();
                     }}
                     className="w-40 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
@@ -1332,6 +1376,35 @@ export function QuickBookDrawer({
           <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             {error}
           </p>
+        )}
+
+        {/* THE BUFFER OVERRIDE, offered only after the database refused. Outside
+            the manual-time panel because a stale suggested slot can hit the
+            buffer too. Owner-only, never pre-ticked. */}
+        {bufferOverrideOffered && (
+          <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+            <p>
+              That time is within the buffer around another appointment. It does
+              not overlap one — double-booking is refused separately and cannot
+              be overridden.
+            </p>
+            {isOwner ? (
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={bufferOverrideConfirmed}
+                  onChange={(e) => setBufferOverrideConfirmed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
+                />
+                <span>
+                  Book it anyway. This records the appointment as an
+                  outside-availability exception.
+                </span>
+              </label>
+            ) : (
+              <p>Only the studio owner can book inside the buffer.</p>
+            )}
+          </div>
         )}
 
         {assignedName && (

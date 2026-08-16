@@ -68,6 +68,28 @@ export function BookAppointment({
   const [manualTimeEnabled, setManualTimeEnabled] = useState(false);
   const [manualTime, setManualTime] = useState("");
   const [outsideHoursConfirmed, setOutsideHoursConfirmed] = useState(false);
+  // THE BUFFER OVERRIDE, offered only in response to the server refusing.
+  //
+  // The soft buffer (0152) is not an availability fact, so it cannot be decided
+  // from the window: a time can be squarely inside working hours and still sit
+  // in the gap around a neighbouring appointment. Only the database knows, and
+  // it says so by returning `buffer_conflict`.
+  //
+  // Reaching such a time is a real, shipped capability -- 0152 exists for it,
+  // and the suggestion list deliberately hides those times, so the override is
+  // the only route. It is offered HERE, after the refusal, rather than as a
+  // standing control, so allow_outside_availability is still posted only on a
+  // deliberate opt-in with a concrete reason on screen.
+  //
+  // Owner-only, because the same flag is what the server gates on role.
+  const [bufferOverrideOffered, setBufferOverrideOffered] = useState(false);
+  const [bufferOverrideConfirmed, setBufferOverrideConfirmed] = useState(false);
+  // Any change to WHICH booking this is invalidates a buffer offer: it was a
+  // fact about one (time, date, service, target), not a standing permission.
+  function clearBufferOverride() {
+    setBufferOverrideOffered(false);
+    setBufferOverrideConfirmed(false);
+  }
   // The REAL availability window for the loaded (service, date, target),
   // resolved server-side and returned with the suggestions. null until a
   // successful load, cleared before every refetch, and cleared on every failure
@@ -114,6 +136,9 @@ export function BookAppointment({
     // allow_outside_availability for an ordinary working time -- the original
     // defect, re-entered through stale state.
     setAvailabilityWindow(null);
+    // A new (date, target) is a different booking; a buffer refusal for the old
+    // one says nothing about it.
+    clearBufferOverride();
     const req = ++slotReq.current;
     startLoading(async () => {
       const r = await fetchSlotsForClientBookingAction({
@@ -231,8 +256,18 @@ export function BookAppointment({
   const requiresOutsideOverride =
     manualTimeActive && manualDecision.requiresOutsideOverride;
 
+  // The flag is posted for EITHER reason the server will accept it for: a time
+  // genuinely outside working hours, or an owner deliberately overriding the
+  // soft buffer after the database refused. Both are explicit acknowledgements;
+  // neither fires on its own.
+  const postsOutsideAvailability =
+    requiresOutsideOverride || (bufferOverrideOffered && bufferOverrideConfirmed);
+
   const canConfirm =
     targetValid &&
+    // An outstanding buffer refusal blocks re-submission until the owner
+    // acknowledges it. Re-submitting unchanged would just be refused again.
+    (!bufferOverrideOffered || (isOwner && bufferOverrideConfirmed)) &&
     (manualTimeActive
       ? // An unknown window blocks the manual path outright rather than routing
         // it through the override, which would file an in-hours appointment as
@@ -249,6 +284,9 @@ export function BookAppointment({
 
   function handleConfirm() {
     if (!serviceId || !canConfirm) return;
+    // An outstanding buffer refusal must be acknowledged by an owner before a
+    // re-submit; the button is a hint, this is the gate.
+    if (bufferOverrideOffered && !(isOwner && bufferOverrideConfirmed)) return;
     setError(null);
     const fd = new FormData();
     fd.set("client_id", clientId);
@@ -272,17 +310,30 @@ export function BookAppointment({
       // permission, and enforces every DB scheduling constraint regardless.
       const utc = utcInstantFromLocal(date, manualTime, timezone);
       fd.set("starts_at", utc.toISOString());
-      if (requiresOutsideOverride) {
-        fd.set("allow_outside_availability", "true");
-      }
     } else {
       if (!pickedSlot) return;
       fd.set("starts_at", pickedSlot.start);
+    }
+    // ONE posting site, covering both acknowledged reasons. A suggested slot can
+    // also hit the buffer if it went stale between fetch and submit, so this sits
+    // outside the manual/suggestion branch rather than inside it.
+    if (postsOutsideAvailability) {
+      fd.set("allow_outside_availability", "true");
     }
     startBooking(async () => {
       const r = await bookAppointmentForClientAction(fd);
       if (!r.ok) {
         setError(r.error);
+        // The database refused on the SOFT buffer. That is the one refusal an
+        // owner may legitimately override, so offer it here rather than leaving
+        // them at a dead end. Non-owners are told who can, and nothing is
+        // pre-ticked.
+        if (r.code === "buffer_conflict") {
+          setBufferOverrideOffered(true);
+          setBufferOverrideConfirmed(false);
+        } else {
+          clearBufferOverride();
+        }
         return;
       }
       router.push(`/calendar/${r.appointmentId}`);
@@ -462,7 +513,11 @@ export function BookAppointment({
               <input
                 type="time"
                 value={manualTime}
-                onChange={(e) => setManualTime(e.target.value)}
+                onChange={(e) => {
+                  setManualTime(e.target.value);
+                  // A different time is a different question for the buffer.
+                  clearBufferOverride();
+                }}
                 className="min-h-[44px] max-w-[10rem] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
               />
             </label>
@@ -516,6 +571,35 @@ export function BookAppointment({
         )}
       </div>
 
+      {/* THE BUFFER OVERRIDE, offered only after the database refused. It sits
+          outside the manual-time panel because a stale suggested slot can hit
+          the buffer too. Owner-only, never pre-ticked. */}
+      {bufferOverrideOffered && (
+        <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+          <p className="text-xs text-amber-800 dark:text-amber-300">
+            That time is within the buffer around another appointment. It does
+            not overlap one — double-booking is refused separately and cannot be
+            overridden.
+          </p>
+          {isOwner ? (
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={bufferOverrideConfirmed}
+                onChange={(e) => setBufferOverrideConfirmed(e.target.checked)}
+                className="h-4 w-4"
+              />
+              Book it anyway. This records the appointment as an
+              outside-availability exception.
+            </label>
+          ) : (
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+              Only the studio owner can book inside the buffer.
+            </p>
+          )}
+        </div>
+      )}
+
       <label className="flex flex-col gap-1.5">
         <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
           Notes (optional)
@@ -545,9 +629,11 @@ export function BookAppointment({
                 manual time inside working hours is an ordinary Confirm. */}
             {booking
               ? "Booking…"
-              : requiresOutsideOverride && windowKnown
-                ? "Book out-of-hours"
-                : "Confirm"}
+              : bufferOverrideOffered
+                ? "Book anyway"
+                : requiresOutsideOverride && windowKnown
+                  ? "Book out-of-hours"
+                  : "Confirm"}
           </button>
           {error && (
             <span className="text-sm text-red-600 dark:text-red-400">{error}</span>

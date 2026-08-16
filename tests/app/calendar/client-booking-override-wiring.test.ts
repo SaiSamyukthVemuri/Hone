@@ -35,13 +35,23 @@ describe("client-page override reuses the shared action + is owner-only in the U
     );
   });
 
-  it("posts allow_outside_availability ONLY when the time is genuinely outside hours", () => {
+  it("posts allow_outside_availability ONLY for an acknowledged reason", () => {
+    // ONE posting site, guarded by ONE derived condition. The condition now has
+    // two arms because the DB flag bypasses two different soft rules: working
+    // hours, and the 0152 buffer. Both arms require an explicit acknowledgement
+    // — neither can fire on its own — so the flag still never rides along with
+    // an ordinary booking.
     expect(BOOK).toMatch(
-      /if \(requiresOutsideOverride\) \{\s*\n\s*fd\.set\("allow_outside_availability", "true"\);/,
+      /const postsOutsideAvailability =\s*\n?\s*requiresOutsideOverride \|\| \(bufferOverrideOffered && bufferOverrideConfirmed\);/,
+    );
+    expect(BOOK).toMatch(
+      /if \(postsOutsideAvailability\) \{\s*\n\s*fd\.set\("allow_outside_availability", "true"\);/,
     );
     expect(
       BOOK.match(/fd\.set\("allow_outside_availability", "true"\)/g)?.length,
     ).toBe(1);
+    // The buffer arm is owner-gated in the UI and never pre-ticked.
+    expect(BOOK).toMatch(/setBufferOverrideConfirmed\(false\)/);
     // The verdict comes from the SHARED decision function against the
     // server-resolved window, not from a second client-side notion of "inside
     // hours". Both internal surfaces call the same one, which is what stops

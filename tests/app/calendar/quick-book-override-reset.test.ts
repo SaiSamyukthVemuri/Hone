@@ -116,15 +116,38 @@ describe("booking outside availability still requires an explicit acknowledgemen
       /const requiresOutsideOverride =\s*\n?\s*manualTimeEnabled && manualDecision\.requiresOutsideOverride;/,
     );
   });
-  it("allow_outside_availability is posted ONLY when the override is required", () => {
-    // A bare `fd.set("allow_outside_availability", "true")` outside the
-    // requiresOutsideOverride branch would re-create the original defect:
-    // an ordinary working time filed as an out-of-hours exception.
+  it("allow_outside_availability is posted ONLY for an acknowledged reason", () => {
+    // A bare `fd.set("allow_outside_availability", "true")` outside the guarded
+    // branch would re-create the original defect: an ordinary working time
+    // filed as an out-of-hours exception.
+    //
+    // The guard has two arms because the DB flag bypasses two different soft
+    // rules — working hours, and the 0152 buffer. Each arm requires its own
+    // explicit acknowledgement, so neither fires on its own.
     expect(DRAWER).toMatch(
-      /if \(requiresOutsideOverride\) \{\s*\n\s*fd\.set\("allow_outside_availability", "true"\);/,
+      /const postsOutsideAvailability =\s*\n?\s*requiresOutsideOverride \|\| \(bufferOverrideOffered && bufferOverrideConfirmed\);/,
+    );
+    expect(DRAWER).toMatch(
+      /if \(postsOutsideAvailability\) \{\s*\n\s*fd\.set\("allow_outside_availability", "true"\);/,
     );
     expect(
       DRAWER.match(/fd\.set\("allow_outside_availability", "true"\)/g)?.length,
     ).toBe(1);
+  });
+
+  it("a buffer refusal keeps the typed time instead of resetting it away", () => {
+    // The generic failure reset wipes manualTimeEnabled so a failed attempt is
+    // not sticky. For buffer_conflict that would throw away the very time the
+    // owner is being asked to confirm, leaving the offer unacceptable. The
+    // buffer branch must return BEFORE that reset.
+    expect(DRAWER).toMatch(
+      /if \(r\.code === "buffer_conflict"\) \{[\s\S]*?setBufferOverrideOffered\(true\);[\s\S]*?return;\s*\n\s*\}/,
+    );
+    const bufferBranch = DRAWER.indexOf('if (r.code === "buffer_conflict")');
+    const genericReset = DRAWER.indexOf(
+      "A failed attempt must NOT leave the outside-availability override",
+    );
+    expect(bufferBranch).toBeGreaterThan(-1);
+    expect(genericReset).toBeGreaterThan(bufferBranch);
   });
 });
