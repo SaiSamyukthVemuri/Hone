@@ -174,6 +174,48 @@ describe("0183: studio_id is derived, not authored", () => {
     expect(rows.rows).toHaveLength(0);
   });
 
+  it("a FOREIGN studio's practitioner cannot be recorded as the updater", async () => {
+    // The 0179 actor-FK doctrine, enforced structurally: attribution must be
+    // in-studio. Even as the service role, and even with the studio_id trigger
+    // having already stamped the correct studio.
+    await clearBudget(a.clientId);
+    await expect(
+      adminQuery(
+        `insert into public.client_budget_context
+           (client_id, studio_id, budget_notes, updated_by_practitioner_id)
+         values ($1, $2, 'x', $3)`,
+        [a.clientId, a.studioId, b.practitionerId],
+      ),
+    ).rejects.toThrow();
+
+    // The same row with the OWN-studio practitioner is accepted.
+    await adminQuery(
+      `insert into public.client_budget_context
+         (client_id, studio_id, budget_notes, updated_by_practitioner_id)
+       values ($1, $2, 'x', $3)`,
+      [a.clientId, a.studioId, a.practitionerId],
+    );
+    const rows = await adminQuery(
+      "select updated_by_practitioner_id from public.client_budget_context where client_id = $1",
+      [a.clientId],
+    );
+    expect(rows.rows[0].updated_by_practitioner_id).toBe(a.practitionerId);
+  });
+
+  it("an UNATTRIBUTED row is still allowed (MATCH SIMPLE on the composite)", async () => {
+    await clearBudget(a.clientId);
+    await adminQuery(
+      `insert into public.client_budget_context (client_id, studio_id, budget_notes)
+       values ($1, $2, 'no author recorded')`,
+      [a.clientId, a.studioId],
+    );
+    const rows = await adminQuery(
+      "select updated_by_practitioner_id from public.client_budget_context where client_id = $1",
+      [a.clientId],
+    );
+    expect(rows.rows[0].updated_by_practitioner_id).toBeNull();
+  });
+
   it("a budget row for a non-existent client is refused", async () => {
     await expect(
       adminQuery(

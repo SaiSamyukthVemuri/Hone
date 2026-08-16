@@ -91,13 +91,28 @@ create table if not exists public.client_budget_context (
     references public.studios(id) on delete cascade,
   budget_level text,
   budget_notes text not null default '',
-  updated_by_practitioner_id uuid
-    references public.practitioners(id) on delete set null,
+  -- ACTOR column. Studio-scoped by composite FK, following the 0179 actor-FK
+  -- doctrine: "who did this" is attribution, and a simple FK to
+  -- practitioners(id) would let a budget edit be attributed to a practitioner
+  -- from ANOTHER studio. The nine simple practitioner FKs 0179 deliberately
+  -- left behind are all non-actor (assignee, resource, recipient, domain
+  -- subject, clinical performer provenance); this is not one of them.
+  --
+  -- ON DELETE RESTRICT, not SET NULL, for two reasons: it is what every other
+  -- 0179-upgraded actor column does (attribution is durable, so removing the
+  -- practitioner is refused rather than silently erasing who wrote it), and a
+  -- composite SET NULL would try to null studio_id too, which is NOT NULL.
+  -- NULL attribution is still permitted: MATCH SIMPLE satisfies the composite
+  -- whenever updated_by_practitioner_id is NULL.
+  updated_by_practitioner_id uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint client_budget_context_client_studio_fkey
     foreign key (client_id, studio_id)
-    references public.clients (id, studio_id) on delete cascade
+    references public.clients (id, studio_id) on delete cascade,
+  constraint client_budget_context_updated_by_same_studio_fk
+    foreign key (updated_by_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict
 );
 
 -- The canonical vocabulary. These three values are the SAME list as

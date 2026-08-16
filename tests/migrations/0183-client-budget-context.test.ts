@@ -100,10 +100,26 @@ describe("0183: one row per client, structurally", () => {
     expect(CODE).toContain("references public.studios(id) on delete cascade");
   });
 
-  it("keeps the practitioner stamp nullable via on delete set null", () => {
+  it("studio-scopes the ACTOR column per the 0179 actor-FK doctrine", () => {
+    // A simple FK to practitioners(id) would let a budget edit be attributed
+    // to a practitioner from another studio, and would land this column in
+    // the 0179 census of simple practitioner FKs — a list whose nine members
+    // are all explicitly NON-actor.
     expect(CODE).toMatch(
-      /updated_by_practitioner_id uuid\s*\n\s*references public\.practitioners\(id\) on delete set null/,
+      /foreign key \(updated_by_practitioner_id, studio_id\)\s*\n\s*references public\.practitioners \(id, studio_id\) on delete restrict/,
     );
+    expect(CODE).not.toMatch(/references public\.practitioners\(id\)/);
+  });
+
+  it("uses RESTRICT, never SET NULL, on the actor FK", () => {
+    // SET NULL on a composite would try to null studio_id, which is NOT NULL;
+    // and attribution is durable evidence, so removing the practitioner is
+    // refused rather than silently erasing who recorded the budget.
+    const line = CODE.slice(
+      CODE.indexOf("client_budget_context_updated_by_same_studio_fk"),
+    ).slice(0, 240);
+    expect(line).toContain("on delete restrict");
+    expect(line).not.toContain("set null");
   });
 });
 
