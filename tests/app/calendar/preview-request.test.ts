@@ -7,6 +7,7 @@ import {
   detailRemainsCurrent,
   shouldApplyPreviewFailure,
   shouldStartPreviewLoad,
+  currentPreviewDetail,
 } from "@/app/(app)/calendar/preview-request";
 
 // The A -> B race. A practitioner scanning a week clicks fast; server actions
@@ -166,6 +167,37 @@ describe("the drawer actually uses the rule", () => {
     // success commit, and the rejection branch. A single one of them falling
     // back to the captured `id` reopens the cross-identity race.
     expect(matches.length).toBe(4);
+  });
+
+  it("gates the whole rendered block on currentPreviewDetail, never raw detail", () => {
+    expect(DRAWER).toMatch(/currentPreviewDetail\(\{/);
+    expect(DRAWER).toMatch(/renderedAppointmentId: a\.id/);
+    // The rendered block and every appointment-scoped clinical field read the
+    // GATED value. A single `detail.value.` left behind would paint the previous
+    // client's data under this one's name for the transition render.
+    expect(DRAWER).not.toMatch(/\bdetail\.value\./);
+    expect(DRAWER).not.toMatch(/\bdetail\?\.value\./);
+    expect(DRAWER).toMatch(/\{currentDetail && \(/);
+  });
+
+  it("derives currentDetail during RENDER, not inside an effect", () => {
+    // The defect is a single render that happens BEFORE any effect runs, so a
+    // fix that lives in an effect cannot reach it.
+    const body = DRAWER.slice(DRAWER.indexOf("const a = appointment;"));
+    const gateAt = body.indexOf("currentPreviewDetail({");
+    const firstEffectAt = body.indexOf("useEffect(");
+    expect(gateAt).toBeGreaterThan(-1);
+    // Either there is no effect after it, or the gate comes first.
+    expect(firstEffectAt === -1 || gateAt < firstEffectAt).toBe(true);
+  });
+
+  it("asks identity BEFORE freshness", () => {
+    const body = DRAWER.slice(DRAWER.indexOf("const a = appointment;"));
+    expect(body.indexOf("currentPreviewDetail({")).toBeLessThan(
+      body.indexOf("detailRemainsCurrent({"),
+    );
+    // And freshness is asked of the GATED detail, never the raw one.
+    expect(DRAWER).toMatch(/detailSeq: currentDetail\?\.seq \?\? null/);
   });
 
   it("clears the previous appointment's detail before loading the next", () => {
@@ -362,5 +394,88 @@ describe("CASE D — a late failure may not damage the appointment now open", ()
         openAppointmentId: "B",
       }),
     ).toBe(true);
+  });
+});
+
+// IDENTITY IS A RENDER-TIME QUESTION, NOT ONLY A CALLBACK ONE.
+//
+// The drawer is not remounted when the practitioner switches appointments —
+// DayColumn renders <AppointmentPreviewDrawer appointment={preview}> with no
+// key — so `detail` and `issuedSeq` survive the prop change. React therefore
+// renders ONCE with appointment = B and detail = A before the passive effect
+// clears it.
+//
+// On that render the sequence check still passes (nothing has been issued yet),
+// so a sequence-only rule calls A's row current: B's header and B's ids appear
+// over A's allergies, A's prep, A's intake, A's notes and A's schedule, and
+// lifecycle controls targeting B are mounted under A's authority. No stale
+// response is involved, which is why binding the RESPONSE to the open
+// appointment cannot reach it.
+//
+// So identity gates the detail before freshness is even asked.
+describe("a held detail is renderable only for the appointment being rendered", () => {
+  const heldA = { value: { appointmentId: A }, seq: 4 };
+
+  it("A's detail is NOT renderable while B is the rendered appointment", () => {
+    expect(currentPreviewDetail({ held: heldA, renderedAppointmentId: B })).toBeNull();
+  });
+
+  it("A's detail IS renderable for A (positive control)", () => {
+    expect(currentPreviewDetail({ held: heldA, renderedAppointmentId: A })).toBe(heldA);
+  });
+
+  it("nothing held is nothing to render", () => {
+    expect(currentPreviewDetail({ held: null, renderedAppointmentId: A })).toBeNull();
+  });
+
+  it("identity is asked BEFORE freshness — a current sequence cannot rescue it", () => {
+    // The exact render-transition state: the sequence that produced A's detail
+    // is still the newest issued, so every generation check agrees. Only
+    // identity refuses, and it must.
+    expect(detailRemainsCurrent({ detailSeq: 4, issuedSeq: 4 })).toBe(true);
+    expect(currentPreviewDetail({ held: heldA, renderedAppointmentId: B })).toBeNull();
+  });
+});
+
+// THE REFRESH-FAILURE LAW, stated as behaviour rather than as a code comment.
+//
+// Codex re-raised "clear stale detail when a refresh read fails" at a head that
+// already implements the currency rule. These are the two scenarios that decide
+// whether that finding is live. If both hold, a failed refresh cannot leave a
+// supposedly verified version behind, and clearing the detail outright would be
+// a change made for review optics rather than for behaviour.
+describe("REFRESH-FAILURE P2 — the intended law, proved", () => {
+  it("a refresh WITHDRAWS freshness at start, before the await", () => {
+    // Generation N produced the held detail; issuing N+1 is what advances the
+    // issued generation, and it happens synchronously at the top of load().
+    expect(detailRemainsCurrent({ detailSeq: 1, issuedSeq: 1 })).toBe(true);
+    expect(detailRemainsCurrent({ detailSeq: 1, issuedSeq: 2 })).toBe(false);
+  });
+
+  it("a FAILED current refresh leaves the held detail non-fresh, so nothing is authorized", () => {
+    // Failure does not advance the detail, so the gap persists. The drawer gates
+    // Cancel/Reschedule and the move expected-version payload on `fresh`.
+    expect(detailRemainsCurrent({ detailSeq: 1, issuedSeq: 2 })).toBe(false);
+    expect(
+      shouldApplyPreviewFailure({
+        requestSeq: 2,
+        currentSeq: 2,
+        requestedAppointmentId: A,
+        openAppointmentId: A,
+      }),
+    ).toBe(true);
+  });
+
+  it("an OLDER failure cannot invalidate a newer successful read", () => {
+    // N starts, N+1 succeeds and becomes the held detail, then N fails.
+    expect(
+      shouldApplyPreviewFailure({
+        requestSeq: 1,
+        currentSeq: 2,
+        requestedAppointmentId: A,
+        openAppointmentId: A,
+      }),
+    ).toBe(false);
+    expect(detailRemainsCurrent({ detailSeq: 2, issuedSeq: 2 })).toBe(true);
   });
 });

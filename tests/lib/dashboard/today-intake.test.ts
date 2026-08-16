@@ -347,7 +347,10 @@ describe("calendar preview drawer", () => {
     // The client id now reaches the helper through the held detail's payload
     // (detail.value.clientId), so this pins the CALL rather than one spelling of
     // its argument — while still forbidding any hand-written path.
-    expect(DRAWER).toMatch(/practitionerIntakeReviewHref\(\s*detail\.value\.clientId\s*\)/);
+    // The client id comes from the IDENTITY-GATED detail, so the intake link
+    // can never be minted for the previously-open client during the A -> B
+    // render transition. Stronger than the previous `detail.value.clientId`.
+    expect(DRAWER).toMatch(/practitionerIntakeReviewHref\(\s*currentDetail\.value\.clientId\s*\)/);
     expect(DRAWER).not.toMatch(/href=\{`\/clients\/\$\{[^}]+\}\/intake`\}/);
   });
 

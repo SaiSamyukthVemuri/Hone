@@ -19,7 +19,10 @@ import {
   shouldApplyPreviewFailure,
   shouldStartPreviewLoad,
   detailRemainsCurrent,
+  currentPreviewDetail,
 } from "./preview-request";
+import { buildPrepProvenanceModel } from "@/lib/sessions/appointment-prep-memory";
+import { PriorNarrative } from "@/components/prep-prior-narrative";
 import { previewAppointmentVersion } from "./preview-appointment-version";
 
 // In-context appointment PREP WORKSPACE, opened from a card on the desktop week
@@ -212,6 +215,41 @@ export function AppointmentPreviewDrawer({
 
   const a = appointment;
 
+  // IDENTITY GATE, BEFORE ANY OTHER QUESTION.
+  //
+  // This component is not remounted when the practitioner switches appointments
+  // (DayColumn renders it with no key), so `detail` survives the prop change and
+  // React renders once with the NEW appointment and the OLD detail before the
+  // effect below clears it. On that render every sequence check still agrees,
+  // so a generation-only rule would call the previous client's row current and
+  // paint their allergies, prep, intake and notes under this client's name.
+  //
+  // Nothing appointment-scoped may read `detail` directly. `currentDetail` is
+  // the only permitted source, and it is null the instant identity disagrees —
+  // not a fallback, not a stale hint: another client's clinical text under this
+  // client's name has no acceptable duration.
+  const currentDetail = currentPreviewDetail({
+    held: detail,
+    renderedAppointmentId: a.id,
+  });
+
+  // Ownership and chronology come from the SHARED authority, never from the
+  // shape of the JSX below. `owned` is what the treatment card already paints;
+  // `external` is narrative belonging to a different visit, which is exactly
+  // what was being dropped.
+  const { external: externalNarrative } = buildPrepProvenanceModel({
+    selected: currentDetail?.value.prepMemory
+      ? {
+          sessionId: currentDetail.value.prepMemory.sessionId,
+          startedAt: currentDetail.value.prepMemory.startedAt,
+        }
+      : null,
+    ownPlan: currentDetail?.value.prepMemory?.notes.forNextVisit?.text ?? null,
+    ownLegacyNotes: currentDetail?.value.prepMemory?.notes.general[0]?.text ?? null,
+    windowPlan: currentDetail?.value.narrative.plan ?? null,
+    windowLegacyNotes: currentDetail?.value.narrative.legacySessionNotes ?? null,
+  });
+
   // ONE version for the whole drawer. Before this, the status line read the
   // re-read row while the time line read the grid, so a booking moved in
   // another window showed its old time beside its new status — and Reschedule
@@ -224,16 +262,18 @@ export function AppointmentPreviewDrawer({
       durationMinutes: a.duration_minutes,
       status: a.status,
     },
-    detail: detail
+    detail: currentDetail
       ? {
-          startsAt: detail.value.startsAt,
-          endsAt: detail.value.endsAt,
-          durationMinutes: detail.value.durationMinutes,
-          status: detail.value.status,
+          startsAt: currentDetail.value.startsAt,
+          endsAt: currentDetail.value.endsAt,
+          durationMinutes: currentDetail.value.durationMinutes,
+          status: currentDetail.value.status,
         }
       : null,
+    // Freshness is asked SEPARATELY, and only of a detail that already passed
+    // identity. Same appointment + older generation = shown, not authoritative.
     detailIsCurrent: detailRemainsCurrent({
-      detailSeq: detail?.seq ?? null,
+      detailSeq: currentDetail?.seq ?? null,
       issuedSeq,
     }),
   });
@@ -342,13 +382,13 @@ export function AppointmentPreviewDrawer({
         {/* Allergies: the one client-safety fact worth carrying here, and it
             comes free with the appointment read. Never summarised or truncated
             into something that could read as reassurance. */}
-        {detail?.value.allergies?.trim() && (
+        {currentDetail?.value.allergies?.trim() && (
           <div
             aria-label="Allergies"
             className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-100"
           >
             <span className="font-semibold">Allergies: </span>
-            {detail.value.allergies}
+            {currentDetail.value.allergies}
           </div>
         )}
 
@@ -368,7 +408,7 @@ export function AppointmentPreviewDrawer({
           </p>
         )}
 
-        {detail && (
+        {currentDetail && (
           <>
             {/* 1. PREP FOR THIS CLIENT ------------------------------------ */}
             <section
@@ -384,19 +424,44 @@ export function AppointmentPreviewDrawer({
                   of the unavailable state. It is imported across feature
                   folders for the same reason the detail page imports
                   practitionerIntakeReviewHref from @/lib/dashboard. */}
-              {!detail.value.lastTreatmentUnavailable && !detail.value.prepMemory ? (
+              {!currentDetail.value.lastTreatmentUnavailable && !currentDetail.value.prepMemory ? (
                 <p className="text-sm text-neutral-500">
                   No previous treatment charted for this client.
                 </p>
               ) : (
-                detail.value.clientId && (
+                currentDetail.value.clientId && (
                   <TodayTreatmentMemory
-                    clientId={detail.value.clientId}
+                    clientId={currentDetail.value.clientId}
                     clientName={clientName}
-                    memory={detail.value.prepMemory}
-                    unavailable={detail.value.lastTreatmentUnavailable}
+                    memory={currentDetail.value.prepMemory}
+                    unavailable={currentDetail.value.lastTreatmentUnavailable}
                   />
                 )
+              )}
+              {/* NARRATIVE FROM ANOTHER VISIT.
+                  The loader returns `treatment` and `narrative` independently:
+                  the newest CHARTED visit, and the newest next-visit
+                  instruction / legacy note in the candidate window — which may
+                  belong to a newer, note-only visit that is deliberately not
+                  promoted to a treatment. Consuming only `treatment` meant the
+                  drawer could say "no previous treatment charted" while
+                  withholding an instruction the practitioner needs in the room.
+
+                  WHO OWNS WHAT is not decided here. buildPrepProvenanceModel is
+                  the same authority the appointment detail page uses, and
+                  `owned` is already painted by the treatment card above, so only
+                  `external` is rendered — always dated, never implied to belong
+                  to the treatment above it. Both the rule and the presentation
+                  are shared, so Calendar cannot drift from the detail page on
+                  attribution or chronology. */}
+              {externalNarrative.length > 0 && (
+                <div
+                  data-testid="preview-prior-narrative"
+                  className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800"
+                >
+                  <SectionHeading>From another visit</SectionHeading>
+                  <PriorNarrative items={externalNarrative} />
+                </div>
               )}
             </section>
 
@@ -406,18 +471,18 @@ export function AppointmentPreviewDrawer({
               data-testid="preview-intake"
             >
               <SectionHeading>Intake</SectionHeading>
-              {detail.value.intakeUnavailable ? (
+              {currentDetail.value.intakeUnavailable ? (
                 <p className="text-sm text-neutral-500">
                   Intake status could not be loaded.
                 </p>
-              ) : detail.value.intakeStatus === "submitted" ? (
+              ) : currentDetail.value.intakeStatus === "submitted" ? (
                 <>
                   <p className="text-sm text-neutral-600 dark:text-neutral-400">
                     Awaiting review
                   </p>
-                  {detail.value.clientId && (
+                  {currentDetail.value.clientId && (
                     <Link
-                      href={practitionerIntakeReviewHref(detail.value.clientId)}
+                      href={practitionerIntakeReviewHref(currentDetail.value.clientId)}
                       data-testid="preview-review-intake"
                       className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                     >
@@ -425,14 +490,14 @@ export function AppointmentPreviewDrawer({
                     </Link>
                   )}
                 </>
-              ) : detail.value.intakeStatus === "reviewed" ? (
+              ) : currentDetail.value.intakeStatus === "reviewed" ? (
                 <>
                   <p className="text-sm text-neutral-600 dark:text-neutral-400">
                     Reviewed
                   </p>
-                  {detail.value.clientId && (
+                  {currentDetail.value.clientId && (
                     <Link
-                      href={practitionerIntakeReviewHref(detail.value.clientId)}
+                      href={practitionerIntakeReviewHref(currentDetail.value.clientId)}
                       data-testid="preview-view-intake"
                       className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
                     >
@@ -440,7 +505,7 @@ export function AppointmentPreviewDrawer({
                     </Link>
                   )}
                 </>
-              ) : detail.value.intakeStatus === "in_progress" ? (
+              ) : currentDetail.value.intakeStatus === "in_progress" ? (
                 // Deliberately no action: an unsubmitted form is not reviewable,
                 // and offering to review it would be a lie.
                 <p className="text-sm text-neutral-600 dark:text-neutral-400">
@@ -462,7 +527,7 @@ export function AppointmentPreviewDrawer({
             <AppointmentNotesEditor
               key={a.id}
               appointmentId={a.id}
-              notes={detail.value.notes}
+              notes={currentDetail.value.notes}
               onSaved={() => load(a.id)}
             />
 

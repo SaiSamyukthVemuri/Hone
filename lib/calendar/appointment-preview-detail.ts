@@ -8,6 +8,7 @@ import {
   prepMemoryInputFromTreatment,
   type AppointmentPrepMemory,
 } from "@/lib/sessions/appointment-prep-memory";
+import type { AppointmentPrepLoad } from "@/lib/sessions/last-treatment-loader";
 import type { IntakeStatus } from "@/lib/types/database";
 
 // ONE bounded prep load for ONE appointment, run only when the calendar's
@@ -76,11 +77,37 @@ export type AppointmentPreviewDetail = {
   // A read FAILED or was truncated. Distinct from `prepMemory === null`, which
   // means the client genuinely has nothing charted.
   lastTreatmentUnavailable: boolean;
+
+  // The loader's NARRATIVE, carried through untouched.
+  //
+  // loadLastChartedTreatmentForClient returns two independently meaningful
+  // outputs. `treatment` is the newest CHARTED visit; `narrative` is the newest
+  // next-visit instruction and legacy session note in the candidate window,
+  // which may belong to a DIFFERENT — often newer, note-only — visit. That
+  // separation is deliberate in the loader: a note-bearing visit with no
+  // charting is not a treatment and must never be promoted to one, but the
+  // instruction attached to it is still the thing a practitioner needs before
+  // walking into the room.
+  //
+  // Consuming only `treatment` dropped it, so the drawer could say "no previous
+  // treatment charted" while silently withholding a known next-visit
+  // instruction. Ownership and chronology are NOT decided here: the shared
+  // buildPrepProvenanceModel does that, exactly as it does for the appointment
+  // detail page.
+  narrative: AppointmentPrepLoad["narrative"];
 };
 
 export type AppointmentPreviewDetailResult =
   | { ok: true; detail: AppointmentPreviewDetail }
   | { ok: false; reason: string };
+
+// A client with no narrative and a FAILED read are both represented by empty
+// items; the distinction the practitioner needs lives in
+// `lastTreatmentUnavailable`, which the drawer renders explicitly.
+const EMPTY_NARRATIVE: AppointmentPrepLoad["narrative"] = {
+  plan: null,
+  legacySessionNotes: null,
+};
 
 const NOT_FOUND = "This appointment could not be found in this studio.";
 const LOAD_FAILED = "Could not load this appointment. Please try again.";
@@ -153,6 +180,7 @@ export async function loadAppointmentPreviewDetail(args: {
         intakeUnavailable: false,
         prepMemory: null,
         lastTreatmentUnavailable: false,
+        narrative: EMPTY_NARRATIVE,
       },
     };
   }
@@ -211,6 +239,10 @@ export async function loadAppointmentPreviewDetail(args: {
       // A read that FAILED is not a client with no history. Either the loader
       // reported unavailable, or the call itself threw.
       lastTreatmentUnavailable: !prepRes.ok || prepRes.load.unavailable,
+      // Carried through verbatim. When the candidate read itself threw there is
+      // nothing to carry — the loader's own failure path returns empty
+      // narrative for the same reason.
+      narrative: prepRes.ok && prepRes.load ? prepRes.load.narrative : EMPTY_NARRATIVE,
     },
   };
 }

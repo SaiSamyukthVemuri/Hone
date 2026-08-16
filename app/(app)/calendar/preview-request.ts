@@ -131,3 +131,44 @@ export function shouldApplyPreviewResponse(
   if (input.requestedAppointmentId !== input.openAppointmentId) return false;
   return true;
 }
+
+// IDENTITY IS A RENDER-TIME QUESTION, NOT ONLY A CALLBACK ONE.
+//
+// The drawer is not remounted when the practitioner switches appointments —
+// DayColumn renders it with no `key` — so the held detail and its generation
+// survive the prop change. React therefore renders ONCE with the new
+// appointment and the OLD detail, before the passive effect that clears it.
+//
+// On that render every sequence check still agrees: nothing new has been issued
+// yet, so the old detail is genuinely the newest read. A generation-only rule
+// therefore calls it current, and the drawer paints the new appointment's header
+// and ids over the previous client's allergies, prep, intake, notes and
+// schedule — mounting lifecycle controls that target the new appointment under
+// the old one's authority. No stale response is involved anywhere, which is why
+// binding the RESPONSE to the open appointment cannot reach this.
+//
+// So identity is asked FIRST, and separately:
+//
+//   identity    does this detail belong to the appointment being rendered?
+//               If not it is not shown AT ALL — not as a fallback, not as a
+//               stale hint. Another client's clinical text under this client's
+//               name is the one outcome with no acceptable duration.
+//
+//   freshness   is it from the newest successful read? A same-appointment
+//               detail may legitimately be shown while a refresh is in flight;
+//               it simply cannot authorize a lifecycle action. See
+//               detailRemainsCurrent.
+//
+// Conflating the two is what produced both defects: the first treated a
+// sequence as proof of identity, the second treated a retained object as proof
+// of currency.
+export function currentPreviewDetail<T extends { appointmentId: string }>(input: {
+  // The detail held in state, with the generation that produced it.
+  held: { value: T; seq: number } | null;
+  // The appointment this render is describing.
+  renderedAppointmentId: string;
+}): { value: T; seq: number } | null {
+  if (!input.held) return null;
+  if (input.held.value.appointmentId !== input.renderedAppointmentId) return null;
+  return input.held;
+}

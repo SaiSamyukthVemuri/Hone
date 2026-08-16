@@ -244,3 +244,97 @@ describe("payload shape", () => {
     if (r.ok) expect(r.detail.allergies).toBe("Latex");
   });
 });
+
+// NARRATIVE IS A SECOND, INDEPENDENT OUTPUT — AND WAS BEING DROPPED.
+//
+// loadLastChartedTreatmentForClient returns `treatment` (the newest CHARTED
+// visit) and `narrative` (the newest next-visit instruction / legacy session
+// note in the candidate window). They deliberately need not come from the same
+// visit: a note-only visit is not a treatment and must never be promoted to
+// one, but the instruction attached to it is exactly what a practitioner needs
+// before walking into the room.
+//
+// This projection consumed only `treatment`, so the drawer could state "no
+// previous treatment charted for this client" while silently withholding a
+// known next-visit instruction. These prove the pass-through, not a second
+// selector: which item is owned vs external is decided downstream by the shared
+// buildPrepProvenanceModel.
+describe("prior-visit narrative survives the projection", () => {
+  const NOTE_ONLY = {
+    id: "55555555-5555-4555-8555-555555555555",
+    client_id: CLIENT,
+    started_at: "2026-06-01T15:00:00.000Z",
+    modality: "electrolysis",
+    record_status: "active",
+    deleted_at: null,
+    appointment_id: null,
+    session_notes: null,
+    next_session_note: "Numb 20 min earlier next time — client found it sharp.",
+    electrolysis_entries: [],
+    laser_entries: [],
+  };
+
+  it("CASE D — narrative survives when there is NO charted treatment", async () => {
+    // The headline case. Nothing is charted, so the treatment card correctly
+    // says so; the instruction must not vanish with it.
+    responses.sessions = { data: [NOTE_ONLY], error: null };
+    responses.session_blocks = { data: [], error: null };
+    const r = await loadAppointmentPreviewDetail({ studioId: STUDIO, appointmentId: APPT });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.detail.prepMemory).toBeNull();
+      expect(r.detail.lastTreatmentUnavailable).toBe(false);
+      expect(r.detail.narrative.plan?.text).toBe(NOTE_ONLY.next_session_note);
+      // Provenance is carried, not invented: the item keeps its own session and
+      // date so a downstream surface can attribute it truthfully.
+      expect(r.detail.narrative.plan?.sessionId).toBe(NOTE_ONLY.id);
+      expect(r.detail.narrative.plan?.startedAt).toBe(NOTE_ONLY.started_at);
+    }
+  });
+
+  it("carries the legacy session note as its own item, not merged into the plan", async () => {
+    responses.sessions = {
+      data: [{ ...NOTE_ONLY, next_session_note: null, session_notes: "Reacted to lidocaine." }],
+      error: null,
+    };
+    responses.session_blocks = { data: [], error: null };
+    const r = await loadAppointmentPreviewDetail({ studioId: STUDIO, appointmentId: APPT });
+    if (r.ok) {
+      expect(r.detail.narrative.plan).toBeNull();
+      expect(r.detail.narrative.legacySessionNotes?.text).toBe("Reacted to lidocaine.");
+    }
+  });
+
+  it("CASE E — a FAILED candidate read carries no narrative and still says unavailable", async () => {
+    // The loader's own failure path returns empty narrative because nothing was
+    // read. The truthful state is "unavailable", never "nothing recorded".
+    responses.sessions = { data: null, error: { code: "57014" } };
+    const r = await loadAppointmentPreviewDetail({ studioId: STUDIO, appointmentId: APPT });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.detail.lastTreatmentUnavailable).toBe(true);
+      expect(r.detail.narrative.plan).toBeNull();
+      expect(r.detail.narrative.legacySessionNotes).toBeNull();
+    }
+  });
+
+  it("a genuinely empty history carries empty narrative (positive control)", async () => {
+    responses.sessions = { data: [], error: null };
+    const r = await loadAppointmentPreviewDetail({ studioId: STUDIO, appointmentId: APPT });
+    if (r.ok) {
+      expect(r.detail.narrative.plan).toBeNull();
+      expect(r.detail.lastTreatmentUnavailable).toBe(false);
+    }
+  });
+
+  it("a deleted client yields empty narrative rather than an undefined field", async () => {
+    responses.appointments = {
+      data: { ...APPT_ROW, client_id: null, client: null },
+      error: null,
+    };
+    const r = await loadAppointmentPreviewDetail({ studioId: STUDIO, appointmentId: APPT });
+    if (r.ok) {
+      expect(r.detail.narrative).toEqual({ plan: null, legacySessionNotes: null });
+    }
+  });
+});
