@@ -258,18 +258,41 @@ export function classifyAgainstWindow(
 // drifted into different laws (the client page hid manual time behind isOwner;
 // the drawer did not). One function means one law.
 //
-// It answers two questions the UI needs:
+// It answers three questions the UI needs:
 //   verdict                 what the typed time IS, or null when it cannot yet
 //                           be determined (no time typed, window not loaded).
 //   requiresOutsideOverride whether this booking must travel the owner-only
 //                           outside-hours path, which is also exactly when
 //                           allow_outside_availability may be posted.
+//   windowKnown             whether the availability window actually loaded.
 //
 // FAILS CLOSED in both directions:
 //   * a null verdict (unknown window, unparseable time) requires the override
 //     rather than waving the booking through;
 //   * `timeValid` is returned so a caller can block submit on an unparseable
 //     time WITHOUT relying on requiresOutsideOverride to do that job.
+//
+// WHY `windowKnown` IS SEPARATE FROM `requiresOutsideOverride`.
+// Failing closed says "do not treat this as an ordinary booking". It does NOT
+// say "this time is outside availability" -- and the two are not
+// interchangeable, because the second one is an ASSERTION ABOUT THE WORLD that
+// the database persists forever (booked_outside_availability, an
+// outside_availability audit entry, an authorising owner, and the buffer
+// trigger disabled for that row).
+//
+// An unloaded window is not evidence of anything. If a caller renders the
+// outside-hours warning and posts allow_outside_availability off the back of a
+// window that never arrived -- an in-flight refetch after a date or
+// practitioner change, or a failed slot load -- then a time squarely inside
+// working hours is filed as an out-of-hours exception. That is exactly the
+// defect this module exists to remove, re-entering through the one state where
+// nothing is known.
+//
+// So callers must gate the manual path on `windowKnown`: you may not assert a
+// time is outside availability unless you know the availability. It is exposed
+// here, once, rather than left as an `availabilityWindow === null` check
+// duplicated in each surface, because two copies of this rule is how the two
+// booking surfaces drifted apart in the first place.
 //
 // A CUSTOM LENGTH always requires the override. That is not a UI preference: a
 // caller-supplied duration is owner-only inside create_internal_appointment_v2
@@ -278,6 +301,7 @@ export function classifyAgainstWindow(
 // a migration, so it is deliberately untouched here.
 export type ManualTimeDecision = {
   timeValid: boolean;
+  windowKnown: boolean;
   verdict: RequestedTimeVerdict | null;
   requiresOutsideOverride: boolean;
 };
@@ -307,6 +331,7 @@ export function decideManualTime(input: {
       : null;
   return {
     timeValid,
+    windowKnown: input.window !== null,
     verdict,
     requiresOutsideOverride:
       input.customDurationMinutes != null || verdict !== "inside_availability",

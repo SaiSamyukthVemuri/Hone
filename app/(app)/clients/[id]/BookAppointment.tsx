@@ -70,8 +70,11 @@ export function BookAppointment({
   const [outsideHoursConfirmed, setOutsideHoursConfirmed] = useState(false);
   // The REAL availability window for the loaded (service, date, target),
   // resolved server-side and returned with the suggestions. null until a
-  // successful load and cleared on every failure, so an unknown window is never
-  // mistaken for an open one.
+  // successful load, cleared before every refetch, and cleared on every failure
+  // -- so an unknown window is never mistaken for an open one, and a window
+  // belonging to a previous target/date is never reused for a new one. While it
+  // is null the manual path is blocked outright rather than routed through the
+  // outside-hours override; see the note on ManualTimeDecision.
   const [availabilityWindow, setAvailabilityWindow] =
     useState<AvailabilityWindow | null>(null);
 
@@ -103,6 +106,14 @@ export function BookAppointment({
   function loadSlots(nextServiceId: string, nextDate: string, nextTarget: string) {
     setError(null);
     setPickedSlot(null);
+    // DROP THE PREVIOUS WINDOW BEFORE REFETCHING. It belongs to the OLD
+    // (target, date); keeping it while the new one is in flight would classify
+    // the typed time against a practitioner or a day this booking is no longer
+    // for. If the stale window said "closed" and the new one is open, the form
+    // would show the outside-hours warning and post
+    // allow_outside_availability for an ordinary working time -- the original
+    // defect, re-entered through stale state.
+    setAvailabilityWindow(null);
     const req = ++slotReq.current;
     startLoading(async () => {
       const r = await fetchSlotsForClientBookingAction({
@@ -114,8 +125,11 @@ export function BookAppointment({
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
-        // Fail closed: with no window every manual time classifies as outside
-        // hours, which asks for the override rather than waving anything through.
+        // Fail closed, in BOTH directions: a failed load leaves the window
+        // null, and null blocks the manual path rather than routing it through
+        // the outside-hours override. Routing it there would post
+        // allow_outside_availability for a time that may well be inside working
+        // hours -- the very defect this split exists to remove.
         setAvailabilityWindow(null);
         return;
       }
@@ -135,6 +149,9 @@ export function BookAppointment({
     }
     const req = ++eligibleReq.current;
     setEligibleError(null);
+    // The eligible lookup can change the TARGET, which changes the window. Drop
+    // it now rather than after the round trip, for the same reason as loadSlots.
+    setAvailabilityWindow(null);
     startLoadingPractitioners(async () => {
       const r = await fetchEligiblePractitionersAction(nextServiceId);
       if (req !== eligibleReq.current) return; // stale service response
@@ -208,13 +225,20 @@ export function BookAppointment({
   });
   const manualVerdict = manualDecision.verdict;
   const manualTimeValid = manualDecision.timeValid;
+  // Whether the real window actually loaded. Until it has, nothing may be
+  // asserted about the typed time -- see the note on ManualTimeDecision.
+  const windowKnown = manualDecision.windowKnown;
   const requiresOutsideOverride =
     manualTimeActive && manualDecision.requiresOutsideOverride;
 
   const canConfirm =
     targetValid &&
     (manualTimeActive
-      ? manualTimeValid &&
+      ? // An unknown window blocks the manual path outright rather than routing
+        // it through the override, which would file an in-hours appointment as
+        // an out-of-hours exception.
+        windowKnown &&
+        manualTimeValid &&
         (!requiresOutsideOverride || (isOwner && outsideHoursConfirmed))
       : !!pickedSlot);
 
@@ -235,6 +259,10 @@ export function BookAppointment({
     // practitioner_id → the server books the acting practitioner.
     if (showSelector && target) fd.set("practitioner_id", target);
     if (manualTimeActive) {
+      // No window, no submission. allow_outside_availability below is an
+      // assertion the database keeps forever; it may only be made against a
+      // window that actually loaded.
+      if (!windowKnown) return;
       // Same contract as the calendar Quick Book drawer: a UTC instant from the
       // studio-local date + time. allow_outside_availability is posted ONLY when
       // the chosen time is genuinely outside the working-hours window, because
@@ -438,7 +466,16 @@ export function BookAppointment({
                 className="min-h-[44px] max-w-[10rem] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
               />
             </label>
-            {requiresOutsideOverride ? (
+            {/* An UNKNOWN window is not an outside-hours time and must not
+                borrow that copy or its acknowledgement. Confirm stays disabled
+                until the real window arrives. */}
+            {!windowKnown ? (
+              <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                {loading || loadingPractitioners
+                  ? "Checking your working hours…"
+                  : "Could not load your working hours, so this time cannot be checked. Refresh and try again."}
+              </p>
+            ) : requiresOutsideOverride ? (
               <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
                 <p className="text-xs text-amber-800 dark:text-amber-300">
                   {manualVerdict === "practitioner_closed"
@@ -501,7 +538,7 @@ export function BookAppointment({
                 manual time inside working hours is an ordinary Confirm. */}
             {booking
               ? "Booking…"
-              : requiresOutsideOverride
+              : requiresOutsideOverride && windowKnown
                 ? "Book out-of-hours"
                 : "Confirm"}
           </button>

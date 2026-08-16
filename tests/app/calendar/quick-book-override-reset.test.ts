@@ -28,12 +28,22 @@ const DRAWER = readFileSync(
 
 describe("manual-time + outside-hours state resets for each booking attempt (not sticky)", () => {
   it("resets on drawer close (fresh draft) — both off", () => {
-    const closeBlock = DRAWER.slice(
-      DRAWER.indexOf("if (!open) {"),
-      DRAWER.indexOf("}, [open, firstServiceId]"),
-    );
+    // THE ANCHOR MUST EXIST. This slice used to end at
+    // `"}, [open, firstServiceId]"`, which has never appeared in the drawer —
+    // the dependency array has always carried currentPractitionerId too. So
+    // indexOf returned -1, slice(start, -1) spanned nearly the whole file, and
+    // the two assertions below passed on any occurrence anywhere in the
+    // component instead of proving anything about the close block. Asserting
+    // the anchor resolves is what makes the slice non-vacuous.
+    const start = DRAWER.indexOf("if (!open) {");
+    const end = DRAWER.indexOf("}, [open, firstServiceId, currentPractitionerId]);");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const closeBlock = DRAWER.slice(start, end);
     expect(closeBlock).toMatch(/setManualTimeEnabled\(false\)/);
     expect(closeBlock).toMatch(/setOutsideHoursConfirmed\(false\)/);
+    // ANTI-VACUITY: the slice must be the close effect, not the whole file.
+    expect(closeBlock.length).toBeLessThan(DRAWER.length / 2);
   });
   it("resets on a NEW bare-click slot (the else branch no longer leaks the prior state)", () => {
     expect(DRAWER).toMatch(

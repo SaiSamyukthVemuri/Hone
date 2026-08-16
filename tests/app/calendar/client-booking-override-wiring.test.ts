@@ -85,6 +85,87 @@ describe("server gate is the simple binding policy (owner-only bypass, no client
   });
 });
 
+// ---------------------------------------------------------------------------
+// AN UNKNOWN WINDOW IS NOT AN OUTSIDE-HOURS TIME.
+//
+// decideManualTime fails closed on an unloaded window by returning
+// requiresOutsideOverride = true. That is the right answer to "may this be
+// treated as an ordinary booking?" and the WRONG answer to "is this time
+// outside availability?" — and the surfaces render copy and post
+// allow_outside_availability off the second question.
+//
+// Left conflated, an owner who types a time while the window is unknown (an
+// in-flight refetch after changing date or practitioner, or a failed slot load)
+// is shown "outside your normal availability", acknowledges it, and books. The
+// server honours the flag — the override branch skips the working-hours check
+// by design — so a time squarely inside working hours is written with
+// booked_outside_availability = true, an outside_availability audit entry, an
+// authorising owner, and the buffer trigger disabled for that row forever.
+// That is this ticket's defect re-entering through the one state where nothing
+// is known.
+//
+// vitest env is "node" (no DOM), so the wiring is pinned here; the decision
+// itself is proved behaviourally in tests/lib/booking/availability-window.test.ts.
+// ---------------------------------------------------------------------------
+describe("an unknown availability window blocks the manual path on BOTH surfaces", () => {
+  const SURFACES: [string, string][] = [
+    ["client-profile Book form", "app/(app)/clients/[id]/BookAppointment.tsx"],
+    ["calendar Quick Book drawer", "app/(app)/calendar/QuickBookDrawer.tsx"],
+  ];
+
+  for (const [label, rel] of SURFACES) {
+    describe(label, () => {
+      const SRC = read(rel);
+
+      it("reads windowKnown from the SHARED decision, not a local null check", () => {
+        // A local `availabilityWindow === null` in each component is two copies
+        // of one rule, which is precisely how these surfaces drifted before.
+        expect(SRC).toMatch(/const windowKnown = manualDecision\.windowKnown;/);
+      });
+
+      it("submit is DISABLED while the window is unknown", () => {
+        expect(SRC).toMatch(/windowKnown &&/);
+      });
+
+      it("the submit handler refuses outright, not just via the disabled button", () => {
+        // The button is a hint; this is the gate. Without it a stale render or
+        // a programmatic call could still post the flag.
+        expect(SRC).toMatch(/if \(!windowKnown\) return;/);
+      });
+
+      it("the outside-hours warning and acknowledgement do NOT render for an unknown window", () => {
+        // The amber block must sit on the FALSE branch of a windowKnown test,
+        // so an unknown window can never borrow out-of-hours copy.
+        expect(SRC).toMatch(/\{!windowKnown \? \([\s\S]*?\) : requiresOutsideOverride \? \(/);
+        expect(SRC).toMatch(/Checking your working hours/);
+      });
+
+      it("a stale window is dropped BEFORE the refetch, never held across it", () => {
+        // The window belongs to one (target, date). Holding the previous one
+        // while a new one is in flight is what makes the stale-state race
+        // reachable at all.
+        expect(SRC).toMatch(/setAvailabilityWindow\(null\)/);
+      });
+    });
+  }
+
+  it("neither surface can post the flag without a known window", () => {
+    // Belt and braces across both files at once: every posting site is inside
+    // the requiresOutsideOverride branch, and every handler that reaches one
+    // has already returned on an unknown window.
+    for (const [, rel] of SURFACES) {
+      const SRC = read(rel);
+      const posts = SRC.match(
+        /fd\.set\("allow_outside_availability", "true"\)/g,
+      );
+      expect(posts?.length).toBe(1);
+      expect(SRC.indexOf("if (!windowKnown) return;")).toBeLessThan(
+        SRC.indexOf('fd.set("allow_outside_availability", "true")'),
+      );
+    }
+  });
+});
+
 describe("public booking cannot pass the override", () => {
   it("the public booking action does not read allow_outside_availability", () => {
     // Public booking lives in a separate file that must never honour the flag.

@@ -219,8 +219,11 @@ export function QuickBookDrawer({
   const [manualLocalTime, setManualLocalTime] = useState<string>("");
   // The REAL availability window for the loaded (service, date, target),
   // resolved server-side and returned alongside the suggestions. null until the
-  // first successful load, and reset on every failure so an unknown window is
-  // never mistaken for an open one.
+  // first successful load, cleared before every refetch, and reset on every
+  // failure -- so an unknown window is never mistaken for an open one, and a
+  // window belonging to a previous target/date is never reused for a new one.
+  // While it is null the manual path is blocked outright rather than routed
+  // through the outside-hours override; see the note on ManualTimeDecision.
   const [availabilityWindow, setAvailabilityWindow] =
     useState<AvailabilityWindow | null>(null);
   // Drag-derived duration (minutes). Empty string when the drawer was
@@ -447,6 +450,18 @@ export function QuickBookDrawer({
     let cancelled = false;
     const targetDate = draft.localDate;
     const targetHint = draft.localTime;
+    // DROP THE PREVIOUS WINDOW BEFORE REFETCHING.
+    //
+    // The window belongs to a specific (studio, target, date). Changing the
+    // practitioner re-runs this effect, and holding the OLD target's window
+    // while the new one is in flight would let the drawer classify a time
+    // against a practitioner it is no longer booking. If the old window said
+    // "closed" and the new target actually works then, the drawer would show
+    // the outside-hours warning and post allow_outside_availability for an
+    // ordinary working time -- the original defect, re-entered through stale
+    // state. Unknown is the honest value here; the manual path is blocked
+    // until the real window lands.
+    setAvailabilityWindow(null);
     startLoadingSlots(async () => {
       const r = await fetchSlotsForClientBookingAction({
         serviceId,
@@ -461,10 +476,12 @@ export function QuickBookDrawer({
         setError(r.error);
         setSlots([]);
         setPickedSlot(null);
-        // An unknown window must never read as an open one: with no window the
-        // manual path treats every time as outside hours, which is the safe
-        // direction (it asks for the owner override rather than waving a
-        // booking through).
+        // An unknown window must never read as an open one -- and equally must
+        // never read as an out-of-hours one. A failed load leaves it null, and
+        // null BLOCKS the manual path rather than routing it through the owner
+        // override: routing it there would post allow_outside_availability for
+        // a time that may well be inside working hours, which is the very
+        // defect this split exists to remove.
         setAvailabilityWindow(null);
         return;
       }
@@ -607,6 +624,9 @@ export function QuickBookDrawer({
   });
   const manualVerdict = manualDecision.verdict;
   const manualTimeValid = manualDecision.timeValid;
+  // Whether the real window actually loaded. Until it has, nothing may be
+  // asserted about the typed time -- see the note on ManualTimeDecision.
+  const windowKnown = manualDecision.windowKnown;
   const requiresOutsideOverride =
     manualTimeEnabled && manualDecision.requiresOutsideOverride;
 
@@ -619,7 +639,12 @@ export function QuickBookDrawer({
     : currentPractitionerName;
   const canBook = !booking && !!selectedClient && !!serviceId && targetValid && (
     manualTimeEnabled
-      ? manualTimeValid &&
+      ? // An unknown window blocks the manual path outright rather than
+        // routing it through the override. Booking here would either wave a
+        // time through unchecked or, worse, record an in-hours appointment as
+        // an out-of-hours exception.
+        windowKnown &&
+        manualTimeValid &&
         manualDurationValid &&
         (!requiresOutsideOverride || outsideHoursConfirmed)
       : !!pickedSlot
@@ -661,6 +686,10 @@ export function QuickBookDrawer({
     if (showSelector && !eligible.some((p) => p.id === target)) return;
     if (manualTimeEnabled) {
       if (!manualTimeValid) return;
+      // No window, no submission. allow_outside_availability below is an
+      // assertion the database keeps forever; it may only be made against a
+      // window that actually loaded.
+      if (!windowKnown) return;
       // The acknowledgement is required ONLY for a time that genuinely needs the
       // outside-hours override. An ordinary working time is not asked to confirm
       // something untrue.
@@ -1189,8 +1218,21 @@ export function QuickBookDrawer({
                   outside-hours override. A time inside the practitioner's real
                   working hours gets the calm confirmation line instead: no
                   amber, no acknowledgement, and no allow_outside_availability
-                  on submit. */}
-              {requiresOutsideOverride ? (
+                  on submit.
+
+                  An UNKNOWN window is neither of those. It is not an
+                  outside-hours time, so it must not borrow that copy or its
+                  acknowledgement; Save stays disabled until the real window
+                  arrives. */}
+              {!windowKnown ? (
+                <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                  {loadingSlots
+                    ? "Checking your working hours…"
+                    : !serviceId
+                      ? "Pick a service to check this time against your working hours."
+                      : "Could not load your working hours, so this time cannot be checked. Refresh and try again."}
+                </p>
+              ) : requiresOutsideOverride ? (
                 <>
                   <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
                     {manualVerdict === "practitioner_closed"

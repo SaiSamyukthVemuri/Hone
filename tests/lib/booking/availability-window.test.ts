@@ -140,6 +140,47 @@ describe("decideManualTime — the one law both booking surfaces use", () => {
     expect(d.requiresOutsideOverride).toBe(true);
   });
 
+  it("reports an unknown window SEPARATELY from requiring the override", () => {
+    // requiresOutsideOverride answers "may this be treated as an ordinary
+    // booking?" — and failing closed correctly answers no. It does NOT answer
+    // "is this time outside availability?", which is an assertion the database
+    // persists forever (booked_outside_availability, the audit entry, the
+    // authorising owner, the disabled buffer trigger).
+    //
+    // Collapsing the two is how an in-hours appointment gets filed as an
+    // out-of-hours exception whenever the window has not loaded. windowKnown is
+    // what lets a surface refuse to assert anything instead.
+    const unknown = decideManualTime({ ...base, window: null });
+    expect(unknown.windowKnown).toBe(false);
+    expect(unknown.requiresOutsideOverride).toBe(true);
+
+    // ...whereas a genuinely outside time is BOTH known and overriding, so the
+    // two fields cannot be conflated by an accidental alias.
+    const outside = decideManualTime({ ...base, localTime: "18:00" });
+    expect(outside.windowKnown).toBe(true);
+    expect(outside.requiresOutsideOverride).toBe(true);
+  });
+
+  it("windowKnown is true for every window that loaded, open or closed", () => {
+    // A CLOSED day is knowledge, not absence of it: the practitioner really is
+    // not working, so the override path is correct and must stay reachable.
+    expect(decideManualTime(base).windowKnown).toBe(true);
+    expect(decideManualTime({ ...base, window: CLOSED }).windowKnown).toBe(true);
+  });
+
+  it("windowKnown does not depend on the typed time or the duration", () => {
+    // It is a fact about the WINDOW only. Tying it to the other inputs would
+    // make a surface block submission for the wrong reason (or, worse, unblock
+    // it once a time happened to parse).
+    expect(
+      decideManualTime({ ...base, window: null, localTime: "" }).windowKnown,
+    ).toBe(false);
+    expect(
+      decideManualTime({ ...base, localTime: "", serviceDurationMinutes: null })
+        .windowKnown,
+    ).toBe(true);
+  });
+
   it("FAILS CLOSED when the time is unparseable, and reports timeValid", () => {
     const d = decideManualTime({ ...base, localTime: "" });
     expect(d.timeValid).toBe(false);

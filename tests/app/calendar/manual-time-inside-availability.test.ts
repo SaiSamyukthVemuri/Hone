@@ -64,6 +64,16 @@ const scenario = {
     close_time: "17:00:00",
   } as { is_open: boolean; open_time: string; close_time: string } | null,
   blockouts: [] as { starts_on: string; ends_on: string }[],
+  // The shadow reservations the SLOT ENGINE reads. The booking action never
+  // reads this table any more -- that is the whole point -- so it exists here
+  // purely so the RECOMMENDATION axis can be computed independently of the
+  // AVAILABILITY axis. See the anti-vacuity block at the bottom of this file.
+  reservations: [] as {
+    starts_at: string;
+    ends_at: string;
+    source_kind: string;
+    source_id: string;
+  }[],
   // When set, the blockout read reports this error instead of rows.
   blockoutError: null as { code: string } | null,
   rpcResult: "created" as string,
@@ -125,6 +135,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
 import { bookAppointmentForClientAction } from "@/app/(app)/calendar/actions";
+import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
 
 function resolver(q: Query) {
   switch (q.table) {
@@ -152,6 +163,10 @@ function resolver(q: Query) {
       return scenario.blockoutError
         ? { data: null, error: scenario.blockoutError }
         : { data: scenario.blockouts, error: null };
+    case "studio_calendar_reservations":
+      // Read by getAvailableSlots only. The booking action must never appear in
+      // this branch; the anti-vacuity block asserts exactly that.
+      return { data: scenario.reservations, error: null };
     case "studio_availability_overrides":
       // No date overrides in any of these fixtures.
       return { data: null, error: null };
@@ -196,6 +211,17 @@ beforeEach(() => {
   };
   scenario.blockouts = [];
   scenario.blockoutError = null;
+  // Chloe's exact fixture: one 13:40-14:40 appointment. With the studio's
+  // 30-minute buffer its protected interval is [13:40, 15:10), which is what
+  // puts a 15:10 suggestion on the board and leaves 15:30 unsuggested.
+  scenario.reservations = [
+    {
+      starts_at: Z("13:40"),
+      ends_at: Z("14:40"),
+      source_kind: "appointment",
+      source_id: "appt-existing",
+    },
+  ];
   scenario.rpcResult = "created";
   scenario.rpcError = null;
   rpcCalls.length = 0;
@@ -574,5 +600,101 @@ describe("K + L — the manual time is revalidated against the CURRENT target an
     const r30 = await book({ starts_at: OUTSIDE_LATE });
     expect(r30.ok).toBe(true);
     expect(lastRpc().args.p_allow_outside_availability).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ANTI-VACUITY — the two axes are represented INDEPENDENTLY.
+//
+// Every test above would still pass on a fixture where the manually chosen time
+// happened to be a suggestion too. That fixture would prove nothing: the claim
+// under test is precisely that a time can be NOT-RECOMMENDED and STILL VALID,
+// so the suite has to be able to tell those two apart.
+//
+// The mock can, because the two axes come from different tables:
+//
+//   RECOMMENDATION  studio_calendar_reservations -> the real slot engine's
+//                   packed anchor set
+//   AVAILABILITY    studio_availability_default / _overrides -> the window the
+//                   booking action classifies against
+//
+// The block below computes the recommendation axis with the REAL engine over
+// the SAME mock the action runs on, and asserts the two disagree for 15:30
+// while the action still accepts it. If the fixture ever drifts into one where
+// 15:30 is suggested, the first assertion fails and says so, rather than the
+// suite quietly going green for the wrong reason.
+// ---------------------------------------------------------------------------
+
+describe("ANTI-VACUITY — recommended and available are genuinely different here", () => {
+  // The suggestion set the practitioner is actually shown, computed the same
+  // way the drawer computes it (same studio, date, service length, packing).
+  async function suggestionInstants(): Promise<number[]> {
+    const slots = await getAvailableSlots(
+      mock.client,
+      {
+        id: "studio-1",
+        timezone: TZ,
+        default_appointment_duration_minutes: 60,
+        buffer_minutes: 30,
+        practitioner_capacity_enabled: scenario.capacityOn,
+      },
+      DATE,
+      60,
+      undefined,
+      scenario.capacityOn ? OWNER : null,
+      INTERNAL_SLOT_PACKING,
+    );
+    return slots.map((s) => new Date(s.start).getTime());
+  }
+
+  it("the engine really does suggest 15:10 and really does NOT suggest 15:30", async () => {
+    const offered = await suggestionInstants();
+    // Non-empty: a broken fixture that produced zero suggestions would make the
+    // "not a member" assertion below true for free.
+    expect(offered.length).toBeGreaterThan(0);
+    expect(offered).toContain(new Date(SUGGESTED).getTime());
+    expect(offered).not.toContain(new Date(MANUAL_INSIDE).getTime());
+  });
+
+  it("and 15:30 books anyway, with the flag FALSE — the two axes disagree", async () => {
+    // THE WHOLE TICKET IN ONE ASSERTION PAIR: not recommended, still valid.
+    const offered = await suggestionInstants();
+    expect(offered).not.toContain(new Date(MANUAL_INSIDE).getTime());
+
+    rpcCalls.length = 0;
+    mock = createBookingSupabaseMock(resolver);
+    const r = await book({ starts_at: MANUAL_INSIDE });
+    expect(r.ok).toBe(true);
+    expect(lastRpc().args.p_allow_outside_availability).toBe(false);
+  });
+
+  it("the booking action does not consult the recommendation table at all", async () => {
+    // The structural half of the claim. The action asks the availability
+    // question directly; if studio_calendar_reservations ever reappears in its
+    // query log, suggestion membership has crept back into the decision.
+    await book({ starts_at: MANUAL_INSIDE });
+    expect(mock.queriesFor("studio_calendar_reservations")).toHaveLength(0);
+    // ...while it DID read the availability window, so the check is present
+    // rather than simply deleted.
+    expect(
+      mock.queriesFor("studio_availability_default").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("PROOF THE FAKE CAN SEE THE ENGINE: removing the reservation moves 15:10 off the board", async () => {
+    // Positive control on the recommendation axis. If the resolver were not
+    // really feeding the slot engine, the suggestion set would be identical
+    // with and without the appointment, and the first test would be asserting
+    // against a constant.
+    const withAppointment = await suggestionInstants();
+    expect(withAppointment).toContain(new Date(SUGGESTED).getTime());
+
+    scenario.reservations = [];
+    mock = createBookingSupabaseMock(resolver);
+    const withoutAppointment = await suggestionInstants();
+    // 15:10 was purely an artefact of the 13:40-14:40 protected interval.
+    expect(withoutAppointment).not.toContain(new Date(SUGGESTED).getTime());
+    // The hourly walk is still there, so the engine ran rather than failing.
+    expect(withoutAppointment).toContain(new Date(Z("15:00")).getTime());
   });
 });
