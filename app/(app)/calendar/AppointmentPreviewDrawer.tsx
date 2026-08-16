@@ -15,6 +15,7 @@ import { AppointmentNotesEditor } from "./AppointmentNotesEditor";
 import { PractitionerCancelForm } from "./PractitionerCancelForm";
 import { loadAppointmentPreviewAction } from "./appointment-preview-actions";
 import { shouldApplyPreviewResponse } from "./preview-request";
+import { moveDialogSchedule } from "./move-dialog-schedule";
 
 // In-context appointment PREP WORKSPACE, opened from a card on the desktop week
 // grid. The question it answers is "what do I need to know about this visit,
@@ -371,12 +372,23 @@ export function AppointmentPreviewDrawer({
             {/* 4. ACTIONS ------------------------------------------------- */}
             {canAct && (
               <>
+                {/* The RE-READ schedule, not the week payload's copy. These
+                    values become 0133's p_expected_starts_at/ends_at, so a
+                    stale pair does not merely look wrong — it makes a
+                    legitimate move impossible for as long as the drawer stays
+                    open. Same preference the action gate above already applies.
+                    See ./move-dialog-schedule. */}
                 <MoveAppointmentButton
                   appointment={{
                     id: a.id,
-                    startsAt: a.starts_at,
-                    endsAt: a.ends_at,
-                    durationMinutes: a.duration_minutes,
+                    ...moveDialogSchedule({
+                      grid: {
+                        startsAt: a.starts_at,
+                        endsAt: a.ends_at,
+                        durationMinutes: a.duration_minutes,
+                      },
+                      detail: { startsAt: detail.startsAt, endsAt: detail.endsAt },
+                    }),
                     clientName: a.client?.name ?? null,
                     serviceName: a.service?.name ?? null,
                   }}

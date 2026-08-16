@@ -517,6 +517,87 @@ test.describe("mobile width", () => {
   });
 });
 
+// Reschedule must trust the drawer's REFRESHED schedule, not the week grid's
+// copy of it.
+//
+// THE BUG THIS PINS. The week payload is rendered once and then sits on screen.
+// If the appointment moves elsewhere — another tab, another practitioner, a drag
+// on another device — that payload is stale. The drawer re-reads the appointment
+// when it opens and already uses the fresh row for its action gate, so Cancel
+// and Reschedule correctly appear or disappear. But the move dialog was handed
+// the STALE `starts_at`/`ends_at` off the grid, and those are not decoration:
+// they become p_expected_starts_at / p_expected_ends_at, and 0133 refuses any
+// drift with `stale_appointment`.
+//
+// The result was a drawer that had just read the truth and then argued with it —
+// and because the props never change while the drawer is open, every retry
+// failed the same way. The practitioner's only escape was a full reload.
+//
+// This test stages exactly that: the grid holds 13:00, the row moves to 14:00
+// underneath it, and the practitioner then reschedules from the drawer. It fails
+// against the pre-fix head (the move is refused as stale) and passes after.
+test("Reschedule uses the refreshed schedule, not the stale week-grid copy", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  const tz = await getStudioTimezone(seed.studioId);
+  const ownerId = await getOwnerPractitionerId(seed.studioId);
+  const { id: apptId, date } = await seedAppointmentNextWeek(
+    seed.studioId,
+    ownerId,
+    clientId,
+    tz,
+    "13:00",
+  );
+
+  await loginAsOwner(page, seed);
+  // The grid now holds 13:00 and will not learn otherwise on its own.
+  await openWeekOf(page, date);
+
+  // The appointment moves out from under the rendered grid. Assert the stage is
+  // actually set: without this the test could pass for the boring reason that
+  // nothing ever diverged.
+  await shiftAppointmentMinutes(apptId, 60);
+  expect((await localDateTimeOf(apptId, tz)).time).toBe("14:00");
+
+  await card(page, await clientNameOf(apptId)).click();
+  const d = drawer(page);
+  await expect(d).toBeVisible({ timeout: T });
+
+  // The drawer has re-read the row, so Reschedule is offered on the FRESH state.
+  const reschedule = d.getByRole("button", { name: "Reschedule" });
+  await expect(reschedule).toBeVisible({ timeout: T });
+  await reschedule.click();
+
+  const dlg = page.getByRole("dialog", { name: "Move appointment" });
+  await expect(dlg).toBeVisible({ timeout: T });
+
+  // Owner-only custom time, so the target does not depend on generated slots.
+  await dlg.getByRole("button", { name: "Custom time" }).click();
+  const target = futureYmd(30);
+  await dlg.locator('input[type="date"]').fill(target);
+  await dlg.locator('input[type="time"]').fill("10:00");
+  await dlg.getByRole("checkbox").check();
+
+  const confirm = dlg.getByRole("button", { name: /^Move appointment$/ });
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+
+  // The move is ACCEPTED. Pre-fix this dialog stays open with the 0133
+  // stale-appointment refusal, because the expected values describe 13:00 while
+  // the row says 14:00.
+  await expect(dlg).toHaveCount(0, { timeout: T });
+
+  // And it really moved — to the requested target, not back to either the stale
+  // grid time or the intermediate 14:00.
+  const row = await cancellationOf(apptId);
+  expect(row.status).toBe("confirmed");
+  const finalLocal = await localDateTimeOf(apptId, tz);
+  expect(finalLocal.date).toBe(target);
+  expect(finalLocal.time).toBe("10:00");
+});
+
 // --- helpers ---------------------------------------------------------------
 
 async function clientNameOf(appointmentId: string): Promise<string> {
@@ -528,6 +609,49 @@ async function clientNameOf(appointmentId: string): Promise<string> {
   );
   return rows[0].name;
 }
+
+// Move the row out from under an already-rendered grid, the way another tab or
+// another practitioner would. Returns the new starts_at.
+async function shiftAppointmentMinutes(
+  appointmentId: string,
+  minutes: number,
+): Promise<string> {
+  const rows = await sql<{ starts_at: string }>(
+    `update public.appointments
+        set starts_at = starts_at + ($2 || ' minutes')::interval,
+            ends_at   = ends_at   + ($2 || ' minutes')::interval,
+            blocked_ends_at = blocked_ends_at + ($2 || ' minutes')::interval
+      where id = $1
+      returning starts_at`,
+    [appointmentId, String(minutes)],
+  );
+  return rows[0].starts_at;
+}
+
+// The appointment's start as the STUDIO sees it, so the assertion is not written
+// in whatever timezone the runner happens to have.
+async function localDateTimeOf(
+  appointmentId: string,
+  tz: string,
+): Promise<{ date: string; time: string }> {
+  const rows = await sql<{ d: string; t: string }>(
+    `select to_char(starts_at at time zone $2, 'YYYY-MM-DD') as d,
+            to_char(starts_at at time zone $2, 'HH24:MI')    as t
+       from public.appointments where id = $1`,
+    [appointmentId, tz],
+  );
+  return { date: rows[0].d, time: rows[0].t };
+}
+
+// A real future date derived from the clock, never a hardcoded one: a fixed date
+// becomes a PAST date once it passes and the server rejects past custom times.
+const futureYmd = (offsetDays: number) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(Date.now() + offsetDays * 86_400_000));
 
 type CancellationRow = {
   status: string;
