@@ -3,6 +3,7 @@ import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   normalizeProbeLabel,
+  chartedLifecycleStatus,
   type ProbeLotSuggestion,
   type ProbeLotSuggestions,
 } from "@/lib/record-keeping/probe-lot-suggestion";
@@ -268,6 +269,7 @@ export async function getProbeLotSuggestions(
         lastConfirmedInventoryItemId: null,
         lastCharted: "",
         lastChartedInventoryItemId: null,
+        lastChartedLifecycle: null,
       };
     }
     if (
@@ -332,7 +334,92 @@ export async function getProbeLotSuggestions(
       );
     }
   }
+
+  // Migration 0182: resolve the lifecycle of every EXACT item a last-charted
+  // row pointed at, through the identity-complete authority read rather than
+  // the picker projection. One bounded, studio-scoped query for the whole set.
+  const chartedIds = [...Object.values(byKey), ...Object.values(byLabel)]
+    .map((s) => s.lastChartedInventoryItemId)
+    .filter((id): id is string => !!id);
+  if (chartedIds.length > 0) {
+    const today = new Date().toISOString().slice(0, 10);
+    const lifecycle = await getInventoryLifecycleByIds(studioId, chartedIds);
+    for (const s of [...Object.values(byKey), ...Object.values(byLabel)]) {
+      const id = s.lastChartedInventoryItemId;
+      if (!id) continue; // manual row: no item, so no lifecycle. Not "unknown".
+      // A failed read yields "unknown" for every id, NOT "current": the
+      // auto-fill guard must fail closed rather than treat an unanswered
+      // question as permission.
+      s.lastChartedLifecycle = lifecycle.ok
+        ? chartedLifecycleStatus(lifecycle.byId.get(id), today)
+        : "unknown";
+    }
+  }
   return { byKey, byLabel };
+}
+
+// Migration 0182 — THE IDENTITY-COMPLETE LIFECYCLE AUTHORITY.
+//
+// Resolves the lifecycle of EXACT sterile-item ids. It exists because
+// getProbeLotInventory is deliberately a FILTERED, BOUNDED projection built for
+// the charting picker — it requires a non-null probe_key, its option builder
+// drops blank lot numbers, and it caps at 500 rows. A historically linked item
+// can be legitimately absent from that list while still existing and still
+// being discarded, so looking an id up in it made "absent" indistinguishable
+// from "not inventory" and the auto-fill guard failed OPEN.
+//
+// This read applies NONE of those filters. It is keyed on id alone, so it is
+// truthful for an unclassified row, a blank-lot row, or a row far outside any
+// picker bound.
+//
+// AUTHORITY POSTURE:
+//   * studio-scoped: explicit .eq("studio_id") on top of the 0085
+//     is_studio_member RLS SELECT policy, so a cross-studio id resolves to
+//     NOTHING and is reported as unresolved (never as another studio's data);
+//   * bounded by the caller's id set, never a whole-table scan;
+//   * user-scoped client — NO service role, no elevated read;
+//   * returns ONLY the lifecycle columns the decision mechanically needs.
+//
+// FAIL-CLOSED CONTRACT: a read error returns { ok: false }. Callers must map
+// that to "unknown" and refuse to auto-fill, never to "current". Silence is not
+// evidence that stock still exists.
+export type InventoryLifecycleFact = {
+  id: string;
+  expiryDate: string | null;
+  dateDiscarded: string | null;
+};
+
+export async function getInventoryLifecycleByIds(
+  studioId: string,
+  ids: ReadonlyArray<string>,
+): Promise<
+  { ok: true; byId: Map<string, InventoryLifecycleFact> } | { ok: false }
+> {
+  const unique = [...new Set(ids.map((i) => (i ?? "").trim()).filter(Boolean))];
+  if (unique.length === 0) return { ok: true, byId: new Map() };
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("record_keeping_sterile_items")
+    .select("id, expiry_date, date_discarded")
+    .eq("studio_id", studioId)
+    .in("id", unique);
+  // Do NOT fall back to an empty map here: an empty map is indistinguishable
+  // from "every id resolved as missing", which is a legitimate state. The
+  // caller must be able to tell a failed read from a truthful absence.
+  if (error) return { ok: false };
+  const byId = new Map<string, InventoryLifecycleFact>();
+  for (const r of (data ?? []) as Array<{
+    id: string;
+    expiry_date: string | null;
+    date_discarded: string | null;
+  }>) {
+    byId.set(r.id, {
+      id: r.id,
+      expiryDate: r.expiry_date,
+      dateDiscarded: r.date_discarded,
+    });
+  }
+  return { ok: true, byId };
 }
 
 export async function getDisinfectantRecords(

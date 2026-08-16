@@ -130,21 +130,35 @@ export function resolveProbeLotAutofill(args: {
     );
     if (notCurrentForProbe) return { kind: "choose" };
 
-    // Guard 2 — BY IDENTITY. Guard 1 matches on the row's CURRENT probe
-    // classification, so it misses an item charted under probe P and later
-    // RECLASSIFIED to Q: the suggestion still truthfully reports the lot under
-    // the historical probe P, but the row is no longer in P's option list, and
-    // the discarded lot auto-filled as unlinked free text.
+    // Guard 2 — BY IDENTITY, against the AUTHORITY read, and FAIL CLOSED.
     //
-    // Reclassifying a box does not put it back on the shelf. The lot NUMBER
-    // cannot answer this (see Guard 1's uniqueness note), so the check is by
-    // the inventory id the charted row actually pointed at — the only value
-    // that identifies the physical item. Null id = a manual/free-text row,
-    // which was never inventory and so has no lifecycle to check.
+    // Guard 1 matches on the row's CURRENT probe classification, so it misses
+    // an item charted under probe P and later RECLASSIFIED to Q, or one whose
+    // classification was CLEARED entirely: the suggestion still truthfully
+    // reports the lot under the historical probe P, but the row is no longer in
+    // P's option list. Reclassifying a box does not put it back on the shelf.
+    //
+    // The lot NUMBER cannot answer this either (see Guard 1's uniqueness note),
+    // so the question is asked of the exact inventory id the charted row
+    // pointed at. Critically, it is answered by `lastChartedLifecycle`, which
+    // comes from getInventoryLifecycleByIds — an identity-complete,
+    // studio-scoped read — and NOT by looking the id up in `inventory`. That
+    // list is a filtered, bounded picker projection (needs a probe_key, drops
+    // blank lots, capped), so a real discarded item can be absent from it, and
+    // an absence-based check silently failed OPEN.
+    //
+    //   null          -> the charted row was manual/free-text. No item exists,
+    //                    so there is no lifecycle to check and nothing to block.
+    //   "current"     -> proceed with the history suggestion.
+    //   "not-current" -> discarded and/or expired: send her to the picker.
+    //   "unknown"     -> the item could not be resolved, or the read failed.
+    //                    REFUSE. "I cannot tell whether this stock still
+    //                    exists" is not permission to auto-fill it for NEW
+    //                    work; manual entry remains available either way, so
+    //                    the cost of failing closed is one extra tap.
     const chartedId = (suggestion?.lastChartedInventoryItemId ?? "").trim();
-    if (chartedId) {
-      const chartedItem = inventory.find((o) => o.id === chartedId);
-      if (chartedItem && !isCurrentStock(chartedItem)) return { kind: "choose" };
+    if (chartedId && suggestion?.lastChartedLifecycle !== "current") {
+      return { kind: "choose" };
     }
     return { kind: "from-history", lotNumber: lot };
   }

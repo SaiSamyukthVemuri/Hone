@@ -55,9 +55,14 @@ import {
   probeLotOptionsForProbe,
   resolveInventoryAutofill,
   type ProbeLotInventoryRow,
+  type ProbeLotOption,
 } from "@/lib/record-keeping/probe-lot-inventory";
 import { resolveProbeLotAutofill } from "@/lib/record-keeping/probe-lot-autofill";
-import type { ProbeLotSuggestions } from "@/lib/record-keeping/probe-lot-suggestion";
+import {
+  chartedLifecycleStatus,
+  type ChartedLifecycleStatus,
+  type ProbeLotSuggestions,
+} from "@/lib/record-keeping/probe-lot-suggestion";
 import {
   isSupplyDiscarded,
   summarizeSupplyExpiry,
@@ -425,9 +430,13 @@ describe("TARGET — a structured discard removes stock from CURRENT use", () =>
 
 // `chartedId` is the inventory item the last-charted row actually pointed at
 // (null = it was a manual/free-text lot, which has no lifecycle to check).
+// `lifecycle` is the verdict the identity-complete authority read produced for
+// that exact item; it defaults to "unknown" whenever an id IS present, which is
+// the honest default for a caller that has not resolved it.
 function suggestions(
   lot: string,
   chartedId: string | null = null,
+  lifecycle: ChartedLifecycleStatus | null = chartedId ? "unknown" : null,
 ): ProbeLotSuggestions {
   return {
     byKey: {
@@ -438,6 +447,7 @@ function suggestions(
         lastConfirmedInventoryItemId: null,
         lastCharted: lot,
         lastChartedInventoryItemId: chartedId,
+        lastChartedLifecycle: lifecycle,
       },
     },
     byLabel: {},
@@ -491,6 +501,20 @@ describe("TARGET — the free-text history fallback cannot re-suggest discarded 
         suggestions: suggestions("LOT-SOMETHING-ELSE"),
       }),
     ).toEqual({ kind: "from-history", lotNumber: "LOT-SOMETHING-ELSE" });
+  });
+
+  it("a MANUAL charted row (null id, null lifecycle) still autofills — no invented lifecycle", () => {
+    // Contract E. A prior free-text lot was never inventory, so there is no
+    // item whose lifecycle could be checked. `null` lifecycle must NOT be
+    // conflated with "unknown" — that would break the manual-history contract
+    // for every studio with zero probe inventory.
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: [],
+        suggestions: suggestions("MANUAL-LOT", null, null),
+      }),
+    ).toEqual({ kind: "from-history", lotNumber: "MANUAL-LOT" });
   });
 
   it("a RECLASSIFIED discarded lot is still caught (guard checks by IDENTITY)", () => {
@@ -554,18 +578,6 @@ describe("TARGET — the free-text history fallback cannot re-suggest discarded 
     ).toEqual({ kind: "from-history", lotNumber: "LOT-X" });
   });
 
-  it("a MANUAL charted row (null inventory id) has no lifecycle and still autofills", () => {
-    // Null id = the charted lot was free text, never inventory. There is
-    // nothing to check, and the history fallback must stay usable.
-    expect(
-      resolveProbeLotAutofill({
-        probeKey: PROBE,
-        inventory: [],
-        suggestions: suggestions("MANUAL-LOT", null),
-      }),
-    ).toEqual({ kind: "from-history", lotNumber: "MANUAL-LOT" });
-  });
-
   it("a discarded lot does not count as inventory for the fallback decision", () => {
     // `active.length > 0` must be false when the only lot is discarded, or the
     // resolver would take the inventory branch and return `choose` for the
@@ -589,5 +601,194 @@ describe("TARGET — the free-text history fallback cannot re-suggest discarded 
         suggestions: suggestions("HISTORIC-LOT"),
       }),
     ).toEqual({ kind: "from-history", lotNumber: "HISTORIC-LOT" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FINDING C — the guard must not depend on the picker's filtered projection.
+//
+// Codex review of 2a6755f1. The identity guard previously resolved the charted
+// id by looking it up in `inventory`, the charting picker's list. That list is
+// FILTERED and BOUNDED: getProbeLotInventory requires a non-null probe_key,
+// buildProbeLotOptions drops blank lot numbers, and the query caps at 500 rows.
+// A real, discarded, historically linked item can therefore be ABSENT from it —
+// and absence was indistinguishable from "was never inventory", so the guard
+// failed OPEN and auto-filled discarded stock as unlinked free text.
+//
+// Proven against head 2a6755f1 BEFORE this repair: both the unclassified case
+// and the blank-lot case returned { kind: "from-history", lotNumber: "X" }.
+//
+// The fix resolves lifecycle through getInventoryLifecycleByIds — an
+// identity-complete, studio-scoped, id-keyed read applying none of those
+// filters — and the guard consumes that verdict instead of the list.
+// ---------------------------------------------------------------------------
+
+describe("FINDING C — lifecycle authority is independent of the picker list", () => {
+  // EVERY case here passes an inventory list that does NOT contain item "I".
+  // That is the point: the item is absent from the picker projection
+  // throughout, so any behaviour observed is attributable solely to the
+  // authority verdict.
+  const ABSENT: ProbeLotOption[] = [];
+
+  it("1. resolves and is DISCARDED -> never autofills", () => {
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: ABSENT,
+        suggestions: suggestions("LOT-X", "I", "not-current"),
+      }),
+    ).toEqual({ kind: "choose" });
+  });
+
+  it("2. resolves and is EXPIRED -> never autofills", () => {
+    expect(
+      chartedLifecycleStatus(
+        { expiryDate: "2026-01-01", dateDiscarded: null },
+        TODAY,
+      ),
+    ).toBe("not-current");
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: ABSENT,
+        suggestions: suggestions("LOT-X", "I", "not-current"),
+      }),
+    ).toEqual({ kind: "choose" });
+  });
+
+  it("3. resolves and is CURRENT -> autofills (the guard does not over-fire)", () => {
+    // Without this the whole block would pass just as well if the guard simply
+    // refused everything carrying an id.
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: ABSENT,
+        suggestions: suggestions("LOT-X", "I", "current"),
+      }),
+    ).toEqual({ kind: "from-history", lotNumber: "LOT-X" });
+  });
+
+  it("4. exact id NO LONGER RESOLVES -> unknown -> FAILS CLOSED", () => {
+    // Gone from the authority read entirely (deleted, or a cross-studio id RLS
+    // hides). "I cannot tell whether this stock still exists" is not permission
+    // to auto-fill it for new work.
+    expect(chartedLifecycleStatus(undefined, TODAY)).toBe("unknown");
+    expect(chartedLifecycleStatus(null, TODAY)).toBe("unknown");
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: ABSENT,
+        suggestions: suggestions("LOT-X", "I", "unknown"),
+      }),
+    ).toEqual({ kind: "choose" });
+  });
+
+  it("5. lifecycle READ FAILED -> unknown -> FAILS CLOSED", () => {
+    // getProbeLotSuggestions maps a failed authority read to "unknown" for every
+    // id rather than to "current"; the guard then refuses. Same observable
+    // contract as case 4, asserted separately because the cause differs.
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: ABSENT,
+        suggestions: suggestions("LOT-X", "I", "unknown"),
+      }),
+    ).toEqual({ kind: "choose" });
+  });
+
+  it("B. probe_key CLEARED + discarded — the Finding C reproduction", () => {
+    // Charted under P, then the item was made unclassified AND discarded. It
+    // vanishes from the picker (getProbeLotInventory filters probe_key IS NOT
+    // NULL) but the authority read still sees it.
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: ABSENT,
+        suggestions: suggestions("LOT-X", "I", "not-current"),
+      }),
+    ).toEqual({ kind: "choose" });
+  });
+
+  it("C. item outside the picker bound — the list plays no part in the verdict", () => {
+    // Whether the item fell outside the 500-row cap, had its lot blanked, or was
+    // unclassified, the picker is equally silent about it. A picker FULL of
+    // unrelated current stock changes nothing.
+    const noisyInventory = buildProbeLotOptions(
+      [
+        row({
+          id: "unrelated",
+          lotNumber: "OTHER-LOT",
+          // A DIFFERENT probe, so this probe still has no current stock and the
+          // resolver genuinely reaches the history fallback under test.
+          probeKey: "some_other_probe",
+          expiryDate: "2099-01-01",
+        }),
+      ],
+      TODAY,
+    );
+    expect(noisyInventory.find((o) => o.id === "I")).toBeUndefined();
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: noisyInventory,
+        suggestions: suggestions("LOT-X", "I", "not-current"),
+      }),
+    ).toEqual({ kind: "choose" });
+  });
+
+  it("D. same lot number on ANOTHER physical item is judged by ITS OWN identity", () => {
+    // The contract "an expired lot for ANOTHER probe never blocks this probe's
+    // history" survives: the verdict attaches to the charted item's id, not to
+    // the lot string, so another item sharing the number is irrelevant.
+    const otherProbeSameNumber = buildProbeLotOptions(
+      [
+        row({
+          id: "other",
+          lotNumber: "LOT-X",
+          probeKey: "some_other_probe",
+          expiryDate: "2000-01-01", // expired, and irrelevant
+        }),
+      ],
+      TODAY,
+    );
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: otherProbeSameNumber,
+        suggestions: suggestions("LOT-X", "I", "current"),
+      }),
+    ).toEqual({ kind: "from-history", lotNumber: "LOT-X" });
+  });
+
+  it("E. a MANUAL historical row invents no lifecycle", () => {
+    // null id + null lifecycle. Distinct from "unknown": there is no item, so
+    // there is nothing to be unsure about, and the manual-history contract for
+    // studios with zero probe inventory must keep working.
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: ABSENT,
+        suggestions: suggestions("MANUAL-LOT", null, null),
+      }),
+    ).toEqual({ kind: "from-history", lotNumber: "MANUAL-LOT" });
+  });
+
+  it("chartedLifecycleStatus: a discard outranks any expiry date", () => {
+    // Presence is the assertion; even a future-dated discard means gone.
+    expect(
+      chartedLifecycleStatus(
+        { expiryDate: "2099-01-01", dateDiscarded: "2026-07-10" },
+        TODAY,
+      ),
+    ).toBe("not-current");
+    expect(
+      chartedLifecycleStatus(
+        { expiryDate: "2099-01-01", dateDiscarded: "2099-12-31" },
+        TODAY,
+      ),
+    ).toBe("not-current");
+    expect(
+      chartedLifecycleStatus({ expiryDate: null, dateDiscarded: null }, TODAY),
+    ).toBe("current");
   });
 });

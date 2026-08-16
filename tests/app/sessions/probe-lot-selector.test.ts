@@ -34,6 +34,37 @@ describe("server query: authoritative source + probe-specific + studio isolation
     expect(body).toMatch(/\.not\("lot_number", "is", null\)/);
   });
 
+  it("(0182 / Finding C) the lifecycle AUTHORITY read applies none of the picker's filters", () => {
+    // Supplementary source evidence for the behavioural DB coverage in
+    // tests/db/sterile-item-discard-lifecycle.db.test.ts. The whole point of
+    // getInventoryLifecycleByIds is that it is identity-complete: if it ever
+    // inherits the picker's probe_key / lot_number / 500-row constraints, a
+    // discarded item can vanish from it again and the auto-fill guard silently
+    // fails OPEN — which is exactly the defect this function was added to fix.
+    const fn = QUERIES.slice(
+      QUERIES.indexOf("export async function getInventoryLifecycleByIds"),
+    );
+    expect(fn.length).toBeGreaterThan(0);
+    const body = fn.slice(0, fn.indexOf("\n}\n"));
+    const code = body
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // Identity-keyed and studio-scoped...
+    expect(code).toMatch(/\.eq\("studio_id", studioId\)/);
+    expect(code).toMatch(/\.in\("id", unique\)/);
+    // ...returning ONLY lifecycle facts...
+    expect(code).toMatch(/\.select\("id, expiry_date, date_discarded"\)/);
+    // ...with NONE of the picker's narrowing filters or bound.
+    expect(code).not.toMatch(/probe_key/);
+    expect(code).not.toMatch(/lot_number/);
+    expect(code).not.toMatch(/\.limit\(/);
+    // Never elevated: the user-scoped client only, so RLS still applies.
+    expect(code).not.toMatch(/service_role|admin/i);
+    // Fail-closed: a read error is reported, never swallowed into an empty map.
+    expect(code).toMatch(/if \(error\) return \{ ok: false \}/);
+  });
+
   it("(0182) SELECTS date_discarded but never FILTERS on it — the foundational read", () => {
     const fn = QUERIES.slice(
       QUERIES.indexOf("export async function getProbeLotInventory"),

@@ -32,38 +32,38 @@ describe("normalizeProbeLabel", () => {
 
 describe("resolveProbeLotSuggestion", () => {
   it("keyed match wins", () => {
-    const s = suggestions({ byKey: { [probe.key]: { lot: "KEYLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null } } });
-    expect(resolveProbeLotSuggestion(probe.key, s)).toEqual({ lot: "KEYLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null });
+    const s = suggestions({ byKey: { [probe.key]: { lot: "KEYLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null } } });
+    expect(resolveProbeLotSuggestion(probe.key, s)).toEqual({ lot: "KEYLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null });
   });
 
   it("keyed match BEATS a label fallback", () => {
     const s = suggestions({
-      byKey: { [probe.key]: { lot: "KEYLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null } },
-      byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "LABELLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null } },
+      byKey: { [probe.key]: { lot: "KEYLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null } },
+      byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "LABELLOT", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null } },
     });
     expect(resolveProbeLotSuggestion(probe.key, s)?.lot).toBe("KEYLOT");
   });
 
   it("falls back to the normalized-label match when there is no keyed match", () => {
     const s = suggestions({
-      byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "LABELLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null } },
+      byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "LABELLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null } },
     });
-    expect(resolveProbeLotSuggestion(probe.key, s)).toEqual({ lot: "LABELLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null });
+    expect(resolveProbeLotSuggestion(probe.key, s)).toEqual({ lot: "LABELLOT", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null });
   });
 
   it("returns null for an empty probe key or when nothing matches", () => {
-    expect(resolveProbeLotSuggestion("", suggestions({ byKey: { x: { lot: "L", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null } } }))).toBeNull();
+    expect(resolveProbeLotSuggestion("", suggestions({ byKey: { x: { lot: "L", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null } } }))).toBeNull();
     expect(resolveProbeLotSuggestion(probe.key, suggestions())).toBeNull();
   });
 
   it("preserves the confirmed flag through both paths (drives the helper copy)", () => {
     expect(
-      resolveProbeLotSuggestion(probe.key, suggestions({ byKey: { [probe.key]: { lot: "L", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null } } }))?.confirmed,
+      resolveProbeLotSuggestion(probe.key, suggestions({ byKey: { [probe.key]: { lot: "L", confirmed: true, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null } } }))?.confirmed,
     ).toBe(true);
     expect(
       resolveProbeLotSuggestion(
         probe.key,
-        suggestions({ byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "L", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null } } }),
+        suggestions({ byLabel: { [normalizeProbeLabel(probe.displayLabel)]: { lot: "L", confirmed: false, inventoryItemId: null, lastConfirmedInventoryItemId: null, lastCharted: "", lastChartedInventoryItemId: null, lastChartedLifecycle: null } } }),
       )?.confirmed,
     ).toBe(false);
   });

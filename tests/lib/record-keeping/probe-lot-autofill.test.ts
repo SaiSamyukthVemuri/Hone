@@ -46,8 +46,10 @@ function suggestion(
     lastConfirmedInventoryItemId: null,
     lastCharted: lot,
     // 0182: defaults to "the charted row was manual", so every pre-existing
-    // case in this file keeps testing exactly what it tested before.
+    // case in this file keeps testing exactly what it tested before — a manual
+    // row has no inventory item and therefore no lifecycle to check.
     lastChartedInventoryItemId: null,
+    lastChartedLifecycle: null,
     ...over,
   };
 }

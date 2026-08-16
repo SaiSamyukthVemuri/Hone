@@ -42,7 +42,53 @@ export type ProbeLotSuggestion = {
   // (pinned by "an expired lot for ANOTHER probe never blocks this probe's
   // history"). The id is the only thing that identifies the physical item.
   lastChartedInventoryItemId: string | null;
+  // Migration 0182: the lifecycle verdict for THAT EXACT item, resolved by a
+  // dedicated identity-complete studio-scoped read (getInventoryLifecycleByIds)
+  // — deliberately NOT by looking the id up in the charting picker's inventory.
+  //
+  // The picker list is a FILTERED, BOUNDED projection: it requires a non-null
+  // probe_key, drops blank lot numbers during option construction, and is
+  // capped. A historically linked row can therefore be legitimately absent from
+  // it while still existing and still being discarded. Resolving lifecycle
+  // against that list made absence indistinguishable from "not inventory", so
+  // the guard failed OPEN and auto-filled discarded stock as free text.
+  //
+  // null = the charted row carried NO inventory id (manual/free-text): there is
+  // no item and therefore no lifecycle to check. That is not the same as
+  // "unknown", and must not be treated as a reason to block.
+  lastChartedLifecycle: ChartedLifecycleStatus | null;
 };
+
+// The lifecycle verdict for one exact, historically linked inventory item.
+//
+//   "current"     -> resolved, and neither discarded nor expired
+//   "not-current" -> resolved, and discarded and/or expired
+//   "unknown"     -> an id exists but its lifecycle could NOT be established
+//                    (row not found — deleted, cross-studio, or otherwise
+//                    invisible — or the authority read failed)
+//
+// "unknown" is a first-class state on purpose. Collapsing it into "current"
+// is exactly the bug this type exists to prevent: for CURRENT-work auto-fill,
+// "I could not determine whether this stock still exists" must fail CLOSED.
+export type ChartedLifecycleStatus = "current" | "not-current" | "unknown";
+
+// Pure classification of one item's lifecycle facts. `fact` is undefined/null
+// when the identity read returned no row for that id, which is "unknown", never
+// "current". Discard is presence-based (the practitioner asserted the stock is
+// gone; it does not come back when the calendar rolls over); expiry is a date
+// comparison, matching buildProbeLotOptions.
+export function chartedLifecycleStatus(
+  fact:
+    | { expiryDate: string | null; dateDiscarded: string | null }
+    | null
+    | undefined,
+  todayIso: string,
+): ChartedLifecycleStatus {
+  if (!fact) return "unknown";
+  if (fact.dateDiscarded != null) return "not-current";
+  if (fact.expiryDate != null && fact.expiryDate < todayIso) return "not-current";
+  return "current";
+}
 
 export type ProbeLotSuggestions = {
   // Keyed by session_blocks.probe_key.

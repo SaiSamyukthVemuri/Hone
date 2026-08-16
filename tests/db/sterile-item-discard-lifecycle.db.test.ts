@@ -45,7 +45,10 @@ async function seedItem(
       id,
       studio.studioId,
       opts.lot,
-      opts.probeKey ?? F3,
+      // `?? F3` would silently turn an EXPLICIT null into a classified probe,
+      // which would make the "unclassified" case below prove nothing. Only an
+      // OMITTED key defaults.
+      "probeKey" in opts ? opts.probeKey : F3,
       opts.expiry ?? null,
       opts.discarded ?? null,
     ],
@@ -326,6 +329,98 @@ describe("#9 tenancy — no studio may inspect or mark another studio's inventor
       [item],
     );
     expect(check.rows[0].date_discarded).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The identity-complete lifecycle authority (getInventoryLifecycleByIds).
+//
+// Codex Finding C: the auto-fill guard used to resolve a historically linked
+// item by looking its id up in the CHARTING PICKER's list, which requires a
+// non-null probe_key, drops blank lot numbers, and is capped at 500 rows. A
+// discarded item absent from that projection read as "not inventory" and the
+// guard failed OPEN.
+//
+// These prove the authority read is independent of every one of those filters,
+// while still being studio-scoped. FILTER_SQL below mirrors the function's
+// exact chain: .select("id, expiry_date, date_discarded").eq("studio_id").in("id").
+// ---------------------------------------------------------------------------
+
+const LIFECYCLE_SQL = `
+  select id, expiry_date, date_discarded
+  from public.record_keeping_sterile_items
+  where studio_id = $1
+    and id = any($2)
+`;
+
+describe("identity lifecycle authority — independent of the picker projection", () => {
+  it("resolves an UNCLASSIFIED (probe_key NULL) discarded item — the Finding C case", async () => {
+    // getProbeLotInventory does .not("probe_key","is",null), so this row is
+    // INVISIBLE to the picker. The authority read must still see it, or the
+    // guard cannot tell "discarded" from "never existed".
+    const item = await seedItem(a, {
+      lot: "LOT-UNCLASSIFIED",
+      probeKey: null,
+      discarded: "2026-07-10",
+    });
+    const r = await asUser(a.userId, (q) =>
+      q(LIFECYCLE_SQL, [a.studioId, [item]]),
+    );
+    expect(r.rowCount).toBe(1);
+    expect(r.rows[0].date_discarded).not.toBeNull();
+  });
+
+  it("resolves an item whose LOT NUMBER is blank — also dropped by the picker", async () => {
+    // buildProbeLotOptions drops blank-lot rows during option construction.
+    const item = await seedItem(a, { lot: "", discarded: "2026-07-10" });
+    const r = await asUser(a.userId, (q) =>
+      q(LIFECYCLE_SQL, [a.studioId, [item]]),
+    );
+    expect(r.rowCount).toBe(1);
+    expect(r.rows[0].date_discarded).not.toBeNull();
+  });
+
+  it("is STUDIO-SCOPED: a cross-studio id resolves to nothing (-> unknown -> fail closed)", async () => {
+    const foreign = await seedItem(b, {
+      lot: "LOT-FOREIGN",
+      discarded: "2026-07-10",
+    });
+    const r = await asUser(a.userId, (q) =>
+      q(LIFECYCLE_SQL, [a.studioId, [foreign]]),
+    );
+    // No row. The caller maps that to "unknown", never to "current", so a
+    // cross-studio id can neither leak data NOR unlock an auto-fill.
+    expect(r.rowCount).toBe(0);
+  });
+
+  it("POSITIVE CONTROL: an own-studio CURRENT item resolves with a clean lifecycle", async () => {
+    // Without this, the negatives above would pass just as well if the read
+    // were simply broken and returned nothing for everything.
+    const item = await seedItem(a, { lot: "LOT-LIVE-AUTH", expiry: "2099-01-01" });
+    const r = await asUser(a.userId, (q) =>
+      q(LIFECYCLE_SQL, [a.studioId, [item]]),
+    );
+    expect(r.rowCount).toBe(1);
+    expect(r.rows[0].date_discarded).toBeNull();
+    // The pg driver hydrates a `date` column into a JS Date, so normalise
+    // rather than string-comparing the raw value.
+    expect(new Date(r.rows[0].expiry_date).toISOString().slice(0, 10)).toBe(
+      "2099-01-01",
+    );
+  });
+
+  it("resolves a BOUNDED SET in one round trip, and only the ids asked for", async () => {
+    const one = await seedItem(a, { lot: "SET-1", discarded: "2026-07-10" });
+    const two = await seedItem(a, { lot: "SET-2", expiry: "2099-01-01" });
+    const unasked = await seedItem(a, { lot: "SET-3" });
+    const r = await asUser(a.userId, (q) =>
+      q(LIFECYCLE_SQL, [a.studioId, [one, two]]),
+    );
+    const ids = r.rows.map((x) => x.id);
+    expect(ids).toHaveLength(2);
+    expect(ids).toContain(one);
+    expect(ids).toContain(two);
+    expect(ids).not.toContain(unasked);
   });
 });
 
