@@ -34,6 +34,50 @@ describe("server query: authoritative source + probe-specific + studio isolation
     expect(body).toMatch(/\.not\("lot_number", "is", null\)/);
   });
 
+  it("(0182 / Finding C) the WIRING is pinned: lockstep ids, both maps, fail-closed mapping", () => {
+    // The auto-fill guard itself is mutation-proven in
+    // tests/lib/record-keeping/sterile-item-discard-lifecycle.test.ts. These
+    // assertions cover the part a resolver test structurally cannot: the
+    // production reducer in getProbeLotSuggestions that FEEDS it. Verified
+    // mutation-sensitive — before these existed, deleting the lockstep
+    // assignment or flipping the read-error mapping to "current" left the
+    // entire 7,583-test unit suite green while reopening the fail-closed
+    // contract.
+    const fn = QUERIES.slice(
+      QUERIES.indexOf("export async function getProbeLotSuggestions"),
+    );
+    const body = fn.slice(0, fn.indexOf("\n}\n"));
+    const code = body
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+
+    // 1. The charted inventory id is recorded in LOCKSTEP with lastCharted, so
+    //    the id always describes the row the lot number came from.
+    expect(code).toMatch(/map\[slot\]\.lastCharted = lot;/);
+    expect(code).toMatch(
+      /map\[slot\]\.lastChartedInventoryItemId = inventoryItemId;/,
+    );
+
+    // 2. BOTH maps are covered. byLabel is the legacy-row path; leaving it out
+    //    would silently exempt every studio whose rows have no probe_key.
+    expect(code).toMatch(/seedLastCharted\(\s*byKey,/);
+    expect(code).toMatch(/seedLastCharted\(\s*byLabel,/);
+    expect(code).toMatch(
+      /\[\.\.\.Object\.values\(byKey\), \.\.\.Object\.values\(byLabel\)\]/,
+    );
+
+    // 3. FAIL CLOSED. A failed authority read maps every id to "unknown",
+    //    NEVER to "current" — the guard must refuse, not be handed permission.
+    expect(code).toMatch(/lifecycle\.ok[\s\S]{0,160}:\s*"unknown"/);
+    expect(code).not.toMatch(/lifecycle\.ok[\s\S]{0,160}:\s*"current"/);
+
+    // 4. A manual charted row (no inventory id) is skipped entirely, so it
+    //    stays `null` and is never mistaken for "unknown" — otherwise every
+    //    zero-inventory studio would lose its manual history suggestion.
+    expect(code).toMatch(/if \(!id\) continue;/);
+  });
+
   it("(0182 / Finding C) the lifecycle AUTHORITY read applies none of the picker's filters", () => {
     // Supplementary source evidence for the behavioural DB coverage in
     // tests/db/sterile-item-discard-lifecycle.db.test.ts. The whole point of
