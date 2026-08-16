@@ -14,7 +14,124 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-13, post-0181 apply)
+## Current state (verified 2026-08-16, post-0182 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0182** (`0182_sterile_item_discard_lifecycle.sql`, applied **2026-08-16 — CALENDAR DATE ONLY**, see *Apply timestamp* below) |
+| **Repo migration max** | **0182** — **hosted == repo.** Nothing pending. Next free number is **0183** (available, not claimed). |
+| **Total migrations in repo** | **181** (`0001` … `0157`, `0159` … `0182` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **NOT COUNTED, AND NOT CLAIMED.** The post-apply `migration list` was read to confirm `0182 \| 0182` and the ordered tail `0176`…`0182`; the history table was **not** row-counted. The 0181 record's measured total was 180, so 181 is the *expected* total — but it is an inference, not an observation, and is labelled as one. |
+| **`0182` raw checksum (frozen)** | `07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57` |
+| **`0182` executable checksum (frozen)** | `799690db5fba3a4c24d0c100384784344a5b6c14c5d83a4eeec4e9418fba8fba` |
+| **Apply exit status** | 🚨 **PUSH EXIT CODE WAS NOT CAPTURED — and none is claimed.** The **dry run** immediately before the apply exited **0**, and that captured `0` belongs to the **dry run only**. No client exit code for the `db push` itself was observed. |
+| **Apply timestamp** | ⚠️ **DATE ONLY — 2026-08-16.** No exact apply timestamp was captured, and none is invented. See *Apply timestamp: what is and is not known* below. |
+| **Applied from** | the authorized #590 head `c020e1022b585daecdb2ef5ad7784e987c2fbb3d` — **DATABASE FIRST, before any application merge** |
+| **Application merge** | `bf1b18a920b5a1d0ddb10910335a865e96aa61bf` (PR #590), normal two-parent merge, parent 1 `0943c31e9b35845b566f7dbae366746a66f650c0` (previous production), parent 2 = the authorized head |
+| **Where the apply ran** | the **operator's own credentialed machine** — *not* the repository host, which holds no production credential. Every apply observation below is an **operator-reported console observation**, transcribed verbatim. |
+
+> ✅ **REPOSITORY AND HOSTED MIGRATION TRUTH ARE RECONCILED AT 0182.**
+>
+> **WHAT 0182 DOES.** `record_keeping_sterile_items` gains one nullable `date_discarded date`
+> column: `NULL` = no structured discard recorded, a date = the practitioner asserted the physical
+> stock was discarded that day. It mirrors `record_keeping_disinfectants.date_discarded`
+> (0085/0096) exactly — same type, same nullability, no default, no CHECK — so the two logbooks
+> stay one concept rather than two dialects. Before it, a practitioner who physically threw away an
+> expired box of probes could only say so in free-text `notes`, and Hone kept counting the row as
+> actionable CURRENT stock: expiry warnings kept firing and the lot kept being offered.
+>
+> **NOTHING INFERS A DISCARD FROM TEXT.** There is deliberately **no backfill**. Reading the word
+> "discarded" out of a sentence would silently reinterpret *"do not discard"* and *"discarded the
+> OTHER box"* as compliance assertions — the exact failure the structured column exists to replace.
+> Every pre-existing production row therefore arrives as `date_discarded IS NULL`, which is
+> precisely "no structured discard recorded", so no existing row changes meaning.
+>
+> **CURRENT INVENTORY IS NOT HISTORICAL RECORD EXISTENCE.** Discarded stock leaves *current-stock*
+> behaviour (expiry warnings, lot suggestion/auto-fill, the usable-now chooser) but stays fully
+> readable in the record list, lot traceability, export and search. The migration hides nothing;
+> the gating lives in the application, at the current-stock selectors only.
+
+> **APPLY EVIDENCE — EXACTLY WHAT WAS OBSERVED, AND NOTHING MORE.**
+>
+> | Step | Observation |
+> |---|---|
+> | Pre-apply `migration list` | `0180 \| 0180`, `0181 \| 0181`, `0182 \| <empty remote>` — present locally, absent remotely |
+> | Dry run | proposed **`0182_sterile_item_discard_lifecycle.sql` and nothing else**; **dry-run exit code 0 captured** |
+> | Confirmation | CLI prompted *"Do you want to push these migrations to the remote database? `0182_sterile_item_discard_lifecycle.sql`"*; the operator confirmed |
+> | Apply output | *"Applying migration 0182_sterile_item_discard_lifecycle.sql…"* then *"Finished supabase db push."* |
+> | Push exit code | 🚨 **NOT CAPTURED** |
+> | Post-apply `migration list` | `0176 \| 0176`, `0177 \| 0177`, `0178 \| 0178`, `0179 \| 0179`, `0180 \| 0180`, `0181 \| 0181`, **`0182 \| 0182`** — recorded **locally and remotely** |
+> | Post-apply schema | production remote schema dump contains `"date_discarded" "date"` on `public.record_keeping_sterile_items` — **nullable, no default** |
+>
+> Project `alhhybgqdmcdyzpybykj`, pinned Supabase CLI **2.102.0**. The other `date_discarded` in
+> that dump is the pre-existing `record_keeping_disinfectants` precedent, not a second new column.
+> The production database password was removed from the operator shell after use.
+
+> 🚨 **EVIDENCE LIMITATIONS — READ THESE BEFORE QUOTING ANYTHING ABOVE.**
+>
+> 1. **NO PUSH EXIT CODE.** Stated once more because it is the single most quotable-out-of-context
+>    line here: the `db push` client exit status is **unknown**. The captured `0` is the **dry
+>    run's**. This is not the 0181 case (where the push exit code **was** captured, by deliberately
+>    backgrounding the command); it is the 0180 situation — unknown, and recorded as unknown.
+> 2. **NO ROW-COUNT PROOF.** No pre/post business-row count was captured for any table, so **no
+>    zero-row-mutation claim is made from measurement.** What *is* asserted is a claim about the
+>    migration **text**, which any reader can re-check against the frozen bytes: 0182's only
+>    executable statements are one `alter table … add column if not exists date_discarded date` and
+>    one `comment on column`, inside a single `begin;`/`commit;` — no `UPDATE`, `INSERT`, `DELETE`,
+>    backfill, index, constraint, policy, grant, trigger, function or view. That is pinned by
+>    `tests/migrations/0182-sterile-item-discard-lifecycle.test.ts`, which also pins the raw
+>    checksum above.
+> 3. **NO DIRECT SQL VERIFICATION.** `supabase db query --linked` was **unavailable** — the
+>    Management API returned **403**. The post-apply proof therefore rests on the **successful
+>    remote schema dump** plus the remote `migration list`, not on an ad-hoc query.
+> 4. **NO SERVER-SIDE APPLY TIMESTAMP EXISTS**, for 0182 or any other migration:
+>    `supabase_migrations.schema_migrations` carries only `(version, statements, name)` and has no
+>    timestamp column. No later archaeology can recover one.
+
+> ⚠️ **APPLY TIMESTAMP: WHAT IS AND IS NOT KNOWN.**
+>
+> `hosted_applied_at` in [`migration-state.json`](./migration-state.json) reads **`2026-08-16`** —
+> a **calendar date, not an instant**. For 0177–0181 that field held an *observed client-side apply
+> marker* read off the operator console; for 0182 **no clock reading was attached to the report**,
+> and the apply ran on a machine this repository has no telemetry from. A parser that renders the
+> value as `2026-08-16T00:00:00Z` is reading precision that does not exist, which is why the record
+> carries an explicit `hosted_applied_at_precision` field saying so.
+>
+> **Repository-verifiable bound:** the apply preceded the merge commit
+> `bf1b18a920b5a1d0ddb10910335a865e96aa61bf`, committer date **2026-08-16T15:08:27Z** — the rollout
+> was migration-first and the post-apply `migration list` was reported before that merge.
+>
+> **Narrower bound, non-repository source, cited as such:** the operator host's release-session
+> record brackets the apply to **after 2026-08-16T14:12:22Z** (the release run stopped at the
+> credential boundary with 0182 still unapplied) and **before 2026-08-16T15:07:24Z** (the completed
+> apply was reported). That record is **not** a repository artifact and cannot be re-checked from
+> this repository, so it is cited here as context and is deliberately **not** promoted into
+> `hosted_applied_at` as a precise value.
+
+> **MIGRATION-FIRST WAS FOLLOWED, AND FOR 0182 THE SKEW IS BENIGN IN BOTH DIRECTIONS.** The database
+> was applied **first**, before #590 merged. 0182 is purely additive and nullable, so **old app +
+> new DB** is safe (the old application simply never reads or writes the new column). The reverse
+> skew is also safe: a rollback that dropped the column would return the product to its pre-0182
+> behaviour rather than breaking it. The production release was **subsequently verified healthy**.
+
+> **Numbers in this block are the CURRENT hosted truth and move on every apply.** The single
+> machine-readable owner is [`migration-state.json`](./migration-state.json); repo-side totals are
+> **derived** by `scripts/migration-state.mjs` and must never be hand-maintained here. Sections
+> below this one are **frozen historical records** — they state what was true at their own apply and
+> are never rewritten when a later migration lands.
+
+> ⚠️ **LEDGER GAP (unchanged, still open).** `0170` and `0171` have no narrative entry in this
+> file — their apply records live only in `migration-state.json`'s `hosted_note` history. That gap
+> is pre-existing and is **not** back-filled here.
+
+> **The block below is FROZEN.** It is the ledger's former Current state, reproduced
+> byte-for-byte from production commit `bf1b18a`; only its heading is reclassified from
+> Current to Previous. Its wording, tense and numbers are left exactly as they were written
+> when 0181 was the hosted max — including its "next free number is 0182 (available, not
+> claimed)" line, which was true then and is history now. Duplication is preferable to editing
+> historical evidence.
+
+## Previous state (verified 2026-08-13, post-0181 apply)
 
 | Field | Value |
 |---|---|

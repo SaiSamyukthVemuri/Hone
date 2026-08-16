@@ -54,23 +54,55 @@ describe("0181 — production truth: APPLIED (CURRENT STATE — moves on the nex
   // rollout completed on 2026-08-13: 0181 was pushed to the linked production
   // project BEFORE #573 was merged, and the old application was verified
   // healthy against the new database in between.
-  it("is applied — hosted max is 0181", () => {
-    expect(rec.hosted_migration_max).toBe("0181");
+  //
+  // THE SECOND HAND-OFF HAS NOW HAPPENED TOO. This pair previously pinned the
+  // hosted max to EXACTLY 0181 — correct only while 0181 was the hosted
+  // maximum. 0182 was applied to production on 2026-08-16, migration-first,
+  // before #590 merged as bf1b18a9, so an exact pin here would now assert that
+  // production had NOT applied 0182 merely to keep this file green. What 0181
+  // legitimately owns is a FLOOR: production reached 0181 and can never go
+  // backwards past it. Where the hosted max is TODAY is the current maximum's
+  // business, asserted centrally in that migration's own test and derivable
+  // from `npm run migration:state`.
+  it("is applied — production reached 0181 and never went back", () => {
+    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBeGreaterThanOrEqual(181);
   });
 
-  it("0181 remains the HOSTED maximum — this migration's own apply record", () => {
-    // Repo and hosted no longer agree, and that is the CORRECT state: 0182
-    // exists on disk and has NOT been pushed to production. A file on disk says
-    // nothing about what production has applied, so the only claim this test
-    // makes about production is the DECLARED one.
+  it("0181's checksum is carried forward by whichever record supersedes it", () => {
+    // Deliberately NO `versionsAbove("0181")` assertion and no exact hosted
+    // pin: both are the "trip on the next one" tripwire this file removed once
+    // already, and they would go red when 0183 lands for no reason connected to
+    // 0181.
     //
-    // Deliberately NO `versionsAbove("0181")` assertion. Pinning the exact set
-    // of migrations above 0181 would be the same "trip on the next one" pin
-    // this file just removed, one number along: it would go red when 0183
-    // lands, for no reason connected to 0181. Whether anything sits above 0181
-    // is the CURRENT maximum's business, and it is asserted centrally in that
-    // migration's own test.
-    expect(Number.parseInt(rec.hosted_migration_max, 10)).toBe(181);
+    // What 0181 IS entitled to assert about a moving record is that superseding
+    // it does not ERASE it. A successor record must carry 0181's raw checksum
+    // in its chain — that is the mechanism by which one canonical field can
+    // hold every apply back to 0171 without a reader losing the history.
+    expect(rec.hosted_note).toContain(
+      "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f",
+    );
+  });
+
+  it("0181's apply stays RECORDED in the ledger after 0182 took the current-state block", () => {
+    // The frozen 0181 section, sliced at its own heading. When 0182 was applied
+    // the 0181 block was demoted from "Current state" to "Previous state" with
+    // its body reproduced byte-for-byte; this proves the demotion did not
+    // quietly rewrite the apply record.
+    const LEDGER = readFileSync(
+      join(ROOT, "docs/production/migration-ledger.md"),
+      "utf8",
+    );
+    const HEADING = "## Previous state (verified 2026-08-13, post-0181 apply)";
+    const start = LEDGER.indexOf(HEADING);
+    expect(start, "the 0181 block must survive, demoted rather than deleted").toBeGreaterThan(-1);
+    const section = LEDGER.slice(start, LEDGER.indexOf("post-0180 apply)", start));
+    expect(section).toContain(
+      "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f",
+    );
+    expect(section).toMatch(/RECONCILED AT 0181/);
+    // 0181's own apply DID capture a push exit code. That distinguishes it from
+    // 0180 and 0182, and the distinction must not be flattened by a later edit.
+    expect(section).toMatch(/exit code 0 CAPTURED/);
   });
 });
 

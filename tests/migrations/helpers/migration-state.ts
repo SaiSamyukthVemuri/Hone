@@ -21,6 +21,12 @@ export type MigrationState = {
   hosted_migration_max: string;
   hosted_migration_max_number: number;
   hosted_applied_at: string;
+  /**
+   * Non-null when `hosted_applied_at` is NOT a full instant — e.g. 0182, whose
+   * apply was reported with no clock reading, so the field carries a calendar
+   * DATE. Never read `hosted_applied_at` without checking this.
+   */
+  hosted_applied_at_precision: string | null;
   repo_equals_hosted: boolean;
   pending_migrations: string[];
   versions: string[];
