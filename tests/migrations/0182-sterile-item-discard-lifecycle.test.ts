@@ -89,6 +89,27 @@ describe("0182 — migration state", () => {
     expect(state.hosted_applied_at_precision).toMatch(/DATE-ONLY/i);
     expect(state.hosted_applied_at_precision).toMatch(/NONE IS INVENTED/i);
   });
+
+  it("the CURRENT note carries 0182's limitations while 0182 is the hosted max", () => {
+    // CURRENT STATE, deliberately here and not in the permanent block below.
+    // While 0182 IS the hosted max the canonical note is 0182's own record and
+    // must state its limitations — but the moment 0183 lands this whole
+    // describe hands off (it already pins hosted max to "0182"), so these
+    // assertions retire WITH it rather than demanding that 0183's record repeat
+    // 0182's history. 0182's PERMANENT evidence lives in the frozen ledger
+    // section, which is where a later reader should look.
+    const REC = JSON.parse(
+      readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
+    );
+    expect(REC.hosted_note).toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/);
+    expect(REC.hosted_note).toMatch(/NO ROW-COUNT PROOF/);
+    const COUNT_CLAIM =
+      /\b(?!0\d{3}\b)\d+(?:,\d{3})*\s+(?:rows?|records?|entries|entry|tuples?)\b|\bcount\(\*\)|\bmeasured total (?:of|was|=)\s*\d+(?:,\d{3})*/gi;
+    expect(
+      REC.hosted_note.match(COUNT_CLAIM) ?? [],
+      "the canonical note states a measured count that was never captured for 0182",
+    ).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -131,11 +152,93 @@ describe("0182 — migration source is the exact reviewed file", () => {
 // ---------------------------------------------------------------------------
 // PERMANENT apply facts (must survive 0183+).
 //
-// These read the 0182 ledger section and the canonical record. Their job is to
-// stop the apply from being over-claimed later: the push exit code, the row
-// counts and the exact apply instant were NOT captured, and every future reader
-// must meet that limitation rather than a tidied-up version of it.
+// THE LAW THIS BLOCK OBEYS, and the reason it is shaped the way it is:
+//
+//   MIGRATION-SPECIFIC PERMANENT EVIDENCE comes from that migration's FROZEN
+//   HISTORICAL LEDGER SECTION. CURRENT STATE is allowed to move. Only genuine
+//   SUCCESSOR INVARIANTS may be asserted against the canonical record.
+//
+// An earlier revision of this block read 0182's limitations — the uncaptured
+// push exit code, the absent row count — out of `migration-state.json`'s
+// `hosted_note`. That field is CURRENT state. When 0183 is applied it must
+// advance and describe 0183, whose evidence may be nothing like 0182's, so
+// those assertions would have forced the next operator to choose between
+// restating 0182's limitations inside 0183's record and editing a block titled
+// "must survive 0183+". The successor-state test at the bottom holds that line.
 // ---------------------------------------------------------------------------
+
+/**
+ * 0182's permanent apply evidence.
+ *
+ * Reads `frozenSection` ONLY. `currentNote` is accepted so the successor-state
+ * test can pass a hypothetical 0183 record through this exact function and
+ * prove the evidence does not depend on it — if an assertion here is ever
+ * pointed at `currentNote`, that test goes red.
+ */
+function assert0182PermanentEvidence(sources: {
+  frozenSection: string;
+  currentNote: string;
+}) {
+  const { frozenSection } = sources;
+
+  // The uncaptured push exit code. The single most misquotable line in the
+  // record: a dry-run exit code of 0 says the CLI would push 0182 and nothing
+  // else, and says nothing whatever about whether the push itself returned.
+  expect(frozenSection).toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/i);
+  const zeroClaims =
+    frozenSection.match(/[^.\n|]*\bexit(?:ed)?(?: code)? \*{0,2}0\b[^.\n|]*/gi) ?? [];
+  expect(zeroClaims.length).toBeGreaterThan(0);
+  for (const claim of zeroClaims) {
+    expect(claim, "an exit-code-0 claim that is not attributed to the dry run").toMatch(
+      /dry[- ]run/i,
+    );
+  }
+
+  // The absent row count and the unavailable direct-SQL path.
+  expect(frozenSection).toMatch(/NO ROW-COUNT PROOF/i);
+  expect(frozenSection).toMatch(/NOT COUNTED, AND NOT CLAIMED/i);
+  expect(frozenSection).toMatch(/Management API returned \*\*403\*\*/i);
+
+  // Date-only precision, and the reason no archaeology can improve on it.
+  expect(frozenSection).toMatch(/DATE ONLY/i);
+  expect(frozenSection).toContain("2026-08-16");
+  expect(frozenSection).toMatch(/No exact apply timestamp was captured/i);
+  expect(frozenSection).toMatch(/NO SERVER-SIDE APPLY TIMESTAMP EXISTS/i);
+  // The bracket bound is real and sourced; the instant is the MERGE's, not the
+  // apply's, and the section must keep saying so.
+  expect(frozenSection).toContain("2026-08-16T15:08:27Z");
+
+  // Migration-first order against the real production merge.
+  expect(frozenSection).toContain("bf1b18a920b5a1d0ddb10910335a865e96aa61bf");
+  expect(frozenSection).toContain("c020e1022b585daecdb2ef5ad7784e987c2fbb3d");
+  expect(frozenSection).toMatch(/DATABASE FIRST, before any application merge/i);
+
+  // The applied bytes.
+  expect(frozenSection).toContain(
+    "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57",
+  );
+  expect(frozenSection).toContain(
+    "799690db5fba3a4c24d0c100384784344a5b6c14c5d83a4eeec4e9418fba8fba",
+  );
+}
+
+/**
+ * A genuine SUCCESSOR invariant, and the one thing this file may legitimately
+ * demand of the moving canonical record: whatever record supersedes 0182 must
+ * carry the checksum chain forward rather than erasing what came before.
+ */
+function assertCarriesChainForward(hostedNote: string) {
+  expect(hostedNote).toContain(
+    "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57",
+  );
+  expect(hostedNote).toContain(
+    "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f",
+  );
+  expect(hostedNote).toContain(
+    "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6",
+  );
+}
+
 describe("0182 — the recorded apply evidence stays honest", () => {
   const REC = JSON.parse(
     readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
@@ -144,8 +247,10 @@ describe("0182 — the recorded apply evidence stays honest", () => {
     join(ROOT, "docs/production/migration-ledger.md"),
     "utf8",
   );
-  // Sliced at its own heading so a later migration prepending a new Current
-  // state cannot make these assertions read the wrong block.
+  // Sliced from "post-0182 apply)" — deliberately AFTER the Current/Previous
+  // word — so the slice is byte-identical before and after 0183 demotes this
+  // block's heading, and so a later migration prepending a new Current state
+  // cannot make these assertions read the wrong block.
   const SECTION_START = LEDGER.indexOf("post-0182 apply)");
   const SECTION = LEDGER.slice(
     SECTION_START,
@@ -155,89 +260,96 @@ describe("0182 — the recorded apply evidence stays honest", () => {
   it("the ledger carries a 0182 apply section", () => {
     expect(SECTION_START).toBeGreaterThan(-1);
     expect(SECTION.length).toBeGreaterThan(500);
-    expect(SECTION).toContain(
-      "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57",
-    );
-    expect(SECTION).toContain(
-      "799690db5fba3a4c24d0c100384784344a5b6c14c5d83a4eeec4e9418fba8fba",
-    );
   });
 
-  it("records the UNKNOWN push exit status — the captured 0 is the DRY RUN's", () => {
-    // The single most misquotable line in the record. A dry-run exit code of 0
-    // says the CLI would push 0182 and nothing else; it says nothing whatever
-    // about whether the push itself returned cleanly.
-    expect(SECTION).toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/i);
-    expect(REC.hosted_note).toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/);
-
-    const zeroClaims = SECTION.match(/[^.\n|]*\bexit(?:ed)?(?: code)? \*{0,2}0\b[^.\n|]*/gi) ?? [];
-    expect(zeroClaims.length).toBeGreaterThan(0);
-    for (const claim of zeroClaims) {
-      expect(claim, "an exit-code-0 claim that is not attributed to the dry run").toMatch(
-        /dry[- ]run/i,
-      );
-    }
-  });
-
-  it("claims NO row-count proof and NO direct SQL verification", () => {
-    expect(SECTION).toMatch(/NO ROW-COUNT PROOF/i);
-    expect(SECTION).toMatch(/NOT COUNTED, AND NOT CLAIMED/i);
-    expect(SECTION).toMatch(/Management API returned \*\*403\*\*/i);
-    expect(REC.hosted_note).toMatch(/NO ROW-COUNT PROOF/);
-
-    // A disclaimer is not a guard. Keeping the words "NO ROW-COUNT PROOF" while
-    // ALSO appending "the history table held 181 rows" would satisfy every
-    // assertion above and still smuggle in the measured count that was never
-    // taken — so reject the positive claim directly, not just its absence of
-    // denial. Deliberately narrow: the section legitimately discusses counting
-    // in the negative ("was not row-counted", "no pre/post business-row count
-    // was captured") and cites 0181's own measured total as an INFERENCE.
-    const MEASURED_COUNT = /\b\d[\d,]*\s+rows?\b|\bcount\(\*\)|\brow[- ]count(?:ed)?\s*[:=]\s*\d/i;
+  it("the 0182 evidence section is FROZEN, byte for byte", () => {
+    // THE PRIMARY ANTI-FABRICATION GUARD, and the reason the lexical checks
+    // below are only defence in depth.
+    //
+    // A disclaimer is not a guard: an edit could keep every "NO ROW-COUNT
+    // PROOF" phrase intact and still append "181 records were present", and no
+    // realistic amount of regex would catch every synonym for a count. So the
+    // section is pinned STRUCTURALLY — this repository already freezes applied
+    // migrations by sha256 (see the 0180 record), and the ledger's own law says
+    // historical sections "are never rewritten when a later migration lands".
+    //
+    // The slice starts after the Current/Previous word, so demoting this block
+    // at 0183 leaves the hash untouched. ANY other edit — a word, a digit, an
+    // appended sentence — breaks it, which is the intent. If a genuine
+    // correction to 0182's record is ever needed, updating this hash is the
+    // deliberate, reviewable act that records it.
+    const sha = createHash("sha256").update(SECTION, "utf8").digest("hex");
     expect(
-      SECTION.match(MEASURED_COUNT)?.[0],
-      "the 0182 section states a measured row count that was never captured",
-    ).toBeUndefined();
-    expect(
-      REC.hosted_note.match(MEASURED_COUNT)?.[0],
-      "the canonical note states a measured row count that was never captured",
-    ).toBeUndefined();
+      sha,
+      "the frozen 0182 evidence section changed — if that was deliberate, update this pin in the same review",
+    ).toBe("64b3eb89a020873c386e7766c53a073c304188513d09ca2071be8119658ba39c");
   });
 
-  it("records the apply date at DATE precision in the frozen ledger section", () => {
-    // Read from the LEDGER, not from migration-state.json. `hosted_applied_at`
-    // is CURRENT state and must advance when 0183 is applied; pinning 0182's
-    // date to it inside a block titled "must survive 0183+" would force the
-    // next operator to choose between editing a permanent test and leaving
-    // hosted truth stale. The current-record assertions live in the
-    // current-state block above, where moving is expected.
-    expect(SECTION).toMatch(/DATE ONLY/i);
-    expect(SECTION).toContain("2026-08-16");
-    expect(SECTION).toMatch(/No exact apply timestamp was captured/i);
-    // The bounds are real and sourced; the instant is not, and must not appear
-    // as 0182's apply time.
-    expect(SECTION).toContain("2026-08-16T15:08:27Z");
-    expect(SECTION).toMatch(/NO SERVER-SIDE APPLY TIMESTAMP EXISTS/i);
+  it("states NO measured count, in any wording", () => {
+    // Defence in depth behind the hash: a clearer failure for the most likely
+    // fabrication, and it covers the synonyms the old `rows`-only guard missed
+    // ("181 records", "181 entries", "measured total of 181").
+    //
+    // Asserted as an EXACT allowlist rather than "no matches", because the
+    // section legitimately cites 0181's own measurement while explicitly
+    // labelling 181 an INFERENCE for 0182. Any additional match is a new count
+    // claim. The leading (?!0\d{3}) keeps four-digit MIGRATION IDS from reading
+    // as counts — "the 0181 record" is a chain link, not a tally.
+    const COUNT_CLAIM =
+      /\b(?!0\d{3}\b)\d+(?:,\d{3})*\s+(?:rows?|records?|entries|entry|tuples?)\b|\bcount\(\*\)|\bmeasured total (?:of|was|=)\s*\d+(?:,\d{3})*|\brow[- ]count(?:ed)?\s*[:=]\s*\d/gi;
+    expect(
+      SECTION.match(COUNT_CLAIM) ?? [],
+      "the frozen 0182 section states a measured count that was never captured",
+    ).toEqual(["measured total was 180"]);
+  });
+
+  it("records 0182's permanent evidence from the FROZEN section", () => {
+    assert0182PermanentEvidence({ frozenSection: SECTION, currentNote: REC.hosted_note });
   });
 
   it("carries the checksum chain forward instead of dropping earlier applies", () => {
-    // The chain is the reason a single canonical record can supersede its
-    // predecessor without erasing it. 0182 at the head, 0181 immediately behind
-    // it, and the oldest link still present.
-    expect(REC.hosted_note).toContain(
-      "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57",
-    );
-    expect(REC.hosted_note).toContain(
-      "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f",
-    );
-    expect(REC.hosted_note).toContain(
-      "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6",
-    );
+    // The chain is how one canonical record supersedes its predecessor without
+    // erasing it: 0182 at the head, 0181 behind it, the oldest link still there.
+    assertCarriesChainForward(REC.hosted_note);
   });
 
-  it("records the migration-first order against the real production merge", () => {
-    expect(SECTION).toContain("bf1b18a920b5a1d0ddb10910335a865e96aa61bf");
-    expect(SECTION).toContain("c020e1022b585daecdb2ef5ad7784e987c2fbb3d");
-    expect(SECTION).toMatch(/DATABASE FIRST, before any application merge/i);
+  it("survives a future 0183 apply whose evidence differs from 0182's", () => {
+    // THE SUCCESSOR-STATE TEST, and the anti-vacuity proof for everything
+    // above. `hosted_note` is CURRENT state: when 0183 is applied it must
+    // advance and describe 0183, whose evidence may be nothing like 0182's — a
+    // captured push exit code, a real row count, a precise timestamp.
+    //
+    // This fixture is HYPOTHETICAL. It is never written to disk and asserts
+    // nothing about what 0183 will actually contain.
+    const FUTURE_0183_NOTE =
+      "0183_hypothetical_successor.sql APPLIED to production on 2026-09-01, MIGRATION-FIRST. " +
+      "APPLY EXIT STATUS: PUSH EXIT CODE 0 WAS CAPTURED (the command was backgrounded so a " +
+      "harness timeout could not obscure it). POST-APPLY VERIFICATION: hosted migration history " +
+      "max 0183 recorded exactly once, 182 rows total. FINAL STATE: repository max 0183, hosted " +
+      "max 0183, repo == hosted, nothing pending, next free 0184. SUPERSEDES the 0182 record and " +
+      "CARRIES THE FULL CHECKSUM CHAIN FORWARD: the 0182 record " +
+      "(0182_sterile_item_discard_lifecycle.sql, raw sha256 " +
+      "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57, executable sha256 " +
+      "799690db5fba3a4c24d0c100384784344a5b6c14c5d83a4eeec4e9418fba8fba, applied 2026-08-16), " +
+      "the 0181 record (raw sha256 " +
+      "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f) ... and the 0171 record " +
+      "(sha256 f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6).";
+
+    // The fixture is a REAL successor: its evidence contradicts 0182's on every
+    // point this file pins, so it would break any assertion still coupled to
+    // the moving record.
+    expect(FUTURE_0183_NOTE).not.toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/);
+    expect(FUTURE_0183_NOTE).not.toMatch(/NO ROW-COUNT PROOF/);
+    expect(FUTURE_0183_NOTE).toMatch(/\b182 rows\b/);
+
+    // 0182's permanent evidence is UNAFFECTED — it lives in the frozen section.
+    assert0182PermanentEvidence({
+      frozenSection: SECTION,
+      currentNote: FUTURE_0183_NOTE,
+    });
+
+    // And the successor invariant still binds the new record.
+    assertCarriesChainForward(FUTURE_0183_NOTE);
   });
 });
 
