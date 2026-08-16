@@ -29,6 +29,19 @@ export type ProbeLotSuggestion = {
   // confirmed row would otherwise pin the field forever (auto-fill never
   // confirms, so every later row stays unconfirmed).
   lastCharted: string;
+  // Migration 0182: the inventory item id of the SAME row `lastCharted` came
+  // from (null when that row was manual/free-text). Tracked purely so the
+  // history fallback can check that item's LIFECYCLE BY IDENTITY.
+  //
+  // Identity is required because the alternatives are both wrong. Matching on
+  // the row's CURRENT probe classification misses an item that was charted
+  // under one probe and later reclassified to another — reclassifying a box
+  // does not put it back on the shelf. Matching on the lot NUMBER across all
+  // inventory over-fires, because lot numbers are explicitly not unique and a
+  // different probe's same-numbered lot must never block this probe's history
+  // (pinned by "an expired lot for ANOTHER probe never blocks this probe's
+  // history"). The id is the only thing that identifies the physical item.
+  lastChartedInventoryItemId: string | null;
 };
 
 export type ProbeLotSuggestions = {

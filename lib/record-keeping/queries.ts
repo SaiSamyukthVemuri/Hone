@@ -267,6 +267,7 @@ export async function getProbeLotSuggestions(
         inventoryItemId,
         lastConfirmedInventoryItemId: null,
         lastCharted: "",
+        lastChartedInventoryItemId: null,
       };
     }
     if (
@@ -287,11 +288,15 @@ export async function getProbeLotSuggestions(
     slot: string,
     lot: string,
     createdAt: string,
+    // 0182: the inventory id of THIS row, kept in lockstep with lastCharted so
+    // the auto-fill guard can check that exact item's lifecycle by identity.
+    inventoryItemId: string | null,
   ) => {
     const previous = seenAt[slot];
     if (previous !== undefined && previous >= createdAt) return;
     seenAt[slot] = createdAt;
     map[slot].lastCharted = lot;
+    map[slot].lastChartedInventoryItemId = inventoryItemId;
   };
   const lastChartedAtByKey: Record<string, string> = {};
   const lastChartedAtByLabel: Record<string, string> = {};
@@ -305,12 +310,26 @@ export async function getProbeLotSuggestions(
     const key = (row.probe_key as string | null)?.trim();
     if (key) {
       seedFirst(byKey, key, lot, confirmed, inventoryItemId);
-      seedLastCharted(byKey, lastChartedAtByKey, key, lot, createdAt);
+      seedLastCharted(
+        byKey,
+        lastChartedAtByKey,
+        key,
+        lot,
+        createdAt,
+        inventoryItemId,
+      );
     }
     const label = normalizeProbeLabel(row.probe_label as string | null);
     if (label) {
       seedFirst(byLabel, label, lot, confirmed, inventoryItemId);
-      seedLastCharted(byLabel, lastChartedAtByLabel, label, lot, createdAt);
+      seedLastCharted(
+        byLabel,
+        lastChartedAtByLabel,
+        label,
+        lot,
+        createdAt,
+        inventoryItemId,
+      );
     }
   }
   return { byKey, byLabel };

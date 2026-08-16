@@ -423,7 +423,12 @@ describe("TARGET — a structured discard removes stock from CURRENT use", () =>
 // The history fallback — the subtle bypass.
 // ---------------------------------------------------------------------------
 
-function suggestions(lot: string): ProbeLotSuggestions {
+// `chartedId` is the inventory item the last-charted row actually pointed at
+// (null = it was a manual/free-text lot, which has no lifecycle to check).
+function suggestions(
+  lot: string,
+  chartedId: string | null = null,
+): ProbeLotSuggestions {
   return {
     byKey: {
       [PROBE]: {
@@ -432,6 +437,7 @@ function suggestions(lot: string): ProbeLotSuggestions {
         inventoryItemId: null,
         lastConfirmedInventoryItemId: null,
         lastCharted: lot,
+        lastChartedInventoryItemId: chartedId,
       },
     },
     byLabel: {},
@@ -485,6 +491,79 @@ describe("TARGET — the free-text history fallback cannot re-suggest discarded 
         suggestions: suggestions("LOT-SOMETHING-ELSE"),
       }),
     ).toEqual({ kind: "from-history", lotNumber: "LOT-SOMETHING-ELSE" });
+  });
+
+  it("a RECLASSIFIED discarded lot is still caught (guard checks by IDENTITY)", () => {
+    // Regression, Codex review of 389c6c2c. The guard used to search only rows
+    // whose CURRENT probe classification matched the selected probe, so this
+    // sequence escaped it entirely:
+    //   1. chart lot X for probe P, linked to inventory item I
+    //   2. later edit I: reclassify it to probe Q AND mark it discarded
+    //   3. chart a new block for probe P
+    // `getProbeLotSuggestions` still truthfully reports X under the HISTORICAL
+    // probe P, but I no longer appeared in the probe-P option list, so the
+    // discarded lot auto-filled as unlinked free text — violating the contract
+    // that discarded stock is never suggested. Reclassifying a box does not put
+    // it back on the shelf.
+    const inventory = buildProbeLotOptions(
+      [
+        row({
+          id: "I",
+          lotNumber: "LOT-X",
+          probeKey: "some_other_probe", // reclassified away from PROBE
+          expiryDate: "2099-01-01", // NOT expired: the discard alone must catch it
+          dateDiscarded: "2026-07-10",
+        }),
+      ],
+      TODAY,
+    );
+    // The probe-scoped guard genuinely cannot see it — that is the hole.
+    expect(probeLotOptionsForProbe(inventory, PROBE)).toHaveLength(0);
+    // The identity guard does, because the charted row pointed at item "I".
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory,
+        suggestions: suggestions("LOT-X", "I"),
+      }),
+    ).toEqual({ kind: "choose" });
+  });
+
+  it("does NOT over-fire: another probe's same-numbered CURRENT lot stays silent", () => {
+    // Lot numbers are explicitly not unique across inventory rows. The guard is
+    // by IDENTITY precisely so a coincidence of numbers cannot block a
+    // legitimate history suggestion — the existing contract "an expired lot for
+    // ANOTHER probe never blocks this probe's history" must keep holding.
+    const inventory = buildProbeLotOptions(
+      [
+        row({
+          id: "other-current",
+          lotNumber: "LOT-X",
+          probeKey: "some_other_probe",
+          expiryDate: "2099-01-01",
+        }),
+      ],
+      TODAY,
+    );
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory,
+        suggestions: suggestions("LOT-X"),
+      }),
+    ).toEqual({ kind: "from-history", lotNumber: "LOT-X" });
+  });
+
+  it("a MANUAL charted row (null inventory id) has no lifecycle and still autofills", () => {
+    // Null id = the charted lot was free text, never inventory. There is
+    // nothing to check, and the history fallback must stay usable.
+    expect(
+      resolveProbeLotAutofill({
+        probeKey: PROBE,
+        inventory: [],
+        suggestions: suggestions("MANUAL-LOT", null),
+      }),
+    ).toEqual({ kind: "from-history", lotNumber: "MANUAL-LOT" });
   });
 
   it("a discarded lot does not count as inventory for the fallback decision", () => {

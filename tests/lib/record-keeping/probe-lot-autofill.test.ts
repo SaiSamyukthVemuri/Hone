@@ -45,6 +45,9 @@ function suggestion(
     inventoryItemId: null,
     lastConfirmedInventoryItemId: null,
     lastCharted: lot,
+    // 0182: defaults to "the charted row was manual", so every pre-existing
+    // case in this file keeps testing exactly what it tested before.
+    lastChartedInventoryItemId: null,
     ...over,
   };
 }

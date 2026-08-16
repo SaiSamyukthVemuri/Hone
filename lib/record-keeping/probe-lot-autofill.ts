@@ -118,10 +118,34 @@ export function resolveProbeLotAutofill(args: {
     // discarded, unlinked and unflagged, which is the original complaint wearing
     // a different hat. Both states mean "not usable now", so both route to the
     // picker rather than into the field.
-    const notCurrent = probeLotOptionsForProbe(inventory, probeKey).some(
+    //
+    // Guard 1 — BY PROBE + LOT NUMBER. Unchanged pre-existing behaviour, now
+    // reading `!isCurrentStock` so it covers discarded as well as expired. It
+    // stays scoped to THIS probe deliberately: lot numbers are explicitly not
+    // unique, and another probe's same-numbered lot must never block this
+    // probe's history (pinned by "an expired lot for ANOTHER probe never blocks
+    // this probe's history").
+    const notCurrentForProbe = probeLotOptionsForProbe(inventory, probeKey).some(
       (o) => !isCurrentStock(o) && sameLot(o.lotNumber, lot),
     );
-    if (notCurrent) return { kind: "choose" };
+    if (notCurrentForProbe) return { kind: "choose" };
+
+    // Guard 2 — BY IDENTITY. Guard 1 matches on the row's CURRENT probe
+    // classification, so it misses an item charted under probe P and later
+    // RECLASSIFIED to Q: the suggestion still truthfully reports the lot under
+    // the historical probe P, but the row is no longer in P's option list, and
+    // the discarded lot auto-filled as unlinked free text.
+    //
+    // Reclassifying a box does not put it back on the shelf. The lot NUMBER
+    // cannot answer this (see Guard 1's uniqueness note), so the check is by
+    // the inventory id the charted row actually pointed at — the only value
+    // that identifies the physical item. Null id = a manual/free-text row,
+    // which was never inventory and so has no lifecycle to check.
+    const chartedId = (suggestion?.lastChartedInventoryItemId ?? "").trim();
+    if (chartedId) {
+      const chartedItem = inventory.find((o) => o.id === chartedId);
+      if (chartedItem && !isCurrentStock(chartedItem)) return { kind: "choose" };
+    }
     return { kind: "from-history", lotNumber: lot };
   }
 
