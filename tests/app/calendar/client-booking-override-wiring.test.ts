@@ -197,3 +197,107 @@ describe("public booking cannot pass the override", () => {
     expect(publicAction).not.toMatch(/allow_outside_availability/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P2-3 / P2-4 / P2-5 — the three findings whose fix lives in component wiring.
+//
+// vitest env is "node" (no DOM), so these are SOURCE PINS, not behavioural
+// tests, and they are labelled as such. The behavioural halves live where they
+// can actually run: the decision semantics in
+// tests/lib/booking/availability-window.test.ts, and the slot-A/slot-B buffer
+// leak in e2e/buffer-override-candidate-scope.spec.ts.
+// ---------------------------------------------------------------------------
+
+describe("P2-3 — a date change invalidates in-flight practitioner lookups", () => {
+  it("handleDate routes through loadForService, which bumps the generation", () => {
+    // Going straight to loadSlots left `eligibleReq` untouched, so an
+    // eligible-practitioner lookup started for the PREVIOUS date could resolve
+    // afterwards, call loadSlots with its captured old date, win the slotReq
+    // race and install the wrong day's window while the form submitted the new
+    // date. Routing through loadForService makes the superseded lookup return
+    // early at its own guard.
+    expect(BOOK).toMatch(
+      /function handleDate\(v: string\) \{[\s\S]*?loadForService\(serviceId, v\);/,
+    );
+    expect(BOOK).not.toMatch(
+      /function handleDate\(v: string\) \{[\s\S]*?loadSlots\(serviceId, v, target\);/,
+    );
+  });
+
+  it("the generation guard it depends on is still present", () => {
+    // The fix is only as good as the guard it leans on.
+    expect(BOOK).toMatch(/const req = \+\+eligibleReq\.current;/);
+    expect(BOOK).toMatch(/if \(req !== eligibleReq\.current\) return;/);
+    expect(BOOK).toMatch(/if \(req !== slotReq\.current\) return;/);
+  });
+});
+
+describe("P2-4 — a buffer approval is scoped to ONE booking candidate", () => {
+  const SURFACES: [string, string][] = [
+    ["client-profile Book form", "app/(app)/clients/[id]/BookAppointment.tsx"],
+    ["calendar Quick Book drawer", "app/(app)/calendar/QuickBookDrawer.tsx"],
+  ];
+
+  for (const [label, rel] of SURFACES) {
+    describe(label, () => {
+      const SRC = read(rel);
+
+      it("stores the candidate the offer was issued FOR, not a bare boolean", () => {
+        // A boolean is a standing permission; an identity is not. This is the
+        // structural difference that makes "approve slot A, then pick slot B"
+        // safe without every mutation site remembering to clear.
+        expect(SRC).toMatch(/const \[bufferOverrideFor, setBufferOverrideFor\]/);
+        expect(SRC).not.toMatch(/setBufferOverrideOffered\(true\)/);
+      });
+
+      it("the offer is DERIVED by comparing against the current candidate", () => {
+        expect(SRC).toMatch(
+          /const bufferOverrideOffered =\s*\n?\s*bufferOverrideFor !== null && bufferOverrideFor === candidateKey;/,
+        );
+      });
+
+      it("the candidate identity covers instant + service + practitioner", () => {
+        expect(SRC).toMatch(/const candidateKey =/);
+        expect(SRC).toMatch(/\$\{serviceId\}\|/);
+        expect(SRC).toMatch(/candidateStartsAt/);
+      });
+
+      it("the refusal scopes the offer to the candidate that was refused", () => {
+        expect(SRC).toMatch(/setBufferOverrideFor\(candidateKey\)/);
+      });
+
+      it("picking a different suggestion also actively clears the acknowledgement", () => {
+        expect(SRC).toMatch(
+          /setPickedSlot\(slot\);[\s\S]{0,200}clearBufferOverride\(\)/,
+        );
+      });
+    });
+  }
+
+  it("the drawer's candidate also covers the drag length", () => {
+    const DRAWER2 = read("app/(app)/calendar/QuickBookDrawer.tsx");
+    expect(DRAWER2).toMatch(/parsedManualDuration \?\? ""/);
+  });
+});
+
+describe("P2-5 — override copy states the FACTUAL reason", () => {
+  const SURFACES: [string, string][] = [
+    ["client-profile Book form", "app/(app)/clients/[id]/BookAppointment.tsx"],
+    ["calendar Quick Book drawer", "app/(app)/calendar/QuickBookDrawer.tsx"],
+  ];
+
+  for (const [label, rel] of SURFACES) {
+    it(`${label}: renders from overrideReason, and has a custom-duration branch`, () => {
+      const SRC = read(rel);
+      // Copy must follow the factual reason, never `requiresOutsideOverride`,
+      // which is true for a custom length on a perfectly ordinary in-hours time.
+      expect(SRC).toMatch(/const manualOverrideReason = manualDecision\.overrideReason;/);
+      expect(SRC).toMatch(/manualOverrideReason === "custom_duration"/);
+      expect(SRC).toMatch(/custom appointment length needs an exception/i);
+      // The acknowledgement wording must not force a false statement either.
+      expect(SRC).toMatch(/I confirm this custom length needs an exception/);
+      // And the old verdict-driven copy must not linger.
+      expect(SRC).not.toMatch(/manualVerdict === "practitioner_closed"/);
+    });
+  }
+});

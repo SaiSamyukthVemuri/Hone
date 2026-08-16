@@ -224,10 +224,18 @@ export function QuickBookDrawer({
   // time is a real capability -- the suggestion list hides those times by
   // design, so the override is the only route -- and it is offered AFTER the
   // refusal so the flag stays a deliberate opt-in with a reason on screen.
-  const [bufferOverrideOffered, setBufferOverrideOffered] = useState(false);
+  //
+  // BOUND TO ONE CANDIDATE, not held as a standing permission. The offer stores
+  // the IDENTITY of the booking it was issued for, so picking a different slot,
+  // time, service, target or drag length revokes it automatically. Requiring
+  // every mutation site to remember a clear() is how this leaked the first
+  // time: approving a buffer conflict for slot A and then choosing slot B kept
+  // the approval and posted allow_outside_availability for a booking the server
+  // had never refused.
+  const [bufferOverrideFor, setBufferOverrideFor] = useState<string | null>(null);
   const [bufferOverrideConfirmed, setBufferOverrideConfirmed] = useState(false);
   function clearBufferOverride() {
-    setBufferOverrideOffered(false);
+    setBufferOverrideFor(null);
     setBufferOverrideConfirmed(false);
   }
   // The REAL availability window for the loaded (service, date, target),
@@ -637,11 +645,18 @@ export function QuickBookDrawer({
   const selectedService = services.find((s) => s.id === serviceId) ?? null;
   const manualDecision = decideManualTime({
     window: availabilityWindow,
+    // The date and zone are required so the END is derived from the real UTC
+    // instant, exactly as the database derives it. Wall-clock addition
+    // disagreed with the validator by an hour on DST-transition days.
+    localDate: draft.localDate,
     localTime: manualLocalTime,
+    timezone: studioTimezone,
     serviceDurationMinutes: selectedService?.default_duration_minutes ?? null,
     customDurationMinutes: parsedManualDuration,
   });
-  const manualVerdict = manualDecision.verdict;
+  // The FACTUAL reason an override is required, which is not the same question
+  // as whether one is required. Copy must follow this, never the boolean.
+  const manualOverrideReason = manualDecision.overrideReason;
   const manualTimeValid = manualDecision.timeValid;
   // Whether the real window actually loaded. Until it has, nothing may be
   // asserted about the typed time -- see the note on ManualTimeDecision.
@@ -656,6 +671,23 @@ export function QuickBookDrawer({
   const assignedName = showSelector
     ? (eligible.find((p) => p.id === target)?.displayName ?? "")
     : currentPractitionerName;
+  // WHICH APPOINTMENT IS ON SCREEN, as one comparable identity: the exact
+  // instant, the service, the assigned practitioner, and the drag length when
+  // there is one. A buffer approval is scoped to this and nothing else.
+  const candidateStartsAt = manualTimeEnabled
+    ? manualTimeValid
+      ? utcInstantFromLocal(draft.localDate, manualLocalTime, studioTimezone).toISOString()
+      : null
+    : (pickedSlot?.start ?? null);
+  const candidateKey =
+    candidateStartsAt && serviceId
+      ? `${serviceId}|${showSelector ? target : currentPractitionerId}|${candidateStartsAt}|${parsedManualDuration ?? ""}`
+      : null;
+  // Derived, never stored: the approval applies only while the candidate it was
+  // issued for is still the one being booked.
+  const bufferOverrideOffered =
+    bufferOverrideFor !== null && bufferOverrideFor === candidateKey;
+
   // The flag is posted for EITHER reason the server accepts it for: a time
   // genuinely outside working hours, or an owner deliberately overriding the
   // soft buffer after the database refused. Both are explicit; neither fires
@@ -783,12 +815,13 @@ export function QuickBookDrawer({
       if (!r.ok) {
         setError(r.error);
         if (r.code === "buffer_conflict") {
+          // Scope the offer to the candidate that was actually refused.
           // THE ONE REFUSAL AN OWNER MAY ACT ON. Offer the override instead of
           // resetting: wiping the manual time here would throw away the very
           // time they are being asked about, leaving no way to accept the
           // offer. The acknowledgement is never pre-ticked, and the reset below
           // still applies to every other failure.
-          setBufferOverrideOffered(true);
+          setBufferOverrideFor(candidateKey);
           setBufferOverrideConfirmed(false);
           return;
         }
@@ -1235,6 +1268,7 @@ export function QuickBookDrawer({
                       value={manualDurationMinutes}
                       onChange={(e) => {
                         setManualDurationMinutes(e.target.value);
+                        clearBufferOverride();
                         markManualTimeExplicit();
                       }}
                       className="w-28 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
@@ -1251,12 +1285,6 @@ export function QuickBookDrawer({
                   was opened via drag (manualDurationMinutes is pre-filled) AND
                   that custom length is what forces the override path. A custom
                   length is owner-only in the database, so this stays as-is. */}
-              {manualDurationMinutes !== "" && parsedManualDuration != null && (
-                <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
-                  This custom duration uses the internal override. Confirm
-                  before booking.
-                </p>
-              )}
               {/* THE WARNING IS CONDITIONAL NOW.
                   It renders only when the chosen time genuinely needs the
                   outside-hours override. A time inside the practitioner's real
@@ -1285,9 +1313,11 @@ export function QuickBookDrawer({
               ) : !manualTimeValid ? null : requiresOutsideOverride ? (
                 <>
                   <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
-                    {manualVerdict === "practitioner_closed"
+                    {manualOverrideReason === "practitioner_closed"
                       ? "You are not working on this day. Booking here needs the outside-hours override, and public booking remains unchanged."
-                      : "This appointment will be booked outside your published availability. Public booking remains unchanged."}
+                      : manualOverrideReason === "custom_duration"
+                        ? "That time is inside your working hours, but a custom appointment length needs an exception. Public booking remains unchanged."
+                        : "This appointment will be booked outside your published availability. Public booking remains unchanged."}
                   </div>
                   <label className="flex items-start gap-2 text-xs text-neutral-700 dark:text-neutral-300">
                     <input
@@ -1300,7 +1330,9 @@ export function QuickBookDrawer({
                       className="mt-0.5 h-4 w-4 flex-none rounded border-neutral-400"
                     />
                     <span>
-                      I understand this is outside my normal availability.
+                      {manualOverrideReason === "custom_duration"
+                        ? "I confirm this custom length needs an exception."
+                        : "I understand this is outside my normal availability."}
                     </span>
                   </label>
                 </>
@@ -1341,7 +1373,12 @@ export function QuickBookDrawer({
                   <button
                     key={slot.start}
                     type="button"
-                    onClick={() => setPickedSlot(slot)}
+                    onClick={() => {
+                      setPickedSlot(slot);
+                      // A different suggestion is a different candidate; a
+                      // buffer approval for the previous one does not travel.
+                      clearBufferOverride();
+                    }}
                     className={`rounded-md border px-3 py-1.5 text-sm transition ${
                       picked
                         ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"

@@ -214,8 +214,34 @@ export function localLongDate(d: Date, tz: string): string {
   }).format(d);
 }
 
+// 0 = Sunday, 6 = Saturday, for a LOCAL CALENDAR DATE that is already known.
+//
+// Use this whenever you hold a "YYYY-MM-DD" and want its weekday. It is pure
+// arithmetic on the date itself: no timezone, no instant, nothing to round-trip.
+//
+// The tempting alternative -- localDayOfWeek(new Date(`${date}T12:00:00Z`), tz)
+// -- is WRONG for far-eastern zones. Noon UTC on a Monday is already Tuesday in
+// UTC+13/UTC+14 (Pacific/Kiritimati, Pacific/Apia), so that expression returns
+// Tuesday's weekday for a Monday date and the caller reads the wrong day's
+// weekly hours. That was harmless while it only shifted which suggestions were
+// generated; it stopped being harmless when the same resolution became the
+// authority for manual-time booking, because migration 0152 fences the
+// database's entire working-hours block behind `if v_cap then` and a
+// capacity-OFF studio has no second opinion.
+//
+// A calendar date has exactly one weekday. Asking a timezone about it can only
+// introduce error.
+export function dayOfWeekFromLocalDate(dateStr: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
+  if (!m) return NaN;
+  return new Date(
+    Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
+  ).getUTCDay();
+}
+
 // 0 = Sunday, 6 = Saturday: matches JS Date getDay() in UTC, but evaluated
-// against the studio's local clock.
+// against the studio's local clock. Takes an INSTANT. When you already have a
+// local calendar date, use dayOfWeekFromLocalDate instead.
 export function localDayOfWeek(d: Date, tz: string): number {
   const dateStr = localDateString(d, tz);
   // Treat dateStr as a UTC date (it lines up with the start of that local day

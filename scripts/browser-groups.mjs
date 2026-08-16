@@ -117,6 +117,9 @@ export const BROWSER_GROUPS = {
       // booked_outside_availability. The pair proves the same control produces
       // opposite outcomes based on the real availability window.
       "manual-time-inside-availability.spec.ts",
+      // A buffer approval is scoped to ONE candidate: approving it for 14:30
+      // and then booking 11:00 must not carry the flag to 11:00.
+      "buffer-override-candidate-scope.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",

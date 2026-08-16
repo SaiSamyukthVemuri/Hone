@@ -1,9 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  dayOfWeekFromLocalDate,
   localDateString,
-  localDayOfWeek,
   localMinutesSinceMidnight,
   localTimeString,
+  utcInstantFromLocal,
 } from "./tz";
 import {
   getStudioWideDaySafe,
@@ -132,13 +133,21 @@ export async function resolveAvailabilityWindow(
   studio: AvailabilityStudio,
   dateStr: string,
   practitionerId?: string | null,
-  dayOfWeek?: number,
 ): Promise<AvailabilityWindow> {
-  // Derived with the SAME expression the slot engine uses, deliberately
-  // including its timezone round-trip. A plain `getUTCDay()` on noon-UTC
-  // disagrees with it in zones far enough east (UTC+13/+14), and a weekday
-  // that disagrees with the slot engine's weekday is a second calendar.
-  const dow = dayOfWeek ?? localDayOfWeek(new Date(`${dateStr}T12:00:00Z`), studio.timezone);
+  // Derived from the CALENDAR DATE, not from an instant.
+  //
+  // This used to be localDayOfWeek(new Date(`${dateStr}T12:00:00Z`), tz), taken
+  // verbatim from the slot engine so the two could not disagree. They agreed --
+  // and both were wrong in UTC+13/UTC+14, where noon UTC on a Monday is already
+  // Tuesday locally, so a Monday booking was measured against Tuesday's hours.
+  //
+  // Harmless while it only shifted which suggestions appeared. Not harmless
+  // once this resolution became the authority for manual-time booking: 0152
+  // fences the database's working-hours block behind `if v_cap then`, so a
+  // capacity-OFF studio has no second opinion and would accept a Monday time
+  // that only fits Tuesday's schedule. The slot engine now calls this same
+  // function, so both are corrected together and there is still one calendar.
+  const dow = dayOfWeekFromLocalDate(dateStr);
 
   const capacityOn =
     studio.practitioner_capacity_enabled === true &&
@@ -224,29 +233,71 @@ export type RequestedTimeVerdict =
 //      engine's own fit filter agrees (`start + duration > close`), and
 //      migration 0170 states the rule outright. Subtracting the buffer here
 //      would refuse the last appointment of every day that Hone already offers.
-//   2. The comparison is on LOCAL WALL-CLOCK time-of-day, not on UTC instants,
-//      because that is what the SQL does. On a DST-transition day the two
-//      domains disagree, and the capacity-ON database is the final authority --
-//      so disagreeing with it would only produce a confusing message.
+//   2. Both endpoints are LOCAL PROJECTIONS OF UTC INSTANTS, because that is
+//      what the SQL does: it computes `p_ends_at` by adding the duration to the
+//      UTC instant and only then converts it with `at time zone v_tz`.
+//
+//      An earlier version of this comment claimed the SQL compared local
+//      wall-clock time and added the duration in that domain. That is true of
+//      the START and false of the END, and the difference is exactly one hour
+//      on a DST-transition day -- which is how the precheck came to disagree
+//      with the validator it claims to mirror. See localInterval below.
 //   3. An appointment may not cross local midnight into the next date. The SQL
 //      refuses it before it ever compares against close, so a 23:30 booking
 //      cannot pass by arithmetic that wraps.
 //
-// `startLocalMinutes` and the duration are minutes; `endLocalMinutes` is
-// deliberately NOT wrapped modulo 24h so a crossing is detectable rather than
-// silently folded back into the window.
+// The interval as the DATABASE sees it: both endpoints projected into studio
+// local time from their UTC instants.
+export type LocalInterval = {
+  startDate: string; // "YYYY-MM-DD"
+  startMinutes: number;
+  endDate: string; // "YYYY-MM-DD"
+  endMinutes: number;
+};
+// Project (start instant, duration) into studio-local endpoints the SAME way
+// migration 0152 does:
+//
+//   v_ends_at    := p_starts_at + duration        -- UTC INSTANT arithmetic
+//   v_local_end  := p_ends_at at time zone v_tz   -- then converted to local
+//
+// This is not the same as adding the duration to the local wall clock, and on a
+// DST-transition day the two disagree by an hour. A 60-minute appointment
+// starting 01:30 the morning of spring-forward really ends at 03:30 local, not
+// 02:30; fall-back has the inverse discrepancy. Adding minutes to wall-clock
+// time made the app precheck disagree with the validator, in both directions:
+// it could accept a booking the database then refuses, and -- worse -- refuse a
+// booking the database would have accepted, demanding the persistent
+// outside-availability override for an ordinary appointment. Deriving both
+// endpoints from instants removes the disagreement by construction.
+export function localInterval(
+  startsAt: Date,
+  durationMinutes: number,
+  timezone: string,
+): LocalInterval {
+  const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
+  return {
+    startDate: localDateString(startsAt, timezone),
+    startMinutes: localMinutesSinceMidnight(localTimeString(startsAt, timezone)),
+    endDate: localDateString(endsAt, timezone),
+    endMinutes: localMinutesSinceMidnight(localTimeString(endsAt, timezone)),
+  };
+}
+
 export function classifyAgainstWindow(
   window: AvailabilityWindow,
-  startLocalMinutes: number,
-  durationMinutes: number,
+  interval: LocalInterval,
 ): RequestedTimeVerdict {
   if (window.kind === "closed") return "practitioner_closed";
   const open = localMinutesSinceMidnight(window.openTime);
   const close = localMinutesSinceMidnight(window.closeTime);
-  const end = startLocalMinutes + durationMinutes;
-  // Crossing local midnight: refused before the window comparison, as in SQL.
-  if (end > 24 * 60) return "outside_availability";
-  if (startLocalMinutes < open || end > close) return "outside_availability";
+  // An appointment may not run into the next local date. The SQL refuses this
+  // before it ever compares against close, so a 23:30 booking cannot pass by
+  // arithmetic that wraps -- and an end at exactly local midnight lands on the
+  // next date here just as `v_local_end::date` does in Postgres.
+  if (interval.endDate !== interval.startDate) return "outside_availability";
+  if (interval.startMinutes < open || interval.endMinutes > close) {
+    return "outside_availability";
+  }
   return "inside_availability";
 }
 
@@ -299,21 +350,47 @@ export function classifyAgainstWindow(
 // (a non-owner passing p_duration_override_minutes gets 'not_authorized'), and
 // the server action couples it to this flag. Changing that coupling would need
 // a migration, so it is deliberately untouched here.
+//
+// BUT THE REASON IS NOT THE SAME AS THE VERDICT, and the UI must not conflate
+// them. A dragged 45-minute appointment at 10:00 on a 09:00-17:00 day is
+// FACTUALLY INSIDE the practitioner's working hours; it needs the shared
+// database flag only because that flag is also what authorises a custom length.
+// Telling the practitioner "this is outside your normal availability" and
+// asking them to affirm it is a false statement about their own schedule --
+// the same class of lie this module exists to remove. `overrideReason` carries
+// the factual reason so each surface can say the true thing.
+export type OverrideReason =
+  // The practitioner does not work that day at all.
+  | "practitioner_closed"
+  // The time genuinely falls outside the day's working-hours window.
+  | "outside_availability"
+  // The time is INSIDE working hours; only the custom length needs an exception.
+  | "custom_duration";
+
 export type ManualTimeDecision = {
   timeValid: boolean;
   windowKnown: boolean;
   verdict: RequestedTimeVerdict | null;
   requiresOutsideOverride: boolean;
+  // Why the override is required, or null when it is not (or cannot yet be
+  // determined). Never infer this from `requiresOutsideOverride` alone.
+  overrideReason: OverrideReason | null;
 };
 
 const MANUAL_TIME_RE = /^\d{2}:\d{2}$/;
+const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function decideManualTime(input: {
   // The server-resolved window for the loaded (studio, target, date). null when
   // it has not loaded or the load failed.
   window: AvailabilityWindow | null;
+  // The studio-local date the manual time belongs to, "YYYY-MM-DD".
+  localDate: string;
   // Studio-local "HH:MM" as typed.
   localTime: string;
+  // Studio IANA timezone. Required because the END of the appointment is
+  // derived from the UTC instant, exactly as the database derives it.
+  timezone: string;
   // The selected service's authoritative default length.
   serviceDurationMinutes: number | null;
   // A drag-derived custom length, already parsed/validated, else null.
@@ -321,20 +398,45 @@ export function decideManualTime(input: {
 }): ManualTimeDecision {
   const timeValid = MANUAL_TIME_RE.test(input.localTime);
   const duration = input.customDurationMinutes ?? input.serviceDurationMinutes;
-  const verdict =
-    timeValid && input.window !== null && duration != null
-      ? classifyAgainstWindow(
-          input.window,
-          localMinutesSinceMidnight(input.localTime),
-          duration,
-        )
-      : null;
+  const resolvable =
+    timeValid &&
+    input.window !== null &&
+    duration != null &&
+    LOCAL_DATE_RE.test(input.localDate);
+  // Built through utcInstantFromLocal -- the SAME helper both surfaces use to
+  // compute the `starts_at` they submit -- so the time being classified is the
+  // instant that will actually be booked, DST conventions included.
+  const verdict = resolvable
+    ? classifyAgainstWindow(
+        input.window!,
+        localInterval(
+          utcInstantFromLocal(input.localDate, input.localTime, input.timezone),
+          duration!,
+          input.timezone,
+        ),
+      )
+    : null;
+  const requiresOutsideOverride =
+    input.customDurationMinutes != null || verdict !== "inside_availability";
+  // Precedence: a genuinely out-of-hours time is reported as such even when a
+  // custom length is also in play, because that is the more serious fact and
+  // the one the acknowledgement is really about. "custom_duration" is reserved
+  // for a time that is otherwise perfectly ordinary.
+  const overrideReason: OverrideReason | null = !requiresOutsideOverride
+    ? null
+    : verdict === "practitioner_closed"
+      ? "practitioner_closed"
+      : verdict === "outside_availability"
+        ? "outside_availability"
+        : verdict === "inside_availability"
+          ? "custom_duration"
+          : null;
   return {
     timeValid,
     windowKnown: input.window !== null,
     verdict,
-    requiresOutsideOverride:
-      input.customDurationMinutes != null || verdict !== "inside_availability",
+    requiresOutsideOverride,
+    overrideReason,
   };
 }
 
@@ -365,8 +467,10 @@ export async function classifyRequestedTime(
     dateStr,
     practitionerId,
   );
-  const startLocalMinutes = localMinutesSinceMidnight(
-    localTimeString(startsAt, studio.timezone),
+  // Both endpoints projected from instants, matching the validator. See
+  // localInterval for why wall-clock addition was wrong across DST.
+  return classifyAgainstWindow(
+    window,
+    localInterval(startsAt, durationMinutes, studio.timezone),
   );
-  return classifyAgainstWindow(window, startLocalMinutes, durationMinutes);
 }

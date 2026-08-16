@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  localDayOfWeek,
   localMinutesSinceMidnight,
   localTimeString12h,
   minutesToHHMM,
@@ -208,7 +207,6 @@ export async function getAvailableSlots(
     studio.practitioner_capacity_enabled === true &&
     practitionerId !== undefined &&
     practitionerId !== null;
-  const dow = localDayOfWeek(new Date(`${dateStr}T12:00:00Z`), tz);
   const buffer = Math.max(0, studio.buffer_minutes ?? 0);
   const duration =
     serviceDurationMinutes ?? studio.default_appointment_duration_minutes ?? 60;
@@ -239,12 +237,18 @@ export async function getAvailableSlots(
   //
   // Generation semantics are unchanged: a closed or absent window yields NO
   // slots, exactly as `if (!isOpen || !openTime || !closeTime) return []` did.
+  //
+  // The weekday it resolves against is now derived from the CALENDAR DATE
+  // rather than from a noon-UTC instant round-tripped through the studio zone.
+  // That round trip returned the NEXT day's weekday in UTC+13/UTC+14, so a
+  // Monday generated Tuesday's hours. It is corrected inside the shared
+  // resolver, so the slot engine and the manual-time check are fixed together
+  // and still share exactly one calendar.
   const window = await resolveAvailabilityWindow(
     supabase,
     studio,
     dateStr,
     practitionerId,
-    dow,
   );
   if (window.kind !== "open") return [];
   const openTime: string = window.openTime;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Service } from "@/lib/types/database";
 import {
@@ -82,12 +82,21 @@ export function BookAppointment({
   // deliberate opt-in with a concrete reason on screen.
   //
   // Owner-only, because the same flag is what the server gates on role.
-  const [bufferOverrideOffered, setBufferOverrideOffered] = useState(false);
+  //
+  // BOUND TO ONE CANDIDATE, not held as a standing permission.
+  //
+  // The offer stores the IDENTITY of the booking it was issued for. Every
+  // mutation that changes which appointment is being booked -- slot, manual
+  // time, date, service, target -- changes that identity, and the offer stops
+  // applying automatically. Relying instead on each mutation site remembering
+  // to call a clear() is how the first version of this leaked: picking a
+  // different slot after approving a buffer conflict for slot A left the
+  // approval standing and posted allow_outside_availability for slot B, which
+  // the server had never refused.
+  const [bufferOverrideFor, setBufferOverrideFor] = useState<string | null>(null);
   const [bufferOverrideConfirmed, setBufferOverrideConfirmed] = useState(false);
-  // Any change to WHICH booking this is invalidates a buffer offer: it was a
-  // fact about one (time, date, service, target), not a standing permission.
   function clearBufferOverride() {
-    setBufferOverrideOffered(false);
+    setBufferOverrideFor(null);
     setBufferOverrideConfirmed(false);
   }
   // The REAL availability window for the loaded (service, date, target),
@@ -214,7 +223,21 @@ export function BookAppointment({
   }
   function handleDate(v: string) {
     setDate(v);
-    if (serviceId && v) loadSlots(serviceId, v, target);
+    // FINDING 3: route through loadForService, not straight to loadSlots.
+    //
+    // loadForService bumps `eligibleReq`, which INVALIDATES any in-flight
+    // eligible-practitioner lookup started for the previous date. That matters
+    // because such a lookup finishes by calling loadSlots with the date it
+    // captured: if it resolved after this date change it would start a NEWER
+    // slot generation for the OLD date, win the slotReq race, and install the
+    // wrong day's availability window while the form submits the new date.
+    // Clearing the window before each fetch does not help -- the stale lookup
+    // begins its own fetch afterwards.
+    //
+    // Sending it through the same entry point the service change uses means the
+    // superseded lookup returns early at its `req !== eligibleReq.current`
+    // guard, and the eligible list is re-resolved for the current date.
+    if (serviceId && v) loadForService(serviceId, v);
   }
   function handleTarget(v: string) {
     setTarget(v);
@@ -244,17 +267,50 @@ export function BookAppointment({
   const selectedService = services.find((s) => s.id === serviceId) ?? null;
   const manualDecision = decideManualTime({
     window: availabilityWindow,
+    // The date and zone are required so the END is derived from the real UTC
+    // instant, exactly as the database derives it. Wall-clock addition
+    // disagreed with the validator by an hour on DST-transition days.
+    localDate: date,
     localTime: manualTime,
+    timezone,
     serviceDurationMinutes: selectedService?.default_duration_minutes ?? null,
     customDurationMinutes: null,
   });
-  const manualVerdict = manualDecision.verdict;
+  // The FACTUAL reason an override is required, which is not the same question
+  // as whether one is required. Copy must follow this, never the boolean.
+  const manualOverrideReason = manualDecision.overrideReason;
   const manualTimeValid = manualDecision.timeValid;
   // Whether the real window actually loaded. Until it has, nothing may be
   // asserted about the typed time -- see the note on ManualTimeDecision.
   const windowKnown = manualDecision.windowKnown;
   const requiresOutsideOverride =
     manualTimeActive && manualDecision.requiresOutsideOverride;
+
+  // WHICH APPOINTMENT IS ON SCREEN, as one comparable identity: the exact
+  // instant, the service (which fixes the length) and the assigned
+  // practitioner. A buffer approval is scoped to this and nothing else.
+  const candidateStartsAt = manualTimeActive
+    ? manualTimeValid
+      ? utcInstantFromLocal(date, manualTime, timezone).toISOString()
+      : null
+    : (pickedSlot?.start ?? null);
+  const candidateKey =
+    candidateStartsAt && serviceId
+      ? `${serviceId}|${showSelector ? target : currentPractitionerId}|${candidateStartsAt}`
+      : null;
+  // Derived, never stored: the approval applies only while the candidate it was
+  // issued for is still the one being booked. Changing slot, time, date,
+  // service or practitioner therefore revokes it with no clear() call at all.
+  const bufferOverrideOffered =
+    bufferOverrideFor !== null && bufferOverrideFor === candidateKey;
+  // ...and the acknowledgement itself is actively dropped too, so returning to
+  // the same candidate later cannot find a pre-ticked box.
+  useEffect(() => {
+    if (bufferOverrideFor !== null && bufferOverrideFor !== candidateKey) {
+      setBufferOverrideFor(null);
+      setBufferOverrideConfirmed(false);
+    }
+  }, [bufferOverrideFor, candidateKey]);
 
   // The flag is posted for EITHER reason the server will accept it for: a time
   // genuinely outside working hours, or an owner deliberately overriding the
@@ -329,7 +385,8 @@ export function BookAppointment({
         // them at a dead end. Non-owners are told who can, and nothing is
         // pre-ticked.
         if (r.code === "buffer_conflict") {
-          setBufferOverrideOffered(true);
+          // Scope the offer to the candidate that was actually refused.
+          setBufferOverrideFor(candidateKey);
           setBufferOverrideConfirmed(false);
         } else {
           clearBufferOverride();
@@ -470,7 +527,12 @@ export function BookAppointment({
                 <button
                   key={slot.start}
                   type="button"
-                  onClick={() => setPickedSlot(slot)}
+                  onClick={() => {
+                    setPickedSlot(slot);
+                    // A different suggestion is a different candidate; a buffer
+                    // approval for the previous one does not travel.
+                    clearBufferOverride();
+                  }}
                   className={`rounded-md border px-3 py-1.5 text-sm transition ${
                     picked
                       ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
@@ -539,11 +601,18 @@ export function BookAppointment({
                   : "Could not load your working hours, so this time cannot be checked. Refresh and try again."}
               </p>
             ) : !manualTimeValid ? null : requiresOutsideOverride ? (
+              // THE COPY FOLLOWS THE FACTUAL REASON, NOT THE PERMISSION ANSWER.
+              // A custom length needs the shared DB exception flag even when
+              // the time is squarely inside working hours; saying "outside your
+              // normal availability" there asks the practitioner to affirm
+              // something false about their own schedule.
               <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
                 <p className="text-xs text-amber-800 dark:text-amber-300">
-                  {manualVerdict === "practitioner_closed"
+                  {manualOverrideReason === "practitioner_closed"
                     ? "You are not working on this date. Double-booking, buffer and time-off rules are still enforced."
-                    : "This time is outside your normal availability. Double-booking, buffer and time-off rules are still enforced."}
+                    : manualOverrideReason === "custom_duration"
+                      ? "That time is inside your working hours, but a custom appointment length needs an exception. Double-booking, buffer and time-off rules are still enforced."
+                      : "This time is outside your normal availability. Double-booking, buffer and time-off rules are still enforced."}
                 </p>
                 {isOwner ? (
                   <label className="flex items-center gap-2 text-xs">
@@ -553,11 +622,15 @@ export function BookAppointment({
                       onChange={(e) => setOutsideHoursConfirmed(e.target.checked)}
                       className="h-4 w-4"
                     />
-                    I confirm I want to book this out-of-hours time.
+                    {manualOverrideReason === "custom_duration"
+                      ? "I confirm this custom length needs an exception."
+                      : "I confirm I want to book this out-of-hours time."}
                   </label>
                 ) : (
                   <p className="text-xs text-amber-800 dark:text-amber-300">
-                    Only the studio owner can book outside normal availability.
+                    {manualOverrideReason === "custom_duration"
+                      ? "Only the studio owner can book a custom appointment length."
+                      : "Only the studio owner can book outside normal availability."}
                   </p>
                 )}
               </div>

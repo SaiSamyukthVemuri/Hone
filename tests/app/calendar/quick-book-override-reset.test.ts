@@ -141,7 +141,7 @@ describe("booking outside availability still requires an explicit acknowledgemen
     // owner is being asked to confirm, leaving the offer unacceptable. The
     // buffer branch must return BEFORE that reset.
     expect(DRAWER).toMatch(
-      /if \(r\.code === "buffer_conflict"\) \{[\s\S]*?setBufferOverrideOffered\(true\);[\s\S]*?return;\s*\n\s*\}/,
+      /if \(r\.code === "buffer_conflict"\) \{[\s\S]*?setBufferOverrideFor\(candidateKey\);[\s\S]*?return;\s*\n\s*\}/,
     );
     const bufferBranch = DRAWER.indexOf('if (r.code === "buffer_conflict")');
     const genericReset = DRAWER.indexOf(
