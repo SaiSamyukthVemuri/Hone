@@ -73,7 +73,7 @@ describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6
     // could not reject a response whose candidate had moved on underneath it.
     expect(BOOK).toMatch(/isCurrentGeneration: \(g\) => g === slotReq\.current/);
     expect(BOOK).toMatch(/readCurrentRequest: liveSlotRequest/);
-    expect(BOOK).toMatch(/identityOf: slotFetchIdentity/);
+    expect(BOOK).toMatch(/identityOf: slotCandidateIdentity/);
     expect(BOOK).toMatch(/decision\.kind === "discard"/);
     // The eligible-side guard moved into resolveEligibleSelection, which checks
     // it AFTER the await; the component supplies the generation + predicate.

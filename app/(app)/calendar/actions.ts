@@ -35,7 +35,21 @@ export type BookResult =
   // bypassable by the same flag that bypasses working hours, so the surfaces
   // offer an explicit "book it anyway" and re-submit. Without the code they
   // would have to string-match the message to know when to offer it.
-  | { ok: false; error: string; code?: "slot_taken" | "buffer_conflict" };
+  | {
+      ok: false;
+      error: string;
+      code?: "slot_taken" | "buffer_conflict" | "stale_candidate";
+      // Returned ONLY with `buffer_conflict`: the appointment length the server
+      // actually refused, read from the service row in this same request.
+      //
+      // The surfaces previously scoped the acknowledgement using a duration
+      // taken from their React `services` prop, which is a snapshot that can
+      // age. If the service length changed between the refusal and the retry,
+      // the approval still matched while the server booked a different
+      // interval -- bypassing the buffer for something the owner never saw.
+      // Bounded on purpose: a duration, nothing else about the service.
+      authoritativeDurationMinutes?: number;
+    };
 
 // Part 4: the canonical booking command's result row + safe owner-facing copy.
 type BookingRpcRow = {
@@ -175,6 +189,23 @@ export async function bookAppointmentForClientAction(
     return { ok: false, error: "Missing fields." };
   }
 
+  // OPTIMISTIC-CONCURRENCY PRECONDITION, not authorization.
+  //
+  // When a surface retries a booking carrying the buffer override, it states
+  // the appointment length the refusal it is acting on was issued for. This is
+  // compared against the service row read below -- the row the command will
+  // actually book from. A mismatch means the service was edited between the
+  // refusal and the retry, so the acknowledgement describes an interval that no
+  // longer exists and MUST NOT authorise a bypass.
+  //
+  // The browser's number is never trusted as permission. It can only make the
+  // server refuse; it can never make it accept. Everything else -- studio,
+  // role, service, duration, target authority -- is still derived server-side.
+  const expectedDurationRaw = formDataStrOrNull(
+    formData,
+    "expected_duration_minutes",
+  );
+
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot book." };
@@ -229,6 +260,20 @@ export async function bookAppointmentForClientAction(
     return { ok: false, error: "Could not load the service. Please try again." };
   }
   if (!service) return { ok: false, error: "Service not found." };
+  if (expectedDurationRaw !== null) {
+    const expected = parseInt(expectedDurationRaw.trim(), 10);
+    if (
+      !Number.isFinite(expected) ||
+      expected !== service.default_duration_minutes
+    ) {
+      return {
+        ok: false,
+        code: "stale_candidate",
+        error:
+          "The service length changed. Review the appointment and try again.",
+      };
+    }
+  }
 
   // Confirm the client belongs to the studio. SMS consent + opt-out
   // selected so dispatchBookingEmails below can attempt SMS without a
@@ -414,6 +459,9 @@ export async function bookAppointmentForClientAction(
         ok: false,
         error: bookingResultMessage("buffer_conflict"),
         code: "buffer_conflict",
+        // The interval THIS refusal was issued for, from the service row read
+        // above in this same request.
+        authoritativeDurationMinutes: service.default_duration_minutes,
       };
     }
     return { ok: false, error: bookingResultMessage(outcome?.result) };

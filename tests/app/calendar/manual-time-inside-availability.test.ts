@@ -796,3 +796,99 @@ describe("ANTI-VACUITY — recommended and available are genuinely different her
     expect(withoutAppointment).toContain(new Date(Z("15:00")).getTime());
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE BUFFER ACKNOWLEDGEMENT IS BOUND TO THE INTERVAL THE SERVER REFUSED.
+//
+// The surfaces used to scope the approval with a duration taken from their
+// React `services` prop -- a snapshot that ages. If the service length changed
+// between the refusal and the retry, the approval still matched while the
+// server booked a DIFFERENT interval, bypassing the buffer for something the
+// owner never saw or agreed to.
+//
+// The refusal now reports the length it was issued for, and the retry states it
+// back as a PRECONDITION. The browser's number can only make the server refuse;
+// it can never make it accept.
+// ---------------------------------------------------------------------------
+
+describe("buffer refusal reports the interval it was issued for", () => {
+  it("buffer_conflict carries the server's authoritative duration", async () => {
+    scenario.rpcResult = "buffer_conflict";
+    const r = await book({ starts_at: MANUAL_INSIDE });
+    expect(!r.ok && r.code).toBe("buffer_conflict");
+    // 60 is what the mocked service row says -- read by the server, not sent.
+    expect(!r.ok && r.authoritativeDurationMinutes).toBe(60);
+  });
+
+  it("no OTHER refusal carries a duration", async () => {
+    scenario.rpcResult = "not_eligible";
+    const r = await book({ starts_at: MANUAL_INSIDE });
+    expect(!r.ok && r.authoritativeDurationMinutes).toBeUndefined();
+  });
+});
+
+describe("D — the service length changed between refusal and retry", () => {
+  it("a stale acknowledged duration REFUSES, and never reaches the command", async () => {
+    // The refusal was issued for 60. The service is now 90. The owner's
+    // acknowledgement describes an interval that no longer exists.
+    rpcCalls.length = 0;
+    mock = createBookingSupabaseMock((q) =>
+      q.table === "services"
+        ? {
+            data: {
+              id: "svc-1",
+              studio_id: "studio-1",
+              active: true,
+              default_duration_minutes: 90,
+            },
+            error: null,
+          }
+        : resolver(q),
+    );
+    const r = await book({
+      starts_at: MANUAL_INSIDE,
+      allow_outside_availability: "true",
+      expected_duration_minutes: "60",
+    });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.code).toBe("stale_candidate");
+    expect(!r.ok && r.error).toMatch(/service length changed/i);
+    // NOTHING was booked, and the override never reached the DB command.
+    expect(rpcCalls).toHaveLength(0);
+  });
+});
+
+describe("E — the length is unchanged, so the override still works", () => {
+  it("a matching acknowledged duration books with the flag TRUE", async () => {
+    const r = await book({
+      starts_at: MANUAL_INSIDE,
+      allow_outside_availability: "true",
+      expected_duration_minutes: "60", // matches the service row
+    });
+    expect(r.ok).toBe(true);
+    expect(lastRpc().args.p_allow_outside_availability).toBe(true);
+  });
+
+  it("the precondition is not authorization — a member is still refused", async () => {
+    // Stating a matching duration must not soften the owner-only gate.
+    scenario.role = "practitioner";
+    const r = await book({
+      starts_at: MANUAL_INSIDE,
+      allow_outside_availability: "true",
+      expected_duration_minutes: "60",
+    });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toMatch(/only the studio owner can book outside/i);
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it("a garbage precondition refuses rather than being ignored", async () => {
+    const r = await book({
+      starts_at: MANUAL_INSIDE,
+      allow_outside_availability: "true",
+      expected_duration_minutes: "not-a-number",
+    });
+    expect(!r.ok && r.code).toBe("stale_candidate");
+    expect(rpcCalls).toHaveLength(0);
+  });
+});

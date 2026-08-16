@@ -22,8 +22,16 @@ describe("QuickBookDrawer — owner selector, target-aware slots, member/Legacy"
     expect(DRAWER).toMatch(/fetchEligiblePractitionersAction/);
   });
   it("the slot effect is target-aware: target in deps + practitionerId only when the selector is active", () => {
-    expect(DRAWER).toMatch(/practitionerId: showSelector \? target : undefined/);
-    expect(DRAWER).toMatch(/\}, \[open, draft\?\.localDate, draft\?\.localTime, serviceId, showSelector, target\]\)/);
+    // The argument now travels inside the request object the identity is
+    // derived from, so the two provably cannot diverge.
+    expect(DRAWER).toMatch(/practitionerId: showSelector \? \(target \|\| null\) : null/);
+    expect(DRAWER).toMatch(/practitionerId: q\.practitionerId \?\? undefined/);
+    // The deps still carry the target, and now also the two prop-borne identity
+    // components (capacity mode, timezone) so a change to either REFETCHES
+    // rather than leaving the drawer holding a window that is no longer current.
+    expect(DRAWER).toMatch(
+      /\}, \[\s*\n\s*open,\s*\n\s*draft\?\.localDate,\s*\n\s*draft\?\.localTime,\s*\n\s*serviceId,\s*\n\s*showSelector,\s*\n\s*target,\s*\n\s*practitionerCapacityEnabled,\s*\n\s*studioTimezone,\s*\n\s*\]\)/,
+    );
     // Fail closed: no self-slot fetch when the selector is shown but no target.
     expect(DRAWER).toMatch(/showSelector && !target/);
   });

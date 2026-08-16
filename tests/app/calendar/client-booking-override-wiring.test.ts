@@ -276,7 +276,13 @@ describe("P2-4 — a buffer approval is scoped to ONE booking candidate", () => 
       });
 
       it("the refusal scopes the offer to the candidate that was refused", () => {
-        expect(SRC).toMatch(/setBufferOverrideFor\(candidateKey\)/);
+        // Scoped to the SERVER-refused candidate: the client page rebuilds the
+        // key with the duration the refusal reported; the drawer's key already
+        // prefers that duration, so passing candidateKey is equivalent there.
+        expect(SRC).toMatch(
+          /setBufferOverrideFor\(\s*\n?\s*(candidateKey|bookingCandidateKey\(\{)/,
+        );
+        expect(SRC).toMatch(/setBufferOverrideDuration\(/);
       });
 
       it("picking a different suggestion also actively clears the acknowledgement", () => {
@@ -289,7 +295,7 @@ describe("P2-4 — a buffer approval is scoped to ONE booking candidate", () => 
 
   it("the drawer's candidate also covers the (normalised) drag length", () => {
     const DRAWER2 = read("app/(app)/calendar/QuickBookDrawer.tsx");
-    expect(DRAWER2).toMatch(/effectiveDurationMinutes:\s*\n?\s*effectiveDurationOverride \?\?/);
+    expect(DRAWER2).toMatch(/effectiveDurationOverride \?\?\s*\n?\s*selectedService\?\.default_duration_minutes/);
   });
 });
 
@@ -352,7 +358,7 @@ describe("P2-A/C — both surfaces use the SHARED candidate identity", () => {
     );
     // The decision, the identity and the payload must all read the SAME value.
     expect(DRAWER3).toMatch(/customDurationMinutes: effectiveDurationOverride/);
-    expect(DRAWER3).toMatch(/effectiveDurationMinutes:\s*\n?\s*effectiveDurationOverride \?\?/);
+    expect(DRAWER3).toMatch(/effectiveDurationOverride \?\?\s*\n?\s*selectedService\?\.default_duration_minutes/);
     // ...and it falls back to the SERVICE default, so a standard booking's
     // interval is still part of the buffer identity.
     expect(DRAWER3).toMatch(/selectedService\?\.default_duration_minutes/);
@@ -522,14 +528,14 @@ describe("slot/window results commit only to the current candidate", () => {
 
   it("loadSlots invalidates synchronously BEFORE issuing the request", () => {
     const inval = BOOK.indexOf("invalidateSelection();");
-    const issue = BOOK.indexOf("const request: SlotFetchInput");
+    const issue = BOOK.indexOf("const request: SlotCandidateIdentity");
     expect(inval).toBeGreaterThan(-1);
     expect(inval).toBeLessThan(issue);
   });
 
   it("the result is committed through the identity-checked helper", () => {
-    expect(BOOK).toMatch(/fetchForIdentity<SlotFetchInput, SlotResult>\(\{/);
-    expect(BOOK).toMatch(/identityOf: slotFetchIdentity/);
+    expect(BOOK).toMatch(/fetchForIdentity<SlotCandidateIdentity, SlotResult>\(\{/);
+    expect(BOOK).toMatch(/identityOf: slotCandidateIdentity/);
     expect(BOOK).toMatch(/isCurrentGeneration: \(g\) => g === slotReq\.current/);
     expect(BOOK).toMatch(/readCurrentRequest: liveSlotRequest/);
     expect(BOOK).toMatch(/if \(decision\.kind === "discard"\) return;/);
@@ -538,7 +544,7 @@ describe("slot/window results commit only to the current candidate", () => {
   });
 
   it("the live request is read from refs, never captured state", () => {
-    expect(BOOK).toMatch(/function liveSlotRequest\(\): SlotFetchInput/);
+    expect(BOOK).toMatch(/function liveSlotRequest\(\): SlotCandidateIdentity/);
     expect(BOOK).toMatch(/serviceId: serviceRef\.current/);
     expect(BOOK).toMatch(/date: dateRef\.current/);
     expect(BOOK).toMatch(/targetRef\.current/);
@@ -551,9 +557,78 @@ describe("slot/window results commit only to the current candidate", () => {
     // A window resolved for another candidate is handed over as null, which the
     // shared decision already treats as "not loaded" -- so loading can never
     // present itself as "outside hours".
-    expect(BOOK).toMatch(/windowFor === slotFetchIdentity\(liveSlotRequest\(\)\)/);
+    expect(BOOK).toMatch(/windowFor === slotCandidateIdentity\(liveSlotRequest\(\)\)/);
     expect(BOOK).toMatch(/window: windowIsCurrent \? availabilityWindow : null,/);
     // The window is stamped with the identity of the request it came from.
-    expect(BOOK).toMatch(/setWindowFor\(slotFetchIdentity\(request\)\);/);
+    expect(BOOK).toMatch(/setWindowFor\(slotCandidateIdentity\(request\)\);/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IDENTITY COMPLETENESS + LIVENESS + SERVER-AUTHORITATIVE BUFFER DURATION.
+// Semantics proved in tests/lib/booking/slot-request.test.ts and
+// tests/app/calendar/manual-time-inside-availability.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("the semantic identity carries capacity mode AND timezone", () => {
+  const SURFACES: [string, string][] = [
+    ["client-profile Book form", "app/(app)/clients/[id]/BookAppointment.tsx"],
+    ["calendar Quick Book drawer", "app/(app)/calendar/QuickBookDrawer.tsx"],
+  ];
+  for (const [label, rel] of SURFACES) {
+    it(`${label}: both prop-borne dimensions are in the identity`, () => {
+      const SRC = read(rel);
+      expect(SRC).toMatch(/capacityMode: practitionerCapacityEnabled/);
+      expect(SRC).toMatch(/timezone(: studioTimezone)?,/);
+    });
+  }
+});
+
+describe("a changed identity REFETCHES — invalidation without replacement is a bug", () => {
+  it("the client page reloads when capacity mode or timezone changes", () => {
+    // Neither is owned by a handler; without this the form stayed unusable
+    // until the practitioner changed a field or reopened it.
+    expect(BOOK).toMatch(/const propIdentityRef = useRef<string \| null>\(null\);/);
+    expect(BOOK).toMatch(/\$\{practitionerCapacityEnabled\}\|\$\{timezone\}/);
+    expect(BOOK).toMatch(/if \(serviceId && date\) loadForService\(serviceId, date\);/);
+    expect(BOOK).toMatch(/\}, \[practitionerCapacityEnabled, timezone, open\]\);/);
+  });
+
+  it("the drawer's slot effect depends on both", () => {
+    const D = read("app/(app)/calendar/QuickBookDrawer.tsx");
+    expect(D).toMatch(/practitionerCapacityEnabled,\s*\n\s*studioTimezone,\s*\n\s*\]\);/);
+  });
+});
+
+describe("the buffer approval is bound to the SERVER-refused interval", () => {
+  const SURFACES: [string, string][] = [
+    ["client-profile Book form", "app/(app)/clients/[id]/BookAppointment.tsx"],
+    ["calendar Quick Book drawer", "app/(app)/calendar/QuickBookDrawer.tsx"],
+  ];
+  for (const [label, rel] of SURFACES) {
+    it(`${label}: stores the server duration and echoes it as a precondition`, () => {
+      const SRC = read(rel);
+      expect(SRC).toMatch(/setBufferOverrideDuration\(r\.authoritativeDurationMinutes \?\? null\)/);
+      // The key prefers the server's number over the prop snapshot.
+      expect(SRC).toMatch(/effectiveDurationMinutes:\s*\n?\s*bufferOverrideDuration \?\?/);
+      expect(SRC).toMatch(
+        /fd\.set\("expected_duration_minutes", String\(bufferOverrideDuration\)\)/,
+      );
+      // ...and it is cleared with the rest of the approval.
+      expect(SRC).toMatch(/setBufferOverrideDuration\(null\)/);
+    });
+  }
+
+  it("the server treats the echoed duration as a PRECONDITION, not permission", () => {
+    // It can only make the server refuse. Role, service, duration and target
+    // authority are all still derived server-side.
+    expect(ACTIONS).toMatch(/expected_duration_minutes/);
+    expect(ACTIONS).toMatch(/expected !== service\.default_duration_minutes/);
+    expect(ACTIONS).toMatch(/code: "stale_candidate"/);
+    expect(ACTIONS).toMatch(/service length changed/i);
+    // The owner gate is untouched and still unconditional.
+    expect(ACTIONS).toMatch(
+      /if \(allowOutsideAvailability && practitioner\.role !== "owner"\)/,
+    );
   });
 });

@@ -38,8 +38,8 @@ import {
 } from "@/lib/booking/availability-window";
 import {
   fetchForIdentity,
-  slotFetchIdentity,
-  type SlotFetchInput,
+  slotCandidateIdentity,
+  type SlotCandidateIdentity,
 } from "@/lib/booking/slot-request";
 import {
   fetchSlotsForClientBookingAction,
@@ -242,9 +242,15 @@ export function QuickBookDrawer({
   // had never refused.
   const [bufferOverrideFor, setBufferOverrideFor] = useState<string | null>(null);
   const [bufferOverrideConfirmed, setBufferOverrideConfirmed] = useState(false);
+  // THE INTERVAL THE SERVER ACTUALLY REFUSED -- see the client-profile form for
+  // the reasoning. The `services` prop is a snapshot; this is authoritative for
+  // the refusal it came with, and is echoed back as a retry precondition.
+  const [bufferOverrideDuration, setBufferOverrideDuration] =
+    useState<number | null>(null);
   function clearBufferOverride() {
     setBufferOverrideFor(null);
     setBufferOverrideConfirmed(false);
+    setBufferOverrideDuration(null);
   }
   // The REAL availability window for the loaded (service, date, target),
   // resolved server-side and returned alongside the suggestions. null until the
@@ -474,13 +480,14 @@ export function QuickBookDrawer({
   // THE REQUEST THE DRAWER WOULD MAKE RIGHT NOW. Built from the same
   // expressions the effect uses for its arguments, so the recorded identity is
   // provably the identity of the data that comes back.
-  function liveSlotRequest(): SlotFetchInput | null {
+  function liveSlotRequest(): SlotCandidateIdentity | null {
     if (!open || !draft || !serviceId || (showSelector && !target)) return null;
     return {
       serviceId,
       date: draft.localDate,
       practitionerId: showSelector ? (target || null) : null,
       capacityMode: practitionerCapacityEnabled,
+      timezone: studioTimezone,
     };
   }
 
@@ -518,18 +525,19 @@ export function QuickBookDrawer({
     clearBufferOverride();
     // THE REQUEST OWNS ITS IDENTITY -- one object is both the argument list and
     // the thing the identity derives from, so they cannot diverge.
-    const request: SlotFetchInput = {
+    const request: SlotCandidateIdentity = {
       serviceId,
       date: targetDate,
       // Item 6: the EXACT target drives the slots, recorded as the ARGUMENT
       // actually sent rather than as adjacent state.
       practitionerId: showSelector ? (target || null) : null,
       capacityMode: practitionerCapacityEnabled,
+      timezone: studioTimezone,
     };
     startLoadingSlots(async () => {
-      const decision = await fetchForIdentity<SlotFetchInput, SlotResult>({
+      const decision = await fetchForIdentity<SlotCandidateIdentity, SlotResult>({
         request,
-        identityOf: slotFetchIdentity,
+        identityOf: slotCandidateIdentity,
         readCurrentRequest: liveSlotRequest,
         fetch: (q) =>
           fetchSlotsForClientBookingAction({
@@ -557,7 +565,7 @@ export function QuickBookDrawer({
       }
       setError(null);
       setAvailabilityWindow(r.window);
-      setWindowFor(slotFetchIdentity(request));
+      setWindowFor(slotCandidateIdentity(request));
       // Display-only past-time guard for the internal calendar: never offer a
       // slot whose start instant is already in the past (today's earlier
       // hours). Absolute UTC comparison on the ISO slot.start. The shared
@@ -611,8 +619,22 @@ export function QuickBookDrawer({
     // startLoadingSlots is a stable transition starter and intentionally
     // excluded to avoid a re-fetch on every render. target/showSelector are in
     // the deps so changing the practitioner refetches target-specific slots.
+    //
+    // practitionerCapacityEnabled and studioTimezone are in the deps because
+    // they are part of the candidate identity: when either changes the loaded
+    // window stops being current, so the effect must issue the replacement
+    // request rather than leave the drawer stranded with nothing usable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, draft?.localDate, draft?.localTime, serviceId, showSelector, target]);
+  }, [
+    open,
+    draft?.localDate,
+    draft?.localTime,
+    serviceId,
+    showSelector,
+    target,
+    practitionerCapacityEnabled,
+    studioTimezone,
+  ]);
 
   // extraClients (created this drawer session) sort first so a
   // just-added client lands at the top of the list before the user
@@ -707,7 +729,7 @@ export function QuickBookDrawer({
   const windowIsCurrent =
     windowFor !== null &&
     liveRequestNow !== null &&
-    windowFor === slotFetchIdentity(liveRequestNow);
+    windowFor === slotCandidateIdentity(liveRequestNow);
   const manualDecision = decideManualTime({
     window: windowIsCurrent ? availabilityWindow : null,
     // The date and zone are required so the END is derived from the real UTC
@@ -758,7 +780,11 @@ export function QuickBookDrawer({
     // service's own default. Passing null for the standard path meant a service
     // whose default duration changed under the same id between the refusal and
     // the retry kept a matching approval for a different interval.
+    // Once the server has refused, the approval is keyed to the duration IT
+    // reported. Before that, the drag override or the service default is fine
+    // for display, but neither can scope an acknowledged bypass.
     effectiveDurationMinutes:
+      bufferOverrideDuration ??
       effectiveDurationOverride ??
       selectedService?.default_duration_minutes ??
       null,
@@ -893,6 +919,11 @@ export function QuickBookDrawer({
     // if it went stale between fetch and submit.
     if (postsOutsideAvailability) {
       fd.set("allow_outside_availability", "true");
+      // The interval the refusal was issued for; the server re-reads the
+      // service row and refuses a mismatch.
+      if (bufferOverrideDuration != null) {
+        fd.set("expected_duration_minutes", String(bufferOverrideDuration));
+      }
     }
     if (notes.trim().length > 0) fd.set("notes", notes);
     const targetDate = draft!.localDate;
@@ -901,6 +932,7 @@ export function QuickBookDrawer({
       if (!r.ok) {
         setError(r.error);
         if (r.code === "buffer_conflict") {
+          setBufferOverrideDuration(r.authoritativeDurationMinutes ?? null);
           // Scope the offer to the candidate that was actually refused.
           // THE ONE REFUSAL AN OWNER MAY ACT ON. Offer the override instead of
           // resetting: wiping the manual time here would throw away the very

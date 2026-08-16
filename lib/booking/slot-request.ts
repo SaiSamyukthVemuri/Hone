@@ -12,7 +12,7 @@
 //
 // So the identity is not written by hand at the call site. It is computed from
 // the request object, over ALL of that object's keys. Adding a field to
-// `SlotFetchInput` therefore extends the identity automatically, and the
+// `SlotCandidateIdentity` therefore extends the identity automatically, and the
 // compiler forces every call site to supply it. Omission stops being a silent
 // gap and becomes a type error.
 //
@@ -22,8 +22,17 @@
 // only the identity answers that -- notably in the case where NOTHING newer was
 // ever issued and the inputs simply moved on underneath an in-flight request.
 
-/** EXACTLY the inputs that determine a slot/window fetch's result. */
-export type SlotFetchInput = {
+// EVERYTHING THAT DETERMINES WHAT A LOADED SLOT/WINDOW MEANS.
+//
+// Named for what it is. An earlier version called this the "fetch input" and
+// reasoned that only literal action arguments belong in it -- which is how the
+// capacity mode and the studio timezone were both left out. Neither is posted
+// as an argument, and both change the interpretation and the SOURCE of the
+// result: capacity mode selects which window the server reads, and the timezone
+// decides what local date the request means and what instants come back.
+//
+// A loaded candidate is current only when ALL of this still matches.
+export type SlotCandidateIdentity = {
   serviceId: string;
   date: string;
   // The literal argument sent to the action -- null when none is sent. Recorded
@@ -35,6 +44,11 @@ export type SlotFetchInput = {
   // and it changes which window source is authoritative. A non-owner sends null
   // in both modes, so the argument alone cannot capture this.
   capacityMode: boolean;
+  // Not an argument either, but it changes what the date MEANS and what
+  // instants the slots carry. A result generated under one zone must never
+  // stay authoritative under another -- reformatting the display while keeping
+  // the old instants would submit a time nobody chose.
+  timezone: string;
 };
 
 /** EXACTLY the inputs that determine an eligible-practitioner fetch's result. */
@@ -59,7 +73,7 @@ function identityOf<T extends Record<string, unknown>>(input: T): string {
   );
 }
 
-export function slotFetchIdentity(input: SlotFetchInput): string {
+export function slotCandidateIdentity(input: SlotCandidateIdentity): string {
   return identityOf(input);
 }
 

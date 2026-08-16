@@ -25,9 +25,9 @@ import { resolveEligibleSelection } from "@/lib/booking/eligible-selection";
 import {
   eligibleFetchIdentity,
   fetchForIdentity,
-  slotFetchIdentity,
+  slotCandidateIdentity,
   type EligibleFetchInput,
-  type SlotFetchInput,
+  type SlotCandidateIdentity,
 } from "@/lib/booking/slot-request";
 
 type Slot = { start: string; end: string; startLabel: string };
@@ -118,9 +118,16 @@ export function BookAppointment({
   // the server had never refused.
   const [bufferOverrideFor, setBufferOverrideFor] = useState<string | null>(null);
   const [bufferOverrideConfirmed, setBufferOverrideConfirmed] = useState(false);
+  // THE INTERVAL THE SERVER ACTUALLY REFUSED. The React `services` prop is a
+  // snapshot that can age; this is the length the refusal was issued for, read
+  // by the server from the service row in that same request. It scopes the
+  // approval AND is sent back on retry as a concurrency precondition.
+  const [bufferOverrideDuration, setBufferOverrideDuration] =
+    useState<number | null>(null);
   function clearBufferOverride() {
     setBufferOverrideFor(null);
     setBufferOverrideConfirmed(false);
+    setBufferOverrideDuration(null);
   }
   // The REAL availability window for the loaded (service, date, target),
   // resolved server-side and returned with the suggestions. null until a
@@ -178,12 +185,13 @@ export function BookAppointment({
   // Recording adjacent STATE instead is what let a capacity flip leave a stale
   // window looking current: the selected target did not change, but the
   // argument (and the window's source) did.
-  function liveSlotRequest(): SlotFetchInput {
+  function liveSlotRequest(): SlotCandidateIdentity {
     return {
       serviceId: serviceRef.current,
       date: dateRef.current,
       practitionerId: showSelector ? (targetRef.current || null) : null,
       capacityMode: practitionerCapacityEnabled,
+      timezone,
     };
   }
   function liveEligibleRequest(): EligibleFetchInput {
@@ -218,17 +226,18 @@ export function BookAppointment({
     invalidateSelection();
     // THE REQUEST OWNS ITS IDENTITY. This one object is both the argument list
     // and the thing the identity is derived from, so the two cannot diverge.
-    const request: SlotFetchInput = {
+    const request: SlotCandidateIdentity = {
       serviceId: nextServiceId,
       date: nextDate,
       practitionerId: showSelector ? (nextTarget || null) : null,
       capacityMode: practitionerCapacityEnabled,
+      timezone,
     };
     const req = slotReq.current;
     startLoading(async () => {
-      const decision = await fetchForIdentity<SlotFetchInput, SlotResult>({
+      const decision = await fetchForIdentity<SlotCandidateIdentity, SlotResult>({
         request,
-        identityOf: slotFetchIdentity,
+        identityOf: slotCandidateIdentity,
         readCurrentRequest: liveSlotRequest,
         generation: req,
         isCurrentGeneration: (g) => g === slotReq.current,
@@ -257,7 +266,7 @@ export function BookAppointment({
       setSlots(r.slots);
       setAvailabilityWindow(r.window);
       // Stamp the window with the identity of the request it came from.
-      setWindowFor(slotFetchIdentity(request));
+      setWindowFor(slotCandidateIdentity(request));
     });
   }
 
@@ -321,6 +330,31 @@ export function BookAppointment({
     });
   }
 
+  // RECOVERY IS DRIVEN BY THE IDENTITY, NOT BY THE USER.
+  //
+  // Making a stale result DETECTABLE is only half the job. Capacity mode and
+  // studio timezone arrive as props from an RSC refresh -- no handler owns
+  // them -- so when one changed, the loaded window correctly stopped being
+  // current and the form simply became unusable until the practitioner changed
+  // a field or closed and reopened it. Invalidation without replacement is a
+  // liveness bug of my own making.
+  //
+  // Keyed on the identity components the handlers do NOT cover, so a dimension
+  // added to SlotCandidateIdentity in future is refetched here too rather than
+  // silently stranding the form. Skips the first run: mount already loads.
+  const propIdentityRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = `${practitionerCapacityEnabled}|${timezone}`;
+    const first = propIdentityRef.current === null;
+    const changed = !first && propIdentityRef.current !== key;
+    propIdentityRef.current = key;
+    if (!changed || !open) return;
+    // loadForService invalidates synchronously, then issues the replacement
+    // request for the CURRENT service/date under the new mode/zone.
+    if (serviceId && date) loadForService(serviceId, date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [practitionerCapacityEnabled, timezone, open]);
+
   function handleOpen() {
     setOpen(true);
     if (serviceId && date) loadForService(serviceId, date);
@@ -381,7 +415,7 @@ export function BookAppointment({
   // truthful checking copy, no acknowledgement, no flag. Loading never becomes
   // "outside hours".
   const windowIsCurrent =
-    windowFor !== null && windowFor === slotFetchIdentity(liveSlotRequest());
+    windowFor !== null && windowFor === slotCandidateIdentity(liveSlotRequest());
   const manualDecision = decideManualTime({
     window: windowIsCurrent ? availabilityWindow : null,
     // The date and zone are required so the END is derived from the real UTC
@@ -424,7 +458,10 @@ export function BookAppointment({
     // here, but the SERVICE's default length still defines that interval, and a
     // default changed under the same service id between the refusal and the
     // retry would otherwise keep a matching approval for a different booking.
-    effectiveDurationMinutes: selectedService?.default_duration_minutes ?? null,
+    // Once the server has refused, the approval is keyed to the duration IT
+    // reported, never to the prop snapshot. Before any refusal the prop is fine
+    // for ordinary display, but it cannot scope an acknowledged bypass.
+    effectiveDurationMinutes: bufferOverrideDuration ?? selectedService?.default_duration_minutes ?? null,
   });
   // Derived, never stored: the approval applies only while the candidate it was
   // issued for is still the one being booked. Changing slot, time, date,
@@ -514,6 +551,12 @@ export function BookAppointment({
     // outside the manual/suggestion branch rather than inside it.
     if (postsOutsideAvailability) {
       fd.set("allow_outside_availability", "true");
+      // State the interval the refusal was issued for. The server re-reads the
+      // service row and refuses if it no longer matches -- so a length changed
+      // elsewhere between refusal and retry cannot ride an old approval.
+      if (bufferOverrideDuration != null) {
+        fd.set("expected_duration_minutes", String(bufferOverrideDuration));
+      }
     }
     startBooking(async () => {
       const r = await bookAppointmentForClientAction(fd);
@@ -524,8 +567,19 @@ export function BookAppointment({
         // them at a dead end. Non-owners are told who can, and nothing is
         // pre-ticked.
         if (r.code === "buffer_conflict") {
-          // Scope the offer to the candidate that was actually refused.
-          setBufferOverrideFor(candidateKey);
+          // Scope the offer to the candidate the server actually refused,
+          // including the interval IT resolved.
+          setBufferOverrideDuration(r.authoritativeDurationMinutes ?? null);
+          setBufferOverrideFor(
+            bookingCandidateKey({
+              clientId,
+              serviceId: serviceId || null,
+              practitionerId:
+                (showSelector ? target : currentPractitionerId) || null,
+              startsAtIso: candidateStartsAt,
+              effectiveDurationMinutes: r.authoritativeDurationMinutes ?? null,
+            }),
+          );
           setBufferOverrideConfirmed(false);
         } else {
           clearBufferOverride();

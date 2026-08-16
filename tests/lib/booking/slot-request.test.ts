@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   eligibleFetchIdentity,
   fetchForIdentity,
-  slotFetchIdentity,
+  slotCandidateIdentity,
   type EligibleFetchInput,
-  type SlotFetchInput,
+  type SlotCandidateIdentity,
 } from "@/lib/booking/slot-request";
 
 // THE ASYNC-AUTHORITY RACES, driven deterministically with deferred promises.
@@ -22,21 +22,22 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const REQ = (over: Partial<SlotFetchInput> = {}): SlotFetchInput => ({
+const REQ = (over: Partial<SlotCandidateIdentity> = {}): SlotCandidateIdentity => ({
   serviceId: "svc-1",
   date: "2026-08-20",
   practitionerId: "prac-A",
   capacityMode: true,
+  timezone: "America/Toronto",
   ...over,
 });
 
 // Drive one race: start a fetch for `request`, mutate what is current, resolve.
-async function race(request: SlotFetchInput, becomesCurrent: SlotFetchInput) {
+async function race(request: SlotCandidateIdentity, becomesCurrent: SlotCandidateIdentity) {
   const gate = deferred<string>();
   let current = request;
-  const pending = fetchForIdentity<SlotFetchInput, string>({
+  const pending = fetchForIdentity<SlotCandidateIdentity, string>({
     request,
-    identityOf: slotFetchIdentity,
+    identityOf: slotCandidateIdentity,
     readCurrentRequest: () => current,
     fetch: () => gate.promise,
     // Deliberately still "current": these races must be caught by IDENTITY
@@ -53,18 +54,19 @@ describe("the identity is DERIVED from the request, so it cannot fall behind", (
   it("changing ANY input changes the identity", () => {
     const base = REQ();
     // Iterating the keys is what makes this future-proof: a dimension added to
-    // SlotFetchInput is covered here without anyone editing this test.
-    const mutations: Record<keyof SlotFetchInput, SlotFetchInput> = {
+    // SlotCandidateIdentity is covered here without anyone editing this test.
+    const mutations: Record<keyof SlotCandidateIdentity, SlotCandidateIdentity> = {
       serviceId: REQ({ serviceId: "svc-2" }),
       date: REQ({ date: "2026-08-21" }),
       practitionerId: REQ({ practitionerId: null }),
       capacityMode: REQ({ capacityMode: false }),
+      timezone: REQ({ timezone: "Pacific/Kiritimati" }),
     };
-    for (const key of Object.keys(base) as (keyof SlotFetchInput)[]) {
+    for (const key of Object.keys(base) as (keyof SlotCandidateIdentity)[]) {
       expect(
-        slotFetchIdentity(mutations[key]),
+        slotCandidateIdentity(mutations[key]),
         `${String(key)} must participate in the identity`,
-      ).not.toBe(slotFetchIdentity(base));
+      ).not.toBe(slotCandidateIdentity(base));
     }
   });
 
@@ -72,14 +74,14 @@ describe("the identity is DERIVED from the request, so it cannot fall behind", (
     // Guards the derivation itself: if identityOf ever stopped covering all
     // keys, some mutation above would silently stop changing the identity.
     const base = REQ();
-    const seen = slotFetchIdentity(base);
-    for (const key of Object.keys(base) as (keyof SlotFetchInput)[]) {
+    const seen = slotCandidateIdentity(base);
+    for (const key of Object.keys(base) as (keyof SlotCandidateIdentity)[]) {
       expect(seen).toContain(`"${String(key)}"`);
     }
   });
 
   it("an identical request yields an identical identity", () => {
-    expect(slotFetchIdentity(REQ())).toBe(slotFetchIdentity(REQ()));
+    expect(slotCandidateIdentity(REQ())).toBe(slotCandidateIdentity(REQ()));
   });
 
   it("DURATION is deliberately absent, and here is why", () => {
@@ -94,6 +96,7 @@ describe("the identity is DERIVED from the request, so it cannot fall behind", (
       "date",
       "practitionerId",
       "serviceId",
+      "timezone",
     ]);
   });
 });
@@ -131,12 +134,49 @@ describe("D — CAPACITY MODE is part of the identity", () => {
   });
 });
 
+describe("D2 — STUDIO TIMEZONE is part of the identity", () => {
+  it("a timezone change discards a result generated under the old zone", async () => {
+    // The zone decides what local date the request meant and what instants came
+    // back. Reformatting the display while keeping the old instants would
+    // submit a time nobody chose.
+    const d = await race(
+      REQ({ timezone: "America/Toronto" }),
+      REQ({ timezone: "Europe/London" }),
+    );
+    expect(d.kind === "discard" && d.reason).toBe("identity_changed");
+  });
+
+  it("C — an IN-FLIGHT old-zone request resolving last is still discarded", async () => {
+    const gateOld = deferred<string>();
+    const gateNew = deferred<string>();
+    let current = REQ({ timezone: "America/Toronto" });
+    const stale = fetchForIdentity<SlotCandidateIdentity, string>({
+      request: REQ({ timezone: "America/Toronto" }),
+      identityOf: slotCandidateIdentity,
+      readCurrentRequest: () => current,
+      fetch: () => gateOld.promise,
+    });
+    current = REQ({ timezone: "Europe/London" });
+    const fresh = fetchForIdentity<SlotCandidateIdentity, string>({
+      request: REQ({ timezone: "Europe/London" }),
+      identityOf: slotCandidateIdentity,
+      readCurrentRequest: () => current,
+      fetch: () => gateNew.promise,
+    });
+    gateNew.resolve("new zone");
+    gateOld.resolve("old zone"); // resolves LAST
+    expect((await stale).kind).toBe("discard");
+    const f = await fresh;
+    expect(f.kind === "commit" && f.result).toBe("new zone");
+  });
+});
+
 describe("E — a still-current result installs normally", () => {
   it("commits when nothing moved", async () => {
     const gate = deferred<string>();
-    const pending = fetchForIdentity<SlotFetchInput, string>({
+    const pending = fetchForIdentity<SlotCandidateIdentity, string>({
       request: REQ(),
-      identityOf: slotFetchIdentity,
+      identityOf: slotCandidateIdentity,
       readCurrentRequest: () => REQ(),
       fetch: () => gate.promise,
       generation: 3,
@@ -152,15 +192,15 @@ describe("E — a still-current result installs normally", () => {
     const gateA = deferred<string>();
     const gateB = deferred<string>();
     let current = REQ({ date: "2026-08-21" });
-    const stale = fetchForIdentity<SlotFetchInput, string>({
+    const stale = fetchForIdentity<SlotCandidateIdentity, string>({
       request: REQ({ date: "2026-08-20" }),
-      identityOf: slotFetchIdentity,
+      identityOf: slotCandidateIdentity,
       readCurrentRequest: () => current,
       fetch: () => gateA.promise,
     });
-    const fresh = fetchForIdentity<SlotFetchInput, string>({
+    const fresh = fetchForIdentity<SlotCandidateIdentity, string>({
       request: REQ({ date: "2026-08-21" }),
-      identityOf: slotFetchIdentity,
+      identityOf: slotCandidateIdentity,
       readCurrentRequest: () => current,
       fetch: () => gateB.promise,
     });
@@ -176,9 +216,9 @@ describe("the generation counter is cancellation only, never the sole authority"
   it("a bumped generation discards as superseded", async () => {
     const gate = deferred<string>();
     let gen = 1;
-    const pending = fetchForIdentity<SlotFetchInput, string>({
+    const pending = fetchForIdentity<SlotCandidateIdentity, string>({
       request: REQ(),
-      identityOf: slotFetchIdentity,
+      identityOf: slotCandidateIdentity,
       readCurrentRequest: () => REQ(),
       fetch: () => gate.promise,
       generation: 1,
@@ -193,9 +233,9 @@ describe("the generation counter is cancellation only, never the sole authority"
   it("with NO counter at all, identity still rejects a stale completion", async () => {
     const gate = deferred<string>();
     let current = REQ({ date: "2026-08-20" });
-    const pending = fetchForIdentity<SlotFetchInput, string>({
+    const pending = fetchForIdentity<SlotCandidateIdentity, string>({
       request: REQ({ date: "2026-08-20" }),
-      identityOf: slotFetchIdentity,
+      identityOf: slotCandidateIdentity,
       readCurrentRequest: () => current,
       fetch: () => gate.promise,
     });
@@ -206,9 +246,9 @@ describe("the generation counter is cancellation only, never the sole authority"
 
   it("no current request at all never matches", async () => {
     const gate = deferred<string>();
-    const pending = fetchForIdentity<SlotFetchInput, string>({
+    const pending = fetchForIdentity<SlotCandidateIdentity, string>({
       request: REQ(),
-      identityOf: slotFetchIdentity,
+      identityOf: slotCandidateIdentity,
       readCurrentRequest: () => null,
       fetch: () => gate.promise,
     });
