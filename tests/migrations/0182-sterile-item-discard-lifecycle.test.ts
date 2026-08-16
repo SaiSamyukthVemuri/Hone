@@ -38,20 +38,23 @@ const EXEC = SQL.split("\n")
 const LOGIC = EXEC.replace(/comment on [\s\S]*?';/gi, "");
 
 // ---------------------------------------------------------------------------
-// THE ONE measured-count contradiction expression.
+// DEFENCE IN DEPTH ONLY — this is NOT an integrity authority.
 //
-// It is defined ONCE and shared by both places that need it — the frozen 0182
-// ledger section and the current `hosted_note` — because maintaining two copies
-// is precisely how they drifted: the current-note copy silently lost the
-// `row-count:` alternative, so `row-count: 181` could be appended to the record
-// with "NO ROW-COUNT PROOF" left intact and the guard stayed green.
+// Integrity for both 0182 evidence records is STRUCTURAL: each is pinned by
+// SHA-256 (the frozen ledger section below, and the current `hosted_note` in
+// the "0182 is hosted max" contract above). Those hashes catch ANY edit,
+// whatever words it uses.
 //
-// The purpose is narrow and is NOT natural-language understanding: stop an
-// UNSUPPORTED POSITIVE measured row-count claim from coexisting with the
-// explicit truth that no pre/post business-row count was ever captured.
+// This helper exists only to turn the most likely fabrication into a readable
+// failure message instead of a bare digest mismatch. It does NOT understand
+// English and makes no claim to: three consecutive reviews each found another
+// wording it missed — "181 records", "measured total of 181", "row-count: 181",
+// "record-count: 181", "row total: 181" — and a claim spelled out in words
+// ("one hundred and eighty-one") would defeat any regex of this kind. Enumerating
+// synonyms was the wrong primary mechanism and has been retired as one.
 //
-// Held as a SOURCE STRING and compiled fresh on every call — a shared /g RegExp
-// object carries `lastIndex` between callers and would skip matches.
+// Held as a SOURCE STRING and compiled fresh per call — a shared /g RegExp
+// carries `lastIndex` between callers and would skip matches.
 const MEASURED_COUNT_CLAIM_SOURCE = [
   // "181 rows", "181 records", "181 entries", "1,024 tuples" — but never a
   // four-digit migration id: "the 0181 record" is a chain link, not a tally.
@@ -67,6 +70,24 @@ const MEASURED_COUNT_CLAIM_SOURCE = [
 /** Every measured-count claim in `text`. Empty when the text asserts none. */
 const measuredCountClaims = (text: string): string[] =>
   text.match(new RegExp(MEASURED_COUNT_CLAIM_SOURCE, "gi")) ?? [];
+
+// ---------------------------------------------------------------------------
+// STRUCTURAL AUTHORITY for the CURRENT 0182 evidence record.
+//
+// The digest of the reviewed `hosted_note` as it stands while 0182 is the
+// hosted maximum. Belongs to the "0182 is current" contract ONLY — a successor
+// record legitimately fails it, which is the point.
+// ---------------------------------------------------------------------------
+const CURRENT_0182_NOTE_SHA =
+  "a6053039a86eeb278fe7fd91c781423ab63ea2b88a88a2af32fabc303b066627";
+
+function assertCurrent0182NotePinned(note: string) {
+  const sha = createHash("sha256").update(note, "utf8").digest("hex");
+  expect(
+    sha,
+    "0182 is still current; any edit to its canonical hosted_note requires deliberate review and updating this pin",
+  ).toBe(CURRENT_0182_NOTE_SHA);
+}
 
 describe("0182 — migration state", () => {
   it("is the current repository maximum and consumes exactly one number", () => {
@@ -121,23 +142,34 @@ describe("0182 — migration state", () => {
     expect(state.hosted_applied_at_precision).toMatch(/NONE IS INVENTED/i);
   });
 
-  it("the CURRENT note carries 0182's limitations while 0182 is the hosted max", () => {
-    // CURRENT STATE, deliberately here and not in the permanent block below.
-    // While 0182 IS the hosted max the canonical note is 0182's own record and
-    // must state its limitations — but the moment 0183 lands this whole
-    // describe hands off (it already pins hosted max to "0182"), so these
-    // assertions retire WITH it rather than demanding that 0183's record repeat
-    // 0182's history. 0182's PERMANENT evidence lives in the frozen ledger
-    // section, which is where a later reader should look.
+  it("the CURRENT hosted_note is byte-pinned while 0182 is the hosted max", () => {
+    // STRUCTURAL AUTHORITY for the current record, and the reason no language
+    // regex guards it any more.
+    //
+    // `hosted_note` is CURRENT state and MUST be free to change when 0183 is
+    // applied. But while the canonical hosted max is still 0182, that note IS
+    // 0182's reviewed evidence record, and its exact bytes are known. Pinning
+    // the digest catches ANY edit — an appended fabricated count in any wording,
+    // a softened limitation, a quietly dropped checksum — without anyone having
+    // to anticipate the vocabulary. Three reviews running, enumerating synonyms
+    // missed one; a hash cannot.
+    //
+    // THIS PIN RETIRES AT THE 0183 HANDOFF, by construction: it lives in the
+    // describe that already asserts hosted max === "0182", so the whole block
+    // hands off together when the next apply moves hosted max, applied-at,
+    // next-free and the note. It imposes nothing on 0183's record. 0182's
+    // PERMANENT evidence is sourced from the FROZEN ledger section instead —
+    // see the permanent block below, which never reads this field.
     const REC = JSON.parse(
       readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
     );
+
+    // Key truth phrases first: they fail with a readable message, and a digest
+    // mismatch alone would not say WHICH guarantee was lost.
     expect(REC.hosted_note).toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/);
     expect(REC.hosted_note).toMatch(/NO ROW-COUNT PROOF/);
-    expect(
-      measuredCountClaims(REC.hosted_note),
-      "the canonical note states a measured count that was never captured for 0182",
-    ).toEqual([]);
+
+    assertCurrent0182NotePinned(REC.hosted_note);
   });
 });
 
@@ -314,7 +346,7 @@ describe("0182 — the recorded apply evidence stays honest", () => {
     ).toBe("64b3eb89a020873c386e7766c53a073c304188513d09ca2071be8119658ba39c");
   });
 
-  it("states NO measured count, in any wording", () => {
+  it("states no measured count in the wordings the helper does cover", () => {
     // Defence in depth behind the hash: a clearer failure for the most likely
     // fabrication, and it covers the synonyms the old `rows`-only guard missed
     // ("181 records", "181 entries", "measured total of 181").
@@ -330,11 +362,12 @@ describe("0182 — the recorded apply evidence stays honest", () => {
     ).toEqual(["measured total was 180"]);
   });
 
-  it("the shared count guard catches every fabrication form it claims to", () => {
-    // ANTI-VACUITY. Each of these is the same unsupported claim in different
-    // clothes, and every one of them must fail the guard. The `row-count:`
-    // family is listed explicitly because it is the family that silently fell
-    // out of the current-note copy while the frozen copy kept it.
+  it("the defence-in-depth helper catches the wordings it enumerates — and only those", () => {
+    // Each of these is the same unsupported claim in different clothes, and
+    // each must fail the helper. This asserts COVERAGE OF A LIST, not coverage
+    // of English — "record-count: 181", "row total: 181" and a count spelled
+    // out in words all pass this helper, which is exactly why neither evidence
+    // record relies on it for integrity. Both are pinned by SHA-256.
     for (const fabrication of [
       "the history table contained 181 rows",
       "181 records were present after apply",
@@ -365,18 +398,35 @@ describe("0182 — the recorded apply evidence stays honest", () => {
     ).toEqual([]);
   });
 
-  it("keeps ONE count-guard definition, so the two checks cannot drift apart", () => {
-    // The defect this repair closes was not a bad regex — it was TWO regexes.
-    // The frozen-section check and the current-note check must keep routing
-    // through the single shared source; a second copy is the drift itself.
-    const self = readFileSync(
-      join(ROOT, "tests/migrations/0182-sterile-item-discard-lifecycle.test.ts"),
-      "utf8",
+  it("the CURRENT-note pin rejects ANY edit, whatever vocabulary it uses", () => {
+    // THE POINT OF THE WHOLE ARCHITECTURE, proved behaviourally rather than by
+    // scanning this file's own source. The previous version of this test counted
+    // occurrences of a regex fragment, which said nothing about whether the
+    // design still held.
+    //
+    // Every injection below evaded the lexical helper at some point in review —
+    // including one spelled out in words, which no regex of that kind can ever
+    // catch. The structural pin rejects all of them for the same reason it
+    // rejects a single stray character: it does not read English.
+    const REC = JSON.parse(
+      readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
     );
-    expect(
-      self.match(/rows\?\|records\?/g) ?? [],
-      "the count-claim pattern is defined more than once — both checks must share one definition",
-    ).toHaveLength(1);
+    expect(() => assertCurrent0182NotePinned(REC.hosted_note)).not.toThrow();
+
+    for (const injection of [
+      " POST-APPLY VERIFICATION: record-count: 181.",
+      " POST-APPLY VERIFICATION: entry count = 181.",
+      " POST-APPLY VERIFICATION: row total: 181.",
+      " POST-APPLY VERIFICATION: 181 records were present.",
+      " The post-apply tally stood at one hundred and eighty-one.",
+      " Unrelated fabricated prose with no count in it at all.",
+      " ",
+    ]) {
+      expect(
+        () => assertCurrent0182NotePinned(REC.hosted_note + injection),
+        `an edit to the canonical note went undetected: ${injection}`,
+      ).toThrow();
+    }
   });
 
   it("records 0182's permanent evidence from the FROZEN section", () => {
@@ -426,6 +476,17 @@ describe("0182 — the recorded apply evidence stays honest", () => {
 
     // And the successor invariant still binds the new record.
     assertCarriesChainForward(FUTURE_0183_NOTE);
+
+    // THE PIN RETIRES CORRECTLY. The current-note digest belongs to the
+    // "0182 is hosted max" contract alone: a legitimate successor record fails
+    // it, and that is the intended behaviour, not a defect. It is asserted only
+    // inside the current-state describe — which hands off wholesale at 0183 —
+    // and is never consulted by the permanent evidence above, which is why the
+    // call below throws while assert0182PermanentEvidence() just passed.
+    expect(
+      () => assertCurrent0182NotePinned(FUTURE_0183_NOTE),
+      "the current-note pin must NOT be imposed on a successor record",
+    ).toThrow();
   });
 });
 
