@@ -2,14 +2,32 @@
 
 ## Session payment amount authority
 
-Session charge amounts are resolved **server-side** from current records at the
-moment of preparation; the browser cannot decide
-`payment_charge_attempts.amount_cents`. Precedence is current client-specific
-price → current booked-service menu price → block. Conflicting equally-current
-client prices fail closed. `expected_amount_cents` submitted by the UI is
-stale-display detection only and can never supply a value. See
-docs/06_PAYMENTS_AND_STRIPE.md. **F-PAY-001: IMPLEMENTED — PENDING MERGE AND
-PRODUCTION VERIFICATION.**
+The **reference price** is resolved **server-side** from current records at the
+moment of preparation, and the browser cannot decide it. Precedence is current
+client-specific price → current booked-service menu price → block. Conflicting
+equally-current client prices fail closed. `expected_amount_cents` submitted by
+the UI is stale-display detection only and can never supply a value.
+
+**F-PAY-002 amended what the browser may request, not what it may forge.** The
+browser MAY request the operator-authored **final total**, which becomes
+`payment_charge_attempts.amount_cents`. That request is refused unless: the
+displayed reference still matches the freshly re-resolved one; the amount parses
+as strict CAD with at most two decimals inside the ceiling (no coercion, no
+rounding, no clamping); and — when it differs from the reference — the
+authenticated practitioner's role is `owner` and a bounded non-empty adjustment
+reason is supplied. The owner fact comes from
+`getCurrentPractitionerWithStudio()`; there is no `is_owner` form field, and the
+deciding module is pure and cannot read a request. A $0.00 total prepares
+nothing.
+
+The browser still cannot supply the studio, the practitioner, the practitioner's
+role, the client, the session, the appointment, the service lineage, the card,
+the consent signature, or any Stripe identifier. Once prepared, the amount is an
+immutable transaction fact: execution charges `attemptRow.amount_cents` and no
+pricing is re-read for it. See docs/06_PAYMENTS_AND_STRIPE.md.
+
+**F-PAY-001 and F-PAY-002: IMPLEMENTED — PENDING MERGE AND PRODUCTION
+VERIFICATION.**
 
 ## 1. Tenant isolation model
 

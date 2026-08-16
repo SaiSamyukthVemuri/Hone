@@ -228,6 +228,12 @@ failures that reads like a broken diff. Run `30814919019` took the targeted lane
 assigned tests, **all 60 passed**, and was cut at 12m15s after the suite gained
 a spec and Playwright handed that shard +35% work.
 
+F-PAY-002 took the **payment** lane (10 → 18) *before* it could recur a fourth
+time, which is the cheaper way to learn this: the lane measured **9.6-10.4
+min** locally across repeated runs of 57 serial specs while its single number
+10 was serving as both target and ceiling. The observed run time and the ceiling were the same number,
+with nothing left for a slow runner's setup.
+
 **A ceiling must clear SETUP plus tests, and setup is not a fixed cost.** The
 same 81 tests spent **508s** before the first test executed on one runner and
 **266s** on another, while per-test speed barely moved (3.8s vs 3.6s) — so the
@@ -245,7 +251,8 @@ before assuming the diff broke something.**
 | targeted browser lane | target ~6 min · **hard timeout 15 min** |
 | extended browser shard (×4) | target <10 min · **hard timeout 18 min** |
 | nightly browser shard (×4) | hard timeout 15 min |
-| payment / Google / mobile | 10 min each |
+| payment browser e2e (fake stripe) | target ~10 min · **hard timeout 18 min** |
+| Google / mobile | 10 min each |
 
 ---
 

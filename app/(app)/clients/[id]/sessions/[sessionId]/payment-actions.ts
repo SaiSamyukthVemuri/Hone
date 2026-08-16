@@ -19,6 +19,10 @@ import {
   SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH,
 } from "@/lib/billing/session-payment-types";
 import {
+  decideCheckoutFinalAmount,
+  OWNER_ONLY_AMOUNT_ERROR,
+} from "@/lib/billing/checkout-final-amount";
+import {
   runSessionPaymentCharge,
   type SessionPaymentChargeResult,
 } from "@/lib/billing/session-payment-charge";
@@ -46,17 +50,19 @@ import {
 //     inserted row comes from the active client_payment_methods
 //     row resolved by the eligibility helper.
 //   * No email or SMS. No automatic anything.
-//   * No client-side amount derivation. Amount comes from the
-//     practitioner-confirmed form input, per PR #169's product
-//     rule. The eligibility helper carries sessions.price_paid_cents
-//     as a non-binding suggestion only.
+//   * No client-side pricing derivation. The REFERENCE price is
+//     re-resolved here from current records; the browser's only
+//     contribution to money is the operator-authored final total,
+//     which is authorised, bounded and audited by
+//     lib/billing/checkout-final-amount.ts.
 //
 // Inputs (FormData):
-//   * session_id, expected_amount_cents, internal_note. studio_id,
-//     client_id, and practitioner_id are resolved server-side; the
-//     client cannot supply them. The action also re-reads
-//     session.client_id from the eligibility result, so a form
-//     post that names a different client_id is ignored.
+//   * session_id, expected_amount_cents, final_amount_dollars,
+//     adjustment_reason, internal_note. studio_id, client_id,
+//     practitioner_id AND THE PRACTITIONER ROLE are resolved
+//     server-side; the client cannot supply them. The action also
+//     re-reads session.client_id from the eligibility result, so a
+//     form post that names a different client_id is ignored.
 //
 // Duplicate protection:
 //   1. Pre-INSERT: eligibility helper refuses to mark eligible
@@ -70,7 +76,16 @@ import {
 
 export type PrepareSessionPaymentResult =
   | { ok: true; attemptId: string }
-  | { ok: false; error: string; blockingReasons?: string[] };
+  | {
+      ok: false;
+      error: string;
+      blockingReasons?: string[];
+      // F-PAY-002. A $0.00 checkout is not a failure. Nothing is prepared, but
+      // nothing is wrong either, so the surface renders it as a calm statement
+      // rather than a red validation error. Optional on purpose: every existing
+      // failure branch keeps its exact shape.
+      noChargeRequired?: true;
+    };
 
 const GENERIC_PRACTITIONER_ERROR =
   "We couldn't prepare this session payment. Please refresh and try again.";
@@ -85,13 +100,11 @@ const OWNER_ONLY_REFUND_ERROR =
 // length-capped. There is intentionally no "note required" error.
 const NOTE_TOO_LONG_ERROR =
   `Internal note must be under ${SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH} characters.`;
-const AMOUNT_INVALID_ERROR =
-  "Enter an amount greater than $0.00.";
-const AMOUNT_TOO_LARGE_ERROR =
-  `Amount must be $${(SESSION_PAYMENT_AMOUNT_CEILING_CENTS / 100).toFixed(0)} or less.`;
-// The ceiling now applies to a price the practitioner CANNOT edit, so telling
-// her the amount "must be $X or less" would be unactionable. Point at the
-// pricing instead, which is the thing she can actually change.
+// The REFERENCE price is not something the practitioner can edit, so telling
+// her a configured price "must be $X or less" would be unactionable. Point at
+// the pricing instead, which is the thing she can actually change. (The
+// operator-authored FINAL charge has its own ceiling copy, which does tell her
+// the limit, because that number IS hers to correct.)
 const AUTHORITATIVE_AMOUNT_TOO_LARGE_ERROR =
   `This configured price is above the supported session-payment limit of $${(
     SESSION_PAYMENT_AMOUNT_CEILING_CENTS / 100
@@ -113,44 +126,8 @@ function logInternal(event: string, detail: unknown) {
   }
 }
 
-// Parses the browser's expected_amount_cents. This is a STALE-DISPLAY CHECK,
-// never authority: it can only cause a rejection, never decide a value.
-function parseExpectedCents(
-  raw: string,
-): { ok: true; cents: number } | { ok: false } {
-  if (!/^\d+$/.test(raw)) return { ok: false };
-  const cents = Number(raw);
-  if (!Number.isSafeInteger(cents) || cents <= 0) return { ok: false };
-  return { ok: true, cents };
-}
-
-// Safe, fixed copy for a price that moved (or a request that could not say
-// what it was showing). Never leaks a DB error or the other amount.
-const PRICE_CHANGED_ERROR =
-  "The price changed. Refresh and review the current amount before preparing payment.";
-
 function strOrEmpty(v: FormDataEntryValue | null): string {
   return typeof v === "string" ? v.trim() : "";
-}
-
-// Parses an "amount in dollars" form value into integer cents.
-// Rejects non-numeric, negative, zero, and >ceiling values. The
-// CHECK constraint on payment_charge_attempts.amount_cents
-// independently enforces > 0 and <= 200000; this parser surfaces
-// a user-facing error before the DB rejects.
-function parseAmountCents(raw: string): { ok: true; cents: number } | { ok: false; error: string } {
-  const trimmed = raw.replace(/[,$\s]/g, "");
-  if (trimmed.length === 0) return { ok: false, error: AMOUNT_INVALID_ERROR };
-  const asNumber = Number(trimmed);
-  if (!Number.isFinite(asNumber) || asNumber <= 0) {
-    return { ok: false, error: AMOUNT_INVALID_ERROR };
-  }
-  const cents = Math.round(asNumber * 100);
-  if (cents <= 0) return { ok: false, error: AMOUNT_INVALID_ERROR };
-  if (cents > SESSION_PAYMENT_AMOUNT_CEILING_CENTS) {
-    return { ok: false, error: AMOUNT_TOO_LARGE_ERROR };
-  }
-  return { ok: true, cents };
 }
 
 export async function prepareSessionPaymentChargeAction(
@@ -164,36 +141,41 @@ export async function prepareSessionPaymentChargeAction(
   let practitionerId: string;
   let studioId: string;
   let studioTimezone: string;
+  // F-PAY-002. THE OWNER FACT, derived here from the authenticated
+  // practitioner returned by getCurrentPractitionerWithStudio and from nowhere
+  // else. Mirrors the refund action's owner gate below. There is deliberately
+  // no `is_owner` form field to read; a forged one would name a field that no
+  // code path consults.
+  let actorIsOwner: boolean;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     practitionerId = practitioner.id;
     studioId = studio.id;
     studioTimezone = studio.timezone;
+    actorIsOwner = practitioner.role === "owner";
   } catch (err) {
     logInternal("session_payment_prepare_auth_failed", { err: String(err) });
     return { ok: false, error: NOT_AUTHORIZED_ERROR };
   }
 
   const sessionId = strOrEmpty(formData.get("session_id"));
-  // F-PAY-001: `amount_dollars` is NOT read. The browser no longer decides the
-  // amount; it only tells us which amount it was showing, so a price that moved
-  // since the practitioner looked at it can be caught instead of charged.
+  // The browser's claim about what it was DISPLAYING. A stale-display check
+  // only: it can cause a rejection, never choose a value.
   const expectedRaw = strOrEmpty(formData.get("expected_amount_cents"));
+  // The operator-authored FINAL total, and her explanation when it differs
+  // from the reference. Both are requests; decideCheckoutFinalAmount decides.
+  const finalAmountRaw = strOrEmpty(formData.get("final_amount_dollars"));
+  const adjustmentReasonRaw = strOrEmpty(formData.get("adjustment_reason"));
   const internalNote = strOrEmpty(formData.get("internal_note"));
 
   if (!sessionId) {
     return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
   }
-  const expected = parseExpectedCents(expectedRaw);
-  if (!expected.ok) {
-    // Missing or malformed: insert nothing. A request that cannot say what it
-    // was showing cannot be confirmed against the current price.
-    return { ok: false, error: PRICE_CHANGED_ERROR };
-  }
   // The internal note is optional (blank/whitespace-only -> NULL, see the
   // insert below). Only the maximum-length cap is enforced here; it still
   // matches the manual-fee ceiling constant and guards against oversized
-  // input before the DB is touched.
+  // input before the DB is touched. The tighter "note PLUS adjustment context
+  // must fit" rule lives with the composition, in the decision module.
   if (internalNote.length > SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH) {
     return { ok: false, error: NOTE_TOO_LONG_ERROR };
   }
@@ -218,10 +200,10 @@ export async function prepareSessionPaymentChargeAction(
   const clientId = eligibility.client.id;
   const appointmentId = eligibility.appointment.id ?? null;
 
-  // THE AMOUNT DECISION. Independently re-loaded from current records, not
+  // THE REFERENCE PRICE. Independently re-loaded from current records, not
   // from the page's props, not from the modal's state, and not from the form.
-  // This is the whole point of F-PAY-001: the value inserted below is derived
-  // here, server-side, at the moment of preparation.
+  // This is what the booked service (or this client's specific pricing)
+  // currently costs, and it is the number the practitioner is adjusting FROM.
   const priced = await getAuthoritativeSessionPaymentAmount({
     studioId,
     sessionId,
@@ -243,21 +225,44 @@ export async function prepareSessionPaymentChargeAction(
   if (priced.result.kind !== "resolved") {
     return { ok: false, error: unresolvedAmountMessage(priced.result) };
   }
-  const authoritativeCents = priced.result.amountCents;
+  const referenceCents = priced.result.amountCents;
 
-  // The ceiling applies to the AUTHORITATIVE amount. It is never clamped and
-  // never replaced by the browser's value: a price above the supported ceiling
-  // is a pricing problem for a human to look at, not something to quietly
-  // reduce.
-  if (authoritativeCents > SESSION_PAYMENT_AMOUNT_CEILING_CENTS) {
+  // The ceiling applies to the CONFIGURED reference too. It is never clamped
+  // and never replaced: a configured price above the supported ceiling is a
+  // pricing problem for a human to look at, not something to quietly reduce,
+  // and it is checked before the operator's total so she is not asked to work
+  // around a menu she should fix.
+  if (referenceCents > SESSION_PAYMENT_AMOUNT_CEILING_CENTS) {
     return { ok: false, error: AUTHORITATIVE_AMOUNT_TOO_LARGE_ERROR };
   }
 
-  // Stale-display check. If the price moved between render and submit, insert
-  // nothing and make the practitioner re-read the new amount. Preparing at a
-  // number she never saw would be exactly the failure this PR exists to remove.
-  if (expected.cents !== authoritativeCents) {
-    return { ok: false, error: PRICE_CHANGED_ERROR };
+  // THE AMOUNT DECISION. Stale-display check, strict money parsing, the
+  // zero-dollar outcome, the owner gate for a changed total, the adjustment
+  // reason, and the audit-note composition — one pure function, exercised
+  // directly by tests/lib/billing/checkout-final-amount.test.ts.
+  const decision = decideCheckoutFinalAmount({
+    referenceCents,
+    ceilingCents: SESSION_PAYMENT_AMOUNT_CEILING_CENTS,
+    expectedReferenceRaw: expectedRaw,
+    requestedFinalRaw: finalAmountRaw,
+    adjustmentReasonRaw,
+    internalNoteRaw: internalNote,
+    actorIsOwner,
+  });
+  if (decision.kind === "no_charge_required") {
+    // Nothing is prepared and nothing is wrong. No row, no Stripe call.
+    return { ok: false, error: decision.message, noChargeRequired: true };
+  }
+  if (decision.kind === "reject") {
+    if (decision.error === OWNER_ONLY_AMOUNT_ERROR) {
+      // Mirrors the refund action's non-owner denial log below: safe IDs only.
+      // No client identity, no amount, no note text.
+      logInternal("session_payment_amount_change_denied_not_owner", {
+        studioId,
+        practitionerId,
+      });
+    }
+    return { ok: false, error: decision.error };
   }
 
   const admin = createAdminClient();
@@ -276,7 +281,11 @@ export async function prepareSessionPaymentChargeAction(
       appointment_id: appointmentId,
       session_id: sessionId,
       created_by_practitioner_id: practitionerId,
-      amount_cents: authoritativeCents,
+      // THE OPERATOR-CONFIRMED FINAL AMOUNT, and an immutable transaction fact
+      // from this moment on. The Ready summary, the confirm button, the Stripe
+      // execution and any later refund all read THIS column; nothing downstream
+      // recomputes it from the service menu.
+      amount_cents: decision.amountCents,
       currency: "cad",
       status: "ready",
       client_payment_method_id: eligibility.card.id,
@@ -289,10 +298,14 @@ export async function prepareSessionPaymentChargeAction(
       // (identical to before); the new payment_charge_attempts_live_requires_
       // account_check (0101) is satisfied because stripe_account_id is set above.
       stripe_livemode: inferStripeLivemode(),
-      // Optional note: store NULL when blank/whitespace-only (strOrEmpty
-      // already trimmed it), never a fabricated placeholder. A real note is
-      // written verbatim. Mirrors the refund path's blank-to-null idiom below.
-      internal_note: internalNote.length > 0 ? internalNote : null,
+      // Optional note: NULL when blank/whitespace-only, never a fabricated
+      // placeholder. A real note is preserved verbatim. When the final charge
+      // differs from the reference, this also carries the adjustment audit
+      // line the decision module composed — the reference amount, the final
+      // amount and the practitioner's own words, as prose. The AMOUNT COLUMN
+      // above remains the monetary fact; nothing parses this text back into
+      // discount or product semantics.
+      internal_note: decision.internalNote,
     })
     .select("id")
     .single();

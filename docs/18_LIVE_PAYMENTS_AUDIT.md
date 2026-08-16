@@ -145,9 +145,9 @@ Charge eligibility (`lib/billing/session-payment-eligibility.ts`, mirrored by th
 |---|---|---|
 | Double-click / concurrent charge | **Handled** | claim RPC (FOR UPDATE conditional) + deterministic idempotency key + Stripe idempotency |
 | Duplicate charge on retry | **Handled** | same key on retry within window; stale `pending_stripe` needs manual review (60-min rule): live must add `paymentIntents.search` (docs/16 §5 standing item) |
-| Amount tampering | **Handled** | amount fixed at prepare into the row (DB CHECK 0 < x <= $2,000); execute charges `attemptRow.amount_cents`, never client input |
+| Amount tampering | **Handled** | amount fixed at prepare into the row (DB CHECK 0 < x <= $2,000); execute charges `attemptRow.amount_cents`, never client input. **F-PAY-002:** the browser now REQUESTS the operator-authored final total, which `decideCheckoutFinalAmount` admits only after the stale-reference check, strict CAD parsing (2 decimals, exact cents, reject-never-clamp), the OWNER-ONLY gate on a changed total and a required reason. Execution is unchanged |
 | Client/studio/session mismatch | **Handled** | studio-scoped queries + lineage checks + webhook metadata matching |
-| Charge authorization (who may charge) | **Handled (policy open)** | any ACTIVE practitioner of the studio; no owner-only restriction: acceptable for a 1-2 person pilot, revisit before multi-staff studios |
+| Charge authorization (who may charge) | **Handled (policy open)** | any ACTIVE practitioner of the studio may prepare and charge AT THE BOOKED PRICE; no owner-only restriction there: acceptable for a 1-2 person pilot, revisit before multi-staff studios. **CHANGING the final total is owner-only** (F-PAY-002), server-derived from `getCurrentPractitionerWithStudio()`, alongside the existing owner-only refund gate |
 | Refund permission | **Partially handled** | any active practitioner can refund; no owner-only gate, no refund audit_logs row (ops trail exists via attempt columns). Policy decision before live. |
 | Webhook spoofing | **Handled** | signature verification, generic 400, idempotent claim |
 | Live/test confusion | **Handled** | three independent guards + UI labels + receipt disclaimer |
