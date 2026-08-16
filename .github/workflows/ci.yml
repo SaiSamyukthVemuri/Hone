@@ -598,7 +598,19 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # TARGET ~10 min · HARD TIMEOUT 18 min. Separate numbers, deliberately.
+    #
+    # This lane sat at a single 10, which is a target being used as a ceiling —
+    # the exact shape that produced runs 30767725631, 30814919019 and
+    # 31852791688, each cancelled at its budget with ZERO test failures and each
+    # read at first as a broken diff. F-PAY-002 measured the lane at 9.6-10.4
+    # min locally across repeated runs of 57 serial specs: the ceiling and the
+    # observed run time were the same number. Setup here is not a fixed cost either — the Supabase
+    # stack, the full migration chain from scratch and the `next build` inside
+    # Playwright's webServer have been measured ~4 minutes apart across runners
+    # before the first test executes. 18 clears a slow-runner setup plus the
+    # full suite; ~10 is the number to watch for real slowdown.
+    timeout-minutes: 18
 
     steps:
       - name: Checkout repository

@@ -267,7 +267,19 @@ describe("PR CI — path-aware lane selection", () => {
     expect(budget("changes")).toBeLessThanOrEqual(2);
     expect(budget("validate")).toBeLessThanOrEqual(8);
     expect(budget("db-integration")).toBeLessThanOrEqual(8);
-    expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(10);
+    // payment-browser-e2e: TARGET ~10 min, HARD TIMEOUT 18. It carried a single
+    // 10 that served as both, which is precisely the shape the comment below
+    // warns about. F-PAY-002 measured the lane at 9.6-10.4 min locally across
+    // repeated runs of 57 serial specs — i.e. the ceiling and the observed run
+    // time were the same number, with nothing left for a slow runner.
+    //
+    // The lower bound is 14, not 11, for the same reason the extended shards
+    // clear their target by ~8: setup is not a fixed cost, and the measured
+    // runner spread before the first test executes is ~4 minutes (266s vs 508s
+    // for the same work). A ceiling of 12 would sit inside that spread and the
+    // lane would pass or be cancelled according to which runner it drew.
+    expect(budget("payment-browser-e2e")).toBeGreaterThan(14);
+    expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(18);
     expect(budget("google-browser-e2e")).toBeLessThanOrEqual(10);
     expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
     // Targeted hard timeout 15, extended shard hard timeout 18 — both above

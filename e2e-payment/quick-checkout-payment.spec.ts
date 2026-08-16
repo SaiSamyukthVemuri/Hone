@@ -128,10 +128,15 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   const modal = page.getByTestId("quick-checkout-modal");
   await expect(modal).toBeVisible();
   await expect(modal.getByText(seed.clientName)).toBeVisible();
-  // F-PAY-001: the amount is the server's decision, rendered not edited — and
-  // quick checkout shows exactly what session detail shows.
+  // F-PAY-001 + F-PAY-002: the booked price is the server's decision, rendered
+  // not edited — and quick checkout shows exactly what session detail shows.
   await expect(modal.getByTestId("authoritative-amount")).toHaveText("$225.00");
-  await expect(modal.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+  // The FINAL charge is a separate, editable field defaulted to that reference.
+  // This journey leaves it untouched, which is the ordinary checkout; the
+  // adjusted-total journey lives in custom-final-amount-payment.spec.ts.
+  await expect(modal.getByTestId("final-charge-input")).toHaveValue("225.00");
+  // The legacy unguarded field never returns.
+  await expect(modal.locator('input[name="amount_dollars"]')).toHaveCount(0);
   await expect(modal.getByText(/ending in 4242/i)).toBeVisible();
   // Processor identifiers are never shown by default (owner-only disclosure; and
   // there is no PaymentIntent yet anyway).

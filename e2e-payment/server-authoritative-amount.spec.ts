@@ -12,7 +12,17 @@ import { expectPreparedDurable, sessionPaymentRegion } from "./helpers/checkout-
 // F-PAY-001. The browser used to decide payment_charge_attempts.amount_cents:
 // the prepare action read `amount_dollars` off the form and inserted it, so a
 // tampered request preparing $1.00 against a $145.00 service became a real
-// chargeable row. These prove the amount is now a SERVER decision.
+// chargeable row.
+//
+// F-PAY-002 restated what these prove, without weakening any of it. The
+// REFERENCE — what the booked service or this client's specific pricing costs
+// today — is still resolved server-side, still re-resolved at prepare time,
+// still fails closed when it is ambiguous, missing or above the ceiling, and
+// still refuses a submission whose displayed reference has moved. What changed
+// is that the amount CHARGED is now the operator's explicit final total rather
+// than the reference itself. Each test below therefore names which of the two
+// numbers it is about; every stale-price, lineage and fail-closed guarantee is
+// unchanged, and the retired `amount_dollars` field is still read by nothing.
 //
 // No real provider is reached: the payment lane uses the fake Stripe stack.
 
@@ -49,7 +59,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
   test.describe(label, () => {
     test.use({ viewport, isMobile, hasTouch: isMobile });
 
-    test("the authoritative amount is shown, not editable, and is what gets prepared", async ({
+    test("the reference is shown, defaults the final charge, and is what gets prepared", async ({
       page,
     }) => {
       const s = await seed("shown");
@@ -58,9 +68,13 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
 
       await expect(region.getByTestId("authoritative-amount")).toHaveText("$145.00");
       await expect(region.getByTestId("amount-source")).toHaveText("Booked service price.");
-      await expect(region.getByText(/Booked service: AUTH shown/)).toBeVisible();
-      // THE fix: there is no amount input at all.
-      await expect(page.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+      await expect(region.getByText(/AUTH shown/)).toBeVisible();
+      // F-PAY-002: the REFERENCE is still server-decided and is still rendered
+      // rather than typed into. What changed is that the FINAL CHARGE is now a
+      // separate editable field, defaulted to it — left untouched here, so this
+      // test remains the ordinary-price path it has always been.
+      await expect(region.getByTestId("final-charge-input")).toHaveValue("145.00");
+      await expect(page.locator('input[name="amount_dollars"]')).toHaveCount(0);
 
       await region.getByRole("button", { name: /prepare session payment/i }).click();
       await expectPreparedDurable(region);
@@ -77,7 +91,9 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await loginAsOwner(page, s);
       const region = await openSession(page, s);
 
-      // Inject the old contract's field into the live form and submit it.
+      // Inject the RETIRED field name into the live form and submit it. It is
+      // read by no code path, so the prepared amount must come from the visible
+      // final-charge field (left at the reference) and never from this.
       await region.evaluate((el) => {
         const form = el.querySelector("form");
         const inj = document.createElement("input");
@@ -91,6 +107,43 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const rows = await attempts(s.sessionId);
       expect(rows).toHaveLength(1);
       // The server amount, never the injected $1.00.
+      expect(Number(rows[0].amount_cents)).toBe(PRICE);
+      await cleanupPaymentScenario(s.studioId);
+    });
+
+    test("an APPENDED duplicate final_amount_dollars loses to the real field", async ({
+      page,
+    }) => {
+      // F-PAY-002. The final charge is a legitimate input now, so the tamper
+      // shape changed: append a duplicate field rather than a retired one.
+      //
+      // NAMED PRECISELY, because the mechanism is narrow: FormData.get() returns
+      // the FIRST value in DOM order, so an APPENDED forgery loses. Field order
+      // is NOT a security boundary and this test does not claim it is — a raw
+      // POST could put the forged value first. What makes that harmless is the
+      // real gate: any value differing from the reference must still clear the
+      // OWNER check and the reason requirement (proved server-side in
+      // tests/app/sessions/prepare-final-amount-authority.test.ts case E, and
+      // end-to-end in checkout-default-amount.spec.ts "a non-owner
+      // practitioner"), and an owner could type $1.00 into the visible field
+      // anyway. What this pins is that the visible field the operator READ is
+      // the one that is submitted.
+      const s = await seed("dup-final");
+      await loginAsOwner(page, s);
+      const region = await openSession(page, s);
+
+      await region.evaluate((el) => {
+        const form = el.querySelector("form");
+        const inj = document.createElement("input");
+        inj.name = "final_amount_dollars";
+        inj.value = "1.00";
+        form?.appendChild(inj);
+      });
+      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await expectPreparedDurable(region);
+
+      const rows = await attempts(s.sessionId);
+      expect(rows).toHaveLength(1);
       expect(Number(rows[0].amount_cents)).toBe(PRICE);
       await cleanupPaymentScenario(s.studioId);
     });
@@ -109,7 +162,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         }, tampered);
         await region.getByRole("button", { name: /prepare session payment/i }).click();
 
-        await expect(region.getByText(/The price changed/i)).toBeVisible({ timeout: 20_000 });
+        await expect(region.getByText(/booked service price changed/i)).toBeVisible({ timeout: 20_000 });
         expect(await attempts(s.sessionId)).toHaveLength(0);
         await cleanupPaymentScenario(s.studioId);
       }
@@ -130,7 +183,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       );
 
       await region.getByRole("button", { name: /prepare session payment/i }).click();
-      await expect(region.getByText(/The price changed/i)).toBeVisible({ timeout: 20_000 });
+      await expect(region.getByText(/booked service price changed/i)).toBeVisible({ timeout: 20_000 });
       // Nothing was prepared at either price.
       expect(await attempts(s.sessionId)).toHaveLength(0);
 
@@ -235,7 +288,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
           if (f) f.value = v;
         }, value);
         await region.getByRole("button", { name: /prepare session payment/i }).click();
-        await expect(region.getByText(/The price changed/i)).toBeVisible({ timeout: 20_000 });
+        await expect(region.getByText(/booked service price changed/i)).toBeVisible({ timeout: 20_000 });
         expect(await attempts(s.sessionId), `value=${value}`).toHaveLength(0);
         await cleanupPaymentScenario(s.studioId);
       }
@@ -257,7 +310,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         [s.studioId, s.clientId],
       );
       await region.getByRole("button", { name: /prepare session payment/i }).click();
-      await expect(region.getByText(/The price changed/i)).toBeVisible({ timeout: 20_000 });
+      await expect(region.getByText(/booked service price changed/i)).toBeVisible({ timeout: 20_000 });
       expect(await attempts(s.sessionId)).toHaveLength(0);
       await cleanupPaymentScenario(s.studioId);
     });
@@ -402,19 +455,28 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const s = await seed("immutable");
       await loginAsOwner(page, s);
       const region = await openSession(page, s);
+      // Prepare an AUTHORED total, so this proves the immutability of an
+      // operator decision and not merely of a number the server could
+      // re-derive from the menu anyway.
+      await region.getByTestId("final-charge-input").fill("130.00");
+      await region.getByTestId("adjustment-reason-input").fill("Package adjustment");
       await region.getByRole("button", { name: /prepare session payment/i }).click();
       await expectPreparedDurable(region);
-      expect(Number((await attempts(s.sessionId))[0].amount_cents)).toBe(PRICE);
+      expect(Number((await attempts(s.sessionId))[0].amount_cents)).toBe(13000);
 
       await adminQuery(
         `update public.services set price_cents = 19900 where studio_id = $1 and name = $2`,
         [s.studioId, "AUTH immutable"],
       );
       await page.reload();
-      // Preparation is the pricing boundary: the persisted attempt is unchanged.
+      // Preparation is the pricing boundary: the persisted attempt is unchanged
+      // by a later menu-price move, and the Ready panel still quotes it.
       const rows = await attempts(s.sessionId);
       expect(rows).toHaveLength(1);
-      expect(Number(rows[0].amount_cents)).toBe(PRICE);
+      expect(Number(rows[0].amount_cents)).toBe(13000);
+      await expect(
+        sessionPaymentRegion(page).getByText(/saved card will be charged \$130\.00/i),
+      ).toBeVisible({ timeout: 20_000 });
       await cleanupPaymentScenario(s.studioId);
     });
 
@@ -424,6 +486,11 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const region = await openSession(page, s);
       await expect(region.getByTestId("authoritative-amount")).toBeVisible();
       await expect(region.getByTestId("amount-source")).toBeVisible();
+      // F-PAY-002: the final charge is the control the practitioner touches, so
+      // it carries the same touch-target floor as the CTA on every viewport
+      // this suite runs at.
+      const finalBox = await region.getByTestId("final-charge-input").boundingBox();
+      expect(finalBox!.height).toBeGreaterThanOrEqual(44);
       const box = await region
         .getByRole("button", { name: /prepare session payment/i })
         .boundingBox();
@@ -503,7 +570,7 @@ function workflowSuite(
         await expect(region.getByTestId("amount-source")).toHaveText(
           "Booked service price.",
         );
-        await expect(page.getByLabel("Amount in Canadian dollars")).toHaveCount(0);
+        await expect(region.getByTestId("final-charge-input")).toHaveValue("145.00");
         const cta = region.getByRole("button", { name: /prepare session payment/i });
         const box = await cta.boundingBox();
         expect(box!.height).toBeGreaterThanOrEqual(44);

@@ -2,10 +2,26 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// F-PAY-001. This suite used to pin the "display default" amount FIELD: an
-// editable input whose value the prepare action inserted verbatim. The amount
-// is now a server decision that the card RENDERS and never edits, so these pin
-// the authoritative display instead.
+// F-PAY-001 then F-PAY-002. This suite has pinned the amount field through two
+// inversions, and the history is the point:
+//
+//   * originally: an editable `amount_dollars` input whose value the prepare
+//     action inserted VERBATIM — the browser decided what a client was charged;
+//   * F-PAY-001: no input at all, the server-resolved price the only amount —
+//     which closed the hole and took Chloe's till with it;
+//   * F-PAY-002 (here): the server-resolved price is the REFERENCE and the
+//     default, and a separate `final_amount_dollars` field carries the
+//     operator-authored total, which the server authorises, bounds and audits.
+//
+// What is pinned below is therefore NOT "there is no input" — that claim is
+// deliberately false now. It is the narrower, still-load-bearing claim: the
+// REFERENCE is display-only and the legacy unguarded field is gone for good.
+//
+// The rendered-output proof (the field exists, is enabled, defaults to the
+// reference) lives in tests/components/checkout-final-amount-ui.test.ts, and
+// the amount that actually lands on the row in
+// tests/app/sessions/prepare-final-amount-authority.test.ts. These are source
+// pins about STRUCTURE only.
 
 const CARD = readFileSync(
   path.resolve(__dirname, "../../../components/session-payment-prepare-card.tsx"),
@@ -17,23 +33,66 @@ const amountRegion = CARD.slice(
   CARD.indexOf('name="internal_note"'),
 );
 
-describe("the authoritative amount is displayed, not edited", () => {
-  it("renders the server amount and submits it only as a stale-price check", () => {
+describe("the reference is displayed; the FINAL charge is the editable total", () => {
+  it("renders the server reference and submits it only as a stale-price check", () => {
     expect(amountRegion).toMatch(/formatCadFromCents\(amount\.amountCents\)/);
     expect(amountRegion).toMatch(/name="expected_amount_cents"/);
     expect(amountRegion).toMatch(/type="hidden"/);
   });
 
-  it("there is NO editable amount input anywhere in the card", () => {
+  it("the reference itself is never an input", () => {
+    // `authoritative-amount` is the reminder. Wrapping it in a control would
+    // make the reference look like the editable total and reintroduce the
+    // confusion between the two numbers.
+    const referenceTag = CARD.slice(
+      CARD.lastIndexOf("<", CARD.indexOf('data-testid="authoritative-amount"')),
+      CARD.indexOf('data-testid="authoritative-amount"'),
+    );
+    expect(referenceTag).not.toMatch(/<input/);
+  });
+
+  it("the legacy unguarded amount field is gone for good", () => {
+    // The exact field name the pre-F-PAY-001 code inserted verbatim. Its
+    // replacement is `final_amount_dollars`, which no code path reads without
+    // going through decideCheckoutFinalAmount.
     expect(CARD).not.toMatch(/name="amount_dollars"/);
     expect(CARD).not.toMatch(/aria-label="Amount in Canadian dollars"/);
     expect(CARD).not.toMatch(/suggestedAmount/);
-    // ...and no copy inviting an edit.
+    // ...and no copy that frames the total as a mere suggestion to tweak.
     expect(CARD).not.toMatch(/You can adjust before preparing/);
   });
 
-  it("names the booked service and its duration beside the amount", () => {
-    expect(amountRegion).toMatch(/Booked service: \{amount\.serviceName\}/);
+  it("the final charge is a real, named, enabled control", () => {
+    expect(CARD).toMatch(/name="final_amount_dollars"/);
+    expect(CARD).toMatch(/aria-label="Final charge in Canadian dollars"/);
+    // Bounded to the ONE `<input …/>` element, not a fixed character window:
+    // a window wide enough to reach the className is also wide enough to reach
+    // the NEXT field's attributes and answer this question with them.
+    const nameAt = CARD.indexOf('name="final_amount_dollars"');
+    const field = CARD.slice(
+      CARD.lastIndexOf("<input", nameAt),
+      CARD.indexOf("/>", nameAt) + 2,
+    );
+    expect(field).toMatch(/^<input/);
+    expect(field).toMatch(/name="final_amount_dollars"/);
+    expect(field).not.toMatch(/readOnly/);
+    expect(field).not.toMatch(/disabled/);
+    expect(field).toMatch(/inputMode="decimal"/);
+    expect(field).toMatch(/min-h-\[44px\]/);
+  });
+
+  it("parses the typed total with the SAME parser the server uses", () => {
+    // Not a re-implementation: a second parser in the browser could decide
+    // "this is an adjustment" while the action decided "this is malformed".
+    expect(CARD).toMatch(
+      /import \{[\s\S]{0,200}parseCadAmountToCents[\s\S]{0,120}\} from "@\/lib\/billing\/cad-amount"/,
+    );
+    expect(CARD).toMatch(/parseCadAmountToCents\(\s*finalAmount,/);
+  });
+
+  it("names the booked service and its duration beside the reference", () => {
+    expect(amountRegion).toMatch(/Booked service/);
+    expect(amountRegion).toMatch(/\{amount\.serviceName\}/);
     expect(amountRegion).toMatch(/amount\.durationMinutes != null/);
   });
 
