@@ -156,6 +156,7 @@ function Field({
   placeholder,
   wide = false,
   defaultValue,
+  hint,
 }: {
   label: string;
   name: string;
@@ -164,6 +165,10 @@ function Field({
   placeholder?: string;
   wide?: boolean;
   defaultValue?: string;
+  // Optional explanatory copy under the input, for a field whose CONSEQUENCE is
+  // not obvious from its label (0182's date_discarded). Omitted = renders
+  // nothing, so every existing Field is byte-identical.
+  hint?: string;
 }) {
   return (
     <label className={`flex flex-col gap-1 ${wide ? "sm:col-span-2" : ""}`}>
@@ -179,6 +184,7 @@ function Field({
         defaultValue={defaultValue}
         className={INPUT_CLS}
       />
+      {hint && <span className="text-xs text-neutral-500">{hint}</span>}
     </label>
   );
 }
@@ -460,6 +466,12 @@ function ExposedPersonPicker({
 
 // PR #316: the shape copy-last prefills from (the studio's most recent sterile
 // record). lot_number is intentionally absent. It must NEVER be copied.
+//
+// Migration 0182: date_discarded is absent for the SAME reason and it is just
+// as load-bearing. Each purchase has its own lifecycle; copying a discard date
+// onto a brand-new box would assert that freshly-bought stock had already been
+// thrown away — a false compliance record, and one that would immediately hide
+// the new stock from current inventory.
 export type SterileCopyLast = {
   date_purchased: string;
   item_description: string;
@@ -542,6 +554,13 @@ export function AddSterileItemForm({
           name="expiry_date"
           type="date"
           defaultValue={prefill?.expiry_date?.slice(0, 10)}
+        />
+        {/* 0182: never prefilled from copy-last, always starts blank. */}
+        <Field
+          label="Date discarded"
+          name="date_discarded"
+          type="date"
+          hint="Leave blank unless this stock has been thrown away. Setting it removes the item from current inventory; its history is kept."
         />
         <NotesField defaultValue={prefill?.notes ?? undefined} />
       </div>
@@ -666,6 +685,8 @@ type SterileItemRecord = {
   expiry_date: string | null;
   notes: string | null;
   probe_key: string | null;
+  // Migration 0182: null = not discarded.
+  date_discarded: string | null;
 };
 
 export function EditSterileItemForm({
@@ -705,6 +726,17 @@ export function EditSterileItemForm({
           name="expiry_date"
           type="date"
           defaultValue={record.expiry_date?.slice(0, 10)}
+        />
+        {/* Migration 0182: THE structured way to discard a sterile item, and
+            the reason this branch exists. Setting it retires the stock from
+            current inventory; clearing it again undoes an accidental discard.
+            Both directions are recorded by the 0086 audit trigger. */}
+        <Field
+          label="Date discarded"
+          name="date_discarded"
+          type="date"
+          defaultValue={record.date_discarded?.slice(0, 10)}
+          hint="Set this when the stock has been thrown away: it stops expiry reminders and removes the item from lot suggestions. The record, its lot traceability and any treatment that used it are all kept. Clear the date to undo."
         />
         <NotesField defaultValue={record.notes ?? ""} />
       </div>

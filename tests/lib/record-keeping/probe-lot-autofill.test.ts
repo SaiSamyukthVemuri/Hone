@@ -59,7 +59,17 @@ const TODAY = "2026-07-31";
 const FUTURE = "2099-01-01";
 const PAST = "2000-01-01";
 
-function inv(rows: Array<{ id: string; lot: string; probeKey: string; expiry?: string | null }>) {
+function inv(
+  rows: Array<{
+    id: string;
+    lot: string;
+    probeKey: string;
+    expiry?: string | null;
+    // 0182: omitted = not discarded, so every pre-existing case in this file
+    // keeps testing exactly what it tested before.
+    discarded?: string | null;
+  }>,
+) {
   return buildProbeLotOptions(
     rows.map((r) => ({
       id: r.id,
@@ -68,6 +78,7 @@ function inv(rows: Array<{ id: string; lot: string; probeKey: string; expiry?: s
       itemDescription: "Sterex Gold F3",
       manufacturerName: "Sterex",
       expiryDate: r.expiry === undefined ? null : r.expiry,
+      dateDiscarded: r.discarded === undefined ? null : r.discarded,
     })),
     TODAY,
   );

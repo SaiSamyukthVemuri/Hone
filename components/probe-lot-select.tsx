@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useId, useMemo, useState } from "react";
 import {
   filterProbeLotOptions,
+  isCurrentStock,
   probeLotOptionLabel,
   PROBE_LOT_LABEL_DELIMITER,
   type ProbeLotOption,
@@ -47,12 +48,17 @@ export function ProbeLotSelect({
 }: Props) {
   const [open, setOpen] = useState(false);
   const listId = useId();
-  const active = useMemo(() => options.filter((o) => !o.isExpired), [options]);
+  // Migration 0182: the shortlist is CURRENT STOCK, which now means neither
+  // expired NOR discarded. Shared predicate so this cannot drift from the
+  // server-side selectors.
+  const active = useMemo(() => options.filter(isCurrentStock), [options]);
   const hasActiveInventory = active.length > 0;
   const isManual = selectedInventoryItemId == null && value.trim() !== "";
 
-  // Empty input → the active shortlist; typed input → search the full set (so an
-  // expired historical lot remains findable) filtered by the query.
+  // Empty input → the current-stock shortlist; typed input → search the full set
+  // (so an expired or since-discarded historical lot remains FINDABLE, which is
+  // what keeps retrospective charting of a treatment performed before the
+  // discard possible) filtered by the query.
   const results = useMemo(() => {
     const q = value.trim();
     const base = q ? options : active;
@@ -121,6 +127,14 @@ export function ProbeLotSelect({
                       {o.isExpired && (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
                           Expired
+                        </span>
+                      )}
+                      {/* 0182: shown alongside Expired, not instead of it —
+                          both facts are true and both matter when deciding
+                          whether to record this lot for a past treatment. */}
+                      {o.isDiscarded && (
+                        <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                          Discarded
                         </span>
                       )}
                     </span>

@@ -1431,6 +1431,16 @@ export type RecordKeepingSterileItem = {
   // Never inferred from item_description; validated against the code catalog
   // before write.
   probe_key: string | null;
+  // Migration 0182: the structured discard lifecycle. NULL = no discard has
+  // been recorded; a date = the practitioner asserted the physical stock was
+  // discarded that day. Mirrors RecordKeepingDisinfectant.date_discarded.
+  //
+  // A discarded item leaves CURRENT inventory behaviour (expiry warnings, lot
+  // suggestion/auto-fill, the usable-now chooser) but REMAINS in every
+  // historical surface: the record list, lot traceability, export and search.
+  // Current inventory is not historical record existence. Never inferred from
+  // notes or any other free text.
+  date_discarded: string | null;
 };
 
 export type RecordKeepingDisinfectant = {

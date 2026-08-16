@@ -46,6 +46,19 @@ export async function getSterileItemRecords(
 // "Supplies expiring" attention card. Studio-scoped (RLS + explicit .eq);
 // `today` is passed in so callers stay deterministic. Returns only safe display
 // fields (no lot_number, the card never needs it).
+//
+// MIGRATION 0182 — DISCARDED STOCK IS FILTERED OUT HERE, DELIBERATELY. This is
+// a purely CURRENT surface: it exists only to prompt action on supplies still
+// on the shelf, and it has exactly one caller (the dashboard). Stock the
+// practitioner recorded as physically thrown away cannot need replacing, so the
+// gate belongs in the query. This is the precise line that stops Hone telling
+// Chloe to replace probes she has already binned.
+//
+// This is NOT the forbidden global filter. The foundational reads —
+// getSterileItemRecords (the historical log), getProbeLotInventory (the
+// inventory the charting form and every historical link resolve through) and
+// getLotTraceability — are DIFFERENT functions and are deliberately left
+// unfiltered. Current inventory is not historical record existence.
 export async function getExpiringSterileItems(
   studioId: string,
   todayIso: string,
@@ -63,6 +76,7 @@ export async function getExpiringSterileItems(
     .from("record_keeping_sterile_items")
     .select("id, item_description, manufacturer_name, expiry_date")
     .eq("studio_id", studioId)
+    .is("date_discarded", null) // 0182: discarded stock is not current stock
     .not("expiry_date", "is", null)
     .lte("expiry_date", horizon)
     .order("expiry_date", { ascending: true })
@@ -91,6 +105,10 @@ export async function getLatestProbeLotSuggestion(
     .eq("studio_id", studioId)
     .not("lot_number", "is", null)
     .ilike("item_description", "%probe%")
+    // Migration 0182: never suggest stock the practitioner recorded as
+    // discarded. This function suggests the CURRENT lot to chart against, so
+    // discarded rows are excluded here alongside the existing expiry gate.
+    .is("date_discarded", null)
     .or(`expiry_date.is.null,expiry_date.gte.${today}`)
     .order("date_purchased", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
@@ -107,6 +125,15 @@ export async function getLatestProbeLotSuggestion(
 // RLS). Expired lots ARE returned (a historical value must stay selectable) but
 // are classified isExpired and sorted last by buildProbeLotOptions. Manual entry
 // always remains available in the form; this only powers suggestions/search.
+//
+// MIGRATION 0182 — DISCARDED ROWS ARE RETURNED, NOT FILTERED. This is the
+// FOUNDATIONAL inventory read, and filtering it on date_discarded would be a
+// defect: a historical session's probe_inventory_item_id link, the edit chooser
+// for that old record, and lot traceability all resolve through this list, so a
+// row that vanishes here takes retrospective truth with it. date_discarded is
+// SELECTED and carried onto each option as isDiscarded; the CURRENT-stock gate
+// lives in activeProbeLotOptionsForProbe / resolveInventoryAutofill. Current
+// inventory is not historical record existence.
 export async function getProbeLotInventory(
   studioId: string,
 ): Promise<ProbeLotOption[]> {
@@ -119,7 +146,9 @@ export async function getProbeLotInventory(
   // unclassified rows (probe_key null) never appear as an exact probe match.
   const { data } = await supabase
     .from("record_keeping_sterile_items")
-    .select("id, probe_key, lot_number, item_description, manufacturer_name, expiry_date")
+    .select(
+      "id, probe_key, lot_number, item_description, manufacturer_name, expiry_date, date_discarded",
+    )
     .eq("studio_id", studioId)
     .not("probe_key", "is", null)
     .not("lot_number", "is", null)
@@ -133,6 +162,7 @@ export async function getProbeLotInventory(
     item_description: string | null;
     manufacturer_name: string | null;
     expiry_date: string | null;
+    date_discarded: string | null;
   }>).map((r) => ({
     id: r.id,
     probeKey: r.probe_key,
@@ -140,6 +170,7 @@ export async function getProbeLotInventory(
     itemDescription: r.item_description ?? "",
     manufacturerName: r.manufacturer_name ?? null,
     expiryDate: r.expiry_date,
+    dateDiscarded: r.date_discarded,
   }));
   return buildProbeLotOptions(rows, today);
 }

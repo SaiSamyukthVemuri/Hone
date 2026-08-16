@@ -1,0 +1,131 @@
+-- ===========================================================================
+-- STRUCTURED STERILE-ITEM DISCARD LIFECYCLE — 0182
+-- ===========================================================================
+--
+-- THE DEFECT. Chloe physically throws away an expired box of probes and writes
+-- that in the record's free-text `notes`. Hone keeps counting the row as
+-- actionable CURRENT stock: the Dashboard keeps raising "supplies expiring",
+-- the charting form keeps offering the lot, and the reading is alarming —
+-- "Hone thinks I might still be using expired probes."
+--
+-- Notes are prose. They carry no lifecycle meaning and nothing in Hone reads
+-- them as machine state, which is CORRECT: a physical-stock / health-inspection
+-- fact is practitioner-authored structured data or it does not exist. Teaching
+-- any query to pattern-match the word "discarded" out of a sentence would be a
+-- defect, not a fix — it would silently reinterpret "do not discard" and
+-- "discarded the OTHER box" as compliance assertions. 0182 adds the structured
+-- fact instead, and NOTHING in this change infers discard from any text field.
+--
+-- THE COLUMN.
+--
+--   date_discarded IS NULL      -> no structured discard has been recorded
+--   date_discarded IS NOT NULL  -> the practitioner asserted the physical stock
+--                                  was discarded on that calendar date
+--
+-- This is NOT a new concept in Hone. `record_keeping_disinfectants` has carried
+-- exactly this column, with exactly this meaning, since 0085 — "date_discarded
+-- -> when it was ACTUALLY discarded" (0096). Only the sterile-items table
+-- lacked it. The type, nullability, absence of a default and absence of a CHECK
+-- are all copied DELIBERATELY from that sibling column so the two logbooks stay
+-- one concept rather than two dialects.
+--
+-- WHY NO CHECK CONSTRAINT (e.g. date_discarded >= date_purchased). The sibling
+-- column has none, and a logbook must accept a correction. A practitioner
+-- back-dating a discard she forgot to log, or fixing a typo, must not be met
+-- with a database error on a health-inspection record. Ordering between the two
+-- dates is a display concern, not an integrity one.
+--
+-- WHY NO INDEX. These are per-studio logbook tables read with an explicit
+-- studio_id predicate and a hard row cap (the inventory read caps at 500, the
+-- record list at 200). The existing (studio_id, date_purchased desc) index
+-- already selects the studio's rows; filtering a few hundred already-fetched
+-- rows on a nullable date needs no second index, and an unused index is write
+-- cost on every insert for no read benefit. 0096 added none for the same reason.
+--
+-- ===========================================================================
+-- CURRENT INVENTORY IS NOT HISTORICAL RECORD EXISTENCE
+-- ===========================================================================
+--
+-- The load-bearing rule for everything built on this column. Two invariants
+-- pull against each other and BOTH must hold:
+--
+--   1. Discarded stock is not CURRENT stock. It must not raise expiry warnings,
+--      must not be suggested or auto-filled, and must not sit in the default
+--      "usable now" chooser.
+--   2. Discarding stock TODAY must not rewrite what happened LAST MONTH. The
+--      row, and every treatment that referenced it, stays readable and truthful.
+--
+-- A fix that satisfied (1) by filtering discarded rows out of the FOUNDATIONAL
+-- inventory read would silently violate (2): historical sessions would lose the
+-- inventory row behind their lot snapshot, traceability would go blind, and a
+-- re-save of an old record would fail to resolve its own link.
+--
+-- So this migration deliberately does NOT hide anything. It adds one nullable
+-- fact. The application carries that fact THROUGH its inventory model and gates
+-- it at the CURRENT-stock selectors only; the historical reads (record list,
+-- lot traceability, export, search) continue to return discarded rows in full.
+--
+-- ===========================================================================
+-- SAFETY
+-- ===========================================================================
+--
+-- ADDITIVE + NULLABLE + FORWARD-ONLY. Every existing production row reads as
+-- date_discarded IS NULL, which is exactly "no structured discard recorded" —
+-- so existing rows keep their current semantics with no backfill and no
+-- reinterpretation. There is deliberately NO backfill: inferring a discard from
+-- notes is the very thing this column exists to replace.
+--
+-- NO ROW MUTATION. No UPDATE, no DELETE, no DDL on any other table.
+--
+-- FOREIGN KEYS UNTOUCHED. session_blocks.probe_inventory_item_id references
+-- record_keeping_sterile_items (studio_id, id) (0155) and the created_by actor
+-- FK is 0179's tenant-consistent pair. Adding a column touches neither, so
+-- every historical clinical reference stays valid.
+--
+-- RLS UNCHANGED. The 0085 per-command policies (member select / insert /
+-- update, and DELIBERATELY NO DELETE POLICY — these are health-inspection
+-- logbook records and Hone ships no delete affordance) already scope every
+-- command by is_studio_member(studio_id) at the ROW level. A new column
+-- inherits that scoping exactly: no studio can read or write another studio's
+-- discard state, and marking an item discarded is a normal member UPDATE, not
+-- a deletion.
+--
+-- AUDIT IS AUTOMATIC AND REQUIRES NO CHANGE HERE. 0086's
+-- record_keeping_audit_row() trigger diffs to_jsonb(old) against to_jsonb(new)
+-- over jsonb_object_keys(v_new) — it is column-generic, not a hard-coded field
+-- list. date_discarded is therefore audited from the moment it exists: setting
+-- it, and CLEARING it again to correct an accidental discard, both land in
+-- record_keeping_audit_events.changed_fields with old/new values and the acting
+-- practitioner. That is what makes an accidental discard correctable through
+-- the ordinary edit form WITHOUT losing audit truth.
+--
+-- PREFLIGHT (read-only; expected 0 before apply, the column does not yet exist):
+--   select count(*) from information_schema.columns
+--    where table_schema = 'public'
+--      and table_name   = 'record_keeping_sterile_items'
+--      and column_name  = 'date_discarded';   -- 0
+--
+-- Idempotent (add column if not exists). NOT hosted-applied by this change.
+-- ===========================================================================
+
+begin;
+set local lock_timeout = '5s';
+
+-- The ONLY schema change in 0182. ADD COLUMN of a nullable column with no
+-- default does not rewrite the table: it is a catalog-only change under an
+-- ACCESS EXCLUSIVE lock held for microseconds, bounded by the lock_timeout
+-- above. Safe against a live production table of any size.
+alter table public.record_keeping_sterile_items
+  add column if not exists date_discarded date;
+
+comment on column public.record_keeping_sterile_items.date_discarded is
+  'Migration 0182. NULL = no structured discard recorded; a date = the practitioner asserted the physical stock was discarded that day. Mirrors record_keeping_disinfectants.date_discarded (0085/0096). Removes the item from CURRENT inventory behaviour (expiry warnings, lot suggestion/auto-fill, the usable-now chooser) while PRESERVING it for historical record keeping, lot traceability, export and search — current inventory is not historical record existence. Never inferred from notes or any other free text.';
+
+commit;
+
+-- ===========================================================================
+-- ROLLBACK (throwaway/local only; not part of any hosted apply):
+--   alter table public.record_keeping_sterile_items drop column date_discarded;
+-- Drops only the new column. No clinical row, no inventory row, no foreign key
+-- and no audit history is touched by 0182 or by its rollback.
+-- ===========================================================================

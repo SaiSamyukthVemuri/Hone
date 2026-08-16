@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // 0181 — multi-studio command authority. STATIC contract.
 //
@@ -24,15 +24,18 @@ const EXEC = SQL.split("\n")
   .join("\n");
 
 describe("0181 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0181")).toBe(true);
-    expect(versionsAbove("0181")).toEqual([]);
+  it("consumes exactly one number", () => {
     expect(countVersion("0181")).toBe(1);
   });
 
-  it("leaves 0182 free", () => {
-    expect(countVersion("0182")).toBe(0);
-  });
+  // 0181 is NO LONGER the repository maximum: 0182 (sterile-item discard
+  // lifecycle) landed above it. Per CONTRIBUTING/CLAUDE.md only the CURRENT
+  // maximum's own test may assert isRepoMax / versionsAbove — an older
+  // migration keeping that pin is exactly the hard-coded tripwire that turned
+  // every new migration into an 18-file mechanical sweep and put 0163, 0164 and
+  // 0165 red after push. The "nothing above me" guarantee is now served
+  // centrally, and the isRepoMax assertion moved to
+  // tests/migrations/0182-sterile-item-discard-lifecycle.test.ts.
 
   it("never reintroduces 0158, which is permanently skipped", () => {
     expect(countVersion("0158")).toBe(0);
@@ -55,9 +58,18 @@ describe("0181 — production truth: APPLIED (CURRENT STATE — moves on the nex
     expect(rec.hosted_migration_max).toBe("0181");
   });
 
-  it("repo and hosted agree, with nothing pending", () => {
-    expect(isRepoMax("0181")).toBe(true);
-    expect(versionsAbove("0181")).toEqual([]);
+  it("0181 remains the HOSTED maximum — this migration's own apply record", () => {
+    // Repo and hosted no longer agree, and that is the CORRECT state: 0182
+    // exists on disk and has NOT been pushed to production. A file on disk says
+    // nothing about what production has applied, so the only claim this test
+    // makes about production is the DECLARED one.
+    //
+    // Deliberately NO `versionsAbove("0181")` assertion. Pinning the exact set
+    // of migrations above 0181 would be the same "trip on the next one" pin
+    // this file just removed, one number along: it would go red when 0183
+    // lands, for no reason connected to 0181. Whether anything sits above 0181
+    // is the CURRENT maximum's business, and it is asserted centrally in that
+    // migration's own test.
     expect(Number.parseInt(rec.hosted_migration_max, 10)).toBe(181);
   });
 });

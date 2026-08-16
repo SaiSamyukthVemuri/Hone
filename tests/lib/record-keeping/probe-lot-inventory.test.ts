@@ -26,6 +26,9 @@ function row(over: Partial<ProbeLotInventoryRow> = {}): ProbeLotInventoryRow {
     itemDescription: "Sterex Gold F3 probe",
     manufacturerName: "Sterex",
     expiryDate: "2026-12-01",
+    // 0182: default "not discarded", so every pre-existing case in this file
+    // keeps testing exactly what it tested before.
+    dateDiscarded: null,
     ...over,
   };
 }

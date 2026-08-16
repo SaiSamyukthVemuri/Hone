@@ -26,12 +26,32 @@ describe("server query: authoritative source + probe-specific + studio isolation
   it("(0155) selects the id + probe_key, is studio-scoped, and filters to probe-classified rows with a lot", () => {
     const fn = QUERIES.slice(QUERIES.indexOf("export async function getProbeLotInventory"));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).toMatch(/\.select\("id, probe_key, lot_number/);
+    expect(body).toMatch(/"id, probe_key, lot_number/);
     expect(body).toMatch(/\.eq\("studio_id", studioId\)/);
     // Probe-SPECIFIC via structured probe_key, NOT the free-text ILIKE heuristic.
     expect(body).toMatch(/\.not\("probe_key", "is", null\)/);
     expect(body).not.toMatch(/\.ilike\("item_description"/);
     expect(body).toMatch(/\.not\("lot_number", "is", null\)/);
+  });
+
+  it("(0182) SELECTS date_discarded but never FILTERS on it — the foundational read", () => {
+    const fn = QUERIES.slice(
+      QUERIES.indexOf("export async function getProbeLotInventory"),
+    );
+    const body = fn.slice(0, fn.indexOf("\n}\n"));
+    const code = body
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // Carried through onto the option model...
+    expect(code).toMatch(/date_discarded/);
+    expect(code).toMatch(/dateDiscarded: r\.date_discarded/);
+    // ...and NOT used as a query predicate. This is the architecture law: a
+    // historical session's probe_inventory_item_id, the edit chooser for that
+    // old record, and lot traceability ALL resolve through this list, so a row
+    // that vanished here would take retrospective truth with it.
+    expect(code).not.toMatch(/\.is\("date_discarded"/);
+    expect(code).not.toMatch(/\.not\("date_discarded"/);
   });
 });
 
@@ -62,6 +82,28 @@ describe("selector component: id identity, manual entry, expired handling", () =
     expect(SELECT).toMatch(/Expired/);
     expect(SELECT).toMatch(/onMouseDown=/);
     expect(SELECT).toMatch(/min-h-\[2\.75rem\]/);
+  });
+
+  it("(0182) the default shortlist is CURRENT STOCK, via the SHARED predicate", () => {
+    // The shortlist must not re-implement "usable now" locally. It previously
+    // read `options.filter((o) => !o.isExpired)`; if that inline predicate
+    // returned, a discarded lot would silently reappear as current stock in the
+    // chooser while every server-side selector excluded it.
+    expect(SELECT).toMatch(/options\.filter\(isCurrentStock\)/);
+    expect(SELECT).toMatch(
+      /import \{[\s\S]{0,200}isCurrentStock,[\s\S]{0,200}\} from "@\/lib\/record-keeping\/probe-lot-inventory"/,
+    );
+    expect(SELECT).not.toMatch(/options\.filter\(\(o\) => !o\.isExpired\)/);
+  });
+
+  it("(0182) a discarded lot is LABELLED and remains findable by typing", () => {
+    // Two halves of the same contract. The badge stops it being mistaken for
+    // current stock; the typed-search fallback (`const base = q ? options :
+    // active`) is what keeps a prior session's since-discarded lot resolvable
+    // for retrospective charting.
+    expect(SELECT).toMatch(/o\.isDiscarded &&/);
+    expect(SELECT).toMatch(/>\s*Discarded\s*</);
+    expect(SELECT).toMatch(/const base = q \? options : active/);
   });
 });
 
