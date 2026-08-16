@@ -644,6 +644,12 @@ test("Reschedule states the stored duration, and the move preserves it", async (
 
   const d = drawer(page);
   await expect(d).toBeVisible({ timeout: T });
+
+  // The DRAWER SUMMARY states the stored duration too, not the 90 minute span a
+  // reconstruction would produce. Display, dialog copy and command all agree.
+  await expect(d).toContainText("· 60m", { timeout: T });
+  await expect(d).not.toContainText("· 90m");
+
   await d.getByRole("button", { name: "Reschedule" }).click();
 
   const dlg = page.getByRole("dialog", { name: "Move appointment" });
@@ -670,6 +676,102 @@ test("Reschedule states the stored duration, and the move preserves it", async (
   const moved = await localDateTimeOf(apptId, tz);
   expect(moved.date).toBe(target);
   expect(moved.time).toBe("11:00");
+});
+
+// TEST A. A cancellation in another window must be SAID, not merely obeyed.
+//
+// The grid is rendered while the booking is active and then sits there; the
+// calendar filters cancelled rows out upstream, so only the drawer's own re-read
+// can ever bring a `cancelled` status into this surface. The branch already
+// gated the actions on that fresh status — Cancel and Reschedule disappear —
+// but the label chain had no cancelled arm and fell through to "Upcoming". The
+// drawer therefore refused to act on a booking it was still calling upcoming.
+test("a cancellation in another window reads as Cancelled, never Upcoming", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  const tz = await getStudioTimezone(seed.studioId);
+  const ownerId = await getOwnerPractitionerId(seed.studioId);
+  const { id: apptId, date } = await seedAppointmentNextWeek(
+    seed.studioId,
+    ownerId,
+    clientId,
+    tz,
+    "13:00",
+  );
+
+  await loginAsOwner(page, seed);
+  // The grid renders it as a live, confirmed booking.
+  await openWeekOf(page, date);
+
+  // Another window cancels it.
+  await cancelAppointmentRow(apptId);
+  expect((await cancellationOf(apptId)).status).toBe("cancelled");
+
+  await card(page, await clientNameOf(apptId)).click();
+  const d = drawer(page);
+  await expect(d).toBeVisible({ timeout: T });
+
+  // What it SAYS matches what it DOES.
+  await expect(d.getByText("Cancelled")).toBeVisible({ timeout: T });
+  await expect(d.getByText("Upcoming")).toHaveCount(0);
+  await expect(d.getByRole("button", { name: "Cancel appointment" })).toHaveCount(0);
+  await expect(d.getByRole("button", { name: "Reschedule" })).toHaveCount(0);
+  // The escape hatch to the full record stays.
+  await expect(d.getByRole("link", { name: "Open full details" })).toBeVisible();
+});
+
+// TEST B. The visible summary and the Reschedule dialog must describe the SAME
+// appointment.
+//
+// The drawer re-reads the row and used that fresh copy for the status line, the
+// action gate and (after the previous repair) the move payload — while still
+// formatting the date, time and duration from the week grid. So a booking moved
+// in another window displayed its old time beside its new status, and Reschedule
+// opened on a third answer.
+//
+// The studio is pinned to 24h here so the assertion is an exact clock string
+// rather than a locale-formatted one ("2:00 PM" can carry a narrow no-break
+// space, which is not what this test is about).
+test("the summary shows the refreshed schedule, and Reschedule agrees with it", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  const tz = await getStudioTimezone(seed.studioId);
+  const ownerId = await getOwnerPractitionerId(seed.studioId);
+  await setStudioTimeFormat(seed.studioId, "24h");
+  const { id: apptId, date } = await seedAppointmentNextWeek(
+    seed.studioId,
+    ownerId,
+    clientId,
+    tz,
+    "13:00",
+  );
+
+  await loginAsOwner(page, seed);
+  // The grid holds 13:00–14:00.
+  await openWeekOf(page, date);
+
+  // It moves to 14:00–15:00 underneath the rendered grid.
+  await shiftAppointmentMinutes(apptId, 60);
+  expect((await localDateTimeOf(apptId, tz)).time).toBe("14:00");
+
+  await card(page, await clientNameOf(apptId)).click();
+  const d = drawer(page);
+  await expect(d).toBeVisible({ timeout: T });
+
+  // The summary describes the row as it is now, not as the grid remembers it.
+  await expect(d).toContainText("14:00", { timeout: T });
+  await expect(d).not.toContainText("13:00");
+
+  // And Reschedule opens on the same appointment the summary just described.
+  await d.getByRole("button", { name: "Reschedule" }).click();
+  const dlg = page.getByRole("dialog", { name: "Move appointment" });
+  await expect(dlg).toBeVisible({ timeout: T });
+  await expect(dlg).toContainText("14:00");
+  await expect(dlg).not.toContainText("13:00");
 });
 
 // --- helpers ---------------------------------------------------------------
@@ -700,6 +802,23 @@ async function shiftAppointmentMinutes(
     [appointmentId, String(minutes)],
   );
   return rows[0].starts_at;
+}
+
+// Cancel the row directly, the way another window's cancellation would leave it.
+async function cancelAppointmentRow(appointmentId: string): Promise<void> {
+  await sql(
+    `update public.appointments
+        set status = 'cancelled', cancelled_at = now()
+      where id = $1`,
+    [appointmentId],
+  );
+}
+
+async function setStudioTimeFormat(studioId: string, format: "12h" | "24h"): Promise<void> {
+  await sql(`update public.studios set time_format_preference = $2 where id = $1`, [
+    studioId,
+    format,
+  ]);
 }
 
 // The two schedule facts, read separately so a test can prove they disagree.

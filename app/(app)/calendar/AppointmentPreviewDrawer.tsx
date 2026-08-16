@@ -15,7 +15,7 @@ import { AppointmentNotesEditor } from "./AppointmentNotesEditor";
 import { PractitionerCancelForm } from "./PractitionerCancelForm";
 import { loadAppointmentPreviewAction } from "./appointment-preview-actions";
 import { shouldApplyPreviewResponse } from "./preview-request";
-import { moveDialogSchedule } from "./move-dialog-schedule";
+import { previewAppointmentVersion } from "./preview-appointment-version";
 
 // In-context appointment PREP WORKSPACE, opened from a card on the desktop week
 // grid. The question it answers is "what do I need to know about this visit,
@@ -41,11 +41,14 @@ import { moveDialogSchedule } from "./move-dialog-schedule";
 // appointment that was clicked, when it is clicked. Nothing here scales with
 // the number of appointments on screen.
 //
-// FRESHNESS. The summary header renders instantly from the row the grid already
-// had. Everything that gates an ACTION is re-read from the server first: a week
-// payload can be minutes old, and an appointment cancelled or completed in
-// another tab must not still offer Cancel here. So actions appear with the
-// loaded detail, never from the stale copy.
+// FRESHNESS. The header renders immediately from the row the grid already had,
+// then switches to the re-read row the moment it lands — and switches ALL of it
+// at once. See ./preview-appointment-version: one selection supplies the
+// displayed schedule, the displayed status, the action gate and the move
+// dialog's expected-version payload, so the drawer cannot show one appointment
+// while acting on another. A week payload can be minutes old; an appointment
+// moved or cancelled in another window must not be described from the grid's
+// memory of it, nor still offer Cancel.
 
 type Props = {
   appointment: AppointmentWithPractitionerColor | null;
@@ -150,10 +153,33 @@ export function AppointmentPreviewDrawer({
   if (!appointment) return null;
 
   const a = appointment;
-  const start = new Date(a.starts_at);
+
+  // ONE version for the whole drawer. Before this, the status line read the
+  // re-read row while the time line read the grid, so a booking moved in
+  // another window showed its old time beside its new status — and Reschedule
+  // opened on a third answer. Display, the action gate and the move payload now
+  // all read the same object, so they cannot disagree.
+  const version = previewAppointmentVersion({
+    grid: {
+      startsAt: a.starts_at,
+      endsAt: a.ends_at,
+      durationMinutes: a.duration_minutes,
+      status: a.status,
+    },
+    detail: detail
+      ? {
+          startsAt: detail.startsAt,
+          endsAt: detail.endsAt,
+          durationMinutes: detail.durationMinutes,
+          status: detail.status,
+        }
+      : null,
+  });
+
+  const start = new Date(version.startsAt);
   const dispStart = formatTimeForStudio(start, studioTimezone, timeFormat);
-  const dispEnd = a.ends_at
-    ? formatTimeForStudio(new Date(a.ends_at), studioTimezone, timeFormat)
+  const dispEnd = version.endsAt
+    ? formatTimeForStudio(new Date(version.endsAt), studioTimezone, timeFormat)
     : null;
   const timeRange = timeRangeLabel(dispStart, dispEnd);
   const clientName = a.client?.name?.trim() || "Client";
@@ -163,27 +189,36 @@ export function AppointmentPreviewDrawer({
   // Prefer the freshly re-read row once it arrives. The week payload can be
   // minutes old, and a drawer that labels a cancelled appointment "Upcoming"
   // while offering it no actions is the confusing half-truth this avoids.
-  const ds = appointmentDisplayStatus(
-    detail?.status ?? a.status,
-    detail?.endsAt ?? a.ends_at,
-  );
+  const ds = appointmentDisplayStatus(version.status, version.endsAt);
+  // Every arm appointmentDisplayStatus can return has a label. It returns
+  // "cancelled" as a first-class value, and without an arm for it a booking
+  // cancelled in another window fell through to "Upcoming" — the drawer
+  // withholding Cancel and Reschedule while still calling the appointment
+  // upcoming. "Cancelled" is the term /calendar/[id] already uses; this is not
+  // a second status vocabulary.
   const statusLabel =
-    ds === "done"
-      ? "Done"
-      : ds === "completed"
-        ? "Completed"
-        : ds === "no_show"
-          ? "No-show"
-          : "Upcoming";
+    ds === "cancelled"
+      ? "Cancelled"
+      : ds === "done"
+        ? "Done"
+        : ds === "completed"
+          ? "Completed"
+          : ds === "no_show"
+            ? "No-show"
+            : "Upcoming";
 
   // Gated on the SERVER-READ status, not the week payload's copy, and on the
   // one shared predicate. Cancel and Reschedule share it exactly as they share
   // one `isCancelable` on the detail page.
+  // Gated on the SAME version the drawer is displaying, so the actions offered
+  // and the facts shown can never describe different rows. `fresh` is required:
+  // a grid snapshot is not a verified current state, and offering lifecycle
+  // actions on one is how the stale-move refusal happened.
   const canAct =
-    detail !== null
+    version.fresh
     && isAppointmentCancelable({
-      status: detail.status,
-      startsAt: detail.startsAt,
+      status: version.status,
+      startsAt: version.startsAt,
       nowMs: Date.now(),
     });
 
@@ -208,7 +243,7 @@ export function AppointmentPreviewDrawer({
           <div className="flex flex-col gap-0.5">
             <h2 className="text-base font-semibold">{clientName}</h2>
             <p className="text-sm text-neutral-500">
-              {dayLabel(a.starts_at, studioTimezone)}
+              {dayLabel(version.startsAt, studioTimezone)}
             </p>
           </div>
           <button
@@ -224,7 +259,7 @@ export function AppointmentPreviewDrawer({
           <div className="flex justify-between gap-3">
             <dt className="text-neutral-500">Time</dt>
             <dd className="text-right font-medium tabular-nums">
-              {timeRange} · {a.duration_minutes}m
+              {timeRange} · {version.durationMinutes}m
             </dd>
           </div>
           {serviceName && (
@@ -383,18 +418,9 @@ export function AppointmentPreviewDrawer({
                 <MoveAppointmentButton
                   appointment={{
                     id: a.id,
-                    ...moveDialogSchedule({
-                      grid: {
-                        startsAt: a.starts_at,
-                        endsAt: a.ends_at,
-                        durationMinutes: a.duration_minutes,
-                      },
-                      detail: {
-                        startsAt: detail.startsAt,
-                        endsAt: detail.endsAt,
-                        durationMinutes: detail.durationMinutes,
-                      },
-                    }),
+                    startsAt: version.startsAt,
+                    endsAt: version.endsAt,
+                    durationMinutes: version.durationMinutes,
                     clientName: a.client?.name ?? null,
                     serviceName: a.service?.name ?? null,
                   }}
