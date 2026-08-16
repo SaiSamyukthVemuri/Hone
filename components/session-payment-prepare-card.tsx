@@ -11,7 +11,17 @@ import type {
   SessionPaymentAmountResult,
 } from "@/lib/billing/session-payment-amount";
 import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-permission";
-import { SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH } from "@/lib/billing/session-payment-types";
+import {
+  SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH,
+  SESSION_PAYMENT_AMOUNT_CEILING_CENTS,
+  SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH,
+} from "@/lib/billing/session-payment-types";
+import {
+  centsToAmountInputValue,
+  formatCadFromCents as formatCents,
+  parseCadAmountToCents,
+} from "@/lib/billing/cad-amount";
+import { OWNER_ONLY_AMOUNT_ERROR } from "@/lib/billing/checkout-final-amount";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   derivePaymentSummary,
@@ -25,7 +35,14 @@ import { TechnicalPaymentDetails } from "@/components/payment/technical-payment-
 
 type PrepareResult =
   | { ok: true; attemptId: string }
-  | { ok: false; error: string; blockingReasons?: string[] };
+  | {
+      ok: false;
+      error: string;
+      blockingReasons?: string[];
+      // F-PAY-002. A $0.00 checkout prepares nothing, but nothing is wrong, so
+      // the card renders it calmly rather than as a red validation failure.
+      noChargeRequired?: boolean;
+    };
 
 type ExecuteResult =
   | {
@@ -133,12 +150,13 @@ type RefundAction = (formData: FormData) => Promise<RefundResult>;
 //     charge uses "Charge succeeded," never "Payment
 //     complete" or "Live payment."
 
-const CENTS_PER_DOLLAR = 100;
-
+// Nullable wrapper over THE shared money formatter. Delegating rather than
+// re-implementing keeps the amount in the prepare form, the amount in the
+// charge confirmation and the amount written into the adjustment audit note
+// from drifting apart by a rounding style.
 function formatCadFromCents(cents: number | null): string {
   if (cents == null) return "";
-  const dollars = cents / CENTS_PER_DOLLAR;
-  return `$${dollars.toFixed(2)}`;
+  return formatCents(cents);
 }
 
 // PR #174. Status labels reflect the persisted row's actual state
@@ -218,6 +236,10 @@ export function SessionPaymentPrepareCard({
   // In-session feedback only. After refresh the persisted row drives
   // the rendering; these are confined to the same page-load.
   const [prepareError, setPrepareError] = useState<string | null>(null);
+  // Separate from prepareError on purpose: "no charge is required at $0.00" is
+  // a factual outcome, not a mistake to correct, and rendering it in the red
+  // alert would tell Chloe she did something wrong when she did not.
+  const [prepareNoCharge, setPrepareNoCharge] = useState<string | null>(null);
   const [prepareBlockingReasons, setPrepareBlockingReasons] = useState<string[]>(
     [],
   );
@@ -392,11 +414,14 @@ export function SessionPaymentPrepareCard({
           sessionId={sessionId}
           eligibility={eligibleDetails}
           amount={presentation.prepareFormAmount}
+          isOwner={isOwner}
           pending={preparePending}
           error={prepareError}
+          noChargeRequired={prepareNoCharge}
           blockingReasons={prepareBlockingReasons}
           onSubmit={(fd) => {
             setPrepareError(null);
+            setPrepareNoCharge(null);
             setPrepareBlockingReasons([]);
             startPrepareTransition(async () => {
               const r = await prepareAction(fd);
@@ -408,6 +433,10 @@ export function SessionPaymentPrepareCard({
                 // banner is gated on !activeAttempt above so it
                 // disappears as soon as the refresh completes.
                 router.refresh();
+                return;
+              }
+              if (r.noChargeRequired) {
+                setPrepareNoCharge(r.error);
                 return;
               }
               setPrepareError(r.error);
@@ -1246,20 +1275,72 @@ function PrepareForm({
   sessionId,
   eligibility,
   amount,
+  isOwner,
   pending,
   error,
+  noChargeRequired,
   blockingReasons,
   onSubmit,
 }: {
   sessionId: string;
   eligibility: Extract<SessionPaymentEligibility, { eligible: true }>;
-  // The SERVER's resolved amount. The form renders it and never edits it.
+  // The SERVER's resolved REFERENCE price: what this booked service (or this
+  // client's specific pricing) currently costs. It is the reminder and the
+  // default, never the cage — see the block comment above the field below.
   amount: ResolvedSessionPaymentAmount;
+  // Server-derived (practitioner.role). Used ONLY to tell a non-owner the
+  // truth before she submits; the owner gate itself is enforced server-side in
+  // decideCheckoutFinalAmount against the authenticated practitioner, and no
+  // value from this component reaches that decision.
+  isOwner: boolean;
   pending: boolean;
   error: string | null;
+  // The calm $0.00 outcome. Distinct from `error`; see the card's state.
+  noChargeRequired: string | null;
   blockingReasons: string[];
   onSubmit: (formData: FormData) => void;
 }) {
+  // F-PAY-002. The final charge is the practitioner's to author, so it is
+  // CONTROLLED state here: the adjustment reason, the delta line and the
+  // owner warning all have to react to it as she types.
+  const [finalAmount, setFinalAmount] = useState(
+    centsToAmountInputValue(amount.amountCents),
+  );
+
+  // THE SAME parser the server uses, imported rather than re-written, so the
+  // field cannot decide "this is a $100 adjustment" while the action decides
+  // "this is malformed". A value that does not parse simply reveals nothing
+  // extra; the server returns the precise reason on submit.
+  const parsed = parseCadAmountToCents(
+    finalAmount,
+    SESSION_PAYMENT_AMOUNT_CEILING_CENTS,
+  );
+  const finalCents = parsed.ok ? parsed.cents : null;
+  const isZero = finalCents === 0;
+  // The DELTA line needs a real number on both sides, so it requires a parse.
+  const isAdjusted =
+    finalCents !== null && finalCents !== amount.amountCents && !isZero;
+
+  // WHETHER TO ASK FOR A REASON. Three states count as "she has not changed
+  // the total", and each of them is a distinct reason NOT to demand one:
+  //
+  //   untouched — the field still holds exactly the prefilled reference. This
+  //     is NOT the same as "parses to the reference": a configured price above
+  //     the ceiling prefills "5000.00", which the parser rejects, and treating
+  //     that as an adjustment made the required reason block the submit so the
+  //     practitioner never reached the server's "review the pricing" message.
+  //   blank — an amount to fix, not an adjustment to justify.
+  //   zero — its own outcome; nothing is prepared, so there is nothing to
+  //     explain.
+  //
+  // Everything else asks, INCLUDING values that do not parse yet. Requiring a
+  // parse here unmounted the field mid-keystroke — "100.50" passes through
+  // "100." — and threw away the reason she had already typed.
+  const untouched = finalAmount.trim() === centsToAmountInputValue(amount.amountCents);
+  const blank = finalAmount.trim().length === 0;
+  const differsFromReference =
+    !untouched && !blank && !isZero && finalCents !== amount.amountCents;
+
   return (
     <form
       onSubmit={(e) => {
@@ -1275,6 +1356,18 @@ function PrepareForm({
           {error}
         </p>
       )}
+      {/* Gated on isZero as well as on the result: the panel states a fact about
+          a $0.00 total, so it must not keep asserting that fact while she types
+          a real one. */}
+      {noChargeRequired && isZero && (
+        <p
+          data-testid="no-charge-required"
+          className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+          role="status"
+        >
+          {noChargeRequired}
+        </p>
+      )}
       {blockingReasons.length > 0 && (
         <ul className="flex flex-col gap-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
           {blockingReasons.map((r, idx) => (
@@ -1283,34 +1376,36 @@ function PrepareForm({
         </ul>
       )}
 
-      {/* F-PAY-001. The amount is NO LONGER an input. It used to be an
-          editable field whose value the prepare action inserted verbatim, so
-          the browser decided what the client was charged. The server now
-          resolves the amount from current records; this renders that decision
-          and submits it back ONLY as expected_amount_cents, which can cause a
-          rejection if the price moved but can never choose a value. */}
-      <div className="flex flex-col gap-1">
+      {/* THE REFERENCE, as secondary context.
+          F-PAY-001 made the server-resolved price the sole preparation amount,
+          which closed a real hole (a tampered browser amount could become a
+          chargeable row) and, in the same stroke, removed the till. Chloe:
+          "I can't change to discount or add product etc. It needs to 'soft'
+          show the price of the service so I am reminded what they booked but I
+          also need to be able to change it."
+          So this block is the REMINDER — what was booked and what it costs
+          today — deliberately quieter than the field below it, and the
+          editable Final charge is the total. It is still submitted back as
+          expected_amount_cents, which can cause a stale-price rejection but can
+          never choose a value. */}
+      <div className="flex flex-col gap-0.5">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Amount (CAD)
+          Booked service
         </span>
-        <div className="flex items-baseline gap-2">
-          <span
-            data-testid="authoritative-amount"
-            className="text-lg font-medium tabular-nums"
-          >
+        <span className="text-xs text-neutral-700 dark:text-neutral-300">
+          {amount.serviceName}
+          {amount.durationMinutes != null && ` · ${amount.durationMinutes} min`}
+          {" · "}
+          <span data-testid="authoritative-amount" className="tabular-nums">
             {formatCadFromCents(amount.amountCents)}
           </span>
-        </div>
+        </span>
         <input
           type="hidden"
           name="expected_amount_cents"
           value={String(amount.amountCents)}
         />
         <div className="flex flex-col gap-0.5 text-[11px] text-neutral-500">
-          <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
-            Booked service: {amount.serviceName}
-            {amount.durationMinutes != null && ` (${amount.durationMinutes} min)`}
-          </span>
           {amount.source === "custom_pricing" ? (
             <>
               <span data-testid="amount-source">
@@ -1325,6 +1420,95 @@ function PrepareForm({
           )}
         </div>
       </div>
+
+      {/* THE TOTAL. Front and centre, never behind a disclosure, and big
+          enough to hit with a client standing there. */}
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+          Final charge (CAD)
+        </span>
+        <input
+          type="text"
+          name="final_amount_dollars"
+          data-testid="final-charge-input"
+          // Named for a person reading it aloud, not for its position on the
+          // page, so a test and a screen reader find it the same way.
+          aria-label="Final charge in Canadian dollars"
+          value={finalAmount}
+          onChange={(e) => setFinalAmount(e.target.value)}
+          // `decimal`, not `numeric`: the iPad keyboard has to offer a decimal
+          // point for $10.50 to be typeable at all.
+          inputMode="decimal"
+          autoComplete="off"
+          // Room for the ceiling plus a currency symbol and separators; the
+          // server parses strictly regardless of what fits here.
+          maxLength={16}
+          className="min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-lg font-medium tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+        />
+        <span className="text-[11px] text-neutral-500">
+          Change this for a discount, product/add-on, or other adjustment.
+        </span>
+      </label>
+
+      {isAdjusted && (
+        <p
+          data-testid="checkout-adjustment-delta"
+          className="text-[11px] text-neutral-600 dark:text-neutral-400"
+        >
+          Adjusted from {formatCadFromCents(amount.amountCents)} to{" "}
+          {formatCadFromCents(finalCents)}
+        </p>
+      )}
+
+      {isZero && (
+        <p
+          data-testid="zero-charge-hint"
+          role="status"
+          aria-live="polite"
+          className="rounded-md border border-neutral-300 bg-neutral-50 p-2 text-[11px] text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+        >
+          No charge is required at $0.00. Nothing will be prepared.
+        </p>
+      )}
+
+      {/* The reason is required exactly when the total differs, and only then.
+          The ordinary "charge what was booked" checkout stays a two-tap. */}
+      {differsFromReference &&
+        (isOwner ? (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+              Reason for adjustment
+            </span>
+            <input
+              type="text"
+              name="adjustment_reason"
+              data-testid="adjustment-reason-input"
+              aria-label="Reason for adjustment"
+              required
+              maxLength={SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH}
+              placeholder="Client discount, aftercare product, package adjustment…"
+              className="min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+            <span className="text-[11px] text-neutral-500">
+              Recorded with this payment so the adjusted total is explainable
+              later.
+            </span>
+          </label>
+        ) : (
+          // Honest UI, not a gate. The gate is the server's, against the
+          // authenticated practitioner; this only saves a non-owner from
+          // filling in a reason for a submission that will be refused.
+          <p
+            data-testid="owner-only-amount-hint"
+            // Announced: this appears mid-typing and tells her the submission
+            // will be refused, which is not something to discover by tabbing.
+            role="status"
+            aria-live="polite"
+            className="rounded-md border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+          >
+            {OWNER_ONLY_AMOUNT_ERROR}
+          </p>
+        ))}
 
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">

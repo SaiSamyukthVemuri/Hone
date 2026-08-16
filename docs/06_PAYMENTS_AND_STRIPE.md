@@ -114,12 +114,15 @@ practitioner opens /clients/[id]/sessions/[sessionId]
   -> SessionPaymentPrepareCard renders one of three states:
        blocked            -> show practitioner-facing blocking reasons
        existing_attempt   -> show existing payment_charge_attempts row
-       ready              -> show form: amount + internal note + Prepare button
+       ready              -> show form: booked-service REFERENCE (read-only)
+                             + editable Final charge + adjustment reason
+                             (only when the total differs) + internal note
+                             + Prepare button
   -> Prepare button:
        prepareSessionPaymentChargeAction (server action)
-         getCurrentPractitionerWithStudio() -> studio_id, practitioner_id
-         parse amount_dollars to amount_cents (> 0 AND <= 200000)
-         require internal_note (1..1000 chars)
+         getCurrentPractitionerWithStudio()
+           -> studio_id, practitioner_id, AND the owner role (F-PAY-002)
+         internal_note optional, <= 1000 chars
          getSessionPaymentEligibility({ studioId, sessionId })
            gates (each blocks with a practitioner-facing message):
              1. session exists in this studio
@@ -131,6 +134,12 @@ practitioner opens /clients/[id]/sessions/[sessionId]
              5. studio_payment_settings: account_status='enabled', livemode=false
              6. no existing active payment_charge_attempts row for
                 (studio, session, charge_reason='session_payment')
+         getAuthoritativeSessionPaymentAmount(...) -> the REFERENCE price
+           (F-PAY-001: free / missing / ambiguous / unreadable all BLOCK)
+         decideCheckoutFinalAmount(...) -> the amount that will be charged
+           (F-PAY-002: stale-reference check, strict CAD parsing, the
+            zero-dollar no-charge outcome, OWNER-ONLY for a changed total,
+            a required bounded reason, and the audit-note composition)
          INSERT payment_charge_attempts row with the full lineage from
            the eligibility result (client_payment_method_id,
            card_authorization_signature_id, stripe_account_id,
@@ -585,6 +594,13 @@ select stripe_event_id, event_type, stripe_account_id, stripe_livemode,
 **Status: IMPLEMENTED — PENDING MERGE AND PRODUCTION VERIFICATION.** Not deployed,
 not closed, not production verified.
 
+> **PARTIALLY SUPERSEDED by F-PAY-002 (see the next section).** The security
+> repair described here stands: the browser still cannot decide the reference
+> price, forge any payment lineage, or bypass the stale-display check. What
+> F-PAY-002 changed is that the server-resolved price became the REFERENCE and
+> DEFAULT rather than the only possible charge. The three statements below that
+> no longer hold are marked inline; everything else is current.
+
 **What was wrong.** `prepareSessionPaymentChargeAction` read `amount_dollars`
 from the submitted form and inserted it into `payment_charge_attempts.amount_cents`.
 The page computed a correct suggestion and the practitioner could edit the
@@ -619,20 +635,26 @@ The appointment query is scoped by id **and** studio **and** the session's own
 client. Service–studio lineage is enforced by migration 0151's composite
 `(service_id, studio_id)` relationship rather than an app-level check.
 
-**The form contract.** `session_id`, `expected_amount_cents`, `internal_note`.
-`amount_dollars` is not read. `expected_amount_cents` is **stale-display
+**The form contract.** ~~`session_id`, `expected_amount_cents`,
+`internal_note`.~~ *(Superseded by F-PAY-002: the form also carries
+`final_amount_dollars` and `adjustment_reason`.)* The retired `amount_dollars`
+field is still read by nothing. `expected_amount_cents` remains **stale-display
 detection only**: it can cause a rejection, never supply a value. If it does not
-match the freshly resolved amount, nothing is inserted and the practitioner is
+match the freshly resolved reference, nothing is inserted and the practitioner is
 asked to review the new amount and press Prepare again — a payment is never
-prepared at a number she did not just look at.
+prepared against a reference she did not just look at.
 
-**The ceiling** applies to the authoritative amount and never clamps: a price
+**The ceiling** applies to the configured reference and never clamps: a price
 above the supported limit blocks with a "review the pricing" message, because
-the amount is no longer something she can edit down.
+that number is not hers to edit down. *(F-PAY-002 adds a second, independent
+ceiling check on the operator-authored total, which likewise rejects and never
+clamps — see the next section.)*
 
-**No manual override exists.** A safe audited override would need permission,
-original amount, override amount, reason, an audit event and reporting; none of
-that is built, and `internal_note` is not a substitute.
+~~**No manual override exists.**~~ *(Superseded by F-PAY-002.)* The reasoning
+was right about what an override needs — permission, original amount, override
+amount, reason and an audit trail — and F-PAY-002 builds exactly that set. What
+it does **not** build is structured discount/product accounting; see the "not
+built" list in the next section.
 
 **Both surfaces share one authority.** The session-detail card and the
 quick-checkout modal call the same loader and render the same component, so they
@@ -645,3 +667,92 @@ changes do not rewrite it. `executeSessionPaymentChargeAction` takes
 `attempt_id` only, `runSessionPaymentCharge` charges the persisted amount, and
 no pricing is re-read during execution. Receipts, refunds and Stripe idempotency
 are unchanged.
+
+## The operator authors the final total (F-PAY-002)
+
+**Status: IMPLEMENTED — PENDING MERGE AND PRODUCTION VERIFICATION.** Not
+deployed, not closed, not production verified.
+
+**What was wrong.** F-PAY-001 closed a real security hole and, in the same
+stroke, removed the till. Chloe, in production: *"I can't do a custom price.
+When I prepare charge it's stuck as whatever the price of the service is. I
+can't change to discount or add product etc. It needs to 'soft' show the price
+of the service so I am reminded what they booked but I also need to be able to
+change it."* Every discount, aftercare product and package adjustment had to
+happen outside Hone.
+
+**The distinction F-PAY-001 collapsed.** The browser may **request** one number
+— the operator-authored final total. The browser may **not** supply the studio,
+the practitioner, the practitioner's **role**, the client, the session, the
+appointment, the service lineage, the card, the consent signature, the Stripe
+account, the Stripe customer or the Stripe payment method. All of those are
+still resolved server-side from trusted records, exactly as F-PAY-001 left them.
+
+**The form contract.** `session_id`, `expected_amount_cents`,
+`final_amount_dollars`, `adjustment_reason`, `internal_note`. The whole decision
+is one pure function, `decideCheckoutFinalAmount`
+(`lib/billing/checkout-final-amount.ts`), which the prepare action calls once:
+
+1. **Stale display, first.** A malformed/absent `expected_amount_cents`, or one
+   that differs from the freshly resolved reference, rejects. A custom total
+   buys no exemption; `$0.00` buys no exemption.
+2. **Strict money.** `parseCadAmountToCents`
+   (`lib/billing/cad-amount.ts`) accepts ordinary CAD cash-register syntax and
+   nothing else: optional `$`, well-formed thousands groups, at most two
+   decimals. Rejected, never normalised: blank, negative, `NaN`, `Infinity`,
+   `1e2`, `0x64`, `12.345`, `120.`, `.50`, `1,20.00`, values above the ceiling
+   and unsafe magnitudes. Cents are computed with **BigInt integer arithmetic**
+   from the decimal string, never `Number(x) * 100` — `10.10 * 100` is
+   `1009.9999999999999` in IEEE-754, and `10.999` must be a rejection rather
+   than a rounded-up real charge.
+3. **`$0.00` is calm, not an error.** No attempt row, no Stripe call, no
+   migration: *"No charge is required at $0.00."* Recording a deliberately
+   comped session as a financial event is separate, unbuilt work.
+4. **Unchanged total → the ordinary path.** No owner requirement, no reason.
+   Client-in-the-chair checkout stays a two-tap.
+5. **Changed total → OWNER ONLY, server-side.** The role comes from
+   `getCurrentPractitionerWithStudio()`. There is no `is_owner` form field, and
+   the decision module is pure — it cannot read a request even in principle. A
+   denial is logged as `session_payment_amount_change_denied_not_owner` with
+   safe IDs only.
+6. **Changed total → a reason is required**, bounded by
+   `SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH` (200).
+
+**Audit, without a migration.** The existing `internal_note` carries the
+reference amount, the final amount and the practitioner's words as prose:
+`Checkout adjusted from $120.00 to $100.00. Reason: Client discount`. An
+independent note is preserved alongside it, separated by a blank line. If the
+two cannot both fit inside `SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH`, the
+submission is **rejected** — neither half is silently truncated. **No code may
+parse this note** to infer discount or product semantics; the amount column is
+the monetary fact.
+
+**Both surfaces, one authority.** Quick Checkout renders the same
+`SessionPaymentPrepareCard` and calls the same server actions, so the editable
+total, the owner gate and the reason requirement cannot differ between the
+session-detail card and the modal. The browser re-uses the *same* parser the
+server uses, so the field cannot decide "this is a $100 adjustment" while the
+action decides "this is malformed".
+
+**The prepared amount stays immutable.** Nothing changed here, and that is the
+point: `runSessionPaymentCharge` still charges `attemptRow.amount_cents`, and
+`decideExecutionPricingPermission` remains a **permission** check that never
+reads, returns or compares an amount. A $145 attempt prepared against a $120
+service sends exactly `14500` to Stripe, and a later menu-price move does not
+rewrite it. Free / missing / ambiguous / unreadable current pricing still
+fails closed at execution.
+
+**Deliberately NOT built.** Product inventory, a product catalogue, line-item
+accounting, percentage-discount accounting, a tax engine, inventory decrement,
+packages, store credit, itemized Stripe receipts, and a "fully comped session"
+financial event. This is a reference price, an editable final total, and a
+reason when they differ — nothing more.
+
+**Known limitation: the adjustment context is written, not surfaced.**
+`internal_note` has never been rendered by any application surface, and this
+change does not add one, so the composed audit line is readable through the
+database and the admin surfaces rather than in the payment card. The
+non-forgeable half of the record is elsewhere and is unaffected: every adjusted
+row carries `created_by_practitioner_id`, and because a changed total is
+owner-gated, that practitioner's role was `owner` at the moment of preparation.
+Surfacing the note to the practitioner is a small, separate follow-up.
