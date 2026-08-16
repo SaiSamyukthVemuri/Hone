@@ -107,8 +107,51 @@ export type OverrideReason =
   | "outside_availability"
   | "custom_duration";
 
+const MANUAL_TIME_RE_ = /^\d{2}:\d{2}$/;
+const LOCAL_DATE_RE_ = /^\d{4}-\d{2}-\d{2}$/;
+
+// A SYNTACTICALLY VALID LOCAL TIME IS NOT NECESSARILY A REAL ONE.
+//
+// On a spring-forward date the local clock jumps and an hour of wall times
+// simply does not occur. `utcInstantFromLocal` documents its convention for
+// those: the nonexistent input maps to the instant one hour BEFORE the string,
+// because no convention can round-trip a time that never happened.
+//
+// That convention is fine for storage and wrong for a booking form, where it
+// silently turns "02:30" into an appointment that renders as 01:30 -- a
+// different hour from the one the practitioner typed and read back on screen.
+//
+// So the conversion is only accepted when it ROUND-TRIPS: the instant must
+// render back to exactly the local date and HH:MM that were requested. This
+// rejects nonexistent times and leaves every real time -- including the
+// ambiguous repeated hour at fall-back, which does round-trip -- untouched.
+export function resolveLocalInstant(
+  localDate: string,
+  localTime: string,
+  timezone: string,
+): string | null {
+  if (!LOCAL_DATE_RE_.test(localDate) || !MANUAL_TIME_RE_.test(localTime)) {
+    return null;
+  }
+  const at = utcInstantFromLocal(localDate, localTime, timezone);
+  if (Number.isNaN(at.getTime())) return null;
+  if (
+    localDateString(at, timezone) !== localDate ||
+    localTimeString(at, timezone) !== localTime
+  ) {
+    return null;
+  }
+  return at.toISOString();
+}
+
 export type ManualTimeDecision = {
+  // True only when the typed time is syntactically well-formed AND names a
+  // local time that actually exists on that date in that zone.
   timeValid: boolean;
+  // The instant that will be submitted, derived ONCE here so that the time
+  // being classified, the time stamped into an approval and the time posted to
+  // the server cannot be three different answers.
+  startsAtIso: string | null;
   // An UNREADABLE or unloaded window is no more "known" than no window at all.
   // Failing closed says "do not treat this as ordinary"; it does NOT say "this
   // is outside availability", and only the second is a claim the database
@@ -119,9 +162,6 @@ export type ManualTimeDecision = {
   overrideReason: OverrideReason | null;
 };
 
-const MANUAL_TIME_RE = /^\d{2}:\d{2}$/;
-const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
 export function decideManualTime(input: {
   window: AvailabilityWindow | null;
   localDate: string;
@@ -131,7 +171,18 @@ export function decideManualTime(input: {
   serviceDurationMinutes: number | null;
   customDurationMinutes: number | null;
 }): ManualTimeDecision {
-  const timeValid = MANUAL_TIME_RE.test(input.localTime);
+  // Syntax first, then EXISTENCE. A time that does not occur on this date in
+  // this zone is invalid, not "outside hours" and not silently relocated.
+  const startsAtIso = resolveLocalInstant(
+    input.localDate,
+    input.localTime,
+    input.timezone,
+  );
+  const timeValid =
+    MANUAL_TIME_RE_.test(input.localTime) &&
+    // With no usable date there is nothing to check existence against; the
+    // caller cannot confirm without one either way.
+    (!LOCAL_DATE_RE_.test(input.localDate) || startsAtIso !== null);
   // Normalised HERE as well as at any call site, so the answer is right for
   // every caller rather than only the ones that remembered.
   const customDurationMinutes = normalizeDurationOverride(
@@ -139,21 +190,13 @@ export function decideManualTime(input: {
     input.serviceDurationMinutes,
   );
   const duration = customDurationMinutes ?? input.serviceDurationMinutes;
-  const resolvable =
-    timeValid &&
-    input.window !== null &&
-    duration != null &&
-    LOCAL_DATE_RE.test(input.localDate);
-  // Built through the SAME helper the surfaces use to compute the instant they
-  // submit, so the time being classified is the time that will be booked.
+  const resolvable = startsAtIso !== null && input.window !== null && duration != null;
+  // Classified from the SAME instant that will be submitted, so the time being
+  // judged is the time that will be booked.
   const verdict = resolvable
     ? classifyAgainstWindow(
         input.window!,
-        localInterval(
-          utcInstantFromLocal(input.localDate, input.localTime, input.timezone),
-          duration!,
-          input.timezone,
-        ),
+        localInterval(new Date(startsAtIso!), duration!, input.timezone),
       )
     : null;
   const requiresOutsideOverride =
@@ -173,6 +216,7 @@ export function decideManualTime(input: {
           : null;
   return {
     timeValid,
+    startsAtIso,
     windowKnown: input.window !== null && input.window.kind !== "unknown",
     verdict,
     requiresOutsideOverride,

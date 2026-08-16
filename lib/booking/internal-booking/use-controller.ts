@@ -1,15 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import { utcInstantFromLocal } from "../tz";
 import {
   availabilityKey,
   candidateKey,
   type InternalBookingCandidateIdentity,
 } from "./candidate";
 import {
-  currentAvailabilityKey,
+  currentRequestToken,
   initialState,
+  isLoading,
   needsLoad,
   reduce,
   type InternalBookingEvent,
@@ -26,10 +26,26 @@ import type { InternalBookingServerSnapshot } from "./server-snapshot";
 // practitioner may confirm, and what gets submitted -- lives in the reducer and
 // the decision function underneath, not in either component.
 //
-// Recovery is DERIVED here, not remembered: the effect below watches the
-// current availability key, so ANY identity change (including a dimension added
-// to the type later) triggers the replacement load. The previous hand-written
-// effect watched two named props and missed a third.
+// A REQUEST'S LIFETIME IS THE QUESTION, NOT THE WANTING
+// -----------------------------------------------------
+// The first version keyed this effect on a derived `needsLoad` boolean. That
+// boolean is true precisely until the request records that it started, so the
+// sequence was:
+//
+//   needsLoad true -> effect runs -> dispatch SLOT_REQUEST_STARTED
+//     -> needsLoad false -> dependency changed -> React runs the CLEANUP
+//     -> the effect cancels the request it had just issued
+//
+// and the controller sat in "loading" forever. The lesson is not "add a timing
+// guard"; it is that a request's lifetime must be keyed to the QUESTION being
+// asked, which does not change when the asking begins.
+//
+// The key is `currentRequestToken`: the availability identity plus an explicit
+// retry epoch. It changes when the candidate changes (supersede the old
+// request, issue a new one) and when a retry is requested (issue exactly one
+// replacement), and at no other time. Recording a start, committing a result,
+// recording a failure, and every state change that is not the availability
+// question all leave it alone -- so none of them can kill an in-flight load.
 
 export type LoadResult =
   | { ok: true; snapshot: Omit<InternalBookingServerSnapshot, "availabilityKey"> }
@@ -43,13 +59,9 @@ export function useInternalBookingController(input: {
   load: (identity: InternalBookingCandidateIdentity) => Promise<LoadResult>;
   onLoadError?: (error: string) => void;
 }) {
-  const [state, dispatch] = useReducer(
-    reduce,
-    input.identity,
-    initialState,
-  );
+  const [state, dispatch] = useReducer(reduce, input.identity, initialState);
 
-  // Keep the reducer's identity in step with the props/state the surface owns.
+  // Keep the reducer's state in step with the props/state the surface owns.
   // Each dimension is its own event so the transition law -- not the caller --
   // decides what a change revokes.
   const id = input.identity;
@@ -74,6 +86,16 @@ export function useInternalBookingController(input: {
   useEffect(() => {
     dispatch({ type: "TIMEZONE_CHANGED", timezone: id.timezone });
   }, [id.timezone]);
+  // The chosen length is CONTROLLER STATE, not a bare argument passed to the
+  // decision at render time. It participates in the effective interval, so an
+  // approval granted before it changed must stop being current -- which only
+  // works if the reducer knows about it.
+  useEffect(() => {
+    dispatch({
+      type: "CUSTOM_DURATION_CHANGED",
+      minutes: input.customDurationMinutes,
+    });
+  }, [input.customDurationMinutes]);
 
   // The live state, readable from inside an async continuation.
   const stateRef = useRef(state);
@@ -83,14 +105,18 @@ export function useInternalBookingController(input: {
   const onErrRef = useRef(input.onLoadError);
   onErrRef.current = input.onLoadError;
 
-  const key = currentAvailabilityKey(state);
-  const wants = needsLoad(state);
+  const token = currentRequestToken(state);
 
   useEffect(() => {
-    if (!wants) return;
+    // Null means the candidate is too incomplete to ask anything.
+    if (token === null) return;
+    // Read through the REF, never as a dependency. As a dependency this is the
+    // self-cancelling load described above; as a ref read it simply means
+    // "this exact question has already been asked", which is what stops a
+    // return trip to an earlier candidate from refetching an answer still held.
+    if (!needsLoad(stateRef.current)) return;
     const requested = stateRef.current.identity;
-    const requestedKey = availabilityKey(requested);
-    dispatch({ type: "SLOT_REQUEST_STARTED", key: requestedKey });
+    dispatch({ type: "SLOT_REQUEST_STARTED", token });
     let cancelled = false;
     void (async () => {
       let r: LoadResult;
@@ -102,45 +128,46 @@ export function useInternalBookingController(input: {
       if (cancelled) return;
       if (!r.ok) {
         onErrRef.current?.(r.error);
-        dispatch({ type: "SLOT_REQUEST_FAILED", key: requestedKey });
+        dispatch({ type: "SLOT_REQUEST_FAILED", token });
         return;
       }
-      // The snapshot carries the key it answers for; the reducer refuses it if
-      // the candidate has moved on. Cancellation is a courtesy, not the guard.
+      // Every dispatch carries the token it answers for; the reducer refuses
+      // any whose token has moved on. Cancellation is a courtesy, not the guard.
       dispatch({
         type: "SLOT_REQUEST_SUCCEEDED",
-        snapshot: { ...r.snapshot, availabilityKey: requestedKey },
+        token,
+        // Stamped with the question this request was issued for, taken from the
+        // identity the loader was actually handed.
+        snapshot: { ...r.snapshot, availabilityKey: availabilityKey(requested) },
       });
     })();
     return () => {
       cancelled = true;
     };
-  }, [wants, key]);
+    // DELIBERATELY the token alone. Adding any state-derived value here
+    // reintroduces the self-cancelling load this comment block describes.
+  }, [token]);
 
   const decision: InternalBookingDecision = useMemo(
-    () =>
-      decide({
-        state,
-        isOwner: input.isOwner,
-        customDurationMinutes: input.customDurationMinutes,
-        toInstantIso: (d, t) => {
-          const at = utcInstantFromLocal(d, t, state.identity.timezone);
-          return Number.isNaN(at.getTime()) ? null : at.toISOString();
-        },
-      }),
-    [state, input.isOwner, input.customDurationMinutes],
+    () => decide({ state, isOwner: input.isOwner }),
+    [state, input.isOwner],
   );
 
   const send = useCallback((e: InternalBookingEvent) => dispatch(e), []);
+  // The ONLY route out of a failed load that does not require the practitioner
+  // to change or reopen the candidate.
+  const retry = useCallback(() => dispatch({ type: "RETRY_REQUESTED" }), []);
 
   return {
     state,
     decision,
     send,
+    retry,
     /** The identity string a buffer refusal must be scoped to. */
     candidateKey: candidateKey(state.identity),
     slots: decision.snapshotStale ? [] : (state.snapshot?.slots ?? []),
-    loading: state.loadingKey !== null,
+    loading: isLoading(state),
+    loadFailed: state.loadFailed,
   };
 }
 

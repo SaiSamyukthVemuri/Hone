@@ -33,7 +33,11 @@ export type InternalBookingCandidateIdentity = {
 // Derived by folding over every key, so a field added to the type joins the
 // identity automatically and omission becomes a type error rather than a
 // silent gap. This property is what four hand-listed identities failed at.
-function fold(input: Record<string, unknown>): string {
+//
+// Exported because the INTERVAL identity is derived the same way and must be
+// derived by the same code: two folds that agree today are two folds that can
+// disagree later.
+export function fold(input: Record<string, unknown>): string {
   return JSON.stringify(
     Object.keys(input)
       .sort()

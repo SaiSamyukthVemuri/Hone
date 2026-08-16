@@ -4,10 +4,15 @@ import {
   decideManualTime,
   localInterval,
   normalizeDurationOverride,
+  resolveLocalInstant,
   selectedSlotMatchesDate,
   type AvailabilityWindow,
 } from "@/lib/booking/internal-booking/availability";
-import { utcInstantFromLocal } from "@/lib/booking/tz";
+import {
+  localDateString,
+  localTimeString,
+  utcInstantFromLocal,
+} from "@/lib/booking/tz";
 
 // The pure semantics the shared controller decides from. Total functions, so
 // every case here is exact rather than illustrative.
@@ -143,6 +148,91 @@ describe("decideManualTime — permission and fact are separate answers", () => 
     // 16:00 + 120 = 18:00, past a 17:00 close.
     const d = decideManualTime({ ...base, localTime: "16:00", serviceDurationMinutes: 120 });
     expect(d.verdict).toBe("outside_availability");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A LOCAL TIME THAT NEVER HAPPENS IS NOT A BOOKABLE TIME.
+//
+// `utcInstantFromLocal` maps a nonexistent spring-forward wall time to the
+// instant one hour before the string -- a documented storage convention, and a
+// silent hour of drift in a booking form. The round-trip requirement rejects
+// exactly those inputs and nothing else.
+// ---------------------------------------------------------------------------
+
+describe("resolveLocalInstant refuses local times that do not exist", () => {
+  const SPRING = "2026-03-08"; // Toronto: 02:00 -> 03:00
+  const FALL = "2026-11-01"; // Toronto: 02:00 -> 01:00
+
+  it("the skipped hour is rejected", () => {
+    expect(resolveLocalInstant(SPRING, "02:30", TZ)).toBeNull();
+    expect(resolveLocalInstant(SPRING, "02:00", TZ)).toBeNull();
+    expect(resolveLocalInstant(SPRING, "02:59", TZ)).toBeNull();
+  });
+
+  it("the hours either side of it are ordinary", () => {
+    for (const t of ["01:30", "03:30"]) {
+      const at = resolveLocalInstant(SPRING, t, TZ);
+      expect(at, t).not.toBeNull();
+      // ...and round-trips to exactly what was asked for.
+      expect(localTimeString(new Date(at!), TZ)).toBe(t);
+      expect(localDateString(new Date(at!), TZ)).toBe(SPRING);
+    }
+  });
+
+  it("the same wall time on an ordinary date is fine", () => {
+    expect(resolveLocalInstant(PLAIN, "02:30", TZ)).not.toBeNull();
+  });
+
+  it("the AMBIGUOUS fall-back hour is still accepted, unchanged", () => {
+    // It happens twice rather than never; the existing first-occurrence
+    // convention round-trips, so this ticket must not disturb it.
+    const at = resolveLocalInstant(FALL, "01:30", TZ);
+    expect(at).not.toBeNull();
+    expect(localTimeString(new Date(at!), TZ)).toBe("01:30");
+  });
+
+  it("the rule is not Toronto-specific", () => {
+    const LDN = "Europe/London"; // 2026-03-29: 01:00 -> 02:00
+    expect(resolveLocalInstant("2026-03-29", "01:30", LDN)).toBeNull();
+    expect(resolveLocalInstant("2026-03-29", "00:30", LDN)).not.toBeNull();
+    expect(resolveLocalInstant("2026-03-29", "02:30", LDN)).not.toBeNull();
+  });
+
+  it("malformed input is null rather than a guess", () => {
+    expect(resolveLocalInstant(PLAIN, "", TZ)).toBeNull();
+    expect(resolveLocalInstant(PLAIN, "9:00", TZ)).toBeNull();
+    expect(resolveLocalInstant("15 June", "09:00", TZ)).toBeNull();
+  });
+});
+
+describe("decideManualTime refuses to book a time that does not exist", () => {
+  const base = {
+    window: { kind: "open", openTime: "00:00", closeTime: "23:59" } as AvailabilityWindow,
+    localDate: "2026-03-08",
+    timezone: TZ,
+    serviceDurationMinutes: 60,
+    customDurationMinutes: null as number | null,
+  };
+
+  it("02:30 on the spring-forward date is invalid, not relocated", () => {
+    const d = decideManualTime({ ...base, localTime: "02:30" });
+    expect(d.timeValid).toBe(false);
+    expect(d.startsAtIso).toBeNull();
+    expect(d.verdict, "no claim about the practitioner's day").toBeNull();
+    expect(d.overrideReason).toBeNull();
+  });
+
+  it("03:30 the same morning is a normal booking", () => {
+    const d = decideManualTime({ ...base, localTime: "03:30" });
+    expect(d.timeValid).toBe(true);
+    expect(localTimeString(new Date(d.startsAtIso!), TZ)).toBe("03:30");
+    expect(d.verdict).toBe("inside_availability");
+  });
+
+  it("the instant reported is the instant classified", () => {
+    const d = decideManualTime({ ...base, localDate: PLAIN, localTime: "10:00" });
+    expect(d.startsAtIso).toBe(utcInstantFromLocal(PLAIN, "10:00", TZ).toISOString());
   });
 });
 

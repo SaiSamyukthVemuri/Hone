@@ -20,10 +20,21 @@ export type InternalBookingServerSnapshot = {
   slots: { start: string; end: string; startLabel: string }[];
 };
 
-// The bounded facts a buffer refusal reports, so a retry can state the exact
-// interval it is acting on. Deliberately narrow: a duration and the candidate
-// it belongs to, nothing else about the service or the studio.
+// The bounded facts a buffer refusal reports.
+//
+// It must name the exact INTERVAL the server refused, not merely the candidate.
+// A refusal identified only by candidate floats: the practitioner retypes the
+// time or drags the length, the appointment becomes a different one, and an
+// approval granted for the interval the server actually objected to silently
+// authorises an interval it never saw.
 export type BufferConflictSnapshot = {
   candidateKey: string;
+  // The instant the server refused.
+  startsAtIso: string;
+  // The length that refusal was computed for.
+  effectiveDurationMinutes: number;
+  // The authoritative service length the server read while refusing, echoed
+  // back on retry as an optimistic-concurrency PRECONDITION. Distinct from the
+  // effective length above, which may be a custom override.
   serviceDurationMinutes: number;
 };
