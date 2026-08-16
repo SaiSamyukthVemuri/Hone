@@ -137,6 +137,12 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // The week grid's appointment preview drawer as a prep workspace: it
+      // opens without leaving /calendar, shows the shared last-treatment and
+      // intake state, and routes Reschedule/Cancel to the governed commands.
+      // It belongs to `calendar` rather than `booking` because every one of its
+      // assertions starts from the desktop week grid.
+      "calendar-preview-drawer.spec.ts",
     ],
   },
   owner_admin: {

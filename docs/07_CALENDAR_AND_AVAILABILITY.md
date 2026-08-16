@@ -84,10 +84,20 @@ id from another studio resolves to "not found in this studio". The read is RLS-s
 
 **Freshness and races.** Action gating uses the **re-read** status, not the possibly
 stale week payload, so an appointment cancelled in another tab is not still offered
-Cancel. Because two loads can be in flight at once and responses are unordered, every
-response must satisfy `shouldApplyPreviewResponse` (`app/(app)/calendar/preview-request.ts`):
-it must be the newest request issued **and** describe the appointment currently open.
-Without it, appointment A's late payload would render under appointment B's name.
+Cancel. A practitioner scanning a week clicks fast, so more than one load can be
+outstanding, and **server actions carry no documented ordering guarantee**. Every
+response must therefore satisfy `shouldApplyPreviewResponse`
+(`app/(app)/calendar/preview-request.ts`): it must be the newest request issued **and**
+describe the appointment currently open. Otherwise appointment A's late payload would
+render under appointment B's name — a clinical mis-read, not a cosmetic glitch.
+
+Stated honestly: Next.js *currently* dispatches server actions serially, so B is not
+sent until A settles and the late-A case is not reachable from the UI today. The guard
+does not rely on that — it is defence in depth against an undocumented implementation
+detail, and it goes live the moment the load moves to a route handler. Its logic is
+proved directly in `tests/app/calendar/preview-request.test.ts`; the e2e spec asserts
+the end state a practitioner would actually see (switching from A to B never leaves A's
+prep on screen) and says so rather than claiming to have won a race it cannot stage.
 
 The mobile day view is unchanged: it still navigates to `/calendar/[id]`.
 
