@@ -508,19 +508,27 @@ describe("G — blockouts and closed days refuse a manual time", () => {
     expect(rpcCalls).toHaveLength(0);
   });
 
-  it("an UNREADABLE blockout table fails CLOSED, never as 'no time off'", async () => {
+  it("an UNREADABLE blockout table is refused as UNKNOWN, never as 'no time off' NOR as 'not working'", async () => {
     // The manual-time path is the only working-hours authority a capacity-OFF
-    // studio has, so "we could not tell whether she is off today" must resolve
-    // to no. Reading a failed query as an empty result would book a client onto
-    // a day the practitioner deliberately took off.
+    // studio has, so "we could not tell whether she is off today" must never
+    // resolve to yes. Reading a failed query as an empty result would book a
+    // client onto a day the practitioner deliberately took off.
     //
-    // This is deliberately STRICTER than slot generation, which has always
-    // discarded this error and continues; that behaviour reaches the public
-    // booking page and is preserved there rather than changed as a side effect.
+    // But it must not resolve to a FACTUAL no either. This assertion used to
+    // demand the closed copy ("isn't working at that time"), which is a claim
+    // about the practitioner's day that a failed read cannot support -- and on
+    // the browser surface that same collapse made windowKnown true and exposed
+    // the owner acknowledgement, so accepting it persisted a false
+    // outside-availability exception for a day that may be perfectly open.
+    //
+    // UNKNOWN is its own outcome: refuse, retryably, and describe nothing.
     scenario.blockoutError = { code: "PGRST301" };
     const r = await book({ starts_at: MANUAL_INSIDE });
     expect(r.ok).toBe(false);
-    expect(!r.ok && r.error).toMatch(/isn't working at that time/i);
+    expect(!r.ok && r.error).toMatch(/could not check your working hours/i);
+    expect(!r.ok && r.error).not.toMatch(/isn't working at that time/i);
+    expect(!r.ok && r.error).not.toMatch(/outside the practitioner/i);
+    // Still fails closed: the command is never reached.
     expect(rpcCalls).toHaveLength(0);
   });
 

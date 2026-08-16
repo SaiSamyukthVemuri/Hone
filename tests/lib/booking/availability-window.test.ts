@@ -4,8 +4,10 @@ import {
   classifyAgainstWindow,
   decideManualTime,
   localInterval,
+  classifyRequestedTime,
   normalizeDurationOverride,
   readFullDayBlockout,
+  selectedSlotMatchesDate,
   resolveAvailabilityWindow,
   type AvailabilityWindow,
 } from "@/lib/booking/availability-window";
@@ -840,5 +842,231 @@ describe("P2-D — an unreadable window is UNKNOWN, never a fallback fact", () =
     expect(d.windowKnown).toBe(false);
     expect(d.requiresOutsideOverride).toBe(true); // fails closed
     expect(d.overrideReason).toBeNull(); // ...but asserts nothing
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THIRD-ROUND P2s (Codex, exact head b3c9d6e1). They share two structural laws:
+//
+//   LAW 1  candidate state is invalidated SYNCHRONOUSLY when its identity
+//          changes -- never "eventually, once the refetch lands".
+//   LAW 2  UNKNOWN / READ FAILED is never converted into a factual
+//          availability state.
+// ---------------------------------------------------------------------------
+
+// A predicate-aware stub; `onRead` decides each read's outcome.
+function readStub(
+  onRead: (table: string, scoped: boolean) => { data: unknown; error: unknown },
+) {
+  return {
+    from(table: string) {
+      let scoped = false;
+      const b: Record<string, unknown> = {};
+      for (const op of ["eq", "is", "lte", "gte"]) {
+        b[op] = (col: string, val: unknown) => {
+          if (col === "practitioner_id") scoped = typeof val === "string";
+          return b;
+        };
+      }
+      b.select = () => b;
+      b.maybeSingle = () => Promise.resolve(onRead(table, scoped));
+      b.then = (f: (v: unknown) => unknown) =>
+        Promise.resolve(onRead(table, scoped)).then(f);
+      return b;
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+}
+const OPEN_ROW_9_17 = { is_open: true, open_time: "09:00:00", close_time: "17:00:00" };
+const READ_ERROR = { data: null, error: { code: "PGRST301", message: "boom" } };
+const NO_ROW = { data: null, error: null };
+
+describe("LAW 1 / P2-A — a selected suggestion belongs to its own date", () => {
+  const TZ4 = "America/Toronto";
+
+  it("a slot from the previous date is NOT submittable under the new date", () => {
+    // The exact defect: the form shows 2026-08-21 while the selection is still
+    // the instant offered for 2026-08-20.
+    const slotOn20 = utcInstantFromLocal("2026-08-20", "10:00", TZ4).toISOString();
+    expect(
+      selectedSlotMatchesDate({ startsAtIso: slotOn20, formDate: "2026-08-20", timezone: TZ4 }),
+    ).toBe(true);
+    expect(
+      selectedSlotMatchesDate({ startsAtIso: slotOn20, formDate: "2026-08-21", timezone: TZ4 }),
+    ).toBe(false);
+  });
+
+  it("no selection is not a submittable selection", () => {
+    expect(
+      selectedSlotMatchesDate({ startsAtIso: null, formDate: "2026-08-20", timezone: TZ4 }),
+    ).toBe(false);
+  });
+
+  it("an unparseable instant is refused rather than assumed current", () => {
+    expect(
+      selectedSlotMatchesDate({ startsAtIso: "not-a-date", formDate: "2026-08-20", timezone: TZ4 }),
+    ).toBe(false);
+  });
+
+  it("the comparison is in STUDIO local time, not UTC", () => {
+    // 2026-08-21T02:00Z is still 2026-08-20 in Toronto. A UTC comparison would
+    // wrongly reject a perfectly current late-evening slot.
+    const lateEvening = "2026-08-21T02:00:00.000Z";
+    expect(
+      selectedSlotMatchesDate({ startsAtIso: lateEvening, formDate: "2026-08-20", timezone: TZ4 }),
+    ).toBe(true);
+  });
+});
+
+describe("LAW 2 / P2-B — a failed blockout read is UNKNOWN, not closed", () => {
+  const STUDIO4 = { id: "s1", timezone: "America/Toronto" };
+  const AT_10 = new Date("2026-06-15T14:00:00.000Z"); // 10:00 local
+
+  it("a blockout ROW is still a factual closed day", async () => {
+    const supabase = readStub((t) =>
+      t === "studio_blockouts"
+        ? { data: [{ starts_on: "2026-06-15", ends_on: "2026-06-15" }], error: null }
+        : { data: OPEN_ROW_9_17, error: null },
+    );
+    expect(await classifyRequestedTime(supabase, STUDIO4, AT_10, 60, null)).toBe(
+      "practitioner_closed",
+    );
+  });
+
+  it("a successful no-blockout read continues to the real window", async () => {
+    const supabase = readStub((t) =>
+      t === "studio_blockouts"
+        ? { data: [], error: null }
+        : { data: OPEN_ROW_9_17, error: null },
+    );
+    expect(await classifyRequestedTime(supabase, STUDIO4, AT_10, 60, null)).toBe(
+      "inside_availability",
+    );
+  });
+
+  it("a FAILED blockout read is availability_unknown", async () => {
+    // Never "you are not working": the day may be perfectly open, and calling
+    // it closed exposes an acknowledgement that persists a false exception.
+    const supabase = readStub((t) =>
+      t === "studio_blockouts" ? READ_ERROR : { data: OPEN_ROW_9_17, error: null },
+    );
+    expect(await classifyRequestedTime(supabase, STUDIO4, AT_10, 60, null)).toBe(
+      "availability_unknown",
+    );
+  });
+
+  it("UNKNOWN offers no acknowledgement and no factual reason", () => {
+    const d = decideManualTime({
+      window: { kind: "unknown" },
+      localDate: "2026-06-15",
+      localTime: "10:00",
+      timezone: "America/Toronto",
+      serviceDurationMinutes: 60,
+      customDurationMinutes: null,
+    });
+    expect(d.windowKnown).toBe(false);
+    expect(d.overrideReason).toBeNull();
+  });
+});
+
+describe("LAW 2 / P2-C — capacity-OFF read failures are UNKNOWN, not throws", () => {
+  const OFF_STUDIO = { id: "s1", timezone: "America/Toronto" }; // capacity OFF
+
+  it("A: a studio-wide override is used when present", async () => {
+    const w = await resolveAvailabilityWindow(
+      readStub((t) =>
+        t === "studio_availability_overrides"
+          ? { data: { is_open: true, open_time: "11:00:00", close_time: "12:00:00" }, error: null }
+          : NO_ROW,
+      ),
+      OFF_STUDIO,
+      "2026-06-15",
+      null,
+    );
+    expect(w).toEqual({ kind: "open", openTime: "11:00", closeTime: "12:00" });
+  });
+
+  it("B+C: absent override falls through to the weekly default", async () => {
+    const w = await resolveAvailabilityWindow(
+      readStub((t) =>
+        t === "studio_availability_default" ? { data: OPEN_ROW_9_17, error: null } : NO_ROW,
+      ),
+      OFF_STUDIO,
+      "2026-06-15",
+      null,
+    );
+    expect(w).toEqual({ kind: "open", openTime: "09:00", closeTime: "17:00" });
+  });
+
+  it("D: the 0135 schema-compatibility fallback still works (undefined column)", async () => {
+    // 42703 = undefined_column: the scoped probe is retried WITHOUT the 0135
+    // practitioner_id filter. That is a legitimate migration-order condition,
+    // not a read failure, and must NOT become unknown.
+    let sawLegacyRetry = false;
+    const w = await resolveAvailabilityWindow(
+      readStub((t, scoped) => {
+        if (t !== "studio_availability_default") return NO_ROW;
+        if (scoped) return { data: null, error: { code: "42703", message: "no column" } };
+        sawLegacyRetry = true;
+        return { data: OPEN_ROW_9_17, error: null };
+      }),
+      OFF_STUDIO,
+      "2026-06-15",
+      null,
+    );
+    expect(sawLegacyRetry).toBe(true);
+    expect(w).toEqual({ kind: "open", openTime: "09:00", closeTime: "17:00" });
+  });
+
+  it("E: a genuine OVERRIDE read failure resolves to unknown", async () => {
+    const w = await resolveAvailabilityWindow(
+      readStub((t) => (t === "studio_availability_overrides" ? READ_ERROR : NO_ROW)),
+      OFF_STUDIO,
+      "2026-06-15",
+      null,
+    );
+    expect(w.kind).toBe("unknown");
+  });
+
+  it("F: a genuine DEFAULT read failure resolves to unknown", async () => {
+    const w = await resolveAvailabilityWindow(
+      readStub((t) => (t === "studio_availability_default" ? READ_ERROR : NO_ROW)),
+      OFF_STUDIO,
+      "2026-06-15",
+      null,
+    );
+    expect(w.kind).toBe("unknown");
+  });
+
+  it("G: it reaches classifyRequestedTime as the retryable unknown, not a throw", async () => {
+    const supabase = readStub((t) => {
+      if (t === "studio_blockouts") return { data: [], error: null };
+      if (t === "studio_availability_default") return READ_ERROR;
+      return NO_ROW;
+    });
+    // Must RESOLVE, not reject: a throw escapes the action's result contract.
+    await expect(
+      classifyRequestedTime(
+        supabase,
+        { id: "s1", timezone: "America/Toronto" },
+        new Date("2026-06-15T14:00:00.000Z"),
+        60,
+        null,
+      ),
+    ).resolves.toBe("availability_unknown");
+  });
+
+  it("both capacity modes answer with the SAME three outcomes", async () => {
+    const kinds = new Set<string>();
+    for (const capacity of [false, true]) {
+      const w = await resolveAvailabilityWindow(
+        readStub((t) => (t === "studio_availability_default" ? READ_ERROR : NO_ROW)),
+        { id: "s1", timezone: "America/Toronto", practitioner_capacity_enabled: capacity },
+        "2026-06-15",
+        capacity ? "prac-1" : null,
+      );
+      kinds.add(w.kind);
+    }
+    expect([...kinds]).toEqual(["unknown"]);
   });
 });

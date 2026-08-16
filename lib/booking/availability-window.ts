@@ -177,10 +177,34 @@ export async function resolveAvailabilityWindow(
     // OFF: studio-wide only, via the migration-order-safe loaders. Nothing here
     // references the 0134/0135 columns, so this is byte-for-byte the flag-off
     // behaviour the slot engine has always had.
-    const override = await getStudioWideOverrideDaySafe(supabase, studio.id, dateStr);
-    if (override) return toWindow(override as WindowRow);
-    const def = await getStudioWideDaySafe(supabase, studio.id, dow);
-    return toWindow(def as WindowRow | null);
+    //
+    // THOSE LOADERS SIGNAL A READ FAILURE BY THROWING (`failClosed` ->
+    // "availability_read_failed:..."), which predates this resolver and is
+    // deliberate: they must never let a failed read look like an absent row.
+    // But a throw escapes the OPEN/CLOSED/UNKNOWN contract entirely -- it went
+    // straight through classifyRequestedTime and the server action, so a
+    // capacity-OFF studio could never reach the availability_unknown refusal
+    // and the surfaces awaited a rejected promise instead.
+    //
+    // Translate it here, at the resolver boundary. The loaders keep their own
+    // behaviour (including the 0135 schema-compatibility fallback, which is
+    // handled INSIDE them and does not throw), and both capacity modes now
+    // answer with the same three outcomes.
+    try {
+      const override = await getStudioWideOverrideDaySafe(supabase, studio.id, dateStr);
+      if (override) return toWindow(override as WindowRow);
+      const def = await getStudioWideDaySafe(supabase, studio.id, dow);
+      return toWindow(def as WindowRow | null);
+    } catch (e) {
+      // Bounded, PHI-free. A genuine bug still shows up in the logs rather than
+      // being silently absorbed, but it cannot masquerade as a factual window.
+      console.error(
+        `availability_window_read_failed:${
+          e instanceof Error ? e.message.slice(0, 60) : "unknown"
+        }`,
+      );
+      return { kind: "unknown" };
+    }
   }
 
   // ON: practitioner-specific row wins over the studio-wide fallback, overrides
@@ -413,6 +437,30 @@ export function normalizeDurationOverride(
   return chosenMinutes;
 }
 
+// A SELECTED SUGGESTION BELONGS TO THE DATE IT WAS OFFERED FOR.
+//
+// The slot list is fetched per (service, date, practitioner). When the form's
+// date changes, any slot already picked from the previous date is stale --
+// but it is a plain ISO instant, so nothing about it says "I am no longer
+// yours". `!!pickedSlot` was therefore true across a date change, and until the
+// refetch completed the practitioner could submit the OLD date's instant while
+// the form displayed the NEW date.
+//
+// The component clears the selection synchronously on every identity change,
+// which closes the window. This predicate is the SECOND line: even if some
+// future path forgets to clear, a suggestion whose own local date is not the
+// form's date can never be submitted. Derived, so it cannot go stale.
+export function selectedSlotMatchesDate(input: {
+  startsAtIso: string | null;
+  formDate: string;
+  timezone: string;
+}): boolean {
+  if (!input.startsAtIso) return false;
+  const d = new Date(input.startsAtIso);
+  if (Number.isNaN(d.getTime())) return false;
+  return localDateString(d, input.timezone) === input.formDate;
+}
+
 // THE IDENTITY OF ONE BOOKING CANDIDATE.
 //
 // A server-issued exception (today: buffer_conflict) is an answer about ONE
@@ -568,7 +616,12 @@ export async function classifyRequestedTime(
   // FullDayBlockoutRead: this path is the only working-hours authority a
   // capacity-OFF studio has, so "we could not tell" must resolve to "no".
   const blockout = await readFullDayBlockout(supabase, studio.id, dateStr);
-  if (blockout.blocked || blockout.readFailed) return "practitioner_closed";
+  // A blockout ROW is a fact: the practitioner is not working. A failed READ
+  // is not -- and calling it "closed" let the surfaces render factual
+  // not-working copy and offer the owner an acknowledgement, which persists a
+  // false outside-availability exception for a day that may be perfectly open.
+  if (blockout.readFailed) return "availability_unknown";
+  if (blockout.blocked) return "practitioner_closed";
   const window = await resolveAvailabilityWindow(
     supabase,
     studio,

@@ -138,9 +138,15 @@ export async function fetchSlotsForClientBookingAction(params: {
   // that stays hidden, never a booking on a day off.
   const blockout = await readFullDayBlockout(supabase, studio.id, params.date);
   const window: AvailabilityWindow =
-    blockout.blocked || blockout.readFailed
-      ? { kind: "closed" }
-      : await resolveAvailabilityWindow(
+    // A blockout ROW is knowledge: the day is closed. A failed READ is not, and
+    // must not be rendered as a factual "not working" state -- doing so made
+    // windowKnown true and exposed the owner acknowledgement, which would
+    // persist a false exception. UNKNOWN blocks the manual path instead.
+    blockout.readFailed
+      ? { kind: "unknown" }
+      : blockout.blocked
+        ? { kind: "closed" }
+        : await resolveAvailabilityWindow(
           supabase,
           {
             id: studio.id,

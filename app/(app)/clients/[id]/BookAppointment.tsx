@@ -17,6 +17,7 @@ import { utcInstantFromLocal } from "@/lib/booking/tz";
 import {
   bookingCandidateKey,
   decideManualTime,
+  selectedSlotMatchesDate,
   type AvailabilityWindow,
 } from "@/lib/booking/availability-window";
 import { resolveEligibleSelection } from "@/lib/booking/eligible-selection";
@@ -137,6 +138,16 @@ export function BookAppointment({
   // acting practitioner -> first eligible) now lives in resolveEligibleSelection,
   // together with the ORDERING guarantees it depends on.
 
+  // EVERY identity change runs this FIRST, synchronously, before any await.
+  // loadSlots always did; loadForService did not, which is how a suggestion
+  // picked on the previous date stayed selected (and submittable) for the whole
+  // duration of the eligibility round trip.
+  function invalidateSelection() {
+    setPickedSlot(null);
+    setAvailabilityWindow(null);
+    clearBufferOverride();
+  }
+
   function loadSlots(nextServiceId: string, nextDate: string, nextTarget: string) {
     setError(null);
     setPickedSlot(null);
@@ -186,9 +197,11 @@ export function BookAppointment({
     }
     const req = ++eligibleReq.current;
     setEligibleError(null);
-    // The eligible lookup can change the TARGET, which changes the window. Drop
-    // it now rather than after the round trip, for the same reason as loadSlots.
-    setAvailabilityWindow(null);
+    // SYNCHRONOUSLY, before the await: the eligible lookup can change the
+    // target and the caller may have changed the date, so the whole previous
+    // candidate -- selected slot, window and any buffer approval -- is stale
+    // from this instant, not from whenever the round trip happens to finish.
+    invalidateSelection();
     startLoadingPractitioners(async () => {
       // Ordering lives in resolveEligibleSelection, which reads the CURRENT
       // target through the callback instead of capturing it. That is what lets
@@ -351,7 +364,14 @@ export function BookAppointment({
         windowKnown &&
         manualTimeValid &&
         (!requiresOutsideOverride || (isOwner && outsideHoursConfirmed))
-      : !!pickedSlot);
+      : // A suggestion is submittable only while it still belongs to the date
+        // on the form. The synchronous clear above normally makes this moot;
+        // it is here so no future path can reintroduce a cross-date submit.
+        selectedSlotMatchesDate({
+          startsAtIso: pickedSlot?.start ?? null,
+          formDate: date,
+          timezone,
+        }));
 
   // The practitioner this booking will be assigned to (for the confirmation line).
   const assignedName = showSelector

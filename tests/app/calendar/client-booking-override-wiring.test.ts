@@ -388,3 +388,52 @@ describe("P2-D — an unreadable window is refused, never described", () => {
     expect(unknownBranch).not.toMatch(/outside the practitioner/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THIRD-ROUND P2s — surface wiring. Semantics proved behaviourally in
+// tests/lib/booking/availability-window.test.ts; these pin that the component
+// routes through them and invalidates SYNCHRONOUSLY.
+// ---------------------------------------------------------------------------
+
+describe("LAW 1 / P2-A — identity changes invalidate the selection before any await", () => {
+  it("there is ONE synchronous invalidation, and loadForService calls it", () => {
+    // loadForService previously cleared only the window, so a slot picked on
+    // the previous date stayed selected for the whole eligibility round trip.
+    expect(BOOK).toMatch(/function invalidateSelection\(\) \{[\s\S]{0,220}setPickedSlot\(null\);/);
+    expect(BOOK).toMatch(/function invalidateSelection\(\) \{[\s\S]{0,220}setAvailabilityWindow\(null\);/);
+    expect(BOOK).toMatch(/function invalidateSelection\(\) \{[\s\S]{0,220}clearBufferOverride\(\);/);
+    // Called BEFORE the transition that awaits.
+    const call = BOOK.indexOf("invalidateSelection();");
+    const await_ = BOOK.indexOf("startLoadingPractitioners(async () => {");
+    expect(call).toBeGreaterThan(-1);
+    expect(call).toBeLessThan(await_);
+  });
+
+  it("Confirm binds a suggestion to the CURRENT form date", () => {
+    // The bare `!!pickedSlot` could not tell a stale instant from a current one.
+    expect(BOOK).toMatch(/selectedSlotMatchesDate\(\{/);
+    expect(BOOK).toMatch(/formDate: date,/);
+    expect(BOOK).not.toMatch(/: !!pickedSlot\);/);
+  });
+});
+
+describe("LAW 2 / P2-B — the browser surface keeps a failed blockout read unknown", () => {
+  it("readFailed maps to unknown, blocked maps to closed, and they are distinct", () => {
+    const ACTIONS2 = read("app/(app)/clients/[id]/booking-actions.ts");
+    expect(ACTIONS2).toMatch(
+      /blockout\.readFailed\s*\n?\s*\? \{ kind: "unknown" \}\s*\n?\s*: blockout\.blocked\s*\n?\s*\? \{ kind: "closed" \}/,
+    );
+    // The collapsed form must not come back.
+    expect(ACTIONS2).not.toMatch(/blockout\.blocked \|\| blockout\.readFailed/);
+  });
+});
+
+describe("LAW 2 / P2-C — the capacity-OFF branch cannot throw past the contract", () => {
+  it("the safe loaders are translated at the resolver boundary", () => {
+    const AW = read("lib/booking/availability-window.ts");
+    expect(AW).toMatch(/try \{[\s\S]{0,400}getStudioWideOverrideDaySafe/);
+    expect(AW).toMatch(/\} catch \(e\) \{[\s\S]{0,400}return \{ kind: "unknown" \};/);
+    // Bounded, PHI-free marker so a genuine bug is still visible.
+    expect(AW).toMatch(/availability_window_read_failed:/);
+  });
+});
