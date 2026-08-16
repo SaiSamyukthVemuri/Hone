@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   ADJUSTMENT_REASON_REQUIRED_ERROR,
   hasMeaningfulAdjustmentReason,
@@ -413,6 +415,97 @@ describe("a changed total needs an explanation", () => {
     }
   });
 
+  // -------------------------------------------------------------------------
+  // F-PAY-002 / Codex P2 round 3: "Reject compatibility symbols that NFKC turns
+  // into letters".
+  //
+  // Round 2 ran the reason through NFKC before asking whether it contained a
+  // letter or number. NFKC's whole job is to fold compatibility forms, and ten
+  // of those forms are SYMBOLS whose folded form is text:
+  //
+  //     ™ -> "TM"    ℠ -> "SM"    ℡ -> "TEL"   № -> "No"    ℃ -> "°C"
+  //     ℉ -> "°F"    ㎒ -> "MHz"   ㏒ -> "log"   ℅ -> "c/o"   ㏂ -> "a.m."
+  //
+  // So the normalization MANUFACTURED the very content the rule was checking
+  // for, and a bare trademark sign satisfied a contract that explicitly rejects
+  // symbols. Classification now reads the RAW submitted string: a practitioner
+  // who typed only "™" typed only a symbol.
+  //
+  // The distinction is the point. "Does this text carry meaning?" is a question
+  // about what the user WROTE. Normalizing first answers a different question —
+  // "could this text be rewritten into something meaningful?" — and that is not
+  // the contract.
+  // -------------------------------------------------------------------------
+  const NFKC_MANUFACTURED: Array<[string, string]> = [
+    ["U+2122 trade mark sign", "\u2122"],
+    ["U+2120 service mark", "\u2120"],
+    ["U+2121 telephone sign", "\u2121"],
+    ["U+2116 numero sign", "\u2116"],
+    ["U+2103 degree celsius", "\u2103"],
+    ["U+2109 degree fahrenheit", "\u2109"],
+    ["U+3392 square MHz", "\u3392"],
+    ["U+33D2 square log", "\u33D2"],
+    ["U+2105 care of", "\u2105"],
+    ["U+33C2 square a.m.", "\u33C2"],
+    ["several of them together", "\u2122\u2116\u2103"],
+    ["one padded with spaces", "  \u2122  "],
+    ["one mixed with zero-width", "\u200B\u2122\u200D"],
+    ["one mixed with punctuation", "-\u2122-"],
+  ];
+
+  for (const [label, reason] of NFKC_MANUFACTURED) {
+    it(`refuses ${label}, whose NFKC form would qualify`, () => {
+      expect(
+        decide({ requestedFinalRaw: "100.00", adjustmentReasonRaw: reason }),
+      ).toEqual({ kind: "reject", error: ADJUSTMENT_REASON_REQUIRED_ERROR });
+    });
+  }
+
+  it("proves these are rejected for the RIGHT reason: NFKC really would qualify them", () => {
+    // Without this, the tests above would still pass if the symbols happened to
+    // be rejected for some unrelated cause, and the regression they guard would
+    // be invisible.
+    const LETTER_OR_NUMBER = /[\p{L}\p{N}]/u;
+    for (const [, raw] of NFKC_MANUFACTURED.slice(0, 10)) {
+      expect(LETTER_OR_NUMBER.test(raw), `raw ${JSON.stringify(raw)}`).toBe(false);
+      expect(
+        LETTER_OR_NUMBER.test(raw.normalize("NFKC")),
+        `NFKC ${JSON.stringify(raw)}`,
+      ).toBe(true);
+    }
+  });
+
+  it("a compatibility symbol does not POISON an otherwise real reason", () => {
+    // The rule is about what the reason contains, not what it lacks. "Promo"
+    // and "client" are raw letters; the trademark sign is simply along for the
+    // ride, and the stored text keeps it.
+    const d = decide({
+      requestedFinalRaw: "100.00",
+      adjustmentReasonRaw: "Promo \u2122 client",
+    });
+    expect(d.kind).toBe("prepare");
+    expect((d as { internalNote: string }).internalNote).toContain("Promo \u2122 client");
+  });
+
+  // Characters that are ALREADY Letter or Number in the raw input, so NFKC is
+  // not what qualifies them. Accepted, deliberately and consistently: the
+  // contract accepts a bare "10", so a bare circled one is the same claim.
+  // Called out explicitly so this reads as a decision rather than an oversight.
+  const RAW_LETTER_OR_NUMBER: Array<[string, string]> = [
+    ["U+2107 euler constant (Lu)", "\u2107"],
+    ["U+00BD vulgar one half (No)", "\u00BD"],
+    ["U+2460 circled digit one (No)", "\u2460"],
+    ["U+247D parenthesized ten (No)", "\u247D"],
+  ];
+
+  for (const [label, reason] of RAW_LETTER_OR_NUMBER) {
+    it(`accepts ${label}, which qualifies WITHOUT any normalization`, () => {
+      expect(
+        decide({ requestedFinalRaw: "100.00", adjustmentReasonRaw: reason }),
+      ).toMatchObject({ kind: "prepare", amountCents: 10_000 });
+    });
+  }
+
   it("accepts a reason at exactly the length bound", () => {
     expect(
       decide({
@@ -643,46 +736,67 @@ describe("no decision path can emit an unchargeable amount", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WHY THE GUARD HAS BELT *AND* BRACES, and how we know which is which.
+// A CORRECTION, KEPT IN PLACE ON PURPOSE.
 //
-// The mutation harness reports something worth writing down: deleting the
-// explicit BLANK_FILLERS list, or deleting the NFKC normalization, changes NO
-// behaviour today. Both are redundant against the CURRENT Unicode data, for two
-// separate reasons:
+// An earlier revision of this file claimed that deleting the NFKC call changed
+// no behaviour, on the strength of a mutation that stayed green. That claim was
+// FALSE, and the way it was reached is the lesson: the mutation stayed green
+// only because no test here contained a compatibility symbol. The harness was
+// measuring THIS FILE'S COVERAGE and the conclusion drawn was about the
+// PRODUCTION CODE. A green mutation is evidence of a coverage gap at least as
+// often as it is evidence of redundant code.
 //
-//   * U+2800 BRAILLE PATTERN BLANK is category So. The narrowing to L-or-N
-//     rejects it without any list.
-//   * U+115F, U+1160, U+3164 and U+FFA0 are Default_Ignorable_Code_Point, so
-//     the ignorable sweep removes them without any list, and NFKC folding
-//     U+3164/U+FFA0 into U+1160 is not needed to get there.
+// NFKC was not redundant. It was manufacturing letters out of symbols (™ -> TM)
+// and it has been removed from the classification path entirely.
 //
-// That redundancy is deliberate defence in depth, but code no test can falsify
-// is exactly what these reviews keep catching. So this block pins the UNICODE
-// FACTS the redundancy rests on instead. If a future ICU update moves any of
-// them, these fail loudly — and that is precisely the moment the explicit list
-// stops being belt and starts being the only thing holding.
+// The filler list is a different kind of claim, and a checkable one: it is
+// FIVE NAMED CHARACTERS, so each can be tested against each rule individually.
+// That is exhaustive over the claim's domain, which "NFKC changes nothing" —
+// a claim over every possible string — never was.
 // ---------------------------------------------------------------------------
-describe("the assumptions that make the filler list redundant today", () => {
+describe("each named filler is rejected, and by which rule", () => {
   const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
   const LETTER_OR_NUMBER = /[\p{L}\p{N}]/u;
 
-  it("U+2800 is NOT default-ignorable, and is caught only by the L/N narrowing", () => {
+  it("U+2800 is caught by the letter-or-number narrowing, not by the sweep", () => {
     expect(DEFAULT_IGNORABLE.test("\u2800")).toBe(false);
     expect(LETTER_OR_NUMBER.test("\u2800")).toBe(false);
   });
 
-  it("every Hangul filler IS default-ignorable, which is why the sweep catches them", () => {
+  it("the filler list and the ignorable sweep are backups for each other", () => {
+    // Measured, not assumed: removing either one alone leaves every filler
+    // rejected; removing BOTH turns 11 tests red. So both mechanisms are real,
+    // and the pair is what actually holds. Recorded here because the honest
+    // reading of a green mutation is "these tests cannot tell the two apart",
+    // never "this code does nothing".
+    const list = /[\u2800\u115F\u1160\u3164\uFFA0]/u;
+    const ignorable = /\p{Default_Ignorable_Code_Point}/u;
+    for (const c of ["\u115F", "\u1160", "\u3164", "\uFFA0"]) {
+      expect(list.test(c) && ignorable.test(c), c).toBe(true);
+    }
+    // U+2800 is the exception the pair does NOT double-cover: the sweep misses
+    // it, so the list and the letter/number narrowing are its only guards.
+    expect(list.test("\u2800")).toBe(true);
+    expect(ignorable.test("\u2800")).toBe(false);
+  });
+
+  it("every Hangul filler is default-ignorable AND a Letter", () => {
+    // Default-ignorable is why the sweep catches them; Letter is exactly why a
+    // category-only rule let them through in the first place.
     for (const c of ["\u115F", "\u1160", "\u3164", "\uFFA0"]) {
       expect(DEFAULT_IGNORABLE.test(c), c).toBe(true);
-      // ...and each is ALSO a Letter, which is exactly why a category-only rule
-      // let them through in the first place.
       expect(LETTER_OR_NUMBER.test(c), c).toBe(true);
     }
   });
 
-  it("NFKC folds the halfwidth/compatibility fillers onto U+1160", () => {
-    expect("\u3164".normalize("NFKC")).toBe("\u1160");
-    expect("\uFFA0".normalize("NFKC")).toBe("\u1160");
+  it("no classification path applies a compatibility normalization", () => {
+    // The regression that produced round 3. Pinned on the SOURCE because the
+    // absence of a transform cannot be observed from outputs alone.
+    const SRC = readFileSync(
+      path.resolve(__dirname, "../../../lib/billing/checkout-final-amount.ts"),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(SRC).not.toMatch(/\.normalize\(/);
   });
 
   it("the engine supports every Unicode property the classifier relies on", () => {
@@ -711,7 +825,13 @@ describe("hasMeaningfulAdjustmentReason, exercised directly", () => {
   });
 
   it("rejects symbols and punctuation standing alone, by design", () => {
-    for (const s of ["\u{1F642}", "-", "---", "...", "+", "$", "%"]) {
+    for (const s of [
+      "\u{1F642}", "-", "---", "...", "+", "$", "%",
+      // Compatibility symbols: rejected on the RAW input, though NFKC would
+      // have turned each into qualifying text.
+      "\u2122", "\u2120", "\u2121", "\u2116", "\u2103", "\u2109",
+      "\u3392", "\u33D2", "\u2105", "\u33C2",
+    ]) {
       expect(hasMeaningfulAdjustmentReason(s), JSON.stringify(s)).toBe(false);
     }
   });

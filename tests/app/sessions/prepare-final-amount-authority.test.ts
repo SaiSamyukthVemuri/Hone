@@ -735,6 +735,36 @@ describe("adjustment audit context and the internal note share one column", () =
     expect(String(inserted[0].internal_note)).toContain(family);
   });
 
+  // F-PAY-002 / Codex P2 round 3. A compatibility SYMBOL whose NFKC form is text
+  // must not buy an adjusted charge. Proved through the REAL action, zero rows.
+  const NFKC_SYMBOL_REASONS: Array<[string, string]> = [
+    ["U+2122 trade mark sign", "\u2122"],
+    ["U+2116 numero sign", "\u2116"],
+    ["U+2103 degree celsius", "\u2103"],
+    ["U+33D2 square log", "\u33D2"],
+  ];
+
+  for (const [label, reason] of NFKC_SYMBOL_REASONS) {
+    it(`refuses a direct post whose reason is only ${label}`, async () => {
+      const res = await prepareSessionPaymentChargeAction(
+        form({ final: "100.00", reason }),
+      );
+      expect(res.ok).toBe(false);
+      expect(inserted).toHaveLength(0);
+    });
+  }
+
+  it("accepts a real reason that merely CONTAINS a compatibility symbol", async () => {
+    const res = await prepareSessionPaymentChargeAction(
+      form({ final: "100.00", reason: "Client discount \u2122" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].amount_cents).toBe(10_000);
+    // Stored verbatim: the symbol is the practitioner's text, not ours to fold.
+    expect(String(inserted[0].internal_note)).toContain("Client discount \u2122");
+  });
+
   it("bounds the adjustment reason itself", async () => {
     const res = await prepareSessionPaymentChargeAction(
       form({ final: "100.00", reason: "y".repeat(5000) }),

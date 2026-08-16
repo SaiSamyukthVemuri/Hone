@@ -78,18 +78,18 @@ export const ADJUSTMENT_REASON_REQUIRED_ERROR =
 //   U+3164 HANGUL FILLER                  Lo  — NFKC folds to U+1160
 //   U+FFA0 HALFWIDTH HANGUL FILLER        Lo  — NFKC folds to U+1160
 //
-// HONEST ABOUT ITS OWN REDUNDANCY. Against today's Unicode data this list
-// changes no outcome, and the mutation harness says so: delete it and every
-// test still passes. Both halves are already covered elsewhere —
+// Defence in depth, and PROVEN to be that rather than inferred from a green
+// mutation. Measured three ways:
 //
-//   U+2800 is a Symbol, so the letter-or-number narrowing below rejects it;
-//   the four Hangul fillers are Default_Ignorable, so the sweep removes them.
+//   drop this list, keep Default_Ignorable in the sweep  -> still rejected
+//   drop Default_Ignorable, keep this list               -> still rejected
+//   drop BOTH                                            -> 11 tests RED
 //
-// It is kept as defence in depth against a narrowing of that sweep, and the
-// Unicode facts it leans on are pinned in
-// tests/lib/billing/checkout-final-amount.test.ts ("the assumptions that make
-// the filler list redundant today") so that an ICU change which makes this list
-// load-bearing fails loudly instead of silently.
+// So the list and the ignorable sweep are backups for each other and are
+// jointly load-bearing; neither is dead code. An earlier revision of this file
+// concluded the opposite from a single green mutation, and was wrong. A green
+// mutation says the current tests do not distinguish two implementations — it
+// does not say the code is doing nothing.
 const BLANK_FILLERS = /[⠀ᅟᅠㅤﾠ]/gu;
 
 // Everything that carries no semantic content on its own. `\p{M}` removes
@@ -122,17 +122,33 @@ const NON_CONTENT = /[\p{White_Space}\p{Default_Ignorable_Code_Point}\p{Cc}\p{Cf
  * my machine" heuristics. Classification is pure string work so it is
  * deterministic on every runtime.
  *
- * CLASSIFICATION ONLY. The caller stores the practitioner's ORIGINAL text; NFKC
- * and the strips below exist to decide sufficiency and never reach the audit
- * note. That separation is what lets "Courtesy 👨‍👩‍👧" pass on the strength of
- * "Courtesy" while the family emoji survives intact in the record.
+ * NO COMPATIBILITY NORMALIZATION. THIS IS DELIBERATE AND LOAD-BEARING.
+ *
+ * An earlier revision ran NFKC before this test, on the theory that folding
+ * look-alikes into one canonical shape could only help. It did the opposite:
+ * NFKC's purpose is to rewrite compatibility forms, and ten of those forms are
+ * SYMBOLS whose folded form is text —
+ *
+ *     ™ -> "TM"    ℠ -> "SM"    ℡ -> "TEL"   № -> "No"    ℃ -> "°C"
+ *     ℉ -> "°F"    ㎒ -> "MHz"   ㏒ -> "log"   ℅ -> "c/o"   ㏂ -> "a.m."
+ *
+ * so the normalization MANUFACTURED the very letters this function looks for,
+ * and a bare trademark sign satisfied a rule that exists to reject symbols.
+ *
+ * The distinction is the whole point. "Does this text carry meaning?" is a
+ * question about what the practitioner WROTE. Normalizing first silently
+ * substitutes a different question — "could this be rewritten into something
+ * meaningful?" — and the answer to that is yes for a large family of glyphs
+ * nobody would accept as an audit reason. So classification reads RAW code
+ * points, and no NFKC/NFKD/NFC/NFD belongs on this path.
+ *
+ * CLASSIFICATION ONLY. The caller stores the practitioner's ORIGINAL text; the
+ * strips below exist to decide sufficiency and never reach the audit note. That
+ * separation is what lets "Courtesy 👨‍👩‍👧" pass on the strength of "Courtesy"
+ * while the family emoji survives intact in the record.
  */
 export function hasMeaningfulAdjustmentReason(reason: string): boolean {
   const classified = reason
-    // NFKC first: it folds compatibility forms (fullwidth Ｃｌｉｅｎｔ becomes
-    // Client, and U+3164/U+FFA0 become U+1160) so a single classification pass
-    // sees one canonical shape instead of a family of look-alikes.
-    .normalize("NFKC")
     .replace(BLANK_FILLERS, "")
     .replace(NON_CONTENT, "");
   return /[\p{L}\p{N}]/u.test(classified);
