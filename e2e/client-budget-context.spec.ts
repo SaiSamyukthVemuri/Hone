@@ -220,33 +220,54 @@ test("treatment plan: budget is no longer editable there, and legacy notes survi
   await loginAsOwner(page, seed);
 
   await test.step("J. the legacy note renders, clearly labelled as legacy", async () => {
-    await page.goto(`/clients/${clientId}?tab=plans`);
+    // The treatment-plans tab value is `treatment`, not `plans`.
+    await page.goto(`/clients/${clientId}?tab=treatment`);
     await expect(page.getByText(/legacy plan budget note/i)).toBeVisible({
       timeout: 20_000,
     });
     await expect(page.getByText(legacy)).toBeVisible();
+    await expect(
+      page.getByText(/current budget lives under consultation/i),
+    ).toBeVisible();
   });
 
   await test.step("I. the plan editor offers no Budget notes control", async () => {
-    await page.getByRole("button", { name: /^edit( plan)?$/i }).first().click();
+    await page.getByRole("button", { name: "Edit plan" }).first().click();
     // Practitioner notes are still editable — the plan keeps what is its own.
-    await expect(page.getByText(/practitioner notes/i).first()).toBeVisible();
-    // Budget editing is gone from this surface.
+    const practitionerBox = page.getByPlaceholder(/dense terminal hair/i);
+    await expect(practitionerBox).toBeVisible();
+    // Budget editing is gone from this surface: no label, and no textarea
+    // carrying the old placeholder.
     await expect(page.getByText(/client budget notes/i)).toHaveCount(0);
+    await expect(page.getByPlaceholder(/unlimited budget/i)).toHaveCount(0);
   });
 
   await test.step("K. an unrelated plan edit does NOT erase the legacy value", async () => {
     // The data-loss tripwire: budget_notes is absent from the plan writer, so
-    // saving other fields must leave the legacy column exactly as it was.
-    const area = page.getByPlaceholder(/chin|area/i).first();
-    if (await area.count()) await area.fill("Chin");
-    await page.getByRole("button", { name: /^save/i }).first().click();
-    await page.waitForTimeout(1500);
+    // saving an UNRELATED field must leave the legacy column exactly as it
+    // was. If the writer still listed the key, the missing form field would
+    // resolve to null here and wipe the note.
+    await page
+      .getByPlaceholder(/dense terminal hair/i)
+      .fill(`Edited reasoning ${seed.runId}`);
+    await page.getByRole("button", { name: "Save plan" }).click();
+    // The editor closes on success, which is the signal the write landed.
+    await expect(
+      page.getByRole("button", { name: "Edit plan" }).first(),
+    ).toBeVisible({ timeout: 20_000 });
 
-    const [row] = await sql<{ budget_notes: string | null }>(
-      `select budget_notes from public.treatment_plans where id = $1`,
+    const [row] = await sql<{
+      budget_notes: string | null;
+      practitioner_notes: string | null;
+    }>(
+      `select budget_notes, practitioner_notes
+         from public.treatment_plans where id = $1`,
       [planId],
     );
+    // The unrelated field DID change — proving the save actually happened and
+    // this assertion is not vacuous.
+    expect(row.practitioner_notes).toBe(`Edited reasoning ${seed.runId}`);
+    // And the legacy budget note survived it untouched.
     expect(row.budget_notes).toBe(legacy);
   });
 
