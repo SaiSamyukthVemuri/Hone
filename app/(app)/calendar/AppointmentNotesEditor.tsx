@@ -27,6 +27,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setAppointmentNotesAction } from "./appointment-repair-actions";
 import { MAX_APPOINTMENT_NOTES_LENGTH } from "./appointment-repair-contract";
+import {
+  initialNotesCommit,
+  reconcileWithProp,
+  commitSavedNotes,
+} from "./notes-commit";
 
 export type AppointmentNotesEditorProps = {
   appointmentId: string;
@@ -50,6 +55,20 @@ export function AppointmentNotesEditor({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  // WHAT IS DISPLAYED is the last value we KNOW was saved, not whatever the
+  // prop currently says. In the drawer that prop is a client-held copy that
+  // only advances when a fallible reload succeeds, so reading it directly meant
+  // a failed reload re-rendered the pre-save text over a note the database had
+  // already accepted. See ./notes-commit.
+  const [commit, setCommit] = useState(() => initialNotesCommit(notes));
+  // Adjusting state while rendering, React's documented pattern for "derive
+  // from a prop that CHANGED". Using `next` for this render rather than waiting
+  // for the re-render keeps the two consistent within the same paint; the
+  // rule returns the same object when nothing changed, so this cannot loop.
+  const next = reconcileWithProp(commit, notes);
+  if (next !== commit) setCommit(next);
+  const committedNotes = next.committed;
+
   const tooLong = draft.trim().length > MAX_APPOINTMENT_NOTES_LENGTH;
 
   function submit(e: React.FormEvent) {
@@ -61,9 +80,15 @@ export function AppointmentNotesEditor({
         notes: draft,
       });
       if (!res.ok) {
+        // A failed WRITE commits nothing: the old note is still the truth.
         setError(res.error);
         return;
       }
+      // The write succeeded, so remember it HERE, before leaning on either
+      // refresh. router.refresh() cannot reach the drawer's client-held copy,
+      // and onSaved's reload may fail; neither is allowed to decide whether a
+      // successful save is visible.
+      setCommit(commitSavedNotes(next, draft));
       setOpen(false);
       router.refresh();
       onSaved?.();
@@ -80,21 +105,25 @@ export function AppointmentNotesEditor({
           <button
             type="button"
             onClick={() => {
-              setDraft(notes ?? "");
+              // Seeded from what we know was saved, never from a prop that may
+              // still describe the pre-save state — otherwise reopening Edit
+              // after a failed reload re-submits the obsolete text and undoes a
+              // save that succeeded.
+              setDraft(committedNotes ?? "");
               setError(null);
               setOpen(true);
             }}
             className="text-xs font-medium text-neutral-600 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
           >
-            {notes ? "Edit" : "Add notes"}
+            {committedNotes ? "Edit" : "Add notes"}
           </button>
         )}
       </div>
 
       {!open ? (
-        notes ? (
+        committedNotes ? (
           <p className="mt-2 whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
-            {notes}
+            {committedNotes}
           </p>
         ) : (
           <p className="mt-2 text-xs text-neutral-500">No notes for this appointment.</p>
