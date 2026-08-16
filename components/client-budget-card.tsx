@@ -39,6 +39,34 @@ export type BudgetCardActionState =
 
 const INITIAL_STATE: BudgetCardActionState = { status: "idle" };
 
+// Shown when the budget read FAILED (permission, RLS, network, timeout —
+// anything that is not the proven migration-skew condition). It renders no
+// textarea, no chips and no Save button, because the whole hazard is a blank
+// editable form that a practitioner saves over their real data. Consultation
+// notes and Skin & hair analysis are separate cards and stay usable.
+export function ClientBudgetCardUnavailable() {
+  return (
+    <section
+      aria-labelledby="client-budget-heading"
+      className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+    >
+      <h2
+        id="client-budget-heading"
+        className="text-sm font-medium uppercase tracking-wider text-neutral-500"
+      >
+        Budget
+      </h2>
+      <p role="alert" className="text-sm text-neutral-700 dark:text-neutral-300">
+        Budget information could not be loaded. Try again.
+      </p>
+      <p className="text-xs text-neutral-500">
+        Nothing has been changed. Reload the page to try again — any budget
+        already saved for this client is still there.
+      </p>
+    </section>
+  );
+}
+
 export function ClientBudgetCard({
   clientId,
   initial,

@@ -102,9 +102,16 @@ create table if not exists public.client_budget_context (
   -- 0179-upgraded actor column does (attribution is durable, so removing the
   -- practitioner is refused rather than silently erasing who wrote it), and a
   -- composite SET NULL would try to null studio_id too, which is NOT NULL.
-  -- NULL attribution is still permitted: MATCH SIMPLE satisfies the composite
-  -- whenever updated_by_practitioner_id is NULL.
-  updated_by_practitioner_id uuid,
+  --
+  -- NOT NULL, deliberately. There is no legitimate unattributed writer of this
+  -- table: it is created empty and never backfilled, service_role holds no
+  -- privileges, clearing a budget is an UPDATE rather than a DELETE, and every
+  -- application write runs through one practitioner-authenticated server
+  -- action. Leaving it nullable would have left a hole the RLS policies below
+  -- close anyway — under MATCH SIMPLE a NULL actor satisfies the composite FK
+  -- unconditionally, so "erase who recorded this" would have been a legal
+  -- write. NOT NULL removes the case instead of policing it.
+  updated_by_practitioner_id uuid not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint client_budget_context_client_studio_fkey
@@ -202,23 +209,71 @@ drop policy if exists "client_budget_context_member_select"
   on public.client_budget_context;
 create policy "client_budget_context_member_select"
   on public.client_budget_context for select to authenticated
-  using (public.is_studio_member(studio_id));
+  -- Qualified for consistency with the write policies below. There is no
+  -- joined subquery here so the bare name is unambiguous today, but 0126's
+  -- tautology started as an unqualified reference that was safe until a
+  -- subquery was added around it.
+  using (public.is_studio_member(client_budget_context.studio_id));
 
+-- ACTOR-DERIVED WRITE AUTHORITY.
+--
+-- Studio membership alone is NOT sufficient to write. A member issuing
+-- PostgREST requests directly could otherwise set updated_by_practitioner_id
+-- to any colleague in their studio, making "last updated by" caller-authored
+-- rather than durable evidence. The database therefore VERIFIES the actor
+-- instead of trusting the application to have derived it: the row's updater
+-- must be the ACTIVE practitioner belonging to the signed-in caller, in the
+-- row's own studio.
+--
+-- Every column reference is FULLY QUALIFIED with client_budget_context. This
+-- is not stylistic. 0126 wrote the equivalent clause as `p.studio_id =
+-- studio_id`, and because `practitioners` also has a studio_id column
+-- PostgreSQL resolved the bare name to the INNER one — degrading the check to
+-- the tautology `p.studio_id = p.studio_id`, which 0127 had to fix in
+-- production. This file uses 0127's corrected form from the start.
+--
+-- The BEFORE trigger above has already overwritten studio_id from the parent
+-- client by the time WITH CHECK is evaluated (BEFORE ROW triggers run first),
+-- so these predicates see the SERVER-DERIVED studio, never a caller-supplied
+-- one. For a practitioner holding memberships in two studios, that means the
+-- actor must be their practitioner row IN THE CLIENT'S studio specifically.
 drop policy if exists "client_budget_context_member_insert"
   on public.client_budget_context;
 create policy "client_budget_context_member_insert"
   on public.client_budget_context for insert to authenticated
-  with check (public.is_studio_member(studio_id));
+  with check (
+    public.is_studio_member(client_budget_context.studio_id)
+    and exists (
+      select 1 from public.practitioners p
+      where p.id = client_budget_context.updated_by_practitioner_id
+        and p.studio_id = client_budget_context.studio_id
+        and p.user_id = (select auth.uid())
+        and p.active
+    )
+  );
 
 -- USING gates which existing row may be targeted; WITH CHECK gates the result.
 -- Both are required: USING alone would let a member move a row into another
 -- studio, and WITH CHECK alone would let them target a foreign row.
+--
+-- A member may edit any budget row in their own studio (USING), but whatever
+-- results must be attributed to THEM (WITH CHECK) — you cannot edit a
+-- colleague's record and leave their name on it.
 drop policy if exists "client_budget_context_member_update"
   on public.client_budget_context;
 create policy "client_budget_context_member_update"
   on public.client_budget_context for update to authenticated
-  using (public.is_studio_member(studio_id))
-  with check (public.is_studio_member(studio_id));
+  using (public.is_studio_member(client_budget_context.studio_id))
+  with check (
+    public.is_studio_member(client_budget_context.studio_id)
+    and exists (
+      select 1 from public.practitioners p
+      where p.id = client_budget_context.updated_by_practitioner_id
+        and p.studio_id = client_budget_context.studio_id
+        and p.user_id = (select auth.uid())
+        and p.active
+    )
+  );
 
 -- ---------------------------------------------------------------------------
 -- GRANTS
@@ -243,6 +298,9 @@ revoke all on public.client_budget_context from service_role;
 
 comment on table public.client_budget_context is
   'CURRENT practitioner-recorded budget context for a client (one row per client, mutable in place). Practitioner-held planning documentation only: not a clinical note, not an affordability score, not income or payment data, and never surfaced to clients. Supersedes the plan-scoped treatment_plans.budget_notes (0034), which is retained read-only and was deliberately NOT backfilled.';
+
+comment on column public.client_budget_context.updated_by_practitioner_id is
+  'The practitioner who last wrote this row. VERIFIED at the database boundary, not merely supplied: the insert/update policies require this to be the ACTIVE practitioner whose user_id = auth.uid() in the row''s own (trigger-derived) studio, so a member can neither attribute an edit to a colleague nor erase attribution. NOT NULL — there is no legitimate unattributed writer.';
 
 comment on column public.client_budget_context.budget_level is
   'Broad practitioner-selected level: no_stated_limit | somewhat_limited | severely_limited. NULL means no broad level was recorded, which is a legitimate state and not a fourth level. Mirrors lib/budget/levels.ts.';

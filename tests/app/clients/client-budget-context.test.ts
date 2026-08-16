@@ -458,9 +458,12 @@ describe("treatment plan: no longer a budget authority", () => {
     // exact class of bug this whole change exists to remove. Grep the tree
     // rather than a hand-listed set of files, so a NEW file cannot introduce a
     // second authority without failing here.
+    // Matches BOTH the string literal and the shared constant, so moving a
+    // call site onto CLIENT_BUDGET_CONTEXT_RELATION cannot hide it from this
+    // census.
     const touchers = require("node:child_process")
       .execSync(
-        `grep -rl 'from("client_budget_context")' app lib components 2>/dev/null || true`,
+        `grep -rlE 'from\\("client_budget_context"\\)|from\\(CLIENT_BUDGET_CONTEXT_RELATION\\)' app lib components 2>/dev/null || true`,
         { cwd: ROOT, encoding: "utf8" },
       )
       .trim()
@@ -479,7 +482,9 @@ describe("treatment plan: no longer a budget authority", () => {
     // Of those, only the action mutates.
     const mutators = touchers.filter((f: string) => {
       const src = readFileSync(join(ROOT, f), "utf8");
-      const idx = src.indexOf('from("client_budget_context")');
+      const idx = src.search(
+        /from\("client_budget_context"\)|from\(CLIENT_BUDGET_CONTEXT_RELATION\)/,
+      );
       return /\.(upsert|insert|update|delete)\(/.test(src.slice(idx, idx + 400));
     });
     expect(mutators).toEqual([

@@ -133,7 +133,10 @@ import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 import { ClinicalNotesSummary } from "@/components/clinical-notes-summary";
 import { updateClientBudgetContextAction } from "./budget-context-actions";
 import { getClientBudgetContext } from "@/lib/budget/queries";
-import { ClientBudgetCard } from "@/components/client-budget-card";
+import {
+  ClientBudgetCard,
+  ClientBudgetCardUnavailable,
+} from "@/components/client-budget-card";
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
@@ -1022,17 +1025,40 @@ export default async function ClientCheatSheetPage({
       {/* Chloe pilot feedback: budget belongs with consultation, not with a
           treatment plan. Renders as a peer of the two clinical sections but
           is deliberately separate from them — mutable current context, not an
-          append-only clinical record, and not a client_clinical_notes kind. */}
-      {activeTab === "consultation" && budgetContext && (
-        <ClientBudgetCard
-          clientId={client.id}
-          initial={{
-            budgetLevel: budgetContext.budgetLevel,
-            budgetNotes: budgetContext.budgetNotes,
-          }}
-          action={updateClientBudgetContextAction}
-        />
-      )}
+          append-only clinical record, and not a client_clinical_notes kind.
+
+          Four read states, three renderings:
+            available / empty  -> the editable card (empty is a real "no
+                                  budget recorded yet", which IS editable)
+            unavailable        -> a truthful non-destructive notice with NO
+                                  form, so a failed read can never be saved
+                                  over real stored data
+            not_installed      -> nothing at all; 0183 is not applied yet and
+                                  the rest of the tab must still work */}
+      {activeTab === "consultation" &&
+        budgetContext &&
+        (budgetContext.status === "available" ||
+          budgetContext.status === "empty") && (
+          <ClientBudgetCard
+            clientId={client.id}
+            initial={{
+              budgetLevel:
+                budgetContext.status === "available"
+                  ? budgetContext.budgetLevel
+                  : null,
+              budgetNotes:
+                budgetContext.status === "available"
+                  ? budgetContext.budgetNotes
+                  : "",
+            }}
+            action={updateClientBudgetContextAction}
+          />
+        )}
+
+      {activeTab === "consultation" &&
+        budgetContext?.status === "unavailable" && (
+          <ClientBudgetCardUnavailable />
+        )}
 
       {activeTab === "personal" && (
         <ClientPersonalNotesEditor

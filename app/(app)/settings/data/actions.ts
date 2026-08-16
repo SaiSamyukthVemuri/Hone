@@ -11,6 +11,13 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+// One decision point for the budget read, backed by the SAME narrow
+// migration-skew classifier the Consultation page uses, so the two surfaces
+// cannot drift into tolerating different sets of errors.
+import {
+  decideBudgetExportRead,
+  type BudgetExportReadResult,
+} from "@/lib/budget/export-read";
 import { mergeReactionIntoChips } from "@/lib/observation-chips";
 import {
   blockAreasLabel,
@@ -341,18 +348,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     exposureIncidentsRes,
     auditEventsRes,
     clinicalNotesRes,
-    // budgetContextRes is INTENTIONALLY NOT in this list. Every table above
-    // predates this change, so a read failure there is a real fault and the
-    // export must refuse rather than hand over a plausible-looking ZIP.
-    // client_budget_context is introduced by 0183, and migration-first
-    // rollout has a window where the new application runs against a database
-    // that has not yet had 0183 applied. Failing the WHOLE export in that
-    // window would take out portability for sixteen tables that are perfectly
-    // readable. Instead the file is OMITTED (never written empty, which would
-    // falsely assert the studio holds no budget context) and the omission is
-    // recorded in the manifest below. Once 0183 is applied the read succeeds
-    // and the file is exported with the same to-exhaustion guarantee as the
-    // rest.
+    // budgetContextRes is handled SEPARATELY, immediately below — not
+    // excluded from failing the export.
   ]) {
     if (r.error) {
       return {
@@ -361,6 +358,30 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       };
     }
   }
+
+  // client_budget_context (0183) gets exactly ONE tolerated failure: the
+  // proven "this relation does not exist" condition, which is the
+  // migration-first window where the new application runs against a database
+  // that has not yet had 0183 applied. Failing the whole export then would
+  // take out portability for sixteen perfectly readable tables.
+  //
+  // EVERY other failure rejoins the all-or-nothing guard above. An earlier
+  // version tolerated all of them, which meant a permission denial, an RLS
+  // refusal, a network fault, a failed later pagination page, or
+  // fetchAllRows' own "refusing to return a partial table" refusal each
+  // produced an ok:true ZIP that was silently missing known data. A
+  // portability export that quietly omits records is worse than one that
+  // fails: the owner cannot tell it happened.
+  const budgetDecision = decideBudgetExportRead(
+    budgetContextRes as BudgetExportReadResult,
+  );
+  if (budgetDecision.kind === "fail") {
+    return {
+      ok: false,
+      error: `Failed to load data for export: ${budgetDecision.message}`,
+    };
+  }
+  const budgetContextExported = budgetDecision.kind === "export";
 
   // Entries are fetched in parallel with sessions, so they may contain rows
   // belonging to soft-deleted sessions. Filter them out using the set of
@@ -948,14 +969,15 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // Current client budget context (0183). Practitioner-held client data, so it
   // travels with the export rather than being silently dropped from
   // portability. Serialized through the same rowsToCsv chokepoint (budget
-  // notes are free text and routinely contain commas and line breaks). See the
-  // error-guard comment above for why a failed read omits the file instead of
-  // failing the export.
-  const budgetContextExported = !budgetContextRes.error;
-  if (budgetContextExported) {
-    const budgetContextRows = (
-      (budgetContextRes.data ?? []) as Array<Record<string, unknown>>
-    ).map((row) => ({
+  // notes are free text and routinely contain commas and line breaks).
+  //
+  // Reaching here with budgetContextExported === false means the ONE tolerated
+  // condition above: 0183 is not applied. A successful read of an EMPTY table
+  // is a different thing entirely and still writes a valid header-only CSV
+  // with a manifest count of 0 — "zero rows" must never be conflated with
+  // "could not read rows".
+  if (budgetDecision.kind === "export") {
+    const budgetContextRows = budgetDecision.rows.map((row) => ({
       ...row,
       client_name:
         typeof row.client_id === "string"
@@ -1135,10 +1157,13 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
           omitted_files: {
             files: ["client_budget_context.csv"],
             reason:
-              "The client_budget_context source could not be read (expected only in the " +
-              "migration-first window before 0183 is applied). The file was OMITTED rather " +
-              "than written empty, because an empty file would falsely assert that this " +
-              "studio holds no budget context. No other file is affected.",
+              "The client_budget_context table does not exist in this database, which " +
+              "means migration 0183 has not been applied yet. This is the ONLY read " +
+              "failure the export tolerates: any other failure on this source (permission, " +
+              "network, a failed pagination page, a partial-read refusal) fails the whole " +
+              "export instead of producing this ZIP. The file was OMITTED rather than " +
+              "written empty, because an empty file would falsely assert that this studio " +
+              "holds no budget context. No other file is affected.",
           },
         }),
     completeness_contract: [
@@ -1237,7 +1262,10 @@ hello@hone.care
         client_clinical_notes: (clinicalNotesRes.data ?? []).length,
         ...(budgetContextExported
           ? {
-              client_budget_context: (budgetContextRes.data ?? []).length,
+              client_budget_context:
+                budgetDecision.kind === "export"
+                  ? budgetDecision.rows.length
+                  : 0,
             }
           : {}),
       },

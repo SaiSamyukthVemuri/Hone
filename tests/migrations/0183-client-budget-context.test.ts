@@ -111,6 +111,10 @@ describe("0183: one row per client, structurally", () => {
     expect(CODE).not.toMatch(/references public\.practitioners\(id\)/);
   });
 
+  it("the actor column is NOT NULL — there is no unattributed writer", () => {
+    expect(CODE).toMatch(/updated_by_practitioner_id uuid not null,/);
+  });
+
   it("uses RESTRICT, never SET NULL, on the actor FK", () => {
     // SET NULL on a composite would try to null studio_id, which is NOT NULL;
     // and attribution is durable evidence, so removing the practitioner is
@@ -205,22 +209,55 @@ describe("0183: RLS and grants", () => {
     );
   });
 
-  it("gates select, insert and update on studio membership, for authenticated", () => {
+  it("gates select, insert and update on authenticated studio membership", () => {
     for (const op of ["select", "insert", "update"]) {
-      expect(CODE).toMatch(
-        new RegExp(`for ${op} to authenticated`),
-      );
+      expect(CODE).toMatch(new RegExp(`for ${op} to authenticated`));
     }
-    expect(CODE).toMatch(/using \(public\.is_studio_member\(studio_id\)\)/);
-    expect(CODE).toMatch(/with check \(public\.is_studio_member\(studio_id\)\)/);
+    expect(CODE).toMatch(
+      /public\.is_studio_member\(client_budget_context\.studio_id\)/,
+    );
+  });
+
+  it("BOTH write policies VERIFY the actor against auth.uid()", () => {
+    // Studio membership alone would let a member attribute an edit to a
+    // colleague, or (when nullable) erase attribution entirely. The database
+    // derives the actor instead of trusting the caller.
+    for (const policy of [
+      "client_budget_context_member_insert",
+      "client_budget_context_member_update",
+    ]) {
+      const pol = CODE.slice(CODE.indexOf(`create policy "${policy}"`)).slice(
+        0,
+        800,
+      );
+      expect(pol).toContain("from public.practitioners p");
+      expect(pol).toContain(
+        "p.id = client_budget_context.updated_by_practitioner_id",
+      );
+      expect(pol).toContain("p.user_id = (select auth.uid())");
+      expect(pol).toContain("and p.active");
+    }
+  });
+
+  it("FULLY QUALIFIES the studio comparison — the 0126 tautology bug", () => {
+    // 0126 wrote `p.studio_id = studio_id`; because practitioners also has a
+    // studio_id column PostgreSQL bound the bare name to the INNER one, making
+    // the clause `p.studio_id = p.studio_id` — always true. 0127 had to fix
+    // that in production. This file must use the corrected form from the
+    // start, everywhere.
+    expect(CODE).toContain("p.studio_id = client_budget_context.studio_id");
+    expect(CODE).not.toMatch(/p\.studio_id = studio_id/);
+    expect(CODE).not.toMatch(/p\.id = updated_by_practitioner_id\b/);
+    // And no bare is_studio_member(studio_id) that could bind ambiguously.
+    expect(CODE).not.toMatch(/is_studio_member\(studio_id\)/);
   });
 
   it("the UPDATE policy carries BOTH using and with check", () => {
     const pol = CODE.slice(
       CODE.indexOf('create policy "client_budget_context_member_update"'),
-    ).slice(0, 400);
-    expect(pol).toContain("using (public.is_studio_member(studio_id))");
-    expect(pol).toContain("with check (public.is_studio_member(studio_id))");
+    ).slice(0, 800);
+    expect(pol).toMatch(/using \(/);
+    expect(pol).toMatch(/with check \(/);
   });
 
   it("has NO delete policy — clearing is an UPDATE, not a row removal", () => {

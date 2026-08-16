@@ -19,6 +19,12 @@
 // practitioner was told, without claiming the client literally has
 // unlimited resources.
 
+// The table name, defined once. Both the page read and the export classify
+// their errors against this exact relation, and neither may hard-code the
+// string separately. It lives in this pure module (not the server-only query
+// module) so client and non-server callers can share it.
+export const CLIENT_BUDGET_CONTEXT_RELATION = "client_budget_context";
+
 export const CLIENT_BUDGET_LEVELS = [
   "no_stated_limit",
   "somewhat_limited",
