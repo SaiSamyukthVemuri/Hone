@@ -77,6 +77,62 @@ function policyDefinition(name: string, sql: string = CODE): string {
   throw new Error(`policy ${name} has no statement-terminating semicolon`);
 }
 
+/**
+ * The canonical hosted_note names exactly ONE current record, and it is 0183's
+ * supersession of 0182. Every other migration named in the note is a
+ * historical chain link and must read as one.
+ *
+ * Counts rather than confirms presence: the surrounding evidence assertions
+ * all check a phrase or checksum in isolation, which is precisely why a
+ * duplicated transition clause survived them.
+ */
+function assertSingleCurrentRecord(note: string): void {
+  const occurrences = (hay: string, needle: string): number =>
+    hay.split(needle).length - 1;
+
+  // A. exactly one CURRENT marker anywhere in the note.
+  expect(
+    occurrences(note, "as the CURRENT hosted-state record"),
+    "the canonical note must name exactly ONE current hosted record",
+  ).toBe(1);
+
+  // B. and it is 0183 superseding 0182.
+  expect(note).toContain(
+    "SUPERSEDES the 0182 record as the CURRENT hosted-state record",
+  );
+
+  // C. no historical link is labelled current. Checked generically — by
+  // migration number, not by hard-coding "0181" — so a future rewrite cannot
+  // mislabel a DIFFERENT migration and slip past.
+  //
+  // The lookbehind excludes the ONE legitimate form: the supersession clause
+  // names the migration being REPLACED ("SUPERSEDES the 0182 record as the
+  // CURRENT hosted-state record"), which is correct English for the handoff.
+  // Any other "the NNNN record as the CURRENT" is a stale label.
+  const mislabelled = [
+    ...note.matchAll(/(?<!SUPERSEDES )the (\d{4}) record as the CURRENT/g),
+  ].map((m) => m[1]);
+  expect(
+    mislabelled,
+    `historical record(s) wrongly labelled CURRENT: ${mislabelled.join(", ")}`,
+  ).toEqual([]);
+
+  // D/E. the chain is still carried forward, oldest link included.
+  expect(note).toContain("0181_multi_studio_command_authority.sql");
+  expect(note).toContain(
+    "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f",
+  );
+  expect(note).toContain(
+    "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6",
+  );
+
+  // F. exactly one chain-forward transition.
+  expect(
+    occurrences(note, "CARRIES THE FULL CHECKSUM CHAIN FORWARD"),
+    "the note must declare the chain-forward transition exactly once",
+  ).toBe(1);
+}
+
 describe("0183: file and numbering", () => {
   it("carries the version exactly once", () => {
     // 0183 is NO LONGER the repository maximum — 0184 (its least-privilege
@@ -151,6 +207,56 @@ describe("0183: file and numbering", () => {
       "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6", // 0171
     ]) {
       expect(REC.hosted_note, priorSha).toContain(priorSha);
+    }
+  });
+
+  it("names exactly ONE current record — a historical link can never be CURRENT", () => {
+    // The 0183 state rewrite spliced a new chain entry in front of 0181 and
+    // left the old transition clause attached to it, so the canonical note
+    // said "the 0181 record as the CURRENT hosted-state record" a few hundred
+    // characters after correctly naming 0183. The structured field was right,
+    // so nothing derived was wrong — but the narrative contradicted itself,
+    // and this record is what a release decision reads.
+    //
+    // The earlier evidence assertions could not catch it: every one of them
+    // checks a phrase or a checksum in ISOLATION, and all six passed. This is
+    // a CONSISTENCY check — it counts, rather than confirming presence.
+    const REC = JSON.parse(
+      readFileSync(
+        path.join(ROOT, "docs/production/migration-state.json"),
+        "utf8",
+      ),
+    );
+    assertSingleCurrentRecord(REC.hosted_note);
+  });
+
+  it("ANTI-VACUITY: re-labelling a historical link as CURRENT is caught", () => {
+    // Mutates a COPY. The real record is never touched.
+    const REC = JSON.parse(
+      readFileSync(
+        path.join(ROOT, "docs/production/migration-state.json"),
+        "utf8",
+      ),
+    );
+    expect(() => assertSingleCurrentRecord(REC.hosted_note)).not.toThrow();
+
+    for (const injection of [
+      // The exact regression that occurred.
+      "the 0181 record as the CURRENT hosted-state record and CARRIES THE FULL CHECKSUM CHAIN FORWARD so no earlier apply record is dropped: ",
+      // A different historical link mislabelled.
+      "the 0180 record as the CURRENT hosted-state record ",
+      // A second chain-forward transition.
+      "and CARRIES THE FULL CHECKSUM CHAIN FORWARD again ",
+    ]) {
+      const mutated = REC.hosted_note.replace(
+        "the 0181 record (0181_multi_studio_command_authority.sql",
+        injection + "the 0181 record (0181_multi_studio_command_authority.sql",
+      );
+      expect(mutated).not.toEqual(REC.hosted_note);
+      expect(
+        () => assertSingleCurrentRecord(mutated),
+        `a mislabelled historical record went undetected: ${injection.slice(0, 60)}`,
+      ).toThrow();
     }
   });
 
