@@ -172,15 +172,44 @@ describe("0184: file and numbering", () => {
     // the operator linked and applied afterwards, and the stale conclusion was
     // carried forward without re-checking. That is the failure this pins.
     const note = canonicalRecord().hosted_note;
-    expect(note).toMatch(/hone-dev-01, the Hone repository host/);
-    expect(note).toMatch(/NOT a separate operator machine/i);
+
     // The specific false claim must not survive anywhere in the current record.
     expect(note).not.toMatch(/operator's own credentialed machine/);
     expect(note).not.toMatch(/the repository host, which holds no production credential/);
-    // The evidence, not just the conclusion.
+
+    // 0184: ESTABLISHED. pgdelta is written by `db push` and was modified
+    // INSIDE the apply window — a direct artifact of the push on this host.
+    expect(note).toMatch(/0184 — ESTABLISHED/);
     expect(note).toContain("pgdelta");
-    expect(note).toMatch(/2026-08-17T01:00:02Z/);
     expect(note).toMatch(/2026-08-17T12:03:00Z/);
+
+    // 0183: INFERENCE ONLY, and the record must say so. Linkage created three
+    // minutes before the window proves this host was CAPABLE, not that the
+    // push ran here — the operator could have linked here and pushed
+    // elsewhere. Stating it categorically would repeat, one level down, the
+    // exact overreach this correction exists to fix.
+    expect(note).toMatch(/0183 — INFERENCE, NOT ESTABLISHED/);
+    expect(note).toMatch(/2026-08-17T01:00:02Z/);
+    expect(note).toMatch(/does NOT prove the 0183 `db push` itself ran here/);
+    expect(note).toMatch(/and none is invented/);
+
+    // No blanket certainty claim spanning two differently-evidenced events.
+    expect(note).not.toMatch(/evidence is unambiguous/i);
+  });
+
+  it("does not send readers to a STALER source for current deployment status", () => {
+    // The first version of this correction delegated current status to
+    // current-state.md / release-changelog.md — both last reconciled
+    // 2026-07-27, still naming 96b28d6 (PR #478) and migration max 0165, and
+    // mentioning neither #593 nor the 266b6092 merge. That pointed readers at
+    // records STALER than the claim being removed.
+    const note = canonicalRecord().hosted_note;
+    expect(note).toMatch(/READ IT FROM THE LIVE SYSTEMS/i);
+    expect(note).toMatch(/AS OF THIS RECORD BOTH ARE STALE/i);
+    expect(note).toMatch(/2026-07-27/);
+    expect(note).toMatch(/96b28d6/);
+    expect(note).toMatch(/open follow-up/i);
+    expect(note).toMatch(/NOT claimed to have been done here/i);
   });
 
   it("describes the release credentials as TRANSIENT, not persisted", () => {
@@ -213,13 +242,29 @@ describe("0184: file and numbering", () => {
     // Mutates COPIES. The real record is never touched.
     const note = canonicalRecord().hosted_note;
 
+    // (a) reverting to the original false apply-host claim
     const revertHost = note.replace(
-      /hone-dev-01, the Hone repository host/,
-      "the operator's own credentialed machine",
+      /WHERE THE APPLIES RAN[\s\S]*?not from this record\./,
+      "WHERE BOTH APPLIES RAN: the operator's own credentialed machine — not the repository host, which holds no production credential.",
     );
     expect(revertHost).not.toEqual(note);
     expect(revertHost).toMatch(/operator's own credentialed machine/);
-    expect(revertHost).not.toMatch(/hone-dev-01, the Hone repository host/);
+    expect(revertHost).not.toMatch(/0183 — INFERENCE, NOT ESTABLISHED/);
+
+    // (b) re-asserting 0183 categorically — the overreach Codex caught. The
+    //     record must never claim for 0183 what is only established for 0184.
+    const overclaim = note.replace(
+      /0183 — INFERENCE, NOT ESTABLISHED/,
+      "0183 — ESTABLISHED, evidence is unambiguous",
+    );
+    expect(overclaim).not.toEqual(note);
+    expect(overclaim).toMatch(/evidence is unambiguous/i);
+    expect(overclaim).not.toMatch(/0183 — INFERENCE, NOT ESTABLISHED/);
+
+    // (c) dropping the staleness disclosure from the delegation pointer
+    const hideStale = note.replace(/AS OF THIS RECORD BOTH ARE STALE[\s\S]*?done here\./, "");
+    expect(hideStale).not.toEqual(note);
+    expect(hideStale).not.toMatch(/AS OF THIS RECORD BOTH ARE STALE/);
 
     const revertApp = note.replace(
       /#593 SUBSEQUENTLY MERGED/,
