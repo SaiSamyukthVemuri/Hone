@@ -35,6 +35,37 @@ const CODE = SQL.split("\n")
   .filter((line) => !/^\s*--/.test(line))
   .join("\n");
 
+/**
+ * The migration maximum a production document REPORTS as current — read from
+ * the statement that communicates it, never from an arbitrary occurrence of a
+ * four-digit number.
+ *
+ * `0157` also appears in release-changelog.md's historical #478 row, so a
+ * substring check cannot tell "this document reports 0157" from "this document
+ * mentions 0157 somewhere". Correcting the headline while leaving the history
+ * intact must change the answer.
+ *
+ * Handles the two shapes the production docs actually use:
+ *   table | **Production migration max** | **0165** — ...
+ *   prose > The production migration max is **0157** and ...
+ *
+ * Returns null when no such statement exists, rather than guessing.
+ */
+function parseReportedMigrationMax(src: string): string | null {
+  // Table row: the label cell, then the first bolded 4-digit value after it.
+  const row = /\|\s*\*\*Production migration max\*\*\s*\|([\s\S]{0,80}?)\*\*(\d{4})\*\*/i.exec(
+    src,
+  );
+  if (row) return row[2];
+
+  // Prose: "production migration max is ... **0157**", tolerating a line break
+  // and blockquote markers between the phrase and the value.
+  const prose = /production migration max is[\s>*]{0,20}\*\*(\d{4})\*\*/i.exec(src);
+  if (prose) return prose[1];
+
+  return null;
+}
+
 function canonicalRecord(): { hosted_note: string } {
   return JSON.parse(
     readFileSync(path.join(ROOT, "docs/production/migration-state.json"), "utf8"),
@@ -197,43 +228,123 @@ describe("0184: file and numbering", () => {
     expect(note).not.toMatch(/evidence is unambiguous/i);
   });
 
-  it("the staleness disclosure matches what those files ACTUALLY contain", () => {
-    // THE ASSERTION THAT WOULD HAVE CAUGHT THE DEFECT. Every other test here
-    // pins the record's own prose, which cannot detect the record being wrong
-    // ABOUT SOMETHING ELSE. This one reads the described files and compares.
+  // P2-A. The previous version of this block read current-state.md and
+  // release-changelog.md and asserted, over the WHOLE FILE, that they must not
+  // mention #593, 266b6092 or 0165. That coupled an immutable migration-apply
+  // test to two MUTABLE status documents, and the promised follow-up — bringing
+  // them current — MUST add #593 and 266b6092 and may legitimately cite 0165 as
+  // historical context. The test would then go red while the 0184 record stayed
+  // perfectly accurate, because its disclosure is explicitly time-qualified
+  // ("AS OF THIS RECORD"). A truthful documentation fix must never fail an old
+  // apply test.
+  //
+  // CORE LAW: test the fact at the same scope where the fact exists. The
+  // record's claim is a time-qualified SNAPSHOT, so the assertions below run
+  // against the RECORD ONLY. The parser below exists so the class of error that
+  // produced the wrong figure is still detectable — proven on fixtures rather
+  // than by re-reading files that are allowed to change.
+
+  it("P2-B: the reported max comes from the HEADLINE statement, not any occurrence", () => {
+    // The previous check was `rc.includes("0157")`. That does not verify what
+    // the document REPORTS as its current maximum: 0157 also sits in the
+    // historical #478 release row. Correct the headline to 0184 and leave that
+    // row alone, and the loose check still passes while the record keeps
+    // claiming the document "says 0157".
     //
-    // The defect: the disclosure claimed both documents report a production
-    // migration max of 0165. current-state.md does; release-changelog.md says
-    // 0157 and contains no 0165 at all. One verified fact (the shared
-    // reconciliation date and head) was generalised to cover a figure that was
-    // never checked per-document.
+    // parseReportedMigrationMax reads only the statement that COMMUNICATES the
+    // maximum, in either shape the two documents use:
+    //   current-state.md      | **Production migration max** | **0165** — ...
+    //   release-changelog.md  > The production migration max is **0157** and ...
+    //
+    // Proven on FIXTURES, not on the live mutable files (see P2-A above).
+
+    const HISTORICAL_ROW =
+      "| **#478** | **0157** | Deployed | whole-session copy | merge 96b28d6 |\n";
+
+    // Table shape, headline corrected to 0184, historical 0157 row retained.
+    const tableUpdated =
+      "# Doc\n\n| Field | Value |\n|---|---|\n| **Production migration max** | **0184** — repo == hosted |\n" +
+      HISTORICAL_ROW;
+    expect(parseReportedMigrationMax(tableUpdated)).toBe("0184");
+    expect(tableUpdated).toContain("0157"); // the loose check would still pass
+    expect(parseReportedMigrationMax(tableUpdated)).not.toBe("0157");
+
+    // Prose shape, headline corrected to 0184, historical 0157 row retained.
+    const proseUpdated =
+      "# Doc\n\n> The production migration max is\n> **0184** and the runtime head is `266b609`.\n\n" +
+      HISTORICAL_ROW;
+    expect(parseReportedMigrationMax(proseUpdated)).toBe("0184");
+    expect(proseUpdated).toContain("0157");
+    expect(parseReportedMigrationMax(proseUpdated)).not.toBe("0157");
+
+    // And when the headline is genuinely stale, it reports the stale value —
+    // failing for the intended reason rather than passing by coincidence.
+    const tableStale =
+      "# Doc\n\n| Field | Value |\n|---|---|\n| **Production migration max** | **0165** — stale |\n" +
+      HISTORICAL_ROW;
+    expect(parseReportedMigrationMax(tableStale)).toBe("0165");
+    const proseStale =
+      "# Doc\n\n> The production migration max is\n> **0157** and the runtime head is `96b28d6`.\n";
+    expect(parseReportedMigrationMax(proseStale)).toBe("0157");
+
+    // No headline statement at all is not silently a number.
+    expect(parseReportedMigrationMax("# Doc\n\nnothing here. 0157 0165 0184\n")).toBeNull();
+  });
+
+  // A test asserting the LIVE documents' headline maxima was written here and
+  // then REMOVED, because the P2-A anti-vacuity exercise showed it failed the
+  // very requirement it was meant to respect: with both status documents
+  // legitimately updated to name #593 / 266b6092 / 0184, every record assertion
+  // still passed and only that one went red. It was the last remaining coupling
+  // between an immutable apply record and two mutable documents.
+  //
+  // Per P2-B's second option — "stop making a machine claim about that
+  // document's current maximum". The snapshot figures were verified against
+  // both files AT WRITE TIME (current-state.md 0165, release-changelog.md
+  // 0157, both confirmed per document), the record states them as a
+  // time-qualified snapshot, and parseReportedMigrationMax above is proven on
+  // fixtures so the substring-vs-headline error class stays detectable. Making
+  // it a permanent live assertion would only guarantee that a truthful
+  // documentation fix turns this file red.
+
+  it("the disclosure is TIME-QUALIFIED and states each document separately", () => {
     const note = canonicalRecord().hosted_note;
-    const read = (f: string) =>
-      readFileSync(path.join(ROOT, "docs/production", f), "utf8");
-    const cs = read("current-state.md");
-    const rc = read("release-changelog.md");
-
-    // Facts the disclosure asserts about BOTH — verified against both.
-    for (const [name, src] of [
-      ["current-state.md", cs],
-      ["release-changelog.md", rc],
-    ] as const) {
-      expect(src, `${name} should still name the stale head`).toContain("96b28d6");
-      expect(src, `${name} should still carry the stale date`).toContain("2026-07-27");
-      expect(src, `${name} must not mention #593`).not.toContain("#593");
-      expect(src, `${name} must not mention the merge SHA`).not.toContain("266b6092");
-    }
-
-    // The figure that DIFFERS. Asserted per-document, in both directions.
-    expect(cs, "current-state.md reports 0165").toContain("0165");
-    expect(rc, "release-changelog.md does NOT report 0165").not.toContain("0165");
-    expect(rc, "release-changelog.md reports 0157").toContain("0157");
-
-    // And the record must say exactly that, per document — never a shared max.
+    // A snapshot claim, explicitly bounded to when it was written.
+    expect(note).toMatch(/AS OF THIS RECORD BOTH ARE STALE/);
+    // Per document, never one shared figure — the P2 that started this.
     expect(note).toMatch(/current-state\.md says 0165/);
     expect(note).toMatch(/release-changelog\.md says 0157/);
     expect(note).toMatch(/DIFFER FROM EACH OTHER/);
     expect(note).not.toMatch(/a production migration max of 0165/);
+    // And it says what production actually is, so the reader is not left to
+    // infer it from the stale figures.
+    expect(note).toMatch(/production is actually 0184/);
+    // It must NOT assert anything about those files' FUTURE contents.
+    expect(note).not.toMatch(/will never mention/i);
+    expect(note).not.toMatch(/must not mention/i);
+  });
+
+  it("the disclosure does not couple this record to mutable file contents", () => {
+    // Structural guard on the test file itself: no whole-file negative
+    // assertion against a mutable status document may return here. This is the
+    // guard that would have stopped the previous version from being written.
+    const self = readFileSync(
+      path.join(ROOT, "tests/migrations", "0184-client-budget-context-least-privilege.test.ts"),
+      "utf8",
+    );
+    const code = self
+      .split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+    // Assembled from parts so this guard's own patterns are not present in the
+    // file as literals — otherwise it matches itself and always fails.
+    const NEG = "not.to" + "Contain";
+    for (const target of ['"#593"', '"266b6092"', '"0165"']) {
+      const forbidden = `${NEG}(${target})`;
+      expect(code, `must not assert absence over a mutable doc: ${forbidden}`).not.toContain(
+        forbidden,
+      );
+    }
   });
 
   it("does not send readers to a STALER source for current deployment status", () => {
