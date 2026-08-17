@@ -14,7 +14,61 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-17, post-0183 apply)
+## Current state (verified 2026-08-17, post-0184 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0184** (`0184_client_budget_context_least_privilege.sql`, applied **2026-08-17**, operator-observed apply window `12:02:40Z` – `12:03:01Z`) |
+| **Repo migration max** | **0184** — **hosted == repo.** Nothing pending. Next free number is **0185** (available, **not claimed**). |
+| **Total migrations in repo** | **183** (`0001` … `0157`, `0159` … `0184` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **NOT COUNTED, AND NOT CLAIMED.** The post-apply `migration list` was read to confirm the ordered tail `0182 \| 0182`, `0183 \| 0183`, `0184 \| 0184`; the history table was **not** row-counted. |
+| **`0184` raw checksum (frozen)** | `aa110edadd459e0f11062e3904ea7ad54a54a75c31d9342b762a533ecc07694c` |
+| **`0183` raw checksum (frozen)** | `a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb` |
+| **Dry run** | proposed `0184_client_budget_context_least_privilege.sql` **and nothing else**; observed `12:00:42Z` – `12:00:46Z`; **DRY-RUN EXIT 0** |
+| **Apply exit status** | ✅ **PUSH EXIT CODE 0 EXPLICITLY CAPTURED.** CLI output: `Applying migration 0184_client_budget_context_least_privilege.sql...` / `Finished supabase db push.` |
+| **Apply timestamp** | ⚠️ **OPERATOR-OBSERVED CLIENT-SIDE WINDOW**, `2026-08-17T12:02:40Z` – `12:03:01Z`. **No server-generated migration timestamp was captured, and none is invented.** |
+| **Applied from** | the authorized #593 head `74e41327b6909ec068619f9743e8099e5dd3c76a` |
+| **Application merge** | **NONE YET.** #593 remains **OPEN and UNMERGED**; application production is still `a1047c7a5fdcad58bf033b6ae1cdcc8f7f1b5875`. Production holds the budget schema with **no UI writing to it** — the intended migration-first ordering, not a defect. |
+| **Where the apply ran** | the **operator's own credentialed machine** — *not* the repository host, which holds no production credential. |
+| **Post-apply verification** | `migration list` read `0184 \| 0184`; remote schema dump exit 0. |
+
+### Final privilege state — the 0183 drift is closed
+
+From the post-apply schema dump:
+
+```
+GRANT SELECT,INSERT,UPDATE ON TABLE "public"."client_budget_context" TO "authenticated";
+
+REVOKE ALL ON FUNCTION "public"."client_budget_context_immutable_fields"()  FROM PUBLIC;
+REVOKE ALL ON FUNCTION "public"."client_budget_context_server_timestamps"() FROM PUBLIC;
+REVOKE ALL ON FUNCTION "public"."client_budget_context_set_studio_id"()     FROM PUBLIC;
+```
+
+| Grantee | Table `client_budget_context` | The three trigger functions |
+|---|---|---|
+| `PUBLIC` | **nothing** | **nothing** |
+| `anon` | **nothing** | **nothing** |
+| `authenticated` | `SELECT`, `INSERT`, `UPDATE` — and **no** `REFERENCES`, `TRIGGER` or `MAINTAIN` | **nothing** |
+| `service_role` | **nothing** | **nothing** |
+
+`REFERENCES`, `TRIGGER` and `MAINTAIN` are gone. The measured escalation — an
+authenticated member could `CREATE TRIGGER` on the table, because that needs
+only table `TRIGGER` + function `EXECUTE` and never ownership — is closed.
+
+**Zero business-row mutation** here is a statement about 0184's **executable
+contract** (begin · `set local lock_timeout` · one `REVOKE ALL` · one `GRANT` ·
+three function `REVOKE ALL PRIVILEGES` · commit, pinned by a positive
+statement allowlist), **not** a measured production row count. No row count was
+captured and none is claimed.
+
+`public.set_updated_at()` was **deliberately not touched** — a shared helper
+since 0015 carrying the same permissive create-time default. That remains an
+open repository-wide hardening item, not a 0184 omission.
+
+**Both `0183` and `0184` are now FROZEN.** Any further correction is a NEW
+migration.
+
+## Previous state (verified 2026-08-17, post-0183 apply)
 
 | Field | Value |
 |---|---|

@@ -159,7 +159,9 @@ describe("0182 — migration state", () => {
     const REC = JSON.parse(
       readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
     );
-    expect(REC.hosted_migration_max).toBe("0183");
+    // Generic, not hard-coded to the migration that happened to supersede it:
+    // the guarantee is that 0182 is no longer current, whatever is.
+    expect(Number(REC.hosted_migration_max)).toBeGreaterThan(182);
     expect(() => assertCurrent0182NotePinned(REC.hosted_note)).toThrow();
     // And 0182 is still named in the chain the successor carries forward.
     expect(REC.hosted_note).toMatch(/0182_sterile_item_discard_lifecycle\.sql/);

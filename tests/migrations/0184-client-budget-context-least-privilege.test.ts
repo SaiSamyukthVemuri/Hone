@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   countVersion,
@@ -34,6 +35,60 @@ const CODE = SQL.split("\n")
   .filter((line) => !/^\s*--/.test(line))
   .join("\n");
 
+function canonicalRecord(): { hosted_note: string } {
+  return JSON.parse(
+    readFileSync(path.join(ROOT, "docs/production/migration-state.json"), "utf8"),
+  );
+}
+
+/**
+ * The canonical hosted_note names exactly ONE current record, and it is 0184's
+ * supersession of 0183. Every other migration named in the note is a
+ * historical chain link and must read as one.
+ *
+ * COUNTS rather than confirms presence: a duplicated transition clause once
+ * survived six assertions that each checked a phrase in isolation.
+ */
+function assertSingleCurrentRecord(note: string): void {
+  const occurrences = (hay: string, needle: string): number =>
+    hay.split(needle).length - 1;
+
+  expect(
+    occurrences(note, "as the CURRENT hosted-state record"),
+    "the canonical note must name exactly ONE current hosted record",
+  ).toBe(1);
+
+  expect(note).toContain(
+    "SUPERSEDES the 0183 record as the CURRENT hosted-state record",
+  );
+
+  // Generic by migration number, so a future rewrite mislabelling a DIFFERENT
+  // migration is caught too. The lookbehind excludes the one legitimate form:
+  // the supersession clause names the migration being REPLACED.
+  const mislabelled = [
+    ...note.matchAll(/(?<!SUPERSEDES )the (\d{4}) record as the CURRENT/g),
+  ].map((m) => m[1]);
+  expect(
+    mislabelled,
+    `historical record(s) wrongly labelled CURRENT: ${mislabelled.join(", ")}`,
+  ).toEqual([]);
+
+  // The chain is still carried forward, head to oldest link.
+  for (const sha of [
+    "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb", // 0183
+    "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57", // 0182
+    "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f", // 0181
+    "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6", // 0171 tail
+  ]) {
+    expect(note, sha).toContain(sha);
+  }
+
+  expect(
+    occurrences(note, "CARRIES THE FULL CHECKSUM CHAIN FORWARD"),
+    "the note must declare the chain-forward transition exactly once",
+  ).toBe(1);
+}
+
 describe("0184: file and numbering", () => {
   it("is the repository maximum and carries the version exactly once", () => {
     expect(isRepoMax(VERSION)).toBe(true);
@@ -42,10 +97,104 @@ describe("0184: file and numbering", () => {
   });
 
   it("is a NEW migration — 0183 was applied and must not be edited", () => {
-    // The repair could not be made in place: 0183 has reached hosted
+    // The repair could not be made in place: 0183 had reached hosted
     // production, so its bytes are frozen and a correction is a new number.
     expect(countVersion("0183")).toBe(1);
     expect(migrationState().versions).toContain("0183");
+  });
+
+  it("IS applied to production — hosted state is declared, not derived", () => {
+    // THE HAND-OFF HAPPENED. This block previously asserted the PRE-APPLY
+    // state (hosted 0183, pending ["0184"]) and was written to go red the
+    // moment the rollout ran, so the apply could not be recorded without
+    // updating the canonical record in the same change. 0184 was applied on
+    // 2026-08-17 and this block was flipped in that same change.
+    //
+    // repo == hosted now: nothing is pending, and 0185 is available but NOT
+    // claimed.
+    const state = migrationState();
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.next_free_migration).toBe("0185");
+  });
+
+  it("stamps the CURRENT apply as an OPERATOR-OBSERVED window, not a server time", () => {
+    const state = migrationState();
+    expect(state.hosted_applied_at).toBe("2026-08-17T12:03:01Z");
+    expect(state.hosted_applied_at_precision).toMatch(/operator-observed/i);
+    expect(state.hosted_applied_at_precision).toMatch(
+      /NOT a server-generated migration timestamp/i,
+    );
+  });
+
+  it("the canonical record carries 0184's apply evidence, honestly", () => {
+    const REC = canonicalRecord();
+    // What was actually captured.
+    expect(REC.hosted_note).toContain(
+      "aa110edadd459e0f11062e3904ea7ad54a54a75c31d9342b762a533ecc07694c",
+    );
+    expect(REC.hosted_note).toMatch(/DRY-RUN EXIT 0/);
+    expect(REC.hosted_note).toMatch(/PUSH EXIT CODE 0 EXPLICITLY CAPTURED/);
+    expect(REC.hosted_note).toMatch(/0184 \| 0184/);
+    expect(REC.hosted_note).toMatch(/schema dump exit 0/i);
+    // The final ACL result, which is the whole point of the migration.
+    expect(REC.hosted_note).toMatch(
+      /GRANT SELECT,INSERT,UPDATE ON TABLE public\.client_budget_context TO authenticated/,
+    );
+    expect(REC.hosted_note).toMatch(/REFERENCES, TRIGGER and MAINTAIN are gone/);
+    // The limitations, stated rather than glossed.
+    expect(REC.hosted_note).toMatch(
+      /OPERATOR-OBSERVED CLIENT-SIDE WINDOWS, NOT SERVER-GENERATED/i,
+    );
+    expect(REC.hosted_note).toMatch(
+      /NO production row count was captured and none is claimed/i,
+    );
+    // The deliberate omission is named, not hidden.
+    expect(REC.hosted_note).toMatch(/set_updated_at\(\) was DELIBERATELY NOT TOUCHED/);
+    // And the application has NOT shipped — production holds schema with no UI.
+    expect(REC.hosted_note).toMatch(/#593 remains OPEN and UNMERGED/);
+  });
+
+  it("names exactly ONE current record — a historical link can never be CURRENT", () => {
+    // Inherited from 0183's block at the handoff. The 0183 rewrite once left a
+    // stale transition clause attached to 0181, so the note named two current
+    // records at once; every surrounding assertion passed because each checked
+    // a phrase in ISOLATION. This one COUNTS.
+    assertSingleCurrentRecord(canonicalRecord().hosted_note);
+  });
+
+  it("ANTI-VACUITY: re-labelling a historical link as CURRENT is caught", () => {
+    // Mutates a COPY. The real record is never touched.
+    const note = canonicalRecord().hosted_note;
+    expect(() => assertSingleCurrentRecord(note)).not.toThrow();
+    for (const injection of [
+      "the 0183 record as the CURRENT hosted-state record and CARRIES THE FULL CHECKSUM CHAIN FORWARD so no earlier apply record is dropped: ",
+      "the 0181 record as the CURRENT hosted-state record ",
+      "and CARRIES THE FULL CHECKSUM CHAIN FORWARD again ",
+    ]) {
+      const mutated = note.replace(
+        "the 0182 record (0182_sterile",
+        injection + "the 0182 record (0182_sterile",
+      );
+      expect(mutated).not.toEqual(note);
+      expect(
+        () => assertSingleCurrentRecord(mutated),
+        `a mislabelled historical record went undetected: ${injection.slice(0, 55)}`,
+      ).toThrow();
+    }
+  });
+
+  it("the APPLIED bytes still hash to the recorded checksum", () => {
+    // 0184 is frozen: production ran these exact bytes.
+    expect(createHash("sha256").update(SQL, "utf8").digest("hex")).toBe(
+      "aa110edadd459e0f11062e3904ea7ad54a54a75c31d9342b762a533ecc07694c",
+    );
+  });
+
+  it("0185 is available but NOT claimed", () => {
+    expect(migrationState().next_free_migration).toBe("0185");
+    expect(countVersion("0185")).toBe(0);
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {
