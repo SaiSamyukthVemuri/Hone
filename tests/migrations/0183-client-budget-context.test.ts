@@ -44,6 +44,38 @@ function fnBody(name: string): string {
   return CODE.slice(start, end);
 }
 
+/**
+ * EXACTLY ONE `create policy` statement, from its header through its own
+ * statement-terminating semicolon.
+ *
+ * A fixed-width window (the previous `slice(start, start + 800)`) runs past
+ * the end of one policy into the NEXT one, so assertions nominally about the
+ * INSERT policy could be satisfied entirely by UPDATE-policy text — and a
+ * regression that stripped INSERT-side actor verification would pass unnoticed.
+ *
+ * The terminator cannot be found with `indexOf(";")`: a policy body contains
+ * `(select auth.uid())` and a multi-line `exists (...)`, so semicolons and
+ * parentheses nest. Depth is tracked and the first semicolon at depth ZERO
+ * ends the statement.
+ *
+ * Accepts the policy source rather than the module-level CODE so a mutated
+ * fixture can be passed in to prove these assertions are load-bearing.
+ */
+function policyDefinition(name: string, sql: string = CODE): string {
+  const marker = `create policy "${name}"`;
+  const start = sql.indexOf(marker);
+  expect(start, `policy ${name} must exist`).toBeGreaterThan(-1);
+
+  let depth = 0;
+  for (let i = start; i < sql.length; i++) {
+    const ch = sql[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === ";" && depth === 0) return sql.slice(start, i + 1);
+  }
+  throw new Error(`policy ${name} has no statement-terminating semicolon`);
+}
+
 describe("0183: file and numbering", () => {
   it("is the repository maximum and carries the version exactly once", () => {
     expect(isRepoMax(VERSION)).toBe(true);
@@ -295,25 +327,112 @@ describe("0183: RLS and grants", () => {
     );
   });
 
+  it("each policy extraction stops at its OWN statement", () => {
+    // The boundary proof. Without it, everything below can be satisfied by the
+    // adjacent policy's text.
+    const insert = policyDefinition("client_budget_context_member_insert");
+    const update = policyDefinition("client_budget_context_member_update");
+    const select = policyDefinition("client_budget_context_member_select");
+
+    expect(insert).not.toContain("client_budget_context_member_update");
+    expect(insert).not.toContain("client_budget_context_member_select");
+    expect(update).not.toContain("client_budget_context_member_insert");
+    expect(update).not.toContain("client_budget_context_member_select");
+    expect(select).not.toContain("client_budget_context_member_insert");
+
+    // Each really is the statement it claims to be, and each terminates.
+    expect(insert).toContain("for insert to authenticated");
+    expect(update).toContain("for update to authenticated");
+    expect(select).toContain("for select to authenticated");
+    for (const pol of [insert, update, select]) {
+      expect(pol.endsWith(";")).toBe(true);
+    }
+  });
+
   it("BOTH write policies VERIFY the actor against auth.uid()", () => {
     // Studio membership alone would let a member attribute an edit to a
     // colleague, or (when nullable) erase attribution entirely. The database
     // derives the actor instead of trusting the caller.
+    //
+    // Each policy is extracted through its OWN terminating semicolon, so an
+    // INSERT-side regression cannot be masked by the UPDATE policy sitting a
+    // few lines below it.
     for (const policy of [
       "client_budget_context_member_insert",
       "client_budget_context_member_update",
     ]) {
-      const pol = CODE.slice(CODE.indexOf(`create policy "${policy}"`)).slice(
-        0,
-        800,
-      );
-      expect(pol).toContain("from public.practitioners p");
-      expect(pol).toContain(
+      const pol = policyDefinition(policy);
+      expect(pol, policy).toContain("public.is_studio_member(");
+      expect(pol, policy).toContain("from public.practitioners p");
+      expect(pol, policy).toContain(
         "p.id = client_budget_context.updated_by_practitioner_id",
       );
-      expect(pol).toContain("p.user_id = (select auth.uid())");
-      expect(pol).toContain("and p.active");
+      expect(pol, policy).toContain("p.user_id = (select auth.uid())");
+      expect(pol, policy).toContain("and p.active");
+      expect(pol, policy).toContain(
+        "p.studio_id = client_budget_context.studio_id",
+      );
     }
+  });
+
+  it("ANTI-VACUITY: a bare-membership INSERT policy is CAUGHT, and UPDATE stays green", () => {
+    // Mutate a COPY of the migration source: the INSERT policy is "simplified"
+    // back to a bare studio-membership check while the UPDATE policy is left
+    // fully correct. That is the exact regression the old fixed-width slice
+    // could not see — its window ran into the UPDATE policy, which satisfied
+    // all four actor assertions on the INSERT policy's behalf.
+    const realInsert = policyDefinition("client_budget_context_member_insert");
+    const bare =
+      'create policy "client_budget_context_member_insert"\n' +
+      "  on public.client_budget_context for insert to authenticated\n" +
+      "  with check (public.is_studio_member(client_budget_context.studio_id));";
+    const mutated = CODE.replace(realInsert, bare);
+    expect(mutated).not.toEqual(CODE);
+
+    const mutatedInsert = policyDefinition(
+      "client_budget_context_member_insert",
+      mutated,
+    );
+    // The INSERT policy no longer verifies the actor — and we can SEE that,
+    // which is the whole point.
+    expect(mutatedInsert).not.toContain("from public.practitioners p");
+    expect(mutatedInsert).not.toContain("p.user_id = (select auth.uid())");
+    expect(mutatedInsert).not.toContain("and p.active");
+
+    // The UPDATE policy is untouched and still fully verified, proving the two
+    // are independently bound rather than sharing one window.
+    const mutatedUpdate = policyDefinition(
+      "client_budget_context_member_update",
+      mutated,
+    );
+    expect(mutatedUpdate).toContain("from public.practitioners p");
+    expect(mutatedUpdate).toContain("p.user_id = (select auth.uid())");
+    expect(mutatedUpdate).toContain("and p.active");
+  });
+
+  it("ANTI-VACUITY: a bare-membership UPDATE policy is CAUGHT, and INSERT stays green", () => {
+    const realUpdate = policyDefinition("client_budget_context_member_update");
+    const bare =
+      'create policy "client_budget_context_member_update"\n' +
+      "  on public.client_budget_context for update to authenticated\n" +
+      "  using (public.is_studio_member(client_budget_context.studio_id))\n" +
+      "  with check (public.is_studio_member(client_budget_context.studio_id));";
+    const mutated = CODE.replace(realUpdate, bare);
+    expect(mutated).not.toEqual(CODE);
+
+    const mutatedUpdate = policyDefinition(
+      "client_budget_context_member_update",
+      mutated,
+    );
+    expect(mutatedUpdate).not.toContain("from public.practitioners p");
+    expect(mutatedUpdate).not.toContain("and p.active");
+
+    const mutatedInsert = policyDefinition(
+      "client_budget_context_member_insert",
+      mutated,
+    );
+    expect(mutatedInsert).toContain("from public.practitioners p");
+    expect(mutatedInsert).toContain("and p.active");
   });
 
   it("FULLY QUALIFIES the studio comparison — the 0126 tautology bug", () => {
@@ -330,11 +449,18 @@ describe("0183: RLS and grants", () => {
   });
 
   it("the UPDATE policy carries BOTH using and with check", () => {
-    const pol = CODE.slice(
-      CODE.indexOf('create policy "client_budget_context_member_update"'),
-    ).slice(0, 800);
+    // Bounded to its own statement: with a fixed window this could have been
+    // satisfied by the SELECT policy's `using` plus the INSERT policy's
+    // `with check`, without the UPDATE policy having either.
+    const pol = policyDefinition("client_budget_context_member_update");
     expect(pol).toMatch(/using \(/);
     expect(pol).toMatch(/with check \(/);
+  });
+
+  it("the SELECT policy is read-only — it carries no with check", () => {
+    const pol = policyDefinition("client_budget_context_member_select");
+    expect(pol).toMatch(/using \(/);
+    expect(pol).not.toMatch(/with check/);
   });
 
   it("has NO delete policy — clearing is an UPDATE, not a row removal", () => {
