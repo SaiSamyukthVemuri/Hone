@@ -152,8 +152,81 @@ describe("0184: file and numbering", () => {
     );
     // The deliberate omission is named, not hidden.
     expect(REC.hosted_note).toMatch(/set_updated_at\(\) was DELIBERATELY NOT TOUCHED/);
-    // And the application has NOT shipped — production holds schema with no UI.
-    expect(REC.hosted_note).toMatch(/#593 remains OPEN and UNMERGED/);
+    // The migration-first ORDERING is recorded — as history, not as a
+    // present-tense application-status claim. The dedicated tests below own
+    // the "no stale deployment claim" contract; this one just pins that the
+    // ordering fact itself survives.
+    expect(REC.hosted_note).toMatch(/MIGRATION-FIRST/);
+  });
+
+  it("tells the truth about WHERE the apply ran", () => {
+    // A post-release filesystem check disproved the original narrative. The
+    // record said the applies ran on "the operator's own credentialed machine
+    // — not the repository host, which holds no production credential". Both
+    // 0183 and 0184 in fact ran from hone-dev-01, this repository's own host:
+    // supabase/.temp/project-ref was created ~3 minutes before the 0183 window
+    // opened, and supabase/.temp/pgdelta/ — written by `supabase db push` —
+    // was modified INSIDE the 0184 window.
+    //
+    // The recon that produced the wrong conclusion was accurate WHEN IT RAN;
+    // the operator linked and applied afterwards, and the stale conclusion was
+    // carried forward without re-checking. That is the failure this pins.
+    const note = canonicalRecord().hosted_note;
+    expect(note).toMatch(/hone-dev-01, the Hone repository host/);
+    expect(note).toMatch(/NOT a separate operator machine/i);
+    // The specific false claim must not survive anywhere in the current record.
+    expect(note).not.toMatch(/operator's own credentialed machine/);
+    expect(note).not.toMatch(/the repository host, which holds no production credential/);
+    // The evidence, not just the conclusion.
+    expect(note).toContain("pgdelta");
+    expect(note).toMatch(/2026-08-17T01:00:02Z/);
+    expect(note).toMatch(/2026-08-17T12:03:00Z/);
+  });
+
+  it("describes the release credentials as TRANSIENT, not persisted", () => {
+    const note = canonicalRecord().hosted_note;
+    expect(note).toMatch(/TEMPORARY AND ENVIRONMENT-SCOPED/i);
+    expect(note).toMatch(/SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD were both unset/i);
+    expect(note).toMatch(/no credential was committed/i);
+    expect(note).toMatch(/gitignored/i);
+    // Linkage is not authority — the distinction that keeps the record honest.
+    expect(note).toMatch(/grants NO database authority without a valid token/i);
+  });
+
+  it("carries NO stale present-tense application-deployment claim", () => {
+    // A migration apply record states facts about the APPLY. A present-tense
+    // application-status sentence inside it rots the moment production
+    // advances — which is exactly what happened when #593 merged.
+    const note = canonicalRecord().hosted_note;
+    expect(note).not.toMatch(/#593 remains OPEN and UNMERGED/);
+    expect(note).not.toMatch(/HAS NOT SHIPPED/);
+    expect(note).not.toMatch(/application production is still/);
+    // The ordering fact is preserved, but as HISTORY.
+    expect(note).toMatch(/historical, not current status/i);
+    expect(note).toMatch(/MIGRATION-FIRST/);
+    // And the subsequent merge is recorded, with current status delegated.
+    expect(note).toContain("266b6092f22ffd6d656a967be527abcf9437a95f");
+    expect(note).toMatch(/release-changelog\.md/);
+  });
+
+  it("ANTI-VACUITY: the stale apply-host and application claims are caught", () => {
+    // Mutates COPIES. The real record is never touched.
+    const note = canonicalRecord().hosted_note;
+
+    const revertHost = note.replace(
+      /hone-dev-01, the Hone repository host/,
+      "the operator's own credentialed machine",
+    );
+    expect(revertHost).not.toEqual(note);
+    expect(revertHost).toMatch(/operator's own credentialed machine/);
+    expect(revertHost).not.toMatch(/hone-dev-01, the Hone repository host/);
+
+    const revertApp = note.replace(
+      /#593 SUBSEQUENTLY MERGED/,
+      "#593 remains OPEN and UNMERGED and",
+    );
+    expect(revertApp).not.toEqual(note);
+    expect(revertApp).toMatch(/#593 remains OPEN and UNMERGED/);
   });
 
   it("names exactly ONE current record — a historical link can never be CURRENT", () => {
