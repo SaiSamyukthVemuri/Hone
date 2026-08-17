@@ -892,6 +892,52 @@ describe("0183: privileges", () => {
     expect(Object.keys(acl).sort()).toEqual(["authenticated", "postgres"]);
   });
 
+  it("no COLUMN-level grant exists, and a table REVOKE would clear one anyway", async () => {
+    // Review raised the concern that column grants live in pg_attribute.attacl
+    // and could survive 0184's table-level REVOKE ALL. Measured here rather
+    // than assumed: none exist, AND seeding two (different roles, different
+    // privileges) then running 0184's exact revoke clears both — matching
+    // PostgreSQL's documented behaviour that revoking a table privilege
+    // revokes the corresponding column privileges.
+    const none = await adminQuery(
+      `select count(*)::int as n from pg_attribute
+        where attrelid = 'public.client_budget_context'::regclass and attacl is not null`,
+    );
+    expect(none.rows[0].n).toBe(0);
+
+    await adminQuery(
+      "grant update (budget_notes) on public.client_budget_context to anon",
+    );
+    await adminQuery(
+      "grant select (budget_level) on public.client_budget_context to service_role",
+    );
+    const seeded = await adminQuery(
+      `select has_column_privilege('anon','public.client_budget_context','budget_notes','UPDATE') as a,
+              has_column_privilege('service_role','public.client_budget_context','budget_level','SELECT') as s`,
+    );
+    expect(seeded.rows[0].a).toBe(true);
+    expect(seeded.rows[0].s).toBe(true);
+
+    // 0184's exact statement.
+    await adminQuery(
+      "revoke all on public.client_budget_context from public, anon, authenticated, service_role",
+    );
+    const after = await adminQuery(
+      `select (select count(*)::int from pg_attribute
+                where attrelid='public.client_budget_context'::regclass and attacl is not null) as attacl_rows,
+              has_column_privilege('anon','public.client_budget_context','budget_notes','UPDATE') as a,
+              has_column_privilege('service_role','public.client_budget_context','budget_level','SELECT') as s`,
+    );
+    expect(after.rows[0].attacl_rows).toBe(0);
+    expect(after.rows[0].a).toBe(false);
+    expect(after.rows[0].s).toBe(false);
+
+    // Put the intended grant back so later tests see the real contract.
+    await adminQuery(
+      "grant select, insert, update on public.client_budget_context to authenticated",
+    );
+  });
+
   it("the three 0183 trigger functions grant EXECUTE to NOBODY but the owner", async () => {
     const res = await adminQuery(
       `select p.proname,

@@ -131,33 +131,107 @@ describe("0184: trigger-function EXECUTE", () => {
   });
 });
 
-describe("0184: GRANT/REVOKE only — no schema or data change", () => {
-  it("contains no DDL", () => {
-    for (const ddl of [
-      /create table/i,
-      /alter table/i,
-      /drop table/i,
-      /add column/i,
-      /drop column/i,
-      /add constraint/i,
-      /drop constraint/i,
-      /create index/i,
-      /create trigger/i,
-      /drop trigger/i,
-      /create or replace function/i,
-      /create policy/i,
-      /drop policy/i,
-      /alter policy/i,
-    ]) {
-      expect(CODE, String(ddl)).not.toMatch(ddl);
+// ---------------------------------------------------------------------------
+// POSITIVE EXECUTABLE-STATEMENT ALLOWLIST
+//
+// The previous protection was a denylist of forbidden DDL keywords, and that
+// is exactly why a `comment on table` slipped into a migration whose header
+// claimed "no DDL": the list enumerated CREATE/ALTER/DROP and nobody thought
+// of COMMENT. It is the same enumerate-what-to-exclude mistake this migration
+// exists to repair at the privilege layer, made one layer up in the proof.
+//
+// This asserts the opposite direction — that EVERY executable statement in the
+// file is one of a small, exactly-enumerated set — so any newly inserted
+// statement of ANY kind fails, including one nobody anticipated.
+//
+// Deliberately NOT a SQL parser. 0184 has a tiny finite grammar: strip whole
+// line comments, split on `;`, normalize whitespace, and match each remaining
+// statement against a fixed pattern list.
+// ---------------------------------------------------------------------------
+
+/** Executable statements in file order, comments stripped and whitespace collapsed. */
+function executableStatements(): string[] {
+  return SQL.split("\n")
+    .filter((line) => !/^\s*--/.test(line))
+    .join("\n")
+    .split(";")
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter((s) => s.length > 0);
+}
+
+const FN = [
+  "client_budget_context_set_studio_id",
+  "client_budget_context_immutable_fields",
+  "client_budget_context_server_timestamps",
+] as const;
+
+/** The COMPLETE set of statements 0184 is permitted to contain. */
+const ALLOWED: ReadonlyArray<{ label: string; re: RegExp }> = [
+  { label: "begin", re: /^begin$/i },
+  { label: "set local lock_timeout", re: /^set local lock_timeout = '5s'$/i },
+  {
+    label: "revoke all on the table",
+    re: /^revoke all on public\.client_budget_context from public, anon, authenticated, service_role$/i,
+  },
+  {
+    label: "grant the exact three to authenticated",
+    re: /^grant select, insert, update on public\.client_budget_context to authenticated$/i,
+  },
+  ...FN.map((fn) => ({
+    label: `revoke execute on ${fn}`,
+    re: new RegExp(
+      `^revoke all privileges on function public\\.${fn}\\(\\) from public, anon, authenticated, service_role$`,
+      "i",
+    ),
+  })),
+  { label: "commit", re: /^commit$/i },
+];
+
+describe("0184: GRANT/REVOKE only — positive statement contract", () => {
+  it("EVERY executable statement is on the allowlist", () => {
+    const unexpected = executableStatements().filter(
+      (s) => !ALLOWED.some((a) => a.re.test(s)),
+    );
+    // Naming the offender makes a failure actionable rather than a bare count.
+    expect(unexpected, `unrecognised executable statement(s): ${unexpected.join(" | ")}`).toEqual([]);
+  });
+
+  it("every allowlisted statement is actually PRESENT, exactly once", () => {
+    // The mirror direction: an allowlist that permits statements which were
+    // silently dropped would pass the check above while the repair did nothing.
+    const statements = executableStatements();
+    for (const { label, re } of ALLOWED) {
+      const hits = statements.filter((s) => re.test(s));
+      expect(hits, label).toHaveLength(1);
     }
   });
 
+  it("contains EXACTLY the expected number of statements, in order", () => {
+    const statements = executableStatements();
+    expect(statements).toHaveLength(ALLOWED.length);
+    statements.forEach((s, i) => {
+      expect(s, `statement ${i} should be "${ALLOWED[i].label}"`).toMatch(
+        ALLOWED[i].re,
+      );
+    });
+  });
+
+  it("prose in comments can never satisfy an executable assertion", () => {
+    // The header quotes 0183's defective `revoke delete, truncate` and
+    // discusses COMMENT ON. Those words exist in the file and must not count.
+    expect(SQL).toContain("comment on table");
+    expect(SQL).toMatch(/revoke delete, truncate/);
+    const statements = executableStatements().join(" | ");
+    expect(statements).not.toMatch(/comment on/i);
+    expect(statements).not.toMatch(/revoke delete, truncate/i);
+  });
+
   it("mutates ZERO business rows", () => {
-    expect(CODE).not.toMatch(/\binsert into\b/i);
-    expect(CODE).not.toMatch(/\bupdate\s+public\./i);
-    expect(CODE).not.toMatch(/\bdelete from\b/i);
-    expect(CODE).not.toMatch(/\btruncate\b/i);
+    const statements = executableStatements().join(" | ");
+    expect(statements).not.toMatch(/\binsert into\b/i);
+    expect(statements).not.toMatch(/\bupdate\s+public\./i);
+    expect(statements).not.toMatch(/\bdelete from\b/i);
+    expect(statements).not.toMatch(/\btruncate\b/i);
   });
 
   it("touches no other table, and nothing outside budget context", () => {
@@ -184,8 +258,12 @@ describe("0184: GRANT/REVOKE only — no schema or data change", () => {
     }
   });
 
-  it("re-states the privilege contract in the table comment", () => {
-    expect(CODE).toContain("comment on table public.client_budget_context is");
-    expect(SQL).toMatch(/authenticated holds SELECT\/INSERT\/UPDATE and nothing else/);
+  it("states the privilege contract in the HEADER, not in an executable statement", () => {
+    // The contract must still be written down where a reader will find it —
+    // it just must not cost the migration a statement it did not declare.
+    expect(SQL).toMatch(/authenticated\s+SELECT \+ INSERT \+ UPDATE/);
+    expect(SQL).toMatch(/anon\s+nothing/);
+    expect(SQL).toMatch(/service_role\s+nothing/);
+    expect(SQL).toMatch(/PUBLIC\s+nothing/);
   });
 });

@@ -14,7 +14,69 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-16, post-0182 apply)
+## Current state (verified 2026-08-17, post-0183 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0183** (`0183_client_budget_context.sql`, applied **2026-08-17**, operator-observed apply window `01:03:11Z` – `01:04:02Z`) |
+| **Repo migration max** | **0184** — **repo > hosted.** `0184_client_budget_context_least_privilege.sql` is **AUTHORED AND TESTED, NOT APPLIED.** Next free number is **0185** (available, not claimed). |
+| **Pending** | **`0184`** — awaiting an explicit credentialed apply gate. |
+| **Total migrations in repo** | **183** (`0001` … `0157`, `0159` … `0184` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **NOT COUNTED, AND NOT CLAIMED.** The post-apply `migration list` was read to confirm `0183 \| 0183`; the history table was **not** row-counted. |
+| **`0183` raw checksum (frozen)** | `a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb` |
+| **`0183` executable checksum (frozen)** | `1a968807444b8b7d8d2c93d7f50bf134e613068bfb84c36b3de76615507f778d` (comment-stripped) |
+| **Dry run** | proposed `0183_client_budget_context.sql` **and nothing else**; observed `01:01:11Z` – `01:02:11Z`; **DRY-RUN EXIT 0** |
+| **Apply exit status** | ✅ **PUSH EXIT CODE 0 WAS EXPLICITLY CAPTURED** — not inferred from output. This closes the gap the 0182 record had to declare. |
+| **Apply timestamp** | ⚠️ **OPERATOR-OBSERVED CLIENT-SIDE WINDOW**, `2026-08-17T01:03:11Z` – `01:04:02Z`. This is when the operator's console started and finished the command. **No server-generated migration timestamp was captured, and none is invented.** |
+| **Applied from** | the authorized #593 reviewed head `e43330a0c2cf8b84dac4f8538611febce4f013f1` — **DATABASE FIRST, before any application merge.** #593 remains **OPEN and UNMERGED.** |
+| **Application merge** | **NONE YET.** The application code for this feature has not shipped. |
+| **Where the apply ran** | the **operator's own credentialed machine** — *not* the repository host. A read-only capability recon of `hone-dev-01` on 2026-08-17 found no project-ref in any of its seven checkouts, no `SUPABASE_ACCESS_TOKEN`, no stored CLI token and no database URL. |
+| **Post-apply verification** | `migration list` read `0183 \| 0183`. A full schema dump completed successfully (exit 0) — and it is what surfaced the privilege drift below. |
+
+### 🚨 Known defect in the applied 0183 — repair authored, NOT applied
+
+The post-apply schema dump revealed that 0183 **stated** its privilege contract
+as an allowlist ("authenticated gets SELECT/INSERT/UPDATE") but **enforced** it
+as a denylist (`revoke delete, truncate`). Supabase's `ALTER DEFAULT PRIVILEGES`
+grants the full set at create time, so every unnamed privilege survived.
+Production reads:
+
+```
+GRANT SELECT,INSERT,REFERENCES,TRIGGER,MAINTAIN,UPDATE
+  ON TABLE public.client_budget_context TO authenticated;
+```
+
+and the three new trigger functions carry `EXECUTE` to `PUBLIC`, `anon`,
+`authenticated` and `service_role`.
+
+`MAINTAIN` is a PostgreSQL 17 privilege that **no by-name revoke list written
+for 0183 could have contained** — which is why the repair replaces enumeration
+with `REVOKE ALL` followed by an explicit grant-back. This is the same root
+cause already recorded for **0129** (`anon` missed) and **0164**
+(`service_role` missed).
+
+**Measured exploitability** on a local database migrated to 0183:
+
+| Privilege | Status |
+|---|---|
+| `TRIGGER` | **EXERCISABLE** — `create trigger … on public.client_budget_context` **succeeds** as `authenticated`. CREATE TRIGGER needs only table `TRIGGER` + function `EXECUTE`, never ownership (ownership is required only to *drop* one). A member could attach an existing trigger function and disrupt writes. |
+| `MAINTAIN` | Exercisable (`analyze` runs). No data exposure. |
+| `REFERENCES` | Granted but **unreachable** — the referencing table needs `CREATE` on schema `public`, which is denied. |
+| Function `EXECUTE` | **Not** exploitable as an RPC: PostgreSQL refuses a `returns trigger` function ("trigger functions can only be called as triggers"). |
+
+**0183 is FROZEN and was not edited.** The repair is
+`0184_client_budget_context_least_privilege.sql` — `REVOKE ALL` then grant back
+exactly `SELECT`/`INSERT`/`UPDATE`, plus `REVOKE ALL PRIVILEGES ON FUNCTION` for
+the three 0183 trigger functions. Revoking that `EXECUTE` does **not** affect
+trigger firing (the mechanism does not check `EXECUTE` at fire time), proven by
+revoking on a real migrated database and re-running the full behavioural suite.
+`public.set_updated_at()` carries the same permissive default and is
+**deliberately untouched** — a shared helper since 0015, belonging to its own
+change with its own blast radius.
+
+**0184 is NOT APPLIED.** Until it is, production carries the wider grant.
+
+## Previous state (verified 2026-08-16, post-0182 apply)
 
 | Field | Value |
 |---|---|

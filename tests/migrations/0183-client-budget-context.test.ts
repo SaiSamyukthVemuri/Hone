@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   countVersion,
@@ -87,15 +88,84 @@ describe("0183: file and numbering", () => {
     expect(versionsAbove(VERSION)).toEqual(["0184"]);
   });
 
-  it("is NOT yet applied to production — hosted state is declared, not derived", () => {
-    // Written to go RED the moment the rollout runs, so the apply cannot be
-    // recorded without updating docs/production/migration-state.json in the
-    // same change. A file on disk says nothing about what production has
-    // applied; this reads the DECLARED record.
+  it("IS applied to production — hosted state is declared, not derived", () => {
+    // THE HAND-OFF HAPPENED. This block previously asserted the PRE-APPLY state
+    // (hosted still 0182, pending ["0183"]) and was written to go red the
+    // moment the rollout ran, so the apply could not be recorded without
+    // updating the canonical hosted-state record in the same change. That is
+    // exactly what happened: 0183 was applied on 2026-08-17 from the authorized
+    // #593 reviewed head, BEFORE any application merge, and this block was
+    // flipped in the same change that moved the canonical record.
+    //
+    // A file on disk still says nothing about what production has applied. The
+    // claim below is the DECLARED one, read from
+    // docs/production/migration-state.json.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe("0182");
-    expect(state.pending_migrations).toContain(VERSION);
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).not.toContain(VERSION);
+    // repo != hosted: 0184 is authored and awaiting its own apply gate.
     expect(state.repo_equals_hosted).toBe(false);
+    expect(state.pending_migrations).toEqual(["0184"]);
+  });
+
+  it("stamps the CURRENT apply as an OPERATOR-OBSERVED window, not a server time", () => {
+    // 0183's evidence is stronger than 0182's — a real instant and a captured
+    // push exit code — but it is still a CLIENT-SIDE observation from the
+    // operator's console. The record must say so, and the qualifier must
+    // survive the DERIVATION as well as the file, since
+    // `npm run migration:state -- --json` is the documented machine interface.
+    const state = migrationState();
+    expect(state.hosted_applied_at).toBe("2026-08-17T01:04:02Z");
+    expect(state.hosted_applied_at_precision).toMatch(/operator-observed/i);
+    expect(state.hosted_applied_at_precision).toMatch(
+      /NOT a server-generated migration timestamp/i,
+    );
+  });
+
+  it("the canonical record carries 0183's apply evidence, honestly", () => {
+    const REC = JSON.parse(
+      readFileSync(
+        path.join(ROOT, "docs/production/migration-state.json"),
+        "utf8",
+      ),
+    );
+    // The evidence that was actually captured.
+    expect(REC.hosted_note).toContain(
+      "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb",
+    );
+    expect(REC.hosted_note).toMatch(/PUSH EXIT CODE 0 WAS EXPLICITLY CAPTURED/);
+    expect(REC.hosted_note).toMatch(/DRY-RUN EXIT 0/);
+    expect(REC.hosted_note).toMatch(/0183 \| 0183/);
+    // The limitation, stated rather than glossed.
+    expect(REC.hosted_note).toMatch(
+      /OPERATOR-OBSERVED CLIENT-SIDE WINDOWS, NOT SERVER-GENERATED/i,
+    );
+    // The known defect in the applied migration is recorded, not hidden.
+    expect(REC.hosted_note).toMatch(/MAINTAIN/);
+    expect(REC.hosted_note).toMatch(/0184_client_budget_context_least_privilege\.sql/);
+    expect(REC.hosted_note).toMatch(/NOT YET APPLIED/i);
+    // The chain is carried forward, not dropped.
+    for (const priorSha of [
+      "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57", // 0182
+      "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f", // 0181
+      "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6", // 0171
+    ]) {
+      expect(REC.hosted_note, priorSha).toContain(priorSha);
+    }
+  });
+
+  it("the APPLIED bytes still hash to the recorded checksum", () => {
+    // 0183 is frozen: production ran these exact bytes.
+    const raw = createHash("sha256").update(SQL, "utf8").digest("hex");
+    expect(raw).toBe(
+      "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb",
+    );
+    const executable = createHash("sha256")
+      .update(SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n"), "utf8")
+      .digest("hex");
+    expect(executable).toBe(
+      "1a968807444b8b7d8d2c93d7f50bf134e613068bfb84c36b3de76615507f778d",
+    );
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {

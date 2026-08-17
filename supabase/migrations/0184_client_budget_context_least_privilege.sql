@@ -111,7 +111,19 @@ revoke all privileges on function public.client_budget_context_immutable_fields(
 revoke all privileges on function public.client_budget_context_server_timestamps()
   from public, anon, authenticated, service_role;
 
-comment on table public.client_budget_context is
-  'CURRENT practitioner-recorded budget context for a client (one row per client, mutable in place). Practitioner-held planning documentation only: not a clinical note, not an affordability score, not income or payment data, and never surfaced to clients. Supersedes the plan-scoped treatment_plans.budget_notes (0034), which is retained read-only and was deliberately NOT backfilled. Privileges (0184): authenticated holds SELECT/INSERT/UPDATE and nothing else; anon, service_role and PUBLIC hold nothing.';
+-- NOTHING ELSE. An earlier revision of this file also carried a
+-- `comment on table` restating the privilege contract. It was removed: this
+-- migration declares itself GRANT/REVOKE only, and COMMENT ON writes to
+-- pg_description — schema metadata, however harmless. A migration whose
+-- header claims "no DDL" must contain no DDL, and the contract belongs in
+-- this header and in the tests, not in a statement that widens the file's
+-- executable footprint past its own stated scope.
+--
+-- tests/migrations/0184-client-budget-context-least-privilege.test.ts enforces
+-- that with a POSITIVE allowlist of executable statements rather than a list
+-- of forbidden keywords. The denylist is what let the COMMENT through: it
+-- enumerated CREATE/ALTER/DROP and simply did not think of COMMENT — the same
+-- enumerate-what-to-exclude mistake this very migration exists to repair at
+-- the privilege layer.
 
 commit;
