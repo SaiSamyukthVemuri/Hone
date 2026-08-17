@@ -197,6 +197,45 @@ describe("0184: file and numbering", () => {
     expect(note).not.toMatch(/evidence is unambiguous/i);
   });
 
+  it("the staleness disclosure matches what those files ACTUALLY contain", () => {
+    // THE ASSERTION THAT WOULD HAVE CAUGHT THE DEFECT. Every other test here
+    // pins the record's own prose, which cannot detect the record being wrong
+    // ABOUT SOMETHING ELSE. This one reads the described files and compares.
+    //
+    // The defect: the disclosure claimed both documents report a production
+    // migration max of 0165. current-state.md does; release-changelog.md says
+    // 0157 and contains no 0165 at all. One verified fact (the shared
+    // reconciliation date and head) was generalised to cover a figure that was
+    // never checked per-document.
+    const note = canonicalRecord().hosted_note;
+    const read = (f: string) =>
+      readFileSync(path.join(ROOT, "docs/production", f), "utf8");
+    const cs = read("current-state.md");
+    const rc = read("release-changelog.md");
+
+    // Facts the disclosure asserts about BOTH — verified against both.
+    for (const [name, src] of [
+      ["current-state.md", cs],
+      ["release-changelog.md", rc],
+    ] as const) {
+      expect(src, `${name} should still name the stale head`).toContain("96b28d6");
+      expect(src, `${name} should still carry the stale date`).toContain("2026-07-27");
+      expect(src, `${name} must not mention #593`).not.toContain("#593");
+      expect(src, `${name} must not mention the merge SHA`).not.toContain("266b6092");
+    }
+
+    // The figure that DIFFERS. Asserted per-document, in both directions.
+    expect(cs, "current-state.md reports 0165").toContain("0165");
+    expect(rc, "release-changelog.md does NOT report 0165").not.toContain("0165");
+    expect(rc, "release-changelog.md reports 0157").toContain("0157");
+
+    // And the record must say exactly that, per document — never a shared max.
+    expect(note).toMatch(/current-state\.md says 0165/);
+    expect(note).toMatch(/release-changelog\.md says 0157/);
+    expect(note).toMatch(/DIFFER FROM EACH OTHER/);
+    expect(note).not.toMatch(/a production migration max of 0165/);
+  });
+
   it("does not send readers to a STALER source for current deployment status", () => {
     // The first version of this correction delegated current status to
     // current-state.md / release-changelog.md — both last reconciled
