@@ -77,10 +77,14 @@ function policyDefinition(name: string, sql: string = CODE): string {
 }
 
 describe("0183: file and numbering", () => {
-  it("is the repository maximum and carries the version exactly once", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
+  it("carries the version exactly once", () => {
+    // 0183 is NO LONGER the repository maximum — 0184 (its least-privilege
+    // repair) now is, and per CLAUDE.md only the CURRENT maximum's own test
+    // may assert isRepoMax. The "nothing above me" tripwire is served
+    // centrally by tests/migrations/0184-*.test.ts.
     expect(countVersion(VERSION)).toBe(1);
-    expect(versionsAbove(VERSION)).toEqual([]);
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0184"]);
   });
 
   it("is NOT yet applied to production — hosted state is declared, not derived", () => {

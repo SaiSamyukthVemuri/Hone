@@ -845,20 +845,122 @@ describe("0183: privileges", () => {
     expect(res.rows).toHaveLength(0);
   });
 
-  it("authenticated holds SELECT/INSERT/UPDATE but NOT DELETE or TRUNCATE", async () => {
+  // 0184: the privilege contract is now an ALLOWLIST, asserted EXACTLY.
+  //
+  // information_schema.role_table_grants is NOT sufficient here: it does not
+  // report MAINTAIN (PostgreSQL 17), which is precisely the privilege that
+  // 0183's name-and-revoke approach could not have anticipated. These read the
+  // raw ACL via aclexplode so a privilege invented by a future PostgreSQL
+  // shows up rather than hiding behind an incomplete view.
+  async function tableAcl(): Promise<Record<string, string[]>> {
     const res = await adminQuery(
-      `select privilege_type from information_schema.role_table_grants
-        where table_schema = 'public' and table_name = 'client_budget_context'
-          and grantee = 'authenticated'`,
+      `select coalesce(nullif(pg_get_userbyid(a.grantee), ''), 'PUBLIC') as grantee,
+              a.privilege_type
+         from pg_class c, aclexplode(c.relacl) a
+        where c.oid = 'public.client_budget_context'::regclass`,
     );
-    const granted = res.rows.map((r) => r.privilege_type as string);
-    expect(granted).toEqual(
-      expect.arrayContaining(["SELECT", "INSERT", "UPDATE"]),
+    const out: Record<string, string[]> = {};
+    for (const r of res.rows) {
+      const g = r.grantee as string;
+      (out[g] ??= []).push(r.privilege_type as string);
+    }
+    for (const k of Object.keys(out)) out[k].sort();
+    return out;
+  }
+
+  it("authenticated holds EXACTLY select/insert/update — no REFERENCES, TRIGGER or MAINTAIN", async () => {
+    const acl = await tableAcl();
+    expect(acl.authenticated).toEqual(["INSERT", "SELECT", "UPDATE"]);
+    // Named individually so a failure says WHICH privilege drifted back.
+    for (const unintended of [
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER",
+      "MAINTAIN",
+    ]) {
+      expect(acl.authenticated, unintended).not.toContain(unintended);
+    }
+  });
+
+  it("anon, service_role and PUBLIC hold NOTHING on the table", async () => {
+    const acl = await tableAcl();
+    expect(acl.anon).toBeUndefined();
+    expect(acl.service_role).toBeUndefined();
+    expect(acl.PUBLIC).toBeUndefined();
+    // Only the owner and authenticated appear at all.
+    expect(Object.keys(acl).sort()).toEqual(["authenticated", "postgres"]);
+  });
+
+  it("the three 0183 trigger functions grant EXECUTE to NOBODY but the owner", async () => {
+    const res = await adminQuery(
+      `select p.proname,
+              coalesce(nullif(pg_get_userbyid(a.grantee), ''), 'PUBLIC') as grantee
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+         left join lateral aclexplode(p.proacl) a on true
+        where n.nspname = 'public'
+          and p.proname in ('client_budget_context_set_studio_id',
+                            'client_budget_context_immutable_fields',
+                            'client_budget_context_server_timestamps')
+        order by p.proname`,
     );
-    // REFERENCES and TRIGGER survive from Supabase's default grants exactly as
-    // on client_clinical_notes; neither reads nor removes data.
-    expect(granted).not.toContain("DELETE");
-    expect(granted).not.toContain("TRUNCATE");
+    const byFn: Record<string, string[]> = {};
+    for (const r of res.rows) {
+      (byFn[r.proname as string] ??= []).push(r.grantee as string);
+    }
+    expect(Object.keys(byFn).sort()).toHaveLength(3);
+    for (const [fn, grantees] of Object.entries(byFn)) {
+      expect(grantees.sort(), fn).toEqual(["postgres"]);
+    }
+  });
+
+  it("public.set_updated_at() is deliberately UNTOUCHED by 0184", async () => {
+    // A shared helper used by many tables since 0015. Changing it belongs to
+    // its own change with its own blast radius, not to a budget repair.
+    const res = await adminQuery(
+      `select coalesce(nullif(pg_get_userbyid(a.grantee), ''), 'PUBLIC') as grantee
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace,
+              aclexplode(p.proacl) a
+        where n.nspname = 'public' and p.proname = 'set_updated_at'`,
+    );
+    const grantees = res.rows.map((r) => r.grantee as string);
+    expect(grantees).toEqual(expect.arrayContaining(["authenticated"]));
+  });
+
+  it("an authenticated member cannot CREATE A TRIGGER on the table", async () => {
+    // The one genuinely exercisable escalation the drift allowed: CREATE
+    // TRIGGER needs only table TRIGGER + function EXECUTE, never ownership,
+    // so before 0184 a member could attach an existing trigger function here
+    // and disrupt writes. Measured succeeding before the repair.
+    await expect(
+      userQuery(
+        a.userId,
+        `create trigger zz_forbidden before insert on public.client_budget_context
+           for each row execute function public.client_budget_context_server_timestamps()`,
+      ),
+    ).rejects.toThrow(/permission denied/i);
+
+    const res = await adminQuery(
+      `select tgname from pg_trigger
+        where tgrelid = 'public.client_budget_context'::regclass and not tgisinternal
+        order by tgname`,
+    );
+    expect(res.rows.map((r) => r.tgname as string)).toEqual([
+      "client_budget_context_immutable_fields",
+      "client_budget_context_server_timestamps",
+      "client_budget_context_set_studio_id",
+      "client_budget_context_set_updated_at",
+    ]);
+  });
+
+  it("a trigger function cannot be invoked as an ordinary RPC", async () => {
+    // Refused twice over after 0184: by the privilege layer, and by
+    // PostgreSQL's rule that a `returns trigger` function is not callable.
+    await expect(
+      userQuery(a.userId, "select public.client_budget_context_set_studio_id()"),
+    ).rejects.toThrow();
   });
 
   it("RLS is enabled", async () => {
