@@ -90,86 +90,81 @@ function assertCurrent0182NotePinned(note: string) {
 }
 
 describe("0182 — migration state", () => {
-  it("is the current repository maximum and consumes exactly one number", () => {
-    expect(isRepoMax("0182")).toBe(true);
-    expect(versionsAbove("0182")).toEqual([]);
+  it("consumes exactly one number", () => {
+    // 0182 is NO LONGER the repository maximum — 0183 (client budget context)
+    // now is, and per CLAUDE.md only the CURRENT maximum's own test may assert
+    // isRepoMax. The "nothing above me" tripwire is served centrally by
+    // tests/migrations/0183-client-budget-context.test.ts; re-asserting it here
+    // is exactly the mechanical sweep that turned 0163, 0164 and 0165 red.
     expect(countVersion("0182")).toBe(1);
+    expect(isRepoMax("0182")).toBe(false);
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {
     expect(countVersion("0158")).toBe(0);
   });
 
-  it("IS applied to production — hosted state is declared, not derived", () => {
-    // THE HAND-OFF HAPPENED. This block previously asserted the PRE-APPLY state
-    // (hosted still 0181, pending ["0182"], repo != hosted) and was written to
-    // go red the moment the rollout ran, so the apply could not be recorded
-    // without updating the canonical hosted-state record in the same change.
-    // That is exactly what happened: the migration-first rollout completed on
-    // 2026-08-16 — 0182 was pushed to the linked production project BEFORE #590
-    // was merged as bf1b18a9 — and this block was flipped in the same change
-    // that moved the canonical record.
+  it("IS applied to production, and is no longer the CURRENT record", () => {
+    // THE 0183 HANDOFF HAPPENED. This block asserted "hosted_migration_max ===
+    // 0182" while 0182 was the hosted max. 0183 was applied on 2026-08-17, so
+    // that claim now belongs to 0183's own file — exactly as this block was
+    // built to hand off. What survives here is the only thing that stays true
+    // forever: 0182 IS applied, so it must never appear as pending again.
     //
-    // A file on disk still says nothing about what production has applied. The
-    // claim below is the DECLARED one, read from docs/production/migration-state.json.
+    // 0182's PERMANENT evidence is unaffected: it is sourced from the FROZEN
+    // ledger section below, which never reads the moving canonical note.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe("0182");
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.pending_migrations).not.toContain("0182");
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(182);
   });
 
-  it("leaves 0183 as the next free number, available but unclaimed", () => {
-    expect(migrationState().next_free_migration).toBe("0183");
+  it("0182's date-only stamp is preserved as FROZEN history, not as current state", () => {
+    // While 0182 was the hosted max this asserted the canonical record carried
+    // 0182's date-only stamp. It no longer does — 0183's instant is there now.
+    // The honesty guarantee that mattered (no apply instant was ever captured
+    // for 0182, so none may be invented) is preserved in the frozen ledger
+    // section, which is where 0182's permanent evidence lives.
+    const LEDGER = readFileSync(
+      join(ROOT, "docs/production/migration-ledger.md"),
+      "utf8",
+    );
+    // Same slice the frozen-evidence block uses: anchored on "post-0182
+    // apply)", which is byte-identical whether the heading reads Current or
+    // Previous — that is why demoting the block did not move it.
+    const start = LEDGER.indexOf("post-0182 apply)");
+    const frozen = LEDGER.slice(start, LEDGER.indexOf("post-0181 apply)", start));
+    expect(start).toBeGreaterThan(-1);
+    // The guarantee is that 0182's apply STAMP is date-only and no instant is
+    // claimed for it — NOT that the section contains no timestamp at all. It
+    // legitimately contains several: a verifiable upper bound (the merge
+    // commit's committer date), bounds from the operator's release session,
+    // and an explicit counter-example warning that rendering the date as
+    // T00:00:00Z would read precision that does not exist. Asserting "no
+    // timestamp appears" would fail on the very prose that makes the record
+    // honest.
+    expect(frozen).toMatch(/DATE ONLY/i);
+    expect(frozen).toMatch(/precision that does not exist/i);
+    expect(frozen).toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/);
   });
 
-  it("stamps the CURRENT apply at date precision, and says so machine-readably", () => {
-    // CURRENT STATE, and it moves on the next apply — which is why it lives in
-    // this block and not in the permanent one below. While 0182 is the hosted
-    // max, the canonical record must carry 0182's date-only stamp AND the
-    // qualifier that stops a consumer reading it as midnight.
+  it("the current-note byte pin RETIRED at the 0183 handoff, by construction", () => {
+    // The pin guarded the canonical note's exact bytes while 0182 was the
+    // hosted max. `hosted_note` is CURRENT state and had to be free to advance
+    // when 0183 was applied — which it now has. Imposing 0182's digest on
+    // 0183's record would be the bug, not the guarantee.
     //
-    // The qualifier must survive the DERIVATION too, not just the file: reading
-    // it out of the JSON while `getMigrationState()` silently dropped it is the
-    // whole failure mode, since `npm run migration:state -- --json` is the
-    // documented machine interface.
-    const state = migrationState();
-    expect(state.hosted_applied_at).toBe("2026-08-16");
-    expect(
-      state.hosted_applied_at,
-      "an apply instant was never captured for 0182, so one must never appear here",
-    ).not.toMatch(/T\d{2}:/);
-    expect(state.hosted_applied_at_precision).toMatch(/DATE-ONLY/i);
-    expect(state.hosted_applied_at_precision).toMatch(/NONE IS INVENTED/i);
-  });
-
-  it("the CURRENT hosted_note is byte-pinned while 0182 is the hosted max", () => {
-    // STRUCTURAL AUTHORITY for the current record, and the reason no language
-    // regex guards it any more.
-    //
-    // `hosted_note` is CURRENT state and MUST be free to change when 0183 is
-    // applied. But while the canonical hosted max is still 0182, that note IS
-    // 0182's reviewed evidence record, and its exact bytes are known. Pinning
-    // the digest catches ANY edit — an appended fabricated count in any wording,
-    // a softened limitation, a quietly dropped checksum — without anyone having
-    // to anticipate the vocabulary. Three reviews running, enumerating synonyms
-    // missed one; a hash cannot.
-    //
-    // THIS PIN RETIRES AT THE 0183 HANDOFF, by construction: it lives in the
-    // describe that already asserts hosted max === "0182", so the whole block
-    // hands off together when the next apply moves hosted max, applied-at,
-    // next-free and the note. It imposes nothing on 0183's record. 0182's
-    // PERMANENT evidence is sourced from the FROZEN ledger section instead —
-    // see the permanent block below, which never reads this field.
+    // Proof the retirement is real rather than an excuse to stop checking: the
+    // digest of 0182's note NO LONGER matches the canonical record, because the
+    // record now describes 0183.
     const REC = JSON.parse(
       readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
     );
-
-    // Key truth phrases first: they fail with a readable message, and a digest
-    // mismatch alone would not say WHICH guarantee was lost.
-    expect(REC.hosted_note).toMatch(/PUSH EXIT CODE WAS NOT CAPTURED/);
-    expect(REC.hosted_note).toMatch(/NO ROW-COUNT PROOF/);
-
-    assertCurrent0182NotePinned(REC.hosted_note);
+    // Generic, not hard-coded to the migration that happened to supersede it:
+    // the guarantee is that 0182 is no longer current, whatever is.
+    expect(Number(REC.hosted_migration_max)).toBeGreaterThan(182);
+    expect(() => assertCurrent0182NotePinned(REC.hosted_note)).toThrow();
+    // And 0182 is still named in the chain the successor carries forward.
+    expect(REC.hosted_note).toMatch(/0182_sterile_item_discard_lifecycle\.sql/);
   });
 });
 
@@ -398,34 +393,28 @@ describe("0182 — the recorded apply evidence stays honest", () => {
     ).toEqual([]);
   });
 
-  it("the CURRENT-note pin rejects ANY edit, whatever vocabulary it uses", () => {
-    // THE POINT OF THE WHOLE ARCHITECTURE, proved behaviourally rather than by
-    // scanning this file's own source. The previous version of this test counted
-    // occurrences of a regex fragment, which said nothing about whether the
-    // design still held.
+  it("the digest MECHANISM still works — it just guards 0183's record now", () => {
+    // This used to prove the CURRENT-note pin rejected every injection,
+    // including ones spelled out in words that no regex catches. The pin
+    // retired when 0183 became the hosted max, so proving it against the
+    // canonical note is no longer possible OR correct.
     //
-    // Every injection below evaded the lexical helper at some point in review —
-    // including one spelled out in words, which no regex of that kind can ever
-    // catch. The structural pin rejects all of them for the same reason it
-    // rejects a single stray character: it does not read English.
-    const REC = JSON.parse(
-      readFileSync(join(ROOT, "docs/production/migration-state.json"), "utf8"),
-    );
-    expect(() => assertCurrent0182NotePinned(REC.hosted_note)).not.toThrow();
-
+    // What is still worth proving is that the MECHANISM is sound, because
+    // 0183's record now depends on the same idea. Demonstrated against 0182's
+    // FROZEN ledger section, whose bytes genuinely are fixed forever.
+    const digest = (t: string) =>
+      createHash("sha256").update(t, "utf8").digest("hex");
+    const base = digest(SECTION);
     for (const injection of [
       " POST-APPLY VERIFICATION: record-count: 181.",
-      " POST-APPLY VERIFICATION: entry count = 181.",
-      " POST-APPLY VERIFICATION: row total: 181.",
-      " POST-APPLY VERIFICATION: 181 records were present.",
       " The post-apply tally stood at one hundred and eighty-one.",
       " Unrelated fabricated prose with no count in it at all.",
       " ",
     ]) {
       expect(
-        () => assertCurrent0182NotePinned(REC.hosted_note + injection),
-        `an edit to the canonical note went undetected: ${injection}`,
-      ).toThrow();
+        digest(SECTION + injection),
+        `an edit went undetected: ${injection}`,
+      ).not.toBe(base);
     }
   });
 

@@ -11,6 +11,13 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+// One decision point for the budget read, backed by the SAME narrow
+// migration-skew classifier the Consultation page uses, so the two surfaces
+// cannot drift into tolerating different sets of errors.
+import {
+  decideBudgetExportRead,
+  type BudgetExportReadResult,
+} from "@/lib/budget/export-read";
 import { mergeReactionIntoChips } from "@/lib/observation-chips";
 import {
   blockAreasLabel,
@@ -73,6 +80,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // consultation + skin_hair_analysis. Visible and printable in the product
     // but absent from this export until now.
     clinicalNotesRes,
+    // Migration 0183: CURRENT client budget context. Practitioner-held client
+    // data, so it is exported for portability alongside every comparable
+    // practitioner record. Deliberately EXCLUDED from the all-or-nothing error
+    // guard below — see the comment there.
+    budgetContextRes,
   ] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
@@ -301,6 +313,21 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // Current client budget context (0183). One row per client, so this is
+    // small; still paginated to exhaustion like every other read. `id` is the
+    // deterministic tiebreak.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("client_budget_context")
+        .select(
+          "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
+        )
+        .eq("studio_id", studio.id)
+        // client_id is the PRIMARY KEY (one row per client), so ordering on
+        // it alone is already unique and deterministic — no tiebreak needed.
+        .order("client_id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
   for (const r of [
@@ -321,6 +348,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     exposureIncidentsRes,
     auditEventsRes,
     clinicalNotesRes,
+    // budgetContextRes is handled SEPARATELY, immediately below — not
+    // excluded from failing the export.
   ]) {
     if (r.error) {
       return {
@@ -329,6 +358,30 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       };
     }
   }
+
+  // client_budget_context (0183) gets exactly ONE tolerated failure: the
+  // proven "this relation does not exist" condition, which is the
+  // migration-first window where the new application runs against a database
+  // that has not yet had 0183 applied. Failing the whole export then would
+  // take out portability for sixteen perfectly readable tables.
+  //
+  // EVERY other failure rejoins the all-or-nothing guard above. An earlier
+  // version tolerated all of them, which meant a permission denial, an RLS
+  // refusal, a network fault, a failed later pagination page, or
+  // fetchAllRows' own "refusing to return a partial table" refusal each
+  // produced an ok:true ZIP that was silently missing known data. A
+  // portability export that quietly omits records is worse than one that
+  // fails: the owner cannot tell it happened.
+  const budgetDecision = decideBudgetExportRead(
+    budgetContextRes as BudgetExportReadResult,
+  );
+  if (budgetDecision.kind === "fail") {
+    return {
+      ok: false,
+      error: `Failed to load data for export: ${budgetDecision.message}`,
+    };
+  }
+  const budgetContextExported = budgetDecision.kind === "export";
 
   // Entries are fetched in parallel with sessions, so they may contain rows
   // belonging to soft-deleted sessions. Filter them out using the set of
@@ -913,6 +966,42 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     ),
   );
 
+  // Current client budget context (0183). Practitioner-held client data, so it
+  // travels with the export rather than being silently dropped from
+  // portability. Serialized through the same rowsToCsv chokepoint (budget
+  // notes are free text and routinely contain commas and line breaks).
+  //
+  // Reaching here with budgetContextExported === false means the ONE tolerated
+  // condition above: 0183 is not applied. A successful read of an EMPTY table
+  // is a different thing entirely and still writes a valid header-only CSV
+  // with a manifest count of 0 — "zero rows" must never be conflated with
+  // "could not read rows".
+  if (budgetDecision.kind === "export") {
+    const budgetContextRows = budgetDecision.rows.map((row) => ({
+      ...row,
+      client_name:
+        typeof row.client_id === "string"
+          ? clientNameById.get(row.client_id) ?? null
+          : null,
+    }));
+    zip.file(
+      "client_budget_context.csv",
+      countedCsv(
+        "client_budget_context.csv",
+        [
+          "client_id",
+          "client_name",
+          "budget_level",
+          "budget_notes",
+          "updated_by_practitioner_id",
+          "created_at",
+          "updated_at",
+        ],
+        budgetContextRows,
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------------
   // COMPLETENESS VERIFICATION
   //
@@ -1062,6 +1151,21 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         "so no safe studio-scoped count query exists. Their rows are filtered against the " +
         "exported session ids, so their completeness follows the sessions check above.",
     },
+    ...(budgetContextExported
+      ? {}
+      : {
+          omitted_files: {
+            files: ["client_budget_context.csv"],
+            reason:
+              "The client_budget_context table does not exist in this database, which " +
+              "means migration 0183 has not been applied yet. This is the ONLY read " +
+              "failure the export tolerates: any other failure on this source (permission, " +
+              "network, a failed pagination page, a partial-read refusal) fails the whole " +
+              "export instead of producing this ZIP. The file was OMITTED rather than " +
+              "written empty, because an empty file would falsely assert that this studio " +
+              "holds no budget context. No other file is affected.",
+          },
+        }),
     completeness_contract: [
       "Every supported source is read with pagination to exhaustion; a failed page fails the whole export rather than producing a partial file.",
       "`files` records the number of rows actually exported to each CSV.",
@@ -1102,6 +1206,7 @@ Files included:
 - record_keeping_exposure_incidents.csv: Exposure-incident log (OWNER-ONLY). Contains sensitive personal information about the exposed person (name, address, phone) and incident details.
 - record_keeping_audit_events.csv: Record-keeping change history: record type/id, action, which fields changed, who made the change, and when. (Reduced: it does not include the before/after value snapshots.)
 - client_clinical_notes.csv: The clinical narrative for every client: consultation notes and skin/hair analyses, with the authoring practitioner, the treatment areas tagged, when the note describes (occurred_at) and when it was recorded (created_at). FULL HISTORY: these records are append-only, so a correction appears as its own row whose supersedes_note_id points at the note it revised, and the superseded note is kept.
+- client_budget_context.csv: The client's CURRENT budget context as recorded by the practitioner: a broad budget level (no_stated_limit / somewhat_limited / severely_limited, or empty when none was recorded) and free-text budget notes, with who last updated it and when. One row per client, and only for clients where something was recorded. This is practitioner-authored planning context, not a financial assessment of the client: it holds no income, no affordability score and no payment data, and it never affected pricing or charges. Historical plan-scoped budget notes written before this record existed remain in treatment_plans.csv and were deliberately not copied here.
 
 IMPORTANT: SENSITIVE DATA: This ZIP now includes record-keeping / inspection data, including an exposure-incident log with personal information about exposed individuals. Store, transmit, and dispose of this export securely, and only share it with parties who are authorized to receive it (e.g. an inspector). Only a studio owner can generate this export.
 
@@ -1141,6 +1246,7 @@ hello@hone.care
         "treatment_plans.csv",
         "treatment_plan_stages.csv",
         "client_clinical_notes.csv",
+        ...(budgetContextExported ? ["client_budget_context.csv"] : []),
         "README.txt",
       ],
       row_counts: {
@@ -1154,6 +1260,14 @@ hello@hone.care
         treatment_plans: treatmentPlanRows.length,
         treatment_plan_stages: treatmentPlanStageRows.length,
         client_clinical_notes: (clinicalNotesRes.data ?? []).length,
+        ...(budgetContextExported
+          ? {
+              client_budget_context:
+                budgetDecision.kind === "export"
+                  ? budgetDecision.rows.length
+                  : 0,
+            }
+          : {}),
       },
     },
   });

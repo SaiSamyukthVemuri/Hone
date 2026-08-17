@@ -4,6 +4,10 @@
 // PR #279: numbing vocabulary (allowlist + labels) lives with the other
 // clinical-response vocabulary; the type is imported here for SessionBlock.
 import type { NumbingStatus } from "@/lib/sessions/clinical-response";
+// Migration 0183: the client budget vocabulary is defined once in
+// lib/budget/levels.ts (shared by the UI chips, the server action, the
+// export and the DB CHECK guard test) and imported here.
+import type { ClientBudgetLevel } from "@/lib/budget/levels";
 
 export type Modality = "electrolysis" | "laser";
 export type ElectrolysisMode = "thermo" | "galv" | "blend";
@@ -989,6 +993,14 @@ export type TreatmentPlan = {
   created_at: string;
   closed_at: string | null;
   // Migration 0034 additive columns (nullable; legacy rows are still valid).
+  //
+  // budget_notes is LEGACY and READ-ONLY as of migration 0183. Budget is now
+  // client-level context (public.client_budget_context) because a client with
+  // several plans had several budget answers and no rule for which was
+  // current. The column is deliberately retained — existing values are real
+  // history, are still rendered read-only on the plan and still travel in
+  // treatment_plans.csv — but nothing writes it any more and it was NOT
+  // copied into the new record.
   budget_notes: string | null;
   practitioner_notes: string | null;
   treatment_goal_minutes_override: number | null;
@@ -1016,6 +1028,26 @@ export type TreatmentPlan = {
   treatment_areas: string[] | null;
   estimated_timeline_months_min: number | null;
   estimated_timeline_months_max: number | null;
+};
+
+// Migration 0183: CURRENT client budget context. Practitioner-held planning
+// context, NOT a clinical note and NOT a financial assessment. Exactly one
+// row per client (UNIQUE client_id), mutable in place — unlike
+// client_clinical_notes this is not append-only, because "the client's
+// current budget" is a single fact that gets corrected, not a dated record
+// that accumulates. budget_level is NULL when no broad level was recorded;
+// that is a legitimate state, not a fourth level. The canonical vocabulary
+// lives in lib/budget/levels.ts and is pinned to the DB CHECK by test.
+export type ClientBudgetContext = {
+  // client_id IS the primary key: one row per client, structurally. There is
+  // no surrogate id, because there is no second row to distinguish.
+  client_id: string;
+  studio_id: string;
+  budget_level: ClientBudgetLevel | null;
+  budget_notes: string;
+  updated_by_practitioner_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 // Migration 0034: one stage of a treatment plan. A plan can contain
