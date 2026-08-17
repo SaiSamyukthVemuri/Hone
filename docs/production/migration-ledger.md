@@ -28,8 +28,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Apply exit status** | ✅ **PUSH EXIT CODE 0 EXPLICITLY CAPTURED.** CLI output: `Applying migration 0184_client_budget_context_least_privilege.sql...` / `Finished supabase db push.` |
 | **Apply timestamp** | ⚠️ **OPERATOR-OBSERVED CLIENT-SIDE WINDOW**, `2026-08-17T12:02:40Z` – `12:03:01Z`. **No server-generated migration timestamp was captured, and none is invented.** |
 | **Applied from** | the authorized #593 head `74e41327b6909ec068619f9743e8099e5dd3c76a` |
-| **Application merge** | **NONE YET.** #593 remains **OPEN and UNMERGED**; application production is still `a1047c7a5fdcad58bf033b6ae1cdcc8f7f1b5875`. Production holds the budget schema with **no UI writing to it** — the intended migration-first ordering, not a defect. |
-| **Where the apply ran** | the **operator's own credentialed machine** — *not* the repository host, which holds no production credential. |
+| **Application merge** | **AT THE TIME OF THIS APPLY: none.** #593 was still open and application production was `a1047c7a5fdcad58bf033b6ae1cdcc8f7f1b5875` — production held the budget schema with **no UI writing to it**, the intended migration-first ordering, not a defect. **#593 SUBSEQUENTLY MERGED as `266b6092f22ffd6d656a967be527abcf9437a95f`.** |
+| **Where the apply ran** | **`hone-dev-01`**, from the `client-budget-notes` checkout. A **production-project** pgdelta catalog (`catalog-alhhybgqdmcdyzpybykj-migrations-…-1786968180707.json`) was written to that checkout's `supabase/.temp/pgdelta/` at `12:03:00.717Z` — **inside** the observed apply window — and pgdelta is written by the Supabase `db push` flow. **LIMIT:** no captured command/process record names the `db push` process itself. **Linkage is not authority:** a project-ref on disk grants no database authority, and the credential used was transient and is recorded nowhere in this repository. ⚠️ **CORRECTION:** this row previously said the apply ran on a machine that was *not* the repository host. **That claim is WITHDRAWN — it was false.** |
 | **Post-apply verification** | `migration list` read `0184 \| 0184`; remote schema dump exit 0. |
 
 ### Final privilege state — the 0183 drift is closed
@@ -82,12 +82,12 @@ migration.
 | **Dry run** | proposed `0183_client_budget_context.sql` **and nothing else**; observed `01:01:11Z` – `01:02:11Z`; **DRY-RUN EXIT 0** |
 | **Apply exit status** | ✅ **PUSH EXIT CODE 0 WAS EXPLICITLY CAPTURED** — not inferred from output. This closes the gap the 0182 record had to declare. |
 | **Apply timestamp** | ⚠️ **OPERATOR-OBSERVED CLIENT-SIDE WINDOW**, `2026-08-17T01:03:11Z` – `01:04:02Z`. This is when the operator's console started and finished the command. **No server-generated migration timestamp was captured, and none is invented.** |
-| **Applied from** | the authorized #593 reviewed head `e43330a0c2cf8b84dac4f8538611febce4f013f1` — **DATABASE FIRST, before any application merge.** #593 remains **OPEN and UNMERGED.** |
-| **Application merge** | **NONE YET.** The application code for this feature has not shipped. |
-| **Where the apply ran** | the **operator's own credentialed machine** — *not* the repository host. A read-only capability recon of `hone-dev-01` on 2026-08-17 found no project-ref in any of its seven checkouts, no `SUPABASE_ACCESS_TOKEN`, no stored CLI token and no database URL. |
+| **Applied from** | the authorized #593 reviewed head `e43330a0c2cf8b84dac4f8538611febce4f013f1` — **DATABASE FIRST, before any application merge.** #593 was still open at this point in the timeline. |
+| **Application merge** | **AT THE TIME OF THIS SNAPSHOT: none** — the application code for this feature had not yet shipped. **#593 SUBSEQUENTLY MERGED as `266b6092f22ffd6d656a967be527abcf9437a95f`.** |
+| **Where the apply ran** | **`hone-dev-01`**, from the `client-budget-notes` checkout — on the **same host-artifact basis as 0184**. A **production-project** pgdelta catalog (`catalog-alhhybgqdmcdyzpybykj-migrations-…-1786928642507.json`) was **created** in that checkout's `supabase/.temp/pgdelta/` at `01:04:02.506Z`, the **closing instant** of the observed window (`01:03:11Z` – `01:04:02Z`); the directory did not exist before it. The CLI link artifacts (`project-ref`, `pooler-url`, `linked-project.json`) were written `01:00:01Z` – `01:00:02Z`, ~3 min *before* the window opened. **LIMIT:** that artifact lands **at** the window's close rather than inside it, and no captured command/process record names the `db push` process — so this host is **artifact-supported, not command-proven**. **Linkage is not authority:** a project-ref on disk grants no database authority, and the credential used was transient and is recorded nowhere in this repository. ⚠️ **CORRECTION:** this row previously claimed a read-only recon "found no project-ref in any of its seven checkouts … and no database URL" on `hone-dev-01`. **That claim is WITHDRAWN — it was false:** `project-ref` and `pooler-url` both existed in the `client-budget-notes` checkout from `01:00:01Z`, before the window opened. |
 | **Post-apply verification** | `migration list` read `0183 \| 0183`. A full schema dump completed successfully (exit 0) — and it is what surfaced the privilege drift below. |
 
-### 🚨 Known defect in the applied 0183 — repair authored, NOT applied
+### 🚨 Known defect in the applied 0183 — repair authored, NOT YET APPLIED AT THIS POINT IN THE TIMELINE
 
 The post-apply schema dump revealed that 0183 **stated** its privilege contract
 as an allowlist ("authenticated gets SELECT/INSERT/UPDATE") but **enforced** it
@@ -128,7 +128,9 @@ revoking on a real migrated database and re-running the full behavioural suite.
 **deliberately untouched** — a shared helper since 0015, belonging to its own
 change with its own blast radius.
 
-**0184 is NOT APPLIED.** Until it is, production carries the wider grant.
+**AT THE TIME OF THIS SNAPSHOT, `0184` was NOT YET APPLIED**, so production
+still carried the wider grant. 0184 was applied later the same day — see the
+current-state section above.
 
 ## Previous state (verified 2026-08-16, post-0182 apply)
 

@@ -89,6 +89,40 @@ function assertSingleCurrentRecord(note: string): void {
   ).toBe(1);
 }
 
+/**
+ * This record is an IMMUTABLE apply snapshot. Application deployment state is
+ * MUTABLE, so it may appear here only as history anchored to the apply event —
+ * never as a present-tense claim that goes stale on the next merge.
+ *
+ * It did exactly that: the note asserted "#593 remains OPEN and UNMERGED /
+ * application production is still a1047c7a…", which went false the moment #593
+ * merged as 266b6092. These are the three spellings this record actually
+ * carried — not a general parser for prose it might carry one day.
+ *
+ * Scope note: the apply-HOST correction is narrative prose in
+ * docs/production/migration-ledger.md and is deliberately left untested.
+ * Proving two paragraphs of historical prose with a markdown parser is the
+ * over-engineering this record's previous repair attempt died of.
+ */
+const PRESENT_TENSE_DEPLOYMENT_CLAIMS = [
+  "#593 remains OPEN",
+  "HAS NOT SHIPPED",
+  "application production is still",
+];
+
+function assertApplicationStatusIsHistorical(note: string): void {
+  for (const stale of PRESENT_TENSE_DEPLOYMENT_CLAIMS) {
+    expect(
+      note,
+      `present-tense deployment claim in an immutable apply record: "${stale}"`,
+    ).not.toContain(stale);
+  }
+  expect(note).toContain("APPLICATION STATUS AT THE TIME OF THIS APPLY");
+  expect(note).toContain(
+    "#593 SUBSEQUENTLY MERGED as 266b6092f22ffd6d656a967be527abcf9437a95f",
+  );
+}
+
 describe("0184: file and numbering", () => {
   it("is the repository maximum and carries the version exactly once", () => {
     expect(isRepoMax(VERSION)).toBe(true);
@@ -152,8 +186,11 @@ describe("0184: file and numbering", () => {
     );
     // The deliberate omission is named, not hidden.
     expect(REC.hosted_note).toMatch(/set_updated_at\(\) was DELIBERATELY NOT TOUCHED/);
-    // And the application has NOT shipped — production holds schema with no UI.
-    expect(REC.hosted_note).toMatch(/#593 remains OPEN and UNMERGED/);
+    // The migration-first ordering, stated as history rather than as a
+    // present-tense claim — see the dedicated block below.
+    expect(REC.hosted_note).toMatch(
+      /APPLICATION STATUS AT THE TIME OF THIS APPLY: #593 was still OPEN and UNMERGED/,
+    );
   });
 
   it("names exactly ONE current record — a historical link can never be CURRENT", () => {
@@ -183,6 +220,35 @@ describe("0184: file and numbering", () => {
         `a mislabelled historical record went undetected: ${injection.slice(0, 55)}`,
       ).toThrow();
     }
+  });
+
+  it("states application status as HISTORY, not as a present-tense claim", () => {
+    assertApplicationStatusIsHistorical(canonicalRecord().hosted_note);
+  });
+
+  it("ANTI-VACUITY: reverting to the present tense is caught", () => {
+    // Mutates a COPY. The real record is never touched.
+    const note = canonicalRecord().hosted_note;
+    expect(() => assertApplicationStatusIsHistorical(note)).not.toThrow();
+
+    const reverted = note.replace(
+      "APPLICATION STATUS AT THE TIME OF THIS APPLY: #593 was still OPEN and UNMERGED and application production was a1047c7a5fdcad58bf033b6ae1cdcc8f7f1b5875",
+      "THE APPLICATION CODE FOR THIS FEATURE HAS NOT SHIPPED: #593 remains OPEN and UNMERGED, application production is still a1047c7a5fdcad58bf033b6ae1cdcc8f7f1b5875",
+    );
+    expect(reverted).not.toEqual(note);
+    expect(
+      () => assertApplicationStatusIsHistorical(reverted),
+      "the exact stale wording this record carried went undetected",
+    ).toThrow();
+
+    // Dropping the outcome alone is also caught — history without the merge is
+    // a snapshot that quietly reads as still-current.
+    const outcomeDropped = note.replace(
+      " #593 SUBSEQUENTLY MERGED as 266b6092f22ffd6d656a967be527abcf9437a95f.",
+      "",
+    );
+    expect(outcomeDropped).not.toEqual(note);
+    expect(() => assertApplicationStatusIsHistorical(outcomeDropped)).toThrow();
   });
 
   it("the APPLIED bytes still hash to the recorded checksum", () => {
