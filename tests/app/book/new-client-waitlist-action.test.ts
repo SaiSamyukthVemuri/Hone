@@ -44,6 +44,11 @@ const scenario = {
   rateLimited: false,
   studioSendOk: true,
   studioSendRetryable: false,
+  // What the provider hands back on an ACCEPTED send. `undefined` models the
+  // real reachable envelope where Resend returns no error and no usable
+  // `data.id` — sendEmailSafely surfaces that as { ok: true, messageId:
+  // undefined }, i.e. "not rejected", which is NOT proof of custody.
+  studioMessageId: "msg_1" as string | undefined,
   clientSendOk: true,
   clientSendThrows: false,
 };
@@ -62,6 +67,7 @@ function reset() {
     rateLimited: false,
     studioSendOk: true,
     studioSendRetryable: false,
+    studioMessageId: "msg_1",
     clientSendOk: true,
     clientSendThrows: false,
   });
@@ -102,7 +108,15 @@ vi.mock("@/lib/email/send-appointment", () => ({
     const isStudioSend = sends.length === 1;
     if (isStudioSend) {
       return scenario.studioSendOk
-        ? { ok: true, messageId: "msg_1" }
+        ? // Deliberately spread rather than always setting the key: when
+          // studioMessageId is undefined the property is ABSENT, which is
+          // exactly the `{ ok: true }` shape the helper can return.
+          {
+            ok: true,
+            ...(scenario.studioMessageId === undefined
+              ? {}
+              : { messageId: scenario.studioMessageId }),
+          }
         : {
             ok: false,
             // A real provider error can embed the recipient address. Poisoned
@@ -210,6 +224,74 @@ describe("submitNewClientBookingWaitlistAction — commit semantics", () => {
     expect(clientSend.to).toBe(CANARY_EMAIL);
     expect(clientSend.subject).toBe("You're on the waitlist · Waitlisted Studio");
     expect(clientSend.text).toContain("no appointment time has been reserved");
+  });
+
+  // -----------------------------------------------------------------------
+  // The commit point requires PROVABLE acceptance, not merely "not rejected".
+  //
+  // sendEmailSafely returns { ok: true, messageId: result.data?.id }. Both
+  // `data` and `data.id` are optional in the provider envelope, so a response
+  // carrying no error and no id yields { ok: true, messageId: undefined }.
+  // V1 has no durable queue — the studio email IS the record — so an
+  // acceptance nobody can point at must not become a "You're on the waitlist."
+  // -----------------------------------------------------------------------
+
+  it("provider returns { ok: true } with NO messageId property -> failure, no client confirmation", async () => {
+    scenario.studioMessageId = undefined;
+    const result = await submitNewClientBookingWaitlistAction(form());
+    expect(result).toEqual({ ok: false, error: GENERIC });
+    expect(sends, "the client must not be told they joined").toHaveLength(1);
+    expect(sends[0].to).toBe("owner@studio.test");
+    // Separable from a provider REJECTION: different event, different meaning.
+    const logs = consoleErrors.join("\n");
+    expect(logs).toContain("new_client_waitlist_studio_email_unconfirmed");
+    expect(logs).not.toContain("new_client_waitlist_studio_email_failed");
+  });
+
+  it("provider returns messageId: undefined -> failure, no client confirmation", async () => {
+    // Same reachable envelope, spelled as an explicit undefined value.
+    scenario.studioMessageId = undefined;
+    const result = await submitNewClientBookingWaitlistAction(form());
+    expect(result).toEqual({ ok: false, error: GENERIC });
+    expect(sends).toHaveLength(1);
+  });
+
+  it("provider returns an EMPTY or whitespace messageId -> failure, no client confirmation", async () => {
+    for (const id of ["", "   "]) {
+      reset();
+      setEnv(SLUG);
+      scenario.studioMessageId = id;
+      const result = await submitNewClientBookingWaitlistAction(form());
+      expect(result, `messageId ${JSON.stringify(id)} must not commit`).toEqual({
+        ok: false,
+        error: GENERIC,
+      });
+      expect(sends).toHaveLength(1);
+    }
+  });
+
+  it("provider returns a real messageId -> commit accepted, client confirmation attempted, overall success", async () => {
+    scenario.studioMessageId = "re_test_123";
+    const result = await submitNewClientBookingWaitlistAction(form());
+    expect(result).toEqual({ ok: true });
+    expect(sends, "the client confirmation must follow a proven commit").toHaveLength(2);
+    expect(sends[1].to).toBe(CANARY_EMAIL);
+    expect(consoleErrors.join("\n")).not.toContain("unconfirmed");
+  });
+
+  it("an unconfirmed acceptance leaks no PII and writes nothing", async () => {
+    scenario.studioMessageId = undefined;
+    const result = await submitNewClientBookingWaitlistAction(form());
+    expect(result.ok).toBe(false);
+    // The whole point: fail-closed AND still PII-safe AND still write-free.
+    const logs = [...consoleErrors, ...consoleWarns, ...consoleLogs].join("\n");
+    expect(logs).not.toContain(CANARY_NAME);
+    expect(logs).not.toContain(CANARY_EMAIL);
+    expect(logs).not.toContain(CANARY_PHONE);
+    expect(logs).not.toContain("pii_canary_92837");
+    expect(dbOps).toEqual([`select:studios:${SLUG}`]);
+    expect(dbOps).not.toContain("createAdminClient");
+    expect(dbOps).not.toContain("createClient");
   });
 
   it("studio provider FAILS -> failure, and NO client confirmation is attempted", async () => {

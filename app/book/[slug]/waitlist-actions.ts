@@ -32,14 +32,19 @@ import type { Studio } from "@/lib/types/database";
 // THE COMMIT POINT. V1's operational record is the studio notification email
 // accepted by the provider. So:
 //
-//   studio email provider ACCEPTED  -> this action may return success
-//   studio email provider REJECTED /
-//     TIMED OUT / FAILED / UNCONFIGURED -> this action MUST return failure
+//   studio email provider accepted AND returned a message id
+//                                     -> this action may return success
+//   studio email provider REJECTED / TIMED OUT / FAILED / UNCONFIGURED,
+//     OR accepted without a message id
+//                                     -> this action MUST return failure
 //
-// "Accepted" means the Resend API accepted the send request. It does NOT mean
-// inbox delivery, recipient acceptance, non-spam placement, or that a human
-// saw it. Inbox delivery is proven separately, by a human, before a studio is
-// activated.
+// "Accepted" means the Resend API accepted the send request AND handed back an
+// id for it. It does NOT mean inbox delivery, recipient acceptance, non-spam
+// placement, or that a human saw it. Inbox delivery is proven separately, by a
+// human, before a studio is activated.
+//
+// The message id is load-bearing HERE specifically because there is no durable
+// queue to fall back on; see the commit point below.
 //
 // The client's own confirmation is BEST EFFORT and strictly after that commit:
 // the business already has the request, so a failed acknowledgement must not
@@ -190,6 +195,35 @@ export async function submitNewClientBookingWaitlistAction(
     logWaitlistEvent("new_client_waitlist_studio_email_failed", {
       studioId: studio.id,
       retryable: studioSend.retryable,
+      emailFingerprint,
+    });
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
+  }
+
+  // ACCEPTANCE MUST BE PROVABLE, NOT MERELY UNREJECTED.
+  //
+  // sendEmailSafely returns `{ ok: true, messageId: result.data?.id }`. Both
+  // `data` and `data.id` are optional in the provider envelope, so a response
+  // that carries no error AND no usable id yields `{ ok: true, messageId:
+  // undefined }` — "the provider did not say no", which is not the same as
+  // "the provider took custody".
+  //
+  // For a normal transactional email that distinction is tolerable: the
+  // appointment row is the durable record and the send is an announcement.
+  // V1 HAS NO DURABLE QUEUE. The provider-accepted studio email IS the entire
+  // operational record of this request, so an acceptance we cannot point at is
+  // indistinguishable from a request that was silently dropped — and the
+  // visitor would have been told they are on a waitlist that may not exist.
+  //
+  // So the commit point requires a non-empty message id. Fail-closed: the same
+  // generic refusal, no client confirmation, no success state. A distinct event
+  // name keeps this separable from a provider REJECTION in the logs, because
+  // the two mean very different things operationally.
+  const studioMessageId =
+    typeof studioSend.messageId === "string" ? studioSend.messageId.trim() : "";
+  if (studioMessageId.length === 0) {
+    logWaitlistEvent("new_client_waitlist_studio_email_unconfirmed", {
+      studioId: studio.id,
       emailFingerprint,
     });
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
