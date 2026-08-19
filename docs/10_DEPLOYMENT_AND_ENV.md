@@ -131,6 +131,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `TWILIO_FROM_NUMBER` | Optional | E.164 number. Either this or `TWILIO_MESSAGING_SERVICE_SID` must be set if SMS is in use. |
 | `TWILIO_MESSAGING_SERVICE_SID` | Optional | Preferred over `TWILIO_FROM_NUMBER` when both are set. |
 | `TWILIO_WEBHOOK_BASE_URL` | Recommended | Public origin Twilio POSTs to. Falls back to `request.url`. |
+| `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` | Optional | **Server-only** comma-separated allowlist of studio **slugs**, matched exactly after trim + lowercase. Unset or empty disables the feature. Never prefix `NEXT_PUBLIC_`. Read by `lib/booking/new-client-waitlist.ts`; behaviour is defined by PR #601. |
 
 ## Environment behavior matrix
 
