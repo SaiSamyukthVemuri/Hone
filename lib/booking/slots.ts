@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  localDayOfWeek,
+  calendarDayOfWeek,
   localMinutesSinceMidnight,
   localTimeString12h,
   minutesToHHMM,
@@ -232,7 +232,14 @@ export async function getAvailableSlots(
     studio.practitioner_capacity_enabled === true &&
     practitionerId !== undefined &&
     practitionerId !== null;
-  const dow = localDayOfWeek(new Date(`${dateStr}T12:00:00Z`), tz);
+  // `dateStr` IS the requested studio-local calendar date, so its weekday is
+  // read straight off the calendar — the same derivation the SQL availability
+  // functions use (`extract(dow from p_local_date)`). Round-tripping a
+  // fabricated noon-UTC instant back through `tz` asked which local day that
+  // instant fell on, which advances the date for any studio at UTC offset
+  // >= +12 (NZ, Fiji, Chatham, Kamchatka, Apia, Kiritimati): a Monday request
+  // read TUESDAY's weekly availability row. See calendarDayOfWeek in ./tz.
+  const dow = calendarDayOfWeek(dateStr);
   const buffer = Math.max(0, studio.buffer_minutes ?? 0);
   const duration =
     serviceDurationMinutes ?? studio.default_appointment_duration_minutes ?? 60;

@@ -224,6 +224,59 @@ export function localDayOfWeek(d: Date, tz: string): number {
   return asUtc.getUTCDay();
 }
 
+const CALENDAR_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+// The weekday of a CALENDAR DATE — "YYYY-MM-DD" — as 0 = Sunday .. 6 = Saturday,
+// the same domain as Postgres's `extract(dow from date)`.
+//
+// WHY THIS IS NOT `localDayOfWeek`, AND WHY IT TAKES NO TIMEZONE
+// -------------------------------------------------------------
+// `localDayOfWeek` answers a different question: "which weekday is this
+// INSTANT, read on that timezone's clock?" It is correct for that.
+//
+// A calendar date's weekday is not that question. It is a property of the
+// Gregorian calendar, so it cannot depend on a UTC offset or a DST transition —
+// there is no timezone parameter here because there is nothing for one to
+// change. Handing `localDayOfWeek` a FABRICATED instant (noon UTC on the
+// requested date) to recover a calendar date's weekday reintroduces exactly the
+// dependency the question does not have: for a studio at UTC offset >= +12,
+// noon UTC has already crossed into the next local day, so a Monday resolved to
+// Tuesday's weekly availability row. That is wider than "UTC+13/+14" — it takes
+// in New Zealand, Fiji, Chatham and Kamchatka, year-round.
+//
+// Every SQL availability function already derives the weekday this way
+// (`extract(dow from p_local_date)` — migrations 0170:283, 0171:360, 0171:370),
+// so this is the side that was wrong, and this brings TypeScript into parity
+// with the SQL that already decides.
+//
+// PORTABILITY. Built from integer components through `Date.UTC`, so no date
+// STRING ever reaches the Date parser: no locale, no host timezone, no
+// implementation-defined date-string handling, no system clock.
+//
+// CONTRACT. Input must be a real "YYYY-MM-DD" calendar date. A malformed string
+// or a date that does not exist (2026-02-30, which `Date.UTC` would silently
+// roll forward) throws a RangeError — matching both the previous behaviour
+// (`Intl.DateTimeFormat.format` throws on an Invalid Date) and Postgres's own
+// `date` cast, so callers see no change in how bad input is handled.
+export function calendarDayOfWeek(localDate: string): number {
+  const parts = CALENDAR_DATE_RE.exec(localDate);
+  if (parts === null) {
+    throw new RangeError("calendarDayOfWeek: expected a YYYY-MM-DD calendar date");
+  }
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  const at = new Date(Date.UTC(year, month - 1, day));
+  if (
+    at.getUTCFullYear() !== year ||
+    at.getUTCMonth() !== month - 1 ||
+    at.getUTCDate() !== day
+  ) {
+    throw new RangeError("calendarDayOfWeek: not a real calendar date");
+  }
+  return at.getUTCDay();
+}
+
 // Number of minutes since local midnight on the given local date.
 // Used to compare "HH:MM" wall-clock strings against availability windows.
 export function localMinutesSinceMidnight(time: string): number {

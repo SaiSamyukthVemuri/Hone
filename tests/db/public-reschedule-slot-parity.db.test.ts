@@ -527,3 +527,64 @@ describe("0171 reschedule slot parity — window edges", () => {
     await expectParity(f, day);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WEEKDAY PARITY AT UTC OFFSET >= +12
+//
+// Pacific/Chatham (+12:45) was already in the timezone list above and the
+// weekday defect was still invisible, because `seed` gives all seven weekdays
+// the SAME window (`generate_series(0,6)` at line 115): reading the following
+// day's row returned an identical set. Distinct per-weekday windows are what
+// make the divergence observable, and without them a +12 zone in the fixture
+// list proves nothing about weekday derivation.
+//
+// SQL reads the requested date's weekday (`extract(dow from p_local_date)`,
+// 0171:360 and 0171:370); TypeScript now does the same.
+// ---------------------------------------------------------------------------
+describe("0171 reschedule slot parity — weekday at UTC offset >= +12", () => {
+  async function distinctWindowsPerWeekday(studioId: string): Promise<void> {
+    await adminQuery(
+      `update public.studio_availability_default
+          set open_time = make_time(8 + day_of_week, 0, 0), close_time = '17:00'::time
+        where studio_id = $1 and practitioner_id is null`,
+      [studioId],
+    );
+  }
+
+  const ZONES = [
+    "Pacific/Kiritimati", // +14
+    "Pacific/Apia", // +13
+    "Pacific/Auckland", // +12 / +13
+    "Pacific/Fiji", // +12 / +13
+    "Pacific/Chatham", // +12:45 / +13:45
+    "Asia/Kamchatka", // +12
+  ];
+
+  const DAYS = ["2027-06-14", "2027-06-13", "2027-04-04", "2027-09-26"];
+
+  it.each(ZONES)("agrees with the SQL candidate set in %s", async (tz) => {
+    const f = await seed(`rw12-${tz.replace(/[^a-z]/gi, "")}`, { tz, buffer: 0 });
+    await distinctWindowsPerWeekday(f.studioId);
+    for (const d of DAYS) {
+      const set = await expectParity(f, d);
+      expect(set.length, `${tz} ${d} must offer something to compare`).toBeGreaterThan(0);
+    }
+  });
+
+  it("holds on the capacity-ON path, which resolves the window separately", async () => {
+    const f = await seed("rw12-capacity", { tz: "Pacific/Auckland", buffer: 0, capacity: true });
+    await distinctWindowsPerWeekday(f.studioId);
+    for (const d of DAYS) {
+      await expectParity(f, d);
+    }
+  });
+
+  it("control: a +10 studio with the same distinct windows was already in parity", async () => {
+    const f = await seed("rw12-control", { tz: "Australia/Sydney", buffer: 0 });
+    await distinctWindowsPerWeekday(f.studioId);
+    for (const d of DAYS) {
+      const set = await expectParity(f, d);
+      expect(set.length).toBeGreaterThan(0);
+    }
+  });
+});

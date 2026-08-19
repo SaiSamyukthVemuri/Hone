@@ -556,3 +556,85 @@ describe("precision domain — JavaScript milliseconds, by truncation", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// WEEKDAY PARITY AT UTC OFFSET >= +12
+//
+// Every fixture above seeds all seven weekdays with the SAME window
+// (`generate_series(0,6)` at line 79), so reading the wrong weekday's row
+// produced an identical candidate set and this suite could not see it. The
+// studio timezone was America/Toronto throughout, where the old derivation
+// happened to be right anyway.
+//
+// These fixtures give each weekday a DISTINCT window and place the studio at
+// offset >= +12, which is exactly the pair of conditions the suite was missing.
+// Under the pre-repair derivation the TypeScript loader reads the FOLLOWING
+// day's row while the SQL candidate helper reads the requested date's
+// (`extract(dow from p_local_date)`, 0170:283), so the two sets diverge and
+// every slot the page offered would come back 'not_a_public_slot'.
+// ---------------------------------------------------------------------------
+describe("weekday parity — studios at UTC offset >= +12", () => {
+  // Weekday g opens at (8+g):00 and closes at 17:00, so a one-day slip in the
+  // weekday lookup shifts the opening anchor by an hour and changes the set.
+  async function distinctWindowsPerWeekday(studioId: string): Promise<void> {
+    await adminQuery(
+      `update public.studio_availability_default
+          set open_time = make_time(8 + day_of_week, 0, 0), close_time = '17:00'::time
+        where studio_id = $1 and practitioner_id is null`,
+      [studioId],
+    );
+  }
+
+  const ZONES = [
+    "Pacific/Kiritimati", // +14
+    "Pacific/Apia", // +13
+    "Pacific/Auckland", // +12 / +13
+    "Pacific/Fiji", // +12 / +13
+    "Pacific/Chatham", // +12:45 / +13:45
+    "Asia/Kamchatka", // +12
+  ];
+
+  // Monday, Sunday, and both hemispheres' 2026 DST transition days.
+  const DAYS = ["2026-08-17", "2026-08-16", "2026-09-27", "2026-04-05"];
+
+  for (const tz of ZONES) {
+    it(`agrees with the SQL candidate set in ${tz}`, async () => {
+      const f = await seed(`w12-${tz.replace(/[^a-z]/gi, "")}`, { tz, buffer: 0 });
+      await distinctWindowsPerWeekday(f.studioId);
+      for (const d of DAYS) {
+        const [ts, sql] = [await tsOffered(f, d), await sqlCandidates(f, d)];
+        expect(sql.length, `${tz} ${d}: SQL must offer something to compare`).toBeGreaterThan(0);
+        expect(fmt(sql), `${tz} ${d}`).toEqual(fmt(ts));
+      }
+    });
+  }
+
+  it("control: a +10 studio with the same distinct windows was already in parity", async () => {
+    const f = await seed("w12-control-sydney", { tz: "Australia/Sydney", buffer: 0 });
+    await distinctWindowsPerWeekday(f.studioId);
+    for (const d of DAYS) {
+      const [ts, sql] = [await tsOffered(f, d), await sqlCandidates(f, d)];
+      expect(sql.length).toBeGreaterThan(0);
+      expect(fmt(sql)).toEqual(fmt(ts));
+    }
+  });
+
+  it("every offered start is ACCEPTED by the validator in a +12 studio", async () => {
+    // Parity of the SETS is necessary but not sufficient: the command's own
+    // validator re-derives the window too (0170:493). This closes the loop.
+    const f = await seed("w12-accept", { tz: "Pacific/Auckland", buffer: 0 });
+    await distinctWindowsPerWeekday(f.studioId);
+    const d = "2026-08-17"; // Monday
+    const offered = await tsOffered(f, d);
+    expect(offered.length).toBeGreaterThan(0);
+    for (const ms of offered) {
+      const iso = new Date(ms).toISOString();
+      const v = await adminQuery(
+        `select public.validate_public_booking_slot($1,$2,$3,$4::timestamptz,
+                 $4::timestamptz + make_interval(mins => $5)) as v`,
+        [f.studioId, f.ownerId, f.serviceId, iso, f.duration],
+      );
+      expect(v.rows[0].v, `${iso} is offered in Auckland and must be accepted`).toBe("ok");
+    }
+  });
+});
