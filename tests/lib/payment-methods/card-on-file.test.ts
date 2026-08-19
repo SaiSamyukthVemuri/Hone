@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   getCardOnFileStatuses,
+  loadCardOnFileForStudio,
   resolveCardOnFileStatus,
   shouldOfferPortalLink,
+  studioOffersCardOnFile,
 } from "@/lib/payment-methods/card-on-file";
 
 // The Dashboard's card-on-file batch loader.
@@ -19,6 +21,18 @@ const h = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
   error: null as unknown,
   calls: [] as Array<{ table: string; selected: string }>,
+  templates: [] as Array<{ form_type: string }>,
+  templateCalls: 0,
+  throwOnAdmin: false,
+}));
+
+// The capability gate reuses the PORTAL's own template authority, so the test
+// mocks that authority rather than re-deriving its predicate here.
+vi.mock("@/lib/consent/queries", () => ({
+  getActiveConsentTemplatesForPortal: async () => {
+    h.templateCalls += 1;
+    return h.templates;
+  },
 }));
 
 vi.mock("@/lib/stripe/server", () => ({
@@ -26,7 +40,9 @@ vi.mock("@/lib/stripe/server", () => ({
 }));
 
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({
+  createAdminClient: () => {
+    if (h.throwOnAdmin) throw new Error("SUPABASE_SERVICE_ROLE_KEY not set");
+    return {
     from: (table: string) => {
       const eqs: Array<[string, unknown]> = [];
       const ins: Array<[string, readonly unknown[]]> = [];
@@ -56,7 +72,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       };
       return q;
     },
-  }),
+    };
+  },
 }));
 
 const STUDIO = "studio-1";
@@ -90,7 +107,13 @@ async function statusFor(clientId: string, clientIds = [CLIENT_A, CLIENT_B]) {
 
 beforeEach(() => {
   scenario([]);
+  h.templates = [];
+  h.templateCalls = 0;
 });
+
+/** How many times the CARD table was actually queried. */
+const cardQueries = () =>
+  h.calls.filter((c) => c.table === "client_payment_methods").length;
 
 describe("CARD YES — a trusted active card in the CURRENT mode", () => {
   it("an active, current-mode, same-studio card reads card_on_file", async () => {
@@ -245,5 +268,83 @@ describe("shouldOfferPortalLink — only a TRUSTED absence earns a nudge", () =>
   });
   it("unavailable does NOT — we do not know the card is missing", () => {
     expect(shouldOfferPortalLink("unavailable")).toBe(false);
+  });
+});
+
+
+
+// ===========================================================================
+// CAPABILITY — the card question is only asked where it can be answered
+// ===========================================================================
+//
+// Three independent adversarial reviewers converged here: a studio with no
+// card-on-file route rendered a solid column of amber "No card" against every
+// client on the day, each with a chase button pointing at a portal that has
+// nowhere to send them. Every client is card-less by construction there, so
+// that absence is an artefact of asking the wrong question first — not a fact
+// about anyone.
+//
+// The gate reuses the PORTAL's own authority (an active, live
+// `card_authorization` template) rather than inventing a dashboard dialect,
+// and deliberately NOT `require_card_on_file`, which gates card-required
+// BOOKING (migration 0032's session RPC) and is a different question.
+
+describe("studio capability decides whether the card question is asked at all", () => {
+  it("a studio WITH an active card_authorization template can be asked", async () => {
+    h.templates = [{ form_type: "intake" }, { form_type: "card_authorization" }];
+    expect(await studioOffersCardOnFile(STUDIO)).toBe(true);
+  });
+
+  it("a studio WITHOUT one cannot", async () => {
+    h.templates = [{ form_type: "intake" }, { form_type: "policy" }];
+    expect(await studioOffersCardOnFile(STUDIO)).toBe(false);
+  });
+
+  it("capability OFF ⇒ ZERO card-status queries and no claim to render", async () => {
+    h.templates = [{ form_type: "intake" }];
+    const load = await loadCardOnFileForStudio(STUDIO, [CLIENT_A, CLIENT_B]);
+    expect(load, "no route ⇒ no question ⇒ nothing to render").toBeNull();
+    expect(cardQueries(), "the card table must not be touched").toBe(0);
+  });
+
+  it("an EMPTY DAY costs zero card queries and never even asks capability", async () => {
+    h.templates = [{ form_type: "card_authorization" }];
+    expect(await loadCardOnFileForStudio(STUDIO, [])).toBeNull();
+    expect(cardQueries()).toBe(0);
+    expect(h.templateCalls).toBe(0);
+  });
+
+  it("capability ON ⇒ EXACTLY ONE bounded card read, dedup preserved", async () => {
+    h.templates = [{ form_type: "card_authorization" }];
+    scenario([{ client_id: CLIENT_A }]);
+    const load = await loadCardOnFileForStudio(STUDIO, [CLIENT_A, CLIENT_B, CLIENT_A]);
+    expect(load?.ok).toBe(true);
+    expect(cardQueries()).toBe(1);
+  });
+});
+
+describe("null is the ABSENCE of a question, not a fourth answer", () => {
+  it("a null load makes no claim about any client", () => {
+    expect(resolveCardOnFileStatus(null, CLIENT_A)).toBeNull();
+  });
+
+  it("null is NOT 'unavailable' — the two mean different things", () => {
+    // unavailable = the question applies and the read failed.
+    // null        = the question does not apply to this studio at all.
+    expect(resolveCardOnFileStatus(null, CLIENT_A)).not.toBe("unavailable");
+    expect(resolveCardOnFileStatus({ ok: false }, CLIENT_A)).toBe("unavailable");
+  });
+
+  it("a null status never earns a portal-link nudge", () => {
+    expect(shouldOfferPortalLink(null)).toBe(false);
+  });
+});
+
+describe("a service-role construction failure degrades, it does not crash", () => {
+  it("a THROWN admin client yields unavailable, not an escaping exception", async () => {
+    h.throwOnAdmin = true;
+    const load = await getCardOnFileStatuses(STUDIO, [CLIENT_A]);
+    expect(load.ok, "the module promises a failed read degrades").toBe(false);
+    expect(resolveCardOnFileStatus(load, CLIENT_A)).toBe("unavailable");
   });
 });

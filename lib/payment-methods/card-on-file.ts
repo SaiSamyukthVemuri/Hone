@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { getActiveConsentTemplatesForPortal } from "@/lib/consent/queries";
 
 // Chloe production feedback: "tell me on the dashboard next to my upcoming
 // clients names if they have a card on file or not, so i can remind them if
@@ -67,14 +68,29 @@ export async function getCardOnFileStatuses(
     return { ok: true, clientsWithActiveCard: new Set<string>() };
   }
 
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("client_payment_methods")
-    .select("client_id")
-    .eq("studio_id", studioId)
-    .in("client_id", uniqueClientIds)
-    .eq("stripe_livemode", inferStripeLivemode())
-    .eq("status", "active");
+  // `createAdminClient()` THROWS synchronously when its env is absent, so it
+  // is inside the try with the await: the module promises that a failed read
+  // degrades to "unavailable", and a construction failure is a failed read.
+  // Without this, one missing env turns a per-row pill into a dead dashboard.
+  let data: Array<{ client_id: string }> | null = null;
+  let error: { code?: string; message?: string } | null = null;
+  try {
+    const admin = createAdminClient();
+    const res = await admin
+      .from("client_payment_methods")
+      .select("client_id")
+      .eq("studio_id", studioId)
+      .in("client_id", uniqueClientIds)
+      .eq("stripe_livemode", inferStripeLivemode())
+      .eq("status", "active");
+    data = res.data as Array<{ client_id: string }> | null;
+    error = res.error;
+  } catch (thrown) {
+    error = {
+      code: "card_on_file_client_unavailable",
+      message: thrown instanceof Error ? thrown.message : "unknown",
+    };
+  }
 
   if (error) {
     console.error(
@@ -90,17 +106,68 @@ export async function getCardOnFileStatuses(
   }
 
   const clientsWithActiveCard = new Set<string>();
-  for (const row of (data ?? []) as Array<{ client_id: string }>) {
+  for (const row of data ?? []) {
     clientsWithActiveCard.add(row.client_id);
   }
   return { ok: true, clientsWithActiveCard };
 }
 
-/** Pure. The ONLY place a load becomes a per-client claim. */
+// ===========================================================================
+// CAPABILITY — asked BEFORE the card question, never derived alongside it
+// ===========================================================================
+//
+// "This client has no stored card" is only a meaningful thing to tell a
+// practitioner if her studio can actually collect one. Where it cannot, every
+// client is card-less by construction, so the Dashboard would render a solid
+// column of amber NO CARD against a whole day and offer to chase each of them
+// toward a portal that has nowhere to send them. That is not a truthful
+// absence; it is an artefact of asking the wrong question first.
+//
+// THE AUTHORITY IS THE PORTAL'S OWN GATE, NOT A NEW DIALECT. What decides
+// whether a client has ANY route toward a card is whether the studio has an
+// ACTIVE, LIVE `card_authorization` consent template — the exact condition
+// `app/portal/page.tsx` uses. With one, the portal offers a route in every
+// state: sign it, re-sign an updated version, or add the card outright. With
+// none, the portal shows only its passive "no payment template" note and the
+// client cannot add a card at all — so a nudge is a dead end.
+//
+// It is deliberately NOT `studio_payment_settings.require_card_on_file`. That
+// column gates CARD-REQUIRED BOOKING (migration 0032's session RPC refuses
+// when it is not true), which is a booking policy, not a statement about
+// whether the portal can collect a card. No application surface writes it, and
+// the two questions are not the same one.
+export async function studioOffersCardOnFile(studioId: string): Promise<boolean> {
+  const templates = await getActiveConsentTemplatesForPortal(studioId);
+  return templates.some((t) => t.form_type === "card_authorization");
+}
+
+/**
+ * The Dashboard's single entry point.
+ *
+ * Returns `null` for "do not ask, and render nothing" — an empty day, or a
+ * studio with no card-on-file route. `null` is NOT a fourth pill: it is the
+ * absence of the question, and it costs ZERO card-status queries.
+ */
+export async function loadCardOnFileForStudio(
+  studioId: string,
+  clientIds: ReadonlyArray<string>,
+): Promise<CardOnFileLoad | null> {
+  if (clientIds.length === 0) return null;
+  if (!(await studioOffersCardOnFile(studioId))) return null;
+  return getCardOnFileStatuses(studioId, clientIds);
+}
+
+/**
+ * Pure. The ONLY place a load becomes a per-client claim.
+ *
+ * `null` in means the studio has no card-on-file route, so there is no claim
+ * to make and the caller renders nothing.
+ */
 export function resolveCardOnFileStatus(
-  load: CardOnFileLoad,
+  load: CardOnFileLoad | null,
   clientId: string,
-): CardOnFileStatus {
+): CardOnFileStatus | null {
+  if (load === null) return null;
   if (!load.ok) return "unavailable";
   return load.clientsWithActiveCard.has(clientId) ? "card_on_file" : "no_card";
 }
@@ -112,6 +179,6 @@ export function resolveCardOnFileStatus(
  * would be wrong), and NOT `unavailable`: we do not actually know the card is
  * missing, so nudging the client would be acting on an absence we invented.
  */
-export function shouldOfferPortalLink(status: CardOnFileStatus): boolean {
+export function shouldOfferPortalLink(status: CardOnFileStatus | null): boolean {
   return status === "no_card";
 }

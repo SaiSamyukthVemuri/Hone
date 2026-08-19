@@ -44,7 +44,10 @@ const CARD_ON_FILE_CLASS: Record<CardOnFileStatus, string> = {
     "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
 };
 
-export function CardOnFilePill({ status }: { status: CardOnFileStatus }) {
+export function CardOnFilePill({ status }: { status: CardOnFileStatus | null }) {
+  // A studio with no card-on-file route asks no card question, so there is no
+  // pill — not a fourth state, the absence of the question.
+  if (status === null) return null;
   return (
     <span
       data-testid="today-card-status"

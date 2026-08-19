@@ -2871,3 +2871,24 @@ export async function seedE2eActiveCardOnFile(
     ],
   );
 }
+
+/**
+ * Give the studio the card-on-file CAPABILITY: an ACTIVE, LIVE
+ * `card_authorization` consent template.
+ *
+ * This is the same condition the client portal uses to decide whether a client
+ * has any route toward adding a card at all, and it is what the Dashboard now
+ * asks BEFORE it says anything about cards. Without it a studio genuinely has
+ * no card-on-file workflow, so the Dashboard renders no card pills and offers
+ * no portal-link nudge — seeding a card row alone is not enough to make the
+ * card UI appear, and that is the point.
+ */
+export async function seedE2eCardOnFileCapability(seed: E2eSeed): Promise<void> {
+  await sql(
+    `insert into public.consent_form_templates
+       (studio_id, title, description, body, form_type, version, status, is_live)
+     values ($1, 'Card authorization', 'E2E card authorization',
+             'E2E card authorization body', 'card_authorization', 1, 'active', true)`,
+    [seed.studioId],
+  );
+}

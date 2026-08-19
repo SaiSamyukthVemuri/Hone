@@ -168,14 +168,14 @@ describe("C — Card status", () => {
 
   it("the page resolves status per client from ONE batch load", () => {
     expect(PAGE_CODE).toMatch(
-      /getCardOnFileStatuses,\s*\n?\s*resolveCardOnFileStatus,/,
+      /loadCardOnFileForStudio,\s*\n?\s*resolveCardOnFileStatus,/,
     );
     // ONE call site, inside the existing bulk Promise.all — never in the row map.
-    expect((PAGE_BODY.match(/getCardOnFileStatuses\(/g) ?? []).length).toBe(1);
+    expect((PAGE_BODY.match(/loadCardOnFileForStudio\(/g) ?? []).length).toBe(1);
     expect(PAGE_BODY).toMatch(
-      /getCardOnFileStatuses\(studio\.id, todayClientIds\)/,
+      /loadCardOnFileForStudio\(studio\.id, todayClientIds\)/,
     );
-    expect(ROW).not.toMatch(/getCardOnFileStatuses|createClient|from\("/);
+    expect(ROW).not.toMatch(/loadCardOnFileForStudio|getCardOnFileStatuses|createClient|from\("/);
     expect(PAGE_BODY).toMatch(
       /cardOnFile=\{resolveCardOnFileStatus\(\s*cardOnFileLoad,\s*appt\.client_id,?\s*\)\}/,
     );
@@ -186,7 +186,9 @@ describe("C — Card status", () => {
     // not "does this person have a card on file". The row carries both, and
     // neither is derived from the other.
     expect(ROW).toMatch(/paymentState: AppointmentPaymentState;/);
-    expect(ROW).toMatch(/cardOnFile: CardOnFileStatus;/);
+    // `| null` = the studio has no card-on-file route, so the row asks no card
+    // question at all — distinct from `unavailable`, where it applies and failed.
+    expect(ROW).toMatch(/cardOnFile: CardOnFileStatus \| null;/);
     expect(ROW).not.toMatch(/cardOnFile\s*=\s*paymentState|paymentState\s*===\s*"[a-z_]+"\s*\?\s*"(card_on_file|no_card)"/);
   });
 });
@@ -305,5 +307,66 @@ describe("row hygiene", () => {
 
   it("the secondary actions wrap instead of forming a wall of buttons", () => {
     expect(ROW).toMatch(/flex flex-wrap items-center justify-end gap-x-3 gap-y-1/);
+  });
+});
+
+
+// ===========================================================================
+// RC1 — a rejected action must not be able to take the Dashboard down
+// ===========================================================================
+//
+// Found by all three adversarial reviewers. The send awaits inside
+// `startTransition`; React re-throws a REJECTED action out of the transition,
+// and with no local catch it escapes to the route error boundary — replacing
+// the whole Today roster because one secondary per-row control failed, and
+// setting no hint, so nothing is announced either.
+//
+// A rejection is a different class from `{ok:false}`: the action RETURNS its
+// refusals, so the safe-copy path was already correct. This covers transport
+// failure, a deployment-id mismatch on a tab left open across a deploy, and
+// the practitioner/studio resolver throwing.
+
+describe("RC1 — portal send: all three settlement paths", () => {
+  const SRC = read("app/(app)/dashboard/TodayPortalLinkButton.tsx");
+
+  it("the transition body is wrapped, so a rejection cannot escape it", () => {
+    const body = codeOnly(SRC);
+    expect(
+      body,
+      "the awaited action must sit inside a try/catch",
+    ).toMatch(/startTransition\(async \(\) => \{[\s\S]{0,200}try \{[\s\S]{0,200}await sendPortalLinkAction/);
+    expect(body).toMatch(/\}\s*catch\s*\{/);
+  });
+
+  it("RESOLVED SUCCESS still reports the unchanged success copy", () => {
+    expect(hintFromResult({ ok: true })).toEqual({ kind: "sent" });
+  });
+
+  it("RESOLVED REFUSAL still passes the action's OWN safe copy through unchanged", () => {
+    expect(
+      hintFromResult({ ok: false, error: "Too many portal links sent to this client recently." }),
+    ).toEqual({
+      kind: "error",
+      message: "Too many portal links sent to this client recently.",
+    });
+  });
+
+  it("a REJECTION renders calm generic copy and NEVER the thrown text", () => {
+    const body = codeOnly(SRC);
+    const generic = "Could not send portal link. Please try again.";
+    expect(body, "the catch must render fixed copy").toContain(generic);
+    // The caught value must not be interpolated anywhere.
+    expect(body).not.toMatch(/catch\s*\(\s*\w+\s*\)[\s\S]{0,200}message:\s*\w+(\.message)?\s*[,}]/);
+    expect(body).not.toMatch(/String\(\s*err/);
+  });
+
+  it("the catch does not swallow the refusal path into the generic copy", () => {
+    // A catch that also handled {ok:false} would erase the action's specific,
+    // useful wording (e.g. the rate-limit sentence) — that must stay distinct.
+    const hint = hintFromResult({ ok: false, error: "Client not found in your studio." });
+    expect(hint.kind).toBe("error");
+    expect(hint.kind === "error" && hint.message).toBe(
+      "Client not found in your studio.",
+    );
   });
 });

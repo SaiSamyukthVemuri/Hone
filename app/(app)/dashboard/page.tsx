@@ -67,7 +67,7 @@ import {
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { currentAppointmentIds } from "@/lib/dashboard/current-appointment";
 import {
-  getCardOnFileStatuses,
+  loadCardOnFileForStudio,
   resolveCardOnFileStatus,
   shouldOfferPortalLink,
   type CardOnFileStatus,
@@ -253,12 +253,14 @@ export default async function DashboardPage({
       getPractitionersForStudio(studio.id),
       getLatestPinnedNoteByClient(studio.id, todayClientIds),
       loadIntakeStatusByClient(supabase, studio.id, todayClientIds),
-      // Chloe: card-on-file status beside each name. ONE bounded read for
-      // today's UNIQUE client ids, so a client with two appointments costs one
-      // lookup and the cost does not grow with the schedule. It returns a
-      // discriminated result: a failed read stays UNAVAILABLE and is never
-      // rendered as "No card".
-      getCardOnFileStatuses(studio.id, todayClientIds),
+      // Chloe: card-on-file status beside each name. Capability is asked
+      // FIRST: a studio with no card-on-file route gets `null` and pays ZERO
+      // card-status queries, because "no card" is not a truthful thing to say
+      // about a client who was never able to add one. When it does apply, this
+      // is ONE bounded read for today's UNIQUE client ids, so a client with two
+      // appointments costs one lookup and the cost does not grow with the
+      // schedule, and a failed read stays UNAVAILABLE — never "No card".
+      loadCardOnFileForStudio(studio.id, todayClientIds),
     ]);
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
@@ -789,7 +791,10 @@ function AppointmentRow({
   isCurrent: boolean;
   // Three states, never two. `unavailable` means the card read failed, which is
   // NOT the same claim as "this client has no card".
-  cardOnFile: CardOnFileStatus;
+  // `null` = this studio has no card-on-file route, so the row asks no card
+  // question at all: no pill, no nudge. Distinct from `unavailable`, which
+  // means the question applies but the read failed.
+  cardOnFile: CardOnFileStatus | null;
   tz: string;
   timeFormat: TimeFormat;
 }) {

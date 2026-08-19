@@ -100,7 +100,25 @@ export function TodayPortalLinkButton({
     const fd = new FormData();
     fd.set("client_id", clientId);
     startTransition(async () => {
-      setHint(hintFromResult(await sendPortalLinkAction(fd)));
+      // The action RETURNS its refusals, so `{ok:false}` already routes to its
+      // own safe copy below. This catch is for the other class: a REJECTED
+      // promise — a transport failure, a deployment-id mismatch on a tab left
+      // open across a deploy, or the practitioner/studio resolver throwing.
+      //
+      // Without it React re-throws the rejection out of the transition and it
+      // escapes to the route error boundary, replacing the ENTIRE Today roster
+      // because one secondary per-row control failed — and `hint` never gets
+      // set, so nothing is announced either. A per-row nudge must fail to its
+      // own line. Same shape as StartAssistedIntakeButton, which documents the
+      // identical hazard.
+      //
+      // The thrown value is deliberately NOT rendered: it can carry server
+      // internals. The visitor gets fixed, calm copy.
+      try {
+        setHint(hintFromResult(await sendPortalLinkAction(fd)));
+      } catch {
+        setHint({ kind: "error", message: "Could not send portal link. Please try again." });
+      }
     });
   }
 

@@ -6,6 +6,7 @@ import {
   seedE2eTodayAppointment,
   sql,
   type E2eSeed,
+  seedE2eCardOnFileCapability,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -199,6 +200,9 @@ test.describe("Today row: current client, card status, one-tap actions", () => {
     page,
   }) => {
     const seed = await seedE2eStudio();
+    // The Dashboard asks CAPABILITY first: without an active card_authorization
+    // template the studio has no card-on-file route and renders no card UI at all.
+    await seedE2eCardOnFileCapability(seed);
     const withCard = await seedRow(seed, {
       label: "Hascard Client",
       startsMinutesFromNow: 60,
@@ -249,6 +253,9 @@ test.describe("Today row: current client, card status, one-tap actions", () => {
     page,
   }) => {
     const seed = await seedE2eStudio();
+    // The Dashboard asks CAPABILITY first: without an active card_authorization
+    // template the studio has no card-on-file route and renders no card UI at all.
+    await seedE2eCardOnFileCapability(seed);
     const client = await seedRow(seed, {
       label: "Twice Client",
       startsMinutesFromNow: 60,
@@ -279,6 +286,9 @@ test.describe("Today row: current client, card status, one-tap actions", () => {
     page,
   }) => {
     const seed = await seedE2eStudio();
+    // The Dashboard asks CAPABILITY first: without an active card_authorization
+    // template the studio has no card-on-file route and renders no card UI at all.
+    await seedE2eCardOnFileCapability(seed);
     const noCard = await seedRow(seed, {
       label: "Nudge Client",
       startsMinutesFromNow: 60,
@@ -364,6 +374,9 @@ test.describe("iPhone profile", () => {
     page,
   }) => {
     const seed = await seedE2eStudio();
+    // The Dashboard asks CAPABILITY first: without an active card_authorization
+    // template the studio has no card-on-file route and renders no card UI at all.
+    await seedE2eCardOnFileCapability(seed);
     const inRoom = await seedRow(seed, {
       label: "Mobile Now",
       startsMinutesFromNow: -15,
@@ -416,4 +429,39 @@ test.describe("iPhone profile", () => {
       expect(actionBox!.y).toBeGreaterThanOrEqual(nameBox!.y);
     });
   });
+});
+
+// ===========================================================================
+// CAPABILITY GATE — a studio with no card-on-file route says nothing about cards
+// ===========================================================================
+//
+// Three adversarial reviewers converged: without this gate a studio that cannot
+// collect a card at all rendered a solid column of amber NO CARD against every
+// client on the day, each with a chase button pointing at a portal that has
+// nowhere to send them. Every client is card-less by construction there, so the
+// absence was an artefact of asking the wrong question first.
+//
+// This seeds NO card_authorization template, which is exactly what the portal
+// itself treats as "no route", and proves the Dashboard stays silent.
+test("a studio with no card-on-file route shows no card UI at all", async ({ page }) => {
+  const seed = await seedE2eStudio();
+  // Deliberately NO seedE2eCardOnFileCapability(seed).
+  const client = await seedRow(seed, {
+    label: "Nogate Client",
+    startsMinutesFromNow: 60,
+    endsMinutesFromNow: 120,
+  });
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+
+  const target = row(page, client.name);
+  await expect(target).toBeVisible({ timeout: 20_000 });
+
+  // No pill in ANY of its three states, and no nudge.
+  await expect(target.getByTestId("today-card-status")).toHaveCount(0);
+  await expect(target.getByTestId("today-send-portal-link")).toHaveCount(0);
+  await expect(page.getByText(/card on file|no card|card status unavailable/i)).toHaveCount(0);
+
+  // The rest of the row is untouched — this gate hides the card question only.
+  await expect(target.getByTestId("today-consultation-notes")).toBeVisible();
 });
