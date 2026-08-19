@@ -356,6 +356,25 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 
 ---
 
+## L25 — New-client waitlist: two diagnostic-only classification imprecisions (PR #601)
+
+**Blocking: Neither.** Recorded at delivery, verified, and explicitly **not repaired** in the
+Willow pilot. Neither affects the client-safety contract, and neither blocked activation.
+
+1. In the waitlist send path, a **network throw is labelled `timeout`** in the diagnostic
+   `reason` field. The behaviour is correct — both are treated as ambiguous, which is the
+   fail-closed direction — but the log field is less precise than it reads.
+2. **Connection-refused is conservatively classified ambiguous** even though it means the
+   request never reached the provider. Conservative in the safe direction: the visitor is told
+   the request could not be confirmed rather than being told it succeeded. The cost is the
+   "contact the studio" copy in a case where a plain retry would have been fine.
+
+Both are diagnostic-field / classification-granularity issues. They are **P3 and must not be
+silently promoted or downgraded**. Also carried forward: **PRs #599 and #600 are superseded
+discovery records for this capability — they must never be used as delivery vehicles, and no
+implementation may be copied from them.** See
+[capability-register.md](./capability-register.md) §5.
+
 ## Explicitly *not* claimed
 
 To keep this register honest, the following are **not** asserted anywhere in Hone's

@@ -131,6 +131,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `TWILIO_FROM_NUMBER` | Optional | E.164 number. Either this or `TWILIO_MESSAGING_SERVICE_SID` must be set if SMS is in use. |
 | `TWILIO_MESSAGING_SERVICE_SID` | Optional | Preferred over `TWILIO_FROM_NUMBER` when both are set. |
 | `TWILIO_WEBHOOK_BASE_URL` | Recommended | Public origin Twilio POSTs to. Falls back to `request.url`. |
+| `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` | Optional; **OFF by default** | **Server-only** comma-separated allowlist of studio **slugs** whose NEW-client public booking is served by a waitlist instead of immediate consultation booking. Exact match after trim + lowercase — a substring or prefix never matches. **Unset or empty = OFF for every studio**, and that is also the **kill switch**. Never prefix `NEXT_PUBLIC_`: the list must not reach the browser; the booking page receives only a derived boolean. Read per call (uncached), so a change takes effect on the next render once the deployment carrying it is live. **Currently set on the Production target only, to `willow-electrolysis`** (PR #601, 2026-08-19); Preview and Development carry no such variable. Existing-client booking, reschedule, the client portal and slot generation are unaffected in both states. |
 
 ## Environment behavior matrix
 
@@ -148,6 +149,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `ADMIN_EMAILS` | `isAdmin()` returns `false` for every caller; `/admin` redirects to `/dashboard`. One-shot sanitized log fires. |
 | `PORTAL_FINGERPRINT_SALT` | `hashFingerprint()` returns null; diagnostic columns store null; portal login still works. One-shot sanitized log fires. |
 | `CRON_SECRET` | All `/api/cron/*` routes return 401. Cron is effectively disabled. |
+| `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` | The new-client waitlist is OFF for every studio and public booking behaves exactly as it did before PR #601. This is the intended default and the kill switch — no database rollback is involved, because the feature performs no business writes. |
 | `STRIPE_SECRET_KEY` | `getStripe()` throws when any Stripe surface is hit. |
 | `STRIPE_WEBHOOK_SECRET` | Webhook signature verification fails; webhook returns 400. |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Production **build fails** (PR #262 gate `scripts/check-production-env-gates.mjs`, wired into `npm run build`); a misconfigured deploy cannot ship with public rate limiting silently disabled. Runtime still **fails open** on a transient outage (throttled `ratelimit_backend_unavailable` alarm); the gate is a presence check with no bypass. |
