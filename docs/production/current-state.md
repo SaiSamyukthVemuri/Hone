@@ -234,7 +234,7 @@ override. An owner override bypasses the buffer only — never a real overlap.
 **The direct new-client consultation booking route is `Deferred by product decision`
 (2026-07-27).** It is not built, not a launch blocker, and not the next engineering task.
 
-### New-client waitlist — LIVE, WILLOW PILOT ONLY (PR #601, 2026-08-19)
+### New-client waitlist — LIVE, WILLOW PILOT (PR #601, 2026-08-19)
 
 **Deployed · enabled for the `willow-electrolysis` pilot · production exercised (one
 controlled canary) · human accepted.** Release source `3aa0a64a0afd31489db47c53fc22e3d84d4fccec`.
@@ -254,8 +254,13 @@ Development is machine-measured, as is Willow's own enablement (the live render 
 **operator-declared**, because the stored value is Sensitive and was never read back — see
 [capability-register.md](./capability-register.md) §5. Unset or empty is
 OFF for every studio, which is also the **kill switch**: remove Willow from the variable and
-redeploy Production. There is no database rollback because the feature performs **no business
-writes** — see [capability-register.md](./capability-register.md) §5 for the evidence.
+redeploy Production. Clearing the flag needs no database rollback, and the two reasons are
+separate. **By the PR #601 implementation contract**, the waitlist submission path creates no
+client, appointment, intake or `public.waitlist` row — its only database call is a bounded
+studio read by slug, performed on every submission. **Separately**, the controlled production
+canary observed PRE/POST `0 / 0 / 0` on the three guarded surfaces; that is bounded runtime
+evidence for one request, not the source of the general contract. See
+[capability-register.md](./capability-register.md) §5.
 
 **V1 has no durable queue. The operational record of a waitlist request is the studio
 notification email ACCEPTED BY THE PROVIDER** — that is what the implementation can

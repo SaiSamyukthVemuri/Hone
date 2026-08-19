@@ -149,7 +149,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `ADMIN_EMAILS` | `isAdmin()` returns `false` for every caller; `/admin` redirects to `/dashboard`. One-shot sanitized log fires. |
 | `PORTAL_FINGERPRINT_SALT` | `hashFingerprint()` returns null; diagnostic columns store null; portal login still works. One-shot sanitized log fires. |
 | `CRON_SECRET` | All `/api/cron/*` routes return 401. Cron is effectively disabled. |
-| `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` | The new-client waitlist is OFF for every studio and public booking behaves exactly as it did before PR #601. This is the intended default and the kill switch — no database rollback is involved, because the feature performs no business writes. |
+| `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` | The new-client waitlist is OFF for every studio and public booking behaves exactly as it did before PR #601. This is the intended default and the kill switch — no database rollback is involved, because by the PR #601 implementation contract the waitlist submission path creates no client, appointment, intake or `public.waitlist` row (its only database call is a bounded studio read by slug). |
 | `STRIPE_SECRET_KEY` | `getStripe()` throws when any Stripe surface is hit. |
 | `STRIPE_WEBHOOK_SECRET` | Webhook signature verification fails; webhook returns 400. |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Production **build fails** (PR #262 gate `scripts/check-production-env-gates.mjs`, wired into `npm run build`); a misconfigured deploy cannot ship with public rate limiting silently disabled. Runtime still **fails open** on a transient outage (throttled `ratelimit_backend_unavailable` alarm); the gate is a presence check with no bypass. |
