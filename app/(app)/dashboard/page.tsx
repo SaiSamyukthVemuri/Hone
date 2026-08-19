@@ -65,6 +65,15 @@ import {
   type TodayIntakeRow,
 } from "@/lib/dashboard/today-intake";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
+import { currentAppointmentIds } from "@/lib/dashboard/current-appointment";
+import {
+  getCardOnFileStatuses,
+  resolveCardOnFileStatus,
+  shouldOfferPortalLink,
+  type CardOnFileStatus,
+} from "@/lib/payment-methods/card-on-file";
+import { CardOnFilePill, CurrentPill } from "./today-status-pills";
+import { TodayPortalLinkButton } from "./TodayPortalLinkButton";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { DashboardTodoList } from "./todo-list";
 import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
@@ -99,6 +108,13 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 //   Needs attention (urgent) ..... AMBER accent (amber-* left border + tint)
 //   Needs attention (soft/info) .. NEUTRAL (no Phase-1-blocking urgency)
 //   Birthdays .................... WARM  (rose-* tint)
+//   Current appointment .......... BLUE  (blue-*)  , "in the room now": not an
+//                                                    alarm and not a task, so
+//                                                    never red and never amber
+//   Card on file ................. GREEN (emerald-*)
+//   No card on file .............. AMBER (amber-*) , actionable, easy to miss
+//   Card status unavailable ...... NEUTRAL         , a failed read is NOT a
+//                                                    client state
 //   Empty / good states .......... GREEN / NEUTRAL
 //
 // This is a local convention, not a design-system refactor.
@@ -118,7 +134,10 @@ type TodayAppointment = Pick<
   | "status"
   | "client_id"
 > & {
-  client: Pick<Client, "id" | "name" | "allergies" | "pronouns"> | null;
+  // `email` is here ONLY so the row can tell whether a portal link CAN be
+  // sent. It widens the existing narrow projection by one column rather than
+  // adding a second client query, and it is never rendered.
+  client: Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email"> | null;
   service: Pick<Service, "id" | "name" | "modality"> | null;
   practitioner: { id: string; display_name: string | null; color: string } | null;
 };
@@ -137,6 +156,12 @@ export default async function DashboardPage({
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 
+  // ONE clock read for the whole render. Every "is this happening now?"
+  // question below answers against THIS instant, so the Today roster cannot
+  // disagree with itself and no row calls the clock for itself. V1 is
+  // deliberately render-time only: no polling, no minute timer.
+  const renderNow = new Date();
+
   // Studio-local "today" range, converted to UTC for the appointments
   // query. The calendar week view uses the same pattern; we just window
   // it to a single local day here.
@@ -151,7 +176,7 @@ export default async function DashboardPage({
   const { data: apptRows, error: apptErr } = await supabase
     .from("appointments")
     .select(
-      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, allergies, pronouns), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
+      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, allergies, pronouns, email), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
     )
     .eq("studio_id", studio.id)
     .gte("starts_at", startUtc.toISOString())
@@ -172,8 +197,8 @@ export default async function DashboardPage({
     status: AppointmentStatus;
     client_id: string;
     client:
-      | Pick<Client, "id" | "name" | "allergies" | "pronouns">
-      | Pick<Client, "id" | "name" | "allergies" | "pronouns">[]
+      | Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email">
+      | Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email">[]
       | null;
     service:
       | Pick<Service, "id" | "name" | "modality">
@@ -211,13 +236,30 @@ export default async function DashboardPage({
     new Set(visibleAppointments.map((a) => a.client_id)),
   );
 
+  // Chloe: "dashboard should highlight current client". PURE, ZERO queries: the
+  // rule reads facts already loaded (starts_at / ends_at / status) against the
+  // single `renderNow` above. A SET, so two genuinely overlapping appointments
+  // (two practitioners, two rooms) both read Current instead of one silently
+  // winning.
+  const currentAppointmentIdSet = currentAppointmentIds(
+    visibleAppointments,
+    renderNow.getTime(),
+  );
+
   // Bulk lookups for the visible client set. Each query is read-only,
   // RLS-scoped, and bounded by today's client list.
-  const [practitioners, pinnedByClient, intakeByClient] = await Promise.all([
-    getPractitionersForStudio(studio.id),
-    getLatestPinnedNoteByClient(studio.id, todayClientIds),
-    loadIntakeStatusByClient(supabase, studio.id, todayClientIds),
-  ]);
+  const [practitioners, pinnedByClient, intakeByClient, cardOnFileLoad] =
+    await Promise.all([
+      getPractitionersForStudio(studio.id),
+      getLatestPinnedNoteByClient(studio.id, todayClientIds),
+      loadIntakeStatusByClient(supabase, studio.id, todayClientIds),
+      // Chloe: card-on-file status beside each name. ONE bounded read for
+      // today's UNIQUE client ids, so a client with two appointments costs one
+      // lookup and the cost does not grow with the schedule. It returns a
+      // discriminated result: a failed read stays UNAVAILABLE and is never
+      // rendered as "No card".
+      getCardOnFileStatuses(studio.id, todayClientIds),
+    ]);
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
   // may surface here without paying an extra round-trip.
@@ -425,7 +467,7 @@ export default async function DashboardPage({
   // window is computed once here so the helper stays clock-free.
   const followUpAssistant = await getMissingRecordsAssistant(
     studio.id,
-    new Date().toISOString(),
+    renderNow.toISOString(),
   );
 
   // PR #316: sterile items / probe lots expired or expiring within 30 days,
@@ -544,6 +586,11 @@ export default async function DashboardPage({
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
+                  isCurrent={currentAppointmentIdSet.has(appt.id)}
+                  cardOnFile={resolveCardOnFileStatus(
+                    cardOnFileLoad,
+                    appt.client_id,
+                  )}
                   prepMemory={
                     prepMemoryByAppointment.get(appt.id) ?? {
                       memory: null,
@@ -719,6 +766,8 @@ function AppointmentRow({
   linkedSession,
   paymentState,
   prepMemory,
+  isCurrent,
+  cardOnFile,
   tz,
   timeFormat,
 }: {
@@ -735,6 +784,12 @@ function AppointmentRow({
   // APPOINTMENT id upstream, so two same-client appointments each get their own
   // boundary and one client can never receive another's memory.
   prepMemory: { memory: AppointmentPrepMemory | null; unavailable: boolean };
+  // Resolved ONCE for the whole page against one instant (see `renderNow`), not
+  // re-derived per row from its own clock read.
+  isCurrent: boolean;
+  // Three states, never two. `unavailable` means the card read failed, which is
+  // NOT the same claim as "this client has no card".
+  cardOnFile: CardOnFileStatus;
   tz: string;
   timeFormat: TimeFormat;
 }) {
@@ -766,12 +821,34 @@ function AppointmentRow({
     : null;
   const serviceName = appt.service?.name ?? null;
   const showAllergyFlag = !!appt.client?.allergies;
+  // Chloe: "a button for consultation notes so i can start them immediately
+  // from dashboard". The label is derived from the SERVICE MODALITY ALREADY
+  // LOADED for this row (zero queries), so "Start consultation notes" is only
+  // claimed on the visit where a consultation note is actually about to be
+  // written.
+  const isConsultationVisit = appt.service?.modality === "consultation";
+  // Only when the card status is a TRUSTED "no card": never for a client who
+  // already has one, and never off an `unavailable` read.
+  const offerPortalLink = shouldOfferPortalLink(cardOnFile);
 
   return (
     // PR #236: the row body still opens the appointment (calendar
     // detail), and a separate primary-action button sits beside it,
     // wrapping below the content on phones. No nested anchors.
-    <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900">
+    // CURRENT CLIENT (Chloe): a calm but unmissable accent — left rule + tint
+    // + the solid "Current" pill below — so the person in the room is the
+    // dominant row without shouting. The border replaces 4px of the left
+    // padding (pl-3 + border-4 = the pl-4 the other rows use), so the time
+    // column stays on the same vertical line and nothing shifts.
+    <div
+      data-testid={isCurrent ? "today-current-row" : undefined}
+      data-current={isCurrent ? "true" : undefined}
+      className={`flex flex-wrap items-start justify-between gap-3 py-4 pr-4 ${
+        isCurrent
+          ? "border-l-4 border-l-blue-500 bg-blue-50 pl-3 hover:bg-blue-100/70 dark:border-l-blue-400 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
+          : "pl-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+      }`}
+    >
       {/* CHLOE D1, the row body is a link, so NOTHING interactive may live
           inside it.
           ----------------------------------------------------------------
@@ -806,7 +883,12 @@ function AppointmentRow({
               <span className="truncate font-medium">
                 {appt.client?.name ?? "Client deleted"}
               </span>
+              {isCurrent && <CurrentPill />}
               <AppointmentStatusPill status={appt.status} />
+              {/* Beside the NAME, exactly where Chloe asked for it, and ahead
+                  of the intake line in the reading order. A non-interactive
+                  span, so it is safe inside the row-body link. */}
+              <CardOnFilePill status={cardOnFile} />
               {nextAction.chip && (
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
@@ -972,15 +1054,45 @@ function AppointmentRow({
             resolved primary action (Start/Continue charting) or the checkout
             cell above it. Sibling of the row-body link, never nested inside
             it. */}
-        {intakeAction && (
+        {/* SECONDARY STRIP. One wrapping line rather than a stack of buttons:
+            each item is quiet, borderless, and never competes with the resolved
+            primary action or the checkout cell above. Every item here is a
+            SIBLING of the row-body link, never nested inside it. */}
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
+              NAVIGATES to the canonical practitioner writer
+              (/clients/<id>?tab=consultation, client_clinical_notes) exactly as
+              the appointment-side ConsultationNotesCard does. No modal, no
+              drawer, no second textarea, no second note action, no second
+              clinical-note loader — a second writer is precisely what this
+              contract exists to prevent. */}
           <Link
-            href={intakeAction.href}
-            data-testid="today-review-intake"
-            className="rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+            href={`/clients/${appt.client_id}?tab=consultation`}
+            data-testid="today-consultation-notes"
+            className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
           >
-            {intakeAction.label}
+            {isConsultationVisit
+              ? "Start consultation notes"
+              : "Consultation notes"}
           </Link>
-        )}
+          {intakeAction && (
+            <Link
+              href={intakeAction.href}
+              data-testid="today-review-intake"
+              className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+            >
+              {intakeAction.label}
+            </Link>
+          )}
+          {/* Only for a TRUSTED "no card". Reuses the existing practitioner
+              portal-link authority whole; sends nothing until she clicks. */}
+          {offerPortalLink && (
+            <TodayPortalLinkButton
+              clientId={appt.client_id}
+              clientHasEmail={!!appt.client?.email?.trim()}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

@@ -2730,3 +2730,144 @@ export async function getSessionsForClient(clientId: string): Promise<
     [clientId],
   );
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard "current client + card on file" fixtures (Chloe production
+// feedback). Everything here is ordinary schema seeding: no Stripe API call, no
+// token, no email provider.
+// ---------------------------------------------------------------------------
+
+/**
+ * A client for the Dashboard Today roster, with the email present or ABSENT.
+ * A client with no email is the case where the one-click portal send must not
+ * be offered as an enabled control.
+ */
+export async function seedE2eDashboardClient(
+  seed: E2eSeed,
+  opts: { label: string; withEmail?: boolean },
+): Promise<{ clientId: string; name: string }> {
+  const clientId = randomUUID();
+  const uniq = randomUUID().slice(0, 8);
+  const name = `${opts.label} ${seed.runId}-${uniq}`;
+  const email =
+    opts.withEmail === false
+      ? null
+      : `e2e-dash-${seed.runId}-${uniq}@harness.local`;
+  await sql(
+    `insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`,
+    [clientId, seed.studioId, name, email],
+  );
+  return { clientId, name };
+}
+
+/**
+ * An appointment on TODAY'S roster with an exact interval relative to now and
+ * an exact status — the only way to express "now is inside this interval" and
+ * "…but the visit is already a no-show" as separate facts.
+ *
+ * `withService` attaches the studio's seeded CONSULTATION service, which is
+ * what upgrades the row's notes action to "Start consultation notes".
+ */
+export async function seedE2eTodayAppointment(
+  seed: E2eSeed,
+  opts: {
+    clientId: string;
+    startsMinutesFromNow: number;
+    endsMinutesFromNow: number;
+    status?: "confirmed" | "completed" | "cancelled" | "no_show";
+    withService?: boolean;
+  },
+): Promise<{ appointmentId: string }> {
+  const practitionerId = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0]!.id;
+  const serviceId = opts.withService
+    ? (
+        await sql<{ id: string }>(
+          `select id from public.services where studio_id = $1 and modality = 'consultation' limit 1`,
+          [seed.studioId],
+        )
+      )[0]?.id ?? null
+    : null;
+  const starts = new Date(Date.now() + opts.startsMinutesFromNow * 60_000);
+  const ends = new Date(Date.now() + opts.endsMinutesFromNow * 60_000);
+  const durationMinutes = Math.max(
+    1,
+    Math.round((ends.getTime() - starts.getTime()) / 60_000),
+  );
+  const rows = await sql<{ id: string }>(
+    `insert into public.appointments
+       (id, studio_id, client_id, practitioner_id, service_id, starts_at, ends_at,
+        duration_minutes, buffer_minutes_snapshot, blocked_ends_at, status)
+     values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, 0, $6, $8)
+     returning id`,
+    [
+      seed.studioId,
+      opts.clientId,
+      practitionerId,
+      serviceId,
+      starts.toISOString(),
+      ends.toISOString(),
+      durationMinutes,
+      opts.status ?? "confirmed",
+    ],
+  );
+  return { appointmentId: rows[0]!.id };
+}
+
+/**
+ * An ACTIVE card on file for (studio, client) in a chosen Stripe mode, with the
+ * full lineage the FKs require (studio_payment_settings -> client_stripe_
+ * customers -> client_payment_methods).
+ *
+ * `livemode` is a parameter on purpose: seeding a LIVE card while the E2E
+ * runtime is in TEST mode is the only way to prove the Dashboard refuses to
+ * count an unchargeable card as "Card on file".
+ *
+ * No Stripe API is contacted; these are the same rows the real webhook writes.
+ */
+export async function seedE2eActiveCardOnFile(
+  seed: E2eSeed,
+  clientId: string,
+  opts: { livemode?: boolean } = {},
+): Promise<void> {
+  const livemode = opts.livemode ?? false;
+  const uniq = randomUUID().slice(0, 8);
+  const accountId = `acct_e2e_${seed.runId}_${livemode ? "live" : "test"}`;
+  const customerId = `cus_e2e_${uniq}`;
+
+  await sql(
+    `insert into public.studio_payment_settings
+       (studio_id, stripe_account_id, stripe_account_status, stripe_charges_enabled,
+        stripe_payouts_enabled, stripe_livemode)
+     values ($1, $2, 'enabled', true, true, $3)
+     on conflict on constraint studio_payment_settings_studio_mode_uniq
+     do update set stripe_account_id = excluded.stripe_account_id`,
+    [seed.studioId, accountId, livemode],
+  );
+  await sql(
+    `insert into public.client_stripe_customers
+       (client_id, studio_id, stripe_account_id, stripe_livemode, stripe_customer_id)
+     values ($1, $2, $3, $4, $5)`,
+    [clientId, seed.studioId, accountId, livemode, customerId],
+  );
+  await sql(
+    `insert into public.client_payment_methods
+       (studio_id, client_id, stripe_account_id, stripe_livemode, stripe_customer_id,
+        stripe_payment_method_id, stripe_setup_intent_id,
+        brand, last4, exp_month, exp_year, status)
+     values ($1, $2, $3, $4, $5, $6, $7, 'visa', '4242', 12, 2030, 'active')`,
+    [
+      seed.studioId,
+      clientId,
+      accountId,
+      livemode,
+      customerId,
+      `pm_e2e_${uniq}`,
+      `seti_e2e_${uniq}`,
+    ],
+  );
+}

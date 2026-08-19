@@ -58,6 +58,12 @@ export const BROWSER_GROUPS = {
       // while the standalone appointment-prep card keeps its full-chart link.
       // Also carries the D2/D3/D4 "this is no longer on the Dashboard" proofs.
       "dashboard-treatment-memory-inline.spec.ts",
+      // Chloe fast-feedback pass on the Today row: the current-client
+      // highlight, the one-tap consultation-notes navigation, the three-state
+      // card-on-file status (including the wrong-Stripe-mode refusal) and the
+      // one-click portal-link reminder. It sits with the other Dashboard
+      // Today specs.
+      "dashboard-current-client-card-status.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be
