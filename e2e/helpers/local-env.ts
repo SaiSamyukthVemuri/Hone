@@ -88,6 +88,12 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: LOCAL_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: LOCAL_SERVICE_ROLE_KEY,
   RESEND_API_KEY: "re_dummy_resend_key",
+  // P0 new-client waitlist. Exactly ONE reserved slug is enabled for this
+  // lane, and e2e/new-client-waitlist.spec.ts is the only spec that claims it.
+  // Every other seeded studio uses a random `e2e-studio-<runId>` slug, so the
+  // whole rest of the browser suite runs with the feature OFF — which is what
+  // makes the extended run itself the flag-OFF regression proof.
+  NEW_CLIENT_WAITLIST_STUDIO_SLUGS: "e2e-waitlist-p0",
   TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000000",
   TWILIO_AUTH_TOKEN: "dummy-twilio-token",
   TWILIO_FROM_NUMBER: "+15555550100",
