@@ -131,7 +131,7 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 | Booking | Backward-packed slot anchor + source-aware conflicts (PR #467) | Merged | no migration | Deployed | Enabled | ✅ | ✅ | PR #467 | — |
 | Booking | Explicit per-service calendar colour (0153) | Merged | ✅ applied | Deployed | Enabled | ✅ | ✅ | migration 0153 | Rose/red reserved for clinical caution |
 | Booking | **Direct new-client consultation booking route** | **Deferred** | — | — | — | — | — | Product decision 2026-07-27 | **Deferred by product decision.** Not built, not a blocker, not the next task |
-| Booking | **New-client waitlist (admission control) — PR #601** | Merged | **no migration** | Deployed | **Enabled for `willow-electrolysis` only** | ✅ one controlled canary, 2026-08-19 | ✅ | See the release record below | V1 has **no durable queue**; the provider-accepted studio email is the queue |
+| Booking | **New-client waitlist (admission control) — PR #601** | Merged | **no migration** | Deployed | Enabled for `willow-electrolysis` — **"and no other studio" is operator-declared**, see the release record | ✅ one controlled canary, 2026-08-19 | ✅ | See the release record below | V1 has **no durable queue**; the provider-accepted studio email is the queue |
 
 ### New-client waitlist — Stage A / Stage B release record (2026-08-19)
 
@@ -217,9 +217,16 @@ probed by canary identity rather than by studio.
 10. **Clearing the flag is the kill switch** — no database rollback, because there is nothing
     written to roll back.
 
-**#599 and #600 are superseded discovery records.** They remain open as history and **must
-never become delivery vehicles**; no implementation may be copied from them. PR #601 is the
-only delivery vehicle for this capability.
+**Vehicle history for this capability.** Five PRs carry the name; only one shipped product,
+and the roles are not interchangeable.
+
+| PR | Role | Status |
+|---|---|---|
+| #599 | Superseded **discovery** vehicle | Open as history. **Never merge.** No implementation may be copied from it |
+| #600 | Superseded **discovery** vehicle | Open as history. **Never merge.** No implementation may be copied from it |
+| **#601** | **SOLE PRODUCT DELIVERY VEHICLE** | **Merged** — the only vehicle that shipped this capability |
+| #602 | Failed **documentation closeout** vehicle — *not* a product implementation vehicle | **Closed, never merged, not in production ancestry.** Failed its exact-head review on two documentation-truth defects: it overclaimed provider acceptance as delivery, and it committed unnecessary raw personal contact details into release evidence. **Must never be merged or reopened as the maintained closeout.** It remains in prior GitHub history; that is not the same as being in production ancestry, and no claim of historical erasure is made |
+| #603 | Clean replacement **documentation** vehicle | The maintained closeout — this record |
 
 ## 6. Client portal and intake
 

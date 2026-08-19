@@ -236,8 +236,8 @@ override. An owner override bypasses the buffer only — never a real overlap.
 
 ### New-client waitlist — LIVE, WILLOW PILOT ONLY (PR #601, 2026-08-19)
 
-**Deployed · enabled for `willow-electrolysis` only · production exercised (one controlled
-canary) · human accepted.** Release source `3aa0a64a0afd31489db47c53fc22e3d84d4fccec`.
+**Deployed · enabled for the `willow-electrolysis` pilot · production exercised (one
+controlled canary) · human accepted.** Release source `3aa0a64a0afd31489db47c53fc22e3d84d4fccec`.
 
 Willow reached a capacity state where new-client consultations kept arriving while no
 treatment-sized opening existed for roughly two weeks. When the studio is waitlisted, a
@@ -247,8 +247,12 @@ before any client, appointment or intake can be created. **Existing clients are 
 intercepted** — their booking and portal hand-off are unchanged.
 
 Enablement is the server-only env var **`NEW_CLIENT_WAITLIST_STUDIO_SLUGS`**, an exact-match
-comma-separated slug allowlist. Current intended Production value: **`willow-electrolysis`**
-(Production target only; Preview and Development carry no such variable). Unset or empty is
+comma-separated slug allowlist. The pilot value is **`willow-electrolysis`**, set on the
+Production target only. That the variable is present on Production and absent from Preview and
+Development is machine-measured, as is Willow's own enablement (the live render returns
+`newClientWaitlistEnabled: true`); that **no other studio** is in the value is
+**operator-declared**, because the stored value is Sensitive and was never read back — see
+[capability-register.md](./capability-register.md) §5. Unset or empty is
 OFF for every studio, which is also the **kill switch**: remove Willow from the variable and
 redeploy Production. There is no database rollback because the feature performs **no business
 writes** — see [capability-register.md](./capability-register.md) §5 for the evidence.
