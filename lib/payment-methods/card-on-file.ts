@@ -1,7 +1,10 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { getActiveConsentTemplatesForPortal } from "@/lib/consent/queries";
+import {
+  getCardAuthorizationCapability,
+  type CardAuthorizationCapability,
+} from "@/lib/consent/queries";
 
 // Chloe production feedback: "tell me on the dashboard next to my upcoming
 // clients names if they have a card on file or not, so i can remind them if
@@ -136,9 +139,10 @@ export async function getCardOnFileStatuses(
 // when it is not true), which is a booking policy, not a statement about
 // whether the portal can collect a card. No application surface writes it, and
 // the two questions are not the same one.
-export async function studioOffersCardOnFile(studioId: string): Promise<boolean> {
-  const templates = await getActiveConsentTemplatesForPortal(studioId);
-  return templates.some((t) => t.form_type === "card_authorization");
+export async function studioOffersCardOnFile(
+  studioId: string,
+): Promise<CardAuthorizationCapability> {
+  return getCardAuthorizationCapability(studioId);
 }
 
 /**
@@ -153,7 +157,20 @@ export async function loadCardOnFileForStudio(
   clientIds: ReadonlyArray<string>,
 ): Promise<CardOnFileLoad | null> {
   if (clientIds.length === 0) return null;
-  if (!(await studioOffersCardOnFile(studioId))) return null;
+
+  const capability = await studioOffersCardOnFile(studioId);
+
+  // UNKNOWN IS NOT OFF. A capability read we could not complete says nothing
+  // about this studio, so it must not be spoken as "no card route" — that
+  // would hide the whole card UX from a studio that has one. It resolves to
+  // the honest third state, "Card status unavailable", and buys no further
+  // query: we do not know whether the question even applies.
+  if (!capability.ok) return { ok: false };
+
+  // ABSENT is authoritative: the read succeeded and there is no route, so the
+  // question genuinely does not apply and no card query is issued.
+  if (!capability.enabled) return null;
+
   return getCardOnFileStatuses(studioId, clientIds);
 }
 

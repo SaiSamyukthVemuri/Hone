@@ -21,7 +21,9 @@ const h = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
   error: null as unknown,
   calls: [] as Array<{ table: string; selected: string }>,
-  templates: [] as Array<{ form_type: string }>,
+  capability: { ok: true, enabled: false } as
+    | { ok: true; enabled: boolean }
+    | { ok: false },
   templateCalls: 0,
   throwOnAdmin: false,
 }));
@@ -29,9 +31,9 @@ const h = vi.hoisted(() => ({
 // The capability gate reuses the PORTAL's own template authority, so the test
 // mocks that authority rather than re-deriving its predicate here.
 vi.mock("@/lib/consent/queries", () => ({
-  getActiveConsentTemplatesForPortal: async () => {
+  getCardAuthorizationCapability: async () => {
     h.templateCalls += 1;
-    return h.templates;
+    return h.capability;
   },
 }));
 
@@ -107,7 +109,7 @@ async function statusFor(clientId: string, clientIds = [CLIENT_A, CLIENT_B]) {
 
 beforeEach(() => {
   scenario([]);
-  h.templates = [];
+  h.capability = { ok: true, enabled: false };
   h.templateCalls = 0;
 });
 
@@ -290,32 +292,32 @@ describe("shouldOfferPortalLink — only a TRUSTED absence earns a nudge", () =>
 // BOOKING (migration 0032's session RPC) and is a different question.
 
 describe("studio capability decides whether the card question is asked at all", () => {
-  it("a studio WITH an active card_authorization template can be asked", async () => {
-    h.templates = [{ form_type: "intake" }, { form_type: "card_authorization" }];
-    expect(await studioOffersCardOnFile(STUDIO)).toBe(true);
+  it("a studio WITH a card route is PRESENT", async () => {
+    h.capability = { ok: true, enabled: true };
+    expect(await studioOffersCardOnFile(STUDIO)).toEqual({ ok: true, enabled: true });
   });
 
-  it("a studio WITHOUT one cannot", async () => {
-    h.templates = [{ form_type: "intake" }, { form_type: "policy" }];
-    expect(await studioOffersCardOnFile(STUDIO)).toBe(false);
+  it("a studio WITHOUT one is authoritatively ABSENT", async () => {
+    h.capability = { ok: true, enabled: false };
+    expect(await studioOffersCardOnFile(STUDIO)).toEqual({ ok: true, enabled: false });
   });
 
-  it("capability OFF ⇒ ZERO card-status queries and no claim to render", async () => {
-    h.templates = [{ form_type: "intake" }];
+  it("capability ABSENT ⇒ ZERO card-status queries and no claim to render", async () => {
+    h.capability = { ok: true, enabled: false };
     const load = await loadCardOnFileForStudio(STUDIO, [CLIENT_A, CLIENT_B]);
     expect(load, "no route ⇒ no question ⇒ nothing to render").toBeNull();
     expect(cardQueries(), "the card table must not be touched").toBe(0);
   });
 
   it("an EMPTY DAY costs zero card queries and never even asks capability", async () => {
-    h.templates = [{ form_type: "card_authorization" }];
+    h.capability = { ok: true, enabled: true };
     expect(await loadCardOnFileForStudio(STUDIO, [])).toBeNull();
     expect(cardQueries()).toBe(0);
     expect(h.templateCalls).toBe(0);
   });
 
-  it("capability ON ⇒ EXACTLY ONE bounded card read, dedup preserved", async () => {
-    h.templates = [{ form_type: "card_authorization" }];
+  it("capability PRESENT ⇒ EXACTLY ONE bounded card read, dedup preserved", async () => {
+    h.capability = { ok: true, enabled: true };
     scenario([{ client_id: CLIENT_A }]);
     const load = await loadCardOnFileForStudio(STUDIO, [CLIENT_A, CLIENT_B, CLIENT_A]);
     expect(load?.ok).toBe(true);
@@ -346,5 +348,57 @@ describe("a service-role construction failure degrades, it does not crash", () =
     const load = await getCardOnFileStatuses(STUDIO, [CLIENT_A]);
     expect(load.ok, "the module promises a failed read degrades").toBe(false);
     expect(resolveCardOnFileStatus(load, CLIENT_A)).toBe("unavailable");
+  });
+});
+
+
+// ===========================================================================
+// UNKNOWN IS NOT OFF — the capability read has its own third outcome
+// ===========================================================================
+//
+// The previous shape collapsed a failed capability read into "no card route",
+// which silently hid the entire card UX from a studio that has one, and let a
+// synchronous construction throw escape into the Dashboard's Promise.all and
+// take the whole Today roster down. An unknown must never be spoken as an
+// authoritative absence — the same rule the card read itself already follows.
+
+describe("capability UNKNOWN resolves to unavailable, never to absent", () => {
+  it("a failed capability read returns the honest failure shape, NOT null", async () => {
+    h.capability = { ok: false };
+    const load = await loadCardOnFileForStudio(STUDIO, [CLIENT_A, CLIENT_B]);
+    expect(load, "unknown must not be spoken as 'no route'").not.toBeNull();
+    expect(load).toEqual({ ok: false });
+  });
+
+  it("every row then reads 'unavailable' — never 'no card', never a claim", async () => {
+    h.capability = { ok: false };
+    const load = await loadCardOnFileForStudio(STUDIO, [CLIENT_A, CLIENT_B]);
+    for (const c of [CLIENT_A, CLIENT_B]) {
+      expect(resolveCardOnFileStatus(load, c)).toBe("unavailable");
+    }
+  });
+
+  it("and offers NO portal-link nudge, because the absence was never established", async () => {
+    h.capability = { ok: false };
+    const load = await loadCardOnFileForStudio(STUDIO, [CLIENT_A]);
+    expect(shouldOfferPortalLink(resolveCardOnFileStatus(load, CLIENT_A))).toBe(false);
+  });
+
+  it("an unknown capability buys ZERO card-status queries", async () => {
+    h.capability = { ok: false };
+    await loadCardOnFileForStudio(STUDIO, [CLIENT_A, CLIENT_B]);
+    expect(cardQueries()).toBe(0);
+  });
+
+  it("ABSENT and UNKNOWN are different answers, and render differently", async () => {
+    h.capability = { ok: true, enabled: false };
+    const absent = await loadCardOnFileForStudio(STUDIO, [CLIENT_A]);
+    h.capability = { ok: false };
+    const unknown = await loadCardOnFileForStudio(STUDIO, [CLIENT_A]);
+
+    expect(absent).toBeNull();                                  // no question
+    expect(unknown).toEqual({ ok: false });                     // unanswerable
+    expect(resolveCardOnFileStatus(absent, CLIENT_A)).toBeNull();
+    expect(resolveCardOnFileStatus(unknown, CLIENT_A)).toBe("unavailable");
   });
 });

@@ -445,7 +445,12 @@ test.describe("iPhone profile", () => {
 // itself treats as "no route", and proves the Dashboard stays silent.
 test("a studio with no card-on-file route shows no card UI at all", async ({ page }) => {
   const seed = await seedE2eStudio();
-  // Deliberately NO seedE2eCardOnFileCapability(seed).
+  // Deliberately NO seedE2eCardOnFileCapability(seed): the capability read
+  // SUCCEEDS and authoritatively reports no route. That is ABSENT, which is a
+  // different answer from UNKNOWN — a failed capability read renders
+  // "Card status unavailable" instead, and is proved at unit level because
+  // inducing a read failure in the browser would need a production-reachable
+  // failure seam, which this feature deliberately does not have.
   const client = await seedRow(seed, {
     label: "Nogate Client",
     startsMinutesFromNow: 60,
