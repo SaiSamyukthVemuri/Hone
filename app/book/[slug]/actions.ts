@@ -50,6 +50,11 @@ import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isConsultationService } from "@/lib/booking/consultation";
 import {
+  isNewClientWaitlistEnabled,
+  NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
+  NEW_CLIENT_WAITLIST_REFUSAL_CODE,
+} from "@/lib/booking/new-client-waitlist";
+import {
   buildBookingMarketingConsentRow,
   MARKETING_CONSENT_FIELD,
   parseMarketingConsent,
@@ -355,7 +360,11 @@ export type PublicBookResult =
       manageUrl: string;
       confirmationEmailStatus: ConfirmationEmailStatus;
     }
-  | { ok: false; error: string; code?: "slot_taken" };
+  | {
+      ok: false;
+      error: string;
+      code?: "slot_taken" | typeof NEW_CLIENT_WAITLIST_REFUSAL_CODE;
+    };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
   const slug = trimmed(formData.get("slug"));
@@ -450,6 +459,32 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   const studio = await getStudioBySlug(slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+
+  // =====================================================================
+  // P0 NEW-CLIENT WAITLIST ADMISSION GATE — SERVER AUTHORITY
+  // =====================================================================
+  // UI gating is not sufficient. An old tab, a cached page, a replayed
+  // request, a direct server-action call, modified client JavaScript or a
+  // hand-forged form can all reach this action with client_type=new after the
+  // studio has been put into waitlist mode.
+  //
+  // Enablement is derived from the SERVER-RESOLVED studio slug (never a
+  // browser-supplied value), and the refusal happens HERE: before the readiness
+  // read, before the service read, before the slot re-verification, and
+  // therefore before any client insert, appointment command, intake creation,
+  // booking notification, or booking-conversion analytics. No business state
+  // can be mutated on the refused path.
+  //
+  // client_type=existing is deliberately NOT intercepted. Returning clients
+  // keep their entire booking path: this gate is admission control for NEW
+  // intake only, not a studio-wide stop.
+  if (clientType === "new" && isNewClientWaitlistEnabled(studio.slug)) {
+    return {
+      ok: false,
+      error: NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
+      code: NEW_CLIENT_WAITLIST_REFUSAL_CODE,
+    };
+  }
 
   const start = new Date(startsAtRaw);
   if (Number.isNaN(start.getTime())) {

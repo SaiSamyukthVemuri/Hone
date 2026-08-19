@@ -130,6 +130,10 @@ export const BROWSER_GROUPS = {
       "move-appointment-responsive.spec.ts",
       "safe-willow-appointment-lifecycle.spec.ts",
       "create-plan-from-appointment.spec.ts",
+      // P0 emergency: the new-client waitlist admission gate on the PUBLIC
+      // booking page (waitlist UX for new clients, untouched booking UX for
+      // existing clients, and the zero-business-write contract).
+      "new-client-waitlist.spec.ts",
     ],
   },
   calendar: {
