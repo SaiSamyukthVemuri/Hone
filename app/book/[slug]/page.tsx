@@ -7,6 +7,7 @@ import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { PublicBookForm } from "./PublicBookForm";
+import { isNewClientWaitlistEnabled } from "@/lib/booking/new-client-waitlist";
 import type { Service } from "@/lib/types/database";
 import {
   isPubliclyBookable,
@@ -116,6 +117,12 @@ export default async function PublicBookingPage({
             <PublicBookForm
               slug={studio.slug}
               studioName={studio.name}
+              /* P0 new-client waitlist. A DERIVED boolean only: the configured
+                 slug allowlist is server-only and never reaches the browser,
+                 and this flag is presentation authority only. The public
+                 booking server action re-derives it from the server-resolved
+                 studio, so a stale tab or forged post cannot book around it. */
+              newClientWaitlistEnabled={isNewClientWaitlistEnabled(studio.slug)}
               studioAddress={studio.address ?? null}
               services={services}
               defaultDate={today}
