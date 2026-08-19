@@ -356,6 +356,34 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 
 ---
 
+## L25 — New-client waitlist: no delivery signal, and two diagnostic-only classification imprecisions (PR #601)
+
+**Blocking: Neither.** Recorded at delivery, verified, and explicitly **not repaired** in the
+Willow pilot.
+
+**No delivery signal.** V1's operational record is the studio notification email **accepted by
+the provider**. The application observes no delivery receipt and no bounce webhook, and there
+is no durable queue, so a message accepted and then bounced or spam-filtered leaves no record
+at all. Inbox delivery was physically confirmed by a human for the **one controlled production
+canary**; that is evidence for that request, not a property of the implementation. Operational
+mitigation is the studio-side inbox label/filter gate confirmed before activation.
+
+**Two diagnostic-only imprecisions**, both P3 and neither affecting the client-safety
+contract:
+
+1. In the waitlist send path, a **network throw is labelled `timeout`** in the diagnostic
+   `reason` field. The behaviour is correct — both are treated as ambiguous, the fail-closed
+   direction — but the log field is less precise than it reads.
+2. **Connection-refused is conservatively classified ambiguous** even though it means the
+   request never reached the provider. Conservative in the safe direction: the visitor is told
+   the request could not be confirmed rather than being told it succeeded. The cost is the
+   "contact the studio" copy in a case where a plain retry would have been fine.
+
+The two P3s **must not be silently promoted or downgraded**. Also carried forward: **PRs #599
+and #600 are superseded discovery records for this capability — they must never be used as
+delivery vehicles, and no implementation may be copied from them.** See
+[capability-register.md](./capability-register.md) §5.
+
 ## Explicitly *not* claimed
 
 To keep this register honest, the following are **not** asserted anywhere in Hone's

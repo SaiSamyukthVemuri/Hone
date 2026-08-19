@@ -234,6 +234,35 @@ override. An owner override bypasses the buffer only — never a real overlap.
 **The direct new-client consultation booking route is `Deferred by product decision`
 (2026-07-27).** It is not built, not a launch blocker, and not the next engineering task.
 
+### New-client waitlist — LIVE, WILLOW PILOT ONLY (PR #601, 2026-08-19)
+
+**Deployed · enabled for `willow-electrolysis` only · production exercised (one controlled
+canary) · human accepted.** Release source `3aa0a64a0afd31489db47c53fc22e3d84d4fccec`.
+
+Willow reached a capacity state where new-client consultations kept arriving while no
+treatment-sized opening existed for roughly two weeks. When the studio is waitlisted, a
+visitor who identifies as a **new client** gets a waitlist form instead of the consultation
+booking flow, and the public booking server action refuses `client_type=new` for that studio
+before any client, appointment or intake can be created. **Existing clients are never
+intercepted** — their booking and portal hand-off are unchanged.
+
+Enablement is the server-only env var **`NEW_CLIENT_WAITLIST_STUDIO_SLUGS`**, an exact-match
+comma-separated slug allowlist. Current intended Production value: **`willow-electrolysis`**
+(Production target only; Preview and Development carry no such variable). Unset or empty is
+OFF for every studio, which is also the **kill switch**: remove Willow from the variable and
+redeploy Production. There is no database rollback because the feature performs **no business
+writes** — see [capability-register.md](./capability-register.md) §5 for the evidence.
+
+**V1 has no durable queue. The operational record of a waitlist request is the studio
+notification email ACCEPTED BY THE PROVIDER** — that is what the implementation can
+establish, and it means the provider took the request and returned a message id. **It is not
+inbox delivery**, which the application never observes: there is no delivery receipt and no
+bounce webhook, so an accepted message that later bounces or is filtered leaves no record at
+all. For the **one controlled Willow production canary**, delivery to the configured studio
+owner inbox was *additionally* confirmed by human physical observation — that is release
+evidence for that single request, not a general property of the implementation. Durable
+queue, invitations and automatic release are **not built**.
+
 ## 6. Client portal and intake
 
 **Deployed · enabled · in use.** Magic-link portal login with an append-only access-event

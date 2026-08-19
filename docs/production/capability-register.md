@@ -131,6 +131,95 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 | Booking | Backward-packed slot anchor + source-aware conflicts (PR #467) | Merged | no migration | Deployed | Enabled | ✅ | ✅ | PR #467 | — |
 | Booking | Explicit per-service calendar colour (0153) | Merged | ✅ applied | Deployed | Enabled | ✅ | ✅ | migration 0153 | Rose/red reserved for clinical caution |
 | Booking | **Direct new-client consultation booking route** | **Deferred** | — | — | — | — | — | Product decision 2026-07-27 | **Deferred by product decision.** Not built, not a blocker, not the next task |
+| Booking | **New-client waitlist (admission control) — PR #601** | Merged | **no migration** | Deployed | **Enabled for `willow-electrolysis` only** | ✅ one controlled canary, 2026-08-19 | ✅ | See the release record below | V1 has **no durable queue**; the provider-accepted studio email is the queue |
+
+### New-client waitlist — Stage A / Stage B release record (2026-08-19)
+
+Release source **`3aa0a64a0afd31489db47c53fc22e3d84d4fccec`** (PR #601 merge, feature head
+`ca545459126ec4a1ecf5620cc4c07e7205ed75e9`). No migration: the merge changed nothing under
+`supabase/`, and migration `0185` was neither created nor claimed. Implementation detail lives
+in PR #601 — it is not restated here.
+
+**Evidence provenance is separated deliberately. Operator-observed means a human looked;
+machine-measured means a tool returned it.**
+
+**No personal email address is recorded in this file.** The studio destination is identified
+as the configured `studios.owner_email`, which is re-readable from production at any time;
+the canary is identified by its properties. Neither literal address is needed to establish
+any claim below, and Hone's own PII posture (salted fingerprints, never raw addresses in
+logs) applies to its documentation too.
+
+| Gate | Result | Evidence class |
+|---|---|---|
+| Stage A dark smoke, flag OFF — new client | **PASS** — normal NEW CLIENT Consultation, date + slot selection, no interception | Operator-observed, Incognito |
+| Stage A dark smoke, flag OFF — existing client | **PASS** — normal flow, secure client-portal hand-off, no interception | Operator-observed, Incognito |
+| Stage B activation — variable | Present on the **Production target only**; absent from Preview and Development | Machine-measured (name/target listing) |
+| Stage B activation — value | Set to `willow-electrolysis` | **Operator-declared.** The stored value is Sensitive and was never read, so "Willow **and no other studio**" rests on the operator's declaration. What *is* machine-measured is that Willow itself is enabled: the live `/book/willow-electrolysis` render returns `newClientWaitlistEnabled: true` |
+| Stage B live — new client | **PASS** — "Join the new-client waitlist", Name / Email / optional Phone / JOIN WAITLIST, and the non-reservation notice. **Service picker, consultation path, date picker and slot list all absent** | Operator-observed, Incognito |
+| Stage B live — existing client | **PASS** — "Already a Willow Electrolysis client?" and the normal portal hand-off. The waitlist did **not** intercept | Operator-observed, Incognito |
+| Studio operational email | **PASS** — physically seen in the configured studio owner inbox: subject `[HONE WAITLIST] New client · Willow Electrolysis`, carrying the canary name, its address and `Phone: Not provided`, stating "This is a waitlist request only. No appointment has been created." Message remained in Inbox under the `Hone Waitlist` label | **Operator-observed physical inbox** |
+| Rollback | **Not executed** — no defined trigger fired | Operator-observed |
+
+**Provider acceptance is not inbox delivery, and the distinction is load-bearing.** What the
+implementation establishes is that the Resend API took the request and returned a non-empty
+message id. It observes no delivery receipt and no bounce webhook. The physical inbox
+observation above is **human evidence for the single controlled canary** — it must never be
+generalised into a delivery guarantee for ordinary requests.
+
+**Destination provenance.** The studio address used by the sender is the server-resolved
+`studios.owner_email`; it is never browser-supplied. Before activation the operator verified
+that row directly against production and confirmed it matched the intended studio owner
+inbox, and the Gmail label/filter gate was confirmed against that same address.
+
+**Controlled canary — exactly one, and it must not be repeated.** Operator-controlled
+identity `Hone Waitlist Production Test`, submitted at a **fresh operator-controlled alias
+with no prior Willow client, appointment or marketing-waitlist rows**, phone left blank. A
+first candidate address was rejected during preflight because the PRE query showed it already
+belonged to a Willow client (1 client, 5 appointments) — the zero-write proof is only
+meaningful against an identity starting at zero, which is why a fresh alias was required.
+
+| Bounded read-only query (studio-scoped) | PRE | POST |
+|---|---|---|
+| Willow `clients` for the canary identity | 0 | 0 |
+| Willow `appointments` for the canary identity | 0 | 0 |
+| `public.waitlist` rows for the canary identity | 0 | 0 |
+
+**Scope of that claim, stated precisely: ZERO BUSINESS WRITES TO THE THREE GUARDED SURFACES
+FOR THE CONTROLLED CANARY.** It is *not* a claim of zero database operations — the
+implementation performs a bounded studio read by slug on every submission. `public.waitlist`
+is the unrelated marketing early-access list and has no studio ownership, which is why it is
+probed by canary identity rather than by studio.
+
+**Architectural contract as shipped** (detail in PR #601, not duplicated here):
+
+1. **Server-resolved studio authority** — the browser supplies a slug only as a lookup
+   pointer; identity, enablement, rate-limit scope and idempotency tenant all come from the
+   resolved `studios` row.
+2. **Existing-client exemption** — the gate is `client_type === "new"`; nothing else is
+   intercepted.
+3. **Server-side refusal** — a stale, direct or modified-client new-client booking is refused
+   before the readiness read, the service read and any client/appointment/intake write.
+4. **No business creation for a V1 request** — no client, appointment, intake, or
+   `public.waitlist` row.
+5. **Dedicated studio-scoped rate limiting** — its own Redis namespace, keyed by hashed
+   identifier plus the resolved studio id, so one studio cannot consume another's quota and
+   the marketing form's quota is untouched.
+6. **Provider idempotency identity** — event namespace + server-resolved studio id + hash of
+   the exact provider payload. Same studio + same payload ⇒ same key; different studio ⇒
+   different key; changed payload ⇒ different key.
+7. **Ambiguous ≠ success** — a timeout or concurrent-request outcome is reported as
+   unconfirmed with its own copy; success requires provider acceptance **and** a non-empty
+   message id.
+8. **The provider-accepted studio email is the V1 queue** — there is no durable row to
+   reconcile against, and no delivery signal to reconcile with.
+9. **Server-only and default OFF** — the allowlist never reaches the client bundle; unset or
+   empty is OFF for every studio.
+10. **Clearing the flag is the kill switch** — no database rollback, because there is nothing
+    written to roll back.
+
+**#599 and #600 are superseded discovery records.** They remain open as history and **must
+never become delivery vehicles**; no implementation may be copied from them. PR #601 is the
+only delivery vehicle for this capability.
 
 ## 6. Client portal and intake
 
