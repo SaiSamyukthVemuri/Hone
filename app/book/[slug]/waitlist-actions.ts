@@ -6,6 +6,7 @@ import {
   isNewClientWaitlistEnabled,
   validateWaitlistSubmission,
   NEW_CLIENT_WAITLIST_SUBMIT_FAILED,
+  WAITLIST_SLUG_MAX,
 } from "@/lib/booking/new-client-waitlist";
 import { limitWaitlistSubmit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
@@ -123,7 +124,9 @@ export async function submitNewClientBookingWaitlistAction(
     phone: trimmed(formData.get("phone")) || null,
   });
   if (!validated.ok) return { ok: false, error: validated.error };
-  if (!slug) return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
+  if (!slug || slug.length > WAITLIST_SLUG_MAX) {
+    return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
+  }
   const submission = validated.value;
   const emailFingerprint = hashFingerprint(submission.email);
 

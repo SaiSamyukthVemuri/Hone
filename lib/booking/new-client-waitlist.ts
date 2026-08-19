@@ -62,6 +62,10 @@ export const NEW_CLIENT_WAITLIST_SUBMIT_FAILED =
 export const WAITLIST_NAME_MAX = 120;
 export const WAITLIST_EMAIL_MAX = 254; // RFC 5321 practical address ceiling
 export const WAITLIST_PHONE_MAX = 40;
+// The slug arrives from the browser as a lookup pointer. Bounding it keeps an
+// arbitrarily long attacker-supplied string out of both the studio query and
+// the diagnostic log line below. Real slugs are short.
+export const WAITLIST_SLUG_MAX = 100;
 
 // Same conservative shape the rest of the project uses for public email input
 // (public booking, portal login, marketing forms). Intentionally permissive

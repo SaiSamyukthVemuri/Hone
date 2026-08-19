@@ -38,7 +38,14 @@ const CANARY_EMAIL = "e2e-waitlist-canary@harness.local";
 
 async function seedWaitlistStudio() {
   const seed = await seedE2eStudio();
-  // Claim the reserved slug so the server-only allowlist matches this studio.
+  // The reserved slug is a SINGLETON — `studios_slug_unique` (migration 0010)
+  // allows exactly one holder. Release it from any earlier holder before
+  // claiming it, so the second scenario in this file (and a re-run against a
+  // database that was not freshly reset) cannot trip the constraint.
+  await sql(
+    `update public.studios set slug = 'e2e-waitlist-released-' || id where slug = $1`,
+    [WAITLIST_SLUG],
+  );
   await sql(`update public.studios set slug = $2 where id = $1`, [
     seed.studioId,
     WAITLIST_SLUG,

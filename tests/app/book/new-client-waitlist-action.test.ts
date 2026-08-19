@@ -293,6 +293,15 @@ describe("submitNewClientBookingWaitlistAction — refusals", () => {
     expect(sends).toEqual([]);
   });
 
+  it("an over-long slug -> generic refusal, and it never reaches the studio query or a log", async () => {
+    const huge = "a".repeat(5000);
+    const result = await submitNewClientBookingWaitlistAction(form({ slug: huge }));
+    expect(result).toEqual({ ok: false, error: GENERIC });
+    expect(dbOps, "an unbounded slug must not reach the database").toEqual([]);
+    expect(sends).toEqual([]);
+    expect([...consoleErrors, ...consoleWarns, ...consoleLogs].join("\n")).not.toContain(huge);
+  });
+
   it("invalid input -> validation refusal BEFORE the rate limiter and the provider", async () => {
     const blankName = await submitNewClientBookingWaitlistAction(form({ name: "   " }));
     expect(blankName).toEqual({ ok: false, error: "Your name is required." });
