@@ -455,6 +455,93 @@ export async function limitWaitlistSubmit(args: {
   return limitMarketingForm("waitlist", args);
 }
 
+// ===========================================================================
+// P0 NEW-CLIENT BOOKING WAITLIST — DEDICATED, STUDIO-SCOPED BUCKET
+// ===========================================================================
+//
+// This is NOT limitWaitlistSubmit. That limiter serves the Hone MARKETING
+// landing-page waitlist and keys on the hashed IP / hashed email ALONE, with no
+// studio or surface component. Sharing it would mean:
+//
+//   * a visitor who used the landing-page early-access form twice is refused on
+//     a studio's booking waitlist for a day, and
+//   * two waitlisted studios silently consume each other's budgets.
+//
+// Both silently DROP a real new-client lead, which is precisely the demand this
+// release exists to capture. So the booking waitlist gets its own Redis
+// prefixes and its own key space, scoped by the SERVER-RESOLVED studio id.
+//
+// FAIL-OPEN, DELIBERATELY CLASSIFIED (not inherited by habit). A limiter outage
+// here means either (a) fail closed and drop genuine leads during the exact
+// window the studio is trying to capture them, or (b) fail open and risk extra
+// operational emails in the studio inbox. (a) destroys the release's purpose
+// and is unrecoverable — the lead is simply gone. (b) is noisy, visible and
+// recoverable: the operator can clear the feature flag. Fail open, matching
+// every other public limiter in this file.
+//
+// Raw IP and raw email never enter a Redis key or a log line: both are hashed
+// first. The studio id is an internal UUID, not personal data.
+const NEW_CLIENT_WAITLIST_LIMITS = {
+  ip: { limit: 5, window: "1 h" },
+  email: { limit: 3, window: "1 d" },
+} as const;
+
+const newClientWaitlistLimiterCache = new Map<string, Ratelimit | null>();
+function newClientWaitlistLimiter(dimension: "ip" | "email"): Ratelimit | null {
+  const cached = newClientWaitlistLimiterCache.get(dimension);
+  if (cached !== undefined) return cached;
+  const redis = getRedis();
+  const cfg = NEW_CLIENT_WAITLIST_LIMITS[dimension];
+  const limiter = redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(cfg.limit, cfg.window),
+        // Own namespace. Cannot collide with rl:waitlist_* (marketing).
+        prefix: `rl:new_client_waitlist_${dimension}`,
+        analytics: false,
+      })
+    : null;
+  newClientWaitlistLimiterCache.set(dimension, limiter);
+  return limiter;
+}
+
+/**
+ * Rate limit a public new-client booking waitlist submission.
+ *
+ * `studioId` MUST be the server-resolved studios row id, never a
+ * browser-supplied value, or the scoping is meaningless.
+ */
+export async function limitNewClientBookingWaitlist(args: {
+  headers: Headers;
+  studioId: string;
+  email: string;
+}): Promise<RateLimitResult> {
+  const ipLimiter = newClientWaitlistLimiter("ip");
+  const emailLimiter = newClientWaitlistLimiter("email");
+  if (!ipLimiter || !emailLimiter) return { allowed: true }; // disabled
+  const ip = clientIpFromHeaders(args.headers);
+  try {
+    // Identifier hashed FIRST, then scoped by studio, so one studio's traffic
+    // can never consume another's budget.
+    const ipRes = await ipLimiter.limit(`${hashId(ip)}:${args.studioId}`);
+    if (!ipRes.success) {
+      const retry = retryAfterSeconds(ipRes.reset);
+      logRateLimitExceeded("new_client_waitlist", retry, "ip");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    const emailRes = await emailLimiter.limit(`${hashId(args.email)}:${args.studioId}`);
+    if (!emailRes.success) {
+      const retry = retryAfterSeconds(emailRes.reset);
+      logRateLimitExceeded("new_client_waitlist", retry, "email");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    return { allowed: true };
+  } catch (err) {
+    logBackendUnavailable("new_client_waitlist", err);
+    return { allowed: true }; // fail open — see the classification above
+  }
+}
+
 export async function limitDemoRequestSubmit(args: {
   headers: Headers;
   email: string;
