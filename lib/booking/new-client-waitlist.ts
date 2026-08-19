@@ -1,5 +1,4 @@
 import "server-only";
-import { createHash } from "crypto";
 
 // ===========================================================================
 // P0 EMERGENCY — NEW-CLIENT WAITLIST (ADMISSION CONTROL)
@@ -147,78 +146,4 @@ export function validateWaitlistSubmission(raw: {
     ok: true,
     value: { name, email, phone: phoneRaw.length === 0 ? null : phoneRaw },
   };
-}
-
-// ===========================================================================
-// PROVIDER IDEMPOTENCY KEYS
-// ===========================================================================
-//
-// WHY THIS EXISTS. The provider send is raced against a client-side timeout,
-// and a timeout CANNOT cancel the request already in flight. So a send can be
-// reported as failed and still be accepted moments later. With no durable
-// queue there is no row to reconcile against, so without an idempotency key a
-// retry produces a SECOND studio email and a SECOND client confirmation for
-// one logical request.
-//
-// Resend accepts an `Idempotency-Key` header (verified in the installed SDK,
-// resend 6.12.3: `CreateEmailRequestOptions extends IdempotentRequest`, and
-// `post()` sets the header from `options.idempotencyKey`). Repeated identical
-// requests under one key are processed once and the original response is
-// replayed; the same key with a DIFFERENT payload is an error rather than a
-// silent success.
-//
-// KEY DERIVATION. SHA-256 over an UNAMBIGUOUS canonical serialization of the
-// logical request. Each field is length-prefixed (`<len>:<value>`) so no
-// combination of field contents can produce the same byte string as a
-// different combination — a plain separator would collide for a name that
-// itself contains the separator.
-//
-// The digest carries NO recoverable PII, and the key is NEVER logged.
-//
-// NOT hashFingerprint(): that helper is diagnostic and deliberately returns
-// null in production when its salt is unset. A correctness primitive may not
-// depend on optional configuration.
-// ===========================================================================
-
-/** Bumped if the canonical inputs or the email semantics ever change. */
-const STUDIO_KEY_PREFIX = "hone-waitlist-studio-v1";
-const CLIENT_KEY_PREFIX = "hone-waitlist-client-v1";
-
-/** Resend documents a 256-character ceiling for the header value. */
-export const IDEMPOTENCY_KEY_MAX = 256;
-
-function canonicalRequest(studioId: string, s: WaitlistSubmission): string {
-  const fields = [
-    "hone-new-client-waitlist-studio-v1",
-    studioId,
-    s.name,
-    s.email,
-    s.phone ?? "",
-  ];
-  // Length-prefixed so the serialization is injective.
-  return fields.map((f) => `${f.length}:${f}`).join("");
-}
-
-/** SHA-256 hex of the canonical request. Stable for one logical submission. */
-export function waitlistRequestDigest(
-  studioId: string,
-  submission: WaitlistSubmission,
-): string {
-  return createHash("sha256")
-    .update(canonicalRequest(studioId, submission), "utf8")
-    .digest("hex");
-}
-
-/** Idempotency key for the STUDIO operational notification. */
-export function studioWaitlistIdempotencyKey(digest: string): string {
-  return `${STUDIO_KEY_PREFIX}/${digest}`;
-}
-
-/**
- * Idempotency key for the CLIENT courtesy confirmation. Shares the request
- * digest but NEVER the studio key: different recipient and different payload
- * under one key is exactly what the provider treats as an error.
- */
-export function clientWaitlistIdempotencyKey(digest: string): string {
-  return `${CLIENT_KEY_PREFIX}/${digest}`;
 }

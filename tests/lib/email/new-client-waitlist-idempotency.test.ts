@@ -1,15 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  clientWaitlistIdempotencyKey,
-  studioWaitlistIdempotencyKey,
-  waitlistRequestDigest,
-  IDEMPOTENCY_KEY_MAX,
-  type WaitlistSubmission,
-} from "@/lib/booking/new-client-waitlist";
-import {
   sendWaitlistEmailIdempotent,
+  waitlistIdempotencyKey,
+  IDEMPOTENCY_KEY_MAX,
   type IdempotentEmailTransport,
 } from "@/lib/email/new-client-waitlist-send";
+import {
+  buildNewClientWaitlistStudioEmail,
+  buildNewClientWaitlistClientEmail,
+} from "@/lib/email/templates/new-client-waitlist";
 
 // ===========================================================================
 // DEFECT B — AMBIGUOUS PROVIDER TIMEOUT MUST NOT DUPLICATE THE RECORD
@@ -24,90 +23,142 @@ import {
 // send path retries the SAME key exactly once so the provider collapses the
 // duplicate.
 
-const STUDIO = "11111111-1111-4111-8111-111111111111";
-const OTHER_STUDIO = "22222222-2222-4222-8222-222222222222";
-const BASE: WaitlistSubmission = {
-  name: "Ada Lovelace",
-  email: "ada@example.test",
-  phone: "+15555550100",
-};
+const FROM = "Hone <hello@hone.care>";
+const STUDIO_TO = "owner@studio.test";
 
-const digest = (studio: string, s: WaitlistSubmission) => waitlistRequestDigest(studio, s);
+type Payload = { from: string; to: string; subject: string; html: string; text: string };
 
-describe("idempotency key derivation", () => {
-  it("the SAME canonical submission always yields the SAME studio key", () => {
-    const a = studioWaitlistIdempotencyKey(digest(STUDIO, BASE));
-    const b = studioWaitlistIdempotencyKey(digest(STUDIO, { ...BASE }));
-    expect(a).toBe(b);
+/** The exact payload the action hands the sender for a studio notification. */
+function studioPayload(over: Partial<{
+  studioName: string; name: string; email: string; phone: string | null; to: string;
+}> = {}): Payload {
+  const built = buildNewClientWaitlistStudioEmail({
+    studioName: over.studioName ?? "Willow Electrolysis",
+    name: over.name ?? "Ada Lovelace",
+    email: over.email ?? "ada@example.test",
+    phone: over.phone === undefined ? "+15555550100" : over.phone,
+  });
+  return { from: FROM, to: over.to ?? STUDIO_TO, ...built };
+}
+
+describe("the design invariant: same key <=> byte-identical payload", () => {
+  it("the key is a pure function of the payload, so an identical resubmission at ANY wall-clock time collapses", () => {
+    // The defect this replaces: the body carried a minute-resolution timestamp
+    // that the key did not cover, so a resubmit a minute later presented the
+    // SAME key with DIFFERENT bytes — which the provider rejects outright.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T10:00:00Z"));
+    const first = studioPayload();
+    vi.setSystemTime(new Date("2026-08-19T10:47:31Z")); // >1 minute later
+    const later = studioPayload();
+    vi.setSystemTime(new Date("2027-03-02T23:59:59Z")); // a year later
+    const muchLater = studioPayload();
+    vi.useRealTimers();
+
+    expect(later, "the rendered payload must not vary with the clock").toEqual(first);
+    expect(muchLater).toEqual(first);
+    expect(waitlistIdempotencyKey("studio", later)).toBe(waitlistIdempotencyKey("studio", first));
+    expect(waitlistIdempotencyKey("studio", muchLater)).toBe(waitlistIdempotencyKey("studio", first));
   });
 
-  it("the SAME canonical submission always yields the SAME client key", () => {
-    const a = clientWaitlistIdempotencyKey(digest(STUDIO, BASE));
-    const b = clientWaitlistIdempotencyKey(digest(STUDIO, { ...BASE }));
-    expect(a).toBe(b);
+  it("carries no wall clock at all in the rendered studio notice", () => {
+    const p = studioPayload();
+    expect(p.text).not.toMatch(/Joined:/i);
+    expect(p.html).not.toMatch(/Joined:/i);
+    // No year-like token anywhere in the body.
+    expect(p.text).not.toMatch(/20\d\d/);
   });
 
-  it("the studio key and the client key are DIFFERENT", () => {
-    const d = digest(STUDIO, BASE);
-    // Different recipient and different payload under one key is exactly what
-    // the provider rejects as invalid_idempotent_request.
-    expect(studioWaitlistIdempotencyKey(d)).not.toBe(clientWaitlistIdempotencyKey(d));
+  it("the same payload always yields the same key", () => {
+    expect(waitlistIdempotencyKey("studio", studioPayload())).toBe(
+      waitlistIdempotencyKey("studio", studioPayload()),
+    );
   });
 
-  it("a changed name, email or phone yields a DIFFERENT key", () => {
-    const base = studioWaitlistIdempotencyKey(digest(STUDIO, BASE));
-    for (const changed of [
-      { ...BASE, name: "Ada Lovelace Jr" },
-      { ...BASE, email: "ada2@example.test" },
-      { ...BASE, phone: "+15555550101" },
-      { ...BASE, phone: null },
-    ] as WaitlistSubmission[]) {
+  it("ANY provider-payload field changing changes the key", () => {
+    const base = studioPayload();
+    const baseKey = waitlistIdempotencyKey("studio", base);
+    const mutations: Array<[string, Payload]> = [
+      ["from", { ...base, from: "Other <other@hone.care>" }],
+      ["to", { ...base, to: "someone.else@studio.test" }],
+      ["subject", { ...base, subject: `${base.subject} ` }],
+      ["html", { ...base, html: `${base.html}<!-- x -->` }],
+      ["text", { ...base, text: `${base.text}\n` }],
+    ];
+    for (const [field, payload] of mutations) {
       expect(
-        studioWaitlistIdempotencyKey(digest(STUDIO, changed)),
-        `${JSON.stringify(changed)} must not reuse the base key`,
+        waitlistIdempotencyKey("studio", payload),
+        `changing ${field} must change the key`,
+      ).not.toBe(baseKey);
+    }
+  });
+
+  it("a STUDIO NAME change changes the rendered payload and therefore the key", () => {
+    // The old design keyed on form fields only, so a rename would have kept
+    // the key while changing the subject line — the same latent failure.
+    const renamed = studioPayload({ studioName: "Willow Electrolysis Studio" });
+    expect(renamed.subject).not.toBe(studioPayload().subject);
+    expect(waitlistIdempotencyKey("studio", renamed)).not.toBe(
+      waitlistIdempotencyKey("studio", studioPayload()),
+    );
+  });
+
+  it("a STUDIO RECIPIENT change changes the key", () => {
+    expect(
+      waitlistIdempotencyKey("studio", studioPayload({ to: "new-owner@studio.test" })),
+    ).not.toBe(waitlistIdempotencyKey("studio", studioPayload()));
+  });
+
+  it("changed submitter details change the rendered payload and the key", () => {
+    const base = waitlistIdempotencyKey("studio", studioPayload());
+    for (const over of [
+      { name: "Ada Lovelace Jr" },
+      { email: "ada2@example.test" },
+      { phone: "+15555550101" },
+      { phone: null },
+    ]) {
+      expect(
+        waitlistIdempotencyKey("studio", studioPayload(over)),
+        JSON.stringify(over),
       ).not.toBe(base);
     }
   });
 
-  it("a different studio yields a DIFFERENT key for identical personal details", () => {
-    expect(studioWaitlistIdempotencyKey(digest(OTHER_STUDIO, BASE))).not.toBe(
-      studioWaitlistIdempotencyKey(digest(STUDIO, BASE)),
+  it("the studio and client namespaces never collide, even for an identical payload", () => {
+    const p = studioPayload();
+    expect(waitlistIdempotencyKey("client", p)).not.toBe(waitlistIdempotencyKey("studio", p));
+    // And in the real pairing the payloads differ too.
+    const clientBuilt = buildNewClientWaitlistClientEmail({
+      studioName: "Willow Electrolysis",
+      name: "Ada Lovelace",
+    });
+    const clientPayload: Payload = { from: FROM, to: "ada@example.test", ...clientBuilt };
+    expect(waitlistIdempotencyKey("client", clientPayload)).not.toBe(
+      waitlistIdempotencyKey("studio", p),
     );
   });
 
-  it("the canonical serialization is INJECTIVE — field contents cannot be shifted across boundaries", () => {
-    // A naive separator-joined encoding would collide for these two: the
-    // length-prefixed encoding must not.
-    const a: WaitlistSubmission = { name: "ab", email: "c@d.co", phone: "ef" };
-    const b: WaitlistSubmission = { name: "a", email: "bc@d.co", phone: "ef" };
-    expect(digest(STUDIO, a)).not.toBe(digest(STUDIO, b));
-
-    const withSeparators: WaitlistSubmission = {
-      name: "x:1y",
-      email: "z@e.co",
-      phone: null,
-    };
-    const shifted: WaitlistSubmission = {
-      name: "x",
-      email: "1y@e.co",
-      phone: "z",
-    };
-    expect(digest(STUDIO, withSeparators)).not.toBe(digest(STUDIO, shifted));
+  it("the canonical serialization is INJECTIVE — content cannot shift across field boundaries", () => {
+    const a: Payload = { from: "f", to: "ab", subject: "c", html: "d", text: "e" };
+    const b: Payload = { from: "f", to: "a", subject: "bc", html: "d", text: "e" };
+    expect(waitlistIdempotencyKey("studio", a)).not.toBe(waitlistIdempotencyKey("studio", b));
+    const withSep: Payload = { from: "f", to: "x:1y", subject: "z", html: "h", text: "t" };
+    const shifted: Payload = { from: "f", to: "x", subject: "1yz", html: "h", text: "t" };
+    expect(waitlistIdempotencyKey("studio", withSep)).not.toBe(
+      waitlistIdempotencyKey("studio", shifted),
+    );
   });
 
   it("carries NO raw PII and stays within the provider key ceiling", () => {
-    const d = digest(STUDIO, BASE);
-    for (const key of [
-      studioWaitlistIdempotencyKey(d),
-      clientWaitlistIdempotencyKey(d),
-    ]) {
-      expect(key).not.toContain(BASE.name);
-      expect(key).not.toContain(BASE.email);
+    const p = studioPayload();
+    for (const ns of ["studio", "client"] as const) {
+      const key = waitlistIdempotencyKey(ns, p);
       expect(key).not.toContain("Ada");
-      expect(key).not.toContain("ada@");
-      expect(key).not.toContain(BASE.phone as string);
+      expect(key).not.toContain("ada@example.test");
+      expect(key).not.toContain("+15555550100");
+      expect(key).not.toContain("owner@studio.test");
+      expect(key).not.toContain("Willow");
       expect(key.length).toBeLessThanOrEqual(IDEMPOTENCY_KEY_MAX);
-      // versioned prefix + 64 hex chars
       expect(key).toMatch(/^hone-waitlist-(studio|client)-v1\/[0-9a-f]{64}$/);
     }
   });
@@ -115,7 +166,7 @@ describe("idempotency key derivation", () => {
 
 // --- transport harness ------------------------------------------------------
 
-type Attempt = { key: string | undefined; to: string };
+type Attempt = { key: string | undefined; to: string; payload: unknown };
 
 function transportFrom(
   responses: Array<
@@ -130,7 +181,7 @@ function transportFrom(
   const transport: IdempotentEmailTransport = {
     emails: {
       send: async (payload, options) => {
-        attempts.push({ key: options?.idempotencyKey, to: payload.to });
+        attempts.push({ key: options?.idempotencyKey, to: payload.to, payload: { ...payload } });
         const r = responses[Math.min(i++, responses.length - 1)];
         if (r.kind === "throw") throw new Error("network exploded");
         if (r.kind === "hang") return new Promise(() => {}); // never settles
@@ -144,15 +195,18 @@ function transportFrom(
   return { transport, attempts };
 }
 
-const send = (transport: IdempotentEmailTransport, key = "hone-waitlist-studio-v1/abc") =>
-  sendWaitlistEmailIdempotent({
-    to: "owner@studio.test",
-    subject: "s",
-    html: "<p>h</p>",
-    text: "t",
-    idempotencyKey: key,
-    transport,
-  });
+const SEND_ARGS = {
+  namespace: "studio" as const,
+  to: "owner@studio.test",
+  subject: "s",
+  html: "<p>h</p>",
+  text: "t",
+};
+/** The key the sender MUST derive for SEND_ARGS. Computed independently here. */
+const EXPECTED_KEY = waitlistIdempotencyKey("studio", { from: FROM, ...SEND_ARGS });
+
+const send = (transport: IdempotentEmailTransport) =>
+  sendWaitlistEmailIdempotent({ ...SEND_ARGS, transport });
 
 describe("idempotent send — the key is actually transmitted", () => {
   it("passes the idempotency key to the provider on the first attempt", async () => {
@@ -160,7 +214,8 @@ describe("idempotent send — the key is actually transmitted", () => {
     const out = await send(transport);
     expect(out).toEqual({ status: "accepted", messageId: "re_1" });
     expect(attempts).toHaveLength(1);
-    expect(attempts[0].key).toBe("hone-waitlist-studio-v1/abc");
+    // Derived from the payload actually transmitted, not supplied by the caller.
+    expect(attempts[0].key).toBe(EXPECTED_KEY);
   });
 });
 
@@ -181,11 +236,13 @@ describe("idempotent send — ambiguous first attempt retries with the SAME key"
     // Assert the ACTUAL key on both attempts, not merely that they match:
     // two `undefined`s also "match", which is exactly the unprotected send
     // this whole mechanism exists to prevent.
-    expect(attempts[0].key).toBe("hone-waitlist-studio-v1/abc");
+    expect(attempts[0].key).toBe(EXPECTED_KEY);
     expect(
       attempts[1].key,
       "the retry MUST reuse the key or the provider cannot collapse it",
-    ).toBe("hone-waitlist-studio-v1/abc");
+    ).toBe(EXPECTED_KEY);
+    // ...and the identical payload, so the key/payload pairing holds on the retry.
+    expect(attempts[1].payload).toEqual(attempts[0].payload);
     // One logical email: the provider replays the original under one key.
     expect(new Set(attempts.map((a) => a.key)).size).toBe(1);
   });
@@ -198,8 +255,9 @@ describe("idempotent send — ambiguous first attempt retries with the SAME key"
     const out = await send(transport);
     expect(out).toEqual({ status: "accepted", messageId: "re_after_throw" });
     expect(attempts).toHaveLength(2);
-    expect(attempts[0].key).toBe("hone-waitlist-studio-v1/abc");
-    expect(attempts[1].key).toBe("hone-waitlist-studio-v1/abc");
+    expect(attempts[0].key).toBe(EXPECTED_KEY);
+    expect(attempts[1].key).toBe(EXPECTED_KEY);
+    expect(attempts[1].payload).toEqual(attempts[0].payload);
   });
 
   it("still ambiguous after the retry -> ambiguous, and NEVER an unbounded loop", async () => {
@@ -253,23 +311,13 @@ describe("idempotent send — definite refusals", () => {
   });
 
   it("no transport configured, or an invalid recipient, refuses without calling out", async () => {
-    const missing = await sendWaitlistEmailIdempotent({
-      to: "owner@studio.test",
-      subject: "s",
-      html: "h",
-      text: "t",
-      idempotencyKey: "k",
-      transport: null,
-    });
+    const missing = await sendWaitlistEmailIdempotent({ ...SEND_ARGS, transport: null });
     expect(missing).toEqual({ status: "rejected", code: "not_configured" });
 
     const { transport, attempts } = transportFrom([{ kind: "ok", id: "x" }]);
     const bad = await sendWaitlistEmailIdempotent({
+      ...SEND_ARGS,
       to: "not-an-email",
-      subject: "s",
-      html: "h",
-      text: "t",
-      idempotencyKey: "k",
       transport,
     });
     expect(bad).toEqual({ status: "rejected", code: "invalid_recipient" });

@@ -1,12 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  NEW_CLIENT_WAITLIST_SLUGS_ENV,
-  studioWaitlistIdempotencyKey,
-  clientWaitlistIdempotencyKey,
-  waitlistRequestDigest,
-} from "@/lib/booking/new-client-waitlist";
+import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
 
 // ===========================================================================
 // THE WAITLIST SUBMIT ACTION
@@ -29,7 +24,7 @@ const CANARY_NAME = "PII_CANARY_NAME_92837";
 const CANARY_EMAIL = "pii_canary_92837@example.com";
 const CANARY_PHONE = "+1-555-92837";
 
-type Send = { to: string; subject: string; html: string; text: string; idempotencyKey: string };
+type Send = { namespace: string; to: string; subject: string; html: string; text: string };
 
 const sends: Send[] = [];
 const limiterCalls: Array<{ studioId: string; email: string }> = [];
@@ -182,30 +177,40 @@ describe("commit semantics", () => {
     expect(clientSend.subject).toBe("You're on the waitlist · Waitlisted Studio");
   });
 
-  it("each email carries its OWN correct idempotency key", async () => {
+  it("each email is sent under its OWN key namespace", async () => {
     await submitNewClientBookingWaitlistAction(form());
-    const digest = waitlistRequestDigest(STUDIO_ID, {
-      name: CANARY_NAME, email: CANARY_EMAIL, phone: CANARY_PHONE,
-    });
-    expect(sends[0].idempotencyKey).toBe(studioWaitlistIdempotencyKey(digest));
-    expect(sends[1].idempotencyKey).toBe(clientWaitlistIdempotencyKey(digest));
-    expect(sends[0].idempotencyKey).not.toBe(sends[1].idempotencyKey);
+    expect(sends[0].namespace).toBe("studio");
+    expect(sends[1].namespace).toBe("client");
   });
 
-  it("resubmitting the SAME details derives the SAME studio key, so the provider collapses it", async () => {
+  it("resubmitting the SAME details renders BYTE-IDENTICAL payloads, whatever the clock says", async () => {
+    // This is the property that makes the provider collapse a duplicate rather
+    // than reject it: the key is derived from these bytes, so if they drifted
+    // with the wall clock an honest resubmission would fail for 24 hours.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T10:00:00Z"));
     await submitNewClientBookingWaitlistAction(form());
-    const first = sends[0].idempotencyKey;
+    const first = { ...sends[0] };
     reset(); setEnv(SLUG);
+    vi.setSystemTime(new Date("2026-08-19T10:47:31Z"));
     await submitNewClientBookingWaitlistAction(form());
-    expect(sends[0].idempotencyKey).toBe(first);
+    vi.useRealTimers();
+    expect(sends[0]).toEqual(first);
   });
 
-  it("a materially DIFFERENT submission derives a different key", async () => {
+  it("the studio notice carries no wall clock at all", async () => {
     await submitNewClientBookingWaitlistAction(form());
-    const first = sends[0].idempotencyKey;
+    expect(sends[0].text).not.toMatch(/Joined:/i);
+    expect(sends[0].html).not.toMatch(/Joined:/i);
+    expect(sends[0].text).not.toMatch(/20\d\d/);
+  });
+
+  it("a materially DIFFERENT submission renders a different payload", async () => {
+    await submitNewClientBookingWaitlistAction(form());
+    const first = { ...sends[0] };
     reset(); setEnv(SLUG);
     await submitNewClientBookingWaitlistAction(form({ email: "someone.else@example.com" }));
-    expect(sends[0].idempotencyKey).not.toBe(first);
+    expect(sends[0]).not.toEqual(first);
   });
 
   it("provider REFUSES -> failure, and NO client confirmation is attempted", async () => {
@@ -384,11 +389,13 @@ describe("PII canary", () => {
     }
   });
 
-  it("the idempotency KEY is never logged", async () => {
+  it("no idempotency key or canonical payload material is logged", async () => {
     await submitNewClientBookingWaitlistAction(form());
-    const key = sends[0].idempotencyKey;
-    expect(allLogs()).not.toContain(key);
-    expect(allLogs()).not.toContain(key.split("/")[1]);
+    const logs = allLogs();
+    expect(logs).not.toContain("hone-waitlist-studio-v1");
+    expect(logs).not.toContain("hone-waitlist-client-v1");
+    expect(logs).not.toContain(sends[0].subject);
+    expect(logs).not.toContain(sends[0].html);
   });
 
   it("client-failure, client-throw and refusal paths stay clean", async () => {

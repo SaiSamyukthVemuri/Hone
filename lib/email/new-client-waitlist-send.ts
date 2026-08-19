@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "crypto";
 import { FROM_ADDRESS, resend } from "./client";
 
 // ===========================================================================
@@ -39,7 +40,78 @@ import { FROM_ADDRESS, resend } from "./client";
 //     `ErrorResponse = { message, statusCode, name: RESEND_ERROR_CODE_KEY }`.
 //   * Relevant names: `invalid_idempotency_key`, `invalid_idempotent_request`,
 //     `concurrent_idempotent_requests`.
+//
+// THE DESIGN INVARIANT
+//
+//   SAME IDEMPOTENCY KEY  MUST IMPLY  BYTE-IDENTICAL PROVIDER PAYLOAD.
+//
+// The provider treats one key presented with two different payloads as an
+// ERROR, not a duplicate. So a key derived from a hand-maintained list of
+// "fields that ought to matter" is a latent defect: the moment the payload
+// gains a field the list does not know about, honest resubmissions start
+// failing instead of collapsing.
+//
+// The key is therefore derived HERE, from the EXACT payload object this module
+// is about to transmit — from, to, subject, html and text — hashed over a
+// length-prefixed (and so injective) serialization. There is no second list to
+// keep in sync. If the studio's display name, its destination address,
+// FROM_ADDRESS, the subject or any template copy changes, the payload bytes
+// change and the key changes with them, automatically.
+//
+// The corollary the callers must honour: the payload must be a PURE FUNCTION
+// of the submission. Nothing volatile (a wall clock, a nonce) may appear in
+// it, or two submissions of the same details would never collapse.
 // ===========================================================================
+
+/**
+ * The two key namespaces. Studio and client sends MUST never share a key: the
+ * recipient and body differ, which is exactly what the provider rejects.
+ * Version suffix so a future change in event semantics cannot silently reuse
+ * a key minted under the old meaning.
+ */
+export type WaitlistKeyNamespace = "studio" | "client";
+const KEY_PREFIX: Record<WaitlistKeyNamespace, string> = {
+  studio: "hone-waitlist-studio-v1",
+  client: "hone-waitlist-client-v1",
+};
+
+/** Resend documents a 256-character ceiling for the header value. */
+export const IDEMPOTENCY_KEY_MAX = 256;
+
+type ProviderPayload = {
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+};
+
+/**
+ * Length-prefixed, and therefore injective: no combination of field contents
+ * can serialize to the same bytes as a different combination, which a plain
+ * separator would allow whenever a field contained the separator.
+ */
+function canonicalPayload(p: ProviderPayload): string {
+  return [p.from, p.to, p.subject, p.html, p.text]
+    .map((f) => `${f.length}:${f}`)
+    .join("");
+}
+
+/**
+ * Derive the provider idempotency key from the payload itself.
+ *
+ * Exported for the tests that pin the invariant; production callers never pass
+ * a key, they pass a namespace and let this module derive it.
+ */
+export function waitlistIdempotencyKey(
+  namespace: WaitlistKeyNamespace,
+  payload: ProviderPayload,
+): string {
+  const digest = createHash("sha256")
+    .update(canonicalPayload(payload), "utf8")
+    .digest("hex");
+  return `${KEY_PREFIX[namespace]}/${digest}`;
+}
 
 /**
  * Three-way outcome. `ambiguous` is a first-class result, not a flavour of
@@ -142,11 +214,11 @@ async function attempt(
  * answer and repeating it would only burn quota.
  */
 export async function sendWaitlistEmailIdempotent(args: {
+  namespace: WaitlistKeyNamespace;
   to: string;
   subject: string;
   html: string;
   text: string;
-  idempotencyKey: string;
   /** Test seam. Defaults to the shared Resend client. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<WaitlistSendOutcome> {
@@ -167,11 +239,14 @@ export async function sendWaitlistEmailIdempotent(args: {
     html: args.html,
     text: args.text,
   };
+  // Derived from THIS object — the one that is about to be sent — so the key
+  // and the payload cannot drift apart.
+  const idempotencyKey = waitlistIdempotencyKey(args.namespace, payload);
 
-  const first = await attempt(transport, payload, args.idempotencyKey);
+  const first = await attempt(transport, payload, idempotencyKey);
   if (first.status !== "ambiguous") return first;
 
-  // ONE bounded retry, SAME key. Safe precisely because the key makes the
-  // provider treat it as the same operation.
-  return attempt(transport, payload, args.idempotencyKey);
+  // ONE bounded retry, SAME key AND the same payload object. Safe precisely
+  // because the key makes the provider treat it as the same operation.
+  return attempt(transport, payload, idempotencyKey);
 }

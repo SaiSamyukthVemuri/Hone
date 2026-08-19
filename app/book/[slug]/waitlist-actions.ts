@@ -3,11 +3,8 @@
 import { headers } from "next/headers";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import {
-  clientWaitlistIdempotencyKey,
   isNewClientWaitlistEnabled,
-  studioWaitlistIdempotencyKey,
   validateWaitlistSubmission,
-  waitlistRequestDigest,
   NEW_CLIENT_WAITLIST_SUBMIT_FAILED,
   NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED,
   WAITLIST_SLUG_MAX,
@@ -89,26 +86,6 @@ function studioNotificationRecipient(studio: Studio): string | null {
   return owner;
 }
 
-/**
- * Studio-local "when did this arrive". DETERMINISTIC PER MINUTE is not enough:
- * the idempotency contract refuses the same key with a different payload, so
- * the label must be stable across the one bounded retry. It is computed once
- * here and reused for both attempts because the send wrapper retries
- * internally with the same built payload.
- */
-function joinedAtLabel(now: Date, timezone: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
-      dateStyle: "full",
-      timeStyle: "short",
-    }).format(now);
-  } catch {
-    // An unusable studio timezone must not cost the studio the request.
-    return now.toISOString();
-  }
-}
-
 export async function submitNewClientBookingWaitlistAction(
   formData: FormData,
 ): Promise<NewClientWaitlistResult> {
@@ -173,25 +150,23 @@ export async function submitNewClientBookingWaitlistAction(
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
   }
 
-  // One digest for this logical request; two derived keys, because the studio
-  // and client emails have different recipients and payloads and the provider
-  // treats one key with two payloads as an error.
-  const digest = waitlistRequestDigest(studio.id, submission);
-
   // 5. STUDIO NOTIFICATION — the commit point.
   const studioEmail = buildNewClientWaitlistStudioEmail({
     studioName: studio.name,
     name: submission.name,
     email: submission.email,
     phone: submission.phone,
-    joinedAtLabel: joinedAtLabel(new Date(), studio.timezone),
   });
+  // The sender derives the idempotency key from the payload it transmits, so
+  // the key cannot drift from the bytes. Both email builders are pure
+  // functions of the submission, which is what makes an identical
+  // resubmission collapse instead of erroring.
   const studioSend = await sendWaitlistEmailIdempotent({
+    namespace: "studio",
     to: recipient,
     subject: studioEmail.subject,
     html: studioEmail.html,
     text: studioEmail.text,
-    idempotencyKey: studioWaitlistIdempotencyKey(digest),
   });
 
   if (studioSend.status === "ambiguous") {
@@ -225,11 +200,11 @@ export async function submitNewClientBookingWaitlistAction(
       name: submission.name,
     });
     const clientSend = await sendWaitlistEmailIdempotent({
+      namespace: "client",
       to: submission.email,
       subject: clientEmail.subject,
       html: clientEmail.html,
       text: clientEmail.text,
-      idempotencyKey: clientWaitlistIdempotencyKey(digest),
     });
     if (clientSend.status !== "accepted") {
       logWaitlistEvent("new_client_waitlist_client_email_not_accepted", {

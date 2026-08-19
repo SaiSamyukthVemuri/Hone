@@ -22,11 +22,18 @@
 // branch escapes each one; the text branch is not markup. Same local
 // escapeHtml convention as reminders.ts / intake-reminder.ts.
 //
-// DETERMINISM MATTERS HERE. These builders are pure and the caller passes a
-// pre-formatted timestamp, so one logical submission always produces the same
-// bytes. The provider idempotency contract rejects the same key with a
-// different payload, so a non-deterministic template would turn a safe retry
-// into a hard refusal.
+// DETERMINISM IS LOAD-BEARING. The provider idempotency key is derived from
+// the rendered payload bytes, and the provider rejects one key presented with
+// two different payloads. So these builders must be a PURE FUNCTION of the
+// submission: no wall clock, no nonce, nothing that varies between two
+// submissions of the same details.
+//
+// The studio notice therefore carries NO "Joined:" timestamp. It deliberately
+// does not invent one: with no durable waitlist row there is no authoritative
+// business time to state, and the inbox already stamps its own receipt time,
+// which is the honest operational record for V1. Putting a wall clock in the
+// body would make an identical resubmission render different bytes and turn a
+// duplicate — the case idempotency exists to collapse — into a hard refusal.
 // ===========================================================================
 
 function escapeHtml(s: string): string {
@@ -48,8 +55,6 @@ export function buildNewClientWaitlistStudioEmail(p: {
   name: string;
   email: string;
   phone: string | null;
-  /** Pre-formatted studio-local timestamp. Formatting is the caller's job. */
-  joinedAtLabel: string;
 }): { subject: string; html: string; text: string } {
   const subject = `${WAITLIST_SUBJECT_PREFIX} New client · ${p.studioName}`;
   const phoneLine = p.phone ?? "Not provided";
@@ -60,9 +65,6 @@ export function buildNewClientWaitlistStudioEmail(p: {
     `Name: ${p.name}`,
     `Email: ${p.email}`,
     `Phone: ${phoneLine}`,
-    "",
-    "Joined:",
-    p.joinedAtLabel,
     "",
     "This is a waitlist request only.",
     "No appointment has been created.",
@@ -79,10 +81,6 @@ export function buildNewClientWaitlistStudioEmail(p: {
       <strong>Name:</strong> ${escapeHtml(p.name)}<br />
       <strong>Email:</strong> ${escapeHtml(p.email)}<br />
       <strong>Phone:</strong> ${escapeHtml(phoneLine)}
-    </p>
-    <p style="margin:0 0 20px;">
-      <strong>Joined:</strong><br />
-      ${escapeHtml(p.joinedAtLabel)}
     </p>
     <p style="margin:0; color:#6B6B6B; font-size:13px;">
       This is a waitlist request only.<br />
