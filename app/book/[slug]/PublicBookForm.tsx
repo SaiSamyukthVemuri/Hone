@@ -22,6 +22,7 @@ import {
   fetchPublicSlotsAction,
   publicBookAppointmentAction,
 } from "./actions";
+import { NewClientWaitlistForm } from "./NewClientWaitlistForm";
 
 // Public booking new/existing split. The first-step choice is
 // strictly local state and never hits the server: until the visitor
@@ -48,6 +49,11 @@ type Props = {
   defaultDate: string;
   minDate: string;
   maxDate: string;
+  // P0 new-client waitlist. SERVER-DERIVED presentation flag: true only when
+  // the server resolved this studio's slug against the server-only allowlist.
+  // Defaults to FALSE so every pre-existing render path, and any call site that
+  // does not pass it, is byte-for-byte the previous behaviour.
+  newClientWaitlistEnabled?: boolean;
 };
 
 // BOOK-01 Tranche 1. The success state carries the appointment's MANAGEMENT URL
@@ -122,6 +128,7 @@ export function PublicBookForm({
   defaultDate,
   minDate,
   maxDate,
+  newClientWaitlistEnabled = false,
 }: Props) {
   // Pre-compute the service buckets each path needs. Done once at
   // mount and re-runs only if `services` actually changes (which
@@ -138,6 +145,12 @@ export function PublicBookForm({
   const existingClientServices = services;
 
   const [clientType, setClientType] = useState<ClientType>(null);
+
+  // P0 new-client waitlist. TRUE only for a NEW client at a studio the SERVER
+  // put in waitlist mode. When the flag is off this is always false and every
+  // expression below reduces to exactly the previous behaviour. Existing
+  // clients are never in this branch: their booking path is untouched.
+  const waitlistNewClient = newClientWaitlistEnabled && clientType === "new";
   // The picker's option set is whichever bucket matches the current
   // clientType. Until a type is chosen we still resolve a deterministic
   // first-id so the standard "default to the first service" pattern
@@ -236,7 +249,7 @@ export function PublicBookForm({
   // request-cancellation flag handles the unrelated race where slug,
   // serviceId, or date change while a fetch is in flight.
   useEffect(() => {
-    if (clientType == null || !serviceId || !date) {
+    if (clientType == null || waitlistNewClient || !serviceId || !date) {
       setSlots([]);
       setPicked(null);
       setError(null);
@@ -265,7 +278,7 @@ export function PublicBookForm({
     return () => {
       cancelled = true;
     };
-  }, [slug, serviceId, date, clientType]);
+  }, [slug, serviceId, date, clientType, waitlistNewClient]);
 
   // Availability is service-specific, so a prior service's "next available"
   // history is meaningless after a service switch: reset it. (Runs on mount
@@ -517,6 +530,22 @@ export function PublicBookForm({
           </p>
         </div>
       </div>
+    );
+  }
+
+  // P0 new-client waitlist. As soon as the visitor says "new client" at a
+  // waitlisted studio they get the waitlist form — no service picker, no date,
+  // no slot list, and no slot fetch (the effect above short-circuits). They are
+  // never walked through a booking flow only to be refused at the end. Placed
+  // BEFORE the no-consultation-service branch: a waitlisted studio's service
+  // catalogue is irrelevant because nothing here books anything.
+  if (waitlistNewClient) {
+    return (
+      <NewClientWaitlistForm
+        slug={slug}
+        studioName={studioName}
+        onContinueAsExistingClient={() => setClientType("existing")}
+      />
     );
   }
 
