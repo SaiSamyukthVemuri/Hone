@@ -84,7 +84,27 @@ export function DashboardTreatmentMemory({
     setOpen(next);
     if (!next || result !== null || pending) return;
     startTransition(async () => {
-      setResult(await loadAppointmentPrepMemory(appointmentId));
+      // The action RETURNS its own refusals, so a server-side failure already
+      // arrives as `{ status: "unavailable" }` below. This catch is for the
+      // OTHER class: a rejected INVOCATION — a dropped connection, a response
+      // that cannot be decoded, a deployment-id mismatch on a tab left open
+      // across a deploy. The action's internal try/catch runs on the server
+      // and cannot see any of those.
+      //
+      // Without it React re-throws the rejection out of the transition and it
+      // escapes to the route error boundary, replacing the ENTIRE Dashboard
+      // because one OPTIONAL per-row disclosure failed. A per-row read must
+      // fail to its own line. Same shape as TodayPortalLinkButton and
+      // StartAssistedIntakeButton, which document the identical hazard.
+      //
+      // The thrown value is deliberately not read, not rendered and not
+      // logged: it can carry framework and transport internals, and the row
+      // already has truthful copy that says the only thing worth saying.
+      try {
+        setResult(await loadAppointmentPrepMemory(appointmentId));
+      } catch {
+        setResult({ status: "unavailable" });
+      }
     });
   }
 

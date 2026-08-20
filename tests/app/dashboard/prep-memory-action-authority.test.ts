@@ -124,3 +124,48 @@ describe("the client boundary carries only the visible projection", () => {
     expect(PAGE_CODE).toMatch(/<\/Link>[\s\S]{0,600}<DashboardTreatmentMemory/);
   });
 });
+
+describe("four distinct failure/success paths, and they stay distinct", () => {
+  const COMPONENT = readFileSync(
+    join(process.cwd(), "app/(app)/dashboard/dashboard-treatment-memory.tsx"),
+    "utf8",
+  );
+
+  it("a rejected INVOCATION is contained at the call site", () => {
+    // The server action returns its refusals, so a server-side failure already
+    // arrives as `unavailable`. This is the other class: the browser-side
+    // invocation rejecting — dropped connection, undecodable response, a
+    // deployment-id mismatch on a stale tab. The action's own try/catch runs on
+    // the server and cannot see any of it.
+    //
+    // Uncontained, React re-throws out of the transition and it reaches the
+    // route error boundary, replacing the whole Dashboard because one optional
+    // per-row read failed.
+    expect(COMPONENT).toMatch(
+      /try \{\s*setResult\(await loadAppointmentPrepMemory\(appointmentId\)\);\s*\} catch \{\s*setResult\(\{ status: "unavailable" \}\);\s*\}/,
+    );
+  });
+
+  it("the thrown value is never read, rendered or logged", () => {
+    // A bare `catch {` — no binding. It can carry framework and transport
+    // internals, and the row already has the only copy worth showing.
+    expect(COMPONENT).toMatch(/\} catch \{/);
+    expect(COMPONENT).not.toMatch(/catch \(/);
+    expect(COMPONENT).not.toMatch(/console\./);
+  });
+
+  it("all four paths render their own state", () => {
+    // loaded → the card; none → a quiet no-detail line; unavailable →
+    // the truthful failure copy, whether it came from the server or from a
+    // rejected invocation. A transport failure and a server-reported failure
+    // deliberately converge, because they are the same fact to the reader.
+    expect(COMPONENT).toMatch(/result\.status === "loaded"/);
+    expect(COMPONENT).toMatch(/result\.status === "none"/);
+    expect(COMPONENT).toMatch(/Previous treatment could not be loaded/);
+    expect(COMPONENT).toMatch(/<AppointmentPrepMemoryCard/);
+  });
+
+  it("containment does not disturb the cache — one fetch per mounted row", () => {
+    expect(COMPONENT).toMatch(/if \(!next \|\| result !== null \|\| pending\) return;/);
+  });
+});

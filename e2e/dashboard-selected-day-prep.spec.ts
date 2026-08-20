@@ -417,3 +417,130 @@ test.describe("the full treatment is not transported before it is asked for", ()
     });
   });
 });
+
+// ===========================================================================
+// FAIL-SOFT — a rejected disclosure must not take the Dashboard with it.
+// ===========================================================================
+//
+// The server action returns its own refusals, so a failure INSIDE the server
+// already arrives as `{ status: "unavailable" }`. This covers the other class:
+// the browser-side INVOCATION rejecting — dropped connection, undecodable
+// response, a deployment-id mismatch on a tab left open across a deploy. The
+// action's own try/catch runs on the server and cannot see any of those.
+//
+// Without containment React re-throws out of the transition and it reaches the
+// route error boundary, replacing the whole Dashboard because one OPTIONAL
+// per-row read failed.
+
+test.describe("a rejected disclosure fails to its own line", () => {
+  test("the Dashboard survives, the row says so, and its neighbour still works", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+
+    const a = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: null,
+      nextVisitNote: "Row A plan",
+    });
+    await seedE2eFullDetailSentinels(seed.studioId, a.clientId, {
+      probeLot: "SENTINELLOT-ROW-A",
+      reactionNote: "SENTINELREACTION-a",
+      numbingNote: "SENTINELNUMBING-a",
+      entryComment: "SENTINELCOMMENT-a",
+    });
+    await sql(`delete from public.appointments where studio_id = $1`, [seed.studioId]);
+    const b = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: null,
+      nextVisitNote: "Row B plan",
+    });
+    await seedE2eFullDetailSentinels(seed.studioId, b.clientId, {
+      probeLot: "SENTINELLOT-ROW-B",
+      reactionNote: "SENTINELREACTION-b",
+      numbingNote: "SENTINELNUMBING-b",
+      entryComment: "SENTINELCOMMENT-b",
+    });
+    await sql(`delete from public.appointments where studio_id = $1`, [seed.studioId]);
+    for (const [clientId, offsetMin] of [
+      [a.clientId, OFFSET * 24 * 60 + 60],
+      [b.clientId, OFFSET * 24 * 60 + 180],
+    ] as const) {
+      await seedE2eTodayAppointment(seed, {
+        clientId,
+        startsMinutesFromNow: offsetMin,
+        endsMinutesFromNow: offsetMin + 45,
+      });
+    }
+
+    await loginAsOwner(page, seed);
+    await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+    await expect(page.getByTestId("dashboard-memory-toggle").first()).toBeVisible({
+      timeout: T,
+    });
+
+    // Break ONLY the server-action invocation. Server Actions POST back to the
+    // same route, so aborting the POST reproduces a real transport failure —
+    // the action never runs, and the browser-side promise rejects.
+    let aborted = 0;
+    await page.route("**/dashboard**", async (route) => {
+      if (route.request().method() === "POST") {
+        aborted += 1;
+        return route.abort("failed");
+      }
+      return route.fallback();
+    });
+
+    await test.step("23. the row renders its OWN failure state", async () => {
+      await page.getByTestId("dashboard-memory-toggle").first().click();
+      await expect(
+        page.getByTestId("dashboard-memory-unavailable").first(),
+      ).toBeVisible({ timeout: T });
+      expect(aborted, "the server action was never reached").toBeGreaterThan(0);
+    });
+
+    await test.step("24. the Dashboard did NOT hit the route error boundary", async () => {
+      await expect(page.getByText("Something went wrong")).toHaveCount(0);
+      // Still the day briefing, still on the same day.
+      await expect(page.getByTestId("dashboard-next-day")).toBeVisible();
+      expect(new URL(page.url()).searchParams.get("day")).toBe(localDay(tz, OFFSET));
+    });
+
+    await test.step("25. nothing else on the row or the page was disturbed", async () => {
+      // The compact line, the plan note, and the other row's controls all
+      // survive a failure that belongs to one disclosure.
+      await expect(page.getByTestId("dashboard-memory-compact").first()).toBeVisible();
+      await expect(page.getByTestId("dashboard-prep-remember").first()).toBeVisible();
+      await expect(page.getByTestId("dashboard-memory-toggle")).toHaveCount(2);
+    });
+
+    await test.step("26. no clinical sentinel leaked from the failed request", async () => {
+      const html = await page.content();
+      for (const sentinel of [
+        "SENTINELLOT-ROW-A",
+        "SENTINELLOT-ROW-B",
+        "SENTINELREACTION-a",
+        "SENTINELREACTION-b",
+      ]) {
+        expect(html.includes(sentinel), `${sentinel} present after a failed load`).toBe(
+          false,
+        );
+      }
+    });
+
+    await test.step("27. the NEIGHBOURING row is still usable once transport recovers", async () => {
+      await page.unroute("**/dashboard**");
+      await page.getByTestId("dashboard-memory-toggle").nth(1).click();
+      // `.nth(1)`: row A's region is still open showing its failure state, so
+      // two disclosure regions are mounted. That is the point — the failure
+      // stayed in row A.
+      await expect(page.getByTestId("dashboard-memory-full").nth(1)).toContainText(
+        "SENTINELLOT-ROW-B",
+        { timeout: T },
+      );
+      // …and row A still shows its own failure, unchanged by B succeeding.
+      await expect(
+        page.getByTestId("dashboard-memory-unavailable").first(),
+      ).toBeVisible();
+    });
+  });
+});
