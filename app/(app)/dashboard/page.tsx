@@ -17,6 +17,20 @@ import {
 import { computeBookingReadiness } from "@/lib/booking/readiness";
 import { BookingSetupCard } from "./BookingSetupCard";
 import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
+import {
+  canNavigateNext,
+  canNavigatePrevious,
+  calendarHrefForDashboardDay,
+  dashboardDayHref,
+  dayHeading,
+  emptyDayMessage,
+  formatSelectedDayLabel,
+  isViewingToday as isViewingTodayFn,
+  nextDay,
+  previousDay,
+  resolveSelectedDay,
+} from "@/lib/dashboard/day-navigation";
+import { resolveDayNextAction } from "@/lib/dashboard/day-next-action";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
 import type { BirthdayReminderColor } from "@/lib/types/database";
@@ -37,14 +51,16 @@ import {
   type DashboardPeriod,
 } from "@/lib/dashboard/practice-metrics";
 import {
-  resolveNextAction,
 } from "@/lib/dashboard/next-action";
 import {
   getBeforeTodayPreviews,
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
-import { loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
+import {
+  loadLastChartedTreatmentsForClients,
+  type AppointmentPrepLoad,
+} from "@/lib/sessions/last-treatment-loader";
 import {
   buildAppointmentPrepMemory,
   prepMemoryInputFromTreatment,
@@ -142,10 +158,20 @@ type TodayAppointment = Pick<
   practitioner: { id: string; display_name: string | null; color: string } | null;
 };
 
+// One class for the three day-navigation controls, so the disabled variant
+// cannot drift away from the live one. 44px minimum: this row is used on a
+// phone between clients.
+const DAY_NAV_CONTROL =
+  "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
+const DAY_NAV_CONTROL_DISABLED =
+  "inline-flex min-h-[44px] cursor-default items-center rounded-md border border-neutral-200 px-3 text-sm text-neutral-400 dark:border-neutral-800 dark:text-neutral-600";
+
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  // `day` is browser-controlled and Next hands repeated params through as an
+  // array, so the type says so rather than lying about it.
+  searchParams: Promise<{ period?: string; day?: string | string[] }>;
 }) {
   const sp = await searchParams;
   // PR #208: practice-snapshot period filter. Default: this week.
@@ -165,10 +191,30 @@ export default async function DashboardPage({
   // Studio-local "today" range, converted to UTC for the appointments
   // query. The calendar week view uses the same pattern; we just window
   // it to a single local day here.
+  // ACTUAL today. Deliberately NOT renamed and NOT repurposed: birthdays, the
+  // sterile-supply expiry horizon, the To-do supply labels and the birthday
+  // "Today" badge all read this, and every one of them is a claim about the day
+  // the practitioner is IN, not about the day she is browsing.
   const todayLocal = todayInTz(studio.timezone);
-  const tomorrowLocal = addDays(todayLocal, 1);
-  const startUtc = utcInstantFromLocal(todayLocal, "00:00", studio.timezone);
-  const endUtc = utcInstantFromLocal(tomorrowLocal, "00:00", studio.timezone);
+
+  // The day the APPOINTMENT BRIEFING describes. Falls back to actual today for
+  // anything absent, malformed, impossible or beyond the ±365 horizon; the
+  // resolver never throws, so a hand-typed `?day=2026-8-2` cannot 500 the page.
+  //
+  // Compared against `todayLocal` — the single studio-local today above — and
+  // never against a fresh clock read, so the roster window and the history gate
+  // cannot disagree across local midnight.
+  const selectedDayLocal = resolveSelectedDay(sp.day, todayLocal);
+  const viewingToday = isViewingTodayFn(selectedDayLocal, todayLocal);
+  const canGoBack = canNavigatePrevious(selectedDayLocal, todayLocal);
+  const canGoForward = canNavigateNext(selectedDayLocal, todayLocal);
+
+  // ONE local day, built as TWO separate local-midnight instants. Never
+  // `start + 24h`: across a DST transition a Toronto day is 23 or 25 hours, and
+  // the short one would silently drop a late-evening appointment.
+  const selectedDayEndLocal = addDays(selectedDayLocal, 1);
+  const startUtc = utcInstantFromLocal(selectedDayLocal, "00:00", studio.timezone);
+  const endUtc = utcInstantFromLocal(selectedDayEndLocal, "00:00", studio.timezone);
 
   // Today's appointments. Use a narrow inline SELECT so the dashboard
   // gets practitioner color + service modality + client allergies in
@@ -209,7 +255,7 @@ export default async function DashboardPage({
       | { id: string; display_name: string | null; color: string }[]
       | null;
   };
-  const todayAppointments: TodayAppointment[] = (
+  const dayAppointments: TodayAppointment[] = (
     (apptRows ?? []) as RawAppt[]
   ).map((r) => ({
     id: r.id,
@@ -228,11 +274,11 @@ export default async function DashboardPage({
   // The visible roster excludes cancelled appointments: they shouldn't
   // crowd a "what's today" briefing. Cancellation records remain on the
   // calendar week view, where context is appropriate.
-  const visibleAppointments = todayAppointments.filter(
+  const visibleAppointments = dayAppointments.filter(
     (a) => a.status !== "cancelled",
   );
 
-  const todayClientIds = Array.from(
+  const selectedDayClientIds = Array.from(
     new Set(visibleAppointments.map((a) => a.client_id)),
   );
 
@@ -241,18 +287,21 @@ export default async function DashboardPage({
   // single `renderNow` above. A SET, so two genuinely overlapping appointments
   // (two practitioners, two rooms) both read Current instead of one silently
   // winning.
-  const currentAppointmentIdSet = currentAppointmentIds(
-    visibleAppointments,
-    renderNow.getTime(),
-  );
+  // "Current" is a claim about the real present moment, so it is only asked on
+  // the real present day. On any other day the set is empty BY CONSTRUCTION —
+  // relying on "nothing contains now" would silently break the first time the
+  // predicate grew a fallback such as "next up".
+  const currentAppointmentIdSet = !viewingToday
+    ? new Set<string>()
+    : currentAppointmentIds(visibleAppointments, renderNow.getTime());
 
   // Bulk lookups for the visible client set. Each query is read-only,
   // RLS-scoped, and bounded by today's client list.
   const [practitioners, pinnedByClient, intakeByClient, cardOnFileLoad] =
     await Promise.all([
       getPractitionersForStudio(studio.id),
-      getLatestPinnedNoteByClient(studio.id, todayClientIds),
-      loadIntakeStatusByClient(supabase, studio.id, todayClientIds),
+      getLatestPinnedNoteByClient(studio.id, selectedDayClientIds),
+      loadIntakeStatusByClient(supabase, studio.id, selectedDayClientIds),
       // Chloe: card-on-file status beside each name. Capability is asked
       // FIRST: a studio with no card-on-file route gets `null` and pays ZERO
       // card-status queries, because "no card" is not a truthful thing to say
@@ -260,7 +309,7 @@ export default async function DashboardPage({
       // is ONE bounded read for today's UNIQUE client ids, so a client with two
       // appointments costs one lookup and the cost does not grow with the
       // schedule, and a failed read stays UNAVAILABLE — never "No card".
-      loadCardOnFileForStudio(studio.id, todayClientIds),
+      loadCardOnFileForStudio(studio.id, selectedDayClientIds),
     ]);
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
@@ -326,7 +375,7 @@ export default async function DashboardPage({
   // exactly the PR #211 briefing pipeline, compacted.
   // PR #236: linked-session facts for the Today next actions. Two
   // batched reads (same shape as the charted-24h loader); no N+1.
-  const apptIds = todayAppointments.map((a) => a.id);
+  const apptIds = dayAppointments.map((a) => a.id);
   const sessionByAppointment = new Map<
     string,
     { sessionId: string; hasChartedArea: boolean }
@@ -367,10 +416,27 @@ export default async function DashboardPage({
   // visible appointments' payment state, no per-row query, no full history.
   const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds, studio.timezone);
 
-  const beforeTodayPreviews = await getBeforeTodayPreviews(
-    studio.id,
-    visibleAppointments.map((a) => a.client_id),
-  );
+  // THE LOAD-BEARING RULE OF THIS CHANGE.
+  //
+  // These two loaders are the only ones on the roster path that make a
+  // HISTORICAL claim about a client. Everything else here — pinned note, intake
+  // state, card on file, payment state, the linked session — describes the
+  // client or the appointment NOW, and is true on any day.
+  //
+  // Off Today, V1 does not ask the history question AT ALL. It is not asked and
+  // answered "no": it is not asked. So the loads are SKIPPED rather than
+  // rendered-but-hidden, and the row states nothing about history in either
+  // direction — no "New client", no "Returning client", no caution, plan or
+  // setup, and no "unavailable" either, because there was no question.
+  //
+  // Skipping is also strictly cheaper: it removes six batched reads, the
+  // largest read on the page.
+  const beforeTodayPreviews = viewingToday
+    ? await getBeforeTodayPreviews(
+        studio.id,
+        visibleAppointments.map((a) => a.client_id),
+      )
+    : new Map<string, BeforeTodayPreview>();
 
   // Dashboard V2 Part 2A: the FULL previous treatment for every returning
   // client of the day, from the SAME #517 authority the appointment page uses.
@@ -383,7 +449,11 @@ export default async function DashboardPage({
   // Each request carries its OWN appointment boundary: `before` is that
   // appointment's starts_at, and `excludeAppointmentId` keeps a session already
   // linked to today's visit from being presented as its own previous treatment.
-  const prepLoads = await loadLastChartedTreatmentsForClients({
+  // Skipped off Today for the same reason as the Before-Today load above: it
+  // is a historical claim, and V1 does not pose that question on another day.
+  const prepLoads = !viewingToday
+    ? new Map<string, AppointmentPrepLoad>()
+    : await loadLastChartedTreatmentsForClients({
     studioId: studio.id,
     requests: visibleAppointments.map((a) => ({
       // The APPOINTMENT is the unit of identity, not the client. A client with
@@ -424,7 +494,15 @@ export default async function DashboardPage({
   // appointments, the Before Today previews, the linked-session charting state,
   // intake status: into exactly one card per appointment, keyed by APPOINTMENT
   // id and in the query's chronological order. No new query; nothing sorted.
-  const todayWorkflowInputs: TodayWorkflowInput[] = visibleAppointments.map(
+  //
+  // Built ONLY for actual today. Off Today there is no history answer to put
+  // in `hasHistory`, and inventing `false` is the exact untruth this change
+  // exists to avoid. An empty input list means every non-Today row gets
+  // `workflow === null`, and the preparation block and treatment memory —
+  // both already guarded on it in production — go quiet on their own.
+  const todayWorkflowInputs: TodayWorkflowInput[] = (
+    viewingToday ? visibleAppointments : []
+  ).map(
     (appt) => {
       const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
@@ -554,19 +632,106 @@ export default async function DashboardPage({
       )}
 
       <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+        {/* `flex-wrap` matters: this header was the one multi-control row on
+            the page without it, and it now carries day navigation beside the
+            primary action. Without wrapping, 390px overflows horizontally. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-medium">Today</h2>
+            {/* The heading names the day being shown. It says "Today" on the
+                real present day, so the ordinary case reads exactly as before;
+                it must not keep saying "Today" over another day's roster. */}
+            <h2 className="text-lg font-medium">
+              {dayHeading(selectedDayLocal, todayLocal)}
+            </h2>
+            {/* The full date, always, so "Tomorrow" is never ambiguous and a
+                further-out day is unmistakable. */}
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {formatSelectedDayLabel(selectedDayLocal)}
+            </p>
             <DaySummary
               appointmentCount={visibleAppointments.length}
-              clientCount={todayClientIds.length}
+              clientCount={selectedDayClientIds.length}
             />
           </div>
+          {/* Day navigation: server-rendered links, so the URL is shareable,
+              browser Back works, and no client-side date state exists — this
+              page deliberately holds ONE clock read and no timers. */}
+          <nav
+            aria-label="Change day"
+            className="flex flex-wrap items-center gap-1"
+          >
+            {/* At the far edge the control STAYS, disabled: removing it would
+                shift the row under the practitioner's thumb, and a link that
+                targets a day the resolver rejects would silently throw her a
+                year forward to today. Inward navigation is always available. */}
+            {canGoBack ? (
+              <Link
+                href={dashboardDayHref({
+                  day: previousDay(selectedDayLocal),
+                  todayLocal,
+                  period,
+                })}
+                aria-label="Previous day"
+                data-testid="dashboard-prev-day"
+                className={DAY_NAV_CONTROL}
+              >
+                ← Previous
+              </Link>
+            ) : (
+              <span
+                aria-label="Previous day"
+                aria-disabled="true"
+                data-testid="dashboard-prev-day"
+                data-disabled="true"
+                className={DAY_NAV_CONTROL_DISABLED}
+              >
+                ← Previous
+              </span>
+            )}
+            {!viewingToday && (
+              <Link
+                href={dashboardDayHref({ day: todayLocal, todayLocal, period })}
+                data-testid="dashboard-today"
+                className={DAY_NAV_CONTROL}
+              >
+                Today
+              </Link>
+            )}
+            {canGoForward ? (
+              <Link
+                href={dashboardDayHref({
+                  day: nextDay(selectedDayLocal),
+                  todayLocal,
+                  period,
+                })}
+                aria-label="Next day"
+                data-testid="dashboard-next-day"
+                className={DAY_NAV_CONTROL}
+              >
+                Next →
+              </Link>
+            ) : (
+              <span
+                aria-label="Next day"
+                aria-disabled="true"
+                data-testid="dashboard-next-day"
+                data-disabled="true"
+                className={DAY_NAV_CONTROL_DISABLED}
+              >
+                Next →
+              </span>
+            )}
+          </nav>
           {/* The primary action in the appointments area is booking, not
               adding a client (Chloe: she'd never add a client here). Links
-              to the calendar, where the quick-book flow lives. */}
+              to the calendar, where the quick-book flow lives — CARRYING the
+              day being viewed, so stepping to a date and pressing the obvious
+              book button does not silently land on today's week. */}
           <Link
-            href="/calendar"
+            href={calendarHrefForDashboardDay({
+              selectedDay: selectedDayLocal,
+              todayLocal,
+            })}
             className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             Book appointment
@@ -574,7 +739,7 @@ export default async function DashboardPage({
         </div>
 
         {visibleAppointments.length === 0 ? (
-          <EmptyDayState />
+          <EmptyDayState selectedDay={selectedDayLocal} todayLocal={todayLocal} />
         ) : (
           <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {visibleAppointments.map((appt) => (
@@ -588,6 +753,7 @@ export default async function DashboardPage({
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
+                  historyAsked={viewingToday}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
                   cardOnFile={resolveCardOnFileStatus(
                     cardOnFileLoad,
@@ -661,7 +827,12 @@ export default async function DashboardPage({
           functionality. Nothing here was recomputed, renamed or duplicated,
           the only change to its numbers in this PR is the Sunday week
           boundary correction in resolvePeriodRange. */}
-      <PracticeSnapshot metrics={practiceMetrics} livemode={inferStripeLivemode()} />
+      <PracticeSnapshot
+        metrics={practiceMetrics}
+        livemode={inferStripeLivemode()}
+        selectedDay={selectedDayLocal}
+        todayLocal={todayLocal}
+      />
 
       {/* CHLOE D2, setup that is DONE is not daily work.
           ------------------------------------------------------------------
@@ -768,6 +939,7 @@ function AppointmentRow({
   linkedSession,
   paymentState,
   prepMemory,
+  historyAsked,
   isCurrent,
   cardOnFile,
   tz,
@@ -786,6 +958,11 @@ function AppointmentRow({
   // APPOINTMENT id upstream, so two same-client appointments each get their own
   // boundary and one client can never receive another's memory.
   prepMemory: { memory: AppointmentPrepMemory | null; unavailable: boolean };
+  // Whether the page ASKED the history question for this row at all. Only
+  // actual today does. Passed explicitly rather than inferred from
+  // `workflow === null`, so "we did not ask" stays a stated fact rather than a
+  // side effect of another decision.
+  historyAsked: boolean;
   // Resolved ONCE for the whole page against one instant (see `renderNow`), not
   // re-derived per row from its own clock read.
   isCurrent: boolean;
@@ -800,11 +977,18 @@ function AppointmentRow({
 }) {
   // PR #236: ONE obvious primary action per row, resolved from
   // existing facts (pure helper; existing routes only).
-  const nextAction = resolveNextAction({
+  // On TODAY this delegates verbatim to `resolveNextAction`, so the action is
+  // bit-for-bit what production renders. On any other day the history question
+  // was never posed, and the wrapper returns the neutral action rather than
+  // being handed a fabricated `hasHistory: false` — which would quietly claim
+  // that a ten-year client is new.
+  const nextAction = resolveDayNextAction({
     status: appt.status,
     clientId: appt.client_id,
     appointmentId: appt.id,
-    hasHistory: workflow?.hasHistory ?? false,
+    history: historyAsked
+      ? { asked: true, hasHistory: workflow?.hasHistory ?? false }
+      : { asked: false },
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
   });
@@ -1179,19 +1363,33 @@ function IntakePill({
 // ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
-function EmptyDayState() {
+function EmptyDayState({
+  selectedDay,
+  todayLocal,
+}: {
+  selectedDay: string;
+  todayLocal: string;
+}) {
   return (
     <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-10 dark:border-neutral-700 dark:bg-neutral-900">
-      <p className="text-lg font-medium">No appointments today.</p>
+      {/* The TODAY branch returns the exact pre-existing literal, unchanged.
+          The other branches exist because "No appointments today." is simply
+          false when the briefing is showing another day. */}
+      <p className="text-lg font-medium">
+        {emptyDayMessage(selectedDay, todayLocal)}
+      </p>
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         Use the quiet time to review the week or book an appointment.
       </p>
       {/* Single CTA: the "Book appointment" primary action already lives in
           the Appointments section header, so the empty state only offers the
-          calendar view to avoid a duplicate Book appointment button. */}
+          calendar view to avoid a duplicate Book appointment button. Same
+          day-preserving href as that button — an empty day is exactly when a
+          practitioner reaches for the calendar, and landing on the wrong week
+          would be worst here. */}
       <div className="flex flex-wrap gap-2">
         <Link
-          href="/calendar"
+          href={calendarHrefForDashboardDay({ selectedDay, todayLocal })}
           className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           View calendar

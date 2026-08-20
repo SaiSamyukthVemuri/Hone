@@ -263,7 +263,7 @@ describe("Today intake projection (source pins)", () => {
     // inside the appointment map.
     expect(PAGE.match(/loadIntakeStatusByClient\(/g) ?? []).toHaveLength(2); // decl + 1 call
     expect(PAGE).toMatch(
-      /Promise\.all\(\[[\s\S]{0,400}?loadIntakeStatusByClient\(supabase, studio\.id, todayClientIds\)/,
+      /Promise\.all\(\[[\s\S]{0,400}?loadIntakeStatusByClient\(supabase, studio\.id, selectedDayClientIds\)/,
     );
     // The row renderer reads the prepared map; it never queries.
     expect(PAGE).toMatch(/intakeStatus=\{intakeByClient\.get\(appt\.client_id\) \?\? null\}/);

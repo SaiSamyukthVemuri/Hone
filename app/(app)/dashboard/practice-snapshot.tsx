@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { dashboardDayHref } from "@/lib/dashboard/day-navigation";
 import type {
   DashboardPeriod,
   PracticeDashboardMetrics,
@@ -50,11 +51,16 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 export function PracticeSnapshot({
   metrics,
   livemode = false,
+  selectedDay,
+  todayLocal,
 }: {
   metrics: PracticeDashboardMetrics;
   // PR #323: deployment mode. Gates the factual "Live payments On/Off" +
   // "Test payments" labels in the Payments card. Defaults false (test).
   livemode?: boolean;
+  /** Studio-local selected day, so period links preserve it. */
+  selectedDay: string;
+  todayLocal: string;
 }) {
   const a = metrics.appointments;
   return (
@@ -71,7 +77,11 @@ export function PracticeSnapshot({
         {PERIODS.map((p) => (
           <Link
             key={p.key}
-            href={`/dashboard?period=${p.key}`}
+            /* Carries the selected day through. Hardcoding `/dashboard?period=…`
+               would snap the appointment briefing back to today every time a
+               period pill was clicked — silently, because the day simply
+               vanishes rather than erroring. The two controls must not fight. */
+            href={dashboardDayHref({ day: selectedDay, todayLocal, period: p.key })}
             aria-current={metrics.period === p.key ? "page" : undefined}
             className={
               metrics.period === p.key

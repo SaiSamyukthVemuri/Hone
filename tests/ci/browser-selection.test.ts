@@ -93,13 +93,15 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // card is a peer section of Consultation & Skin/Hair, so it also joined
     // `sessions`. Hence 32. Now 33: the Chloe Today-row pass
     // (dashboard-current-client-card-status.spec.ts) joined `sessions`
-    // alongside the other Dashboard Today specs.
+    // alongside the other Dashboard Today specs. Now 34: Chloe's day
+    // navigation (dashboard-day-navigation.spec.ts) joined `sessions` for the
+    // same reason — it drives the same Today roster.
     //
     // This literal is a DELIBERATE COST PIN for the targeted lane, not a
     // migration-style "trip on the next one" pin: the targeted browser lane
     // has been cancelled at its ceiling before, so a spec joining this
     // selection must be a visible decision rather than a silent +1.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(33);
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(34);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

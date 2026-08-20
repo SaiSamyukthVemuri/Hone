@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
+import { dayHeading } from "@/lib/dashboard/day-navigation";
 import { join } from "node:path";
 
 // ===========================================================================
@@ -77,10 +78,32 @@ function at(marker: string | RegExp): number {
   return all[0].index!;
 }
 
-const TODAY = '<h2 className="text-lg font-medium">Today</h2>';
+// The first section heading is now DYNAMIC — the roster follows the selected
+// day, so the h2 renders "Today", "Tomorrow" or a date. Its position is what
+// this file guards, so the marker is the expression that produces it. That the
+// today branch still reads exactly "Today" is asserted below by evaluating the
+// real function, not by trusting a literal that no longer exists in the JSX.
+const TODAY = "{dayHeading(selectedDayLocal, todayLocal)}";
 const TODO = '<h2 className="text-lg font-medium">To do</h2>';
 const BIRTHDAYS = "<BirthdaysThisMonth";
 const SNAPSHOT = "<PracticeSnapshot";
+
+/**
+ * The page's own top-level heading TEXTS, as a viewer sees them TODAY.
+ *
+ * Class-agnostic, and it resolves the roster's dynamic heading by calling the
+ * real `dayHeading` with actual-today on both sides. So this still proves the
+ * user-visible words — a change that made the roster say "Schedule" instead of
+ * "Today" fails here, exactly as it did when the heading was a literal.
+ */
+function pageHeadings(): string[] {
+  return [...DASH.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/g)].map((m) => {
+    const text = m[1].trim();
+    if (text !== TODAY) return text;
+    const d = "2026-08-20";
+    return dayHeading(d, d);
+  });
+}
 
 describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
   it("Today comes before To do", () => {
@@ -102,9 +125,9 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
     // section.
     // Class-AGNOSTIC: a new h2 with different styling must not be invisible
     // here, and a purely cosmetic class change must not turn this red.
-    const h2s = [...DASH.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)];
+    const h2s = pageHeadings();
     expect(h2s.length).toBeGreaterThanOrEqual(3);
-    expect(h2s[0][1]).toBe("Today");
+    expect(h2s[0]).toBe("Today");
   });
 
   it("the page's own top-level headings are exactly Today, To do, Birthdays this month", () => {
@@ -115,7 +138,7 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
     // top-level h2, declared inside practice-snapshot.tsx and asserted below —
     // it is demoted, not absent, and it must keep a heading of its own or its
     // cards nest under Birthdays in the accessibility tree.
-    const h2s = [...DASH.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map((m) => m[1]);
+    const h2s = pageHeadings();
     expect(h2s).toEqual(["Today", "To do", "Birthdays this month"]);
   });
 
@@ -131,7 +154,10 @@ describe("dashboard hierarchy — Today, then To do, then Birthdays", () => {
     );
     expect(snapshot).toMatch(/<h2 className="text-lg font-medium">Practice snapshot<\/h2>/);
     // ...and it is a landmark section, not a bare div.
-    expect(snapshot).toMatch(/export function PracticeSnapshot[\s\S]{0,400}?<section/);
+    // Widened from 400: the component gained documented `selectedDay` /
+    // `todayLocal` props so its period links carry the selected day. The rule
+    // being guarded is "a section, not a bare div", not a character budget.
+    expect(snapshot).toMatch(/export function PracticeSnapshot[\s\S]{0,900}?<section/);
   });
 });
 
@@ -309,7 +335,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // "Do not introduce new cards to replace deleted cards." The page's own
     // top-level headings are still exactly the three operational sections
     // (also asserted above); this pins that the cleanup ADDED no section.
-    const h2s = [...DASH.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map((m) => m[1]);
+    const h2s = pageHeadings();
     expect(h2s).toEqual(["Today", "To do", "Birthdays this month"]);
   });
 });
