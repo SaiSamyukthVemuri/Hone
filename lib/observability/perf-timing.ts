@@ -37,15 +37,29 @@ import * as Sentry from "@sentry/nextjs";
 //
 // PRIVACY POSTURE (deny by default, by construction)
 // --------------------------------------------------
-// The only caller-supplied value this module accepts is a PerfSpanId, which
-// is a closed string-literal union. There is no free-text field, no
-// `details` bag, no id parameter, and no URL/pathname capture anywhere in
-// the payload. That last point is load-bearing: an authenticated pathname
-// such as `/clients/<uuid>` IS a client identifier, so the surface is
-// derived from the span name's own prefix and the real path is never read.
-// A caller therefore cannot pass a client name, an email, an appointment id,
-// a note, a provider payload or a secret into telemetry even by mistake —
-// there is no parameter that would carry one.
+// The only caller-supplied value this module accepts is a span id. There is
+// no free-text field, no `details` bag, no id parameter, and no URL/pathname
+// capture anywhere in the payload. That last point is load-bearing: an
+// authenticated pathname such as `/clients/<uuid>` IS a client identifier, so
+// the surface is derived from the span name's own prefix and the real path is
+// never read.
+//
+// The span id is constrained TWICE, and the second one is the guarantee:
+//
+//   1. at compile time by PerfSpanId, a closed string-literal union;
+//   2. at RUNTIME by the KNOWN_SPAN_IDS allowlist below.
+//
+// The second exists because the first is not a privacy control. TypeScript
+// admits `any` into a string-literal union with no cast, so an ordinary
+// refactor that routes a value from `JSON.parse` — or any untyped shape —
+// into a span name type-checks cleanly. Rejecting the value where it is used
+// closes that no matter how it arrived. lib/analytics/server.ts allowlists
+// event properties at runtime for exactly the same reason.
+//
+// So a caller cannot get a client name, an email, an appointment id, a note,
+// a provider payload or a secret into this telemetry: there is no parameter
+// that would carry one, and a value that is not on the allowlist is dropped
+// without ever being logged.
 //
 // ENABLEMENT
 // ----------
@@ -69,22 +83,47 @@ import * as Sentry from "@sentry/nextjs";
  * telemetry name, and the union is what makes a free-text (and therefore
  * potentially identifying) span name impossible.
  */
-export type PerfSpanId =
+export const PERF_SPAN_IDS = [
   // The authenticated app shell — the cost every navigation pays before the
   // page's own work begins.
-  | "shell.identity"
-  | "shell.memberships"
-  | "shell.support-reads"
+  "shell.identity",
+  "shell.memberships",
+  "shell.support-reads",
   // Per-surface page work. `.identity` is the page's own practitioner/studio
   // resolution; `.domain` is everything the page reads for its own content.
-  | "clients.identity"
-  | "clients.domain"
-  | "client-profile.identity"
-  | "client-profile.domain"
-  | "calendar.identity"
-  | "calendar.domain"
-  | "records.identity"
-  | "records.domain";
+  "clients.identity",
+  "clients.domain",
+  "client-profile.identity",
+  "client-profile.domain",
+  "calendar.identity",
+  "calendar.domain",
+  "records.identity",
+  "records.domain",
+] as const;
+
+export type PerfSpanId = (typeof PERF_SPAN_IDS)[number];
+
+/**
+ * The same names as a runtime set. THE PRIMARY PRIVACY CONTROL.
+ *
+ * The compile-time union is necessary but NOT sufficient, and assuming
+ * otherwise was a real error in an earlier revision of this file. TypeScript
+ * lets `any` satisfy a string-literal union with no cast at all, so
+ *
+ *     const fns = { m: timed };
+ *     const cfg = JSON.parse(payload);   // any
+ *     fns.m(cfg.span, run);              // compiles under --strict
+ *
+ * type-checks and would emit an attacker- or accident-supplied span name.
+ * `any` arrives through ordinary untyped data — a JSON parse, an untyped
+ * third-party shape — so this is a refactor hazard, not a deliberate bypass.
+ *
+ * Checking the value where it is USED closes that regardless of how it got
+ * here, which no amount of static call-site analysis can do. This mirrors
+ * lib/analytics/server.ts, which allowlists event properties at runtime for
+ * exactly the same reason: a compile-time contract is not a privacy control.
+ */
+const KNOWN_SPAN_IDS: ReadonlySet<string> = new Set(PERF_SPAN_IDS);
 
 /** Coarse surface label. Derived from the span id, never from a real path. */
 export type PerfSurface =
@@ -132,6 +171,27 @@ const LOG_EVENT = "perf_route_timing";
 /** Enabled only by explicit opt-in. See ENABLEMENT above. */
 export function isPerfTimingEnabled(): boolean {
   return process.env.HONE_PERF_TIMING === "1";
+}
+
+/**
+ * Refuse a span name that is not on the allowlist.
+ *
+ * The rejected VALUE is never logged, because that value is precisely what
+ * might be a client name, an email or a note — logging it to report the
+ * problem would be the leak. Only the event name goes out, matching
+ * `warnNameOnly` in lib/analytics/server.ts.
+ */
+function rejectUnknownSpan(): void {
+  try {
+    console.warn(JSON.stringify({ event: "perf_span_rejected" }));
+  } catch {
+    // Never escalate from the rejection path either.
+  }
+}
+
+/** True only for a span name this module is allowed to emit. */
+function isKnownSpan(span: string): boolean {
+  return KNOWN_SPAN_IDS.has(span);
 }
 
 /**
@@ -412,6 +472,12 @@ export async function timed<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   if (!isPerfTimingEnabled()) return fn();
+  // The type says this cannot happen; `any` says otherwise. The work still
+  // runs — instrumentation never changes behaviour — it is just unmeasured.
+  if (!isKnownSpan(span)) {
+    rejectUnknownSpan();
+    return fn();
+  }
 
   const startedAt = performance.now();
   try {
@@ -450,6 +516,11 @@ const INERT_SPAN: PerfSpanHandle = { end: () => {} };
  */
 export function startPerfSpan(span: PerfSpanId): PerfSpanHandle {
   if (!isPerfTimingEnabled()) return INERT_SPAN;
+  // Same allowlist as `timed()`; see KNOWN_SPAN_IDS.
+  if (!isKnownSpan(span)) {
+    rejectUnknownSpan();
+    return INERT_SPAN;
+  }
 
   const startedAt = performance.now();
   const sentrySpan = beginInactiveSentrySpan(span);

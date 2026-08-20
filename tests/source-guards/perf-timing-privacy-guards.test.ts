@@ -355,26 +355,68 @@ describe("perf-timing module source", () => {
     }
   });
 
-  it("keeps PerfSpanId a closed union of string literals", () => {
+  it("declares the span ids as one const array of string literals", () => {
+    // PERF_SPAN_IDS is the single source of truth: the compile-time type is
+    // derived from it and the runtime allowlist is built from it, so the two
+    // cannot drift apart by construction.
+    let declaration: ts.VariableDeclaration | undefined;
+    eachNode(MODULE_AST, (node) => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === "PERF_SPAN_IDS"
+      ) {
+        declaration = node;
+      }
+    });
+    expect(declaration, "PERF_SPAN_IDS not found").toBeTruthy();
+
+    const initializer = (declaration as ts.VariableDeclaration).initializer;
+    // `as const` is what keeps the derived type a literal union rather than
+    // widening it to string[].
+    expect(
+      initializer !== undefined && ts.isAsExpression(initializer),
+      "PERF_SPAN_IDS must be declared `as const`",
+    ).toBe(true);
+    const asExpression = initializer as ts.AsExpression;
+    expect(asExpression.type.getText(MODULE_AST)).toBe("const");
+
+    const array = asExpression.expression;
+    expect(ts.isArrayLiteralExpression(array)).toBe(true);
+    const elements = (array as ts.ArrayLiteralExpression).elements;
+    expect(elements.length).toBeGreaterThan(0);
+    for (const element of elements) {
+      expect(
+        ts.isStringLiteral(element),
+        `span id is not a string literal: ${element.getText(MODULE_AST)}`,
+      ).toBe(true);
+      expect((element as ts.StringLiteral).text).toMatch(/^[a-z-]+\.[a-z-]+$/);
+    }
+  });
+
+  it("derives PerfSpanId from that array rather than restating it", () => {
     const alias = findTypeAlias(MODULE_AST, "PerfSpanId");
     expect(alias, "PerfSpanId declaration not found").toBeTruthy();
-
-    const type = (alias as ts.TypeAliasDeclaration).type;
-    expect(ts.isUnionTypeNode(type), "PerfSpanId is no longer a union").toBe(
-      true,
+    // A hand-written union here would be free to drift from the runtime
+    // allowlist; deriving makes drift impossible instead of merely tested.
+    expect((alias as ts.TypeAliasDeclaration).type.getText(MODULE_AST)).toBe(
+      "(typeof PERF_SPAN_IDS)[number]",
     );
+  });
 
-    const members = (type as ts.UnionTypeNode).types;
-    expect(members.length).toBeGreaterThan(0);
-    for (const member of members) {
-      // A widened union (`| string`) is a keyword/TypeReference, not a
-      // LiteralType, and would silently turn every other guard into a no-op.
+  it("checks the span id at RUNTIME, not only at compile time", () => {
+    // The control that survives `any`. Without this, an ordinary refactor
+    // routing untyped data into a span name type-checks and emits it.
+    expect(MODULE_FACTS.names.has("KNOWN_SPAN_IDS")).toBe(true);
+    expect(MODULE_FACTS.names.has("isKnownSpan")).toBe(true);
+
+    for (const entryPoint of ["timed", "startPerfSpan"]) {
+      const fn = findFunction(MODULE_AST, entryPoint);
+      expect(fn, `${entryPoint} not found`).toBeTruthy();
       expect(
-        ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal),
-        `PerfSpanId member is not a string literal: ${member.getText(MODULE_AST)}`,
-      ).toBe(true);
-      const literal = (member as ts.LiteralTypeNode).literal as ts.StringLiteral;
-      expect(literal.text).toMatch(/^[a-z-]+\.[a-z-]+$/);
+        (fn as ts.FunctionDeclaration).getText(MODULE_AST),
+        `${entryPoint} must reject an unknown span id`,
+      ).toMatch(/if \(!isKnownSpan\(span\)\) \{/);
     }
   });
 

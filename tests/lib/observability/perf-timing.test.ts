@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  PERF_SPAN_IDS,
   buildPerfSummary,
   isPerfTimingEnabled,
   startPerfSpan,
   surfaceOf,
   timed,
+  type PerfSpanId,
 } from "@/lib/observability/perf-timing";
 
 // ===========================================================================
@@ -294,6 +296,68 @@ describe("nested and concurrent spans", () => {
     );
     expect(outcomes.get("clients.identity")).toBe("threw");
     expect(outcomes.get("clients.domain")).toBe("ok");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3b. The runtime allowlist — the control that survives `any`.
+// ---------------------------------------------------------------------------
+
+describe("span ids are checked at runtime, not only at compile time", () => {
+  // TypeScript admits `any` into a string-literal union with NO cast, so
+  // `const cfg = JSON.parse(payload); fns.m(cfg.span, run)` type-checks and
+  // would emit an arbitrary span name. These cast through `any` to reproduce
+  // exactly what a refactor routing untyped data can produce accidentally.
+  const smuggled = CLIENT_EMAIL as unknown as PerfSpanId;
+
+  it("drops an unknown span name instead of emitting it", async () => {
+    await timed(smuggled, async () => "work ran");
+
+    const lines = written.join("\n");
+    expect(lines).not.toContain(CLIENT_EMAIL);
+    // Nothing was recorded, so no summary line exists at all.
+    expect(emitted()).toHaveLength(0);
+  });
+
+  it("never logs the rejected value, only that a rejection happened", async () => {
+    const warned: string[] = [];
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation((...args: unknown[]) => {
+        warned.push(String(args[0]));
+      });
+
+    await timed(smuggled, async () => "work ran");
+    startPerfSpan(smuggled).end();
+
+    warnSpy.mockRestore();
+    expect(warned.length).toBeGreaterThan(0);
+    for (const line of warned) {
+      expect(line).not.toContain(CLIENT_EMAIL);
+      expect(JSON.parse(line)).toEqual({ event: "perf_span_rejected" });
+    }
+  });
+
+  it("still runs the work exactly once when the span is rejected", async () => {
+    const fn = vi.fn(async () => "work ran");
+    await expect(timed(smuggled, fn)).resolves.toBe("work ran");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an inert handle for a rejected bracketed span", async () => {
+    const handle = startPerfSpan(smuggled);
+    expect(() => handle.end()).not.toThrow();
+    expect(emitted()).toHaveLength(0);
+  });
+
+  it("still records every allowlisted span", async () => {
+    // Anti-vacuity for the rejection path: the allowlist must not be so
+    // strict that it drops the spans the instrumentation actually uses.
+    for (const span of PERF_SPAN_IDS) {
+      written.length = 0;
+      await timed(span, async () => "ok");
+      expect(emitted(), `span ${span} was dropped`).toHaveLength(1);
+    }
   });
 });
 
