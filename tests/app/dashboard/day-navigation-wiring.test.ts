@@ -210,3 +210,27 @@ describe("#598 survives on every day", () => {
     expect((CODE.match(/loadCardOnFileForStudio\(/g) ?? []).length).toBe(1);
   });
 });
+
+describe("both Dashboard exits to the Calendar carry the selected day", () => {
+  it("no bare /calendar link survives", () => {
+    // Two of them: the section header's "Book appointment" and the empty
+    // state's "View calendar".
+    expect(CODE).not.toMatch(/href="\/calendar"/);
+    expect((CODE.match(/calendarHrefForDashboardDay\(/g) ?? []).length).toBe(2);
+  });
+
+  it("both build the href from the RESOLVED day, never the raw param", () => {
+    expect(CODE).toMatch(
+      /calendarHrefForDashboardDay\(\{\s*selectedDay: selectedDayLocal,\s*todayLocal,\s*\}\)/,
+    );
+    // The empty state receives the same two values as props.
+    expect(CODE).toMatch(
+      /calendarHrefForDashboardDay\(\{ selectedDay, todayLocal \}\)/,
+    );
+    expect(CODE).not.toMatch(/calendarHrefForDashboardDay\([^)]*sp\.day/);
+  });
+
+  it("ONE authority builds the URL — no hand-rolled second copy", () => {
+    expect(CODE).not.toMatch(/`\/calendar\?day=\$\{/);
+  });
+});

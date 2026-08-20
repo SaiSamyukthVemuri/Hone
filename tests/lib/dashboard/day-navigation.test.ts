@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DASHBOARD_DAY_MAX_OFFSET_DAYS,
+  calendarHrefForDashboardDay,
   canNavigateNext,
   canNavigatePrevious,
   dashboardDayBounds,
@@ -270,5 +271,79 @@ describe("isViewingToday", () => {
     expect(isViewingToday(TODAY, TODAY)).toBe(true);
     expect(isViewingToday(nextDay(TODAY), TODAY)).toBe(false);
     expect(isViewingToday(previousDay(TODAY), TODAY)).toBe(false);
+  });
+});
+
+describe("leaving for the Calendar keeps the day you were looking at", () => {
+  // The defect: both Dashboard exits to the Calendar targeted bare
+  // `/calendar`. The Calendar anchors its week from `?day=` and falls back to
+  // today's week without it, and the mobile day view opens on today — so
+  // stepping to a date and pressing the obvious "book" button landed
+  // somewhere else entirely.
+
+  it("1. on actual today the URL stays canonical — no redundant day", () => {
+    expect(
+      calendarHrefForDashboardDay({ selectedDay: TODAY, todayLocal: TODAY }),
+    ).toBe("/calendar");
+  });
+
+  it("2. tomorrow carries the day", () => {
+    expect(
+      calendarHrefForDashboardDay({ selectedDay: "2026-08-21", todayLocal: TODAY }),
+    ).toBe("/calendar?day=2026-08-21");
+  });
+
+  it("3. a distant day carries that EXACT canonical date", () => {
+    for (const day of ["2026-12-15", "2027-01-01", "2028-02-29", "2025-11-02"]) {
+      expect(
+        calendarHrefForDashboardDay({ selectedDay: day, todayLocal: TODAY }),
+        day,
+      ).toBe(`/calendar?day=${day}`);
+    }
+  });
+
+  it("4. Dashboard-only `period` is NOT forwarded", () => {
+    // The Calendar owns no such parameter for this workflow; carrying it would
+    // be noise. The helper takes no period at all, so it cannot leak.
+    const href = calendarHrefForDashboardDay({
+      selectedDay: "2026-08-21",
+      todayLocal: TODAY,
+    });
+    expect(href).not.toMatch(/period/);
+    expect(href).toBe("/calendar?day=2026-08-21");
+  });
+
+  it("5. RAW browser input is never forwarded — only the resolved day is", () => {
+    // The load-bearing guarantee. A hand-typed `?day=2026-02-31` resolves to
+    // actual today on the Dashboard, so the Calendar link is plain
+    // `/calendar` and the malformed text never leaves the page. The Calendar's
+    // own `?day=` parsing is deliberately not this PR's validation authority.
+    for (const hostile of [
+      "2026-02-31",
+      "2026-8-2",
+      "not-a-date",
+      "9999-12-31",
+      "<script>",
+      "2026-08-21' or '1'='1",
+    ]) {
+      const resolved = resolveSelectedDay(hostile, TODAY);
+      const href = calendarHrefForDashboardDay({
+        selectedDay: resolved,
+        todayLocal: TODAY,
+      });
+      expect(href, hostile).toBe("/calendar");
+      expect(href, hostile).not.toContain(hostile);
+    }
+  });
+
+  it("anything it DOES emit is a day the resolver would accept back", () => {
+    // Round-trip: the Calendar can only ever be handed a canonical date.
+    for (const offset of [-365, -40, -1, 1, 7, 40, 365]) {
+      const day = addDays(TODAY, offset);
+      const href = calendarHrefForDashboardDay({ selectedDay: day, todayLocal: TODAY });
+      const emitted = new URL(href, "https://x.test").searchParams.get("day")!;
+      expect(emitted).toBe(day);
+      expect(resolveSelectedDay(emitted, TODAY)).toBe(day);
+    }
   });
 });

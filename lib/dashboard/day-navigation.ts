@@ -145,6 +145,38 @@ export function dashboardDayHref(args: {
   return query ? `/dashboard?${query}` : "/dashboard";
 }
 
+/**
+ * The Calendar URL that keeps the day the practitioner is looking at.
+ *
+ * Both Dashboard exits to the Calendar — "Book appointment" in the section
+ * header and "View calendar" in the empty state — used to target bare
+ * `/calendar`. That was correct while the briefing was Today-only. Once it can
+ * show another day, a bare link silently drops the context: the Calendar
+ * anchors its week from `?day=`, so it falls back to today's week, and the
+ * mobile day view opens on today. Navigating to a date and then pressing the
+ * obvious "book" button would land somewhere else entirely.
+ *
+ * `day` is OMITTED on actual today, so the ordinary path stays the canonical
+ * `/calendar` and no link pins a date that goes stale overnight.
+ *
+ * TAKES THE RESOLVED DAY, NEVER THE RAW PARAM. `selectedDay` has already been
+ * through this module's canonical-date validation and horizon clamp, so a
+ * hand-typed `?day=2026-02-31` resolves to today here and produces
+ * `/calendar` — the malformed text is never forwarded. The Calendar's own
+ * `?day=` handling is deliberately NOT relied on as the validation authority.
+ *
+ * `period` is Dashboard-only and is deliberately not carried across: the
+ * Calendar has no such parameter, so forwarding it would be noise in the URL.
+ */
+export function calendarHrefForDashboardDay(args: {
+  selectedDay: string;
+  todayLocal: string;
+}): string {
+  if (args.selectedDay === args.todayLocal) return "/calendar";
+  const params = new URLSearchParams({ [DASHBOARD_DAY_PARAM]: args.selectedDay });
+  return `/calendar?${params.toString()}`;
+}
+
 export function previousDay(day: string): string {
   return addDays(day, -1);
 }

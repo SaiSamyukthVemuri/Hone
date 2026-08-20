@@ -20,6 +20,7 @@ import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
 import {
   canNavigateNext,
   canNavigatePrevious,
+  calendarHrefForDashboardDay,
   dashboardDayHref,
   dayHeading,
   emptyDayMessage,
@@ -723,9 +724,14 @@ export default async function DashboardPage({
           </nav>
           {/* The primary action in the appointments area is booking, not
               adding a client (Chloe: she'd never add a client here). Links
-              to the calendar, where the quick-book flow lives. */}
+              to the calendar, where the quick-book flow lives — CARRYING the
+              day being viewed, so stepping to a date and pressing the obvious
+              book button does not silently land on today's week. */}
           <Link
-            href="/calendar"
+            href={calendarHrefForDashboardDay({
+              selectedDay: selectedDayLocal,
+              todayLocal,
+            })}
             className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             Book appointment
@@ -1377,10 +1383,13 @@ function EmptyDayState({
       </p>
       {/* Single CTA: the "Book appointment" primary action already lives in
           the Appointments section header, so the empty state only offers the
-          calendar view to avoid a duplicate Book appointment button. */}
+          calendar view to avoid a duplicate Book appointment button. Same
+          day-preserving href as that button — an empty day is exactly when a
+          practitioner reaches for the calendar, and landing on the wrong week
+          would be worst here. */}
       <div className="flex flex-wrap gap-2">
         <Link
-          href="/calendar"
+          href={calendarHrefForDashboardDay({ selectedDay, todayLocal })}
           className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           View calendar

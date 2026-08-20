@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { emptyDayMessage } from "@/lib/dashboard/day-navigation";
+import {
+  calendarHrefForDashboardDay,
+  emptyDayMessage,
+} from "@/lib/dashboard/day-navigation";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -497,8 +500,18 @@ describe("empty day renders ONE empty state", () => {
     expect(summary).toMatch(/\{client\}/);
   });
 
-  it("the Book appointment action is untouched", () => {
-    expect(rendered).toMatch(/href="\/calendar"[\s\S]{0,300}Book appointment/);
+  it("the Book appointment action still points at the calendar", () => {
+    // Its href is no longer a literal: it carries the day being viewed, so
+    // stepping to a date and pressing the obvious book button does not land
+    // on today's week. On actual today the helper still yields "/calendar",
+    // which is asserted where the helper itself is tested.
+    expect(rendered).toMatch(
+      /calendarHrefForDashboardDay\([\s\S]{0,120}\)[\s\S]{0,300}Book appointment/,
+    );
+    expect(calendarHrefForDashboardDay({
+      selectedDay: "2026-08-20",
+      todayLocal: "2026-08-20",
+    })).toBe("/calendar");
   });
 
   it("no standalone Daily Prep Brief empty state survives", () => {

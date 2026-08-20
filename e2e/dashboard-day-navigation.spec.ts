@@ -448,3 +448,130 @@ test.describe("Dashboard day navigation — 390px phone", () => {
     });
   });
 });
+
+// ===========================================================================
+// Leaving for the Calendar must keep the day you were looking at.
+// ===========================================================================
+//
+// Both Dashboard exits used to target bare `/calendar`, which was right while
+// the briefing was Today-only. Once it can show another day, a bare link
+// silently drops the context: the Calendar anchors its week from `?day=` and
+// falls back to today's week without it. Stepping to a date and pressing the
+// obvious "book" button landed somewhere else entirely.
+
+test.describe("Dashboard → Calendar keeps the selected day", () => {
+  test("View calendar and Book appointment both carry the day, across a week boundary", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    await seedOn(seed, "Anchor Person", 90);
+    await loginAsOwner(page, seed);
+
+    const tomorrow = localDay(tz, 1);
+    const today = localDay(tz, 0);
+    // Ten days out is guaranteed to be a different week, so a bare
+    // `/calendar` would visibly load the wrong one.
+    const distant = localDay(tz, 10);
+
+    await test.step("A. tomorrow → View calendar lands on tomorrow's week", async () => {
+      // Tomorrow has no appointments, so the empty state — and its calendar
+      // link — is what renders.
+      await page.goto(`/dashboard?day=${tomorrow}`);
+      await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
+      await page.getByRole("link", { name: "View calendar" }).click();
+      await page.waitForURL(
+        (u) => u.pathname === "/calendar" && u.searchParams.get("day") === tomorrow,
+        { timeout: T },
+      );
+      await expect(
+        page.locator(`[data-testid="week-day-column"][data-date="${tomorrow}"]`),
+      ).toHaveCount(1);
+    });
+
+    await test.step("B. tomorrow → Book appointment carries the same day", async () => {
+      await page.goto(`/dashboard?day=${tomorrow}`);
+      await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
+      await page.getByRole("link", { name: "Book appointment" }).click();
+      await page.waitForURL(
+        (u) => u.pathname === "/calendar" && u.searchParams.get("day") === tomorrow,
+        { timeout: T },
+      );
+      await expect(
+        page.locator(`[data-testid="week-day-column"][data-date="${tomorrow}"]`),
+      ).toHaveCount(1);
+    });
+
+    await test.step("C. a DISTANT day loads that week, not today's", async () => {
+      await page.goto(`/dashboard?day=${distant}`);
+      await page.getByRole("link", { name: "Book appointment" }).click();
+      await page.waitForURL(
+        (u) => u.pathname === "/calendar" && u.searchParams.get("day") === distant,
+        { timeout: T },
+      );
+      // The week CONTAINING the selected day is loaded…
+      await expect(
+        page.locator(`[data-testid="week-day-column"][data-date="${distant}"]`),
+      ).toHaveCount(1);
+      // …and today is NOT in it, which is what a bare /calendar would have shown.
+      await expect(
+        page.locator(`[data-testid="week-day-column"][data-date="${today}"]`),
+      ).toHaveCount(0);
+    });
+
+    await test.step("D. on actual today the URL stays canonical", async () => {
+      await page.goto("/dashboard");
+      await expect(heading(page, "Today")).toBeVisible({ timeout: T });
+      await page.getByRole("link", { name: "Book appointment" }).click();
+      await page.waitForURL((u) => u.pathname === "/calendar", { timeout: T });
+      // No redundant `day` pinned on the ordinary path.
+      expect(new URL(page.url()).searchParams.get("day")).toBeNull();
+      await expect(
+        page.locator(`[data-testid="week-day-column"][data-date="${today}"]`),
+      ).toHaveCount(1);
+    });
+
+    await test.step("E. a malformed Dashboard day never reaches the Calendar URL", async () => {
+      // It resolves to actual today on the Dashboard, so the link is plain
+      // `/calendar` — the malformed text is not forwarded.
+      await page.goto("/dashboard?day=2026-02-31");
+      await expect(heading(page, "Today")).toBeVisible({ timeout: T });
+      await page.getByRole("link", { name: "Book appointment" }).click();
+      await page.waitForURL((u) => u.pathname === "/calendar", { timeout: T });
+      expect(page.url()).not.toContain("2026-02-31");
+      expect(new URL(page.url()).searchParams.get("day")).toBeNull();
+    });
+  });
+});
+
+test.describe("Dashboard → Calendar on a 390px phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test("the mobile day view opens on the day the Dashboard was showing", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    await seedOn(seed, "Phone Anchor", 90);
+    await loginAsOwner(page, seed);
+    const tomorrow = localDay(tz, 1);
+
+    await test.step("F. tomorrow → calendar selects tomorrow, not today", async () => {
+      await page.goto(`/dashboard?day=${tomorrow}`);
+      await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
+      await page.getByRole("link", { name: "Book appointment" }).tap();
+      await page.waitForURL(
+        (u) => u.pathname === "/calendar" && u.searchParams.get("day") === tomorrow,
+        { timeout: T },
+      );
+      // The mobile strip marks its selection; the label carries "Today, " only
+      // for the actual current day, so this proves it did not fall back.
+      const selected = page.locator('[data-selected="true"]').first();
+      await expect(selected).toBeVisible({ timeout: T });
+      const label = await selected.getAttribute("aria-label");
+      expect(label, "selected pill label").not.toMatch(/^Today,/);
+      const dayNumber = String(Number(tomorrow.slice(8, 10)));
+      expect(label).toContain(dayNumber);
+    });
+  });
+});
