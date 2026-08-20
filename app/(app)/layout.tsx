@@ -13,6 +13,7 @@ import { loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-
 import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { identifyServerUser } from "@/lib/analytics/server";
+import { timed } from "@/lib/observability/perf-timing";
 
 export default async function AppLayout({
   children,
@@ -22,7 +23,15 @@ export default async function AppLayout({
   // Invite-only route guard (PR #253). Anonymous -> /login; authenticated
   // but no studio membership -> the safe /no-access gate. No-studio users
   // never render the app shell, nav, or any studio data.
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  //
+  // Measurement only (perf/route-timing-baseline): the `timed()` wrapper
+  // returns exactly what the call returns and re-throws exactly what it
+  // throws, so the /login and /no-access redirects below are unaffected —
+  // they surface in telemetry as an `outcome: "threw"` span, which is the
+  // expected shape for an unauthenticated request, not an error.
+  const { practitioner, studio } = await timed("shell.identity", () =>
+    requirePractitionerWithStudio(),
+  );
   const admin = isAdmin(practitioner.email);
 
   // Identify the practitioner SERVER-SIDE (opaque UUID + validated coarse role
@@ -33,7 +42,11 @@ export default async function AppLayout({
 
   // Show the "Switch studio" affordance only when the user is an active
   // practitioner in 2+ studios. RLS-scoped; a single-studio user sees nothing new.
-  const canSwitchStudio = (await listActiveStudioMemberships()).length > 1;
+  // Measured separately from shell.identity because the audit's open question
+  // is whether this SECOND resolution of the same practitioner is material.
+  const canSwitchStudio =
+    (await timed("shell.memberships", () => listActiveStudioMemberships()))
+      .length > 1;
 
   // PR #164. Unread notification count for the header badge. RLS
   // gates the count by studio membership; a failed count (network,
@@ -43,10 +56,14 @@ export default async function AppLayout({
   // Willow follow-up: overdue disinfectant "Replace now" records also count
   // toward the badge (computed, not persisted) so the operational safety alert is
   // visible from every page. Two bounded studio-scoped reads, run together.
-  const [unreadPersisted, overdueDisinfectantCount] = await Promise.all([
-    loadUnreadNotificationCount(studio.id),
-    loadOverdueDisinfectantCount(studio.id, studio.timezone),
-  ]);
+  const [unreadPersisted, overdueDisinfectantCount] = await timed(
+    "shell.support-reads",
+    () =>
+      Promise.all([
+        loadUnreadNotificationCount(studio.id),
+        loadOverdueDisinfectantCount(studio.id, studio.timezone),
+      ]),
+  );
   const unreadNotifications = unreadPersisted + overdueDisinfectantCount;
 
   return (

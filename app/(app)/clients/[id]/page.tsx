@@ -138,6 +138,7 @@ import {
   ClientBudgetCardUnavailable,
 } from "@/components/client-budget-card";
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
+import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -181,7 +182,19 @@ export default async function ClientCheatSheetPage({
   // Validated internal "/calendar/<uuid>" back target, or null. Never external.
   const planReturnTo = sanitizeAppointmentReturnTo(sp.returnTo);
 
-  const { studio, practitioner } = await getCurrentPractitionerWithStudio();
+  // Measurement only (perf/route-timing-baseline). The page's own identity
+  // resolution is measured separately from its domain reads so the summary
+  // can attribute time to the shell, to identity, and to page content.
+  const { studio, practitioner } = await timed("client-profile.identity", () =>
+    getCurrentPractitionerWithStudio(),
+  );
+  // Domain window opens here and closes immediately before the render return
+  // below, so it covers the whole data-assembly phase INCLUDING the
+  // tab-conditional reads. Deliberately a bracket, not a wrapper: this page
+  // assembles its data across ~13 statements and wrapping them in a closure
+  // would be a real restructuring of a clinical surface for a measurement PR.
+  // An early notFound() simply leaves the span unrecorded.
+  const domain = startPerfSpan("client-profile.domain");
   const data = await getClientById(studio.id, id);
 
   if (!data) {
@@ -523,6 +536,8 @@ export default async function ClientCheatSheetPage({
 
   const hasEmergencyContact =
     !!client.emergency_contact_name || !!client.emergency_contact_phone;
+
+  domain.end();
 
   return (
     <div className="flex flex-col gap-10">

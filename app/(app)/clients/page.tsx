@@ -6,6 +6,7 @@ import {
 } from "@/lib/supabase/queries";
 import { ClientSearch } from "@/components/client-search";
 import { ArchivedClientsList } from "./ArchivedClientsList";
+import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 
 // Clients page. Two views: active (default) and archived. Selected
 // via ?view=archived; anything else (missing, "active", garbage)
@@ -35,11 +36,18 @@ export default async function ClientsPage({
   const params = (await searchParams) ?? {};
   const view = parseView(params.view);
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  // Measurement only (perf/route-timing-baseline). This is the page's OWN
+  // identity resolution, separate from the two the shell layout already
+  // performed; the summary line counts all three for one request.
+  const { studio } = await timed("clients.identity", () =>
+    getCurrentPractitionerWithStudio(),
+  );
+  const domain = startPerfSpan("clients.domain");
   const [activeClients, archivedClients] =
     view === "archived"
       ? [[], await getArchivedClientsForStudio(studio.id)]
       : [await getClientsForStudio(studio.id), []];
+  domain.end();
 
   return (
     <div className="flex flex-col gap-6">
