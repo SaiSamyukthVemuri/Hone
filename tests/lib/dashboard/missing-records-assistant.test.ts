@@ -295,7 +295,7 @@ describe("dashboard wiring (source pins)", () => {
     // once inside the combined Today appointment card.
     expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
     expect(PAGE).not.toMatch(/DailyPrepBriefCard/);
-    expect(PAGE).toMatch(/resolveNextAction\(/);
+    expect(PAGE).toMatch(/resolveDayNextAction\(/);
   });
 
   it("every assistant gap type still reaches the unified list", () => {

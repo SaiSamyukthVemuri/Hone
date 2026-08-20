@@ -93,7 +93,7 @@ describe("dashboard wiring (source pins)", () => {
   );
 
   it("the row resolves and renders the primary action", () => {
-    expect(PAGE).toMatch(/resolveNextAction\(\{/);
+    expect(PAGE).toMatch(/resolveDayNextAction\(\{/);
     expect(PAGE).toMatch(/\{nextAction\.label\}/);
     expect(PAGE).toMatch(/href=\{nextAction\.href\}/);
     expect(PAGE).toMatch(/\{nextAction\.chip\}/);

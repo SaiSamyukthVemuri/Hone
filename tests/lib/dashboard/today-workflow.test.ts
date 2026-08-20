@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { emptyDayMessage } from "@/lib/dashboard/day-navigation";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -433,7 +434,7 @@ describe("dashboard wiring", () => {
 
   it("preserves the row-body appointment link and the primary action resolver", () => {
     expect(PAGE).toMatch(/href=\{`\/calendar\/\$\{appt\.id\}`\}/);
-    expect(PAGE).toMatch(/resolveNextAction\(\{/);
+    expect(PAGE).toMatch(/resolveDayNextAction\(\{/);
     expect(PAGE).toMatch(/<AppointmentCheckoutCell/);
   });
 
@@ -465,9 +466,14 @@ describe("empty day renders ONE empty state", () => {
   const rendered = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
   it("only EmptyDayState renders the empty-day sentence", () => {
-    expect(rendered.match(/No appointments today\./g) ?? []).toHaveLength(1);
+    // The sentence itself moved into `emptyDayMessage`, which says "today"
+    // only when the roster really is showing today. What this test guards is
+    // unchanged: exactly ONE surface prints it, and that surface is
+    // EmptyDayState.
+    expect(rendered.match(/emptyDayMessage\(/g) ?? []).toHaveLength(1);
     const emptyState = rendered.slice(rendered.indexOf("function EmptyDayState("));
-    expect(emptyState).toContain("No appointments today.");
+    expect(emptyState).toContain("emptyDayMessage(selectedDay, todayLocal)");
+    expect(emptyDayMessage("2026-08-20", "2026-08-20")).toBe("No appointments today.");
   });
 
   it("DaySummary renders nothing at all when there are no appointments", () => {
@@ -477,6 +483,7 @@ describe("empty day renders ONE empty state", () => {
     );
     expect(summary).toMatch(/if \(appointmentCount === 0\) return null;/);
     expect(summary).not.toContain("No appointments today.");
+    expect(summary).not.toContain("emptyDayMessage");
   });
 
   it("a NON-empty day still summarises appointment and client counts", () => {
