@@ -166,6 +166,53 @@ function findCallSites(text: string, fileName = "sample.ts"): CallSite[] {
   return callSitesIn(parseSource(text, fileName));
 }
 
+/**
+ * Follow simple local aliases — `const measure = timed;` — to a fixpoint, so
+ * `const a = timed; const b = a; b(...)` resolves too.
+ *
+ * WHAT THIS DOES NOT REACH, stated plainly rather than claimed away. Indirect
+ * forms — `const m = cond ? timed : other`, `const fns = { m: timed }` then
+ * `fns.m(...)`, or passing `timed` to a higher-order function — are not
+ * resolved, and resolving them in general needs the TypeScript checker, i.e.
+ * building a Program over the repo on every unit run.
+ *
+ * That residual gap is accepted deliberately, because the call-site rule is
+ * DEFENCE IN DEPTH over a compile-time type, not the primary control. The
+ * primary control is `PerfSpanId` being a closed union — independently pinned
+ * above — so smuggling a computed span name through any of those forms also
+ * requires writing an explicit `as PerfSpanId` to defeat the type system.
+ * That is not something a refactor does by accident, which is the failure
+ * mode this guard exists to catch.
+ */
+function withLocalAliases(
+  sourceFile: ts.SourceFile,
+  callable: Set<string>,
+): Set<string> {
+  const resolved = new Set(callable);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    eachNode(sourceFile, (node) => {
+      if (
+        !ts.isVariableDeclaration(node) ||
+        !ts.isIdentifier(node.name) ||
+        node.initializer === undefined ||
+        !ts.isIdentifier(node.initializer)
+      ) {
+        return;
+      }
+      if (
+        resolved.has(node.initializer.text) &&
+        !resolved.has(node.name.text)
+      ) {
+        resolved.add(node.name.text);
+        changed = true;
+      }
+    });
+  }
+  return resolved;
+}
+
 /** As {@link findCallSites}, for a file that has already been parsed. */
 function callSitesIn(sourceFile: ts.SourceFile): CallSite[] {
   const { local, namespaces } = perfTimingBindings(sourceFile);
@@ -173,7 +220,10 @@ function callSitesIn(sourceFile: ts.SourceFile): CallSite[] {
   // below carry no import, and nothing else in the tree defines a function by
   // either name. A future collision surfaces here as a LOUD false positive,
   // which is the safe direction for a security guard.
-  const callable = new Set<string>([...ENTRY_POINTS, ...local]);
+  const callable = withLocalAliases(
+    sourceFile,
+    new Set<string>([...ENTRY_POINTS, ...local]),
+  );
 
   const found: CallSite[] = [];
   eachNode(sourceFile, (node) => {
@@ -595,6 +645,33 @@ describe("call sites cannot evade the guard by how they are written", () => {
       'import { measure } from "@/lib/observability";\n' +
       "measure(`${surface}.domain`, run);";
     expect(findCallSites(caller, "caller.ts")).toEqual([]);
+  });
+
+  it("follows a local alias assignment", () => {
+    const source =
+      'import { timed } from "@/lib/observability/perf-timing";\n' +
+      "const measure = timed;\n" +
+      "measure(`${surface}.domain`, run);";
+    const site = firstSite(source);
+    expect(site.fn).toBe("measure");
+    expect(site.isStringLiteral).toBe(false);
+  });
+
+  it("follows a chain of local aliases", () => {
+    const source =
+      'import { startPerfSpan } from "@/lib/observability/perf-timing";\n' +
+      "const a = startPerfSpan;\n" +
+      "const b = a;\n" +
+      "b(spanFromRequest());";
+    expect(firstSite(source).fn).toBe("b");
+  });
+
+  it("does not claim an alias of something unrelated", () => {
+    const source =
+      'import { somethingElse } from "@/lib/other";\n' +
+      "const measure = somethingElse;\n" +
+      "measure(`${surface}.domain`, run);";
+    expect(findCallSites(source, "sample.ts")).toEqual([]);
   });
 
   it("detects a star re-export", () => {
