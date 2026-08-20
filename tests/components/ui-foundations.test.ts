@@ -115,26 +115,87 @@ describe("Button: one canonical focus-visible treatment", () => {
     expect(cls).not.toMatch(/(^|\s)focus:/);
   });
 
-  it("never removes an outline without providing the replacement ring", () => {
-    // The exact defect this constant exists to prevent: `outline-none` with no
-    // substitute. Checked across every primitive, not just Button.
+  it("never uses the bare outline removal anywhere in the layer", () => {
+    // `outline-none` is Tailwind v4's HARD removal: outline-style:none and
+    // nothing else. It must not appear in this layer at all — not even
+    // focus-visible-scoped, which is the v3 idiom and the exact defect this
+    // repair fixed. The forced-colors-safe utility is `outline-hidden`.
     for (const file of readdirSync(UI_DIR)) {
       const code = codeOnly(uiSource(file));
-      // Capture the whole candidate, variant prefix included, so
-      // "focus-visible:outline-none" is not mistaken for a bare removal.
-      const removals = code.match(/[A-Za-z0-9:_-]*outline-none/g) ?? [];
-      for (const removal of removals) {
-        expect(
-          removal,
-          `${file}: outline removal must be focus-visible-scoped`,
-        ).toBe("focus-visible:outline-none");
-      }
-      if (removals.length > 0) {
-        expect(code, `${file}: outline removed without a ring`).toContain(
-          "focus-visible:ring-2",
-        );
-      }
+      expect(
+        code,
+        `${file}: use focus-visible:outline-hidden, never outline-none`,
+      ).not.toMatch(/[A-Za-z0-9:_-]*\boutline-none\b/);
     }
+    expect(buttonClasses()).toContain("focus-visible:outline-hidden");
+    expect(fieldControlClass()).toContain("focus-visible:outline-hidden");
+  });
+});
+
+describe("Focus indicator survives forced-colors mode (proved against compiled CSS)", () => {
+  // This does NOT assert a spelling. It runs the focus classes the primitives
+  // actually ship through the INSTALLED Tailwind compiler and asserts on the
+  // CSS that comes out — because the whole defect was that the source looked
+  // correct while the emitted rule lacked the fallback.
+  //
+  // Mutation contract: restore `focus-visible:outline-none` in
+  // components/ui/control-base.ts and this block turns red, because v4's
+  // `outline-none` emits no forced-colors fallback.
+  async function compile(classes: string): Promise<string> {
+    const [{ default: postcss }, { default: tw }] = await Promise.all([
+      import("postcss"),
+      import("@tailwindcss/postcss"),
+    ]);
+    const base = path.resolve(__dirname, "../../");
+    // `source(none)` + `@source inline(...)` keeps this to the exact candidates
+    // under test instead of scanning the repo. The two @theme entries only need
+    // to EXIST for the ring utilities to resolve; the assertions below are
+    // about outline geometry and box-shadow, not about the colour values.
+    const input = [
+      '@import "tailwindcss" source(none);',
+      `@source inline("${classes}");`,
+      "@theme { --color-focus-ring: oklch(20.5% 0 0); --color-surface: #fff; }",
+    ].join("\n");
+    const out = await postcss([tw({ base })]).process(input, {
+      from: path.join(base, "__focus-probe.css"),
+    });
+    return out.css;
+  }
+
+  it("emits a forced-colors outline fallback for the shipped Button focus classes", async () => {
+    const css = await compile(buttonClasses());
+    expect(css).toContain("forced-colors: active");
+    // A transparent outline that forced-colors repaints in a system colour,
+    // restoring a real indicator where box-shadow cannot survive.
+    expect(css).toMatch(/outline:\s*2px solid transparent/);
+  });
+
+  it("emits the same fallback for every field control", async () => {
+    const css = await compile(fieldControlClass());
+    expect(css).toContain("forced-colors: active");
+    expect(css).toMatch(/outline:\s*2px solid transparent/);
+  });
+
+  it("still paints the ordinary Hone ring in normal mode", async () => {
+    const css = await compile(buttonClasses());
+    // The visible indicator outside forced-colors is the box-shadow ring, and
+    // this repair does not change it.
+    expect(css).toMatch(/--tw-ring-shadow/);
+    expect(css).toContain("--tw-ring-color");
+    expect(css).toContain("--tw-ring-offset-width");
+  });
+
+  it("box-shadow is why the fallback is required — the bare removal loses both", async () => {
+    // Compiles the MUTATION, so the suite states the failure mode rather than
+    // asserting a spelling: forced-colors forces box-shadow:none, so with
+    // `outline-none` the control keeps no indicator at all.
+    const mutated = buttonClasses().replace(
+      "focus-visible:outline-hidden",
+      "focus-visible:outline-none",
+    );
+    const css = await compile(mutated);
+    expect(css).toMatch(/outline-style:\s*none/);
+    expect(css).not.toContain("forced-colors");
   });
 });
 

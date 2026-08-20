@@ -61,12 +61,29 @@ export const CONTROL_COMPACT_FINE_POINTER = "pointer-fine:min-h-8";
  *   rules that also fire on mouse click, which reads as unexplained jitter.
  * - The indicator is a 2px ring plus a 2px offset: it changes the control's
  *   GEOMETRY, so it does not depend on colour perception alone.
- * - `outline-none` appears here only ever paired with the replacement ring.
- *   Removing an outline without providing a substitute is the specific defect
- *   this constant exists to make impossible (11 such sites exist today).
+ * - `outline-hidden`, NOT `outline-none`. In Tailwind v4 these are two
+ *   different utilities and only one of them is safe here:
+ *
+ *     outline-none    -> outline-style: none
+ *     outline-hidden  -> outline-style: none
+ *                        + @media (forced-colors: active) {
+ *                            outline: 2px solid transparent; outline-offset: 2px }
+ *
+ *   v4 renamed v3's forgiving `outline-none` to `outline-hidden` and gave the
+ *   old name the hard removal. That distinction is load-bearing for this
+ *   constant, because our replacement indicator is entirely `box-shadow`, and
+ *   forced-colors mode (Windows High Contrast) forces `box-shadow: none` on
+ *   every element. With the bare removal the control would be left with no
+ *   focus indicator at all in exactly the mode a user relies on most. The
+ *   transparent outline survives, and forced-colors repaints it in a system
+ *   colour.
+ *
+ *   tests/components/ui-foundations.test.ts proves this against CSS compiled by
+ *   the installed Tailwind, not against the spelling: restoring `outline-none`
+ *   removes the forced-colors block from the emitted rule and turns it red.
  */
 export const FOCUS_RING =
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
+  "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-offset-2 " +
   "focus-visible:ring-focus-ring focus-visible:ring-offset-surface";
 
 /**

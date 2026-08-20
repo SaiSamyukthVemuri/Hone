@@ -127,9 +127,17 @@ export function QuickImport({ template }: { template: string }) {
       ) : null}
 
       <div className="flex flex-wrap gap-3">
+        {/* `disabled` carries the FULL lock and does not depend on which busy
+            label is showing. `isPending` is shared by preview and confirm, so
+            gating this button on the preview-shaped pending state alone
+            (`isPending && !preview`) left it live while a CONFIRM import was
+            in flight: overlapping server actions, and a late re-preview
+            response able to land out of order on top of a finished import.
+            `pending` below is PRESENTATION only. Button ORs the two, so the
+            effective disabled state is exactly `isPending || empty`. */}
         <Button
           onClick={onPreview}
-          disabled={text.trim().length === 0}
+          disabled={isPending || text.trim().length === 0}
           pending={isPending && !preview}
           busyLabel="Reading…"
         >
