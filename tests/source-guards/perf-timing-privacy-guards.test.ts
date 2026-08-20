@@ -45,8 +45,11 @@ const MODULE_SOURCE = readFileSync(MODULE_PATH, "utf8");
 /** Directories whose call sites must pass a literal span name. */
 const CALL_SITE_ROOTS = ["app", "lib", "components"];
 
-/** The two public entry points. Any call to either is a call site. */
+/** The two public entry points, by their EXPORTED names. */
 const ENTRY_POINTS = new Set(["timed", "startPerfSpan"]);
+
+/** Matches the perf-timing module however a caller spells the path. */
+const PERF_TIMING_MODULE = /(^|\/)perf-timing$/;
 
 function parseSource(text: string, fileName: string): ts.SourceFile {
   return ts.createSourceFile(
@@ -71,14 +74,73 @@ type CallSite = {
   isStringLiteral: boolean;
 };
 
+/**
+ * Local names an entry point is reachable by in this file.
+ *
+ * Matching the exported spelling alone is evadable: `import { timed as
+ * measure }` and `import * as perf` both produce calls that a name-only check
+ * never sees. Resolving the import bindings closes that.
+ */
+function perfTimingBindings(sourceFile: ts.SourceFile): {
+  local: Set<string>;
+  namespaces: Set<string>;
+} {
+  const local = new Set<string>();
+  const namespaces = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !PERF_TIMING_MODULE.test(statement.moduleSpecifier.text)
+    ) {
+      continue;
+    }
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        // `propertyName` is the EXPORTED name when the import is aliased.
+        const exported = (element.propertyName ?? element.name).text;
+        if (ENTRY_POINTS.has(exported)) local.add(element.name.text);
+      }
+    } else if (ts.isNamespaceImport(bindings)) {
+      namespaces.add(bindings.name.text);
+    }
+  }
+  return { local, namespaces };
+}
+
 /** Every real `timed(...)` / `startPerfSpan(...)` CALL in a source text. */
 function findCallSites(text: string, fileName = "sample.ts"): CallSite[] {
   const sourceFile = parseSource(text, fileName);
+  const { local, namespaces } = perfTimingBindings(sourceFile);
+  // The exported spellings are always candidates too: the synthetic snippets
+  // below carry no import, and nothing else in the tree defines a function by
+  // either name. A future collision surfaces here as a LOUD false positive,
+  // which is the safe direction for a security guard.
+  const callable = new Set<string>([...ENTRY_POINTS, ...local]);
+
   const found: CallSite[] = [];
   eachNode(sourceFile, (node) => {
-    if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
-    const fn = node.expression.text;
-    if (!ENTRY_POINTS.has(fn)) return;
+    if (!ts.isCallExpression(node)) return;
+
+    // Covers `timed(...)`, `timed<T>(...)`, `timed?.(...)`, a newline or a
+    // comment between the callee and its parenthesis — all of which are the
+    // same CallExpression once parsed, and none of which a text scan sees.
+    const callee = node.expression;
+    let fn: string | null = null;
+    if (ts.isIdentifier(callee) && callable.has(callee.text)) {
+      fn = callee.text;
+    } else if (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      namespaces.has(callee.expression.text) &&
+      ENTRY_POINTS.has(callee.name.text)
+    ) {
+      fn = `${callee.expression.text}.${callee.name.text}`;
+    }
+    if (fn === null) return;
+
     const arg = node.arguments[0];
     found.push({
       fn,
@@ -114,11 +176,14 @@ function collectFacts(text: string, fileName: string): SourceFacts {
     }
     if (ts.isIdentifier(node)) names.add(node.text);
     if (ts.isPropertyAccessExpression(node)) names.add(node.name.text);
-    if (
-      ts.isElementAccessExpression(node) &&
-      ts.isStringLiteral(node.argumentExpression)
-    ) {
-      names.add(node.argumentExpression.text);
+    if (ts.isElementAccessExpression(node)) {
+      // A statically-named key is a real read whichever literal form spells
+      // it: `req["pathname"]` and `req[`pathname`]` are the same access, but
+      // only the first is a StringLiteral node.
+      const key = node.argumentExpression;
+      if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) {
+        names.add(key.text);
+      }
     }
   });
   return { imports, names };
@@ -246,17 +311,19 @@ describe("perf-timing call sites", () => {
     walk(path.join(REPO_ROOT, root)),
   ).filter((file) => file !== MODULE_PATH);
 
-  // The raw-text prefilter only ever REMOVES files that cannot contain a call
-  // (no mention of either entry point anywhere in the bytes), so it cannot
-  // hide one; it just avoids parsing ~1,500 files to find a handful.
-  const callSites = files.flatMap((file) => {
-    const text = readFileSync(file, "utf8");
-    if (!text.includes("timed(") && !text.includes("startPerfSpan(")) return [];
-    return findCallSites(text, file).map((site) => ({
+  // EVERY file is parsed. An earlier revision prefiltered on the raw bytes
+  // `timed(` / `startPerfSpan(` to save work, but a call can be written
+  // `timed\n(`, `timed<T>(`, `timed?.(` or `timed /* c */ (` — none of which
+  // contain those bytes — so the filter could skip a file holding exactly the
+  // construct being guarded against. Parsing all of app/, lib/ and
+  // components/ measures ~1.4s for ~640 files, which is a cheap price for an
+  // assertion that cannot be dodged.
+  const callSites = files.flatMap((file) =>
+    findCallSites(readFileSync(file, "utf8"), file).map((site) => ({
       ...site,
       file: path.relative(REPO_ROOT, file),
-    }));
-  });
+    })),
+  );
 
   it("finds the instrumented surfaces", () => {
     // Sanity: if this drops to zero the guard below passes vacuously.
@@ -361,5 +428,80 @@ describe("comments and literals cannot hide a violation", () => {
   it("does not mistake an ordinary string for a read", () => {
     const facts = collectFacts('const label = "pathname";', "sample.ts");
     expect(facts.names.has("pathname")).toBe(false);
+  });
+
+  it("sees a template-literal element-access key", () => {
+    // `req[`pathname`]` is a NoSubstitutionTemplateLiteral, not a
+    // StringLiteral — the same read wearing a different node kind.
+    const facts = collectFacts("const p = req[`pathname`];", "sample.ts");
+    expect(facts.names.has("pathname")).toBe(true);
+  });
+});
+
+describe("call sites cannot evade the guard by how they are written", () => {
+  // Each of these parses to a CallExpression that a name-and-bytes scan misses.
+  const IMPORT = 'import { timed, startPerfSpan } from "@/lib/observability/perf-timing";\n';
+
+  function firstSite(source: string) {
+    const sites = findCallSites(source, "sample.ts");
+    expect(sites).toHaveLength(1);
+    return sites[0];
+  }
+
+  it("sees a call split across a newline before the parenthesis", () => {
+    expect(firstSite(IMPORT + "timed\n(`${surface}.domain`, run);").isStringLiteral).toBe(
+      false,
+    );
+  });
+
+  it("sees a call with explicit type arguments", () => {
+    expect(
+      firstSite(IMPORT + "timed<Result>(`${surface}.domain`, run);").isStringLiteral,
+    ).toBe(false);
+  });
+
+  it("sees an optional call", () => {
+    expect(
+      firstSite(IMPORT + "timed?.(`${surface}.domain`, run);").isStringLiteral,
+    ).toBe(false);
+  });
+
+  it("sees a call with a comment between callee and parenthesis", () => {
+    expect(
+      firstSite(IMPORT + "timed /* still a call */ (`${surface}.domain`, run);")
+        .isStringLiteral,
+    ).toBe(false);
+  });
+
+  it("resolves an aliased import", () => {
+    const source =
+      'import { timed as measure } from "@/lib/observability/perf-timing";\n' +
+      "measure(`${surface}.domain`, run);";
+    const site = firstSite(source);
+    expect(site.fn).toBe("measure");
+    expect(site.isStringLiteral).toBe(false);
+  });
+
+  it("resolves an aliased bracket import", () => {
+    const source =
+      'import { startPerfSpan as begin } from "@/lib/observability/perf-timing";\n' +
+      "begin(spanFromRequest());";
+    expect(firstSite(source).fn).toBe("begin");
+  });
+
+  it("resolves a namespace import", () => {
+    const source =
+      'import * as perf from "@/lib/observability/perf-timing";\n' +
+      "perf.timed(`${surface}.domain`, run);";
+    const site = firstSite(source);
+    expect(site.fn).toBe("perf.timed");
+    expect(site.isStringLiteral).toBe(false);
+  });
+
+  it("does not claim an unrelated namespace call", () => {
+    const source =
+      'import * as other from "@/lib/something-else";\n' +
+      "other.timed(`${surface}.domain`, run);";
+    expect(findCallSites(source, "sample.ts")).toEqual([]);
   });
 });
