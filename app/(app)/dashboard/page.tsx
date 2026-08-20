@@ -609,6 +609,9 @@ export default async function DashboardPage({
         status: appt.status,
         serviceName: appt.service?.name ?? null,
         hasHistory: briefing?.hasHistory ?? false,
+        // Truncation weakens ABSENCE claims; it does not erase positive
+        // evidence. This is consulted only before printing "nothing recorded".
+        briefingComplete: load?.briefingComplete ?? false,
         // The plan note. `narrative.plan` is the loader's own fallback for a
         // note-only visit that charted nothing, and it survives a failed block
         // read, so it is preferred when the briefing has none.
@@ -1305,7 +1308,8 @@ function AppointmentRow({
                 {isToday &&
                 !workflow.hasHistory &&
                 !prepSummary.hasTreatment &&
-                !prepSummary.unavailable ? (
+                !prepSummary.unavailable &&
+                workflow.briefingComplete ? (
                   // ONE relationship line, not "New client" here and "No prior
                   // treatment history yet" somewhere else.
                   //
@@ -1333,7 +1337,9 @@ function AppointmentRow({
                 ) : !workflow.hasHistory && !isToday ? (
                   // Off Today we do not make a relationship claim. State the
                   // bounded fact instead, or nothing.
-                  prepSummary.unavailable ? null : (
+                  // Also an absence claim: it needs BOTH a successful read and
+                  // a complete window.
+                  prepSummary.unavailable || !workflow.briefingComplete ? null : (
                     <span className="text-neutral-500">
                       No prior charted treatment before this visit
                     </span>
@@ -1357,16 +1363,28 @@ function AppointmentRow({
                         Caution: {workflow.caution}
                       </span>
                     )}
-                    {!workflow.remember && !workflow.caution && (
-                      <span className="text-neutral-500">
-                        No watch/plan note.
-                      </span>
-                    )}
+                    {/* An ABSENCE claim, so it needs a complete window. On a
+                        truncated one the note may simply sit outside the slice,
+                        evicted by another client's rows — and printing this
+                        would hide a recorded safety instruction. */}
+                    {!workflow.remember &&
+                      !workflow.caution &&
+                      workflow.briefingComplete && (
+                        <span className="text-neutral-500">
+                          No watch/plan note.
+                        </span>
+                      )}
                     {/* Latest setup, once. The brief's duplicate "Last
                         recorded:" line is gone. */}
-                    <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
-                      Latest setup: {workflow.setup ?? "Not recorded"}
-                    </span>
+                    {/* The VALUE renders whenever it was read. "Not recorded"
+                        is an absence claim and needs a complete window; on a
+                        truncated one the line is omitted entirely rather than
+                        asserting something unproven. */}
+                    {(workflow.setup || workflow.briefingComplete) && (
+                      <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
+                        Latest setup: {workflow.setup ?? "Not recorded"}
+                      </span>
+                    )}
                   </>
                 )}
                 {/* Specific missing-record reminders, once each. The generic

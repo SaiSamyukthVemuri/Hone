@@ -540,9 +540,19 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
   });
 
   it("every load outcome carries narrative, and only a candidate-read failure has none", () => {
-    expect(LOADER_CODE).toMatch(/case "selected":[\s\S]{0,320}unavailable: false, narrative/);
-    expect(LOADER_CODE).toMatch(/case "none":[\s\S]{0,400}unavailable: false, narrative/);
-    expect(LOADER_CODE).toMatch(/case "unavailable":[\s\S]{0,400}unavailable: true, narrative/);
+    // `\s*` between the fields: the result object gained `briefing` and
+    // `briefingComplete`, so these are multi-line now. What is being guarded is
+    // unchanged — every outcome still carries the narrative, and only a
+    // candidate-read failure does not.
+    expect(LOADER_CODE).toMatch(
+      /case "selected":[\s\S]{0,420}unavailable: false,\s*narrative/,
+    );
+    expect(LOADER_CODE).toMatch(
+      /case "none":[\s\S]{0,520}unavailable: false,\s*narrative/,
+    );
+    expect(LOADER_CODE).toMatch(
+      /case "unavailable":[\s\S]{0,520}unavailable: true,\s*narrative/,
+    );
   });
 
   it("newestPlanOf remains the ONE plan authority", () => {

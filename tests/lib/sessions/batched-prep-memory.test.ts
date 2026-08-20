@@ -631,3 +631,134 @@ describe("the briefing is bounded by the appointment", () => {
     expect(issued.map((q) => q.table)).toEqual(["sessions", "session_blocks"]);
   });
 });
+
+// ===========================================================================
+// TRUNCATION LAW — it weakens ABSENCE claims; it does not erase POSITIVE
+// evidence.
+// ===========================================================================
+//
+// A truncated window can still yield a safe selected treatment, because the
+// candidate slice is a newest-first prefix. But a note, caution or setup that
+// is NOT in the slice may simply have been evicted by another client's rows —
+// so "there is none" is unproven, while "here is the one we found" is not.
+
+describe("truncation separates completeness from selection", () => {
+  /** Budget 1 per client with two clients: Bob fills it, Alice is starved. */
+  const STARVE = { limitPerClient: 1 } as const;
+
+  it("A. truncated + selected treatment + a note IN the slice -> both render", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({
+            id: "s-a",
+            client_id: ALICE,
+            started_at: "2026-03-05T10:00:00Z",
+            next_session_note: "Lower the energy",
+          }),
+          session({ id: "s-b", client_id: BOB, started_at: "2026-03-06T10:00:00Z" }),
+        ],
+        session_blocks: [block("s-a"), block("s-b")],
+      },
+      [
+        { clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { clientId: BOB, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+      ],
+      STARVE,
+    );
+    const load = out.get(ALICE)!;
+    // The treatment stays usable — that is the whole point of not collapsing
+    // truncation into `unavailable`.
+    expect(load.treatment).not.toBeNull();
+    expect(load.unavailable).toBe(false);
+    // …and the positive note that WAS read still renders.
+    expect(load.briefing?.remember.plan).toBe("Lower the energy");
+    // …but the window is flagged incomplete.
+    expect(load.briefingComplete).toBe(false);
+  });
+
+  it("B/D/F. truncated + selected treatment + NOTHING in the slice -> no absence claim", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({ id: "s-a", client_id: ALICE, started_at: "2026-03-05T10:00:00Z" }),
+          session({ id: "s-b", client_id: BOB, started_at: "2026-03-06T10:00:00Z" }),
+        ],
+        session_blocks: [block("s-a"), block("s-b")],
+      },
+      [
+        { clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { clientId: BOB, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+      ],
+      STARVE,
+    );
+    const load = out.get(ALICE)!;
+    expect(load.treatment).not.toBeNull();
+    // No note, no caution — but the window cannot prove there is none, so the
+    // renderer must not print "No watch/plan note." or "Not recorded".
+    expect(load.briefingComplete, "absence is unproven under truncation").toBe(false);
+  });
+
+  it("G/H. a COMPLETE window may make absence claims", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({ id: "s-a", client_id: ALICE, started_at: "2026-03-05T10:00:00Z" }),
+        ],
+        session_blocks: [block("s-a")],
+      },
+      [{ clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT }],
+      { limitPerClient: 25 },
+    );
+    const load = out.get(ALICE)!;
+    expect(load.treatment).not.toBeNull();
+    expect(load.briefingComplete, "a complete read PROVES the absence").toBe(true);
+  });
+
+  it("I. truncated + NO selected treatment -> unavailable AND incomplete", async () => {
+    const { out } = await run(
+      {
+        // Budget is 1-per-client x 2 clients = 2, and BOTH rows are Bob's, so
+        // the read comes back full and Alice was never reached.
+        sessions: [
+          session({ id: "s-b1", client_id: BOB, started_at: "2026-03-06T10:00:00Z" }),
+          session({ id: "s-b2", client_id: BOB, started_at: "2026-03-05T10:00:00Z" }),
+        ],
+        session_blocks: [block("s-b1"), block("s-b2")],
+      },
+      [
+        { clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { clientId: BOB, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+      ],
+      STARVE,
+    );
+    const load = out.get(ALICE)!;
+    expect(load.treatment).toBeNull();
+    // Both facts, separately: we could not select, AND we cannot prove absence.
+    expect(load.unavailable).toBe(true);
+    expect(load.briefingComplete).toBe(false);
+  });
+
+  it("completeness and availability are DIFFERENT questions", () => {
+    // The defect this repair exists to stop was overloading one boolean. A
+    // truncated-but-selected row is available and incomplete at the same time.
+    return run(
+      {
+        sessions: [
+          session({ id: "s-a", client_id: ALICE, started_at: "2026-03-05T10:00:00Z" }),
+          session({ id: "s-b", client_id: BOB, started_at: "2026-03-06T10:00:00Z" }),
+        ],
+        session_blocks: [block("s-a"), block("s-b")],
+      },
+      [
+        { clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { clientId: BOB, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+      ],
+      STARVE,
+    ).then(({ out }) => {
+      const load = out.get(ALICE)!;
+      expect(load.unavailable).toBe(false);
+      expect(load.briefingComplete).toBe(false);
+    });
+  });
+});

@@ -69,7 +69,7 @@ describe("Today never contradicts itself about the relationship", () => {
     // …and only on TODAY. "New client" is a relationship claim; off Today the
     // page does not pose that question, so it states the bounded fact instead.
     expect(CODE).toMatch(
-      /\{isToday &&\s*!workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable \? \(/,
+      /\{isToday &&\s*!workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable &&\s*workflow\.briefingComplete \? \(/,
     );
   });
 
@@ -178,7 +178,10 @@ describe("off Today the page states a bounded fact, never a relationship", () =>
   it("off Today it says what it can prove about THIS visit instead", () => {
     expect(CODE).toMatch(/No prior charted treatment before this visit/);
     // …and says nothing at all when the read could not answer.
-    expect(CODE).toMatch(/prepSummary\.unavailable \? null : \(/);
+    // …and stays silent when the window could not prove the absence either.
+    expect(CODE).toMatch(
+      /prepSummary\.unavailable \|\| !workflow\.briefingComplete \? null : \(/,
+    );
   });
 
   it("the temporal label is date-correct", () => {
@@ -225,5 +228,34 @@ describe("a recorded instruction does not depend on proving treatment", () => {
     // Hoisting it must not leave a second copy behind: an ordinary returning
     // client would then read the same note twice.
     expect((CODE.match(/Remember: \{workflow\.remember\}/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("completeness is carried from the loader, not assumed", () => {
+  it("the page passes the loader's own value, never a literal", () => {
+    // Hardcoding `true` here would re-enable every absence claim under a
+    // partial window while every loader-level test still passed — the signal
+    // exists, and the page simply would not be listening.
+    expect(CODE).toMatch(/briefingComplete: load\?\.briefingComplete \?\? false/);
+    expect(CODE).not.toMatch(/briefingComplete: true/);
+  });
+
+  it("every ABSENCE claim consults it", () => {
+    // The positive facts deliberately do NOT: truncation weakens absence
+    // claims, it does not erase evidence that was read.
+    const noWatchPlan = CODE.indexOf("No watch/plan note.");
+    const guardBefore = CODE.lastIndexOf("workflow.briefingComplete", noWatchPlan);
+    expect(guardBefore).toBeGreaterThan(-1);
+    expect(CODE).toMatch(/\(workflow\.setup \|\| workflow\.briefingComplete\) && \(/);
+    expect(CODE).toMatch(
+      /prepSummary\.unavailable \|\| !workflow\.briefingComplete \? null : \(/,
+    );
+  });
+
+  it("the POSITIVE facts do not consult it", () => {
+    // Remember renders on its own authority; adding a completeness condition
+    // here would re-create the P1 this repair exists to prevent.
+    expect(CODE).toMatch(/\{workflow\.remember && \(/);
+    expect(CODE).not.toMatch(/briefingComplete && workflow\.remember/);
   });
 });
