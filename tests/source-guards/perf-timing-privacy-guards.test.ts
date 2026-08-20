@@ -110,9 +110,64 @@ function perfTimingBindings(sourceFile: ts.SourceFile): {
   return { local, namespaces };
 }
 
+/**
+ * Ways of reaching perf-timing that per-file binding resolution CANNOT see.
+ *
+ * Binding resolution reads a file's own import declarations, so it is complete
+ * only while every call site imports the module directly. Two constructs break
+ * that, and this codebase already uses both shapes elsewhere (one aliased
+ * re-export in lib/stripe/server.ts, and `export *` barrels under
+ * lib/google-calendar/sync/):
+ *
+ *   * a re-export — `export { timed as measure } from ".../perf-timing"` or
+ *     `export * from ".../perf-timing"` — after which a caller imports
+ *     `measure` from the BARREL, and the barrel's path is what its import
+ *     declaration names;
+ *   * a dynamic `import(".../perf-timing")`, whose bindings are created at
+ *     runtime by destructuring.
+ *
+ * Following those chains needs a real type checker, which would mean building
+ * a Program over the repo on every unit run. The cheaper and stricter answer
+ * is to forbid the constructs outright: perf-timing is reached by a direct,
+ * static import or not at all. That turns an open-ended resolution problem
+ * into a closed invariant, and a future barrel fails HERE with a reason
+ * instead of silently disarming the call-site guard.
+ */
+function indirectPerfTimingReferences(sourceFile: ts.SourceFile): string[] {
+  const violations: string[] = [];
+  eachNode(sourceFile, (node) => {
+    if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      PERF_TIMING_MODULE.test(node.moduleSpecifier.text)
+    ) {
+      violations.push(`re-export: ${node.getText(sourceFile).slice(0, 120)}`);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      const specifier = node.arguments[0];
+      if (
+        specifier !== undefined &&
+        ts.isStringLiteral(specifier) &&
+        PERF_TIMING_MODULE.test(specifier.text)
+      ) {
+        violations.push(`dynamic import: ${specifier.text}`);
+      }
+    }
+  });
+  return violations;
+}
+
 /** Every real `timed(...)` / `startPerfSpan(...)` CALL in a source text. */
 function findCallSites(text: string, fileName = "sample.ts"): CallSite[] {
-  const sourceFile = parseSource(text, fileName);
+  return callSitesIn(parseSource(text, fileName));
+}
+
+/** As {@link findCallSites}, for a file that has already been parsed. */
+function callSitesIn(sourceFile: ts.SourceFile): CallSite[] {
   const { local, namespaces } = perfTimingBindings(sourceFile);
   // The exported spellings are always candidates too: the synthetic snippets
   // below carry no import, and nothing else in the tree defines a function by
@@ -311,19 +366,38 @@ describe("perf-timing call sites", () => {
     walk(path.join(REPO_ROOT, root)),
   ).filter((file) => file !== MODULE_PATH);
 
-  // EVERY file is parsed. An earlier revision prefiltered on the raw bytes
-  // `timed(` / `startPerfSpan(` to save work, but a call can be written
-  // `timed\n(`, `timed<T>(`, `timed?.(` or `timed /* c */ (` — none of which
-  // contain those bytes — so the filter could skip a file holding exactly the
-  // construct being guarded against. Parsing all of app/, lib/ and
-  // components/ measures ~1.4s for ~640 files, which is a cheap price for an
-  // assertion that cannot be dodged.
-  const callSites = files.flatMap((file) =>
-    findCallSites(readFileSync(file, "utf8"), file).map((site) => ({
-      ...site,
-      file: path.relative(REPO_ROOT, file),
-    })),
+  // EVERY file is parsed, ONCE, and both assertions below read that one pass.
+  // An earlier revision prefiltered on the raw bytes `timed(` /
+  // `startPerfSpan(` to save work, but a call can be written `timed\n(`,
+  // `timed<T>(`, `timed?.(` or `timed /* c */ (` — none of which contain those
+  // bytes — so the filter could skip a file holding exactly the construct
+  // being guarded against. Parsing all of app/, lib/ and components/ measures
+  // ~1.4s for ~640 files, which is a cheap price for an assertion that cannot
+  // be dodged.
+  const parsed = files.map((file) => ({
+    relative: path.relative(REPO_ROOT, file),
+    sourceFile: parseSource(readFileSync(file, "utf8"), file),
+  }));
+
+  const callSites = parsed.flatMap(({ relative, sourceFile }) =>
+    callSitesIn(sourceFile).map((site) => ({ ...site, file: relative })),
   );
+
+  it("is reached only by a direct, static import", () => {
+    // The precondition that makes per-file binding resolution COMPLETE. If
+    // this fails, the call-site guard below is no longer sound: a caller could
+    // import an alias from a barrel and never name perf-timing at all.
+    const offenders = parsed.flatMap(({ relative, sourceFile }) =>
+      indirectPerfTimingReferences(sourceFile).map(
+        (violation) => `${relative} — ${violation}`,
+      ),
+    );
+    expect(
+      offenders,
+      "perf-timing must be imported directly; re-exporting or dynamically " +
+        "importing it hides call sites from the guard below",
+    ).toEqual([]);
+  });
 
   it("finds the instrumented surfaces", () => {
     // Sanity: if this drops to zero the guard below passes vacuously.
@@ -503,5 +577,49 @@ describe("call sites cannot evade the guard by how they are written", () => {
       'import * as other from "@/lib/something-else";\n' +
       "other.timed(`${surface}.domain`, run);";
     expect(findCallSites(source, "sample.ts")).toEqual([]);
+  });
+
+  it("detects an aliased re-export, the one chain binding resolution cannot follow", () => {
+    // Without the direct-import invariant this is the vacuity path: a barrel
+    // renames the export, the caller imports the new name, and the caller's
+    // own import declaration never mentions perf-timing.
+    const barrel =
+      'export { timed as measure } from "@/lib/observability/perf-timing";';
+    expect(
+      indirectPerfTimingReferences(parseSource(barrel, "barrel.ts")),
+    ).toHaveLength(1);
+
+    // Proof the chain really would have been missed: the downstream caller
+    // resolves no bindings and its call is invisible to name-based matching.
+    const caller =
+      'import { measure } from "@/lib/observability";\n' +
+      "measure(`${surface}.domain`, run);";
+    expect(findCallSites(caller, "caller.ts")).toEqual([]);
+  });
+
+  it("detects a star re-export", () => {
+    const barrel = 'export * from "@/lib/observability/perf-timing";';
+    expect(
+      indirectPerfTimingReferences(parseSource(barrel, "barrel.ts")),
+    ).toHaveLength(1);
+  });
+
+  it("detects a dynamic import", () => {
+    const source =
+      'const { timed: measure } = await import("@/lib/observability/perf-timing");';
+    expect(
+      indirectPerfTimingReferences(parseSource(source, "sample.ts")),
+    ).toHaveLength(1);
+  });
+
+  it("does not flag an unrelated re-export or dynamic import", () => {
+    const source = [
+      'export { getRequiredAppOrigin as getAppOrigin } from "@/lib/app-origin";',
+      'export * from "./job-result";',
+      'const mod = await import("@/lib/supabase/admin-server");',
+    ].join("\n");
+    expect(
+      indirectPerfTimingReferences(parseSource(source, "sample.ts")),
+    ).toEqual([]);
   });
 });
