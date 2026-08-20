@@ -2156,6 +2156,40 @@ export async function seedE2eFullDetailSentinels(
   );
 }
 
+/**
+ * A prior visit that recorded ONLY an instruction — no blocks, no entries.
+ *
+ * The shape where a plan note matters most and is easiest to lose: nothing was
+ * charted, so every "has this client got history?" answer is honestly NO, and
+ * a renderer gated on that answer drops the note entirely.
+ */
+export async function seedE2eNoteOnlyVisit(
+  seed: E2eSeed,
+  opts: { clientId: string; note: string; daysAgo?: number },
+): Promise<{ sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0]!;
+  const sessionId = randomUUID();
+  await sql(
+    `insert into public.sessions
+       (id, studio_id, client_id, practitioner_id, modality, started_at, next_session_note)
+     values ($1,$2,$3,$4,'electrolysis', now() - ($5 || ' days')::interval, $6)`,
+    [
+      sessionId,
+      seed.studioId,
+      opts.clientId,
+      prac.id,
+      String(opts.daysAgo ?? 30),
+      opts.note,
+    ],
+  );
+  return { sessionId };
+}
+
 export async function seedE2eUnlinkedSession(
   seed: E2eSeed,
 ): Promise<{ clientId: string; sessionId: string }> {

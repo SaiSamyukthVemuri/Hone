@@ -1275,6 +1275,33 @@ function AppointmentRow({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                   {isToday ? "Before today" : "Before this visit"}
                 </span>
+                {/* REMEMBER IS A POSITIVE RECORDED FACT, AND RENDERS ON ITS OWN
+                    AUTHORITY.
+                    ------------------------------------------------------------
+                    "Do we have a recorded instruction to remember?" and "can we
+                    prove prior charted treatment exists?" are different
+                    questions, and the first can be YES while the second is NO
+                    or UNKNOWN. A visit that charted nothing and recorded only
+                    "started doxycycline, do not treat" is exactly that shape —
+                    and it is the case where the note matters most.
+
+                    This used to render inside the has-history arm, so that note
+                    silently disappeared: the briefing carried it, and nothing
+                    painted it. It also disappeared when the block read failed,
+                    even though the narrative that survives a failed block read
+                    exists precisely so it can still be shown.
+
+                    ONE renderer, deliberately. Leaving the old one in place and
+                    adding a second would print the note twice for every
+                    ordinary returning client. */}
+                {workflow.remember && (
+                  <span
+                    className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
+                    title={workflow.remember}
+                  >
+                    Remember: {workflow.remember}
+                  </span>
+                )}
                 {isToday &&
                 !workflow.hasHistory &&
                 !prepSummary.hasTreatment &&
@@ -1319,18 +1346,6 @@ function AppointmentRow({
                   null
                 ) : (
                   <>
-                    {/* Remember = the PLAN note (next_session_note). It is no
-                        longer taken from `rememberLine`, which collapsed the
-                        caution and the plan into one string, so the caution
-                        used to print twice under two different labels. */}
-                    {workflow.remember && (
-                      <span
-                        className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
-                        title={workflow.remember}
-                      >
-                        Remember: {workflow.remember}
-                      </span>
-                    )}
                     {/* Caution = the watch line, kept visually distinct in the
                         established rose convention and never folded into
                         Remember. */}

@@ -6,6 +6,7 @@ import {
   toDisclosureSummary,
 } from "@/lib/dashboard/dashboard-prep-summary";
 import { resolveDayNextAction } from "@/lib/dashboard/day-next-action";
+import { buildTodayWorkflow } from "@/lib/dashboard/today-workflow";
 
 // TODAY CARRIES TWO INDEPENDENT EVIDENCE SOURCES.
 //
@@ -182,5 +183,47 @@ describe("off Today the page states a bounded fact, never a relationship", () =>
 
   it("the temporal label is date-correct", () => {
     expect(CODE).toMatch(/isToday \? "Before today" : "Before this visit"/);
+  });
+});
+
+describe("a recorded instruction does not depend on proving treatment", () => {
+  it("the workflow model carries Remember when hasHistory is FALSE", () => {
+    const [item] = buildTodayWorkflow([
+      {
+        appointmentId: "a1",
+        clientId: "c1",
+        clientName: "Someone",
+        timeLabel: "9:00 AM",
+        status: "confirmed",
+        serviceName: null,
+        hasHistory: false,
+        nextVisitNote: "Started doxycycline, do not treat",
+        cautionNote: null,
+        setupLine: "27.12 MHz",
+        reminders: [],
+        intake: "reviewed",
+        charting: "none",
+      },
+    ]).items;
+    // The instruction survives…
+    expect(item.remember).toBe("Started doxycycline, do not treat");
+    // …while the treatment-derived fact correctly does not.
+    expect(item.setup).toBeNull();
+  });
+
+  it("the page renders Remember BEFORE the history-state branches", () => {
+    // It used to live inside the has-history arm, so a note-only visit — the
+    // case where the instruction matters most — silently lost it.
+    const remember = CODE.indexOf("Remember: {workflow.remember}");
+    const firstBranch = CODE.indexOf("{isToday &&");
+    expect(remember).toBeGreaterThan(-1);
+    expect(firstBranch).toBeGreaterThan(-1);
+    expect(remember).toBeLessThan(firstBranch);
+  });
+
+  it("there is exactly ONE Remember renderer", () => {
+    // Hoisting it must not leave a second copy behind: an ordinary returning
+    // client would then read the same note twice.
+    expect((CODE.match(/Remember: \{workflow\.remember\}/g) ?? []).length).toBe(1);
   });
 });

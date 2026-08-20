@@ -5,6 +5,7 @@ import {
   seedE2eCardOnFileCapability,
   seedE2eDashboardClient,
   seedE2eDashboardMemoryClient,
+  seedE2eNoteOnlyVisit,
   seedE2eFullDetailSentinels,
   sql,
   seedE2eIntake,
@@ -806,6 +807,109 @@ test.describe("future-day prep at 390px", () => {
       expect(box!.height, "disclosure toggle height").toBeGreaterThanOrEqual(44);
       await toggle.tap();
       await expect(row.getByTestId("dashboard-memory-full")).toBeVisible({ timeout: T });
+    });
+  });
+});
+
+// ===========================================================================
+// A RECORDED INSTRUCTION SURVIVES WITHOUT CHARTED HISTORY.
+// ===========================================================================
+//
+// "Do we have a recorded instruction to remember?" and "can we prove prior
+// charted treatment exists?" are different questions. The first can be YES
+// while the second is NO. A visit that charted nothing and recorded only
+// "started doxycycline, do not treat" is exactly that shape — and it is the
+// case where the note matters most.
+
+test.describe("Remember renders on its own authority", () => {
+  const NOTE = "Started doxycycline, do not treat";
+
+  test("a NOTE-ONLY prior visit shows its instruction on Today AND on a future day", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    const client = await seedE2eDashboardClient(seed, { label: "Note Only" });
+    await seedE2eNoteOnlyVisit(seed, { clientId: client.clientId, note: NOTE });
+    // One appointment today, one three days out.
+    await seedE2eTodayAppointment(seed, {
+      clientId: client.clientId,
+      startsMinutesFromNow: 90,
+      endsMinutesFromNow: 135,
+    });
+    await seedE2eTodayAppointment(seed, {
+      clientId: client.clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+    await loginAsOwner(page, seed);
+
+    await test.step("38. TODAY shows the instruction", async () => {
+      await page.goto("/dashboard");
+      const row = page.locator("li").filter({ hasText: client.name }).first();
+      await expect(row.getByText(`Remember: ${NOTE}`)).toBeVisible({ timeout: T });
+      // …and does not invent a treatment that was never charted.
+      await expect(row.getByTestId("dashboard-memory-compact")).toHaveCount(0);
+      await expect(row.getByText(/^Latest setup:/)).toHaveCount(0);
+    });
+
+    await test.step("39. the FUTURE day shows the SAME instruction", async () => {
+      await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+      const row = page.locator("li").filter({ hasText: client.name }).first();
+      await expect(row.getByText(`Remember: ${NOTE}`)).toBeVisible({ timeout: T });
+      // …and still makes no relationship claim off Today.
+      await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
+    });
+  });
+
+  test("an ordinary returning client sees Remember EXACTLY once", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: "Avoid the jawline",
+      nextVisitNote: "Lower the energy one step",
+    });
+    await seedE2eTodayAppointment(seed, {
+      clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+    await loginAsOwner(page, seed);
+
+    for (const [label, url] of [
+      ["40. Today", "/dashboard"],
+      ["41. future day", `/dashboard?day=${localDay(tz, OFFSET)}`],
+    ] as const) {
+      await test.step(`${label}: one Remember, and the rest still renders`, async () => {
+        await page.goto(url);
+        const row = page.locator("li").filter({ hasText: "Memory Client" }).first();
+        await expect(row).toBeVisible({ timeout: T });
+        // Hoisting the renderer must not leave a second copy behind.
+        await expect(
+          row.getByText(/^Remember: Lower the energy one step/),
+        ).toHaveCount(1);
+        await expect(row.getByText(/Avoid the jawline/)).toBeVisible();
+        await expect(row.getByText(/^Latest setup:/)).toBeVisible();
+        await expect(row.getByTestId("dashboard-memory-compact")).toBeVisible();
+      });
+    }
+  });
+
+  test("a client with NO note gets no fabricated Remember line", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    const client = await seedE2eDashboardClient(seed, { label: "No Note" });
+    await seedE2eTodayAppointment(seed, {
+      clientId: client.clientId,
+      startsMinutesFromNow: 90,
+      endsMinutesFromNow: 135,
+    });
+    await loginAsOwner(page, seed);
+
+    await test.step("42. nothing recorded, nothing claimed", async () => {
+      await page.goto("/dashboard");
+      const row = page.locator("li").filter({ hasText: client.name }).first();
+      await expect(row).toBeVisible({ timeout: T });
+      await expect(row.getByText(/^Remember:/)).toHaveCount(0);
     });
   });
 });
