@@ -60,19 +60,19 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
     const urlBefore = page.url();
     expect(dashboardPath(page)).toBe("/dashboard");
 
-    const toggle = page.getByTestId("today-memory-toggle").first();
+    const toggle = page.getByTestId("dashboard-memory-toggle").first();
     await expect(toggle).toBeVisible({ timeout: T });
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
 
     // The compact line is there before expanding; the full card is not.
-    await expect(page.getByTestId("today-memory-compact").first()).toBeVisible();
-    await expect(page.getByTestId("today-memory-full")).toHaveCount(0);
+    await expect(page.getByTestId("dashboard-memory-compact").first()).toBeVisible();
+    await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
 
     // 3. Click the control Chloe clicks.
     await toggle.click();
 
     // 4. The FULL previous treatment is really rendered — not an empty shell.
-    const full = page.getByTestId("today-memory-full").first();
+    const full = page.getByTestId("dashboard-memory-full").first();
     await expect(full).toBeVisible({ timeout: T });
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
     const card = full.getByTestId("appointment-prep-memory");
@@ -106,7 +106,7 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
 
     // 8. Collapse it.
     await toggle.click();
-    await expect(page.getByTestId("today-memory-full")).toHaveCount(0);
+    await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
 
     // 9. Still nowhere near a route change.

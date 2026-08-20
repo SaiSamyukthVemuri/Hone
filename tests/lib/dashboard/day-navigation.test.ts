@@ -7,6 +7,8 @@ import {
   dashboardDayBounds,
   dashboardDayHref,
   dayHeading,
+  dayRelativeName,
+  daySubLabel,
   emptyDayMessage,
   formatSelectedDayLabel,
   isViewingToday,
@@ -247,7 +249,44 @@ describe("copy is truthful for the day on screen", () => {
   it("headings", () => {
     expect(dayHeading(TODAY, TODAY)).toBe("Today");
     expect(dayHeading("2026-08-21", TODAY)).toBe("Tomorrow");
+    expect(dayHeading("2026-08-19", TODAY)).toBe("Yesterday");
     expect(dayHeading("2026-08-27", TODAY)).toBe("Thursday, August 27");
+  });
+
+  it("the heading and its sub-line NEVER print the same string", () => {
+    // The shipped defect: `dayHeading` fell through to the same function the
+    // page prints underneath it, so from two days out the screen showed
+    // "Sunday, August 23" stacked over "Sunday, August 23".
+    for (const offset of [-400, -366, -365, -30, -2, -1, 0, 1, 2, 30, 365, 366, 400]) {
+      const day = addDays(TODAY, offset);
+      const heading = dayHeading(day, TODAY);
+      const sub = daySubLabel(day, TODAY);
+      expect(sub, `offset ${offset}`).not.toBe(heading);
+    }
+  });
+
+  it("the sub-line exists ONLY to disambiguate a relative name", () => {
+    // "Tomorrow" needs a date beneath it. "Sunday, August 23" already is one.
+    expect(daySubLabel(TODAY, TODAY)).toBe("Thursday, August 20");
+    expect(daySubLabel("2026-08-21", TODAY)).toBe("Friday, August 21");
+    expect(daySubLabel("2026-08-19", TODAY)).toBe("Wednesday, August 19");
+    expect(daySubLabel("2026-08-23", TODAY)).toBeNull();
+    expect(daySubLabel("2026-12-25", TODAY)).toBeNull();
+  });
+
+  it("a relative name exists for exactly three days", () => {
+    expect(dayRelativeName(TODAY, TODAY)).toBe("Today");
+    expect(dayRelativeName("2026-08-21", TODAY)).toBe("Tomorrow");
+    expect(dayRelativeName("2026-08-19", TODAY)).toBe("Yesterday");
+    for (const offset of [-3, -2, 2, 3, 10]) {
+      expect(dayRelativeName(addDays(TODAY, offset), TODAY), `offset ${offset}`).toBeNull();
+    }
+  });
+
+  it("Chloe's exact screenshot case renders ONE date", () => {
+    // Sunday, August 23 — three days out.
+    expect(dayHeading("2026-08-23", TODAY)).toBe("Sunday, August 23");
+    expect(daySubLabel("2026-08-23", TODAY)).toBeNull();
   });
 
   it("the empty sentence never says 'today' about another day", () => {

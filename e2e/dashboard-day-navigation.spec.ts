@@ -282,29 +282,36 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       await expect(page.getByText("Review Before Today").first()).toBeVisible();
     });
 
-    await test.step("17. TOMORROW states nothing about history at all", async () => {
+    await test.step("17. TOMORROW makes no RELATIONSHIP claim — but does carry preparation", async () => {
       await page.getByTestId("dashboard-next-day").click();
       await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
-      // The appointment is there.
       const tomorrowRow = row(page, "Memory Client");
       await expect(tomorrowRow).toBeVisible();
-      // And the entire preparation block is absent from THAT ROW — no claim
-      // either way. Scoped to the row deliberately: the page carries unrelated
-      // prose elsewhere (the "Charted within 24h" card explains itself using
-      // the words "before today"), and a page-wide substring match would fail
-      // on copy that has nothing to do with this client.
+
+      // SUPERSEDED BY PRODUCTION FEEDBACK. This step used to assert that the
+      // ENTIRE preparation block was absent off Today. That was the V1 truth
+      // rule applied too widely: it also removed the clinical preparation a
+      // practitioner opens a future day to read, and she reported the result
+      // as "no pinned notes or anything else I usually see".
+      //
+      // What survives is the part that was actually load-bearing: the page
+      // still asks no new-vs-returning question off Today, so it still states
+      // no answer in either direction. The Before-Today history model does not
+      // run, and none of its vocabulary appears.
       await expect(tomorrowRow.getByText("Before today", { exact: true })).toHaveCount(0);
       await expect(tomorrowRow.getByText("New client · No charted history yet")).toHaveCount(0);
-      await expect(tomorrowRow.getByText(/^Remember:/)).toHaveCount(0);
       await expect(tomorrowRow.getByText(/^Latest setup:/)).toHaveCount(0);
-      await expect(tomorrowRow.getByText("Avoid the jawline")).toHaveCount(0);
       await expect(tomorrowRow.getByTestId("missing-record-chip")).toHaveCount(0);
-      await expect(tomorrowRow.getByTestId("today-memory-compact")).toHaveCount(0);
-      // …and nowhere on the page does it answer the unasked question the other
-      // way either. These strings exist nowhere but the history block, so a
-      // page-wide check is exact here.
       await expect(page.getByText("History unavailable")).toHaveCount(0);
       await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
+
+      // …and what is NOW expected: appointment-bounded preparation from the
+      // prep-memory authority, which is a different loader with a three-state
+      // contract and no clock in it.
+      await expect(tomorrowRow.getByTestId("dashboard-memory-compact")).toBeVisible();
+      await expect(tomorrowRow.getByTestId("dashboard-prep-remember")).toContainText(
+        "Lower the energy one step",
+      );
     });
 
     await test.step("18. and the primary action makes no claim either", async () => {
@@ -423,12 +430,15 @@ test.describe("Dashboard day navigation — 390px phone", () => {
       await page.goto("/dashboard");
       await expect(heading(page, "Today")).toBeVisible({ timeout: T });
 
-      // On today the "Today" link is deliberately absent — a control that
-      // cannot do anything is noise on a 390px header.
-      await expect(page.getByTestId("dashboard-today")).toHaveCount(0);
+      // SUPERSEDED. The "Today" control used to be omitted on today, on the
+      // reasoning that a control which cannot do anything is noise. In
+      // practice its absence changed the group's width between days and moved
+      // "Next →" out from under a thumb that was tapping it repeatedly — so a
+      // two-tap "forward, forward" landed on "Today" and threw the
+      // practitioner back. It is now always present, inert on today, which is
+      // the same reasoning already applied to the disabled horizon controls.
+      await expect(page.getByTestId("dashboard-today")).toBeVisible();
 
-      // Step to tomorrow, where all THREE controls are present: that is the
-      // widest the row ever gets, so it is the case that must fit.
       await page.getByTestId("dashboard-next-day").tap();
       await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
 

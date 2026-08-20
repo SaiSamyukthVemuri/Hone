@@ -712,7 +712,13 @@ export async function loadLastChartedTreatmentsForClients(input: {
 
     const selected = pickNewestChartedSession(candidates, blocksBySession);
     if (!selected) {
-      out.set(r.requestKey, { treatment: null, unavailable: false, narrative });
+      // Same truthfulness rule as the zero-candidate branch above, and it was
+      // missing here. Candidates exist but none carries charting — which is
+      // the COMMON abandoned-empty-session shape — so with a truncated window
+      // the client's real treatment may simply have fallen below the global
+      // cut while their recent empties survived. Reporting `false` there is an
+      // unproven absence: exactly what this module's own contract forbids.
+      out.set(r.requestKey, { treatment: null, unavailable: truncated, narrative });
       continue;
     }
 

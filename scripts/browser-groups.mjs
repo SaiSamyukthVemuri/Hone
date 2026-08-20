@@ -69,6 +69,10 @@ export const BROWSER_GROUPS = {
       // apart — and, off Today, the page claiming a history answer it never
       // asked for. Sits with the other Dashboard Today specs.
       "dashboard-day-navigation.spec.ts",
+      // Chloe: "It looks wonky. No pinned notes or anything else I usually
+      // see." A future day must carry real preparation — previous treatment
+      // and the plan note — without claiming new-vs-returning.
+      "dashboard-selected-day-prep.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be

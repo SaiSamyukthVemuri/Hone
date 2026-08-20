@@ -308,6 +308,64 @@ describe("batched prep memory — truncation is reported, never guessed", () => 
     ).toBe(true);
   });
 
+  it("a client whose surviving rows are all UNCHARTED reads UNAVAILABLE too", async () => {
+    // The gap this closes. `truncated` was consulted only on the
+    // zero-candidates path; a client who kept rows but none carrying charting
+    // fell to a hard-coded `unavailable: false` — a proven "nothing" from a
+    // window that never reached their real treatment.
+    //
+    // This is the COMMON shape, not an exotic one: an abandoned empty session
+    // is ordinary, and the batch is ordered newest-first, so recent empties are
+    // exactly what survives a cut while the older real treatment is dropped.
+    const { out } = await run(
+      {
+        sessions: [
+          // Alice keeps a row, but it carries no charting at all: no block,
+          // and no live entry either.
+          session({
+            id: "s-a-empty",
+            client_id: ALICE,
+            started_at: "2026-03-02T10:00:00Z",
+            electrolysis_entries: [],
+          }),
+          session({ id: "s-b1", client_id: BOB, started_at: "2026-03-01T10:00:00Z" }),
+        ],
+        // No block for Alice's session ⇒ it is not a charted candidate.
+        session_blocks: [block("s-b1")],
+      },
+      [{ clientId: ALICE }, { clientId: BOB }],
+      { limitPerClient: 1 },
+    );
+    expect(out.get(ALICE)?.treatment).toBeNull();
+    expect(
+      out.get(ALICE)?.unavailable,
+      "candidates survived but none was charted, and the window was truncated — that is not proof of absence",
+    ).toBe(true);
+  });
+
+  it("the same shape in an UNtruncated window is a genuine 'nothing charted'", async () => {
+    // The two-way self-test for the case above: identical data, room to spare,
+    // so the empty session really does prove there is nothing charted.
+    const { out } = await run(
+      {
+        sessions: [
+          session({
+            id: "s-a-empty",
+            client_id: ALICE,
+            started_at: "2026-03-02T10:00:00Z",
+            electrolysis_entries: [],
+          }),
+          session({ id: "s-b1", client_id: BOB, started_at: "2026-03-01T10:00:00Z" }),
+        ],
+        session_blocks: [block("s-b1")],
+      },
+      [{ clientId: ALICE }, { clientId: BOB }],
+      { limitPerClient: 25 },
+    );
+    expect(out.get(ALICE)?.treatment).toBeNull();
+    expect(out.get(ALICE)?.unavailable).toBe(false);
+  });
+
   it("an UNtruncated window reports a genuinely empty history as such", () => {
     // The two-way self-test: without it, 'always unavailable' would satisfy the
     // case above and the distinction would be worthless.
