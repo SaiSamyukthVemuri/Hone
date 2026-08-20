@@ -52,6 +52,50 @@ function classAttr(markup: string): string {
   return /class="([^"]*)"/.exec(markup)?.[1] ?? "";
 }
 
+// Boolean-attribute assertions are derived from the INSTALLED renderer rather
+// than assuming a serialization. React 19 emits `disabled=""`; if that ever
+// changes, this follows it instead of silently going vacuous.
+const DISABLED_ATTR = (() => {
+  const probe = renderToStaticMarkup(
+    createElement("button", { disabled: true }),
+  );
+  const attrs = /<button([^>]*)>/.exec(probe)?.[1]?.trim() ?? "";
+  if (!attrs) {
+    throw new Error("could not derive the disabled attribute serialization");
+  }
+  return attrs;
+})();
+
+/**
+ * The rendered <button>'s attribute region with `class="..."` stripped out.
+ *
+ * This strip is the whole point. buttonClasses() always emits
+ * `disabled:cursor-not-allowed disabled:opacity-50` — Tailwind VARIANT class
+ * names — so a substring test for "disabled" against the raw markup is true for
+ * every Button ever rendered, enabled or not. That is exactly how the previous
+ * assertion here stayed green while claiming to prove the opposite.
+ */
+function buttonAttributes(markup: string): string {
+  const attrs = /<button([^>]*)>/.exec(markup)?.[1] ?? "";
+  return attrs.replace(/\sclass="[^"]*"/g, "");
+}
+
+/** True when the real DOM attribute is present, never inferred from CSS. */
+function isDisabled(markup: string): boolean {
+  return buttonAttributes(markup).includes(DISABLED_ATTR);
+}
+
+/** The rendered aria-busy value, or null when the attribute is absent. */
+function ariaBusy(markup: string): string | null {
+  return /aria-busy="([^"]*)"/.exec(buttonAttributes(markup))?.[1] ?? null;
+}
+
+function renderButton(props: { disabled?: boolean; pending?: boolean }): string {
+  return renderToStaticMarkup(
+    createElement(Button, { ...props, children: "Save" }),
+  );
+}
+
 describe("Button: the 44px interaction floor is in the primitive", () => {
   for (const variant of VARIANTS) {
     for (const size of SIZES) {
@@ -225,12 +269,43 @@ describe("Button: press, pending and submit semantics", () => {
     expect(markup).toContain('type="submit"');
   });
 
-  it("pending disables the control and marks it aria-busy", () => {
-    const markup = renderToStaticMarkup(
-      createElement(Button, { pending: true }, "Save"),
-    );
-    expect(markup).toContain("disabled");
-    expect(markup).toContain('aria-busy="true"');
+  // disabled x pending, asserted against the RENDERED attribute in every
+  // combination. `pending` is the sole in-flight guard at two migrated call
+  // sites — QuickImport's "Confirm import" (disabled={zeroGroups}
+  // pending={isPending}) and SaveButton (pending only, no disabled prop) — so
+  // if `disabled={disabled || pending}` in button.tsx ever loses its `||
+  // pending`, case 3 below is what catches it. The previous version of this
+  // test could not: it matched the substring "disabled", which the
+  // `disabled:` variant classes put in every Button's class attribute.
+  const DISABLED_TABLE = [
+    { disabled: false, pending: false, expectDisabled: false, expectBusy: null },
+    { disabled: true, pending: false, expectDisabled: true, expectBusy: null },
+    { disabled: false, pending: true, expectDisabled: true, expectBusy: "true" },
+    { disabled: true, pending: true, expectDisabled: true, expectBusy: "true" },
+  ] as const;
+
+  for (const row of DISABLED_TABLE) {
+    it(`disabled=${row.disabled} pending=${row.pending} -> disabled attribute ${row.expectDisabled ? "present" : "absent"}, aria-busy ${row.expectBusy ?? "absent"}`, () => {
+      const markup = renderButton({
+        disabled: row.disabled,
+        pending: row.pending,
+      });
+      expect(
+        isDisabled(markup),
+        `rendered <button> attributes: ${buttonAttributes(markup).trim()}`,
+      ).toBe(row.expectDisabled);
+      expect(ariaBusy(markup)).toBe(row.expectBusy);
+    });
+  }
+
+  it("proves the attribute check is not satisfied by the disabled:* variant classes", () => {
+    // Guards the guard: an ENABLED Button still carries the substring
+    // "disabled" in its class attribute. If this ever stops being true the
+    // table above is testing less than it appears to.
+    const enabled = renderButton({ disabled: false, pending: false });
+    expect(classAttr(enabled)).toContain("disabled:");
+    expect(enabled).toContain("disabled");
+    expect(isDisabled(enabled)).toBe(false);
   });
 
   it("pending swaps the label only when a busyLabel is supplied", () => {
