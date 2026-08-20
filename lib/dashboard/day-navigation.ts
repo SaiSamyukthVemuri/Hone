@@ -87,11 +87,46 @@ export function resolveSelectedDay(
 ): string {
   const parsed = parseDashboardDay(raw);
   if (parsed === null) return todayLocal;
-  const min = addDays(todayLocal, -DASHBOARD_DAY_MAX_OFFSET_DAYS);
-  const max = addDays(todayLocal, DASHBOARD_DAY_MAX_OFFSET_DAYS);
+  const { min, max } = dashboardDayBounds(todayLocal);
   // Lexicographic comparison is exact for canonical YYYY-MM-DD.
   if (parsed < min || parsed > max) return todayLocal;
   return parsed;
+}
+
+/**
+ * The inclusive navigable range, derived from the ONE horizon constant.
+ *
+ * The parser and the navigation controls must agree by construction. When they
+ * did not — the parser clamping to ±365 while the links still targeted ±366 —
+ * pressing "Next" at the far edge produced a URL the parser rejected, and the
+ * fallback silently threw the practitioner a year back to today. A rejected
+ * URL is a fine answer for a hand-typed address and a terrible one for a
+ * button the product itself rendered.
+ */
+export function dashboardDayBounds(todayLocal: string): {
+  min: string;
+  max: string;
+} {
+  return {
+    min: addDays(todayLocal, -DASHBOARD_DAY_MAX_OFFSET_DAYS),
+    max: addDays(todayLocal, DASHBOARD_DAY_MAX_OFFSET_DAYS),
+  };
+}
+
+/** Whether stepping one day back stays inside the navigable range. */
+export function canNavigatePrevious(
+  selectedDay: string,
+  todayLocal: string,
+): boolean {
+  return previousDay(selectedDay) >= dashboardDayBounds(todayLocal).min;
+}
+
+/** Whether stepping one day forward stays inside the navigable range. */
+export function canNavigateNext(
+  selectedDay: string,
+  todayLocal: string,
+): boolean {
+  return nextDay(selectedDay) <= dashboardDayBounds(todayLocal).max;
 }
 
 /** True when the briefing is describing the real present day. */

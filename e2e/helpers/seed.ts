@@ -2109,6 +2109,62 @@ export async function seedE2eCrossClientLinkedSession(
 }
 
 // A freeform session with NO linked appointment.
+/**
+ * A CHARTED session for an existing client at an EXACT instant.
+ *
+ * Needed to prove the #605 history boundary from the outside: a session
+ * recorded AFTER an appointment must not appear as that appointment's own
+ * preparation history. `seedE2eDashboardMemoryClient` always backdates by 30
+ * days, which cannot express that.
+ */
+export async function seedE2eChartedSessionAt(
+  seed: E2eSeed,
+  opts: {
+    clientId: string;
+    startedAt: Date;
+    nextSessionNote?: string | null;
+    cautionNote?: string | null;
+  },
+): Promise<{ sessionId: string }> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  const sessionId = randomUUID();
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, started_at, next_session_note)
+     values ($1,$2,$3,$4,'electrolysis',$5,$6)`,
+    [
+      sessionId,
+      seed.studioId,
+      opts.clientId,
+      prac.id,
+      opts.startedAt.toISOString(),
+      opts.nextSessionNote ?? null,
+    ],
+  );
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, sort_order, primary_area, side, mode, apilus_modality,
+        energy_level, minutes_performed, machine_frequency, probe_label,
+        caution_for_next_session, caution_note)
+     values ($1,$2,$3,1,'Chin','left','thermolysis','Synchro',
+        7, 15, '27.12 MHz', 'Ballet · Gold · Two-piece · F3 Short', $4, $5)`,
+    [blockId, seed.studioId, sessionId, opts.cautionNote != null, opts.cautionNote ?? null],
+  );
+  await sql(
+    `insert into public.electrolysis_entries
+       (id, session_id, block_id, area, areas, mode, energy_level, minutes_performed,
+        machine_frequency, hairs_treated)
+     values ($1,$2,$3,'Chin',array['Chin']::text[],'thermo',7,15,'27.12 MHz',25)`,
+    [randomUUID(), sessionId, blockId],
+  );
+  return { sessionId };
+}
+
 export async function seedE2eUnlinkedSession(
   seed: E2eSeed,
 ): Promise<{ clientId: string; sessionId: string }> {

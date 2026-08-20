@@ -20,10 +20,34 @@ import type { SessionBlockArea } from "@/lib/types/database";
 // never disagree: if the full card says a probe lot is missing, the
 // preview's reminder count includes it.
 //
-// Performance: THREE batched reads for the whole roster (sessions for
-// all of today's clients, their blocks, the client record fields) --
-// never one query per appointment. Today rosters are small; reads
-// are capped defensively. Read-only; recorded-history wording only.
+// Performance: batched reads for the WHOLE roster (sessions for all of the
+// day's clients, their blocks, their structured areas, the client record
+// fields) -- never one query per appointment. Rosters are small; reads are
+// capped defensively. Read-only; recorded-history wording only.
+//
+// #605 REPAIR — HISTORY IS BOUNDED BY THE APPOINTMENT, NOT BY THE CLIENT.
+//
+// This loader used to answer "what is this client's newest session, full
+// stop", which is only the right question when the briefing is showing the
+// real present day. Once the Dashboard could show ANY day, that answer became
+// wrong in three ways at once:
+//
+//   * a PAST appointment would show a session performed AFTER it as its own
+//     preparation history, and then contradict the per-appointment memory
+//     directly beside it, which does bound itself;
+//   * two appointments for the SAME client on ONE day would share a single
+//     answer, even though a session charted between them is legitimately
+//     history for the second and cannot be history for the first;
+//   * and gating the whole load off on non-today briefings — the first attempt
+//     at this — turned "we did not look" into "there is nothing", which is how
+//     a returning client got rendered as "New client · No charted history yet"
+//     while looking at tomorrow.
+//
+// So eligibility is now per APPOINTMENT: a session counts as history for an
+// appointment when it belongs to the same client, started STRICTLY BEFORE that
+// appointment's own start instant, and is not the session recorded FOR that
+// appointment. The result is keyed by appointment id for exactly that reason —
+// keying by client id cannot express two cutoffs for one person.
 
 export type BeforeTodayPreview = {
   hasHistory: boolean;
@@ -79,6 +103,9 @@ export function compactBeforeToday(briefing: BeforeToday): BeforeTodayPreview {
 type SessionRow = {
   id: string;
   client_id: string;
+  // The appointment this session was recorded FOR, when it was started from
+  // one. Used to keep an appointment's own session out of its own history.
+  appointment_id: string | null;
   started_at: string;
   next_session_note: string | null;
   aftercare_and_risks_explained_at: string | null;
@@ -102,29 +129,183 @@ type BlockRow = ClinicalSummaryBlock & {
     | null;
 };
 
-export async function getBeforeTodayPreviews(
+/** One appointment's history question. `before` is its own start instant. */
+export type BeforeAppointmentRequest = {
+  appointmentId: string;
+  clientId: string;
+  /** ISO instant. A session is eligible only if it started STRICTLY before it. */
+  before: string;
+};
+
+/**
+ * The load, with UNAVAILABLE preserved as its own outcome.
+ *
+ * `{ ok: false }` means the reads did not establish anything. It must never be
+ * flattened into "no history": an unproven absence rendered as "New client"
+ * is a claim about a real person that nothing verified. Same discipline as the
+ * card-on-file load, which distinguishes ABSENT from UNKNOWN for the same
+ * reason.
+ */
+export type BeforeAppointmentLoad =
+  | { ok: true; previews: Map<string, BeforeTodayPreview> }
+  | { ok: false };
+
+/**
+ * The eligibility rule, on its own, so it can be proven without a database.
+ *
+ * A session is preparation history for an appointment when it is that client's,
+ * started STRICTLY before the appointment, and is not the session recorded FOR
+ * that appointment (which is the visit itself, not preparation for it).
+ *
+ * `sessions` must already be this client's, newest-first; the order is carried
+ * through untouched because the summary pipeline depends on it.
+ */
+export function eligibleSessionsForAppointment<
+  T extends { started_at: string; appointment_id: string | null },
+>(sessionsNewestFirst: ReadonlyArray<T>, request: BeforeAppointmentRequest): T[] {
+  return sessionsNewestFirst.filter(
+    (s) =>
+      s.started_at < request.before &&
+      s.appointment_id !== request.appointmentId,
+  );
+}
+
+/**
+ * Build one preview from an ALREADY-FILTERED set of eligible sessions.
+ *
+ * Pure, and the single construction path: the appointment-bounded loader and
+ * anything else that needs a preview must come through here, so there is one
+ * clinical-summary pipeline rather than two that can drift.
+ */
+function buildPreviewFromSessions(args: {
+  sessionsNewestFirst: SessionRow[];
+  blocksBySession: Map<string, BlockRow[]>;
+  clientFields: {
+    date_of_birth: string | null;
+    phone: string | null;
+    address: string | null;
+  } | null;
+}): BeforeTodayPreview {
+  const clientSessions = args.sessionsNewestFirst.map((s) => ({
+    ...s,
+    // Migration 0114: voided passes never count in the dashboard preview.
+    electrolysis_entries: (s.electrolysis_entries ?? []).filter(
+      (e) => !e.deleted_at,
+    ),
+    laser_entries: (s.laser_entries ?? []).filter((e) => !e.deleted_at),
+  }));
+  const clientBlockMap = new Map<string, BlockRow[]>();
+  for (const s of clientSessions) {
+    const list = args.blocksBySession.get(s.id);
+    if (list) clientBlockMap.set(s.id, list);
+  }
+  const lastTreatment = pickLastTreatment(clientSessions, clientBlockMap);
+  const watchSource = pickPreClientWatchPlanSource(
+    clientSessions,
+    clientBlockMap,
+  );
+  const watchPlan = watchSource
+    ? buildLastSessionSummary({
+        blocks: clientBlockMap.get(watchSource.id) ?? [],
+        nextSessionNote: watchSource.next_session_note ?? null,
+      })
+    : null;
+  const allClientBlocks = clientSessions.flatMap(
+    (s) => clientBlockMap.get(s.id) ?? [],
+  );
+  const intelligence = buildTreatmentIntelligence({
+    sessionsNewestFirst: clientSessions,
+    blocks: allClientBlocks.map((b) => ({
+      ...b,
+      entry_hairs: [],
+      observation_chips_list: (b.electrolysis_entries ?? [])
+        .filter((e) => e.deleted_at == null)
+        .map((e) => e.observation_chips),
+    })),
+  });
+  const lastBlocks = lastTreatment
+    ? (clientBlockMap.get(lastTreatment.id) ?? [])
+    : [];
+  const lastSummary = lastTreatment
+    ? buildLastSessionSummary({
+        // Charting unification: feed live entries' observation_chips so the
+        // reaction line reads the unified representation.
+        blocks: lastBlocks.map((b) => ({
+          ...b,
+          observation_chips_list: (b.electrolysis_entries ?? [])
+            .filter((e) => e.deleted_at == null)
+            .map((e) => e.observation_chips),
+        })),
+        nextSessionNote: lastTreatment.next_session_note ?? null,
+      })
+    : null;
+  const fields = args.clientFields;
+  const briefing = buildBeforeToday({
+    lastTreatment: lastTreatment
+      ? {
+          startedAt: lastTreatment.started_at,
+          modality: lastTreatment.modality,
+          areaNames: lastSummary?.areas.map((a) => a.name) ?? [],
+          aftercareExplainedAt:
+            lastTreatment.aftercare_and_risks_explained_at ?? null,
+          blockLots: lastBlocks.map((b) => b.probe_lot_number ?? null),
+          blockMinutes: lastBlocks.map((b) => b.minutes_performed ?? null),
+          blockReactionNotes: lastBlocks.map((b) => b.reaction_notes ?? null),
+        }
+      : null,
+    watchPlan,
+    intelligence,
+    client: {
+      dateOfBirth: fields?.date_of_birth ?? null,
+      phone: fields?.phone ?? null,
+      address: fields?.address ?? null,
+    },
+  });
+  return compactBeforeToday(briefing);
+}
+
+/**
+ * Previews for a day's appointments, each bounded by its OWN start instant.
+ *
+ * Batched: one sessions read for every client on the roster, then blocks,
+ * structured areas and client fields over what that returned. The number of
+ * queries does not grow with the number of appointments — adding a tenth
+ * appointment adds no query.
+ */
+export async function getBeforeAppointmentPreviews(
   studioId: string,
-  clientIds: ReadonlyArray<string>,
-): Promise<Map<string, BeforeTodayPreview>> {
-  const out = new Map<string, BeforeTodayPreview>();
-  const ids = [...new Set(clientIds)].filter(Boolean);
-  if (ids.length === 0) return out;
+  appointments: ReadonlyArray<BeforeAppointmentRequest>,
+): Promise<BeforeAppointmentLoad> {
+  const previews = new Map<string, BeforeTodayPreview>();
+  const requests = appointments.filter((a) => a.appointmentId && a.clientId);
+  if (requests.length === 0) return { ok: true, previews };
+
+  const ids = [...new Set(requests.map((r) => r.clientId))];
+  // The widest cutoff any appointment on this roster asks for. Reading past it
+  // would spend the row budget on sessions no appointment can use.
+  const maxBefore = requests
+    .map((r) => r.before)
+    .reduce((a, b) => (a > b ? a : b));
 
   const supabase = await createClient();
-  const { data: sessionRows } = await supabase
+  const { data: sessionRows, error: sessionsError } = await supabase
     .from("sessions")
     .select(
-      "id, client_id, started_at, next_session_note, aftercare_and_risks_explained_at, modality, electrolysis_entries(hairs_treated, deleted_at), laser_entries(id, deleted_at)",
+      "id, client_id, appointment_id, started_at, next_session_note, aftercare_and_risks_explained_at, modality, electrolysis_entries(hairs_treated, deleted_at), laser_entries(id, deleted_at)",
     )
     .eq("studio_id", studioId)
     .in("client_id", ids)
+    .lt("started_at", maxBefore)
     .is("deleted_at", null)
     .order("started_at", { ascending: false })
     .limit(400);
+  // A failed read establishes nothing. Returning an empty map here is exactly
+  // the collapse this type exists to prevent.
+  if (sessionsError) return { ok: false };
   const sessions = (sessionRows ?? []) as SessionRow[];
 
   const sessionIds = sessions.map((s) => s.id);
-  const [{ data: blockRows }, { data: clientRows }] = await Promise.all([
+  const [blocksResult, clientsResult] = await Promise.all([
     sessionIds.length > 0
       ? supabase
           .from("session_blocks")
@@ -135,21 +316,22 @@ export async function getBeforeTodayPreviews(
           .in("session_id", sessionIds)
           .is("deleted_at", null)
           .order("sort_order", { ascending: true })
-      : Promise.resolve({ data: [] as BlockRow[] }),
+      : Promise.resolve({ data: [] as BlockRow[], error: null }),
     supabase
       .from("clients")
       .select("id, date_of_birth, phone, address")
       .eq("studio_id", studioId)
       .in("id", ids),
   ]);
-  const blocks = (blockRows ?? []) as BlockRow[];
+  if (blocksResult.error || clientsResult.error) return { ok: false };
+  const blocks = (blocksResult.data ?? []) as BlockRow[];
 
   // Migration 0128: attach the structured area rows so every summary surface
   // (last treatment, appointment prep, before-today) shows EVERY treated area +
   // laterality, not just the legacy primary_area. One bounded, studio-scoped
   // query over the loaded block ids, no N+1, no cross-studio rows.
   if (blocks.length > 0) {
-    const { data: areaRows } = await supabase
+    const { data: areaRows, error: areasError } = await supabase
       .from("session_block_areas")
       .select("*")
       .eq("studio_id", studioId)
@@ -159,6 +341,7 @@ export async function getBeforeTodayPreviews(
       )
       .order("display_order", { ascending: true })
       .order("created_at", { ascending: true });
+    if (areasError) return { ok: false };
     const areasByBlock = new Map<string, SessionBlockArea[]>();
     for (const areaRow of (areaRows ?? []) as SessionBlockArea[]) {
       const bucket = areasByBlock.get(areaRow.session_block_id) ?? [];
@@ -171,7 +354,7 @@ export async function getBeforeTodayPreviews(
   }
 
   const clientFields = new Map(
-    ((clientRows ?? []) as Array<{
+    ((clientsResult.data ?? []) as Array<{
       id: string;
       date_of_birth: string | null;
       phone: string | null;
@@ -192,85 +375,22 @@ export async function getBeforeTodayPreviews(
     blocksBySession.set(b.session_id, list);
   }
 
-  for (const clientId of ids) {
-    const clientSessions = (sessionsByClient.get(clientId) ?? []).map((s) => ({
-      ...s,
-      // Migration 0114: voided passes never count in the dashboard preview.
-      electrolysis_entries: (s.electrolysis_entries ?? []).filter(
-        (e) => !e.deleted_at,
-      ),
-      laser_entries: (s.laser_entries ?? []).filter((e) => !e.deleted_at),
-    }));
-    const clientBlockMap = new Map<string, BlockRow[]>();
-    for (const s of clientSessions) {
-      const list = blocksBySession.get(s.id);
-      if (list) clientBlockMap.set(s.id, list);
-    }
-    const lastTreatment = pickLastTreatment(clientSessions, clientBlockMap);
-    const watchSource = pickPreClientWatchPlanSource(
-      clientSessions,
-      clientBlockMap,
+  // Per appointment, IN MEMORY. The reads above are already done; this loop
+  // issues no query, which is what keeps two appointments for one client from
+  // costing two round trips.
+  for (const request of requests) {
+    const eligible = eligibleSessionsForAppointment(
+      sessionsByClient.get(request.clientId) ?? [],
+      request,
     );
-    const watchPlan = watchSource
-      ? buildLastSessionSummary({
-          blocks: clientBlockMap.get(watchSource.id) ?? [],
-          nextSessionNote: watchSource.next_session_note ?? null,
-        })
-      : null;
-    const allClientBlocks = clientSessions.flatMap(
-      (s) => clientBlockMap.get(s.id) ?? [],
+    previews.set(
+      request.appointmentId,
+      buildPreviewFromSessions({
+        sessionsNewestFirst: eligible,
+        blocksBySession,
+        clientFields: clientFields.get(request.clientId) ?? null,
+      }),
     );
-    const intelligence = buildTreatmentIntelligence({
-      sessionsNewestFirst: clientSessions,
-      blocks: allClientBlocks.map((b) => ({
-        ...b,
-        entry_hairs: [],
-        observation_chips_list: (b.electrolysis_entries ?? [])
-          .filter((e) => e.deleted_at == null)
-          .map((e) => e.observation_chips),
-      })),
-    });
-    const lastBlocks = lastTreatment
-      ? (clientBlockMap.get(lastTreatment.id) ?? [])
-      : [];
-    const lastSummary = lastTreatment
-      ? buildLastSessionSummary({
-          // Charting unification: feed live entries' observation_chips so the
-          // reaction line reads the unified representation.
-          blocks: lastBlocks.map((b) => ({
-            ...b,
-            observation_chips_list: (b.electrolysis_entries ?? [])
-              .filter((e) => e.deleted_at == null)
-              .map((e) => e.observation_chips),
-          })),
-          nextSessionNote: lastTreatment.next_session_note ?? null,
-        })
-      : null;
-    const fields = clientFields.get(clientId);
-    const briefing = buildBeforeToday({
-      lastTreatment: lastTreatment
-        ? {
-            startedAt: lastTreatment.started_at,
-            modality: lastTreatment.modality,
-            areaNames: lastSummary?.areas.map((a) => a.name) ?? [],
-            aftercareExplainedAt:
-              lastTreatment.aftercare_and_risks_explained_at ?? null,
-            blockLots: lastBlocks.map((b) => b.probe_lot_number ?? null),
-            blockMinutes: lastBlocks.map((b) => b.minutes_performed ?? null),
-            blockReactionNotes: lastBlocks.map(
-              (b) => b.reaction_notes ?? null,
-            ),
-          }
-        : null,
-      watchPlan,
-      intelligence,
-      client: {
-        dateOfBirth: fields?.date_of_birth ?? null,
-        phone: fields?.phone ?? null,
-        address: fields?.address ?? null,
-      },
-    });
-    out.set(clientId, compactBeforeToday(briefing));
   }
-  return out;
+  return { ok: true, previews };
 }

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DASHBOARD_DAY_MAX_OFFSET_DAYS,
+  canNavigateNext,
+  canNavigatePrevious,
+  dashboardDayBounds,
   dashboardDayHref,
   dayHeading,
   emptyDayMessage,
@@ -215,5 +218,72 @@ describe("isViewingToday", () => {
     expect(isViewingToday(TODAY, TODAY)).toBe(true);
     expect(isViewingToday(nextDay(TODAY), TODAY)).toBe(false);
     expect(isViewingToday(previousDay(TODAY), TODAY)).toBe(false);
+  });
+});
+
+describe("the horizon is ONE authority, and the CONTROLS respect it", () => {
+  // The defect this pins: the resolver clamped to ±365 while the links still
+  // targeted ±366. Pressing "Next" at the far edge produced a URL the resolver
+  // rejected, and the fallback threw the practitioner a YEAR back to today —
+  // a large unexplained jump from a button the product itself rendered.
+  const { min, max } = dashboardDayBounds(TODAY);
+
+  it("the bounds are derived from the exported constant, not a second copy", () => {
+    expect(min).toBe(addDays(TODAY, -DASHBOARD_DAY_MAX_OFFSET_DAYS));
+    expect(max).toBe(addDays(TODAY, DASHBOARD_DAY_MAX_OFFSET_DAYS));
+  });
+
+  it("today + 364: Next is available and targets +365", () => {
+    const day = addDays(TODAY, DASHBOARD_DAY_MAX_OFFSET_DAYS - 1);
+    expect(canNavigateNext(day, TODAY)).toBe(true);
+    expect(nextDay(day)).toBe(max);
+    // …and the resolver accepts exactly what that control offers.
+    expect(resolveSelectedDay(nextDay(day), TODAY)).toBe(max);
+  });
+
+  it("today + 365 (the MAX): Next is refused; Previous and Today still work", () => {
+    expect(canNavigateNext(max, TODAY)).toBe(false);
+    expect(canNavigatePrevious(max, TODAY)).toBe(true);
+    // Inward navigation lands where it says it will.
+    expect(resolveSelectedDay(previousDay(max), TODAY)).toBe(previousDay(max));
+    // And returning to today is always one link away.
+    expect(dashboardDayHref({ day: TODAY, todayLocal: TODAY })).toBe("/dashboard");
+  });
+
+  it("today - 364: Previous is available and targets -365", () => {
+    const day = addDays(TODAY, -(DASHBOARD_DAY_MAX_OFFSET_DAYS - 1));
+    expect(canNavigatePrevious(day, TODAY)).toBe(true);
+    expect(previousDay(day)).toBe(min);
+    expect(resolveSelectedDay(previousDay(day), TODAY)).toBe(min);
+  });
+
+  it("today - 365 (the MIN): Previous is refused; Next and Today still work", () => {
+    expect(canNavigatePrevious(min, TODAY)).toBe(false);
+    expect(canNavigateNext(min, TODAY)).toBe(true);
+    expect(resolveSelectedDay(nextDay(min), TODAY)).toBe(nextDay(min));
+  });
+
+  it("NO offered control ever produces a day the resolver rejects", () => {
+    // The property, stated directly: walk the edges and both directions.
+    for (const day of [min, addDays(min, 1), addDays(max, -1), max, TODAY]) {
+      if (canNavigateNext(day, TODAY)) {
+        const target = nextDay(day);
+        expect(resolveSelectedDay(target, TODAY), `next from ${day}`).toBe(target);
+      }
+      if (canNavigatePrevious(day, TODAY)) {
+        const target = previousDay(day);
+        expect(resolveSelectedDay(target, TODAY), `prev from ${day}`).toBe(target);
+      }
+    }
+  });
+
+  it("the ±366 days the old controls targeted are exactly what is now refused", () => {
+    // Proves the fix is aimed at the real defect: these ARE rejected by the
+    // resolver (silently becoming today), which is why no control may offer
+    // them.
+    expect(resolveSelectedDay(addDays(TODAY, DASHBOARD_DAY_MAX_OFFSET_DAYS + 1), TODAY)).toBe(TODAY);
+    expect(resolveSelectedDay(addDays(TODAY, -(DASHBOARD_DAY_MAX_OFFSET_DAYS + 1)), TODAY)).toBe(TODAY);
+    expect(canNavigateNext(max, TODAY)).toBe(false);
+    expect(canNavigatePrevious(min, TODAY)).toBe(false);
   });
 });

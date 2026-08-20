@@ -114,7 +114,7 @@ describe("placement + reuse", () => {
     // The preview now feeds the combined workflow model (keyed by APPOINTMENT
     // id) instead of being handed to the row directly, so the same facts can no
     // longer be rendered twice from two sources.
-    expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.client_id\)/);
+    expect(PAGE).toMatch(/beforeLoad\.previews\.get\(appt\.id\)/);
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
     expect(PAGE).toMatch(/Before today/);
     // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
@@ -164,9 +164,11 @@ describe("placement + reuse", () => {
     expect(PREVIEWS).toMatch(/\.in\("session_id", sessionIds\)/);
     expect(PREVIEWS).toMatch(/\.from\("session_block_areas"\)/);
     expect(PREVIEWS).toMatch(/\.in\(\s*\n?\s*"session_block_id",/);
-    // One previews call per page load, fed with the whole roster.
+    // One previews call per page load, fed with the whole roster — now one
+    // request PER APPOINTMENT within that single call, because two visits for
+    // one client on one day have different history cutoffs.
     expect(PAGE).toMatch(
-      /getBeforeTodayPreviews\(\s*\n?\s*studio\.id,\s*\n?\s*visibleAppointments\.map/,
+      /getBeforeAppointmentPreviews\(\s*\n?\s*studio\.id,\s*\n?\s*visibleAppointments\.map/,
     );
   });
 });

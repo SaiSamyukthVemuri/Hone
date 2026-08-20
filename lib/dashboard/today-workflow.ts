@@ -48,6 +48,17 @@ export type TodayWorkflowInput = {
   timeLabel: string;
   status: string;
   serviceName: string | null;
+  /**
+   * Whether the history read for THIS appointment actually established
+   * anything. Optional and defaulting to true, so every existing caller and
+   * fixture keeps its meaning; only a genuinely failed load passes false.
+   *
+   * When false, `hasHistory` is not a fact and must not be presented as one.
+   * An unproven absence rendered as "New client" is a claim about a real
+   * person that nothing verified — the same distinction the card-on-file
+   * status draws between "no card" and "unavailable".
+   */
+  historyKnown?: boolean;
   hasHistory: boolean;
   // The structured plan note (session.next_session_note).
   nextVisitNote: string | null;
@@ -72,6 +83,8 @@ export type TodayWorkflowItem = {
   serviceName: string | null;
 
   // Preparation: each fact resolved ONCE, and never re-labelled elsewhere.
+  /** False only when the history read failed. See the input field. */
+  historyKnown: boolean;
   hasHistory: boolean;
   // The plan note. Rendered once under "Remember".
   remember: string | null;
@@ -124,7 +137,9 @@ function priorityFor(input: TodayWorkflowInput): TodayPriority {
   if (upcoming && input.intake !== "reviewed") return 2;
   if (input.charting === "needs") return 3;
   if (input.reminders.length > 0) return 4;
-  if (!input.hasHistory) return 5;
+  // The new-client priority is a claim about the client. It may only be
+  // reached from a history read that actually answered.
+  if (input.historyKnown !== false && !input.hasHistory) return 5;
   return 6;
 }
 
@@ -143,7 +158,12 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
 
   // Setup is shown only when there IS history; "Latest setup" against a client
   // with no charted history is noise, and the no-history state says it already.
-  const setup = input.hasHistory ? trimmedOrNull(input.setupLine) : null;
+  const historyKnown = input.historyKnown !== false;
+  // Setup is shown only when there IS history — and "is" means established.
+  // Reading `input.hasHistory` here instead would let an unanswered load print
+  // a "Latest setup" line beside "History unavailable", which is the same
+  // unproven claim in a different place.
+  const setup = historyKnown && input.hasHistory ? trimmedOrNull(input.setupLine) : null;
 
   // Specific reminders only, order-preserving and deduplicated after
   // shortening (two different long reminders can shorten to the same chip).
@@ -164,7 +184,11 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
     timeLabel: input.timeLabel,
     status: input.status,
     serviceName: input.serviceName,
-    hasHistory: input.hasHistory,
+    historyKnown,
+    // Never asserted from an unanswered read: unknown collapses to false here
+    // ONLY as a shape default, and `historyKnown` is what the UI must branch
+    // on before saying anything about a client being new.
+    hasHistory: historyKnown && input.hasHistory,
     remember,
     caution,
     setup,

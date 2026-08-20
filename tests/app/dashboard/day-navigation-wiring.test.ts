@@ -66,10 +66,19 @@ describe("time-relative surfaces stay anchored to the REAL present", () => {
     );
   });
 
-  it("'Before today' is only loaded when the briefing IS on today", () => {
+  it("'Before today' is bounded by the APPOINTMENT, not gated off the day", () => {
+    // The first version of this feature gated the load off on non-today
+    // briefings. That stopped a past day seeing a later session and, in the
+    // same stroke, told the practitioner that tomorrow's returning clients
+    // were new. The load now always runs and each appointment carries its own
+    // cutoff, so both facts survive.
+    expect(PAGE_CODE).not.toMatch(/beforeTodayPreviews = viewingToday/);
     expect(PAGE_CODE).toMatch(
-      /const beforeTodayPreviews = viewingToday\s*\?\s*await getBeforeTodayPreviews\(/,
+      /const beforeLoad = await getBeforeAppointmentPreviews\(/,
     );
+    expect(PAGE_CODE).toMatch(/before: a\.starts_at/);
+    // Keyed by appointment id — the whole reason the map exists.
+    expect(PAGE_CODE).toMatch(/beforeLoad\.previews\.get\(appt\.id\)/);
   });
 });
 

@@ -1,7 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import {
   getStudioTimezone,
+  seedE2eChartedSessionAt,
   seedE2eDashboardClient,
+  seedE2eDashboardMemoryClient,
   seedE2eStudio,
   seedE2eTodayAppointment,
   type E2eSeed,
@@ -270,6 +272,148 @@ test.describe("Dashboard day navigation — 390px phone", () => {
       // And the return path works under a thumb.
       await page.getByTestId("dashboard-today").tap();
       await expect(heading(page, "Today")).toBeVisible({ timeout: T });
+    });
+  });
+});
+
+// ===========================================================================
+// #605 REPAIR — history follows the APPOINTMENT, and navigation stops at the
+// horizon. Both were found by review on the first head; these are the
+// user-visible proofs.
+// ===========================================================================
+
+test.describe("history on another day", () => {
+  test("a returning client booked TOMORROW is not rendered as new", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    // A client with a real charted session 30 days ago and an appointment
+    // today...
+    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: "Avoid the jawline",
+      nextVisitNote: "Lower the energy one step",
+    });
+    // ...who is ALSO booked tomorrow. This is Chloe's actual use: look at
+    // tomorrow in order to prepare for it.
+    await seedE2eTodayAppointment(seed, {
+      clientId,
+      startsMinutesFromNow: 25 * 60,
+      endsMinutesFromNow: 25 * 60 + 45,
+    });
+    await loginAsOwner(page, seed);
+
+    await test.step("today shows the history, as it always did", async () => {
+      await page.goto("/dashboard");
+      await expect(heading(page, "Today")).toBeVisible({ timeout: T });
+      await expect(page.getByText("Remember: Lower the energy one step").first()).toBeVisible();
+    });
+
+    await test.step("and TOMORROW shows it too — not 'New client'", async () => {
+      await page.getByTestId("dashboard-next-day").click();
+      await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
+      // The defect: this row said "New client · No charted history yet" and
+      // dropped the caution and plan the practitioner needs to prepare.
+      await expect(
+        page.getByText("New client · No charted history yet"),
+      ).toHaveCount(0);
+      await expect(
+        page.getByText("Remember: Lower the energy one step").first(),
+      ).toBeVisible();
+      await expect(page.getByText("Avoid the jawline").first()).toBeVisible();
+    });
+
+    await test.step("and it is never 'History unavailable' on a successful read", async () => {
+      await expect(page.getByText("History unavailable")).toHaveCount(0);
+    });
+  });
+
+  test("a PAST appointment does not see a session recorded AFTER it", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const client = await seedE2eDashboardClient(seed, { label: "Backward Client" });
+    // The appointment happened yesterday...
+    await seedE2eTodayAppointment(seed, {
+      clientId: client.clientId,
+      startsMinutesFromNow: -23 * 60,
+      endsMinutesFromNow: -23 * 60 + 45,
+    });
+    // ...and the only charted session came LATER, today. It is not history for
+    // yesterday's visit, and presenting it as such would also contradict the
+    // per-appointment memory rendered beside it.
+    await seedE2eChartedSessionAt(seed, {
+      clientId: client.clientId,
+      startedAt: new Date(Date.now() - 60 * 60_000),
+      nextSessionNote: "Recorded after the appointment",
+    });
+    await loginAsOwner(page, seed);
+
+    await test.step("yesterday's row does not borrow today's session", async () => {
+      await page.goto("/dashboard");
+      await page.getByTestId("dashboard-prev-day").click();
+      // `.first()`: the seeded name also appears in the To-do section, which
+      // is a different surface with its own rules and is not what this asserts.
+      await expect(page.getByText(client.name).first()).toBeVisible({ timeout: T });
+      await expect(
+        page.getByText("Remember: Recorded after the appointment"),
+      ).toHaveCount(0);
+    });
+  });
+});
+
+test.describe("the ±365-day horizon", () => {
+  test("the outward control is disabled at the limit and never jumps to Today", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    await seedOn(seed, "Horizon Person", 90);
+    await loginAsOwner(page, seed);
+
+    const max = localDay(tz, 365);
+    const nearMax = localDay(tz, 364);
+
+    await test.step("at today + 364, Next is a real link to +365", async () => {
+      await page.goto(`/dashboard?day=${nearMax}`);
+      await expect(page.getByTestId("dashboard-next-day")).toBeVisible({
+        timeout: T,
+      });
+      await expect(page.getByTestId("dashboard-next-day")).not.toHaveAttribute(
+        "data-disabled",
+        "true",
+      );
+      await page.getByTestId("dashboard-next-day").click();
+      // The load-bearing assertion: it lands on +365, NOT back on today.
+      await landsOn(page, { day: max });
+    });
+
+    await test.step("at today + 365, Next is present but disabled", async () => {
+      const next = page.getByTestId("dashboard-next-day");
+      await expect(next).toBeVisible();
+      await expect(next).toHaveAttribute("data-disabled", "true");
+      await expect(next).toHaveAttribute("aria-disabled", "true");
+      // A disabled control is not a link — nothing to click that could throw
+      // the practitioner a year backwards.
+      await expect(page.getByRole("link", { name: "Next day" })).toHaveCount(0);
+    });
+
+    await test.step("inward navigation still works from the limit", async () => {
+      await page.getByTestId("dashboard-prev-day").click();
+      await landsOn(page, { day: nearMax });
+      await page.getByTestId("dashboard-today").click();
+      await landsOn(page, { day: null });
+      await expect(heading(page, "Today")).toBeVisible({ timeout: T });
+    });
+
+    await test.step("the symmetric case at today - 365", async () => {
+      await page.goto(`/dashboard?day=${localDay(tz, -365)}`);
+      const prev = page.getByTestId("dashboard-prev-day");
+      await expect(prev).toBeVisible({ timeout: T });
+      await expect(prev).toHaveAttribute("data-disabled", "true");
+      await expect(page.getByRole("link", { name: "Previous day" })).toHaveCount(0);
+      // Next is live and steps INWARD, not to today.
+      await page.getByTestId("dashboard-next-day").click();
+      await landsOn(page, { day: localDay(tz, -364) });
     });
   });
 });

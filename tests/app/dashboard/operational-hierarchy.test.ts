@@ -570,7 +570,7 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
   it("Today still renders appointments, intake actions and treatment memory", () => {
     expect(DASH).toMatch(/todayWorkflowByAppointment|todayWorkflow/);
     expect(DASH).toMatch(/resolveTodayIntakeAction/);
-    expect(DASH).toMatch(/getBeforeTodayPreviews/);
+    expect(DASH).toMatch(/getBeforeAppointmentPreviews/);
     expect(DASH).toMatch(/getLatestPinnedNoteByClient/);
   });
 

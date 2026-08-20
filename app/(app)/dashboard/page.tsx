@@ -21,6 +21,8 @@ import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
 import type { BirthdayReminderColor } from "@/lib/types/database";
 import {
+  canNavigateNext,
+  canNavigatePrevious,
   dashboardDayHref,
   dayHeading,
   emptyDayMessage,
@@ -50,8 +52,7 @@ import {
   resolveNextAction,
 } from "@/lib/dashboard/next-action";
 import {
-  getBeforeTodayPreviews,
-  type BeforeTodayPreview,
+  getBeforeAppointmentPreviews,
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import { loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
@@ -152,6 +153,14 @@ type TodayAppointment = Pick<
   practitioner: { id: string; display_name: string | null; color: string } | null;
 };
 
+// One class for the three day-navigation controls, so the disabled variant
+// cannot drift away from the live one. 44px minimum: this row is used on a
+// phone between clients.
+const DAY_NAV_CONTROL =
+  "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
+const DAY_NAV_CONTROL_DISABLED =
+  "inline-flex min-h-[44px] cursor-default items-center rounded-md border border-neutral-200 px-3 text-sm text-neutral-400 dark:border-neutral-800 dark:text-neutral-600";
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -189,6 +198,10 @@ export default async function DashboardPage({
   // never throws, so a hand-typed `?day=2026-8-2` cannot 500 the Dashboard.
   const selectedDayLocal = resolveSelectedDay(sp.day, todayLocal);
   const viewingToday = isViewingTodayFn(selectedDayLocal, todayLocal);
+  // Derived from the SAME horizon the resolver clamps to, so a control can
+  // never offer a URL the resolver will reject.
+  const canGoBack = canNavigatePrevious(selectedDayLocal, todayLocal);
+  const canGoForward = canNavigateNext(selectedDayLocal, todayLocal);
 
   // ONE local day, built as TWO separate local-midnight instants. Never
   // `start + 24h`: across a DST transition a Toronto day is 23 or 25 hours, and
@@ -398,22 +411,29 @@ export default async function DashboardPage({
   const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds, studio.timezone);
 
   // "Before today" is a claim about what happened BEFORE the visit on screen,
-  // but this loader carries no date boundary — it returns each client's newest
-  // session, full stop. On a PAST selected day that would surface a treatment
-  // performed AFTER the day being viewed (including one charted on that very
-  // day), and it would then disagree with the per-appointment memory below,
-  // which does bound itself with `before: a.starts_at`. Two contradictory
-  // answers on one row.
+  // so it is bounded by THAT VISIT — not by the client, and not by the selected
+  // day's midnight.
   //
-  // The block is therefore asked for only when the briefing is on the real
-  // present day, where "before today" is exactly what it says. Gating the
-  // caller keeps the loader's own contract — and its other callers — untouched.
-  const beforeTodayPreviews = viewingToday
-    ? await getBeforeTodayPreviews(
-        studio.id,
-        visibleAppointments.map((a) => a.client_id),
-      )
-    : new Map<string, BeforeTodayPreview>();
+  // The first version of this feature gated the whole load off on non-today
+  // briefings, to stop a past day surfacing a session performed after it. That
+  // fixed the leak and introduced a worse defect: downstream, an absent preview
+  // reads as `hasHistory: false`, so a returning client booked TOMORROW was
+  // rendered "New client · No charted history yet" and lost their caution, plan
+  // and setup context. "We did not look" is not "there is nothing", and Chloe's
+  // whole reason for wanting tomorrow is to PREPARE for it.
+  //
+  // Appointment-bounded loading serves both: tomorrow's returning clients keep
+  // every legitimate fact, a past appointment cannot see a session recorded
+  // after it, and two appointments for one client on one day get their own
+  // cutoffs. One batched load, keyed by appointment id.
+  const beforeLoad = await getBeforeAppointmentPreviews(
+    studio.id,
+    visibleAppointments.map((a) => ({
+      appointmentId: a.id,
+      clientId: a.client_id,
+      before: a.starts_at,
+    })),
+  );
 
   // Dashboard V2 Part 2A: the FULL previous treatment for every returning
   // client of the day, from the SAME #517 authority the appointment page uses.
@@ -469,7 +489,11 @@ export default async function DashboardPage({
   // id and in the query's chronological order. No new query; nothing sorted.
   const todayWorkflowInputs: TodayWorkflowInput[] = visibleAppointments.map(
     (appt) => {
-      const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+      // Keyed by APPOINTMENT, so one client's two visits in a day do not share
+      // a history cutoff.
+      const preview = beforeLoad.ok
+        ? (beforeLoad.previews.get(appt.id) ?? null)
+        : null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
       const charting: TodayCharting = linked
         ? linked.hasChartedArea
@@ -487,6 +511,10 @@ export default async function DashboardPage({
         timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
         status: appt.status,
         serviceName: appt.service?.name ?? null,
+        // A failed read must not manufacture "New client". `historyKnown`
+        // false suppresses every history-derived claim instead of asserting
+        // the absence of one.
+        historyKnown: beforeLoad.ok,
         hasHistory: preview?.hasHistory ?? false,
         nextVisitNote: preview?.nextVisitNote ?? null,
         cautionNote: preview?.cautionNote ?? null,
@@ -625,39 +653,67 @@ export default async function DashboardPage({
             aria-label="Change day"
             className="flex flex-wrap items-center gap-1"
           >
-            <Link
-              href={dashboardDayHref({
-                day: previousDay(selectedDayLocal),
-                todayLocal,
-                period,
-              })}
-              aria-label="Previous day"
-              data-testid="dashboard-prev-day"
-              className="inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              ← Previous
-            </Link>
+            {/* At the far edge the control STAYS, disabled: removing it would
+                shift the row under the practitioner's thumb, and a link that
+                targets a day the resolver rejects would silently throw her a
+                year forward to today. Inward navigation is always available. */}
+            {canGoBack ? (
+              <Link
+                href={dashboardDayHref({
+                  day: previousDay(selectedDayLocal),
+                  todayLocal,
+                  period,
+                })}
+                aria-label="Previous day"
+                data-testid="dashboard-prev-day"
+                className={DAY_NAV_CONTROL}
+              >
+                ← Previous
+              </Link>
+            ) : (
+              <span
+                aria-label="Previous day"
+                aria-disabled="true"
+                data-testid="dashboard-prev-day"
+                data-disabled="true"
+                className={DAY_NAV_CONTROL_DISABLED}
+              >
+                ← Previous
+              </span>
+            )}
             {!viewingToday && (
               <Link
                 href={dashboardDayHref({ day: todayLocal, todayLocal, period })}
                 data-testid="dashboard-today"
-                className="inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                className={DAY_NAV_CONTROL}
               >
                 Today
               </Link>
             )}
-            <Link
-              href={dashboardDayHref({
-                day: nextDay(selectedDayLocal),
-                todayLocal,
-                period,
-              })}
-              aria-label="Next day"
-              data-testid="dashboard-next-day"
-              className="inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              Next →
-            </Link>
+            {canGoForward ? (
+              <Link
+                href={dashboardDayHref({
+                  day: nextDay(selectedDayLocal),
+                  todayLocal,
+                  period,
+                })}
+                aria-label="Next day"
+                data-testid="dashboard-next-day"
+                className={DAY_NAV_CONTROL}
+              >
+                Next →
+              </Link>
+            ) : (
+              <span
+                aria-label="Next day"
+                aria-disabled="true"
+                data-testid="dashboard-next-day"
+                data-disabled="true"
+                className={DAY_NAV_CONTROL_DISABLED}
+              >
+                Next →
+              </span>
+            )}
           </nav>
           {/* The primary action in the appointments area is booking, not
               adding a client (Chloe: she'd never add a client here). Links
@@ -1059,7 +1115,15 @@ function AppointmentRow({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                   Before today
                 </span>
-                {!workflow.hasHistory ? (
+                {!workflow.historyKnown ? (
+                  // The read did not answer. Neutral, and explicitly NOT the
+                  // new-client line: an unproven absence must not be printed
+                  // as a fact about a real person. Same rule the card status
+                  // follows when it says "Card status unavailable".
+                  <span className="text-neutral-500">
+                    History unavailable
+                  </span>
+                ) : !workflow.hasHistory ? (
                   // ONE relationship line, not "New client" here and "No prior
                   // treatment history yet" somewhere else.
                   <span className="text-neutral-500">
