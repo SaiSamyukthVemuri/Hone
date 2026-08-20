@@ -474,6 +474,14 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "redactSafeDetails",
   },
   {
+    path: "lib/payment-methods/card-on-file.ts",
+    purpose:
+      "Dashboard Today roster: bounded batch read of which of TODAY'S clients hold an active card in the CURRENT Stripe mode.",
+    why:
+      "Read-only, and service-role for the same reason every other client_payment_methods reader is (eligibility, charge, receipt, card-authorization): that table has no exercised authenticated Data-API path. studioId is resolved server-side from getCurrentPractitionerWithStudio() by the caller and pinned with .eq(\"studio_id\", studioId); the row set is additionally bounded by .in(\"client_id\", ...) to the server-loaded roster. It SELECTS client_id only — no Stripe customer/payment-method/SetupIntent/account id ever leaves the server.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "lib/payment-methods/queries.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

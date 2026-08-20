@@ -127,7 +127,13 @@ describe("nothing else on the dashboard changed", () => {
   it("the row still grows instead of clipping (layout contract)", () => {
     // flex-wrap + items-start on the row and self-center on the action column:
     // a taller text column pushes the actions down/aside, never under them.
-    expect(PAGE).toMatch(/flex flex-wrap items-start justify-between gap-3 px-4 py-4/);
+    //
+    // The left padding became CONDITIONAL when the current-client highlight
+    // landed (a 4px accent border replaces 4px of pl-4, so the time column
+    // stays on the same line); the wrap/alignment contract this test exists for
+    // is unchanged, so it is pinned without the padding shorthand.
+    expect(PAGE).toMatch(/flex flex-wrap items-start justify-between gap-3 py-4 pr-4/);
+    expect(PAGE).toMatch(/pl-4 hover:bg-neutral-50/);
     expect(PAGE).toMatch(/flex flex-col items-end gap-2 self-center/);
     expect(PAGE).toMatch(/className="min-w-0 flex-1"/);
   });

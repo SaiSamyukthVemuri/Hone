@@ -394,3 +394,74 @@ export async function getPortalPhotoConsentsForPractitionerView(
     };
   });
 }
+
+// ===========================================================================
+// CARD-ON-FILE CAPABILITY — a THREE-way answer, deliberately not a boolean
+// ===========================================================================
+//
+// The Dashboard asks "can this studio collect a card at all?" before it says
+// anything about any client's card. `getActiveConsentTemplatesForPortal` above
+// cannot answer that safely for this caller, for two reasons, and BOTH were
+// live defects:
+//
+//   1. It calls `createAdminClient()`, which THROWS synchronously when its env
+//      is absent. The Dashboard reads this inside a `Promise.all`, so an
+//      unguarded throw escapes to the route error boundary and replaces the
+//      entire Today roster.
+//   2. It collapses a query error into `[]`. A caller doing `.some(...)` over
+//      that reads a READ FAILURE as "this studio definitely has no card
+//      route", which silently hides the whole card UX from a studio that does
+//      have one. An unknown must never masquerade as an authoritative absence
+//      — the same principle the three-state card model already enforces one
+//      layer down.
+//
+// So capability is result-bearing. UNKNOWN IS NOT OFF.
+//
+// The predicate is identical to the portal's above — same studio scope, same
+// `form_type`, same `is_live` + `status` pair — and lives beside it so the two
+// cannot drift. It is an EXISTENCE question, so the projection is `id` with
+// `limit(1)`; template bodies are never loaded to answer it.
+//
+// `getActiveConsentTemplatesForPortal` is deliberately left byte-unchanged:
+// its existing callers keep their current behaviour.
+export type CardAuthorizationCapability =
+  | { ok: true; enabled: boolean }
+  | { ok: false };
+
+export async function getCardAuthorizationCapability(
+  studioId: string,
+): Promise<CardAuthorizationCapability> {
+  try {
+    // Inside the try on purpose: construction is a failure class of its own.
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("consent_form_templates")
+      .select("id")
+      .eq("studio_id", studioId)
+      .eq("form_type", "card_authorization")
+      .eq("is_live", true)
+      .eq("status", "active")
+      .limit(1);
+    if (error) {
+      console.error(
+        JSON.stringify({
+          event: "card_authorization_capability_failed",
+          code: error.code,
+          message: error.message,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return { ok: false };
+    }
+    return { ok: true, enabled: (data ?? []).length > 0 };
+  } catch (thrown) {
+    console.error(
+      JSON.stringify({
+        event: "card_authorization_capability_unavailable",
+        message: thrown instanceof Error ? thrown.message : "unknown",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false };
+  }
+}
