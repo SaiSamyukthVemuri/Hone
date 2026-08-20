@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dayHeading, emptyDayMessage } from "@/lib/dashboard/day-navigation";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -310,8 +311,19 @@ describe("action metrics + Today section", () => {
   });
 
   it("Today roster remains with its empty state", () => {
-    expect(PAGE).toMatch(/>Today<\/h2>/);
-    expect(PAGE).toMatch(/No appointments today\./);
+    // The heading and the empty sentence both follow the selected day now, so
+    // neither is a literal in the JSX. Assert what a viewer actually reads on
+    // TODAY by evaluating the real functions the page calls — a grep for the
+    // old literals would have passed on a page that renders nothing at all,
+    // because both strings still appear in the page's own comments.
+    const d = "2026-08-20";
+    expect(PAGE).toMatch(/<h2[^>]*>\s*\{dayHeading\(selectedDayLocal, todayLocal\)\}/);
+    expect(dayHeading(d, d)).toBe("Today");
+    expect(PAGE).toMatch(
+      /<EmptyDayState selectedDay=\{selectedDayLocal\} todayLocal=\{todayLocal\} \/>/,
+    );
+    expect(PAGE).toMatch(/\{emptyDayMessage\(selectedDay, todayLocal\)\}/);
+    expect(emptyDayMessage(d, d)).toBe("No appointments today.");
   });
 });
 

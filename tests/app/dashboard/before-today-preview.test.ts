@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { emptyDayMessage } from "@/lib/dashboard/day-navigation";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compactBeforeToday } from "@/lib/dashboard/before-today-previews";
@@ -125,8 +126,15 @@ describe("placement + reuse", () => {
     // and the brief separately said "No prior treatment history yet".
     expect(PAGE).toMatch(/New client · No charted history yet/);
     expect(PAGE).toMatch(/No watch\/plan note\./);
-    // Empty roster state untouched.
-    expect(PAGE).toMatch(/No appointments today\./);
+    // Empty roster state untouched FOR TODAY. It is `emptyDayMessage` now,
+    // because the roster follows the selected day and "today" would be a lie
+    // on any other one — so evaluate the function rather than grepping for a
+    // literal that survives only in this page's comments.
+    expect(PAGE).toMatch(
+      /<EmptyDayState selectedDay=\{selectedDayLocal\} todayLocal=\{todayLocal\} \/>/,
+    );
+    expect(PAGE).toMatch(/\{emptyDayMessage\(selectedDay, todayLocal\)\}/);
+    expect(emptyDayMessage("2026-08-20", "2026-08-20")).toBe("No appointments today.");
   });
 
   it("preview is NOT in the snapshot metric cards; full card stays on the Overview", () => {

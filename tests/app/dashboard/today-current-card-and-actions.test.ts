@@ -173,7 +173,7 @@ describe("C — Card status", () => {
     // ONE call site, inside the existing bulk Promise.all — never in the row map.
     expect((PAGE_BODY.match(/loadCardOnFileForStudio\(/g) ?? []).length).toBe(1);
     expect(PAGE_BODY).toMatch(
-      /loadCardOnFileForStudio\(studio\.id, todayClientIds\)/,
+      /loadCardOnFileForStudio\(studio\.id, selectedDayClientIds\)/,
     );
     expect(ROW).not.toMatch(/loadCardOnFileForStudio|getCardOnFileStatuses|createClient|from\("/);
     expect(PAGE_BODY).toMatch(

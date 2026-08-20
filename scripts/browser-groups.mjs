@@ -64,6 +64,10 @@ export const BROWSER_GROUPS = {
       // one-click portal-link reminder. It sits with the other Dashboard
       // Today specs.
       "dashboard-current-client-card-status.spec.ts",
+      // Chloe: "I want an option to go to the next day." The briefing follows
+      // a selected day now, so the risk is the roster and the heading drifting
+      // apart. Sits with the other Dashboard Today specs.
+      "dashboard-day-navigation.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be

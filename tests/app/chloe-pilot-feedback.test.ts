@@ -157,7 +157,7 @@ describe("4. procedure records filter copy", () => {
 
 describe("5. dashboard: worklist first", () => {
   it("Today renders before the snapshot and every secondary card", () => {
-    const today = DASH.indexOf('<h2 className="text-lg font-medium">Today</h2>');
+    const today = DASH.indexOf("{dayHeading(selectedDayLocal, todayLocal)}");
     const snapshot = DASH.indexOf("<PracticeSnapshot");
     // Part 2B: the four To-do sub-sections became one list.
     const attention = DASH.indexOf("<DashboardTodoList");
@@ -203,7 +203,7 @@ describe("5. dashboard: worklist first", () => {
   });
 
   it("the legacy incomplete card sits below Today; the onboarding-v2 surface sits above it", () => {
-    const today = DASH.indexOf('<h2 className="text-lg font-medium">Today</h2>');
+    const today = DASH.indexOf("{dayHeading(selectedDayLocal, todayLocal)}");
     // Legacy (flag-off) getting-started card is unchanged: still below Today.
     const card = DASH.indexOf("{!onboardingV2On && !setupComplete && (");
     expect(card).toBeGreaterThan(today);
@@ -222,7 +222,7 @@ describe("5. dashboard: worklist first", () => {
     // `clientsNeedingAttention` value is still loaded once and still rendered
     // — now as treatment_memory rows in the unified list.
     expect(DASH).toMatch(
-      /<PracticeSnapshot metrics=\{practiceMetrics\} livemode=\{inferStripeLivemode\(\)\} \/>/,
+      /<PracticeSnapshot\s+metrics=\{practiceMetrics\}\s+livemode=\{inferStripeLivemode\(\)\}/,
     );
     expect(DASH).not.toMatch(/<ActionNeeded/);
     expect(DASH).toMatch(/attention: clientsNeedingAttention/);
