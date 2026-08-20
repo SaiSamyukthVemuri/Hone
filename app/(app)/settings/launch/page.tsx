@@ -5,6 +5,10 @@ import {
   getAvailabilityDefaults,
 } from "@/lib/booking/queries";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import {
+  StatusPill,
+  type StatusTone,
+} from "@/components/ui/status-pill";
 
 // Studio launch readiness checklist.
 //
@@ -221,7 +225,7 @@ function ChecklistRow({ row }: { row: Row }) {
         <div className="flex flex-col gap-1 min-w-0">
           <p className="flex flex-wrap items-baseline gap-2 text-sm font-medium text-neutral-900 dark:text-neutral-100">
             <span>{row.title}</span>
-            <StatusPill status={row.status} />
+            <ChecklistStatusPill status={row.status} />
           </p>
           {row.detail && (
             <p className="break-words text-xs text-neutral-600 dark:text-neutral-400">
@@ -289,41 +293,25 @@ function StatusBox({ status }: { status: Status }) {
   );
 }
 
-function StatusPill({ status }: { status: Status }) {
-  const { label, cls } = (() => {
+// UI0: the SHAPE moved to components/ui/status-pill.tsx; the MEANING stays
+// here. Launch readiness is its own vocabulary ("To do" is not an appointment
+// status and not a payment status), so this presenter keeps ownership of the
+// label and only chooses how the result is painted. The rendered light-mode
+// classes are unchanged; the inert dark:* halves are dropped with them.
+function ChecklistStatusPill({ status }: { status: Status }) {
+  const { label, tone } = ((): { label: string; tone: StatusTone } => {
     switch (status) {
       case "ready":
-        return {
-          label: "Done",
-          cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
-        };
+        return { label: "Done", tone: "success" };
       case "needs_setup":
-        return {
-          label: "To do",
-          cls: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100",
-        };
+        return { label: "To do", tone: "warning" };
       case "optional":
-        return {
-          label: "Optional",
-          cls: "bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
-        };
+        return { label: "Optional", tone: "neutral" };
       case "not_enabled":
-        return {
-          label: "Not enabled",
-          cls: "bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
-        };
+        return { label: "Not enabled", tone: "neutral" };
       case "manual":
-        return {
-          label: "Manual",
-          cls: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200",
-        };
+        return { label: "Manual", tone: "info" };
     }
   })();
-  return (
-    <span
-      className={`inline-flex h-fit flex-none items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${cls}`}
-    >
-      {label}
-    </span>
-  );
+  return <StatusPill tone={tone}>{label}</StatusPill>;
 }
