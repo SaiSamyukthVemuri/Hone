@@ -101,7 +101,8 @@ const BLOCK_SQL = `
 // appointment bound, newest-first, limited.
 const SESSION_SQL = `
   select s.id, s.started_at, s.modality, s.record_status, s.deleted_at,
-         s.appointment_id, s.session_notes, s.next_session_note,
+         s.appointment_id, s.aftercare_and_risks_explained_at,
+         s.session_notes, s.next_session_note,
          coalesce(
            (select json_agg(json_build_object(
                      'id', e.id, 'block_id', e.block_id, 'area', e.area,
