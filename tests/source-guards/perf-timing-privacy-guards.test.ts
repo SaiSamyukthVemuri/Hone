@@ -35,14 +35,46 @@ const CODE = stripComments(SOURCE);
 const CALL_SITE_ROOTS = ["app", "lib", "components"];
 
 /**
- * Strip comments so prose that merely MENTIONS `timed()` is not mistaken for a
- * call site. Block comments go first, then trailing line comments — the
- * `[^:]` guard keeps a `https://` inside a string literal intact.
+ * Remove WHOLE-LINE comments only, so prose that merely MENTIONS `timed()` is
+ * not mistaken for a call site.
+ *
+ * Deliberately not an inline stripper. Removing a `//` sequence from the middle
+ * of a line is unsafe here because comment delimiters occur inside string,
+ * template and regex literals throughout this codebase, and truncating a line
+ * would delete real code that follows it — a guard that can silently erase the
+ * very code it is checking is worse than no guard at all.
+ *
+ * The trade this makes is deliberate and one-directional: a trailing comment
+ * on a code line survives, so prose there can produce a FALSE POSITIVE. That
+ * is a loud failure a human resolves, which is the safe direction for a
+ * security-lane assertion. It can never produce a false negative.
  */
 function stripComments(text: string): string {
   return text
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trimStart();
+      const isWholeLineComment =
+        trimmed.startsWith("//") ||
+        trimmed.startsWith("/*") ||
+        trimmed.startsWith("*");
+      return isWholeLineComment ? "" : line;
+    })
+    .join("\n");
+}
+
+type CallSite = { fn: string; firstArg: string };
+
+/** Every `timed(` / `startPerfSpan(` call site in a source text. */
+function findCallSites(text: string): CallSite[] {
+  return [...stripComments(text).matchAll(/\b(timed|startPerfSpan)\(([^,)]*)/g)].map(
+    (match) => ({ fn: match[1], firstArg: match[2].trim() }),
+  );
+}
+
+/** A span name that is a plain double-quoted `<surface>.<phase>` literal. */
+function isLiteralSpanName(arg: string): boolean {
+  return /^"[a-z-]+\.[a-z-]+"$/.test(arg);
 }
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -116,15 +148,12 @@ describe("perf-timing call sites", () => {
     walk(path.join(REPO_ROOT, root)),
   ).filter((file) => file !== MODULE_PATH);
 
-  const callSites = files.flatMap((file) => {
-    const text = stripComments(readFileSync(file, "utf8"));
-    const matches = [...text.matchAll(/\b(timed|startPerfSpan)\(([^,)]*)/g)];
-    return matches.map((match) => ({
+  const callSites = files.flatMap((file) =>
+    findCallSites(readFileSync(file, "utf8")).map((site) => ({
+      ...site,
       file: path.relative(REPO_ROOT, file),
-      fn: match[1],
-      firstArg: match[2].trim(),
-    }));
-  });
+    })),
+  );
 
   it("finds the instrumented surfaces", () => {
     // Sanity: if this drops to zero the guards below pass vacuously.
@@ -144,11 +173,80 @@ describe("perf-timing call sites", () => {
     // reading as dynamic. Requiring a plain quoted string keeps every span
     // name greppable and provably free of interpolated data.
     const offenders = callSites.filter(
-      (site) => !/^"[a-z-]+\.[a-z-]+"$/.test(site.firstArg),
+      (site) => !isLiteralSpanName(site.firstArg),
     );
     expect(
       offenders,
       `non-literal perf span name(s): ${JSON.stringify(offenders)}`,
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The guards must not be able to pass VACUOUSLY.
+//
+// Every assertion above runs against comment-stripped source, so the stripper
+// is load-bearing: if it can delete real code, a prohibited construct sails
+// through unseen. These cases pin the exact hazard — comment delimiters inside
+// string, template and regex literals — against synthetic sources.
+// ---------------------------------------------------------------------------
+
+describe("the comment stripper cannot hide a violation", () => {
+  it("keeps a call site that follows a string containing a comment delimiter", () => {
+    const source = 'const sep = "//"; startPerfSpan(`${prefix}.domain`);';
+    const sites = findCallSites(source);
+    expect(sites).toHaveLength(1);
+    expect(isLiteralSpanName(sites[0].firstArg)).toBe(false);
+  });
+
+  it("keeps a call site that follows a block-comment delimiter in a string", () => {
+    const source = 'const s = "/*"; timed(`clients.${phase}`, run);';
+    const sites = findCallSites(source);
+    expect(sites).toHaveLength(1);
+    expect(isLiteralSpanName(sites[0].firstArg)).toBe(false);
+  });
+
+  it("keeps a call site that follows a URL literal", () => {
+    const source = 'const u = "https://hone.care"; timed(`a.${b}`, run);';
+    const sites = findCallSites(source);
+    expect(sites).toHaveLength(1);
+    expect(isLiteralSpanName(sites[0].firstArg)).toBe(false);
+  });
+
+  it("keeps a call site that follows a regex literal containing a slash pair", () => {
+    const source = 'const re = /a\\/\\/b/; startPerfSpan(spanFromRequest());';
+    const sites = findCallSites(source);
+    expect(sites).toHaveLength(1);
+    expect(isLiteralSpanName(sites[0].firstArg)).toBe(false);
+  });
+
+  it("does not preserve prohibited code hidden behind a string delimiter", () => {
+    // Codex's exact counterexample against the previous inline stripper: the
+    // old version reduced this to `const value = "` and the headers() read
+    // vanished. Whole-line stripping leaves it visible.
+    const source = 'const value = "//" + headers();';
+    expect(stripComments(source)).toContain("headers()");
+  });
+
+  it("still removes whole-line prose that merely mentions a call", () => {
+    const source = [
+      "// this file explains timed() and startPerfSpan() at length",
+      "/**",
+      " * More prose about timed(\"a.b\").",
+      " */",
+      'timed("clients.domain", run);',
+    ].join("\n");
+    const sites = findCallSites(source);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].firstArg).toBe('"clients.domain"');
+  });
+
+  it("accepts only a plain double-quoted span name", () => {
+    expect(isLiteralSpanName('"clients.domain"')).toBe(true);
+    expect(isLiteralSpanName('"client-profile.identity"')).toBe(true);
+    expect(isLiteralSpanName("`clients.domain`")).toBe(false);
+    expect(isLiteralSpanName("spanName")).toBe(false);
+    expect(isLiteralSpanName('"clients." + phase')).toBe(false);
+    expect(isLiteralSpanName("")).toBe(false);
   });
 });

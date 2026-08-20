@@ -645,10 +645,10 @@ async function ExposureIncidentsSection({
   studioId: string;
   isOwner: boolean;
 }) {
+  const domain = startPerfSpan("records.domain");
   // Non-owners get no list query: RLS (migration 0088) would return
   // zero rows anyway, but skipping the read keeps the UI honest (an
   // owner-only note instead of a misleading "no incidents" state).
-  const domain = startPerfSpan("records.domain");
   const records = isOwner ? await getExposureIncidentRecords(studioId) : [];
   const audit = await getAuditEventsByRecord(
     studioId,

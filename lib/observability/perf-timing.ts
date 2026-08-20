@@ -309,13 +309,22 @@ function record(
 }
 
 /**
- * Run `fn` inside a Sentry span when tracing is available, and exactly once
- * either way.
+ * Run `fn` inside a Sentry span when tracing is available — exactly once, and
+ * never letting the SDK's own failure become the caller's failure.
  *
- * The `invoked` flag is the whole point: if the SDK throws before it calls
- * our callback we still have to run the work, and if it throws after, the
- * error belongs to the caller and must propagate untouched. Without the flag
- * one of those two cases silently runs the callback twice.
+ * Three things can go wrong, and they need three different answers:
+ *
+ *   1. the SDK throws BEFORE our callback ran   -> run the work, unmeasured;
+ *   2. our callback itself threw or rejected    -> that is the caller's error,
+ *                                                  propagate it untouched;
+ *   3. the SDK throws AFTER our callback ran    -> the work already produced
+ *                                                  its result; a telemetry bug
+ *                                                  must not discard it.
+ *
+ * Tracking only "did the callback start?" collapses 2 and 3 and gets one of
+ * them wrong: it either re-runs a page's database reads or fails a page that
+ * had already succeeded. Capturing the callback's own promise separates them,
+ * because that promise IS the authoritative outcome of the work in both cases.
  */
 async function runWithSentrySpan<T>(
   span: PerfSpanId,
@@ -332,16 +341,59 @@ async function runWithSentrySpan<T>(
 
   if (typeof startSpan !== "function") return fn();
 
-  let invoked = false;
+  let started = false;
+  let work: Promise<T> | undefined;
   try {
     return await startSpan({ name: span, op: SENTRY_OP }, () => {
-      invoked = true;
-      return fn();
+      started = true;
+      work = fn();
+      return work;
     });
   } catch (err) {
-    if (invoked) throw err;
-    // The telemetry backend failed before the work ran. Run it unmeasured.
-    return fn();
+    // Case 1: the SDK never reached our callback.
+    if (!started) return fn();
+    // Case 3: the work ran. Its own promise decides the outcome, whether that
+    // is a value or a rejection — the SDK's error is discarded, not surfaced.
+    if (work !== undefined) return work;
+    // Case 2 with a SYNCHRONOUS throw from fn(), so no promise was ever
+    // assigned. That error is the caller's and is re-thrown unchanged.
+    throw err;
+  }
+}
+
+/**
+ * Begin a Sentry span for a BRACKETED region.
+ *
+ * `Sentry.startSpan` is callback-scoped and cannot express a region that ends
+ * somewhere else in a function body, so the bracket form uses the inactive-span
+ * API instead. Without this, the `.domain` phases — which are the main
+ * page-work windows and the whole point of the waterfall — would appear in the
+ * structured log but be missing from every sampled trace.
+ *
+ * Returns null whenever the SDK is absent or unhappy; callers treat that as
+ * "unmeasured in Sentry", never as an error.
+ */
+function beginInactiveSentrySpan(span: PerfSpanId): { end?: () => void } | null {
+  try {
+    const startInactiveSpan = (
+      Sentry as unknown as {
+        startInactiveSpan?: (options: { name: string; op: string }) => {
+          end?: () => void;
+        };
+      }
+    )?.startInactiveSpan;
+    if (typeof startInactiveSpan !== "function") return null;
+    return startInactiveSpan({ name: span, op: SENTRY_OP }) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function endInactiveSentrySpan(span: { end?: () => void } | null): void {
+  try {
+    span?.end?.();
+  } catch {
+    // A telemetry span that cannot close is not the page's problem.
   }
 }
 
@@ -390,20 +442,23 @@ const INERT_SPAN: PerfSpanHandle = { end: () => {} };
  *   ... existing statements, completely untouched ...
  *   domain.end();
  *
- * If the region throws before `end()`, the span is simply never recorded.
- * That is the correct trade for telemetry: an unrecorded span is a gap in a
- * chart, whereas a `finally` here would add a control-flow construct to a
- * page this PR has no business restructuring.
+ * If the region throws before `end()`, neither the summary record nor the
+ * Sentry span is closed — the inactive span is simply abandoned and dropped
+ * with its transaction. That is the correct trade for telemetry: an
+ * unrecorded span is a gap in a chart, whereas a `finally` here would add a
+ * control-flow construct to a page this PR has no business restructuring.
  */
 export function startPerfSpan(span: PerfSpanId): PerfSpanHandle {
   if (!isPerfTimingEnabled()) return INERT_SPAN;
 
   const startedAt = performance.now();
+  const sentrySpan = beginInactiveSentrySpan(span);
   let ended = false;
   return {
     end: () => {
       if (ended) return;
       ended = true;
+      endInactiveSentrySpan(sentrySpan);
       record(span, performance.now() - startedAt, "ok");
     },
   };
