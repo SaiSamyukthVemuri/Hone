@@ -241,11 +241,40 @@ test.describe("preparing a future day — 390px phone", () => {
       }
     });
 
-    await test.step("14. the primary row action is a real touch target", async () => {
+    await test.step("14. EVERY actionable control on the row is a real touch target", async () => {
+      // Measured, not asserted from class names: the rendered hit box is the
+      // thing a thumb has to find. The disclosure toggle was omitted from this
+      // loop once already, and shipped at the height of its own 11px text
+      // while every control around it was 44px.
       const primary = page.getByRole("link", { name: "Open client" }).first();
       await expect(primary).toBeVisible();
-      const box = await primary.boundingBox();
-      expect(box!.height, "primary action height").toBeGreaterThanOrEqual(44);
+      const primaryBox = await primary.boundingBox();
+      expect(primaryBox!.height, "primary action height").toBeGreaterThanOrEqual(44);
+
+      const toggle = page.getByTestId("dashboard-memory-toggle").first();
+      await expect(toggle).toBeVisible();
+      const toggleBox = await toggle.boundingBox();
+      expect(toggleBox!.height, "disclosure toggle height").toBeGreaterThanOrEqual(44);
+      expect(toggleBox!.x, "disclosure toggle left").toBeGreaterThanOrEqual(0);
+      expect(
+        toggleBox!.x + toggleBox!.width,
+        "disclosure toggle right",
+      ).toBeLessThanOrEqual(390);
+      // The type stays small and quiet — the BOX grew, not the typography.
+      const fontSize = await toggle.evaluate(
+        (el) => getComputedStyle(el).fontSize,
+      );
+      expect(fontSize, "toggle typography should stay quiet").toBe("11px");
+    });
+
+    await test.step("14b. and it still opens and closes under a thumb", async () => {
+      const toggle = page.getByTestId("dashboard-memory-toggle").first();
+      await toggle.tap();
+      await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({
+        timeout: T,
+      });
+      await toggle.tap();
+      await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
     });
 
     await test.step("15. no horizontal overflow at 390px", async () => {
