@@ -47,3 +47,36 @@ export function toDashboardPrepSummary(args: {
     remember: args.planNote,
   };
 }
+
+/**
+ * What the DISCLOSURE client component is allowed to receive.
+ *
+ * Strictly narrower than `DashboardPrepSummary`: it omits `remember`, the plan
+ * note. That note is rendered by the SERVER, and only off Today — so on Today
+ * it is not visible at all, and handing the whole summary to a Client
+ * Component pushed a bounded clinical note across the RSC boundary for every
+ * row that had one, invisibly.
+ */
+export type DashboardTreatmentDisclosureSummary = Pick<
+  DashboardPrepSummary,
+  "hasTreatment" | "unavailable" | "compactSummary"
+>;
+
+/**
+ * Build the disclosure projection by CONSTRUCTION, not by type assertion.
+ *
+ * This returns a NEW object with exactly three keys. Narrowing only the
+ * annotation would leave `remember` on the runtime object, and the RSC
+ * serializer follows the object, not the type — so the note would still cross
+ * while the code looked correct. That is the failure mode this function exists
+ * to make impossible.
+ */
+export function toDisclosureSummary(
+  summary: DashboardPrepSummary,
+): DashboardTreatmentDisclosureSummary {
+  return {
+    hasTreatment: summary.hasTreatment,
+    unavailable: summary.unavailable,
+    compactSummary: summary.compactSummary,
+  };
+}

@@ -86,7 +86,11 @@ describe("the client boundary carries only the visible projection", () => {
   it("the Client Component does not accept the full model as a prop", () => {
     expect(COMPONENT).toMatch(/^"use client";/);
     expect(COMPONENT).not.toMatch(/memory: AppointmentPrepMemory \| null/);
-    expect(COMPONENT).toMatch(/summary: DashboardPrepSummary/);
+    // NARROWER than the row's own summary: it omits the plan note, which the
+    // server renders itself. Passing the wider object crossed that note to the
+    // browser for every row that had one.
+    expect(COMPONENT).toMatch(/summary: DashboardTreatmentDisclosureSummary/);
+    expect(COMPONENT).not.toMatch(/summary\.remember/);
   });
 
   it("the page passes the projection, never the memory", () => {

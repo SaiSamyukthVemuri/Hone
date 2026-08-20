@@ -544,3 +544,93 @@ test.describe("a rejected disclosure fails to its own line", () => {
     });
   });
 });
+
+// ===========================================================================
+// The plan note is SERVER-rendered, and only where it is visible.
+// ===========================================================================
+
+test.describe("the plan note is server-rendered where it is shown", () => {
+  // NOTE ON WHAT IS PROVEN WHERE.
+  //
+  // The decisive proof for the disclosure boundary is the RUNTIME unit test in
+  // tests/app/dashboard/today-two-authority-truth.test.ts: `toDisclosureSummary`
+  // returns a new object with exactly three keys, so the plan note cannot be on
+  // the wire as a disclosure prop regardless of what the type says.
+  //
+  // A browser proof of the same property is NOT constructible by seeding:
+  // Before-Today resolves its "Remember" line from the newest session that
+  // recorded a plan note — the same session the prep loader picks — so on Today
+  // the note is visible whenever it exists at all. There is no seedable state
+  // where it is present but unrendered. Asserting its absence from Today's
+  // payload would therefore be asserting something false, and counting
+  // occurrences cannot separate the rendered copy from a prop, because Next
+  // emits both HTML and an RSC payload for anything rendered.
+  //
+  // What this covers instead is the visible half of the contract.
+  test("off Today the note renders, and nothing else claims it", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    const PLAN = "SENTINELPLAN-drop-one-energy-step";
+    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: null,
+      nextVisitNote: PLAN,
+    });
+    await seedE2eTodayAppointment(seed, {
+      clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+    await loginAsOwner(page, seed);
+
+    await test.step("28. off Today the SERVER paints it, once", async () => {
+      await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+      await expect(page.getByTestId("dashboard-prep-remember")).toContainText(PLAN, {
+        timeout: T,
+      });
+      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(1);
+    });
+
+    await test.step("29. on Today the Before-Today line owns it, not the prep strip", async () => {
+      await page.goto("/dashboard");
+      await expect(
+        page.getByRole("heading", { level: 2, name: "Today", exact: true }),
+      ).toBeVisible({ timeout: T });
+      // One note, one label. The prep strip does not repeat it.
+      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      await expect(page.getByText(`Remember: ${PLAN}`)).toBeVisible();
+    });
+  });
+});
+
+test.describe("Today never says 'no history' beside a proven treatment", () => {
+  test("a client the prep loader proves has history is not called new", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: "Avoid the jawline",
+      nextVisitNote: "Lower the energy one step",
+    });
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Today", exact: true }),
+    ).toBeVisible({ timeout: T });
+
+    await test.step("30. the two statements never appear together on one row", async () => {
+      const row = page.locator("li").filter({ hasText: "Memory Client" }).first();
+      const saysNew = await row
+        .getByText("New client · No charted history yet")
+        .count();
+      const showsTreatment = await row
+        .getByTestId("dashboard-memory-compact")
+        .count();
+      // Whatever the two authorities each concluded, the row must never carry
+      // both at once.
+      expect(
+        saysNew === 0 || showsTreatment === 0,
+        "row asserted 'New client' beside a proven last treatment",
+      ).toBe(true);
+    });
+  });
+});

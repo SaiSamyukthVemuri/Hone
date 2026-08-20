@@ -2,7 +2,7 @@
 
 import { useId, useState, useTransition } from "react";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
-import type { DashboardPrepSummary } from "@/lib/dashboard/dashboard-prep-summary";
+import type { DashboardTreatmentDisclosureSummary } from "@/lib/dashboard/dashboard-prep-summary";
 import {
   loadAppointmentPrepMemory,
   type PrepMemoryResult,
@@ -52,8 +52,14 @@ export function DashboardTreatmentMemory({
   /** For the card's own links only. Never used as authorization. */
   clientId: string;
   clientName: string;
-  /** The visible compact projection. Never the full model. */
-  summary: DashboardPrepSummary;
+  /**
+   * The disclosure projection: three fields, all of them painted here.
+   *
+   * Narrower than the row's own summary on purpose — it omits the plan note,
+   * which the SERVER renders and only off Today. Passing the wider object sent
+   * that note across the boundary on Today, where it is not visible at all.
+   */
+  summary: DashboardTreatmentDisclosureSummary;
 }) {
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<PrepMemoryResult | null>(null);

@@ -69,6 +69,7 @@ import {
 import { DashboardTreatmentMemory } from "./dashboard-treatment-memory";
 import {
   toDashboardPrepSummary,
+  toDisclosureSummary,
   type DashboardPrepSummary,
 } from "@/lib/dashboard/dashboard-prep-summary";
 import {
@@ -1044,9 +1045,30 @@ function AppointmentRow({
     status: appt.status,
     clientId: appt.client_id,
     appointmentId: appt.id,
-    history: historyAsked
-      ? { asked: true, hasHistory: workflow?.hasHistory ?? false }
-      : { asked: false },
+    // THE TODAY MATRIX. Two authorities, and the action must not contradict
+    // either of them:
+    //
+    //   workflow true                      -> history present (Review)
+    //   workflow false + prep treatment    -> history present (Review) — the
+    //                                         prep loader PROVED it, so the
+    //                                         new-client affordance would be
+    //                                         a false claim
+    //   workflow false + prep unavailable  -> NOT ASKED, neutral action; an
+    //                                         unanswered read is not evidence
+    //                                         of a new client
+    //   workflow false + prep proved none  -> history absent (Open client)
+    //
+    // Off Today the question is never posed at all, which is the `asked:false`
+    // branch the wrapper already owns.
+    history: !historyAsked
+      ? { asked: false }
+      : prepSummary.unavailable && !(workflow?.hasHistory ?? false)
+        ? { asked: false }
+        : {
+            asked: true,
+            hasHistory:
+              (workflow?.hasHistory ?? false) || prepSummary.hasTreatment,
+          },
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
   });
@@ -1199,12 +1221,35 @@ function AppointmentRow({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                   Before today
                 </span>
-                {!workflow.hasHistory ? (
+                {!workflow.hasHistory &&
+                !prepSummary.hasTreatment &&
+                !prepSummary.unavailable ? (
                   // ONE relationship line, not "New client" here and "No prior
                   // treatment history yet" somewhere else.
+                  //
+                  // GUARDED BY BOTH AUTHORITIES. Today carries two independent
+                  // evidence sources — the Before-Today workflow and the
+                  // appointment-prep loader — and they can disagree, because
+                  // they differ on void records, truncation and error
+                  // handling. Once the prep memory renders on its own
+                  // authority, the unguarded form could print "New client · No
+                  // charted history yet" directly above "Last treatment: …"
+                  // for the same person.
+                  //
+                  // So this claim now requires that NEITHER source contradicts
+                  // it: the workflow says no history, the prep loader proved no
+                  // treatment, and the prep read actually answered. A
+                  // truncated or failed prep read is not permission to call
+                  // someone new.
                   <span className="text-neutral-500">
                     New client · No charted history yet
                   </span>
+                ) : !workflow.hasHistory ? (
+                  // The workflow says no history but the prep loader either
+                  // proved a treatment or could not answer. Say nothing about
+                  // the relationship; the treatment strip below speaks for
+                  // itself, truthfully, from its own read.
+                  null
                 ) : (
                   <>
                     {/* Remember = the PLAN note (next_session_note). It is no
@@ -1309,7 +1354,11 @@ function AppointmentRow({
               appointmentId={appt.id}
               clientId={appt.client_id}
               clientName={appt.client?.name ?? "this client"}
-              summary={prepSummary}
+              /* The NARROW projection. `prepSummary` also carries the plan
+                 note, which the server renders itself and only off Today —
+                 passing the whole object crossed that note to the browser on
+                 Today, where nothing displays it. */
+              summary={toDisclosureSummary(prepSummary)}
             />
           </div>
         )}

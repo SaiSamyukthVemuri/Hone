@@ -168,22 +168,26 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     // where an answer genuinely exists.
     expect(CODE).not.toMatch(/resolveNextAction\(\{/);
     expect(CODE).toMatch(/resolveDayNextAction\(\{/);
-    // The only `hasHistory` fed to an action lives inside the `asked: true`
-    // arm. The other two reads are the workflow INPUT (built only for today —
-    // pinned above) and the render guard (behind `workflow &&`, null off
-    // today), so neither can be reached on another day.
+    // THE TWO-AUTHORITY MATRIX. Today carries two independent evidence
+    // sources — the Before-Today workflow and the appointment-prep loader —
+    // and they can disagree. The action must not contradict either:
+    //
+    //   workflow true                     -> history present
+    //   workflow false + prep treatment   -> history present (the prep loader
+    //                                        PROVED it; a boolean must not
+    //                                        override proof)
+    //   workflow false + prep unavailable -> NOT ASKED, neutral action
+    //   workflow false + prep proved none -> history absent
     const actionCall = CODE.slice(
       CODE.indexOf("resolveDayNextAction({"),
       CODE.indexOf("});", CODE.indexOf("resolveDayNextAction({")),
     );
-    // Every mention of history in the call sits on the `asked: true` side.
-    expect(actionCall).toMatch(/asked: true, hasHistory:/);
-    expect(actionCall).toMatch(/: \{ asked: false \}/);
-    expect(actionCall.replace(/\{ asked: true, hasHistory: workflow\?\.hasHistory \?\? false \}/, "")).not.toMatch(
-      /hasHistory/,
+    expect(actionCall).toMatch(/history: !historyAsked\s*\?\s*\{ asked: false \}/);
+    expect(actionCall).toMatch(
+      /prepSummary\.unavailable && !\(workflow\?\.hasHistory \?\? false\)\s*\?\s*\{ asked: false \}/,
     );
-    expect(CODE).toMatch(
-      /history: historyAsked\s*\?\s*\{ asked: true, hasHistory: workflow\?\.hasHistory \?\? false \}\s*:\s*\{ asked: false \}/,
+    expect(actionCall).toMatch(
+      /hasHistory:\s*\(workflow\?\.hasHistory \?\? false\) \|\| prepSummary\.hasTreatment/,
     );
     expect(CODE).toMatch(/historyAsked=\{viewingToday\}/);
   });
