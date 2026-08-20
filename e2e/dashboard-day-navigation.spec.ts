@@ -4,6 +4,7 @@ import {
   seedE2eChartedSessionAt,
   seedE2eDashboardClient,
   seedE2eDashboardMemoryClient,
+  seedE2eDeepChartedHistory,
   seedE2eStudio,
   seedE2eTodayAppointment,
   type E2eSeed,
@@ -414,6 +415,81 @@ test.describe("the ±365-day horizon", () => {
       // Next is live and steps INWARD, not to today.
       await page.getByTestId("dashboard-next-day").click();
       await landsOn(page, { day: localDay(tz, -364) });
+    });
+  });
+});
+
+// ===========================================================================
+// #605 ARCHITECTURE REPAIR — history uncertainty survives end to end.
+// ===========================================================================
+//
+// Two reviews in a row found the same root cause one layer further down: an
+// unknown history being written down as "no history". These prove the fix
+// where the practitioner reads it.
+
+test.describe("history that could not be established", () => {
+  test("an unprovable history is never rendered as a new client, and never deletes the treatment memory", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    // A real returning client with a real charted history and an appointment
+    // TOMORROW — the exact row Chloe navigates forward to prepare.
+    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: "Avoid the jawline",
+      nextVisitNote: "Lower the energy one step",
+    });
+    await seedE2eTodayAppointment(seed, {
+      clientId,
+      startsMinutesFromNow: 25 * 60,
+      endsMinutesFromNow: 25 * 60 + 45,
+    });
+    // Now make the shared history batch overflow. The history loader's own
+    // bounded areas read hits its ceiling; the prep loader, which reads areas
+    // as an embedded child, still answers.
+    await seedE2eDeepChartedHistory(seed, {
+      clientId,
+      sessions: 25,
+      areasPerBlock: 36,
+    });
+
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+    await expect(heading(page, "Today")).toBeVisible({ timeout: T });
+    await page.getByTestId("dashboard-next-day").click();
+    await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
+
+    await test.step("the row says it cannot say — it does not invent a first visit", async () => {
+      await expect(page.getByText("History unavailable").first()).toBeVisible({
+        timeout: T,
+      });
+      // The whole point. A crowded-out read is not evidence of a new client.
+      await expect(
+        page.getByText("New client · No charted history yet"),
+      ).toHaveCount(0);
+    });
+
+    await test.step("no history-derived claim is printed from a read that answered nothing", async () => {
+      await expect(page.getByText(/^Latest setup:/)).toHaveCount(0);
+      await expect(page.getByTestId("missing-record-chip")).toHaveCount(0);
+    });
+
+    await test.step("and the INDEPENDENT treatment memory still renders", async () => {
+      // The load-bearing assertion. This region used to be gated on the
+      // history preview, so one loader's failure silently deleted a chart the
+      // other loader had already read — with no error and no way to tell a
+      // failure from an empty record.
+      // Either the memory itself, or the prep loader's OWN "could not be
+      // loaded" notice. What must never happen again is the region vanishing,
+      // which left no way to tell a failure from an empty chart.
+      const compact = page.getByTestId("today-memory-compact");
+      const ownNotice = page.getByTestId("today-memory-unavailable");
+      await expect(compact.or(ownNotice).first()).toBeVisible({ timeout: T });
+      // In this scenario the prep loader DID answer, so it is the real memory.
+      await expect(compact.first()).toBeVisible({ timeout: T });
+    });
+
+    await test.step("the row does not offer the returning-client review it cannot justify", async () => {
+      await expect(page.getByText("Review Before Today")).toHaveCount(0);
     });
   });
 });

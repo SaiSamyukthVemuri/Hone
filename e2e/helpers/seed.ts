@@ -2165,6 +2165,63 @@ export async function seedE2eChartedSessionAt(
   return { sessionId };
 }
 
+/**
+ * A deep charted history for one client, wide enough to TRUNCATE the
+ * Dashboard's shared history batch.
+ *
+ * This is how the #605 truncation contract is proven from the outside without
+ * injecting a fault: the before-appointment history loader reads structured
+ * areas as its own bounded query, while the appointment-prep loader reads them
+ * as an EMBEDDED child of its blocks select. So a wide-enough area set makes
+ * the history load unavailable while the prep load still answers — exactly the
+ * state where the Dashboard used to hide a chart it had successfully read.
+ *
+ * `areasPerBlock` is deliberately large. It is a mechanism test, not a claim
+ * that a real session looks like this.
+ */
+export async function seedE2eDeepChartedHistory(
+  seed: E2eSeed,
+  opts: { clientId: string; sessions: number; areasPerBlock: number },
+): Promise<void> {
+  const prac = (
+    await sql<{ id: string }>(
+      `select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`,
+      [seed.studioId],
+    )
+  )[0];
+  await sql(
+    `with s as (
+       insert into public.sessions
+         (id, studio_id, client_id, practitioner_id, modality, started_at, next_session_note)
+       select gen_random_uuid(), $1, $2, $3, 'electrolysis',
+              now() - (g || ' days')::interval, 'Deep history plan'
+       from generate_series(1, $4) g
+       returning id
+     ), b as (
+       insert into public.session_blocks
+         (id, studio_id, session_id, sort_order, primary_area, side, mode, apilus_modality,
+          energy_level, minutes_performed, machine_frequency, probe_label)
+       select gen_random_uuid(), $1, s.id, 1, 'Chin', 'left', 'thermolysis', 'Synchro',
+              7, 15, '27.12 MHz', 'Ballet · Gold · Two-piece · F3 Short'
+       from s
+       returning id, session_id
+     ), e as (
+       insert into public.electrolysis_entries
+         (id, session_id, block_id, area, areas, mode, energy_level, minutes_performed,
+          machine_frequency, hairs_treated)
+       select gen_random_uuid(), b.session_id, b.id, 'Chin', array['Chin']::text[],
+              'thermo', 7, 15, '27.12 MHz', 25
+       from b
+       returning id
+     )
+     insert into public.session_block_areas
+       (id, studio_id, session_block_id, area, laterality, display_order)
+     select gen_random_uuid(), $1, b.id, 'Area ' || a, 'left', a
+     from b, generate_series(1, $5) a`,
+    [seed.studioId, opts.clientId, prac.id, opts.sessions, opts.areasPerBlock],
+  );
+}
+
 export async function seedE2eUnlinkedSession(
   seed: E2eSeed,
 ): Promise<{ clientId: string; sessionId: string }> {

@@ -21,7 +21,7 @@ function input(over: Partial<TodayWorkflowInput> = {}): TodayWorkflowInput {
     timeLabel: "9:00 AM",
     status: "confirmed",
     serviceName: "Electrolysis 30",
-    hasHistory: true,
+    history: "present",
     nextVisitNote: null,
     cautionNote: null,
     setupLine: null,
@@ -158,11 +158,11 @@ describe("5-7. the note facts each resolve ONCE", () => {
 
   it("latest setup resolves once, and only when there is history", () => {
     const [withHistory] = buildTodayWorkflow([
-      input({ hasHistory: true, setupLine: "27.12 MHz · Ballet F3" }),
+      input({ history: "present", setupLine: "27.12 MHz · Ballet F3" }),
     ]).items;
     expect(withHistory.setup).toBe("27.12 MHz · Ballet F3");
     const [noHistory] = buildTodayWorkflow([
-      input({ hasHistory: false, setupLine: "27.12 MHz · Ballet F3" }),
+      input({ history: "absent", setupLine: "27.12 MHz · Ballet F3" }),
     ]).items;
     // A "latest setup" for someone with no charted history is noise; the
     // no-history state already says everything.
@@ -250,16 +250,16 @@ describe("10. missing-record reminders are specific and deduplicated", () => {
 });
 
 describe("11. relationship state is stated once", () => {
-  it("a no-history client carries hasHistory:false and no setup line", () => {
+  it("a no-history client carries history:absent and no setup line", () => {
     const [item] = buildTodayWorkflow([
-      input({ hasHistory: false, setupLine: "x" }),
+      input({ history: "absent", setupLine: "x" }),
     ]).items;
-    expect(item.hasHistory).toBe(false);
+    expect(item.history).toBe("absent");
     expect(item.setup).toBeNull();
   });
 
   it("the model emits no 'Returning client' badge string", () => {
-    const [item] = buildTodayWorkflow([input({ hasHistory: true })]).items;
+    const [item] = buildTodayWorkflow([input({ history: "present" })]).items;
     // The old brief built a subtitle "Returning client · <service>" and a
     // duplicate tags array. Both duplicated facts already visible on the card.
     expect(JSON.stringify(item)).not.toMatch(/Returning client/);

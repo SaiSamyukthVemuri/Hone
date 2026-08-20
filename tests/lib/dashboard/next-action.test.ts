@@ -1,3 +1,4 @@
+import type { HistoryStatus } from "@/lib/dashboard/before-today-previews";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import { resolveNextAction } from "@/lib/dashboard/next-action";
 const base = {
   clientId: "c1",
   appointmentId: "a1",
-  hasHistory: false,
+  history: "absent" as HistoryStatus,
   sessionId: null as string | null,
   hasChartedArea: false,
 };
@@ -17,7 +18,7 @@ const base = {
 describe("resolveNextAction", () => {
   it("upcoming + returning client: Review Before Today -> client page", () => {
     expect(
-      resolveNextAction({ ...base, status: "confirmed", hasHistory: true }),
+      resolveNextAction({ ...base, status: "confirmed", history: "present" }),
     ).toEqual({ label: "Review Before Today", href: "/clients/c1", chip: null });
   });
 
@@ -119,5 +120,44 @@ describe("dashboard wiring (source pins)", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     expect(executable).not.toMatch(/recommend|score|monitor|unsafe|caused|diagnos/i);
+  });
+});
+
+describe("UNAVAILABLE is a deliberate neutral degradation, not a coerced false", () => {
+  it("an unanswered history read does NOT get the returning-client review", () => {
+    expect(
+      resolveNextAction({ ...base, status: "confirmed", history: "unavailable" }),
+    ).toEqual({ label: "Open client", href: "/clients/c1", chip: null });
+  });
+
+  it("it lands on the SAME destination as the proven-absent case", () => {
+    // "Open client" asserts nothing about the relationship and its href is
+    // correct either way, which is why it is the chosen neutral fallback. What
+    // must never happen is the reverse — an unavailable read claiming the
+    // returning-client affordance, or a returning client losing it.
+    const unavailable = resolveNextAction({ ...base, status: "confirmed", history: "unavailable" });
+    const absent = resolveNextAction({ ...base, status: "confirmed", history: "absent" });
+    expect(unavailable).toEqual(absent);
+    expect(unavailable.label).not.toBe("Review Before Today");
+  });
+
+  it("the charting rules still win over history, whatever its state", () => {
+    // Order matters: a started session is a stronger fact than any history
+    // question, so an unavailable read must not disturb it.
+    for (const history of ["present", "absent", "unavailable"] as const) {
+      expect(
+        resolveNextAction({ ...base, status: "confirmed", history, sessionId: "s1" }).label,
+      ).toBe("Continue charting");
+      expect(
+        resolveNextAction({ ...base, status: "completed", history }).chip,
+      ).toBe("Charting needed");
+    }
+  });
+
+  it("no history state produces an alarming primary button", () => {
+    for (const history of ["present", "absent", "unavailable"] as const) {
+      const label = resolveNextAction({ ...base, status: "confirmed", history }).label;
+      expect(label).not.toMatch(/error|failed|unavailable/i);
+    }
   });
 });

@@ -10,6 +10,7 @@ import {
   buildBeforeToday,
   type BeforeToday,
 } from "@/lib/sessions/before-today";
+import { DEFAULT_CHARTED_SESSION_LIMIT } from "@/lib/sessions/charted-session";
 import type { SessionBlockArea } from "@/lib/types/database";
 
 // PR #212: compact "Before today" previews for the Dashboard Today
@@ -100,7 +101,7 @@ export function compactBeforeToday(briefing: BeforeToday): BeforeTodayPreview {
   };
 }
 
-type SessionRow = {
+export type SessionRow = {
   id: string;
   client_id: string;
   // The appointment this session was recorded FOR, when it was started from
@@ -117,7 +118,7 @@ type SessionRow = {
   laser_entries: Array<{ id: string; deleted_at: string | null }> | null;
 };
 
-type BlockRow = ClinicalSummaryBlock & {
+export type BlockRow = ClinicalSummaryBlock & {
   id: string;
   session_id: string;
   machine_frequency: string | null;
@@ -138,17 +139,105 @@ export type BeforeAppointmentRequest = {
 };
 
 /**
- * The load, with UNAVAILABLE preserved as its own outcome.
+ * ONE appointment's history, as a closed set of states.
  *
- * `{ ok: false }` means the reads did not establish anything. It must never be
- * flattened into "no history": an unproven absence rendered as "New client"
- * is a claim about a real person that nothing verified. Same discipline as the
- * card-on-file load, which distinguishes ABSENT from UNKNOWN for the same
- * reason.
+ * PRESENT     — the reads answered, and prior charted history exists before
+ *               THIS appointment. Carries the preview.
+ * ABSENT      — the reads answered sufficiently and establish that there is
+ *               none.
+ * UNAVAILABLE — the system cannot answer: a read failed, or the shared batch
+ *               was truncated and this appointment's completeness could not be
+ *               established.
+ *
+ * The preview EXISTS ONLY on the present arm. That is the point of the shape:
+ * `setupLine`, `cautionNote` and `reminders` are unreachable unless a read
+ * proved them, so "unknown" cannot be spelled as "null" or "[]" by accident.
+ * The previous model — two booleans, `historyKnown` and `hasHistory`, either
+ * of which could be false — put the burden on every consumer to remember
+ * which one wins, and three consumers forgot.
+ *
+ * Same discipline as `CardOnFileStatus`, which distinguishes "no card" from
+ * "unavailable" for exactly this reason.
  */
-export type BeforeAppointmentLoad =
-  | { ok: true; previews: Map<string, BeforeTodayPreview> }
-  | { ok: false };
+export type AppointmentHistory =
+  | { status: "present"; preview: BeforeTodayPreview }
+  | { status: "absent" }
+  | { status: "unavailable" };
+
+export type HistoryStatus = AppointmentHistory["status"];
+
+/**
+ * Whether the treatment-memory region may render.
+ *
+ * NOTE THE ASYMMETRY, which is the whole point: `unavailable` returns TRUE.
+ * The prep-memory loader is an INDEPENDENT query with its own three-state
+ * answer, and it must be allowed to speak — either with the memory it loaded
+ * or with its own "could not be loaded" notice. Suppressing the region because
+ * THIS load failed deletes a result that another read established, and leaves
+ * the practitioner unable to tell a failure from an empty chart.
+ *
+ * Only a PROVEN absence hides it, because there is genuinely nothing to show.
+ */
+export function shouldShowTreatmentMemory(history: HistoryStatus): boolean {
+  return history !== "absent";
+}
+
+/** Whether the row may offer the returning-client review affordance. */
+export function shouldOfferHistoryReview(history: HistoryStatus): boolean {
+  return history === "present";
+}
+
+// ---------------------------------------------------------------------------
+// Query budget. TRUNCATION IS REPORTED, NOT GUESSED — the same contract
+// `loadLastChartedTreatmentsForClients` states, because this loader shares one
+// batched read between every client on the roster in exactly the same way.
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-client session window. Every session-selection this preview performs —
+ * `pickLastTreatment`, `pickPreClientWatchPlanSource` — is a newest-first
+ * FIRST-HIT scan, which is the same shape `DEFAULT_CHARTED_SESSION_LIMIT`
+ * was sized for, so the constant is shared rather than re-guessed.
+ */
+const PREVIEW_SESSIONS_PER_CLIENT = DEFAULT_CHARTED_SESSION_LIMIT;
+
+/** Hard ceiling on the shared session read, so a large day cannot ask for an
+ *  unbounded payload. */
+const MAX_PREVIEW_SESSION_ROWS = 300;
+
+/**
+ * Ceiling on each CHILD read (blocks, structured areas).
+ *
+ * Deliberately below the PostgREST `max_rows` server cap: if the server's cap
+ * bound first, `rows.length >= OUR_LIMIT` would never fire and the truncation
+ * would be undetectable — which is precisely the state these reads were in,
+ * with no `.limit()` at all.
+ */
+const MAX_PREVIEW_CHILD_ROWS = 900;
+
+/**
+ * The shared session budget for one roster: each client could, in the even
+ * case, fill its own window, capped so a large day cannot ask PostgREST for an
+ * unbounded payload.
+ */
+export function previewSessionBudget(uniqueClientCount: number): number {
+  return Math.min(
+    PREVIEW_SESSIONS_PER_CLIENT * Math.max(0, uniqueClientCount),
+    MAX_PREVIEW_SESSION_ROWS,
+  );
+}
+
+/**
+ * Whether a read came back at its budget, i.e. rows may have been dropped.
+ *
+ * `>=` rather than `>`: PostgREST can never return MORE than the limit, so `>`
+ * is dead code that never fires. The cost of `>=` is a false positive at an
+ * exact fit — reporting unavailable when the batch happened to be exactly
+ * full. That direction is the safe one.
+ */
+export function isBatchTruncated(rowCount: number, budget: number): boolean {
+  return rowCount >= budget;
+}
 
 /**
  * The eligibility rule, on its own, so it can be proven without a database.
@@ -265,20 +354,53 @@ function buildPreviewFromSessions(args: {
 }
 
 /**
- * Previews for a day's appointments, each bounded by its OWN start instant.
+ * History for a day's appointments, each bounded by its OWN start instant.
  *
- * Batched: one sessions read for every client on the roster, then blocks,
- * structured areas and client fields over what that returned. The number of
- * queries does not grow with the number of appointments — adding a tenth
- * appointment adds no query.
+ * EVERY requested appointment id appears in the returned map. There is no
+ * page-wide "ok" flag, because completeness is not a page-wide property: a
+ * shared batch can answer for one client and starve another, and one boolean
+ * cannot say so.
+ *
+ * TRUNCATION IS REPORTED, NOT GUESSED. The reads are budgeted from the roster
+ * and each one is checked against its own budget:
+ *
+ *   * SESSIONS truncated — the batch is ordered by global recency, so the rows
+ *     that lose are the OLDEST across all clients: exactly the returning-after-
+ *     a-gap client for whom history matters most. Any appointment left with no
+ *     eligible session is then UNAVAILABLE, not absent — we did not read far
+ *     enough to prove anything. Appointments that DID find history keep their
+ *     answer, because the per-client slice is a recency prefix.
+ *
+ *   * BLOCKS or AREAS truncated — the whole load is UNAVAILABLE. These reads
+ *     are ordered by `sort_order` / `display_order`, NOT by recency, so their
+ *     truncation is not a prefix: it drops later blocks across every session at
+ *     once. That does not merely omit facts, it CORRUPTS them — a dropped
+ *     caution block makes a real clinical caution vanish behind "No watch/plan
+ *     note.", and can promote an older session's plan as the current one. No
+ *     positive claim survives it, so none is made.
+ *
+ *   * The CLIENT row missing — that appointment is UNAVAILABLE. Without it the
+ *     briefing would emit "date of birth not recorded" / "phone not recorded" /
+ *     "address not recorded" reminders that are artefacts of a short read.
  */
-export async function getBeforeAppointmentPreviews(
+export async function getAppointmentHistory(
   studioId: string,
   appointments: ReadonlyArray<BeforeAppointmentRequest>,
-): Promise<BeforeAppointmentLoad> {
-  const previews = new Map<string, BeforeTodayPreview>();
-  const requests = appointments.filter((a) => a.appointmentId && a.clientId);
-  if (requests.length === 0) return { ok: true, previews };
+): Promise<Map<string, AppointmentHistory>> {
+  const out = new Map<string, AppointmentHistory>();
+  const requests = appointments.filter(
+    (a) => a.appointmentId && a.clientId && a.before,
+  );
+  // Anything malformed still gets an answer, and the answer is "we cannot say".
+  for (const a of appointments) {
+    if (!requests.includes(a)) out.set(a.appointmentId, { status: "unavailable" });
+  }
+  if (requests.length === 0) return out;
+
+  const unavailableForAll = (): Map<string, AppointmentHistory> => {
+    for (const r of requests) out.set(r.appointmentId, { status: "unavailable" });
+    return out;
+  };
 
   const ids = [...new Set(requests.map((r) => r.clientId))];
   // The widest cutoff any appointment on this roster asks for. Reading past it
@@ -286,6 +408,9 @@ export async function getBeforeAppointmentPreviews(
   const maxBefore = requests
     .map((r) => r.before)
     .reduce((a, b) => (a > b ? a : b));
+  // Budget the single read so each client could, in the even case, fill its own
+  // window.
+  const budget = previewSessionBudget(ids.length);
 
   const supabase = await createClient();
   const { data: sessionRows, error: sessionsError } = await supabase
@@ -298,11 +423,15 @@ export async function getBeforeAppointmentPreviews(
     .lt("started_at", maxBefore)
     .is("deleted_at", null)
     .order("started_at", { ascending: false })
-    .limit(400);
-  // A failed read establishes nothing. Returning an empty map here is exactly
-  // the collapse this type exists to prevent.
-  if (sessionsError) return { ok: false };
+    // Tie-break, so two sessions sharing an exact instant always resolve the
+    // same way — and so the row that falls off the budget edge is stable
+    // rather than varying between renders. The charted-session authority
+    // orders the same way for the same reason.
+    .order("id", { ascending: false })
+    .limit(budget);
+  if (sessionsError) return unavailableForAll();
   const sessions = (sessionRows ?? []) as SessionRow[];
+  const sessionsTruncated = isBatchTruncated(sessions.length, budget);
 
   const sessionIds = sessions.map((s) => s.id);
   const [blocksResult, clientsResult] = await Promise.all([
@@ -316,6 +445,7 @@ export async function getBeforeAppointmentPreviews(
           .in("session_id", sessionIds)
           .is("deleted_at", null)
           .order("sort_order", { ascending: true })
+          .limit(MAX_PREVIEW_CHILD_ROWS)
       : Promise.resolve({ data: [] as BlockRow[], error: null }),
     supabase
       .from("clients")
@@ -323,8 +453,11 @@ export async function getBeforeAppointmentPreviews(
       .eq("studio_id", studioId)
       .in("id", ids),
   ]);
-  if (blocksResult.error || clientsResult.error) return { ok: false };
+  if (blocksResult.error || clientsResult.error) return unavailableForAll();
   const blocks = (blocksResult.data ?? []) as BlockRow[];
+  if (isBatchTruncated(blocks.length, MAX_PREVIEW_CHILD_ROWS)) {
+    return unavailableForAll();
+  }
 
   // Migration 0128: attach the structured area rows so every summary surface
   // (last treatment, appointment prep, before-today) shows EVERY treated area +
@@ -340,10 +473,19 @@ export async function getBeforeAppointmentPreviews(
         blocks.map((b) => b.id),
       )
       .order("display_order", { ascending: true })
-      .order("created_at", { ascending: true });
-    if (areasError) return { ok: false };
+      .order("created_at", { ascending: true })
+      .limit(MAX_PREVIEW_CHILD_ROWS);
+    if (areasError) return unavailableForAll();
+    const areaList = (areaRows ?? []) as SessionBlockArea[];
+    // A truncated areas read is INDISTINGUISHABLE from legacy data downstream:
+    // a block whose areas were all dropped falls back to `primary_area` and
+    // renders as a perfectly ordinary single-area block. Nothing later can
+    // detect it, so it has to be caught here.
+    if (isBatchTruncated(areaList.length, MAX_PREVIEW_CHILD_ROWS)) {
+      return unavailableForAll();
+    }
     const areasByBlock = new Map<string, SessionBlockArea[]>();
-    for (const areaRow of (areaRows ?? []) as SessionBlockArea[]) {
+    for (const areaRow of areaList) {
       const bucket = areasByBlock.get(areaRow.session_block_id) ?? [];
       bucket.push(areaRow);
       areasByBlock.set(areaRow.session_block_id, bucket);
@@ -365,7 +507,9 @@ export async function getBeforeAppointmentPreviews(
   const sessionsByClient = new Map<string, SessionRow[]>();
   for (const s of sessions) {
     const list = sessionsByClient.get(s.client_id) ?? [];
-    list.push(s); // already newest-first
+    // Already newest-first; sliced to this client's own window so the shared
+    // budget cannot hand one client a deeper history than another.
+    if (list.length < PREVIEW_SESSIONS_PER_CLIENT) list.push(s);
     sessionsByClient.set(s.client_id, list);
   }
   const blocksBySession = new Map<string, BlockRow[]>();
@@ -378,19 +522,75 @@ export async function getBeforeAppointmentPreviews(
   // Per appointment, IN MEMORY. The reads above are already done; this loop
   // issues no query, which is what keeps two appointments for one client from
   // costing two round trips.
-  for (const request of requests) {
+  for (const [appointmentId, history] of historyStatesFromBatch({
+    requests,
+    sessionsByClient,
+    blocksBySession,
+    clientFields,
+    sessionsTruncated,
+  })) {
+    out.set(appointmentId, history);
+  }
+  return out;
+}
+
+/**
+ * Turn one already-loaded batch into a history state PER APPOINTMENT.
+ *
+ * Pure, so every truncation and crowd-out rule below can be proven without a
+ * database — which matters, because the failure this guards against only
+ * appears when one client's history is deep enough to starve another's.
+ */
+export function historyStatesFromBatch(args: {
+  requests: ReadonlyArray<BeforeAppointmentRequest>;
+  sessionsByClient: Map<string, SessionRow[]>;
+  blocksBySession: Map<string, BlockRow[]>;
+  clientFields: Map<
+    string,
+    { date_of_birth: string | null; phone: string | null; address: string | null }
+  >;
+  /** The shared session read came back at its budget. */
+  sessionsTruncated: boolean;
+}): Map<string, AppointmentHistory> {
+  const out = new Map<string, AppointmentHistory>();
+  for (const request of args.requests) {
+    const fields = args.clientFields.get(request.clientId);
+    if (!fields) {
+      // Without the client row the briefing would emit "date of birth not
+      // recorded" / "phone not recorded" / "address not recorded" reminders
+      // that are artefacts of a short read, not facts about the record.
+      out.set(request.appointmentId, { status: "unavailable" });
+      continue;
+    }
     const eligible = eligibleSessionsForAppointment(
-      sessionsByClient.get(request.clientId) ?? [],
+      args.sessionsByClient.get(request.clientId) ?? [],
       request,
     );
-    previews.set(
+    // Nothing eligible. With a complete window that PROVES there is none; with
+    // a truncated one it proves only that we did not read far enough. The
+    // batch is ordered by global recency, so the clients that lose rows are
+    // the ones whose last visit is oldest — exactly the returning-after-a-gap
+    // client for whom this claim is most damaging.
+    if (eligible.length === 0) {
+      out.set(request.appointmentId, {
+        status: args.sessionsTruncated ? "unavailable" : "absent",
+      });
+      continue;
+    }
+    const preview = buildPreviewFromSessions({
+      sessionsNewestFirst: eligible,
+      blocksBySession: args.blocksBySession,
+      clientFields: fields,
+    });
+    // A non-empty session set can still report no history — every eligible
+    // session may be an empty draft. Same rule: proven only when the window
+    // was complete.
+    out.set(
       request.appointmentId,
-      buildPreviewFromSessions({
-        sessionsNewestFirst: eligible,
-        blocksBySession,
-        clientFields: clientFields.get(request.clientId) ?? null,
-      }),
+      preview.hasHistory
+        ? { status: "present", preview }
+        : { status: args.sessionsTruncated ? "unavailable" : "absent" },
     );
   }
-  return { ok: true, previews };
+  return out;
 }

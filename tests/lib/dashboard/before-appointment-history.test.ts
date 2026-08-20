@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { eligibleSessionsForAppointment } from "@/lib/dashboard/before-today-previews";
+import {
+  eligibleSessionsForAppointment,
+  historyStatesFromBatch,
+  isBatchTruncated,
+  previewSessionBudget,
+  type BlockRow,
+  type SessionRow,
+} from "@/lib/dashboard/before-today-previews";
 import { buildTodayWorkflow, type TodayWorkflowInput } from "@/lib/dashboard/today-workflow";
+import {
+  shouldOfferHistoryReview,
+  shouldShowTreatmentMemory,
+} from "@/lib/dashboard/before-today-previews";
 
 // #605 REPAIR — history is bounded by the APPOINTMENT.
 //
@@ -118,7 +129,7 @@ describe("5. NO N+1 — the per-appointment work is in memory", () => {
     "utf8",
   );
   const code = SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  const loaderBody = code.slice(code.indexOf("export async function getBeforeAppointmentPreviews("));
+  const loaderBody = code.slice(code.indexOf("export async function getAppointmentHistory("));
 
   it("the per-appointment loop issues no query", () => {
     const loop = loaderBody.slice(loaderBody.indexOf("for (const request of requests)"));
@@ -141,11 +152,12 @@ describe("5. NO N+1 — the per-appointment work is in memory", () => {
     // Without `.lt`, the 400-row budget would be spent on sessions no
     // appointment on this roster can use.
     expect(loaderBody).toMatch(/\.lt\("started_at", maxBefore\)/);
+    expect(loaderBody).toMatch(/\.limit\(budget\)/);
     expect(loaderBody).toMatch(/\.eq\("studio_id", studioId\)/);
   });
 });
 
-describe("UNAVAILABLE never becomes ABSENT", () => {
+describe("UNAVAILABLE never becomes ABSENT — the workflow model", () => {
   const input = (over: Partial<TodayWorkflowInput> = {}): TodayWorkflowInput => ({
     appointmentId: "a1",
     clientId: "c1",
@@ -153,7 +165,7 @@ describe("UNAVAILABLE never becomes ABSENT", () => {
     timeLabel: "9:00 AM",
     status: "confirmed",
     serviceName: null,
-    hasHistory: false,
+    history: "absent",
     nextVisitNote: null,
     cautionNote: null,
     setupLine: null,
@@ -163,30 +175,59 @@ describe("UNAVAILABLE never becomes ABSENT", () => {
     ...over,
   });
 
-  it("historyKnown defaults to true, so every existing caller is unchanged", () => {
-    const [item] = buildTodayWorkflow([input()]).items;
-    expect(item.historyKnown).toBe(true);
-    expect(item.hasHistory).toBe(false);
-    // A proven absence still earns the new-client priority.
+  it("a PROVEN absence still earns the new-client priority", () => {
+    const [item] = buildTodayWorkflow([input({ history: "absent" })]).items;
+    expect(item.history).toBe("absent");
     expect(item.priority).toBe(5);
   });
 
-  it("a FAILED read is not a new client", () => {
-    const [item] = buildTodayWorkflow([input({ historyKnown: false })]).items;
-    expect(item.historyKnown).toBe(false);
-    // It must not claim history either way.
-    expect(item.hasHistory).toBe(false);
-    // And it must NOT be ranked as a new client — that is a claim about the
-    // person, reachable only from a read that answered.
+  it("an UNAVAILABLE read does not", () => {
+    const [item] = buildTodayWorkflow([input({ history: "unavailable" })]).items;
+    expect(item.history).toBe("unavailable");
+    // The new-client rank is a claim about the person, reachable only from a
+    // read that answered.
     expect(item.priority).not.toBe(5);
   });
 
-  it("an unavailable read never asserts history it did not establish", () => {
+  it("an UNAVAILABLE read asserts no history-derived fact", () => {
     const [item] = buildTodayWorkflow([
-      input({ historyKnown: false, hasHistory: true, setupLine: "27.12 MHz" }),
+      input({ history: "unavailable", setupLine: "27.12 MHz" }),
     ]).items;
-    expect(item.hasHistory).toBe(false);
     expect(item.setup).toBeNull();
+  });
+
+  it("the item carries NO boolean beside the state", () => {
+    // The whole point of the repair: a `hasHistory` boolean next to the state
+    // reads as authoritative at the call site, which is how `unavailable` got
+    // flattened three separate times.
+    const [item] = buildTodayWorkflow([input()]).items;
+    expect(item).not.toHaveProperty("hasHistory");
+    expect(item).not.toHaveProperty("historyKnown");
+  });
+
+  it("only PRESENT carries the preparation facts through", () => {
+    const [item] = buildTodayWorkflow([
+      input({ history: "present", setupLine: "27.12 MHz" }),
+    ]).items;
+    expect(item.setup).toBe("27.12 MHz");
+  });
+});
+
+describe("the intent predicates carry the asymmetry", () => {
+  it("treatment memory renders for PRESENT and UNAVAILABLE, never for ABSENT", () => {
+    // This asymmetry IS the fix for the independent-loader defect. The prep
+    // loader is a separate query with its own answer; when this history load
+    // fails it must still be allowed to show what it read, or to say that it
+    // could not read it. Only a proven absence means there is nothing.
+    expect(shouldShowTreatmentMemory("present")).toBe(true);
+    expect(shouldShowTreatmentMemory("unavailable")).toBe(true);
+    expect(shouldShowTreatmentMemory("absent")).toBe(false);
+  });
+
+  it("the returning-client review is offered ONLY for PRESENT", () => {
+    expect(shouldOfferHistoryReview("present")).toBe(true);
+    expect(shouldOfferHistoryReview("absent")).toBe(false);
+    expect(shouldOfferHistoryReview("unavailable")).toBe(false);
   });
 });
 
@@ -195,23 +236,256 @@ describe("the Dashboard renders the three history states distinctly", () => {
     join(process.cwd(), "app/(app)/dashboard/page.tsx"),
     "utf8",
   );
+  const CODE = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
   it("unavailable is checked BEFORE the new-client branch", () => {
-    // Comment-stripped: the page documents this very defect in prose above the
-    // code, so a raw indexOf would compare against the explanation.
-    const code = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    const unavailable = code.indexOf("!workflow.historyKnown");
-    const newClient = code.indexOf("New client · No charted history yet");
+    const unavailable = CODE.indexOf('workflow.history === "unavailable"');
+    const newClient = CODE.indexOf("New client · No charted history yet");
     expect(unavailable).toBeGreaterThan(-1);
     expect(newClient).toBeGreaterThan(-1);
     expect(unavailable).toBeLessThan(newClient);
+  });
+
+  it("the new-client line is reachable ONLY from a proven absence", () => {
+    expect(CODE).toMatch(/workflow\.history === "absent" \? \(/);
   });
 
   it("the unavailable branch says so, neutrally", () => {
     expect(PAGE).toMatch(/History unavailable/);
   });
 
-  it("the page passes the load's own outcome, not a coerced boolean", () => {
-    expect(PAGE).toMatch(/historyKnown: beforeLoad\.ok/);
+  it("the page passes the per-appointment STATE, not a page-wide boolean", () => {
+    expect(CODE).toMatch(/history: history\.status/);
+    expect(CODE).not.toMatch(/historyKnown/);
+    expect(CODE).not.toMatch(/beforeLoad\.ok/);
+  });
+
+  it("the treatment-memory region is gated by the PREDICATE, not by hasHistory", () => {
+    // The exact defect: `{workflow?.hasHistory && (` deleted a chart that the
+    // INDEPENDENT prep loader had already read successfully.
+    expect(CODE).not.toMatch(/\{workflow\?\.hasHistory && \(/);
+    expect(CODE).toMatch(
+      /shouldShowTreatmentMemory\(workflow\?\.history \?\? "unavailable"\) && \(/,
+    );
+  });
+
+  it("the prep-memory props still come from the prep loader, not from history", () => {
+    // One loader's failure must not become another loader's failure.
+    expect(CODE).toMatch(/memory=\{prepMemory\.memory\}/);
+    expect(CODE).toMatch(/unavailable=\{prepMemory\.unavailable\}/);
+    // …and the prep fold never consults the history load.
+    const fold = CODE.slice(
+      CODE.indexOf("prepMemoryByAppointment"),
+      CODE.indexOf("todayWorkflowInputs"),
+    );
+    expect(fold).not.toMatch(/historyByAppointment|history\.status/);
+  });
+
+  it("the next action is chosen from the STATE", () => {
+    expect(CODE).toMatch(/history: workflow\?\.history \?\? "unavailable"/);
+  });
+
+  it("absence chips cannot render outside the present arm", () => {
+    // Every missing-record chip is an ABSENCE claim. It used to sit one JSX
+    // level outside the ternary, guarded only by `reminders` happening to
+    // default to [].
+    const chips = CODE.indexOf("workflow.missingRecords.length > 0");
+    const setup = CODE.indexOf("Latest setup:");
+    const memoryGate = CODE.indexOf("shouldShowTreatmentMemory(");
+    expect(chips).toBeGreaterThan(-1);
+    // Inside the arm that renders "Latest setup", i.e. after it opens and
+    // before the arm closes and the treatment-memory region begins.
+    expect(chips).toBeGreaterThan(setup);
+    expect(chips).toBeLessThan(memoryGate);
+  });
+});
+
+// ===========================================================================
+// TRUNCATION — the shared batch cannot turn a missing row into an absent one.
+// ===========================================================================
+//
+// Proven against the PURE resolver, because the defect only appears when one
+// client's history is deep enough to starve another's, which is exactly the
+// state that is hard to stage against a database.
+
+const CLIENT_FIELDS = new Map([
+  ["dense", { date_of_birth: null, phone: null, address: null }],
+  ["quiet", { date_of_birth: null, phone: null, address: null }],
+]);
+
+function session(over: Partial<SessionRow> & { id: string; client_id: string; started_at: string }): SessionRow {
+  return {
+    appointment_id: null,
+    next_session_note: null,
+    aftercare_and_risks_explained_at: null,
+    modality: "electrolysis",
+    electrolysis_entries: [{ hairs_treated: 20, deleted_at: null }],
+    laser_entries: [],
+    ...over,
+  } as SessionRow;
+}
+
+const APPT = (id: string, clientId: string) => ({
+  appointmentId: id,
+  clientId,
+  before: "2026-08-21T13:00:00Z",
+});
+
+describe("the session budget is derived from the ROSTER, not a magic number", () => {
+  it("scales with the number of clients", () => {
+    expect(previewSessionBudget(1)).toBeLessThan(previewSessionBudget(4));
+  });
+
+  it("is capped, so a very large day cannot ask for an unbounded payload", () => {
+    expect(previewSessionBudget(10_000)).toBe(previewSessionBudget(1_000));
+  });
+
+  it("is never negative or zero-by-accident", () => {
+    expect(previewSessionBudget(0)).toBe(0);
+    expect(previewSessionBudget(1)).toBeGreaterThan(0);
+  });
+});
+
+describe("truncation is DETECTED, not guessed", () => {
+  it("a full batch counts as truncated", () => {
+    // `>=`, not `>`: PostgREST can never return more than the limit, so `>`
+    // would be dead code that never fires.
+    expect(isBatchTruncated(300, 300)).toBe(true);
+    expect(isBatchTruncated(299, 300)).toBe(false);
+  });
+});
+
+describe("1-2. a COMPLETE batch answers authoritatively", () => {
+  const sessionsByClient = new Map([
+    ["dense", [session({ id: "s1", client_id: "dense", started_at: "2026-08-01T14:00:00Z" })]],
+    ["quiet", []],
+  ]);
+
+  it("a returning client is PRESENT", () => {
+    const out = historyStatesFromBatch({
+      requests: [APPT("a-dense", "dense")],
+      sessionsByClient,
+      blocksBySession: new Map(),
+      clientFields: CLIENT_FIELDS,
+      sessionsTruncated: false,
+    });
+    expect(out.get("a-dense")?.status).toBe("present");
+  });
+
+  it("a genuinely first-time client is ABSENT", () => {
+    const out = historyStatesFromBatch({
+      requests: [APPT("a-quiet", "quiet")],
+      sessionsByClient,
+      blocksBySession: new Map(),
+      clientFields: CLIENT_FIELDS,
+      sessionsTruncated: false,
+    });
+    expect(out.get("a-quiet")?.status).toBe("absent");
+  });
+});
+
+describe("3-6. a TRUNCATED batch may not manufacture an absence", () => {
+  // The scenario: one client with a very long history fills the shared read,
+  // so a quieter client's older sessions never came back at all.
+  const sessionsByClient = new Map([
+    ["dense", [session({ id: "s1", client_id: "dense", started_at: "2026-08-01T14:00:00Z" })]],
+    ["quiet", []],
+  ]);
+  const truncated = () =>
+    historyStatesFromBatch({
+      requests: [APPT("a-dense", "dense"), APPT("a-quiet", "quiet")],
+      sessionsByClient,
+      blocksBySession: new Map(),
+      clientFields: CLIENT_FIELDS,
+      sessionsTruncated: true,
+    });
+
+  it("3. a client with no returned history is NOT absent", () => {
+    expect(truncated().get("a-quiet")?.status).not.toBe("absent");
+  });
+
+  it("4. the crowded-out client is UNAVAILABLE", () => {
+    expect(truncated().get("a-quiet")?.status).toBe("unavailable");
+  });
+
+  it("the client who DID come back keeps their answer", () => {
+    // Each client's slice is a recency PREFIX, so a positive finding survives
+    // truncation. Degrading everyone would throw away good evidence.
+    expect(truncated().get("a-dense")?.status).toBe("present");
+  });
+
+  it("5-6. UNAVAILABLE cannot reach the new-client copy or ranking", () => {
+    const status = truncated().get("a-quiet")!.status;
+    const [item] = buildTodayWorkflow([
+      {
+        appointmentId: "a-quiet",
+        clientId: "quiet",
+        clientName: "Quiet Client",
+        timeLabel: "9:00 AM",
+        status: "confirmed",
+        serviceName: null,
+        history: status,
+        nextVisitNote: null,
+        cautionNote: null,
+        setupLine: null,
+        reminders: [],
+        intake: "reviewed",
+        charting: "none",
+      },
+    ]).items;
+    expect(item.history).toBe("unavailable");
+    expect(item.priority).not.toBe(5);
+    expect(shouldOfferHistoryReview(item.history)).toBe(false);
+    // …and the memory region still renders, so the independent loader speaks.
+    expect(shouldShowTreatmentMemory(item.history)).toBe(true);
+  });
+
+  it("a missing CLIENT ROW is unavailable, not a client with three blank records", () => {
+    const out = historyStatesFromBatch({
+      requests: [APPT("a-orphan", "orphan")],
+      sessionsByClient: new Map(),
+      blocksBySession: new Map(),
+      clientFields: CLIENT_FIELDS,
+      sessionsTruncated: false,
+    });
+    expect(out.get("a-orphan")?.status).toBe("unavailable");
+  });
+});
+
+describe("7-8. the loader stays batched and studio-scoped", () => {
+  const SRC = readFileSync(
+    join(process.cwd(), "lib/dashboard/before-today-previews.ts"),
+    "utf8",
+  );
+  const code = SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const loader = code.slice(code.indexOf("export async function getAppointmentHistory("));
+
+  it("7. every read is bounded AND every child read has an explicit limit", () => {
+    // The blocks and areas reads used to have NO limit at all, so their only
+    // bound was the PostgREST server cap — which is invisible to the client
+    // and therefore undetectable.
+    expect((loader.match(/\.limit\(/g) ?? []).length).toBe(3);
+    expect(loader).toMatch(/\.limit\(MAX_PREVIEW_CHILD_ROWS\)/);
+  });
+
+  it("8. every read is fenced to the studio", () => {
+    const tables = (loader.match(/\.from\(/g) ?? []).length;
+    expect((loader.match(/\.eq\("studio_id", studioId\)/g) ?? []).length).toBe(tables);
+  });
+
+  it("a truncated CHILD read makes the whole load unavailable", () => {
+    // Blocks and areas are ordered by sort_order / display_order, NOT by
+    // recency, so their truncation is not a prefix — it corrupts positive
+    // claims rather than merely omitting them.
+    expect(loader).toMatch(
+      /if \(isBatchTruncated\(blocks\.length, MAX_PREVIEW_CHILD_ROWS\)\) \{\s*return unavailableForAll\(\);/,
+    );
+    expect(loader).toMatch(
+      /if \(isBatchTruncated\(areaList\.length, MAX_PREVIEW_CHILD_ROWS\)\) \{\s*return unavailableForAll\(\);/,
+    );
+  });
+
+  it("the session order carries a deterministic tie-break", () => {
+    expect(loader).toMatch(/\.order\("id", \{ ascending: false \}\)/);
   });
 });

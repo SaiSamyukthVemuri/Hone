@@ -30,6 +30,8 @@
 // priority sort is retained ONLY as an in-card attention signal; it must never
 // reorder the day, because the day is a sequence she works through in time.
 
+import type { HistoryStatus } from "@/lib/dashboard/before-today-previews";
+
 export type TodayIntake = "reviewed" | "submitted" | "in_progress" | "none";
 export type TodayCharting = "needs" | "started" | "charted" | "none";
 
@@ -49,17 +51,15 @@ export type TodayWorkflowInput = {
   status: string;
   serviceName: string | null;
   /**
-   * Whether the history read for THIS appointment actually established
-   * anything. Optional and defaulting to true, so every existing caller and
-   * fixture keeps its meaning; only a genuinely failed load passes false.
+   * The appointment's history state: present, absent, or unavailable.
    *
-   * When false, `hasHistory` is not a fact and must not be presented as one.
-   * An unproven absence rendered as "New client" is a claim about a real
-   * person that nothing verified — the same distinction the card-on-file
-   * status draws between "no card" and "unavailable".
+   * ONE value, not a pair of booleans. The pair could express `historyKnown:
+   * false, hasHistory: false`, which left every consumer to remember which one
+   * wins — and three of them forgot, so a transient read failure printed "New
+   * client", chose the new-client action, and hid treatment memory that a
+   * different, successful read had already established.
    */
-  historyKnown?: boolean;
-  hasHistory: boolean;
+  history: HistoryStatus;
   // The structured plan note (session.next_session_note).
   nextVisitNote: string | null;
   // The first recorded watch line.
@@ -83,9 +83,13 @@ export type TodayWorkflowItem = {
   serviceName: string | null;
 
   // Preparation: each fact resolved ONCE, and never re-labelled elsewhere.
-  /** False only when the history read failed. See the input field. */
-  historyKnown: boolean;
-  hasHistory: boolean;
+  /**
+   * The history state. Deliberately NOT accompanied by a `hasHistory` boolean:
+   * a boolean beside it reads as authoritative at the call site, and that is
+   * exactly how `unavailable` got flattened into "no history" three times.
+   * Consumers branch on this, or on the intent predicates that wrap it.
+   */
+  history: HistoryStatus;
   // The plan note. Rendered once under "Remember".
   remember: string | null;
   // The watch line. Rendered once under "Caution", visually distinct.
@@ -137,9 +141,9 @@ function priorityFor(input: TodayWorkflowInput): TodayPriority {
   if (upcoming && input.intake !== "reviewed") return 2;
   if (input.charting === "needs") return 3;
   if (input.reminders.length > 0) return 4;
-  // The new-client priority is a claim about the client. It may only be
-  // reached from a history read that actually answered.
-  if (input.historyKnown !== false && !input.hasHistory) return 5;
+  // The new-client priority is a claim about the client, so only a PROVEN
+  // absence earns it. `unavailable` falls through to the neutral rank.
+  if (input.history === "absent") return 5;
   return 6;
 }
 
@@ -158,12 +162,9 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
 
   // Setup is shown only when there IS history; "Latest setup" against a client
   // with no charted history is noise, and the no-history state says it already.
-  const historyKnown = input.historyKnown !== false;
-  // Setup is shown only when there IS history — and "is" means established.
-  // Reading `input.hasHistory` here instead would let an unanswered load print
-  // a "Latest setup" line beside "History unavailable", which is the same
-  // unproven claim in a different place.
-  const setup = historyKnown && input.hasHistory ? trimmedOrNull(input.setupLine) : null;
+  // Setup is shown only when history is ESTABLISHED PRESENT. An unanswered
+  // load must not print a "Latest setup" line beside "History unavailable".
+  const setup = input.history === "present" ? trimmedOrNull(input.setupLine) : null;
 
   // Specific reminders only, order-preserving and deduplicated after
   // shortening (two different long reminders can shorten to the same chip).
@@ -184,11 +185,7 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
     timeLabel: input.timeLabel,
     status: input.status,
     serviceName: input.serviceName,
-    historyKnown,
-    // Never asserted from an unanswered read: unknown collapses to false here
-    // ONLY as a shape default, and `historyKnown` is what the UI must branch
-    // on before saying anything about a client being new.
-    hasHistory: historyKnown && input.hasHistory,
+    history: input.history,
     remember,
     caution,
     setup,

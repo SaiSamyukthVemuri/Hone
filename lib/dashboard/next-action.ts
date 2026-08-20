@@ -1,3 +1,8 @@
+import {
+  shouldOfferHistoryReview,
+  type HistoryStatus,
+} from "@/lib/dashboard/before-today-previews";
+
 // Dashboard Today next-action resolver (PR #236). Pure: decides the
 // ONE primary action for a Today appointment row from facts the
 // dashboard already loads (status, prior charted history) plus the
@@ -13,7 +18,13 @@ export type NextActionInput = {
   clientId: string;
   appointmentId: string;
   // Prior charted history exists for this client (Before Today).
-  hasHistory: boolean;
+  /**
+   * The history state. A boolean here could not represent "we do not know",
+   * so an unavailable read fell through to the brand-new-client affordance
+   * and sent the practitioner to a bare profile instead of the memory she was
+   * reaching for.
+   */
+  history: HistoryStatus;
   // Linked, non-deleted session for THIS appointment, if any.
   sessionId: string | null;
   // That session has at least one non-deleted treatment area.
@@ -68,8 +79,14 @@ export function resolveNextAction(input: NextActionInput): NextAction {
 
   // Upcoming: returning clients get the memory review; brand-new
   // clients get the profile.
-  if (input.hasHistory) {
+  if (shouldOfferHistoryReview(input.history)) {
     return { label: "Review Before Today", href: clientHref, chip: null };
   }
+  // Reached by a PROVEN absence — and, deliberately, by `unavailable` too.
+  // "Open client" is the chosen NEUTRAL degradation: it asserts nothing about
+  // the relationship and its destination is correct either way. It is arrived
+  // at explicitly rather than by coercing unknown to false, and a louder
+  // "history error" button would be worse — it would put an infrastructure
+  // problem in front of a practitioner mid-day.
   return { label: "Open client", href: clientHref, chip: null };
 }

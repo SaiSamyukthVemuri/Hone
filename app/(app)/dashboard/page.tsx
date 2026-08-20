@@ -52,7 +52,8 @@ import {
   resolveNextAction,
 } from "@/lib/dashboard/next-action";
 import {
-  getBeforeAppointmentPreviews,
+  getAppointmentHistory,
+  shouldShowTreatmentMemory,
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import { loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
@@ -426,7 +427,7 @@ export default async function DashboardPage({
   // every legitimate fact, a past appointment cannot see a session recorded
   // after it, and two appointments for one client on one day get their own
   // cutoffs. One batched load, keyed by appointment id.
-  const beforeLoad = await getBeforeAppointmentPreviews(
+  const historyByAppointment = await getAppointmentHistory(
     studio.id,
     visibleAppointments.map((a) => ({
       appointmentId: a.id,
@@ -490,10 +491,15 @@ export default async function DashboardPage({
   const todayWorkflowInputs: TodayWorkflowInput[] = visibleAppointments.map(
     (appt) => {
       // Keyed by APPOINTMENT, so one client's two visits in a day do not share
-      // a history cutoff.
-      const preview = beforeLoad.ok
-        ? (beforeLoad.previews.get(appt.id) ?? null)
-        : null;
+      // a history cutoff. Absent from the map is not a thing that happens —
+      // the loader answers for every request — but if it ever did, the safe
+      // reading is "we cannot say", never "there is nothing".
+      const history = historyByAppointment.get(appt.id) ?? {
+        status: "unavailable" as const,
+      };
+      // The preview EXISTS ONLY on the present arm, so none of the fields
+      // below can be read from an unproven state.
+      const preview = history.status === "present" ? history.preview : null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
       const charting: TodayCharting = linked
         ? linked.hasChartedArea
@@ -511,11 +517,7 @@ export default async function DashboardPage({
         timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
         status: appt.status,
         serviceName: appt.service?.name ?? null,
-        // A failed read must not manufacture "New client". `historyKnown`
-        // false suppresses every history-derived claim instead of asserting
-        // the absence of one.
-        historyKnown: beforeLoad.ok,
-        hasHistory: preview?.hasHistory ?? false,
+        history: history.status,
         nextVisitNote: preview?.nextVisitNote ?? null,
         cautionNote: preview?.cautionNote ?? null,
         setupLine: preview?.setupLine ?? null,
@@ -962,7 +964,9 @@ function AppointmentRow({
     status: appt.status,
     clientId: appt.client_id,
     appointmentId: appt.id,
-    hasHistory: workflow?.hasHistory ?? false,
+    // The row asks for the STATE. A missing workflow is "we cannot say", which
+    // yields the neutral action rather than the brand-new-client one.
+    history: workflow?.history ?? "unavailable",
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
   });
@@ -1115,7 +1119,7 @@ function AppointmentRow({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                   Before today
                 </span>
-                {!workflow.historyKnown ? (
+                {workflow.history === "unavailable" ? (
                   // The read did not answer. Neutral, and explicitly NOT the
                   // new-client line: an unproven absence must not be printed
                   // as a fact about a real person. Same rule the card status
@@ -1123,7 +1127,7 @@ function AppointmentRow({
                   <span className="text-neutral-500">
                     History unavailable
                   </span>
-                ) : !workflow.hasHistory ? (
+                ) : workflow.history === "absent" ? (
                   // ONE relationship line, not "New client" here and "No prior
                   // treatment history yet" somewhere else.
                   <span className="text-neutral-500">
@@ -1164,23 +1168,30 @@ function AppointmentRow({
                     <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
                       Latest setup: {workflow.setup ?? "Not recorded"}
                     </span>
-                  </>
-                )}
-                {/* Specific missing-record reminders, once each. The generic
-                    "Records: N reminders" count is gone: it said nothing these
-                    chips do not say precisely. */}
-                {workflow.missingRecords.length > 0 && (
-                  <span className="mt-0.5 flex flex-wrap gap-1">
-                    {workflow.missingRecords.map((r) => (
-                      <span
-                        key={r}
-                        data-testid="missing-record-chip"
-                        className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-                      >
-                        {r}
+                    {/* Specific missing-record reminders, once each. The
+                        generic "Records: N reminders" count is gone: it said
+                        nothing these chips do not say precisely.
+
+                        INSIDE the present arm deliberately. Every chip is an
+                        ABSENCE claim ("Probe lot number needed", "Client phone
+                        not recorded"), so printing one from a read that
+                        established nothing asserts a specific record gap that
+                        nobody verified. Sitting one level out, it was guarded
+                        only by `reminders` happening to default to []. */}
+                    {workflow.missingRecords.length > 0 && (
+                      <span className="mt-0.5 flex flex-wrap gap-1">
+                        {workflow.missingRecords.map((r) => (
+                          <span
+                            key={r}
+                            data-testid="missing-record-chip"
+                            className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+                          >
+                            {r}
+                          </span>
+                        ))}
                       </span>
-                    ))}
-                  </span>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -1196,7 +1207,16 @@ function AppointmentRow({
             time cell + gap-4), so it reads as the last line of "Before today"
             exactly as it did before: it simply is no longer inside a control
             that navigates. */}
-        {workflow?.hasHistory && (
+        {/* Gated on THIS row's history state, and deliberately NOT on
+            "history is present": `shouldShowTreatmentMemory` also passes
+            `unavailable`.
+
+            The prep-memory loader below is an INDEPENDENT query with its own
+            three-state answer. Hiding this region because the history load
+            failed threw away a chart that loader had successfully read, and
+            left no way to tell a failure from an empty record. Only a PROVEN
+            absence hides it, because then there is genuinely nothing. */}
+        {shouldShowTreatmentMemory(workflow?.history ?? "unavailable") && (
           <div className="pl-[4.5rem] text-xs">
             <TodayTreatmentMemory
               clientId={appt.client_id}

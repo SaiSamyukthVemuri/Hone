@@ -114,7 +114,7 @@ describe("placement + reuse", () => {
     // The preview now feeds the combined workflow model (keyed by APPOINTMENT
     // id) instead of being handed to the row directly, so the same facts can no
     // longer be rendered twice from two sources.
-    expect(PAGE).toMatch(/beforeLoad\.previews\.get\(appt\.id\)/);
+    expect(PAGE).toMatch(/historyByAppointment\.get\(appt\.id\)/);
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
     expect(PAGE).toMatch(/Before today/);
     // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
@@ -160,6 +160,14 @@ describe("placement + reuse", () => {
     // — each ONE bounded query over the whole roster, never a per-appointment or
     // per-session read (no N+1). The areas read is keyed by the loaded block ids.
     expect(PREVIEWS.match(/\.from\(/g)?.length).toBe(4);
+    // …and each one now carries an EXPLICIT limit, so truncation is
+    // detectable rather than hidden behind the PostgREST server cap.
+    // Comment-stripped: the module documents the old no-limit state in prose.
+    const previewsCode = PREVIEWS.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+      /^\s*\/\/.*$/gm,
+      "",
+    );
+    expect(previewsCode.match(/\.limit\(/g)?.length).toBe(3);
     expect(PREVIEWS).toMatch(/\.in\("client_id", ids\)/);
     expect(PREVIEWS).toMatch(/\.in\("session_id", sessionIds\)/);
     expect(PREVIEWS).toMatch(/\.from\("session_block_areas"\)/);
@@ -168,7 +176,7 @@ describe("placement + reuse", () => {
     // request PER APPOINTMENT within that single call, because two visits for
     // one client on one day have different history cutoffs.
     expect(PAGE).toMatch(
-      /getBeforeAppointmentPreviews\(\s*\n?\s*studio\.id,\s*\n?\s*visibleAppointments\.map/,
+      /getAppointmentHistory\(\s*\n?\s*studio\.id,\s*\n?\s*visibleAppointments\.map/,
     );
   });
 });

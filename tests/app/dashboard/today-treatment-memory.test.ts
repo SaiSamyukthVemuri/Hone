@@ -347,12 +347,21 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
 });
 
 describe("the Today row wires it correctly", () => {
-  it("renders the memory only for a client who HAS history", () => {
-    // A first visit stays one calm relationship line. (The gate moved out of
-    // the row-body link with the component — see the D1 block above — so it now
-    // reads `workflow?.hasHistory`, which is the same condition: hasHistory can
-    // only be true when workflow exists.)
-    expect(DASH).toMatch(/\{workflow\?\.hasHistory && \(/);
+  it("hides the memory only for a PROVEN first visit — never for a failed read", () => {
+    // This assertion used to pin `{workflow?.hasHistory && (` and argued the
+    // condition was safe because "hasHistory can only be true when workflow
+    // exists". That reasoned about the NULL-ness of `workflow`, not about the
+    // UNKNOWN-ness of history — and the gap was real: the prep-memory loader
+    // is an INDEPENDENT query, so one transient failure in the *history*
+    // preview silently deleted a chart this loader had already read, with no
+    // error and no way to tell a failure from an empty record.
+    //
+    // A first visit still stays one calm relationship line. An unanswered read
+    // now renders the region so the prep loader can speak for itself.
+    expect(DASH).not.toMatch(/\{workflow\?\.hasHistory && \(/);
+    expect(DASH).toMatch(
+      /shouldShowTreatmentMemory\(workflow\?\.history \?\? "unavailable"\) && \(/,
+    );
     expect(DASH).toMatch(/<TodayTreatmentMemory/);
   });
 

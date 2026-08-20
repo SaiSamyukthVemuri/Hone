@@ -74,11 +74,11 @@ describe("time-relative surfaces stay anchored to the REAL present", () => {
     // cutoff, so both facts survive.
     expect(PAGE_CODE).not.toMatch(/beforeTodayPreviews = viewingToday/);
     expect(PAGE_CODE).toMatch(
-      /const beforeLoad = await getBeforeAppointmentPreviews\(/,
+      /const historyByAppointment = await getAppointmentHistory\(/,
     );
     expect(PAGE_CODE).toMatch(/before: a\.starts_at/);
     // Keyed by appointment id — the whole reason the map exists.
-    expect(PAGE_CODE).toMatch(/beforeLoad\.previews\.get\(appt\.id\)/);
+    expect(PAGE_CODE).toMatch(/historyByAppointment\.get\(appt\.id\)/);
   });
 });
 

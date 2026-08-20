@@ -167,7 +167,7 @@ describe("plan for next visit never becomes To-do content", () => {
       timeLabel: "9:00 AM",
       status: "confirmed",
       serviceName: "Electrolysis 30",
-      hasHistory: true,
+      history: "present",
       nextVisitNote: SENTINEL,
       cautionNote: null,
       setupLine: null,
