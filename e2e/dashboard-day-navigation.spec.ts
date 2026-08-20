@@ -300,8 +300,12 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       // run, and none of its vocabulary appears.
       await expect(tomorrowRow.getByText("Before today", { exact: true })).toHaveCount(0);
       await expect(tomorrowRow.getByText("New client · No charted history yet")).toHaveCount(0);
-      await expect(tomorrowRow.getByText(/^Latest setup:/)).toHaveCount(0);
-      await expect(tomorrowRow.getByTestId("missing-record-chip")).toHaveCount(0);
+      // SUPERSEDED AGAIN. #607 asserted these were ABSENT off Today. The
+      // owner rejected that: she opens a future day to prepare, and the
+      // preparation categories now have parity with Today, bounded to this
+      // appointment. What still must not appear is a RELATIONSHIP claim.
+      await expect(tomorrowRow.getByText(/^Latest setup:/)).toHaveCount(1);
+      await expect(tomorrowRow.getByTestId("missing-record-chip").first()).toBeVisible();
       await expect(page.getByText("History unavailable")).toHaveCount(0);
       await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
 
@@ -309,9 +313,7 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       // prep-memory authority, which is a different loader with a three-state
       // contract and no clock in it.
       await expect(tomorrowRow.getByTestId("dashboard-memory-compact")).toBeVisible();
-      await expect(tomorrowRow.getByTestId("dashboard-prep-remember")).toContainText(
-        "Lower the energy one step",
-      );
+      await expect(tomorrowRow.getByText(/Remember: Lower the energy one step/)).toBeVisible();
     });
 
     await test.step("18. and the primary action makes no claim either", async () => {

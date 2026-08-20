@@ -70,13 +70,12 @@ describe("the roster window is the SELECTED day, and it is DST-correct", () => {
 });
 
 describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule", () => {
-  it("the BEFORE-TODAY loader is still skipped off Today", () => {
-    // This is the retired model: its only output channel is a boolean, so a
-    // failed or truncated read is forced to render as an affirmative "New
-    // client". It must never run off Today.
-    expect(CODE).toMatch(
-      /const beforeTodayPreviews = viewingToday\s*\?\s*await getBeforeTodayPreviews\(/,
-    );
+  it("the BEFORE-TODAY loader is GONE from this page entirely", () => {
+    // It is client-scoped and unbounded: no per-appointment `before`, a
+    // boolean that cannot say "unknown", and errors discarded at every read.
+    // The bounded loader now supplies every fact it used to.
+    expect(CODE).not.toMatch(/getBeforeTodayPreviews/);
+    expect(CODE).not.toMatch(/beforeTodayPreviews/);
   });
 
   it("the APPOINTMENT-PREP loader now runs for the selected day", () => {
@@ -95,14 +94,20 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     expect(CODE).toMatch(/excludeAppointmentId: a\.id/);
   });
 
-  it("the workflow INPUTS are empty off today, so no row can carry a history claim", () => {
-    // `hasHistory` is a required field. The only way to build an item off
-    // Today would be to invent one, so no item is built: every non-Today row
-    // gets `workflow === null` and the preparation block — already guarded on
-    // it — goes quiet on its own.
+  it("the workflow is built for EVERY selected day, from the bounded briefing", () => {
+    // It used to be Today-only because the model behind it could not express
+    // an appointment boundary, so inventing `hasHistory: false` off Today
+    // would have called returning clients new. Every fact now comes from
+    // `load.briefing`, derived from THIS appointment's own window.
+    expect(CODE).not.toMatch(/viewingToday \? visibleAppointments : \[\]/);
     expect(CODE).toMatch(
-      /const todayWorkflowInputs: TodayWorkflowInput\[\] = \(\s*viewingToday \? visibleAppointments : \[\]\s*\)\.map/,
+      /const todayWorkflowInputs: TodayWorkflowInput\[\] = visibleAppointments\.map/,
     );
+    expect(CODE).toMatch(/const briefing = load\?\.briefing \?\? null/);
+    expect(CODE).toMatch(/hasHistory: briefing\?\.hasHistory \?\? false/);
+    expect(CODE).toMatch(/cautionNote: briefing\?\.remember\.watchLines\[0\] \?\? null/);
+    expect(CODE).toMatch(/setupLine: briefing\?\.latestSetupLine \?\? null/);
+    expect(CODE).toMatch(/reminders: briefing\?\.reminders \?\? \[\]/);
   });
 
   it("every RELATIONSHIP claim is still behind the workflow null", () => {
@@ -142,11 +147,14 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     expect(CODE).toMatch(/memory: null,\s*unavailable: false,\s*planNote: null,/);
   });
 
-  it("the plan note renders off Today, and ONLY off Today", () => {
-    // On Today the row already prints this same field as its "Remember" line
-    // from the Before-Today model; printing it twice under two labels is a bug
-    // this row has had once already.
-    expect(CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
+  it("ONE shared prep renderer serves every day", () => {
+    // #607 had two: the rich block on Today, and a standalone plan-note
+    // element off Today, because the rich block could not run there. Now the
+    // same block renders on any selected day from the bounded briefing, so a
+    // second renderer would print the note twice.
+    expect(CODE).not.toMatch(/dashboard-prep-remember/);
+    expect(CODE).toMatch(/Remember: \{workflow\.remember\}/);
+    expect(CODE).toMatch(/isToday \? "Before today" : "Before this visit"/);
   });
 
   it("the page states NOTHING about history in the unasked direction either", () => {

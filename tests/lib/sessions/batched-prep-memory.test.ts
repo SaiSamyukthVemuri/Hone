@@ -105,6 +105,11 @@ async function run(
     clientId: string;
     before?: string | null;
     excludeAppointmentId?: string | null;
+    client?: {
+      dateOfBirth: string | null;
+      phone: string | null;
+      address: string | null;
+    } | null;
   }>,
   opts?: { limitPerClient?: number },
 ) {
@@ -420,5 +425,209 @@ describe("batched prep memory — no per-appointment query loop", () => {
   it("skips the block read entirely when no client has a candidate", async () => {
     const { issued } = await run({ sessions: [], session_blocks: [] }, [{ clientId: ALICE }]);
     expect(issued.map((q) => q.table)).toEqual(["sessions"]);
+  });
+});
+
+// ===========================================================================
+// THE BOUNDED BRIEFING — every preparation fact relative to THIS appointment.
+// ===========================================================================
+//
+// The Dashboard used to derive Remember / Caution / Latest setup / reminders
+// from a CLIENT-scoped, unbounded loader, which is why it could only run on
+// Today. These prove the same facts now come from each appointment's own
+// window.
+
+const FULL_CLIENT = {
+  dateOfBirth: "1990-01-01",
+  phone: "555-0100",
+  address: "1 Main St",
+};
+
+/** A block carrying a caution, so the watch line has a source. */
+function cautionBlock(sessionId: string, note: string): Row {
+  return {
+    ...block(sessionId),
+    caution_for_next_session: true,
+    caution_note: note,
+  };
+}
+
+describe("the briefing is bounded by the appointment", () => {
+  it("5. a caution from an ELIGIBLE prior visit appears", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({ id: "s-prior", client_id: ALICE, started_at: "2026-03-01T10:00:00Z" }),
+        ],
+        session_blocks: [cautionBlock("s-prior", "Avoid the jawline")],
+      },
+      [{ clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT }],
+    );
+    const b = out.get(ALICE)?.briefing;
+    // Area-prefixed, which is the existing watch-line provenance format:
+    // "Chin: Avoid the jawline". The prefix is the point — a caution without
+    // the area it belongs to is harder to act on.
+    expect(b?.remember.watchLines.join(" | ")).toContain("Avoid the jawline");
+    expect(b?.remember.watchLines[0]).toMatch(/^\w+: /);
+  });
+
+  it("6. a caution recorded AFTER the appointment does NOT appear", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({ id: "s-after", client_id: ALICE, started_at: "2026-03-20T10:00:00Z" }),
+        ],
+        session_blocks: [cautionBlock("s-after", "Recorded later")],
+      },
+      [{ clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT }],
+    );
+    const b = out.get(ALICE)?.briefing;
+    expect((b?.remember.watchLines ?? []).join(" | ")).not.toContain("Recorded later");
+    expect(b?.hasHistory).toBe(false);
+  });
+
+  it("7. a PLAN-NOTE-ONLY prior session still reaches the practitioner", async () => {
+    // No charting at all — the visit recorded only an instruction. The old
+    // assembler discarded the note entirely in this shape.
+    const { out } = await run(
+      {
+        sessions: [
+          session({
+            id: "s-note",
+            client_id: ALICE,
+            started_at: "2026-03-01T10:00:00Z",
+            next_session_note: "Started doxycycline, do not treat",
+            electrolysis_entries: [],
+          }),
+        ],
+        session_blocks: [],
+      },
+      [{ clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT }],
+    );
+    const b = out.get(ALICE)?.briefing;
+    expect(b?.remember.plan).toBe("Started doxycycline, do not treat");
+    // …and it is still honest that nothing was charted.
+    expect(b?.hasHistory).toBe(false);
+  });
+
+  it("8. Latest setup is derived from PRE-APPOINTMENT history only", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({ id: "s-old", client_id: ALICE, started_at: "2026-03-01T10:00:00Z" }),
+          session({ id: "s-late", client_id: ALICE, started_at: "2026-03-20T10:00:00Z" }),
+        ],
+        session_blocks: [
+          { ...block("s-old"), machine_frequency: "13.56 MHz" },
+          { ...block("s-late"), machine_frequency: "27.12 MHz" },
+        ],
+      },
+      [{ clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT }],
+    );
+    const b = out.get(ALICE)?.briefing;
+    // The later visit's settings must not leak backwards.
+    expect(b?.latestSetupLine ?? "").not.toContain("27.12 MHz");
+  });
+
+  it("9. missing-record reminders follow the SAME rules as Today", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({ id: "s-prior", client_id: ALICE, started_at: "2026-03-01T10:00:00Z" }),
+        ],
+        // No probe lot recorded on the block.
+        session_blocks: [block("s-prior")],
+      },
+      [
+        {
+          clientId: ALICE,
+          before: "2026-03-10T09:00:00Z",
+          // Client record is incomplete too.
+          client: { dateOfBirth: null, phone: null, address: null },
+        },
+      ],
+    );
+    const reminders = out.get(ALICE)?.briefing?.reminders ?? [];
+    expect(reminders.some((r) => /probe lot/i.test(r))).toBe(true);
+    expect(reminders).toContain("Client date of birth not recorded");
+    expect(reminders).toContain("Client phone not recorded");
+    expect(reminders).toContain("Client address not recorded");
+  });
+
+  it("2. two appointments for ONE client keep separate briefings", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({ id: "s-mid", client_id: ALICE, started_at: "2026-03-10T12:00:00Z" }),
+        ],
+        session_blocks: [cautionBlock("s-mid", "Mid-day caution")],
+      },
+      [
+        { requestKey: "appt-early", clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { requestKey: "appt-late", clientId: ALICE, before: "2026-03-10T17:00:00Z", client: FULL_CLIENT },
+      ],
+    );
+    // The 12:00 session is history for the 17:00 appointment only.
+    expect(
+      (out.get("appt-early")?.briefing?.remember.watchLines ?? []).join(" | "),
+    ).not.toContain("Mid-day caution");
+    expect(
+      (out.get("appt-late")?.briefing?.remember.watchLines ?? []).join(" | "),
+    ).toContain("Mid-day caution");
+  });
+
+  it("3. the appointment's OWN session never becomes its previous treatment", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({
+            id: "s-own",
+            client_id: ALICE,
+            started_at: "2026-03-10T08:58:00Z",
+            appointment_id: "appt-1",
+          }),
+        ],
+        session_blocks: [cautionBlock("s-own", "This visit's own note")],
+      },
+      [
+        {
+          requestKey: "appt-1",
+          clientId: ALICE,
+          before: "2026-03-10T09:00:00Z",
+          excludeAppointmentId: "appt-1",
+          client: FULL_CLIENT,
+        },
+      ],
+    );
+    const b = out.get("appt-1")?.briefing;
+    expect(b?.hasHistory).toBe(false);
+    expect((b?.remember.watchLines ?? []).join(" | ")).not.toContain(
+      "This visit's own note",
+    );
+  });
+
+  it("no briefing is built when the caller does not ask for one", () => {
+    // The appointment-detail path renders the full card and has no use for the
+    // row-sized briefing; it must not pay to assemble one.
+    return run(
+      {
+        sessions: [session({ id: "s1", client_id: ALICE })],
+        session_blocks: [block("s1")],
+      },
+      [{ clientId: ALICE }],
+    ).then(({ out }) => {
+      expect(out.get(ALICE)?.briefing).toBeNull();
+    });
+  });
+
+  it("the briefing costs NO additional query", async () => {
+    const { issued } = await run(
+      {
+        sessions: [session({ id: "s1", client_id: ALICE })],
+        session_blocks: [block("s1")],
+      },
+      [{ clientId: ALICE, client: FULL_CLIENT }],
+    );
+    expect(issued.map((q) => q.table)).toEqual(["sessions", "session_blocks"]);
   });
 });

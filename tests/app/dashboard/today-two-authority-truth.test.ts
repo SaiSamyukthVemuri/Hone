@@ -65,8 +65,10 @@ describe("the disclosure projection cannot carry the plan note", () => {
 describe("Today never contradicts itself about the relationship", () => {
   it("the no-history line requires BOTH authorities to agree", () => {
     // workflow says none, prep PROVED none, and prep actually answered.
+    // …and only on TODAY. "New client" is a relationship claim; off Today the
+    // page does not pose that question, so it states the bounded fact instead.
     expect(CODE).toMatch(
-      /\{!workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable \? \(/,
+      /\{isToday &&\s*!workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable \? \(/,
     );
   });
 
@@ -164,5 +166,21 @@ describe("the TODAY ACTION MATRIX — four cases, no false claim", () => {
     expect(CODE).toMatch(
       /hasHistory:\s*\(workflow\?\.hasHistory \?\? false\) \|\| prepSummary\.hasTreatment/,
     );
+  });
+});
+
+describe("off Today the page states a bounded fact, never a relationship", () => {
+  it("the no-history CLAIM is gated on isToday", () => {
+    expect(CODE).toMatch(/\{isToday &&/);
+  });
+
+  it("off Today it says what it can prove about THIS visit instead", () => {
+    expect(CODE).toMatch(/No prior charted treatment before this visit/);
+    // …and says nothing at all when the read could not answer.
+    expect(CODE).toMatch(/prepSummary\.unavailable \? null : \(/);
+  });
+
+  it("the temporal label is date-correct", () => {
+    expect(CODE).toMatch(/isToday \? "Before today" : "Before this visit"/);
   });
 });

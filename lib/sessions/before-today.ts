@@ -106,9 +106,60 @@ const EMPTY_RESPONSE = {
   hasAny: false,
 };
 
-export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
+/**
+ * The briefing, WITHOUT the "no charted treatment means say nothing" gate.
+ *
+ * `buildBeforeToday` returns an entirely empty briefing when there is no
+ * charted treatment — which also discards the watch/plan notes, even though
+ * those come from a different source and can exist on their own. A visit that
+ * recorded only "started doxycycline, do not treat" and charted nothing is
+ * exactly the case where a practitioner most needs the note, and the gate
+ * deletes it.
+ *
+ * The Dashboard needs the ungated form for every selected day. The gate is
+ * PRESERVED in `buildBeforeToday` below, because the client Overview has
+ * rendered its empty state that way since #211 and this is not the change to
+ * alter it in.
+ *
+ * `hasHistory` still means exactly what it did: a charted treatment exists.
+ * Notes without one are reported alongside `hasHistory: false`, and it is the
+ * caller's job not to turn that into a claim about the person.
+ */
+export function buildPreVisitBriefing(input: BeforeTodayInput): BeforeToday {
   const { lastTreatment, watchPlan, intelligence, client } = input;
 
+  if (!lastTreatment) {
+    const watchOnly = (watchPlan?.watchLines ?? []).filter(
+      (l) => l.trim().length > 0,
+    );
+    const planOnly = watchPlan?.nextSessionNote?.trim() || null;
+    return {
+      hasHistory: false,
+      lastTreated: null,
+      remember: {
+        watchLines: watchOnly,
+        plan: planOnly,
+        hasNotes: watchOnly.length > 0 || planOnly !== null,
+      },
+      response: { ...EMPTY_RESPONSE },
+      setup: null,
+      latestSetupLine: null,
+      // The client-record rules do not depend on a treatment, so they still
+      // apply. The three treatment-derived rules below necessarily do not.
+      reminders: [
+        ...(!client.dateOfBirth ? ["Client date of birth not recorded"] : []),
+        ...(!client.phone?.trim() ? ["Client phone not recorded"] : []),
+        ...(!client.address?.trim() ? ["Client address not recorded"] : []),
+      ],
+    };
+  }
+  return buildBriefingWithTreatment(input, lastTreatment);
+}
+
+export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
+  const { lastTreatment } = input;
+
+  // PRESERVED GATE. The client Overview's empty state depends on this shape.
   if (!lastTreatment) {
     return {
       hasHistory: false,
@@ -120,6 +171,14 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
       reminders: [],
     };
   }
+  return buildBriefingWithTreatment(input, lastTreatment);
+}
+
+function buildBriefingWithTreatment(
+  input: BeforeTodayInput,
+  lastTreatment: NonNullable<BeforeTodayInput["lastTreatment"]>,
+): BeforeToday {
+  const { watchPlan, intelligence, client } = input;
 
   const watchLines = (watchPlan?.watchLines ?? []).filter(
     (l) => l.trim().length > 0,

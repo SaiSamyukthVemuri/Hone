@@ -113,8 +113,8 @@ test.describe("preparing a future day", () => {
 
     await test.step("4. the plan note reaches her as Remember", async () => {
       await expect(
-        returning.getByTestId("dashboard-prep-remember"),
-      ).toContainText("Lower the energy one step");
+        returning.getByText(/Remember: Lower the energy one step/),
+      ).toBeVisible();
     });
 
     await test.step("5. the full treatment expands WITHOUT leaving the Dashboard", async () => {
@@ -150,7 +150,7 @@ test.describe("preparing a future day", () => {
       const fresh = row(page, newClient.name);
       await expect(fresh.getByTestId("dashboard-memory-compact")).toHaveCount(0);
       await expect(fresh.getByTestId("dashboard-memory-unavailable")).toHaveCount(0);
-      await expect(fresh.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      await expect(fresh.getByText(/^Remember:/)).toHaveCount(0);
     });
   });
 
@@ -180,9 +180,11 @@ test.describe("preparing a future day", () => {
     await test.step("10. the plan note is NOT printed twice on Today", async () => {
       // It is the same field as the Before-Today "Remember" line; printing it
       // under two labels is a bug this row has had once already.
+      // ONE shared renderer: the note is the row's Remember line, printed
+      // exactly once. The #607 second element that could have duplicated it
+      // is gone.
       const today = row(page, "Memory Client");
-      await expect(today.getByTestId("dashboard-prep-remember")).toHaveCount(0);
-      await expect(today.getByText(/Lower the energy one step/)).toHaveCount(1);
+      await expect(today.getByText(/^Remember: Lower the energy one step/)).toHaveCount(1);
     });
 
     await test.step("11. the heading and its sub-line differ on Today", async () => {
@@ -287,7 +289,9 @@ test.describe("preparing a future day — 390px phone", () => {
     await test.step("16. the prep the practitioner came for is on screen", async () => {
       await expect(page.getByText("Prefers the 2pm slot")).toBeVisible();
       await expect(page.getByTestId("dashboard-memory-compact")).toBeVisible();
-      await expect(page.getByTestId("dashboard-prep-remember")).toBeVisible();
+      // One shared prep block now, so the note renders as the row's Remember
+      // line on every day rather than through a second off-Today-only element.
+      await expect(page.getByText(/Remember: Lower the energy one step/)).toBeVisible();
     });
   });
 });
@@ -363,9 +367,7 @@ test.describe("the full treatment is not transported before it is asked for", ()
       await expect(page.getByTestId("dashboard-memory-compact")).toContainText(
         "Last treatment:",
       );
-      await expect(page.getByTestId("dashboard-prep-remember")).toContainText(
-        "Lower the energy one step",
-      );
+      await expect(page.getByText(/Remember: Lower the energy one step/)).toBeVisible();
     });
 
     await test.step("20. after an EXPLICIT click, the full detail arrives", async () => {
@@ -538,7 +540,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
       // The compact line, the plan note, and the other row's controls all
       // survive a failure that belongs to one disclosure.
       await expect(page.getByTestId("dashboard-memory-compact").first()).toBeVisible();
-      await expect(page.getByTestId("dashboard-prep-remember").first()).toBeVisible();
+      await expect(page.getByText(/^Remember:/).first()).toBeVisible();
       await expect(page.getByTestId("dashboard-memory-toggle")).toHaveCount(2);
     });
 
@@ -613,10 +615,7 @@ test.describe("the plan note is server-rendered where it is shown", () => {
 
     await test.step("28. off Today the SERVER paints it, once", async () => {
       await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
-      await expect(page.getByTestId("dashboard-prep-remember")).toContainText(PLAN, {
-        timeout: T,
-      });
-      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(1);
+      await expect(page.getByText(`Remember: ${PLAN}`)).toBeVisible({ timeout: T });
     });
 
     await test.step("29. on Today the Before-Today line owns it, not the prep strip", async () => {
@@ -625,7 +624,6 @@ test.describe("the plan note is server-rendered where it is shown", () => {
         page.getByRole("heading", { level: 2, name: "Today", exact: true }),
       ).toBeVisible({ timeout: T });
       // One note, one label. The prep strip does not repeat it.
-      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
       await expect(page.getByText(`Remember: ${PLAN}`)).toBeVisible();
     });
   });
@@ -660,6 +658,154 @@ test.describe("Today never says 'no history' beside a proven treatment", () => {
         saysNew === 0 || showsTreatment === 0,
         "row asserted 'New client' beside a proven last treatment",
       ).toBe(true);
+    });
+  });
+});
+
+// ===========================================================================
+// THE PARITY TEST — the load-bearing one.
+// ===========================================================================
+//
+// Chloe: "It still looks weird. All the old notes and everything were missing.
+// It needs to look the same as today and it's not."
+//
+// Two appointments for the SAME client with the SAME prior history: one today,
+// one three days out. Every preparation fact must appear on both rows. The
+// only permitted differences are the temporal label and the Current pill.
+
+test.describe("Today and a future day show the same preparation", () => {
+  test("identical history yields identical prep facts on both days", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+
+    // Prior history: a plan note, a caution, a recorded setup, a charted
+    // treatment, and a MISSING probe lot so a reminder chip is generated.
+    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: "Avoid the jawline",
+      nextVisitNote: "Lower the energy one step",
+    });
+    await seedPinnedNote(seed.studioId, clientId, "Prefers the 2pm slot");
+    // The same client also books three days out.
+    await seedE2eTodayAppointment(seed, {
+      clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+
+    await loginAsOwner(page, seed);
+
+    /** Every preparation fact the row is expected to carry. */
+    async function prepFacts(url: string) {
+      await page.goto(url);
+      const row = page.locator("li").filter({ hasText: "Memory Client" }).first();
+      await expect(row).toBeVisible({ timeout: T });
+      return {
+        pinned: await row.getByText("Prefers the 2pm slot").count(),
+        remember: await row.getByText(/Remember: Lower the energy one step/).count(),
+        caution: await row.getByText(/Avoid the jawline/).count(),
+        setup: await row.getByText(/^Latest setup:/).count(),
+        chips: await row.getByTestId("missing-record-chip").count(),
+        lastTreatment: await row.getByTestId("dashboard-memory-compact").count(),
+        disclosure: await row.getByTestId("dashboard-memory-toggle").count(),
+      };
+    }
+
+    const today = await prepFacts("/dashboard");
+    const future = await prepFacts(`/dashboard?day=${localDay(tz, OFFSET)}`);
+
+    await test.step("31. Today carries the full briefing (the baseline)", async () => {
+      expect(today.pinned, "pinned note").toBeGreaterThan(0);
+      expect(today.remember, "Remember").toBeGreaterThan(0);
+      expect(today.caution, "Caution").toBeGreaterThan(0);
+      expect(today.setup, "Latest setup").toBeGreaterThan(0);
+      expect(today.chips, "missing-record chip").toBeGreaterThan(0);
+      expect(today.lastTreatment, "Last treatment").toBeGreaterThan(0);
+      expect(today.disclosure, "View full last treatment").toBeGreaterThan(0);
+    });
+
+    await test.step("32. the FUTURE day carries every one of them too", async () => {
+      // This is the assertion the owner's complaint reduces to.
+      expect(future, "future-day prep must match Today").toEqual(today);
+    });
+
+    await test.step("33. only the temporal label differs", async () => {
+      // `exact: true` throughout: getByText does case-insensitive SUBSTRING
+      // matching, and the unrelated "Charted within 24h" card explains itself
+      // using the words "before today".
+      await page.goto("/dashboard");
+      await expect(
+        page.getByText("Before today", { exact: true }).first(),
+      ).toBeVisible({ timeout: T });
+      await expect(page.getByText("Before this visit", { exact: true })).toHaveCount(0);
+
+      await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+      await expect(
+        page.getByText("Before this visit", { exact: true }).first(),
+      ).toBeVisible({ timeout: T });
+      await expect(page.getByText("Before today", { exact: true })).toHaveCount(0);
+    });
+
+    await test.step("34. and the future row still makes no relationship claim", async () => {
+      await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
+      await expect(page.getByText("Returning client")).toHaveCount(0);
+      await expect(page.getByTestId("today-current-pill")).toHaveCount(0);
+    });
+  });
+});
+
+test.describe("future-day prep at 390px", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test("the future row reads like Today, with no gaps or overflow", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: "Avoid the jawline",
+      nextVisitNote: "Lower the energy one step",
+    });
+    await seedPinnedNote(seed.studioId, clientId, "Prefers the 2pm slot");
+    await seedE2eTodayAppointment(seed, {
+      clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+    await loginAsOwner(page, seed);
+    await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+
+    const row = page.locator("li").filter({ hasText: "Memory Client" }).first();
+    await expect(row).toBeVisible({ timeout: T });
+
+    await test.step("35. the whole prep block is readable on a phone", async () => {
+      await expect(row.getByText("Prefers the 2pm slot")).toBeVisible();
+      await expect(row.getByText(/Remember: Lower the energy one step/)).toBeVisible();
+      await expect(row.getByText(/Avoid the jawline/)).toBeVisible();
+      await expect(row.getByText(/^Latest setup:/)).toBeVisible();
+      await expect(row.getByTestId("missing-record-chip").first()).toBeVisible();
+      await expect(row.getByTestId("dashboard-memory-compact")).toBeVisible();
+    });
+
+    await test.step("36. nothing overflows sideways", async () => {
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, "page scrolls sideways").toBeLessThanOrEqual(0);
+      // Chips wrap rather than push the row wide.
+      for (const chip of await row.getByTestId("missing-record-chip").all()) {
+        const box = await chip.boundingBox();
+        expect(box!.x + box!.width, "chip right edge").toBeLessThanOrEqual(390);
+      }
+    });
+
+    await test.step("37. the disclosure is still a real touch target", async () => {
+      const toggle = row.getByTestId("dashboard-memory-toggle");
+      const box = await toggle.boundingBox();
+      expect(box!.height, "disclosure toggle height").toBeGreaterThanOrEqual(44);
+      await toggle.tap();
+      await expect(row.getByTestId("dashboard-memory-full")).toBeVisible({ timeout: T });
     });
   });
 });

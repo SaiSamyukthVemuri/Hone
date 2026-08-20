@@ -441,7 +441,10 @@ describe("the Today row wires it correctly", () => {
       /^\s*\/\/.*$/gm,
       "",
     );
-    expect(DASH_CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
+    // One shared renderer now: the note is the row's Remember line on every
+    // day, so there is no second element that could repeat it.
+    expect(DASH_CODE).not.toMatch(/dashboard-prep-remember/);
+    expect((DASH_CODE.match(/Remember: /g) ?? []).length).toBe(1);
   });
 
   it("writes nothing and touches no appointment mutation surface", () => {

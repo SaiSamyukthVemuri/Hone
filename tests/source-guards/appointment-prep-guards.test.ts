@@ -491,7 +491,10 @@ describe("the plan source is decoupled from the treatment source", () => {
 describe("a failed read is not a clinical claim of 'no history'", () => {
   it("the loader reports unavailability distinctly from absence", () => {
     expect(LOADER_CODE).toMatch(/unavailable: true/);
-    expect(LOADER_CODE).toMatch(/treatment, unavailable: false/);
+    // The result now also carries the bounded briefing, so the shape is
+    // multi-line. What matters is unchanged: a selected treatment is reported
+    // available, and failure is reported distinctly.
+    expect(LOADER_CODE).toMatch(/treatment: outcome\.treatment,\s*unavailable: false/);
   });
 
   it("the page renders a DIFFERENT surface for a failed read", () => {
@@ -537,9 +540,9 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
   });
 
   it("every load outcome carries narrative, and only a candidate-read failure has none", () => {
-    expect(LOADER_CODE).toMatch(/case "selected":[\s\S]{0,120}unavailable: false, narrative/);
-    expect(LOADER_CODE).toMatch(/case "none":[\s\S]{0,200}unavailable: false, narrative/);
-    expect(LOADER_CODE).toMatch(/case "unavailable":[\s\S]{0,200}unavailable: true, narrative/);
+    expect(LOADER_CODE).toMatch(/case "selected":[\s\S]{0,320}unavailable: false, narrative/);
+    expect(LOADER_CODE).toMatch(/case "none":[\s\S]{0,400}unavailable: false, narrative/);
+    expect(LOADER_CODE).toMatch(/case "unavailable":[\s\S]{0,400}unavailable: true, narrative/);
   });
 
   it("newestPlanOf remains the ONE plan authority", () => {

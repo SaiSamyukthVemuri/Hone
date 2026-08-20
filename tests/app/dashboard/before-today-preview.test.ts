@@ -113,7 +113,11 @@ describe("placement + reuse", () => {
     // The preview now feeds the combined workflow model (keyed by APPOINTMENT
     // id) instead of being handed to the row directly, so the same facts can no
     // longer be rendered twice from two sources.
-    expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.client_id\)/);
+    // SUPERSEDED. The page no longer uses the client-scoped preview loader at
+    // all: every preparation fact now comes from the appointment-bounded
+    // briefing, keyed by appointment id.
+    expect(PAGE).not.toMatch(/beforeTodayPreviews/);
+    expect(PAGE).toMatch(/prepLoads\.get\(appt\.id\)/);
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
     expect(PAGE).toMatch(/Before today/);
     // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
@@ -156,10 +160,11 @@ describe("placement + reuse", () => {
     expect(PREVIEWS).toMatch(/\.in\("session_id", sessionIds\)/);
     expect(PREVIEWS).toMatch(/\.from\("session_block_areas"\)/);
     expect(PREVIEWS).toMatch(/\.in\(\s*\n?\s*"session_block_id",/);
-    // One previews call per page load, fed with the whole roster.
-    expect(PAGE).toMatch(
-      /getBeforeTodayPreviews\(\s*\n?\s*studio\.id,\s*\n?\s*visibleAppointments\.map/,
-    );
+    // The DASHBOARD no longer calls it. This module is retained only for its
+    // pure helpers and their tests; the page's preparation authority is the
+    // appointment-bounded loader, which is why the four reads above are no
+    // longer paid on any day.
+    expect(PAGE).not.toMatch(/getBeforeTodayPreviews/);
   });
 });
 

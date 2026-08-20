@@ -52,10 +52,6 @@ import {
 } from "@/lib/dashboard/practice-metrics";
 import {
 } from "@/lib/dashboard/next-action";
-import {
-  getBeforeTodayPreviews,
-  type BeforeTodayPreview,
-} from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import {
   loadLastChartedTreatmentsForClients,
@@ -158,7 +154,19 @@ type TodayAppointment = Pick<
   // `email` is here ONLY so the row can tell whether a portal link CAN be
   // sent. It widens the existing narrow projection by one column rather than
   // adding a second client query, and it is never rendered.
-  client: Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email"> | null;
+  client: Pick<
+    Client,
+    | "id"
+    | "name"
+    | "allergies"
+    | "pronouns"
+    | "email"
+    // Missing-record reminder inputs, from the SAME embed rather than a
+    // second client query.
+    | "date_of_birth"
+    | "phone"
+    | "address"
+  > | null;
   service: Pick<Service, "id" | "name" | "modality"> | null;
   practitioner: { id: string; display_name: string | null; color: string } | null;
 };
@@ -241,7 +249,7 @@ export default async function DashboardPage({
   const { data: apptRows, error: apptErr } = await supabase
     .from("appointments")
     .select(
-      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, allergies, pronouns, email), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
+      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, allergies, pronouns, email, date_of_birth, phone, address), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
     )
     .eq("studio_id", studio.id)
     .gte("starts_at", startUtc.toISOString())
@@ -262,8 +270,32 @@ export default async function DashboardPage({
     status: AppointmentStatus;
     client_id: string;
     client:
-      | Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email">
-      | Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email">[]
+      | Pick<
+    Client,
+    | "id"
+    | "name"
+    | "allergies"
+    | "pronouns"
+    | "email"
+    // Missing-record reminder inputs, from the SAME embed rather than a
+    // second client query.
+    | "date_of_birth"
+    | "phone"
+    | "address"
+  >
+      | Pick<
+    Client,
+    | "id"
+    | "name"
+    | "allergies"
+    | "pronouns"
+    | "email"
+    // Missing-record reminder inputs, from the SAME embed rather than a
+    // second client query.
+    | "date_of_birth"
+    | "phone"
+    | "address"
+  >[]
       | null;
     service:
       | Pick<Service, "id" | "name" | "modality">
@@ -435,27 +467,19 @@ export default async function DashboardPage({
   // visible appointments' payment state, no per-row query, no full history.
   const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds, studio.timezone);
 
-  // THE LOAD-BEARING RULE OF THIS CHANGE.
+  // The Before-Today preview loader is GONE from this page.
   //
-  // These two loaders are the only ones on the roster path that make a
-  // HISTORICAL claim about a client. Everything else here — pinned note, intake
-  // state, card on file, payment state, the linked session — describes the
-  // client or the appointment NOW, and is true on any day.
+  // It was a second historical pipeline: client-scoped, unbounded, with no
+  // per-appointment `before`, a boolean output that could not say "unknown",
+  // and errors discarded at every read. It duplicated substantially the same
+  // rows the appointment-bounded loader already reads — on Today the two ran
+  // one after the other: five serial waves for facts one pipeline now
+  // produces in two.
   //
-  // Off Today, V1 does not ask the history question AT ALL. It is not asked and
-  // answered "no": it is not asked. So the loads are SKIPPED rather than
-  // rendered-but-hidden, and the row states nothing about history in either
-  // direction — no "New client", no "Returning client", no caution, plan or
-  // setup, and no "unavailable" either, because there was no question.
-  //
-  // Skipping is also strictly cheaper: it removes six batched reads, the
-  // largest read on the page.
-  const beforeTodayPreviews = viewingToday
-    ? await getBeforeTodayPreviews(
-        studio.id,
-        visibleAppointments.map((a) => a.client_id),
-      )
-    : new Map<string, BeforeTodayPreview>();
+  // Everything it supplied — Remember, Caution, Latest setup, the
+  // missing-record reminders — now comes from `load.briefing`, bounded to
+  // each appointment. One authority, fewer round-trips, and the same
+  // preparation grammar on every selected day.
 
   // Dashboard V2 Part 2A: the FULL previous treatment for every returning
   // client of the day, from the SAME #517 authority the appointment page uses.
@@ -492,6 +516,14 @@ export default async function DashboardPage({
       clientId: a.client_id,
       before: a.starts_at,
       excludeAppointmentId: a.id,
+      // Client-record facts for the missing-record reminders. They come off
+      // the roster query's own client embed, so asking for the briefing costs
+      // no additional round-trip.
+      client: {
+        dateOfBirth: a.client?.date_of_birth ?? null,
+        phone: a.client?.phone ?? null,
+        address: a.client?.address ?? null,
+      },
     })),
   });
 
@@ -539,16 +571,26 @@ export default async function DashboardPage({
   // intake status: into exactly one card per appointment, keyed by APPOINTMENT
   // id and in the query's chronological order. No new query; nothing sorted.
   //
-  // Built ONLY for actual today. Off Today there is no history answer to put
-  // in `hasHistory`, and inventing `false` is the exact untruth this change
-  // exists to avoid. An empty input list means every non-Today row gets
-  // `workflow === null`, and the preparation block and treatment memory —
-  // both already guarded on it in production — go quiet on their own.
-  const todayWorkflowInputs: TodayWorkflowInput[] = (
-    viewingToday ? visibleAppointments : []
-  ).map(
+  // Built for EVERY selected day, from the appointment-bounded briefing.
+  //
+  // It used to be Today-only, because the model behind it could not express an
+  // appointment boundary and inventing `hasHistory: false` off Today would
+  // have called returning clients new. That constraint is gone: every fact
+  // below now comes from `load.briefing`, which the prep loader derives from
+  // THIS appointment's own window — bounded by its `starts_at`, excluding its
+  // own session, void-filtered, and reporting truncation rather than guessing.
+  //
+  // So Today and any other day now render the same preparation grammar from
+  // the same authority. What stays day-dependent is only what genuinely is:
+  // the Current pill, and the relationship wording.
+  const todayWorkflowInputs: TodayWorkflowInput[] = visibleAppointments.map(
     (appt) => {
-      const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+      // The bounded briefing for THIS appointment. Keyed by appointment id,
+      // never by client: two bookings for one person in a day have two
+      // different answers, and the old client-keyed map handed both rows
+      // whichever was written last.
+      const load = prepLoads.get(appt.id) ?? null;
+      const briefing = load?.briefing ?? null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
       const charting: TodayCharting = linked
         ? linked.hasChartedArea
@@ -566,11 +608,15 @@ export default async function DashboardPage({
         timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
         status: appt.status,
         serviceName: appt.service?.name ?? null,
-        hasHistory: preview?.hasHistory ?? false,
-        nextVisitNote: preview?.nextVisitNote ?? null,
-        cautionNote: preview?.cautionNote ?? null,
-        setupLine: preview?.setupLine ?? null,
-        reminders: preview?.reminders ?? [],
+        hasHistory: briefing?.hasHistory ?? false,
+        // The plan note. `narrative.plan` is the loader's own fallback for a
+        // note-only visit that charted nothing, and it survives a failed block
+        // read, so it is preferred when the briefing has none.
+        nextVisitNote:
+          briefing?.remember.plan ?? load?.narrative.plan?.text?.trim() ?? null,
+        cautionNote: briefing?.remember.watchLines[0] ?? null,
+        setupLine: briefing?.latestSetupLine ?? null,
+        reminders: briefing?.reminders ?? [],
         intake,
         charting,
       };
@@ -806,6 +852,7 @@ export default async function DashboardPage({
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
                   historyAsked={viewingToday}
+                  isToday={viewingToday}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
                   cardOnFile={resolveCardOnFileStatus(
                     cardOnFileLoad,
@@ -994,6 +1041,7 @@ function AppointmentRow({
   paymentState,
   prepSummary,
   historyAsked,
+  isToday,
   isCurrent,
   cardOnFile,
   tz,
@@ -1022,6 +1070,9 @@ function AppointmentRow({
   // `workflow === null`, so "we did not ask" stays a stated fact rather than a
   // side effect of another decision.
   historyAsked: boolean;
+  /** Whether this row is on the real present day. Drives the temporal label
+   *  and the relationship wording only — never which facts are loaded. */
+  isToday: boolean;
   // Resolved ONCE for the whole page against one instant (see `renderNow`), not
   // re-derived per row from its own clock read.
   isCurrent: boolean;
@@ -1218,10 +1269,14 @@ function AppointmentRow({
                 a status already shown by a pill or chip above. */}
             {workflow && (
               <div className="mt-1.5 flex flex-col gap-0.5 text-xs">
+                {/* Same preparation grammar on every day; only the temporal
+                    label differs, because "Before today" is simply false when
+                    the briefing is describing another day. */}
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-                  Before today
+                  {isToday ? "Before today" : "Before this visit"}
                 </span>
-                {!workflow.hasHistory &&
+                {isToday &&
+                !workflow.hasHistory &&
                 !prepSummary.hasTreatment &&
                 !prepSummary.unavailable ? (
                   // ONE relationship line, not "New client" here and "No prior
@@ -1241,9 +1296,21 @@ function AppointmentRow({
                   // treatment, and the prep read actually answered. A
                   // truncated or failed prep read is not permission to call
                   // someone new.
+                  //
+                  // AND ONLY ON TODAY. "New client" is a relationship claim,
+                  // and off Today the page does not pose that question — it
+                  // states the bounded fact instead, in the next branch.
                   <span className="text-neutral-500">
                     New client · No charted history yet
                   </span>
+                ) : !workflow.hasHistory && !isToday ? (
+                  // Off Today we do not make a relationship claim. State the
+                  // bounded fact instead, or nothing.
+                  prepSummary.unavailable ? null : (
+                    <span className="text-neutral-500">
+                      No prior charted treatment before this visit
+                    </span>
+                  )
                 ) : !workflow.hasHistory ? (
                   // The workflow says no history but the prep loader either
                   // proved a treatment or could not answer. Say nothing about
@@ -1324,30 +1391,12 @@ function AppointmentRow({
             time cell + gap-4), so it reads as the last line of "Before today"
             exactly as it did before: it simply is no longer inside a control
             that navigates. */}
-        {/* PREP FOR THIS VISIT — the plan note, off Today only.
-
-            `narrative.plan` is the newest recorded "for next visit" note. On
-            TODAY the row already prints exactly this field as its "Remember"
-            line from the Before-Today model, so showing it here too would
-            print one note twice under two labels — a bug this row has had
-            once already. Off Today that model does not run, so this is the
-            only place the note can appear, and it is the single most useful
-            thing a practitioner opening tomorrow can read.
-
-            It renders even when there is no treatment card: the loader builds
-            the narrative to survive both "nothing charted" and a failed block
-            read, so a note-only visit still reaches her. */}
-        {!workflow && prepSummary.remember && (
-          <div className="pl-[4.5rem] text-xs">
-            <span
-              data-testid="dashboard-prep-remember"
-              className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
-            >
-              <span className="font-medium text-neutral-500">Remember: </span>
-              {prepSummary.remember}
-            </span>
-          </div>
-        )}
+        {/* The standalone off-Today plan note is GONE. It existed because the
+            rich preparation block was Today-only, so a future day had nowhere
+            else to show the note. Now one shared block renders Remember,
+            Caution, Latest setup and the reminders on every selected day, from
+            the same appointment-bounded briefing — so a second renderer would
+            print the note twice. */}
         {(prepSummary.hasTreatment || prepSummary.unavailable) && (
           <div className="pl-[4.5rem] text-xs">
             <DashboardTreatmentMemory

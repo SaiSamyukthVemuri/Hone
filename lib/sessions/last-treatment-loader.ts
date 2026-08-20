@@ -16,6 +16,16 @@ import type {
   PrepNarrativeItem,
 } from "@/lib/sessions/appointment-prep-memory";
 import type { BlockArea } from "@/lib/sessions/block-areas";
+import {
+  buildPreVisitBriefing,
+  type BeforeToday,
+} from "@/lib/sessions/before-today";
+import {
+  buildLastSessionSummary,
+  pickPreClientWatchPlanSource,
+  type ClinicalSummaryBlock,
+} from "@/lib/sessions/clinical-summary";
+import { buildTreatmentIntelligence } from "@/lib/sessions/treatment-intelligence";
 
 // THE loader behind every "last treatment" surface changed by this PR.
 //
@@ -356,6 +366,9 @@ export const PREP_SESSION_COLUMNS =
   // back to its client. It is not part of the prep model and no surface reads
   // it. Harmless for the single-client path, which already filters on it.
   "id, client_id, started_at, modality, record_status, deleted_at, appointment_id, " +
+  // Consumed by the "Aftercare/risks not marked" reminder rule. One
+  // timestamptz per candidate row; no extra query.
+  "aftercare_and_risks_explained_at, " +
   "session_notes, next_session_note, " +
   `electrolysis_entries(${PREP_ENTRY_COLUMNS}), ` +
   "laser_entries(id, deleted_at, zone, observation_notes)";
@@ -374,6 +387,21 @@ export type AppointmentPrepSession = SessionWithLoadedEntries & {
 // confident "No previous treatment charted for this client.", which the code
 // this replaced could never do, because it threw instead.
 export type AppointmentPrepLoad = {
+  /**
+   * The full pre-visit briefing — Remember, Caution, Latest setup and the
+   * missing-record reminders — derived from THIS APPOINTMENT'S bounded window.
+   *
+   * Null only when the caller supplied no `client` fields, i.e. did not ask
+   * for a briefing. It is deliberately populated even when no charted
+   * treatment was found, because a note-only prior visit still has something
+   * to say; `hasHistory` inside it remains the honest answer to "is there a
+   * charted treatment".
+   *
+   * This is what lets one bounded pipeline serve every selected day. The
+   * client-scoped, unbounded preview loader it replaces could not express an
+   * appointment boundary at all.
+   */
+  briefing: BeforeToday | null;
   treatment: LastChartedTreatment<AppointmentPrepSession> | null;
   // True ONLY when a read actually failed: the candidate read OR the batched
   // block read. A first-visit client, and a client whose only other sessions
@@ -466,6 +494,8 @@ export async function loadLastChartedTreatmentForClient(input: {
       treatment: null,
       unavailable: true,
       narrative: { plan: null, legacySessionNotes: null },
+      // The single-client path predates the briefing and does not build one.
+      briefing: null,
     };
   }
 
@@ -489,16 +519,24 @@ export async function loadLastChartedTreatmentForClient(input: {
 
   const outcome = await selectFromCandidates(input.studioId, candidates);
   switch (outcome.status) {
+    // `briefing: null` throughout: the single-client path serves the
+    // appointment detail page, which renders the full card and does not ask
+    // for the row-sized briefing. Only the batched Dashboard caller does.
     case "selected":
-      return { treatment: outcome.treatment, unavailable: false, narrative };
+      return {
+        treatment: outcome.treatment,
+        unavailable: false,
+        narrative,
+        briefing: null,
+      };
     case "none":
       // Reads succeeded; this client genuinely has no charted prior treatment.
       // Narrative may still exist and must still be shown.
-      return { treatment: null, unavailable: false, narrative };
+      return { treatment: null, unavailable: false, narrative, briefing: null };
     case "unavailable":
       // The block read failed. Say so, and keep the narrative that WAS loaded,
       // discarding it would hide a safety instruction we already have in hand.
-      return { treatment: null, unavailable: true, narrative };
+      return { treatment: null, unavailable: true, narrative, briefing: null };
   }
 }
 
@@ -557,6 +595,20 @@ export type PrepMemoryRequest = {
   before?: string | null;
   /** This appointment's id; sessions linked to it are the CURRENT visit. */
   excludeAppointmentId?: string | null;
+  /**
+   * Client-record fields for the missing-record reminders.
+   *
+   * Passed IN rather than read here on purpose: they are client facts, not
+   * history, and the Dashboard already has them on the roster query's own
+   * client embed — so supplying them costs no round-trip. Omit them and the
+   * three client-record rules simply do not run, which is why the briefing is
+   * only produced when they are present.
+   */
+  client?: {
+    dateOfBirth: string | null;
+    phone: string | null;
+    address: string | null;
+  } | null;
 };
 
 export async function loadLastChartedTreatmentsForClients(input: {
@@ -618,6 +670,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
         treatment: null,
         unavailable: true,
         narrative: { plan: null, legacySessionNotes: null },
+        briefing: null,
       });
     }
     return out;
@@ -691,6 +744,119 @@ export async function loadLastChartedTreatmentsForClients(input: {
     }
   }
 
+  // Chips for EVERY candidate block, not just the selected session's. The
+  // watch/plan source and the treatment intelligence both read blocks from
+  // across the window, and the unified reaction line needs each block's own
+  // live observation chips. The entries are already loaded — this is a loop,
+  // not a query.
+  const entriesByBlockAll = new Map<string, PointOfCareEntry[]>();
+  for (const row of rows) {
+    for (const entry of row.electrolysis_entries ?? []) {
+      if (entry.deleted_at != null) continue;
+      const blockId = entry.block_id;
+      if (!blockId) continue;
+      const bucket = entriesByBlockAll.get(blockId);
+      if (bucket) bucket.push(entry);
+      else entriesByBlockAll.set(blockId, [entry]);
+    }
+  }
+
+  /**
+   * The pre-visit briefing for ONE appointment, from ITS OWN bounded window.
+   *
+   * Every fact is evaluated over `candidates`, which the charted-session
+   * authority has already filtered by this appointment's `before`, its own
+   * session exclusion, soft-deletes and void records. That is the whole point:
+   * the same helpers the client Overview uses, fed a window that knows which
+   * appointment it is preparing for.
+   */
+  function briefingFor(
+    r: PrepMemoryRequest,
+    candidates: AppointmentPrepSession[],
+    selected: AppointmentPrepSession | null,
+  ): BeforeToday | null {
+    if (!r.client) return null;
+    const blocksOf = (sessionId: string) => blocksBySession.get(sessionId) ?? [];
+    // BLOCK_COLUMNS selects every field `ClinicalSummaryBlock` needs — see the
+    // constant — but `RawBlock` is derived from `PointOfCareBlock`, which
+    // declares a narrower shape. The rows carry the data; this restates that
+    // at the one boundary where the summary helpers are called.
+    const withChips = (b: RawBlock) =>
+      ({
+        ...b,
+        observation_chips_list: (entriesByBlockAll.get(b.id) ?? []).map(
+          (e) => e.observation_chips,
+        ),
+      }) as unknown as ClinicalSummaryBlock;
+
+    const watchSource = pickPreClientWatchPlanSource(
+      candidates,
+      new Map(
+        candidates.map((c) => [
+          c.id,
+          blocksOf(c.id) as unknown as ReadonlyArray<
+            Pick<ClinicalSummaryBlock, "caution_for_next_session" | "caution_note">
+          >,
+        ]),
+      ),
+    );
+    const watchPlan = watchSource
+      ? buildLastSessionSummary({
+          blocks: blocksOf(watchSource.id).map(withChips),
+          nextSessionNote: watchSource.next_session_note ?? null,
+        })
+      : null;
+
+    const intelligence = buildTreatmentIntelligence({
+      sessionsNewestFirst:
+        candidates as unknown as Parameters<
+          typeof buildTreatmentIntelligence
+        >[0]["sessionsNewestFirst"],
+      blocks: candidates.flatMap((c) =>
+        blocksOf(c.id).map((b) => ({
+          ...(withChips(b) as object),
+          structured_areas: orderAreas(b.structured_areas ?? []),
+          entry_hairs: [],
+        })),
+      ) as unknown as Parameters<typeof buildTreatmentIntelligence>[0]["blocks"],
+    });
+
+    const selectedBlocks = selected ? blocksOf(selected.id) : [];
+    const selectedSummary = selected
+      ? buildLastSessionSummary({
+          blocks: selectedBlocks.map(withChips),
+          nextSessionNote: selected.next_session_note ?? null,
+        })
+      : null;
+
+    return buildPreVisitBriefing({
+      lastTreatment: selected
+        ? {
+            startedAt: selected.started_at,
+            modality: selected.modality,
+            areaNames: selectedSummary?.areas.map((a) => a.name) ?? [],
+            aftercareExplainedAt:
+              (selected as { aftercare_and_risks_explained_at?: string | null })
+                .aftercare_and_risks_explained_at ?? null,
+            blockLots: selectedBlocks.map((b) => b.probe_lot_number ?? null),
+            blockMinutes: selectedBlocks.map((b) =>
+              b.minutes_performed == null ? null : Number(b.minutes_performed),
+            ),
+            blockReactionNotes: selectedBlocks.map(
+              (b) => b.reaction_notes ?? null,
+            ),
+          }
+        : null,
+      watchPlan,
+      intelligence,
+      client: {
+        dateOfBirth: r.client.dateOfBirth,
+        phone: r.client.phone,
+        address: r.client.address,
+      },
+    });
+  }
+
   for (const r of requests) {
     const candidates = candidatesByRequest.get(r.requestKey) ?? [];
     // Narrative is resolved from the candidates already held, independently of
@@ -701,12 +867,24 @@ export async function loadLastChartedTreatmentsForClients(input: {
     };
 
     if (blocksUnavailable) {
-      out.set(r.requestKey, { treatment: null, unavailable: true, narrative });
+      out.set(r.requestKey, {
+        treatment: null,
+        unavailable: true,
+        narrative,
+        // The block read failed, so no setup/caution can be derived. The notes
+        // survive because they come from the session rows already held.
+        briefing: briefingFor(r, candidates, null),
+      });
       continue;
     }
     if (candidates.length === 0) {
       // Truthful: with a truncated window we did not prove there is nothing.
-      out.set(r.requestKey, { treatment: null, unavailable: truncated, narrative });
+      out.set(r.requestKey, {
+        treatment: null,
+        unavailable: truncated,
+        narrative,
+        briefing: briefingFor(r, candidates, null),
+      });
       continue;
     }
 
@@ -718,7 +896,16 @@ export async function loadLastChartedTreatmentsForClients(input: {
       // the client's real treatment may simply have fallen below the global
       // cut while their recent empties survived. Reporting `false` there is an
       // unproven absence: exactly what this module's own contract forbids.
-      out.set(r.requestKey, { treatment: null, unavailable: truncated, narrative });
+      out.set(r.requestKey, {
+        treatment: null,
+        unavailable: truncated,
+        narrative,
+        // Positive facts that WERE read still render: each client's slice is a
+        // recency prefix, so a caution or plan found in it is real. Only the
+        // ABSENCE claim is unproven under truncation, and that is what
+        // `unavailable` carries.
+        briefing: briefingFor(r, candidates, null),
+      });
       continue;
     }
 
@@ -747,6 +934,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
       },
       unavailable: false,
       narrative,
+      briefing: briefingFor(r, candidates, selected),
     });
   }
 
