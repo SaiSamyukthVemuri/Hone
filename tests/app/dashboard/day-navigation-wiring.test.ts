@@ -110,18 +110,27 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     expect(CODE).toMatch(/reminders: briefing\?\.reminders \?\? \[\]/);
   });
 
-  it("every RELATIONSHIP claim is still behind the workflow null", () => {
-    // The rule that survives: nothing may say new-vs-returning off Today.
-    // These all live inside `{workflow && (`, which is null off Today.
+  it("there is NO relationship claim left to place on any day", () => {
+    // This used to assert that "New client · No charted history yet" sat
+    // inside `{workflow && (`, so it could not escape onto a future day.
+    // The claim is now GONE OUTRIGHT rather than positioned, because it was
+    // inferred from history absence across a window that three separate
+    // mechanisms narrow without reporting. Placement was the weaker rule.
+    // CODE is already comment-stripped at the top of this file, so a hit
+    // here is real JSX, not prose in a comment explaining the removal.
+    const code = CODE;
+    expect(code).not.toMatch(/New client/);
+    expect(code).not.toMatch(/Returning client/);
+    // The positive grammar is still there, and still inside the workflow null.
     expect(CODE).toMatch(/\{workflow && \(/);
     const block = CODE.slice(CODE.indexOf("{workflow && ("));
-    for (const claim of [
-      "New client · No charted history yet",
+    for (const fact of [
       "Remember: {workflow.remember}",
-      "Latest setup:",
+      "Caution: {workflow.caution}",
+      "Latest setup: {workflow.setup}",
       "workflow.missingRecords.length > 0",
     ]) {
-      expect(block, claim).toContain(claim);
+      expect(block, fact).toContain(fact);
     }
   });
 

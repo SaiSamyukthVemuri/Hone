@@ -25,6 +25,10 @@ const PAGE = readFileSync(
   "utf8",
 );
 const CODE = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const DISCLOSURE = readFileSync(
+  join(process.cwd(), "app/(app)/dashboard/dashboard-treatment-memory.tsx"),
+  "utf8",
+);
 
 describe("the disclosure projection cannot carry the plan note", () => {
   it("drops `remember` AT RUNTIME, not merely in the type", () => {
@@ -63,23 +67,41 @@ describe("the disclosure projection cannot carry the plan note", () => {
   });
 });
 
-describe("Today never contradicts itself about the relationship", () => {
-  it("the no-history line requires BOTH authorities to agree", () => {
-    // workflow says none, prep PROVED none, and prep actually answered.
-    // …and only on TODAY. "New client" is a relationship claim; off Today the
-    // page does not pose that question, so it states the bounded fact instead.
-    expect(CODE).toMatch(
-      /\{isToday &&\s*!workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable &&\s*workflow\.briefingComplete \? \(/,
-    );
+describe("THE DASHBOARD NEVER MAKES A HISTORY-ABSENCE CLAIM", () => {
+  // The rule that replaced four rounds of completeness bookkeeping.
+  //
+  // Each earlier round licensed an absence claim from one more completeness
+  // signal, and the next unreported narrowing point produced the next false
+  // negative: the global row budget, then the per-client slice, then the
+  // PostgREST cap on the block read. The claims are now GONE, so no signal is
+  // load-bearing and there is no next narrowing point to miss.
+  const ABSENCE_CLAIMS = [
+    "No watch/plan note.",
+    "Not recorded",
+    "No prior charted treatment",
+    "New client",
+    "Returning client",
+    "No charted history",
+  ];
+
+  it("none of the deleted claims survives anywhere in the page", () => {
+    for (const claim of ABSENCE_CLAIMS) {
+      expect(CODE, claim).not.toContain(claim);
+    }
   });
 
-  it("a proven treatment or an unanswered read suppresses the claim", () => {
-    // The middle arm says nothing rather than asserting the opposite.
-    expect(CODE).toMatch(/\) : !workflow\.hasHistory \? \(\s*null\s*\) : \(/);
+  it("no completeness flag is consulted, because none is needed", () => {
+    // If this reappears, the absence claims are on their way back with it.
+    expect(CODE).not.toMatch(/briefingComplete/);
   });
 
-  it("the unguarded form is gone", () => {
+  it("the history state no longer gates ANY rendered preparation fact", () => {
+    // `hasHistory` still resolves the row's primary ACTION, which degrades to
+    // the neutral "Open client" when the question was not asked. What it must
+    // never do again is decide whether a fact Hone READ gets painted.
+    expect(CODE).not.toMatch(/workflow\.hasHistory \? \(/);
     expect(CODE).not.toMatch(/\{!workflow\.hasHistory \? \(/);
+    expect(CODE).not.toMatch(/hasHistory && workflow\.(remember|caution|setup)/);
   });
 });
 
@@ -170,22 +192,31 @@ describe("the TODAY ACTION MATRIX — four cases, no false claim", () => {
   });
 });
 
-describe("off Today the page states a bounded fact, never a relationship", () => {
-  it("the no-history CLAIM is gated on isToday", () => {
-    expect(CODE).toMatch(/\{isToday &&/);
+describe("off Today the page states no relationship and no absence", () => {
+  it("nothing about the relationship is stated on ANY day", () => {
+    // This used to prove the claim was gated on `isToday` so it could not
+    // escape onto a future day. Deleting it is the stronger property: there
+    // is no longer a claim whose placement could be got wrong.
+    expect(CODE).not.toMatch(/New client/);
+    expect(CODE).not.toMatch(/No prior charted treatment before this visit/);
   });
 
-  it("off Today it says what it can prove about THIS visit instead", () => {
-    expect(CODE).toMatch(/No prior charted treatment before this visit/);
-    // …and says nothing at all when the read could not answer.
-    // …and stays silent when the window could not prove the absence either.
-    expect(CODE).toMatch(
-      /prepSummary\.unavailable \|\| !workflow\.briefingComplete \? null : \(/,
-    );
-  });
-
-  it("the temporal label is date-correct", () => {
+  it("`isToday` survives ONLY as the temporal label", () => {
+    // The label is a calendar fact, not a history inference: it says which
+    // window the facts below were drawn from, and asserts nothing about what
+    // is in it.
     expect(CODE).toMatch(/isToday \? "Before today" : "Before this visit"/);
+  });
+
+  it("the same positive grammar is emitted for every day", () => {
+    // One render path. No `isToday` branch may add or remove a prep fact.
+    const block = CODE.slice(CODE.indexOf("{workflow && ("));
+    const grammar = block.slice(0, block.indexOf("missingRecords"));
+    expect(grammar).toContain("{workflow.remember && (");
+    expect(grammar).toContain("{workflow.caution && (");
+    expect(grammar).toContain("{workflow.setup && (");
+    // exactly one isToday in the grammar: the label itself
+    expect((grammar.match(/isToday/g) ?? []).length).toBe(1);
   });
 });
 
@@ -210,8 +241,12 @@ describe("a recorded instruction does not depend on proving treatment", () => {
     ]).items;
     // The instruction survives…
     expect(item.remember).toBe("Started doxycycline, do not treat");
-    // …while the treatment-derived fact correctly does not.
-    expect(item.setup).toBeNull();
+    // …AND SO DOES THE SETTING. This previously asserted `null`, on the
+    // reasoning that "Latest setup" against a client with no charted history
+    // is noise "because the no-history state says it already". That state no
+    // longer says anything — the absence claims are deleted — so the old gate
+    // would now silently drop a concrete value Hone actually read.
+    expect(item.setup).toBe("27.12 MHz");
   });
 
   it("the page renders Remember BEFORE the history-state branches", () => {
@@ -231,31 +266,29 @@ describe("a recorded instruction does not depend on proving treatment", () => {
   });
 });
 
-describe("completeness is carried from the loader, not assumed", () => {
-  it("the page passes the loader's own value, never a literal", () => {
-    // Hardcoding `true` here would re-enable every absence claim under a
-    // partial window while every loader-level test still passed — the signal
-    // exists, and the page simply would not be listening.
-    expect(CODE).toMatch(/briefingComplete: load\?\.briefingComplete \?\? false/);
-    expect(CODE).not.toMatch(/briefingComplete: true/);
-  });
-
-  it("every ABSENCE claim consults it", () => {
-    // The positive facts deliberately do NOT: truncation weakens absence
-    // claims, it does not erase evidence that was read.
-    const noWatchPlan = CODE.indexOf("No watch/plan note.");
-    const guardBefore = CODE.lastIndexOf("workflow.briefingComplete", noWatchPlan);
-    expect(guardBefore).toBeGreaterThan(-1);
-    expect(CODE).toMatch(/\(workflow\.setup \|\| workflow\.briefingComplete\) && \(/);
-    expect(CODE).toMatch(
-      /prepSummary\.unavailable \|\| !workflow\.briefingComplete \? null : \(/,
-    );
-  });
-
-  it("the POSITIVE facts do not consult it", () => {
-    // Remember renders on its own authority; adding a completeness condition
-    // here would re-create the P1 this repair exists to prevent.
+describe("positive facts render on their own authority", () => {
+  it("Remember, Caution and Latest setup are each independent", () => {
+    // Each is a fact Hone READ. None may be gated on proving that some OTHER
+    // fact exists, and none needs a complete-history proof.
     expect(CODE).toMatch(/\{workflow\.remember && \(/);
-    expect(CODE).not.toMatch(/briefingComplete && workflow\.remember/);
+    expect(CODE).toMatch(/\{workflow\.caution && \(/);
+    expect(CODE).toMatch(/\{workflow\.setup && \(/);
+  });
+
+  it("the setup VALUE renders with no absence companion", () => {
+    expect(CODE).toMatch(/Latest setup: \{workflow\.setup\}/);
+    expect(CODE).not.toMatch(/workflow\.setup \?\? /);
+  });
+
+  it("READ FAILURE is still reported — it is not the same as absence", () => {
+    // "The read failed" is an operational fact worth stating. "No positive
+    // fact was found" is not, because the window cannot prove it. Collapsing
+    // the two in either direction is the error this file guards.
+    // The page's job is to keep routing a FAILED read into the disclosure…
+    expect(CODE).toMatch(
+      /\{\(prepSummary\.hasTreatment \|\| prepSummary\.unavailable\) && \(/,
+    );
+    // …which is where the calm failure sentence itself lives.
+    expect(DISCLOSURE).toMatch(/Previous treatment could not be loaded/);
   });
 });

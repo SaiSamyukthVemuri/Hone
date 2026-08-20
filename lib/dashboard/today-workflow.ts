@@ -49,18 +49,6 @@ export type TodayWorkflowInput = {
   status: string;
   serviceName: string | null;
   hasHistory: boolean;
-  /**
-   * Was the history window complete enough to make ABSENCE claims?
-   *
-   * Optional and defaulting to true, so every existing caller keeps its
-   * meaning. Only a partial window passes false.
-   *
-   * Separate from `hasHistory` on purpose: a partial slice can still yield a
-   * safe newest treatment while an older note sits outside it. Positive facts
-   * that were read still render; the absence claims derived from the same
-   * window must not.
-   */
-  briefingComplete?: boolean;
   // The structured plan note (session.next_session_note).
   nextVisitNote: string | null;
   // The first recorded watch line.
@@ -86,7 +74,6 @@ export type TodayWorkflowItem = {
   // Preparation: each fact resolved ONCE, and never re-labelled elsewhere.
   hasHistory: boolean;
   /** False only when the window was partial. See the input field. */
-  briefingComplete: boolean;
   // The plan note. Rendered once under "Remember".
   remember: string | null;
   // The watch line. Rendered once under "Caution", visually distinct.
@@ -155,9 +142,13 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
   const caution = trimmedOrNull(input.cautionNote);
   const remember = trimmedOrNull(input.nextVisitNote);
 
-  // Setup is shown only when there IS history; "Latest setup" against a client
-  // with no charted history is noise, and the no-history state says it already.
-  const setup = input.hasHistory ? trimmedOrNull(input.setupLine) : null;
+  // A CONCRETE SETUP VALUE IS A POSITIVE FACT AND STANDS ALONE.
+  // This used to be gated on `hasHistory`, which was defensible only while the
+  // row also printed a no-history line to "say it already". That line is gone
+  // (positive-evidence-only), and the gate would now silently drop a setting
+  // Hone actually read — from a note-only visit, or from a window whose
+  // charted-treatment question came back UNKNOWN.
+  const setup = trimmedOrNull(input.setupLine);
 
   // Specific reminders only, order-preserving and deduplicated after
   // shortening (two different long reminders can shorten to the same chip).
@@ -179,7 +170,6 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
     status: input.status,
     serviceName: input.serviceName,
     hasHistory: input.hasHistory,
-    briefingComplete: input.briefingComplete !== false,
     remember,
     caution,
     setup,

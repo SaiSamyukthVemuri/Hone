@@ -913,3 +913,92 @@ test.describe("Remember renders on its own authority", () => {
     });
   });
 });
+
+test.describe("THE DASHBOARD NEVER MAKES A HISTORY-ABSENCE CLAIM", () => {
+  // The architectural reduction. Four P1s were one defect: the row inferred an
+  // ABSENCE from a window narrowed by mechanisms that cannot all report — the
+  // global row budget, the per-client slice, the cap on the block read. Each
+  // repair licensed the claim from one more signal; the next silent one broke
+  // it again. The claims are deleted, so there is nothing left to license.
+  const ABSENCE_CLAIMS = [
+    "No watch/plan note.",
+    "Latest setup: Not recorded",
+    "No prior charted treatment before this visit",
+    "New client · No charted history yet",
+    "No prior treatment history yet",
+  ];
+
+  test("5/6/7/12. a client with NO history states nothing, on Today or a future day", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    // No prior visit of any kind: no note, no caution, no setup, no treatment.
+    // Every deleted claim would have been "true" here — and the point is that
+    // the Dashboard still cannot prove it, so it says none of them.
+    const client = await seedE2eDashboardClient(seed, { label: "Silent State" });
+    await seedE2eTodayAppointment(seed, {
+      clientId: client.clientId,
+      startsMinutesFromNow: 90,
+      endsMinutesFromNow: 135,
+    });
+    await seedE2eTodayAppointment(seed, {
+      clientId: client.clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+    await loginAsOwner(page, seed);
+
+    for (const [step, url] of [
+      ["43. Today", "/dashboard"],
+      ["44. a future day", `/dashboard?day=${localDay(tz, OFFSET)}`],
+    ] as const) {
+      await test.step(`${step}: the row appears and claims nothing`, async () => {
+        await page.goto(url);
+        const row = page.locator("li").filter({ hasText: client.name }).first();
+        await expect(row).toBeVisible({ timeout: T });
+        // The row is REAL — it renders, it is just silent about history.
+        await expect(row.getByText(client.name).first()).toBeVisible();
+        for (const claim of ABSENCE_CLAIMS) {
+          await expect(page.getByText(claim, { exact: true }), claim).toHaveCount(0);
+        }
+        // No positive fact is fabricated either.
+        await expect(row.getByText(/^Remember:/)).toHaveCount(0);
+        await expect(row.getByText(/^Caution:/)).toHaveCount(0);
+        await expect(row.getByText(/^Latest setup:/)).toHaveCount(0);
+      });
+    }
+  });
+
+  test("6. a treatment WITHOUT a recorded setup shows no setup line either way", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    // A charted prior visit exists, so history is PROVEN — but nothing was
+    // recorded for the machine setup. The old row printed
+    // "Latest setup: Not recorded"; it now prints no setup line at all.
+    const client = await seedE2eDashboardClient(seed, { label: "No Setup" });
+    await seedE2eNoteOnlyVisit(seed, {
+      clientId: client.clientId,
+      note: "Check the reaction from last time",
+    });
+    await seedE2eTodayAppointment(seed, {
+      clientId: client.clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+    await loginAsOwner(page, seed);
+
+    await test.step("45. the note renders, the absent setup does not", async () => {
+      await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+      const row = page.locator("li").filter({ hasText: client.name }).first();
+      await expect(
+        row.getByText("Remember: Check the reaction from last time"),
+      ).toBeVisible({ timeout: T });
+      await expect(row.getByText(/^Latest setup:/)).toHaveCount(0);
+      await expect(page.getByText("Latest setup: Not recorded")).toHaveCount(0);
+      await expect(page.getByText("No watch/plan note.")).toHaveCount(0);
+    });
+  });
+});

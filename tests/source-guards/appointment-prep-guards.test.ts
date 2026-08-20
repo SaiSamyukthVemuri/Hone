@@ -541,7 +541,7 @@ describe("narrative survives without a charted treatment (final-review P2 #2)", 
 
   it("every load outcome carries narrative, and only a candidate-read failure has none", () => {
     // `\s*` between the fields: the result object gained `briefing` and
-    // `briefingComplete`, so these are multi-line now. What is being guarded is
+    // the briefing, so these are multi-line now. What is being guarded is
     // unchanged — every outcome still carries the narrative, and only a
     // candidate-read failure does not.
     expect(LOADER_CODE).toMatch(

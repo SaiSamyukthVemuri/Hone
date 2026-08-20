@@ -124,11 +124,15 @@ describe("placement + reuse", () => {
     // 70-char cap is gone. Full-visibility is pinned in its own suite
     // (tests/app/dashboard/dashboard-memory-visibility.test.ts).
     expect(PAGE).toMatch(/Remember: \{workflow\.remember\}/);
-    expect(PAGE).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
-    // ONE relationship line now: the old card said "No charted history yet."
-    // and the brief separately said "No prior treatment history yet".
-    expect(PAGE).toMatch(/New client · No charted history yet/);
-    expect(PAGE).toMatch(/No watch\/plan note\./);
+    // POSITIVE-EVIDENCE-ONLY. The setup VALUE renders; there is no
+    // "Not recorded" companion, because that is an absence claim over a
+    // window the page cannot prove is complete.
+    expect(PAGE).toMatch(/Latest setup: \{workflow\.setup\}/);
+    const code = PAGE.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code).not.toMatch(/Not recorded/);
+    expect(code).not.toMatch(/New client · No charted history yet/);
+    expect(code).not.toMatch(/No watch\/plan note\./);
+    expect(code).not.toMatch(/No prior charted treatment/);
     // Empty roster state untouched.
     expect(PAGE).toMatch(/No appointments today\./);
   });

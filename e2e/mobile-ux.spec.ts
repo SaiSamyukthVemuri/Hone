@@ -209,17 +209,20 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     expect(todayBox && snapshotBox && todayBox.y < snapshotBox.y).toBe(true);
     // The Daily Prep Brief list is RETIRED: it re-rendered every appointment a
     // second time. Its preparation facts now live once, inside the Today card,
-    // which must still fit the phone and state the no-history case calmly.
+    // which must still fit the phone.
     await expect(
       page.getByRole("heading", { name: "Daily prep brief" }),
     ).toHaveCount(0);
     const todaySection = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Today", exact: true }) });
+    // NO relationship phrasing at all now, in either wording. The row used to
+    // "state the no-history case calmly"; it cannot prove that case, so the
+    // calm thing is silence. The neutral primary action below is what still
+    // carries the affordance.
     await expect(
-      todaySection.getByText(/New client · No charted history yet/).first(),
-    ).toBeVisible();
-    // ONE relationship phrasing, not two.
+      todaySection.getByText(/New client · No charted history yet/),
+    ).toHaveCount(0);
     await expect(page.getByText(/No prior treatment history yet/)).toHaveCount(0);
     await expectNoPageOverflow(page, "dashboard with combined Today workflow");
     // PR #236: the booked appointment shows ONE obvious action. The

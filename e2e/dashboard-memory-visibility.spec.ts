@@ -167,13 +167,35 @@ test.describe("iPhone profile", () => {
     expect(wordBreak).toBe("break-word");
   });
 
-  test("the no-history and no-note states are unchanged", async ({ page }) => {
+  test("5/6/7. nothing found means nothing SAID — no absence line appears", async ({
+    page,
+  }) => {
     const seed = await seedE2eStudio();
     await seedE2eDashboardMemoryClient(seed, { cautionNote: null });
     await loginAsOwner(page, seed);
     await page.goto("/dashboard");
     // History exists (a charted block) but no watch/plan note was recorded.
-    await expect(page.getByText("No watch/plan note.").first()).toBeVisible({ timeout: T });
+    // This used to assert "No watch/plan note." was VISIBLE. It is now never
+    // rendered: the row cannot prove the note is absent rather than merely
+    // outside a narrowed window, so it states only what it read.
+    // The setup WAS read, so it still renders — this is the positive half of
+    // the law, and it makes the absence assertions below non-vacuous: the row
+    // is present and populated, just silent about what it could not prove.
+    await expect(page.getByText(/^Latest setup:/).first()).toBeVisible({
+      timeout: T,
+    });
+    // No note and no caution were recorded, which is precisely the state that
+    // used to print "No watch/plan note." here.
+    await expect(page.getByText(/^Remember:/)).toHaveCount(0);
+    await expect(page.getByText(/^Caution:/)).toHaveCount(0);
+    for (const claim of [
+      "No watch/plan note.",
+      "Latest setup: Not recorded",
+      "No prior charted treatment",
+      "New client · No charted history yet",
+    ]) {
+      await expect(page.getByText(claim), claim).toHaveCount(0);
+    }
   });
 });
 

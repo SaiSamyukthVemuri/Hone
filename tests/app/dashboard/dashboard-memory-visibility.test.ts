@@ -57,7 +57,7 @@ describe("Today appointment card shows the memory lines in full", () => {
   });
 
   it("the latest-settings line is rendered whole", () => {
-    expect(PREVIEW_BLOCK).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
+    expect(PREVIEW_BLOCK).toMatch(/Latest setup: \{workflow\.setup\}/);
     expect(PREVIEW_BLOCK).not.toMatch(/truncate\(beforeToday\.setupLine/);
   });
 
@@ -72,9 +72,12 @@ describe("Today appointment card shows the memory lines in full", () => {
   it("both lines wrap safely and keep intentional line breaks", () => {
     // Remember and Caution are now independent optional blocks (the old single
     // ternary folded the caution into Remember).
+    // Sliced on the real element boundaries. These used to end at
+    // "No watch/plan note.", which no longer exists — the absence claims were
+    // deleted rather than licensed.
     const remember = PREVIEW_BLOCK.slice(
       PREVIEW_BLOCK.indexOf("{workflow.remember && ("),
-      PREVIEW_BLOCK.indexOf("No watch/plan note."),
+      PREVIEW_BLOCK.indexOf("{workflow.caution && ("),
     );
     expect(remember).toMatch(/whitespace-pre-wrap break-words/);
     const setup = PREVIEW_BLOCK.slice(PREVIEW_BLOCK.indexOf("Latest setup:") - 300);
@@ -82,7 +85,7 @@ describe("Today appointment card shows the memory lines in full", () => {
     // The caution is its own wrapped block, in the rose convention.
     const caution = PREVIEW_BLOCK.slice(
       PREVIEW_BLOCK.indexOf("{workflow.caution && ("),
-      PREVIEW_BLOCK.indexOf("No watch/plan note."),
+      PREVIEW_BLOCK.indexOf("{workflow.setup && ("),
     );
     expect(caution).toMatch(/whitespace-pre-wrap break-words/);
     expect(caution).toMatch(/text-rose-900/);

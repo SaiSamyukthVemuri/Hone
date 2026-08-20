@@ -386,11 +386,15 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       await loginAsOwner(page, seed);
       await openDashboard(page);
 
-      // Whichever cards show the no-history state say it once, one way.
-      const combined = page.getByText("New client · No charted history yet");
-      const oldPhrase = page.getByText("No prior treatment history yet");
-      await expect(oldPhrase).toHaveCount(0);
-      expect(await combined.count()).toBeGreaterThanOrEqual(0);
+      // POSITIVE-EVIDENCE-ONLY: the no-history state is now stated in NO
+      // phrasing at all. This used to assert the claim appeared "once, one
+      // way"; the Dashboard cannot prove it over a window that three separate
+      // mechanisms narrow without reporting, so it says nothing instead.
+      await expect(
+        page.getByText("New client · No charted history yet"),
+      ).toHaveCount(0);
+      await expect(page.getByText("No prior treatment history yet")).toHaveCount(0);
+      await expect(page.getByText("No watch/plan note.")).toHaveCount(0);
       await expectNoHorizontalScroll(page);
     });
   });

@@ -159,17 +159,19 @@ describe("5-7. the note facts each resolve ONCE", () => {
     expect(item.caution).toBeNull();
   });
 
-  it("latest setup resolves once, and only when there is history", () => {
-    const [withHistory] = buildTodayWorkflow([
-      input({ hasHistory: true, setupLine: "27.12 MHz · Ballet F3" }),
-    ]).items;
-    expect(withHistory.setup).toBe("27.12 MHz · Ballet F3");
-    const [noHistory] = buildTodayWorkflow([
-      input({ hasHistory: false, setupLine: "27.12 MHz · Ballet F3" }),
-    ]).items;
-    // A "latest setup" for someone with no charted history is noise; the
-    // no-history state already says everything.
-    expect(noHistory.setup).toBeNull();
+  it("latest setup resolves once, from the VALUE and not from history state", () => {
+    // Both arms now keep it. The old rule — "noise for someone with no charted
+    // history, the no-history state already says everything" — depended on a
+    // no-history line that no longer exists. With the absence claims deleted,
+    // the gate could only ever delete a setting Hone genuinely read: from a
+    // note-only visit, or from a window whose charted-treatment question came
+    // back UNKNOWN.
+    for (const hasHistory of [true, false]) {
+      const [item] = buildTodayWorkflow([
+        input({ hasHistory, setupLine: "27.12 MHz · Ballet F3" }),
+      ]).items;
+      expect(item.setup, String(hasHistory)).toBe("27.12 MHz · Ballet F3");
+    }
   });
 });
 
@@ -253,12 +255,25 @@ describe("10. missing-record reminders are specific and deduplicated", () => {
 });
 
 describe("11. relationship state is stated once", () => {
-  it("a no-history client carries hasHistory:false and no setup line", () => {
+  it("a CONCRETE setup survives even when hasHistory is false", () => {
+    // This asserted `null` while the row still printed a no-history line that
+    // "said it already". That line is gone — positive-evidence-only — so
+    // suppressing the value here would just delete a setting Hone read.
     const [item] = buildTodayWorkflow([
-      input({ hasHistory: false, setupLine: "x" }),
+      input({ hasHistory: false, setupLine: "27.12 MHz" }),
     ]).items;
     expect(item.hasHistory).toBe(false);
-    expect(item.setup).toBeNull();
+    expect(item.setup).toBe("27.12 MHz");
+  });
+
+  it("an EMPTY setup is still null, whatever the history state", () => {
+    // Ungating must not turn whitespace into a rendered line.
+    for (const hasHistory of [true, false]) {
+      const [item] = buildTodayWorkflow([
+        input({ hasHistory, setupLine: "   " }),
+      ]).items;
+      expect(item.setup, String(hasHistory)).toBeNull();
+    }
   });
 
   it("the model emits no 'Returning client' badge string", () => {
@@ -410,8 +425,11 @@ describe("dashboard wiring", () => {
     expect(code.match(/Remember: \{workflow\.remember\}/g) ?? []).toHaveLength(1);
     expect(code.match(/Caution: \{workflow\.caution\}/g) ?? []).toHaveLength(1);
     expect(
-      code.match(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/g) ?? [],
+      code.match(/Latest setup: \{workflow\.setup\}/g) ?? [],
     ).toHaveLength(1);
+    // …and NO absence companion for any of them.
+    expect(code).not.toMatch(/Not recorded/);
+    expect(code).not.toMatch(/No watch\/plan note/);
   });
 
   it("full-text rendering from #486/#489 is preserved (no cap, no clamp)", () => {

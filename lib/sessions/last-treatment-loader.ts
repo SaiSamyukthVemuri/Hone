@@ -402,22 +402,6 @@ export type AppointmentPrepLoad = {
    * appointment boundary at all.
    */
   briefing: BeforeToday | null;
-  /**
-   * Was the history window complete enough to make ABSENCE claims?
-   *
-   * Deliberately separate from `unavailable`, which answers a different
-   * question: "could we select a treatment at all". Both can be true at once,
-   * and overloading one boolean is what produced the defect this exists to
-   * stop.
-   *
-   * TRUNCATION WEAKENS ABSENCE CLAIMS; IT DOES NOT ERASE POSITIVE EVIDENCE.
-   * The candidate slice is a newest-first prefix, so a note, caution, setup or
-   * treatment FOUND in it is real and still renders. But a note that is not in
-   * the slice may simply have been evicted by another client's rows — so
-   * "No watch/plan note." and "Latest setup: Not recorded" are claims this
-   * flag must be consulted before printing.
-   */
-  briefingComplete: boolean;
   treatment: LastChartedTreatment<AppointmentPrepSession> | null;
   // True ONLY when a read actually failed: the candidate read OR the batched
   // block read. A first-visit client, and a client whose only other sessions
@@ -512,7 +496,6 @@ export async function loadLastChartedTreatmentForClient(input: {
       narrative: { plan: null, legacySessionNotes: null },
       // The single-client path predates the briefing and does not build one.
       briefing: null,
-      briefingComplete: false,
     };
   }
 
@@ -545,7 +528,6 @@ export async function loadLastChartedTreatmentForClient(input: {
         unavailable: false,
         narrative,
         briefing: null,
-        briefingComplete: false,
       };
     case "none":
       // Reads succeeded; this client genuinely has no charted prior treatment.
@@ -555,7 +537,6 @@ export async function loadLastChartedTreatmentForClient(input: {
         unavailable: false,
         narrative,
         briefing: null,
-        briefingComplete: false,
       };
     case "unavailable":
       // The block read failed. Say so, and keep the narrative that WAS loaded,
@@ -565,7 +546,6 @@ export async function loadLastChartedTreatmentForClient(input: {
         unavailable: true,
         narrative,
         briefing: null,
-        briefingComplete: false,
       };
   }
 }
@@ -701,7 +681,6 @@ export async function loadLastChartedTreatmentsForClients(input: {
         unavailable: true,
         narrative: { plan: null, legacySessionNotes: null },
         briefing: null,
-        briefingComplete: false,
       });
     }
     return out;
@@ -905,7 +884,6 @@ export async function loadLastChartedTreatmentsForClients(input: {
         // The block read failed, so no setup/caution can be derived. The notes
         // survive because they come from the session rows already held.
         briefing: briefingFor(r, candidates, null),
-        briefingComplete: false,
       });
       continue;
     }
@@ -916,7 +894,6 @@ export async function loadLastChartedTreatmentsForClients(input: {
         unavailable: truncated,
         narrative,
         briefing: briefingFor(r, candidates, null),
-        briefingComplete: !truncated,
       });
       continue;
     }
@@ -938,7 +915,6 @@ export async function loadLastChartedTreatmentsForClients(input: {
         // ABSENCE claim is unproven under truncation, and that is what
         // `unavailable` carries.
         briefing: briefingFor(r, candidates, null),
-        briefingComplete: !truncated,
       });
       continue;
     }
@@ -968,13 +944,20 @@ export async function loadLastChartedTreatmentsForClients(input: {
       },
       unavailable: false,
       narrative,
+      // POSITIVE EVIDENCE ONLY, WHICH IS WHY NO COMPLETENESS FLAG TRAVELS
+      // WITH IT. A truncated window still yields a safe selected treatment —
+      // the slice is a newest-first prefix, so the newest is guaranteed
+      // present — and any note, caution or setup found in it is real.
+      //
+      // What the window CANNOT support is an absence: a note outside the slice
+      // may have been evicted by another client's rows, by the per-client cut,
+      // or by the cap on the block read. An earlier design carried a
+      // `briefingComplete` flag so the Dashboard could license those absence
+      // claims. It was removed with the claims themselves — four P1s proved
+      // that every unreported narrowing point produces another false negative,
+      // and a question nobody asks needs no proof. Consumers render what is
+      // here and say nothing about what is not.
       briefing: briefingFor(r, candidates, selected),
-      // THE CASE THIS FLAG EXISTS FOR. A truncated window can still yield a
-      // safe selected treatment — the prefix guarantees the NEWEST one — while
-      // an older watch/plan note or setup sits outside the slice, evicted by
-      // another client's rows. The treatment stays usable; the absence claims
-      // do not.
-      briefingComplete: !truncated,
     });
   }
 

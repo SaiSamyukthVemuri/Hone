@@ -126,7 +126,10 @@ const EMPTY_RESPONSE = {
  * caller's job not to turn that into a claim about the person.
  */
 export function buildPreVisitBriefing(input: BeforeTodayInput): BeforeToday {
-  const { lastTreatment, watchPlan, intelligence, client } = input;
+  // `intelligence` is deliberately NOT destructured here: the no-treatment
+  // branch below has nothing to derive from it, and the with-treatment branch
+  // forwards the whole `input` to the shared tail.
+  const { lastTreatment, watchPlan, client } = input;
 
   if (!lastTreatment) {
     const watchOnly = (watchPlan?.watchLines ?? []).filter(

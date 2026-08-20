@@ -611,7 +611,6 @@ export default async function DashboardPage({
         hasHistory: briefing?.hasHistory ?? false,
         // Truncation weakens ABSENCE claims; it does not erase positive
         // evidence. This is consulted only before printing "nothing recorded".
-        briefingComplete: load?.briefingComplete ?? false,
         // The plan note. `narrative.plan` is the loader's own fallback for a
         // note-only visit that charted nothing, and it survives a failed block
         // read, so it is preferred when the briefing has none.
@@ -1278,6 +1277,30 @@ function AppointmentRow({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                   {isToday ? "Before today" : "Before this visit"}
                 </span>
+                {/* DASHBOARD PREP IS POSITIVE-EVIDENCE-ONLY.
+                    ------------------------------------------------------------
+                    If Hone read a fact, show it. If Hone did not read a fact,
+                    say NOTHING. Absence of evidence in a bounded, capped
+                    history read is not evidence of absence.
+
+                    This is an architectural reduction, arrived at the hard way.
+                    Four separate P1s were the same defect: the row inferred an
+                    ABSENCE ("No watch/plan note.", "Latest setup: Not
+                    recorded", "No prior charted treatment before this visit",
+                    "New client · No charted history yet") from a window that
+                    several independent mechanisms narrow WITHOUT REPORTING —
+                    the global row budget, the per-client slice, and the
+                    PostgREST cap on the block read. Each repair licensed the
+                    claim from one more completeness signal, and the next
+                    unreported narrowing point produced the next false claim.
+
+                    So the claims are gone rather than licensed. No completeness
+                    proof is needed for a question nobody asks. Every fact below
+                    renders on its own authority and states only what was read.
+
+                    READ FAILURE IS DIFFERENT and is still reported — see the
+                    prep-summary failure line below. "The read failed" and "no
+                    positive fact was found" are not the same statement. */}
                 {/* REMEMBER IS A POSITIVE RECORDED FACT, AND RENDERS ON ITS OWN
                     AUTHORITY.
                     ------------------------------------------------------------
@@ -1305,87 +1328,27 @@ function AppointmentRow({
                     Remember: {workflow.remember}
                   </span>
                 )}
-                {isToday &&
-                !workflow.hasHistory &&
-                !prepSummary.hasTreatment &&
-                !prepSummary.unavailable &&
-                workflow.briefingComplete ? (
-                  // ONE relationship line, not "New client" here and "No prior
-                  // treatment history yet" somewhere else.
-                  //
-                  // GUARDED BY BOTH AUTHORITIES. Today carries two independent
-                  // evidence sources — the Before-Today workflow and the
-                  // appointment-prep loader — and they can disagree, because
-                  // they differ on void records, truncation and error
-                  // handling. Once the prep memory renders on its own
-                  // authority, the unguarded form could print "New client · No
-                  // charted history yet" directly above "Last treatment: …"
-                  // for the same person.
-                  //
-                  // So this claim now requires that NEITHER source contradicts
-                  // it: the workflow says no history, the prep loader proved no
-                  // treatment, and the prep read actually answered. A
-                  // truncated or failed prep read is not permission to call
-                  // someone new.
-                  //
-                  // AND ONLY ON TODAY. "New client" is a relationship claim,
-                  // and off Today the page does not pose that question — it
-                  // states the bounded fact instead, in the next branch.
-                  <span className="text-neutral-500">
-                    New client · No charted history yet
+                {/* CAUTION IS A POSITIVE RECORDED FACT, ON ITS OWN AUTHORITY.
+                    Kept visually distinct in the established rose convention,
+                    never folded into Remember. It used to render only inside
+                    the has-history arm — but a recorded watch line does not
+                    stop being true because the charted-treatment question came
+                    back NO or UNKNOWN. */}
+                {workflow.caution && (
+                  <span
+                    className="whitespace-pre-wrap break-words text-rose-900 dark:text-rose-200"
+                    title={workflow.caution}
+                  >
+                    Caution: {workflow.caution}
                   </span>
-                ) : !workflow.hasHistory && !isToday ? (
-                  // Off Today we do not make a relationship claim. State the
-                  // bounded fact instead, or nothing.
-                  // Also an absence claim: it needs BOTH a successful read and
-                  // a complete window.
-                  prepSummary.unavailable || !workflow.briefingComplete ? null : (
-                    <span className="text-neutral-500">
-                      No prior charted treatment before this visit
-                    </span>
-                  )
-                ) : !workflow.hasHistory ? (
-                  // The workflow says no history but the prep loader either
-                  // proved a treatment or could not answer. Say nothing about
-                  // the relationship; the treatment strip below speaks for
-                  // itself, truthfully, from its own read.
-                  null
-                ) : (
-                  <>
-                    {/* Caution = the watch line, kept visually distinct in the
-                        established rose convention and never folded into
-                        Remember. */}
-                    {workflow.caution && (
-                      <span
-                        className="whitespace-pre-wrap break-words text-rose-900 dark:text-rose-200"
-                        title={workflow.caution}
-                      >
-                        Caution: {workflow.caution}
-                      </span>
-                    )}
-                    {/* An ABSENCE claim, so it needs a complete window. On a
-                        truncated one the note may simply sit outside the slice,
-                        evicted by another client's rows — and printing this
-                        would hide a recorded safety instruction. */}
-                    {!workflow.remember &&
-                      !workflow.caution &&
-                      workflow.briefingComplete && (
-                        <span className="text-neutral-500">
-                          No watch/plan note.
-                        </span>
-                      )}
-                    {/* Latest setup, once. The brief's duplicate "Last
-                        recorded:" line is gone. */}
-                    {/* The VALUE renders whenever it was read. "Not recorded"
-                        is an absence claim and needs a complete window; on a
-                        truncated one the line is omitted entirely rather than
-                        asserting something unproven. */}
-                    {(workflow.setup || workflow.briefingComplete) && (
-                      <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
-                        Latest setup: {workflow.setup ?? "Not recorded"}
-                      </span>
-                    )}
-                  </>
+                )}
+                {/* Latest setup, once, and ONLY when a concrete value was read.
+                    There is deliberately no "Not recorded" companion: that is
+                    an absence claim, and the law above forbids it. */}
+                {workflow.setup && (
+                  <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
+                    Latest setup: {workflow.setup}
+                  </span>
                 )}
                 {/* Specific missing-record reminders, once each. The generic
                     "Records: N reminders" count is gone: it said nothing these

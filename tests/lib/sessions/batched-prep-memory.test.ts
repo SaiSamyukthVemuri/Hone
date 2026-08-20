@@ -29,6 +29,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const STUDIO = "11111111-1111-1111-1111-111111111111";
 const ALICE = "aaaaaaaa-0000-0000-0000-00000000000a";
 const BOB = "bbbbbbbb-0000-0000-0000-00000000000b";
+const CAROL = "cccccccc-0000-0000-0000-00000000000c";
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
@@ -642,11 +643,25 @@ describe("the briefing is bounded by the appointment", () => {
 // is NOT in the slice may simply have been evicted by another client's rows —
 // so "there is none" is unproven, while "here is the one we found" is not.
 
-describe("truncation separates completeness from selection", () => {
+describe("A NARROWED WINDOW CANNOT PRODUCE A FALSE CLAIM, BECAUSE NO CLAIM IS MADE", () => {
+  // This suite used to prove that a `briefingComplete` flag correctly licensed
+  // the Dashboard's absence claims. It now proves something stronger and much
+  // cheaper to keep true: the window is narrowed by THREE independent
+  // mechanisms, only one of which can report, and it no longer matters —
+  // because every fact that survives is POSITIVE, and nothing downstream
+  // infers an absence from what is missing.
+  //
+  //   1. the global row budget    (reportable — `truncated`)
+  //   2. the per-client slice     (SILENT)
+  //   3. the cap on the block read (SILENT)
+  //
+  // Each repair round licensed the claims from one more of these and the next
+  // silent one produced the next false negative. The claims are gone instead.
+
   /** Budget 1 per client with two clients: Bob fills it, Alice is starved. */
   const STARVE = { limitPerClient: 1 } as const;
 
-  it("A. truncated + selected treatment + a note IN the slice -> both render", async () => {
+  it("8. a truncated window still delivers every positive fact it READ", async () => {
     const { out } = await run(
       {
         sessions: [
@@ -667,17 +682,15 @@ describe("truncation separates completeness from selection", () => {
       STARVE,
     );
     const load = out.get(ALICE)!;
-    // The treatment stays usable — that is the whole point of not collapsing
-    // truncation into `unavailable`.
+    // The treatment stays usable — truncation is not collapsed into
+    // `unavailable`, which would discard evidence that was genuinely read.
     expect(load.treatment).not.toBeNull();
     expect(load.unavailable).toBe(false);
-    // …and the positive note that WAS read still renders.
+    // …and the note that WAS read still renders.
     expect(load.briefing?.remember.plan).toBe("Lower the energy");
-    // …but the window is flagged incomplete.
-    expect(load.briefingComplete).toBe(false);
   });
 
-  it("B/D/F. truncated + selected treatment + NOTHING in the slice -> no absence claim", async () => {
+  it("8b. the loader ships NO completeness flag, because nothing needs one", async () => {
     const { out } = await run(
       {
         sessions: [
@@ -693,33 +706,134 @@ describe("truncation separates completeness from selection", () => {
       STARVE,
     );
     const load = out.get(ALICE)!;
-    expect(load.treatment).not.toBeNull();
-    // No note, no caution — but the window cannot prove there is none, so the
-    // renderer must not print "No watch/plan note." or "Not recorded".
-    expect(load.briefingComplete, "absence is unproven under truncation").toBe(false);
+    // No note and no caution were found. Under the old contract this row had
+    // to carry `briefingComplete: false` so the renderer would suppress
+    // "No watch/plan note." — the flag WAS the permission slip. There is no
+    // claim to permit any more, so there is no flag to get wrong.
+    expect(load).not.toHaveProperty("briefingComplete");
+    expect(load.briefing?.remember.plan).toBeNull();
+    expect(load.briefing?.remember.watchLines).toEqual([]);
   });
 
-  it("G/H. a COMPLETE window may make absence claims", async () => {
-    const { out } = await run(
+  it("9. the PER-CLIENT slice drops older rows while the global read looks complete", async () => {
+    // THE EXACT SHAPE OF THE THIRD P1, now harmless.
+    //
+    // Budget is perClient x clientCount = 1 x 3 = 3. Only two rows exist, so
+    // the global read comes back UNDER budget and `truncated` is false — yet
+    // Alice's own bucket is still cut from 2 to 1, silently discarding the
+    // older session that carries her note. The old design would have called
+    // this window complete and printed "No watch/plan note." over a fact it
+    // had thrown away.
+    const { out, issued } = await run(
       {
         sessions: [
-          session({ id: "s-a", client_id: ALICE, started_at: "2026-03-05T10:00:00Z" }),
+          session({ id: "s-a-new", client_id: ALICE, started_at: "2026-03-06T10:00:00Z" }),
+          session({
+            id: "s-a-old",
+            client_id: ALICE,
+            started_at: "2026-03-01T10:00:00Z",
+            next_session_note: "Do not treat the jawline",
+          }),
         ],
-        session_blocks: [block("s-a")],
+        session_blocks: [block("s-a-new"), block("s-a-old")],
       },
-      [{ clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT }],
-      { limitPerClient: 25 },
+      [
+        { clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { clientId: BOB, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { clientId: CAROL, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+      ],
+      STARVE,
     );
     const load = out.get(ALICE)!;
+    // Under budget: the one signal the loader CAN report says "complete".
+    expect(issued.length).toBeGreaterThan(0);
+    expect(load.unavailable).toBe(false);
+    // The older note is genuinely gone from the window…
+    expect(load.briefing?.remember.plan).toBeNull();
+    // …AND THE CONTROL PROVES THE SLICE IS WHY. The identical fixture with a
+    // roomy per-client limit surfaces the note, so its absence above is the
+    // silent narrowing at work and not a fixture that never held it.
+    const { out: roomy } = await run(
+      {
+        sessions: [
+          session({ id: "s-a-new", client_id: ALICE, started_at: "2026-03-06T10:00:00Z" }),
+          session({
+            id: "s-a-old",
+            client_id: ALICE,
+            started_at: "2026-03-01T10:00:00Z",
+            next_session_note: "Do not treat the jawline",
+          }),
+        ],
+        session_blocks: [block("s-a-new"), block("s-a-old")],
+      },
+      [
+        { clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { clientId: BOB, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+        { clientId: CAROL, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+      ],
+      { limitPerClient: 25 },
+    );
+    expect(roomy.get(ALICE)?.briefing?.remember.plan).toBe(
+      "Do not treat the jawline",
+    );
+    // …and the loader states nothing about whether one exists. The renderer
+    // has no absence claim to make, so a dropped row costs a fact, never
+    // creates a false one.
+    expect(load).not.toHaveProperty("briefingComplete");
     expect(load.treatment).not.toBeNull();
-    expect(load.briefingComplete, "a complete read PROVES the absence").toBe(true);
   });
 
-  it("I. truncated + NO selected treatment -> unavailable AND incomplete", async () => {
+  it("10. a session whose blocks are missing does not become a negative statement", async () => {
+    // THE EXACT SHAPE OF THE FOURTH P1. The block read is capped by PostgREST
+    // at `max_rows` with NO error, so an omitted session is indistinguishable
+    // from a genuinely blockless one. Simulated by withholding the blocks for
+    // a session that exists and definitely has them.
+    const sessions = [
+      session({
+        id: "s-a",
+        client_id: ALICE,
+        started_at: "2026-03-05T10:00:00Z",
+        next_session_note: "Keep to the upper lip",
+      }),
+    ];
+    const reqs = [
+      { clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
+    ];
+
+    // CONTROL: the blocks come back, and the setup IS derived from them.
+    const { out: whole } = await run(
+      {
+        sessions,
+        session_blocks: [{ ...block("s-a"), machine_frequency: "27.12 MHz" }],
+      },
+      reqs,
+      { limitPerClient: 25 },
+    );
+    expect(whole.get(ALICE)?.briefing?.latestSetupLine ?? "").toContain(
+      "27.12 MHz",
+    );
+
+    // PAST THE CAP: the same session, its blocks withheld.
+    const { out } = await run({ sessions, session_blocks: [] }, reqs, {
+      limitPerClient: 25,
+    });
+    const load = out.get(ALICE)!;
+    // The note lives on the SESSION row, so it survives the block cap and
+    // still reaches the practitioner…
+    expect(load.briefing?.remember.plan).toBe("Keep to the upper lip");
+    // …while the block-derived setup is simply ABSENT. Nothing downstream may
+    // turn that into "Latest setup: Not recorded": the setting exists, Hone
+    // just did not read it.
+    expect(load.briefing?.latestSetupLine).toBeNull();
+    expect(load).not.toHaveProperty("briefingComplete");
+  });
+
+  it("READ FAILURE is still distinct from absence", async () => {
+    // The one negative statement Hone still makes, and the only one it can
+    // prove: the read itself did not answer. Budget is 1x2 = 2 and both rows
+    // are Bob's, so Alice was never reached.
     const { out } = await run(
       {
-        // Budget is 1-per-client x 2 clients = 2, and BOTH rows are Bob's, so
-        // the read comes back full and Alice was never reached.
         sessions: [
           session({ id: "s-b1", client_id: BOB, started_at: "2026-03-06T10:00:00Z" }),
           session({ id: "s-b2", client_id: BOB, started_at: "2026-03-05T10:00:00Z" }),
@@ -734,31 +848,7 @@ describe("truncation separates completeness from selection", () => {
     );
     const load = out.get(ALICE)!;
     expect(load.treatment).toBeNull();
-    // Both facts, separately: we could not select, AND we cannot prove absence.
+    // "We could not answer" — NOT "there is nothing".
     expect(load.unavailable).toBe(true);
-    expect(load.briefingComplete).toBe(false);
-  });
-
-  it("completeness and availability are DIFFERENT questions", () => {
-    // The defect this repair exists to stop was overloading one boolean. A
-    // truncated-but-selected row is available and incomplete at the same time.
-    return run(
-      {
-        sessions: [
-          session({ id: "s-a", client_id: ALICE, started_at: "2026-03-05T10:00:00Z" }),
-          session({ id: "s-b", client_id: BOB, started_at: "2026-03-06T10:00:00Z" }),
-        ],
-        session_blocks: [block("s-a"), block("s-b")],
-      },
-      [
-        { clientId: ALICE, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
-        { clientId: BOB, before: "2026-03-10T09:00:00Z", client: FULL_CLIENT },
-      ],
-      STARVE,
-    ).then(({ out }) => {
-      const load = out.get(ALICE)!;
-      expect(load.unavailable).toBe(false);
-      expect(load.briefingComplete).toBe(false);
-    });
   });
 });
