@@ -159,6 +159,7 @@ describe("records duration without PII", () => {
         "identity_resolutions",
         "identity_total_ms",
         "membership_resolutions",
+        "membership_total_ms",
         "perf_timing",
         "shell_total_ms",
         "span_count",
@@ -490,13 +491,31 @@ describe("buildPerfSummary", () => {
     // is the field that settles the audit's central hypothesis.
     expect(summary.identity_resolutions).toBe(2);
     expect(summary.membership_resolutions).toBe(1);
-    expect(summary.identity_total_ms).toBe(113);
+    // 40 + 38 — the `.identity` spans ONLY, so that dividing this by
+    // identity_resolutions gives a true mean (39ms). An earlier version folded
+    // the 35ms membership span in here, which inflated that mean to 56.5ms.
+    expect(summary.identity_total_ms).toBe(78);
+    expect(summary.membership_total_ms).toBe(35);
   });
 
   it("attributes time to shell versus page domain", () => {
     const summary = buildPerfSummary([...request], 0, "2026-08-20T00:00:00Z");
     expect(summary.shell_total_ms).toBe(97);
     expect(summary.domain_total_ms).toBe(210);
+  });
+
+  it("keeps the phase totals disjoint so they can be reasoned about", () => {
+    const summary = buildPerfSummary([...request], 0, "2026-08-20T00:00:00Z");
+    // identity + memberships + domain partitions every span that has a phase
+    // bucket; shell.support-reads (22ms) belongs to none of them by design.
+    const phaseTotal =
+      (summary.identity_total_ms as number) +
+      (summary.membership_total_ms as number) +
+      (summary.domain_total_ms as number);
+    expect(phaseTotal).toBe(78 + 35 + 210);
+    // shell_total_ms is an ORTHOGONAL projection and deliberately overlaps.
+    // Pinned so nobody "fixes" the overlap by summing the two axes.
+    expect(summary.shell_total_ms).toBe(40 + 35 + 22);
   });
 
   it("labels the request by its page surface, not the shell", () => {

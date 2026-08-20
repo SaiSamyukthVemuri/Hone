@@ -65,9 +65,13 @@ import * as Sentry from "@sentry/nextjs";
 // ----------
 // Off unless HONE_PERF_TIMING === "1". One rule, no environment-dependent
 // behaviour, so what runs locally is what runs on Vercel. Disabled is a true
-// passthrough: `timed()` awaits the callback and returns it, recording
-// nothing and allocating nothing. The operator turns it on for a measurement
-// window and off again; nothing here is intended to run permanently.
+// passthrough: one env read, then the callback's own result, with nothing
+// recorded and no span or collector created. It is not literally
+// allocation-free — `timed` is an async function, so the disabled branch still
+// allocates the wrapper promise that adopts `fn()`'s; `startPerfSpan` returns
+// a shared INERT_SPAN and allocates nothing. The operator turns it on for a
+// measurement window and off again; nothing here is intended to run
+// permanently.
 //
 // FAILURE POSTURE
 // ---------------
@@ -243,6 +247,7 @@ export function buildPerfSummary(
   let identityResolutions = 0;
   let membershipResolutions = 0;
   let identityTotalMs = 0;
+  let membershipTotalMs = 0;
   let domainTotalMs = 0;
   let shellTotalMs = 0;
 
@@ -265,7 +270,11 @@ export function buildPerfSummary(
       identityTotalMs += record.duration_ms;
     } else if (phase === "memberships") {
       membershipResolutions += 1;
-      identityTotalMs += record.duration_ms;
+      // Its OWN bucket. Folding this into identityTotalMs made the obvious
+      // operator computation `identity_total_ms / identity_resolutions` wrong,
+      // because membership time was in the numerator and not the denominator —
+      // an overstatement of the exact quantity this PR exists to measure.
+      membershipTotalMs += record.duration_ms;
     } else if (phase === "domain") {
       domainTotalMs += record.duration_ms;
     }
@@ -280,9 +289,15 @@ export function buildPerfSummary(
     // navigation; this field is the measurement that settles it.
     identity_resolutions: identityResolutions,
     membership_resolutions: membershipResolutions,
+    // PHASE totals. identity_total_ms covers exactly the `.identity` spans
+    // counted by identity_resolutions, so dividing one by the other is valid.
     identity_total_ms: Math.round(identityTotalMs),
-    shell_total_ms: Math.round(shellTotalMs),
+    membership_total_ms: Math.round(membershipTotalMs),
     domain_total_ms: Math.round(domainTotalMs),
+    // SURFACE total, an ORTHOGONAL projection: it re-counts whichever of the
+    // above ran in the shell. The phase totals and shell_total_ms therefore
+    // OVERLAP and must not be summed. Per-span values live in `spans`.
+    shell_total_ms: Math.round(shellTotalMs),
     span_count: spans.length,
     dropped_spans: dropped,
     spans: spans.map((record) => ({
@@ -309,17 +324,21 @@ function emitStructured(payload: Record<string, unknown>): void {
 }
 
 function flush(store: PerfStore): void {
+  if (store.spans.length === 0) return;
   try {
-    if (store.spans.length === 0) return;
     emitStructured(
       buildPerfSummary(store.spans, store.dropped, new Date().toISOString()),
     );
-    // Reset so a second flush in the same request cannot double-report.
+  } catch {
+    // Telemetry must never escalate.
+  } finally {
+    // In `finally`, not after the emit: if emitting throws, leaving
+    // flushScheduled set would make scheduleFlush() early-return for the rest
+    // of the request, so every later span would accumulate to the cap and be
+    // dropped in silence. Resetting unconditionally re-arms the collector.
     store.spans = [];
     store.dropped = 0;
     store.flushScheduled = false;
-  } catch {
-    // Telemetry must never escalate.
   }
 }
 
