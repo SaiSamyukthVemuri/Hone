@@ -2109,6 +2109,53 @@ export async function seedE2eCrossClientLinkedSession(
 }
 
 // A freeform session with NO linked appointment.
+/**
+ * Stamp SENTINEL values into fields that live ONLY in the full treatment card.
+ *
+ * These are the fields the compact row never paints: probe lot, reaction note,
+ * numbing note, per-pass comments. Seeding unique strings into them lets a
+ * browser test assert the exact security property — that none of it reaches the
+ * page before the practitioner opens the disclosure — rather than asserting a
+ * proxy for it.
+ */
+export async function seedE2eFullDetailSentinels(
+  studioId: string,
+  clientId: string,
+  sentinels: {
+    probeLot: string;
+    reactionNote: string;
+    numbingNote: string;
+    entryComment: string;
+  },
+): Promise<void> {
+  const block = (
+    await sql<{ id: string; session_id: string }>(
+      `select b.id, b.session_id
+         from public.session_blocks b
+         join public.sessions s on s.id = b.session_id
+        where s.studio_id = $1 and s.client_id = $2
+        order by s.started_at desc
+        limit 1`,
+      [studioId, clientId],
+    )
+  )[0];
+  if (!block) throw new Error("seedE2eFullDetailSentinels: no seeded block found");
+  await sql(
+    `update public.session_blocks
+        set probe_lot_number = $2,
+            reaction_notes = $3,
+            numbing_notes = $4
+      where id = $1`,
+    [block.id, sentinels.probeLot, sentinels.reactionNote, sentinels.numbingNote],
+  );
+  await sql(
+    `update public.electrolysis_entries
+        set comments = $2
+      where block_id = $1`,
+    [block.id, sentinels.entryComment],
+  );
+}
+
 export async function seedE2eUnlinkedSession(
   seed: E2eSeed,
 ): Promise<{ clientId: string; sessionId: string }> {

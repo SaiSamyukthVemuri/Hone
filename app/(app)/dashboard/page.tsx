@@ -23,8 +23,8 @@ import {
   calendarHrefForDashboardDay,
   dashboardDayHref,
   dayHeading,
+  daySubLabel,
   emptyDayMessage,
-  formatSelectedDayLabel,
   isViewingToday as isViewingTodayFn,
   nextDay,
   previousDay,
@@ -66,7 +66,12 @@ import {
   prepMemoryInputFromTreatment,
   type AppointmentPrepMemory,
 } from "@/lib/sessions/appointment-prep-memory";
-import { TodayTreatmentMemory } from "./today-treatment-memory";
+import { DashboardTreatmentMemory } from "./dashboard-treatment-memory";
+import {
+  toDashboardPrepSummary,
+  toDisclosureSummary,
+  type DashboardPrepSummary,
+} from "@/lib/dashboard/dashboard-prep-summary";
 import {
   buildTodayWorkflow,
   todayWorkflowByAppointment,
@@ -161,10 +166,24 @@ type TodayAppointment = Pick<
 // One class for the three day-navigation controls, so the disabled variant
 // cannot drift away from the live one. 44px minimum: this row is used on a
 // phone between clients.
-const DAY_NAV_CONTROL =
-  "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
-const DAY_NAV_CONTROL_DISABLED =
-  "inline-flex min-h-[44px] cursor-default items-center rounded-md border border-neutral-200 px-3 text-sm text-neutral-400 dark:border-neutral-800 dark:text-neutral-600";
+// ONE segmented day control, not three free-standing buttons.
+//
+// The segments share a single rounded boundary, so the group reads as one
+// object and takes far less visual weight on a phone. The middle segment is
+// ALWAYS rendered — as a non-link "you are here" marker on today — because
+// conditionally inserting it changed the group's width by ~66px and moved
+// "Next →" out from under a thumb that was tapping it repeatedly: a two-tap
+// "forward, forward" landed the second tap on "Today" and threw the
+// practitioner back. That is the same reasoning already applied to the
+// disabled horizon controls, which stay in place rather than disappearing.
+const DAY_NAV_GROUP =
+  "inline-flex items-stretch overflow-hidden rounded-md border border-neutral-300 dark:border-neutral-700";
+const DAY_NAV_SEGMENT =
+  "inline-flex min-h-[44px] items-center px-3 text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900";
+const DAY_NAV_SEGMENT_DISABLED =
+  "inline-flex min-h-[44px] cursor-default items-center px-3 text-sm text-neutral-400 dark:text-neutral-600";
+/** Divider between segments; the first segment carries no left border. */
+const DAY_NAV_DIVIDE = " border-l border-neutral-300 dark:border-neutral-700";
 
 export default async function DashboardPage({
   searchParams,
@@ -449,16 +468,26 @@ export default async function DashboardPage({
   // Each request carries its OWN appointment boundary: `before` is that
   // appointment's starts_at, and `excludeAppointmentId` keeps a session already
   // linked to today's visit from being presented as its own previous treatment.
-  // Skipped off Today for the same reason as the Before-Today load above: it
-  // is a historical claim, and V1 does not pose that question on another day.
-  const prepLoads = !viewingToday
-    ? new Map<string, AppointmentPrepLoad>()
-    : await loadLastChartedTreatmentsForClients({
+  // Runs for the SELECTED day, not just today.
+  //
+  // This is the one historical surface that is safe off Today, and the reason
+  // is structural rather than a judgement call: this loader has no clock in it.
+  // Every date it uses is the caller-supplied `before` — that appointment's own
+  // `starts_at` — and its result is a THREE-state contract, so a failed or
+  // truncated read comes back `unavailable` instead of being flattened into
+  // "this client has nothing". The retired Before-Today model could not do
+  // either: its only output channel is a boolean, so every unknown was forced
+  // to render as an affirmative "New client".
+  //
+  // One batch is ONE DAY. The shared row budget is spent between the loosest
+  // and tightest `before` in the batch, so widening a batch across several days
+  // would let one day's rows evict another's and reappear as a false absence.
+  const prepLoads = await loadLastChartedTreatmentsForClients({
     studioId: studio.id,
     requests: visibleAppointments.map((a) => ({
       // The APPOINTMENT is the unit of identity, not the client. A client with
-      // two bookings today gets two requests with two different boundaries and
-      // must get back two different answers.
+      // two bookings in a day gets two requests with two different boundaries
+      // and must get back two different answers.
       requestKey: a.id,
       clientId: a.client_id,
       before: a.starts_at,
@@ -471,22 +500,37 @@ export default async function DashboardPage({
   // never re-derives one from the client. An earlier version looked the load up
   // by `appt.client_id`, which handed both of a client's appointments whichever
   // answer was written last.
-  const prepMemoryByAppointment = new Map<
-    string,
-    { memory: AppointmentPrepMemory | null; unavailable: boolean }
-  >();
+  // PROJECTED ON THE SERVER, and the full model never leaves it.
+  //
+  // `buildAppointmentPrepMemory` still runs here — it is the shared authority
+  // and must not be forked — but its output is immediately reduced to the
+  // handful of values the collapsed row actually paints. The complete record
+  // (areas, machine settings, probe lot, tolerance, reactions, narrative) is
+  // resolved again, for ONE appointment, only when the practitioner opens the
+  // disclosure and the server has re-checked that the appointment is hers.
+  const prepSummaryByAppointment = new Map<string, DashboardPrepSummary>();
   for (const appt of visibleAppointments) {
     const load = prepLoads.get(appt.id);
     if (!load) {
-      prepMemoryByAppointment.set(appt.id, { memory: null, unavailable: false });
+      prepSummaryByAppointment.set(
+        appt.id,
+        toDashboardPrepSummary({ memory: null, unavailable: false, planNote: null }),
+      );
       continue;
     }
-    prepMemoryByAppointment.set(appt.id, {
-      memory: load.treatment
-        ? buildAppointmentPrepMemory(prepMemoryInputFromTreatment(load.treatment))
-        : null,
-      unavailable: load.unavailable,
-    });
+    prepSummaryByAppointment.set(
+      appt.id,
+      toDashboardPrepSummary({
+        memory: load.treatment
+          ? buildAppointmentPrepMemory(prepMemoryInputFromTreatment(load.treatment))
+          : null,
+        unavailable: load.unavailable,
+        // `narrative.plan` is the newest recorded "for next visit" note. The
+        // loader builds it to survive both "nothing charted" and a failed block
+        // read, so a note-only visit still reaches the practitioner.
+        planNote: load.narrative.plan?.text?.trim() || null,
+      }),
+    );
   }
 
   // ONE combined Today workflow (Chloe: "Today and the Daily Prep Brief are
@@ -643,11 +687,16 @@ export default async function DashboardPage({
             <h2 className="text-lg font-medium">
               {dayHeading(selectedDayLocal, todayLocal)}
             </h2>
-            {/* The full date, always, so "Tomorrow" is never ambiguous and a
-                further-out day is unmistakable. */}
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              {formatSelectedDayLabel(selectedDayLocal)}
-            </p>
+            {/* ONE node per fact. The sub-line exists only to say WHICH day
+                "Today"/"Tomorrow"/"Yesterday" is; from two days out the heading
+                already IS the date, so `daySubLabel` returns null rather than
+                printing the identical string twice — which is what shipped and
+                is what the practitioner reported as "wonky". */}
+            {daySubLabel(selectedDayLocal, todayLocal) && (
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                {daySubLabel(selectedDayLocal, todayLocal)}
+              </p>
+            )}
             <DaySummary
               appointmentCount={visibleAppointments.length}
               clientCount={selectedDayClientIds.length}
@@ -656,14 +705,7 @@ export default async function DashboardPage({
           {/* Day navigation: server-rendered links, so the URL is shareable,
               browser Back works, and no client-side date state exists — this
               page deliberately holds ONE clock read and no timers. */}
-          <nav
-            aria-label="Change day"
-            className="flex flex-wrap items-center gap-1"
-          >
-            {/* At the far edge the control STAYS, disabled: removing it would
-                shift the row under the practitioner's thumb, and a link that
-                targets a day the resolver rejects would silently throw her a
-                year forward to today. Inward navigation is always available. */}
+          <nav aria-label="Change day" className={DAY_NAV_GROUP}>
             {canGoBack ? (
               <Link
                 href={dashboardDayHref({
@@ -673,7 +715,7 @@ export default async function DashboardPage({
                 })}
                 aria-label="Previous day"
                 data-testid="dashboard-prev-day"
-                className={DAY_NAV_CONTROL}
+                className={DAY_NAV_SEGMENT}
               >
                 ← Previous
               </Link>
@@ -683,16 +725,26 @@ export default async function DashboardPage({
                 aria-disabled="true"
                 data-testid="dashboard-prev-day"
                 data-disabled="true"
-                className={DAY_NAV_CONTROL_DISABLED}
+                className={DAY_NAV_SEGMENT_DISABLED}
               >
                 ← Previous
               </span>
             )}
-            {!viewingToday && (
+            {viewingToday ? (
+              /* Present but inert: it marks where you are, and keeps the two
+                 arrows from moving under the thumb between days. */
+              <span
+                aria-current="page"
+                data-testid="dashboard-today"
+                className={DAY_NAV_SEGMENT_DISABLED + DAY_NAV_DIVIDE}
+              >
+                Today
+              </span>
+            ) : (
               <Link
                 href={dashboardDayHref({ day: todayLocal, todayLocal, period })}
                 data-testid="dashboard-today"
-                className={DAY_NAV_CONTROL}
+                className={DAY_NAV_SEGMENT + DAY_NAV_DIVIDE}
               >
                 Today
               </Link>
@@ -706,7 +758,7 @@ export default async function DashboardPage({
                 })}
                 aria-label="Next day"
                 data-testid="dashboard-next-day"
-                className={DAY_NAV_CONTROL}
+                className={DAY_NAV_SEGMENT + DAY_NAV_DIVIDE}
               >
                 Next →
               </Link>
@@ -716,7 +768,7 @@ export default async function DashboardPage({
                 aria-disabled="true"
                 data-testid="dashboard-next-day"
                 data-disabled="true"
-                className={DAY_NAV_CONTROL_DISABLED}
+                className={DAY_NAV_SEGMENT_DISABLED + DAY_NAV_DIVIDE}
               >
                 Next →
               </span>
@@ -759,11 +811,13 @@ export default async function DashboardPage({
                     cardOnFileLoad,
                     appt.client_id,
                   )}
-                  prepMemory={
-                    prepMemoryByAppointment.get(appt.id) ?? {
+                  prepSummary={
+                    prepSummaryByAppointment.get(appt.id) ??
+                    toDashboardPrepSummary({
                       memory: null,
                       unavailable: false,
-                    }
+                      planNote: null,
+                    })
                   }
                   tz={studio.timezone}
                   timeFormat={resolveTimeFormat(studio)}
@@ -938,7 +992,7 @@ function AppointmentRow({
   intakeStatus,
   linkedSession,
   paymentState,
-  prepMemory,
+  prepSummary,
   historyAsked,
   isCurrent,
   cardOnFile,
@@ -957,7 +1011,12 @@ function AppointmentRow({
   // appointment, already built by the page from one batched read. Keyed by
   // APPOINTMENT id upstream, so two same-client appointments each get their own
   // boundary and one client can never receive another's memory.
-  prepMemory: { memory: AppointmentPrepMemory | null; unavailable: boolean };
+  /**
+   * The compact projection of the previous visit — exactly what the collapsed
+   * row paints, and nothing else. The full `AppointmentPrepMemory` stays
+   * server-side until the practitioner explicitly opens the disclosure.
+   */
+  prepSummary: DashboardPrepSummary;
   // Whether the page ASKED the history question for this row at all. Only
   // actual today does. Passed explicitly rather than inferred from
   // `workflow === null`, so "we did not ask" stays a stated fact rather than a
@@ -986,9 +1045,30 @@ function AppointmentRow({
     status: appt.status,
     clientId: appt.client_id,
     appointmentId: appt.id,
-    history: historyAsked
-      ? { asked: true, hasHistory: workflow?.hasHistory ?? false }
-      : { asked: false },
+    // THE TODAY MATRIX. Two authorities, and the action must not contradict
+    // either of them:
+    //
+    //   workflow true                      -> history present (Review)
+    //   workflow false + prep treatment    -> history present (Review) — the
+    //                                         prep loader PROVED it, so the
+    //                                         new-client affordance would be
+    //                                         a false claim
+    //   workflow false + prep unavailable  -> NOT ASKED, neutral action; an
+    //                                         unanswered read is not evidence
+    //                                         of a new client
+    //   workflow false + prep proved none  -> history absent (Open client)
+    //
+    // Off Today the question is never posed at all, which is the `asked:false`
+    // branch the wrapper already owns.
+    history: !historyAsked
+      ? { asked: false }
+      : prepSummary.unavailable && !(workflow?.hasHistory ?? false)
+        ? { asked: false }
+        : {
+            asked: true,
+            hasHistory:
+              (workflow?.hasHistory ?? false) || prepSummary.hasTreatment,
+          },
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
   });
@@ -1141,12 +1221,35 @@ function AppointmentRow({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                   Before today
                 </span>
-                {!workflow.hasHistory ? (
+                {!workflow.hasHistory &&
+                !prepSummary.hasTreatment &&
+                !prepSummary.unavailable ? (
                   // ONE relationship line, not "New client" here and "No prior
                   // treatment history yet" somewhere else.
+                  //
+                  // GUARDED BY BOTH AUTHORITIES. Today carries two independent
+                  // evidence sources — the Before-Today workflow and the
+                  // appointment-prep loader — and they can disagree, because
+                  // they differ on void records, truncation and error
+                  // handling. Once the prep memory renders on its own
+                  // authority, the unguarded form could print "New client · No
+                  // charted history yet" directly above "Last treatment: …"
+                  // for the same person.
+                  //
+                  // So this claim now requires that NEITHER source contradicts
+                  // it: the workflow says no history, the prep loader proved no
+                  // treatment, and the prep read actually answered. A
+                  // truncated or failed prep read is not permission to call
+                  // someone new.
                   <span className="text-neutral-500">
                     New client · No charted history yet
                   </span>
+                ) : !workflow.hasHistory ? (
+                  // The workflow says no history but the prep loader either
+                  // proved a treatment or could not answer. Say nothing about
+                  // the relationship; the treatment strip below speaks for
+                  // itself, truthfully, from its own read.
+                  null
                 ) : (
                   <>
                     {/* Remember = the PLAN note (next_session_note). It is no
@@ -1209,23 +1312,62 @@ function AppointmentRow({
             #517 card WITHOUT leaving Today. Rendered only for a client who HAS
             history, so a first visit stays a single calm relationship line.
 
+            GATED ON ITS OWN LOADER, not on the Before-Today workflow. That gate
+            was `workflow?.hasHistory`, which is null off Today by construction,
+            so this region vanished on exactly the days a practitioner opens to
+            PREPARE. It now asks the prep loader's own three-state answer: a
+            treatment, or a truthful "could not be loaded", or silence. Silence
+            is never rendered as a claim about the client.
+
             CHLOE D1: it is a SIBLING of the row-body link, never a descendant.
             The left padding lines it up with the text column above it (w-14
             time cell + gap-4), so it reads as the last line of "Before today"
             exactly as it did before: it simply is no longer inside a control
             that navigates. */}
-        {workflow?.hasHistory && (
+        {/* PREP FOR THIS VISIT — the plan note, off Today only.
+
+            `narrative.plan` is the newest recorded "for next visit" note. On
+            TODAY the row already prints exactly this field as its "Remember"
+            line from the Before-Today model, so showing it here too would
+            print one note twice under two labels — a bug this row has had
+            once already. Off Today that model does not run, so this is the
+            only place the note can appear, and it is the single most useful
+            thing a practitioner opening tomorrow can read.
+
+            It renders even when there is no treatment card: the loader builds
+            the narrative to survive both "nothing charted" and a failed block
+            read, so a note-only visit still reaches her. */}
+        {!workflow && prepSummary.remember && (
           <div className="pl-[4.5rem] text-xs">
-            <TodayTreatmentMemory
+            <span
+              data-testid="dashboard-prep-remember"
+              className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
+            >
+              <span className="font-medium text-neutral-500">Remember: </span>
+              {prepSummary.remember}
+            </span>
+          </div>
+        )}
+        {(prepSummary.hasTreatment || prepSummary.unavailable) && (
+          <div className="pl-[4.5rem] text-xs">
+            <DashboardTreatmentMemory
+              appointmentId={appt.id}
               clientId={appt.client_id}
               clientName={appt.client?.name ?? "this client"}
-              memory={prepMemory.memory}
-              unavailable={prepMemory.unavailable}
+              /* The NARROW projection. `prepSummary` also carries the plan
+                 note, which the server renders itself and only off Today —
+                 passing the whole object crossed that note to the browser on
+                 Today, where nothing displays it. */
+              summary={toDisclosureSummary(prepSummary)}
             />
           </div>
         )}
       </div>
-      <div className="flex flex-col items-end gap-2 self-center">
+      {/* ONE compact appointment footer. `gap-1` and `self-start` replace
+          `gap-2` + `self-center`: on a phone this column wraps onto its own
+          full-width line, where centring it against a tall text column opened
+          dead space above and below with nothing in it. */}
+      <div className="flex flex-col items-end gap-1 self-start">
         {/* Quick checkout (Chloe): take payment from the roster without opening
             charting. Paid/Processing/Refunded show a status badge instead. */}
         <AppointmentCheckoutCell
@@ -1235,7 +1377,11 @@ function AppointmentRow({
         />
         <Link
           href={nextAction.href}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
+          /* `min-h-[44px]` — this was the ONE control in the action area below
+             the touch target, at 34px, while all three SECONDARY actions were
+             already 44px. The most important control on the row was the
+             hardest to hit. */
+          className="inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
         >
           {nextAction.label}
         </Link>
@@ -1390,7 +1536,7 @@ function EmptyDayState({
       <div className="flex flex-wrap gap-2">
         <Link
           href={calendarHrefForDashboardDay({ selectedDay, todayLocal })}
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className="inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-sm hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           View calendar
         </Link>

@@ -202,11 +202,50 @@ export function formatSelectedDayLabel(day: string): string {
   }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
-/** The section heading: "Today", "Tomorrow", or the dated label. */
-export function dayHeading(selectedDay: string, todayLocal: string): string {
+/**
+ * The RELATIVE name for a day — "Today", "Tomorrow", "Yesterday" — or null.
+ *
+ * Null for every other day ON PURPOSE. This used to fall through to
+ * `formatSelectedDayLabel`, which is the same function the page prints on the
+ * sub-line directly beneath the heading, so from two days out the two nodes
+ * were byte-identical by construction and the screen showed
+ * "Sunday, August 23" stacked over "Sunday, August 23".
+ *
+ * Returning null lets the caller pick ONE node per fact: a relative name when
+ * one exists (with the date beneath it to disambiguate), otherwise the date
+ * itself as the heading and no sub-line at all.
+ */
+export function dayRelativeName(
+  selectedDay: string,
+  todayLocal: string,
+): string | null {
   if (selectedDay === todayLocal) return "Today";
   if (selectedDay === nextDay(todayLocal)) return "Tomorrow";
-  return formatSelectedDayLabel(selectedDay);
+  if (selectedDay === previousDay(todayLocal)) return "Yesterday";
+  return null;
+}
+
+/** The section heading: a relative name when there is one, else the date. */
+export function dayHeading(selectedDay: string, todayLocal: string): string {
+  return (
+    dayRelativeName(selectedDay, todayLocal) ??
+    formatSelectedDayLabel(selectedDay)
+  );
+}
+
+/**
+ * The sub-line beneath the heading, or null when it would repeat it.
+ *
+ * It exists only to say WHICH day "Tomorrow" is. Once the heading already is
+ * the date, there is nothing left to disambiguate and a second copy is noise.
+ */
+export function daySubLabel(
+  selectedDay: string,
+  todayLocal: string,
+): string | null {
+  return dayRelativeName(selectedDay, todayLocal) === null
+    ? null
+    : formatSelectedDayLabel(selectedDay);
 }
 
 /**

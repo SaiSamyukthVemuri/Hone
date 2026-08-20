@@ -21,7 +21,7 @@ import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memo
 //     proves the rest.
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
-const MEMORY_UI = read("app/(app)/dashboard/today-treatment-memory.tsx");
+const MEMORY_UI = read("app/(app)/dashboard/dashboard-treatment-memory.tsx");
 /**
  * Source with `//` lines and `{/* jsx *\/}` blocks removed. Prose that
  * legitimately NAMES a thing must not satisfy a guard looking for that thing
@@ -143,7 +143,7 @@ describe("expanding reuses the #517 card — it does not reimplement it", () => 
       /import \{ AppointmentPrepMemoryCard \} from "@\/components\/appointment-prep-memory-card"/,
     );
     expect(MEMORY_UI).toMatch(
-      /<AppointmentPrepMemoryCard\s+clientId=\{clientId\}\s+memory=\{memory\}\s+embedded\s+showFullChartLink=\{false\}\s*\/>/,
+      /<AppointmentPrepMemoryCard\s+clientId=\{clientId\}\s+memory=\{result\.memory\}\s+embedded\s+showFullChartLink=\{false\}\s*\/>/,
     );
   });
 
@@ -252,13 +252,13 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
     const link = rowBodyLink();
     expect(
       link,
-      "TodayTreatmentMemory must not be a descendant of the row-body link",
-    ).not.toContain("<TodayTreatmentMemory");
+      "DashboardTreatmentMemory must not be a descendant of the row-body link",
+    ).not.toContain("<DashboardTreatmentMemory");
     // Self-check: the span really is the row body and not an empty slice.
     expect(link).toContain("Latest setup:");
     // ...and it is still rendered on the page, as a sibling.
-    expect(DASH).toContain("<TodayTreatmentMemory");
-    expect(DASH.indexOf("<TodayTreatmentMemory")).toBeGreaterThan(
+    expect(DASH).toContain("<DashboardTreatmentMemory");
+    expect(DASH.indexOf("<DashboardTreatmentMemory")).toBeGreaterThan(
       DASH.indexOf(rowBodyLink()) + rowBodyLink().length - 1,
     );
   });
@@ -278,12 +278,12 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
     );
 
     // ...AND no component that ENCAPSULATES a control. A negative control
-    // caught this gap: re-nesting <TodayTreatmentMemory> inside the link — the
+    // caught this gap: re-nesting <DashboardTreatmentMemory> inside the link — the
     // exact defect — left every raw-tag guard above green, because the button
     // lives one file away. Raw-tag greps cannot see through a component
     // boundary, so the known-interactive children of this row are named.
     for (const component of [
-      "TodayTreatmentMemory", // owns the disclosure <button>
+      "DashboardTreatmentMemory", // owns the disclosure <button>
       "AppointmentCheckoutCell", // owns the checkout control
       "PilotFeedbackPrompt", // mailto anchors
       "DashboardTodoList", // rows of links
@@ -352,14 +352,22 @@ describe("the Today row wires it correctly", () => {
     // the row-body link with the component — see the D1 block above — so it now
     // reads `workflow?.hasHistory`, which is the same condition: hasHistory can
     // only be true when workflow exists.)
-    expect(DASH).toMatch(/\{workflow\?\.hasHistory && \(/);
-    expect(DASH).toMatch(/<TodayTreatmentMemory/);
+    // The gate was `workflow?.hasHistory`, which is null OFF TODAY by
+    // construction — so this region vanished on exactly the days a
+    // practitioner opens in order to PREPARE. It now asks the prep loader's
+    // own three-state answer, which is self-sufficient and never borrows the
+    // Before-Today history model.
+    expect(DASH).not.toMatch(/\{workflow\?\.hasHistory && \(/);
+    expect(DASH).toMatch(
+      /\{\(prepSummary\.hasTreatment \|\| prepSummary\.unavailable\) && \(/,
+    );
+    expect(DASH).toMatch(/<DashboardTreatmentMemory/);
   });
 
   it("passes the memory keyed by APPOINTMENT, not by client", () => {
     // Two same-client appointments must each get their own boundary.
-    expect(DASH).toMatch(/prepMemoryByAppointment\.get\(appt\.id\)/);
-    expect(DASH).toMatch(/prepMemory=\{/);
+    expect(DASH).toMatch(/prepSummaryByAppointment\.get\(appt\.id\)/);
+    expect(DASH).toMatch(/prepSummary=\{/);
   });
 
   it("builds one request per appointment, carrying that appointment's bounds", () => {
@@ -390,7 +398,7 @@ describe("the Today row wires it correctly", () => {
     expect(DASH).not.toMatch(/loadLastChartedTreatmentForClient\b/);
     // The fold that turns loads into per-appointment memories is pure.
     const fold = DASH.slice(
-      DASH.indexOf("const prepMemoryByAppointment"),
+      DASH.indexOf("const prepSummaryByAppointment"),
       DASH.indexOf("const todayWorkflowInputs"),
     );
     expect(fold.length).toBeGreaterThan(0);
@@ -407,13 +415,18 @@ describe("the Today row wires it correctly", () => {
   });
 
   it("a failed or truncated read renders as 'could not load', never as 'new client'", () => {
-    expect(MEMORY_UI).toMatch(/data-testid="today-memory-unavailable"/);
+    expect(MEMORY_UI).toMatch(/data-testid="dashboard-memory-unavailable"/);
     expect(MEMORY_UI).toMatch(/Previous treatment could not be loaded/);
-    // The unavailable branch is checked BEFORE the null-memory branch, so a
-    // failed read can never fall through into silence.
-    expect(MEMORY_UI.indexOf("if (unavailable)")).toBeLessThan(
-      MEMORY_UI.indexOf("if (!memory) return null"),
+    // The unavailable branch is checked BEFORE the no-treatment branch, so a
+    // failed read can never fall through into silence. The values now come
+    // from the compact projection rather than the full model, which no longer
+    // crosses to the browser before the practitioner opens the row.
+    expect(MEMORY_UI.indexOf("if (summary.unavailable)")).toBeLessThan(
+      MEMORY_UI.indexOf("if (!summary.hasTreatment) return null"),
     );
+    // …and the same distinction survives the on-demand load.
+    expect(MEMORY_UI).toMatch(/result\.status === "loaded"/);
+    expect(MEMORY_UI).toMatch(/result\.status === "none"/);
   });
 
   it("does not repeat the plan note that the row already shows as 'Remember'", () => {
@@ -421,8 +434,14 @@ describe("the Today row wires it correctly", () => {
     // model's forNextVisit. Printing one note twice under two labels is a bug
     // this row has already had once.
     expect(MEMORY_UI_CODE).not.toMatch(/For next visit/);
-    // ...and the reason is recorded where the next reader will look.
-    expect(MEMORY_UI).toMatch(/Remember/);
+    // …and the reason is recorded where the next reader will look: the page
+    // prints the plan note ONLY off Today, where the Before-Today "Remember"
+    // line does not run.
+    const DASH_CODE = DASH.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+      /^\s*\/\/.*$/gm,
+      "",
+    );
+    expect(DASH_CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
   });
 
   it("writes nothing and touches no appointment mutation surface", () => {

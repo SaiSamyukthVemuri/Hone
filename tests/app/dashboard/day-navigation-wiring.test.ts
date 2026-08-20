@@ -70,15 +70,29 @@ describe("the roster window is the SELECTED day, and it is DST-correct", () => {
 });
 
 describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule", () => {
-  it("the two HISTORICAL loaders are SKIPPED, not merely hidden", () => {
-    // Skipped rather than loaded-and-suppressed, so there is no answer sitting
-    // in scope for a future edit to render by accident. It is also cheaper.
+  it("the BEFORE-TODAY loader is still skipped off Today", () => {
+    // This is the retired model: its only output channel is a boolean, so a
+    // failed or truncated read is forced to render as an affirmative "New
+    // client". It must never run off Today.
     expect(CODE).toMatch(
       /const beforeTodayPreviews = viewingToday\s*\?\s*await getBeforeTodayPreviews\(/,
     );
+  });
+
+  it("the APPOINTMENT-PREP loader now runs for the selected day", () => {
+    // The opposite call from the Before-Today model, and for a structural
+    // reason: this loader has no clock, is bounded by each appointment's own
+    // `starts_at`, and reports a failed or truncated read as `unavailable`
+    // rather than as an absence. That is what makes it safe on any day — and
+    // it is what gives a practitioner something to prepare with.
+    expect(CODE).not.toMatch(/const prepLoads = !viewingToday/);
     expect(CODE).toMatch(
-      /const prepLoads = !viewingToday\s*\?\s*new Map<string, AppointmentPrepLoad>\(\)/,
+      /const prepLoads = await loadLastChartedTreatmentsForClients\(\{/,
     );
+    // Still one request PER APPOINTMENT, carrying its own boundary.
+    expect(CODE).toMatch(/requestKey: a\.id/);
+    expect(CODE).toMatch(/before: a\.starts_at/);
+    expect(CODE).toMatch(/excludeAppointmentId: a\.id/);
   });
 
   it("the workflow INPUTS are empty off today, so no row can carry a history claim", () => {
@@ -91,11 +105,10 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     );
   });
 
-  it("every history-implying render site is behind that same null", () => {
-    // If any of these stopped being guarded, a non-Today row would state
-    // something about history that was never asked.
+  it("every RELATIONSHIP claim is still behind the workflow null", () => {
+    // The rule that survives: nothing may say new-vs-returning off Today.
+    // These all live inside `{workflow && (`, which is null off Today.
     expect(CODE).toMatch(/\{workflow && \(/);
-    expect(CODE).toMatch(/\{workflow\?\.hasHistory && \(/);
     const block = CODE.slice(CODE.indexOf("{workflow && ("));
     for (const claim of [
       "New client · No charted history yet",
@@ -105,6 +118,35 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     ]) {
       expect(block, claim).toContain(claim);
     }
+  });
+
+  it("the treatment memory is NOT behind it — it has its own authority", () => {
+    // Clinical preparation evidence and relationship status are different
+    // facts from different loaders. Tying the first to the second is what
+    // emptied the future-day roster.
+    expect(CODE).not.toMatch(/\{workflow\?\.hasHistory && \(/);
+    expect(CODE).toMatch(
+      /\{\(prepSummary\.hasTreatment \|\| prepSummary\.unavailable\) && \(/,
+    );
+  });
+
+  it("the plan note is CARRIED from the loader, not dropped", () => {
+    // `narrative.plan` is already loaded and was being thrown away here. It is
+    // the newest recorded "for next visit" note, it survives both "nothing
+    // charted" and a failed block read, and on a future day it is the single
+    // most useful thing the practitioner can read.
+    expect(CODE).toMatch(
+      /planNote: load\.narrative\.plan\?\.text\?\.trim\(\) \|\| null/,
+    );
+    // …and the no-load fallback must not invent one.
+    expect(CODE).toMatch(/memory: null,\s*unavailable: false,\s*planNote: null,/);
+  });
+
+  it("the plan note renders off Today, and ONLY off Today", () => {
+    // On Today the row already prints this same field as its "Remember" line
+    // from the Before-Today model; printing it twice under two labels is a bug
+    // this row has had once already.
+    expect(CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
   });
 
   it("the page states NOTHING about history in the unasked direction either", () => {
@@ -126,22 +168,26 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     // where an answer genuinely exists.
     expect(CODE).not.toMatch(/resolveNextAction\(\{/);
     expect(CODE).toMatch(/resolveDayNextAction\(\{/);
-    // The only `hasHistory` fed to an action lives inside the `asked: true`
-    // arm. The other two reads are the workflow INPUT (built only for today —
-    // pinned above) and the render guard (behind `workflow &&`, null off
-    // today), so neither can be reached on another day.
+    // THE TWO-AUTHORITY MATRIX. Today carries two independent evidence
+    // sources — the Before-Today workflow and the appointment-prep loader —
+    // and they can disagree. The action must not contradict either:
+    //
+    //   workflow true                     -> history present
+    //   workflow false + prep treatment   -> history present (the prep loader
+    //                                        PROVED it; a boolean must not
+    //                                        override proof)
+    //   workflow false + prep unavailable -> NOT ASKED, neutral action
+    //   workflow false + prep proved none -> history absent
     const actionCall = CODE.slice(
       CODE.indexOf("resolveDayNextAction({"),
       CODE.indexOf("});", CODE.indexOf("resolveDayNextAction({")),
     );
-    // Every mention of history in the call sits on the `asked: true` side.
-    expect(actionCall).toMatch(/asked: true, hasHistory:/);
-    expect(actionCall).toMatch(/: \{ asked: false \}/);
-    expect(actionCall.replace(/\{ asked: true, hasHistory: workflow\?\.hasHistory \?\? false \}/, "")).not.toMatch(
-      /hasHistory/,
+    expect(actionCall).toMatch(/history: !historyAsked\s*\?\s*\{ asked: false \}/);
+    expect(actionCall).toMatch(
+      /prepSummary\.unavailable && !\(workflow\?\.hasHistory \?\? false\)\s*\?\s*\{ asked: false \}/,
     );
-    expect(CODE).toMatch(
-      /history: historyAsked\s*\?\s*\{ asked: true, hasHistory: workflow\?\.hasHistory \?\? false \}\s*:\s*\{ asked: false \}/,
+    expect(actionCall).toMatch(
+      /hasHistory:\s*\(workflow\?\.hasHistory \?\? false\) \|\| prepSummary\.hasTreatment/,
     );
     expect(CODE).toMatch(/historyAsked=\{viewingToday\}/);
   });
@@ -232,5 +278,39 @@ describe("both Dashboard exits to the Calendar carry the selected day", () => {
 
   it("ONE authority builds the URL — no hand-rolled second copy", () => {
     expect(CODE).not.toMatch(/`\/calendar\?day=\$\{/);
+  });
+});
+
+describe("the heading prints each fact exactly once", () => {
+  it("the sub-line is CONDITIONAL, not unconditional", () => {
+    // The shipped defect: `dayHeading` falls through to the same function the
+    // sub-line prints, so from two days out the page rendered
+    // "Sunday, August 23" stacked over "Sunday, August 23".
+    expect(CODE).toMatch(/\{daySubLabel\(selectedDayLocal, todayLocal\) && \(/);
+    // The old unconditional call is gone.
+    expect(CODE).not.toMatch(
+      /<p className="text-sm text-neutral-600 dark:text-neutral-400">\s*\{formatSelectedDayLabel\(selectedDayLocal\)\}/,
+    );
+  });
+
+  it("the page no longer imports the raw label formatter for the sub-line", () => {
+    // One authority for "what goes under the heading": `daySubLabel`, which
+    // returns null rather than repeating the heading.
+    expect(CODE).toMatch(/daySubLabel/);
+  });
+});
+
+describe("the day control is one group, stable across days", () => {
+  it("all three segments render on EVERY day", () => {
+    // The middle segment used to be omitted on today, which changed the
+    // group's width and moved "Next →" out from under a repeating thumb.
+    expect(CODE).not.toMatch(/\{!viewingToday && \(\s*<Link/);
+    expect(CODE).toMatch(/\{viewingToday \? \(/);
+    // Present-but-inert on today, and it says so to assistive tech.
+    expect(CODE).toMatch(/aria-current="page"[\s\S]{0,120}data-testid="dashboard-today"/);
+  });
+
+  it("the segments share ONE bordered boundary", () => {
+    expect(CODE).toMatch(/<nav aria-label="Change day" className=\{DAY_NAV_GROUP\}>/);
   });
 });

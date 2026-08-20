@@ -134,7 +134,10 @@ describe("nothing else on the dashboard changed", () => {
     // is unchanged, so it is pinned without the padding shorthand.
     expect(PAGE).toMatch(/flex flex-wrap items-start justify-between gap-3 py-4 pr-4/);
     expect(PAGE).toMatch(/pl-4 hover:bg-neutral-50/);
-    expect(PAGE).toMatch(/flex flex-col items-end gap-2 self-center/);
+    // The action footer tightened to `gap-1 self-start`: on a phone this
+    // column wraps onto its own full-width line, where centring it against a
+    // tall text column opened dead space with nothing in it.
+    expect(PAGE).toMatch(/flex flex-col items-end gap-1 self-start/);
     expect(PAGE).toMatch(/className="min-w-0 flex-1"/);
   });
 });

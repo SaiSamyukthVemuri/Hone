@@ -110,7 +110,7 @@ describe("previously shipped Dashboard fixes are preserved", () => {
     // The e2e spec (dashboard-treatment-memory-inline) is the browser
     // authority. This pins that the component still owns the inline
     // disclosure and this tranche did not reintroduce calendar navigation.
-    const MEM = read("app/(app)/dashboard/today-treatment-memory.tsx");
+    const MEM = read("app/(app)/dashboard/dashboard-treatment-memory.tsx");
     expect(MEM).toMatch(/View full last treatment/i);
     expect(codeOnly(MEM)).not.toMatch(/href=\{?["\`]\/calendar/);
   });
