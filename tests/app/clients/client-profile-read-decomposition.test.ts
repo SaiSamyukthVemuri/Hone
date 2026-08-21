@@ -93,6 +93,46 @@ function enclosingConditionText(node: ts.Node): string {
   return "";
 }
 
+/**
+ * The declared meaning of a `const <name> = <expr>` flag in the page, with
+ * whitespace normalised.
+ *
+ * Checking that a read is wrapped in a condition MENTIONING `needsTreatmentPlans`
+ * proves nothing on its own: redefining that flag to `activeTab === "sessions"`
+ * leaves every such assertion green while the Treatment tab silently renders no
+ * plans. The gate tests below therefore resolve the flag to its predicate and
+ * assert the predicate itself.
+ */
+function flagDefinition(name: string): string {
+  let text: string | undefined;
+  const visit = (n: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === name &&
+      n.initializer
+    ) {
+      text = n.initializer.getText(SF).replace(/\s+/g, " ").trim();
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(SF);
+  if (text === undefined) throw new Error(`flag not found: ${name}`);
+  return text;
+}
+
+/** Fully expand a gate condition by substituting any flags it references. */
+function resolveCondition(condition: string): string {
+  let out = condition.replace(/\s+/g, " ").trim();
+  for (let i = 0; i < 5; i += 1) {
+    const before = out;
+    out = out.replace(/\b(isOverview|needsIntake|needsPortalMessages|needsSessionsData|needsTreatmentPlans|needsPersonalNotes|needsLastTreatment)\b/g,
+      (m) => `(${flagDefinition(m)})`);
+    if (out === before) break;
+  }
+  return out;
+}
+
 describe("independent reads run in one parallel wave", () => {
   it("collapses the page to a small number of serial waves", () => {
     // Was 14 await-bearing top-level statements (2 framework params + 12 data
@@ -163,36 +203,53 @@ describe("independent reads run in one parallel wave", () => {
 
 describe("tab-exclusive reads are skipped on other tabs", () => {
   // helper -> the flag its call site must be gated by.
-  const GATED: Array<[string, RegExp]> = [
-    ["getAppointmentsForClientProfile", /needsSessionsData/],
-    ["getTotalTreatmentTime", /needsSessionsData/],
-    ["getTreatmentTimeByArea", /needsSessionsData/],
-    ["getTreatmentGoal", /needsSessionsData/],
-    ["getTreatmentPlansForClient", /needsTreatmentPlans/],
-    ["getClientPersonalNotes", /needsPersonalNotes/],
-    ["getPortalMessageRepliesForPractitionerView", /activeTab === "messages"/],
-    ["getPortalAccessSummary", /isOverview/],
-    ["getLatestSubmittedOrReviewedIntakeForClient", /isOverview/],
-    ["getPinnedNotesForClient", /isOverview/],
-    ["getConsentTemplatesForStudio", /isOverview/],
-    ["getLatestSignaturesForPractitionerView", /isOverview/],
-    ["getActiveCardForStudioClient", /isOverview/],
-    ["getImportedTreatmentMemoriesForClient", /isOverview/],
-    ["getRecentPortalAccessEvents", /isOverview/],
+  // helper -> the TAB SEMANTICS its call site must resolve to, after flag
+  // substitution. Asserting the resolved predicate (not the flag's name) is
+  // what makes a redefinition of the flag fail here.
+  const GATED: Array<[string, string]> = [
+    ["getAppointmentsForClientProfile", 'activeTab === "sessions"'],
+    ["getTotalTreatmentTime", 'activeTab === "sessions"'],
+    ["getTreatmentTimeByArea", 'activeTab === "sessions"'],
+    ["getTreatmentGoal", 'activeTab === "sessions"'],
+    ["getTreatmentPlansForClient", 'activeTab === "treatment"'],
+    ["getClientPersonalNotes", 'activeTab === "personal"'],
+    ["getPortalMessageRepliesForPractitionerView", 'activeTab === "messages"'],
+    ["getPortalAccessSummary", 'activeTab === "overview"'],
+    ["getLatestSubmittedOrReviewedIntakeForClient", 'activeTab === "overview"'],
+    ["getPinnedNotesForClient", 'activeTab === "overview"'],
+    ["getConsentTemplatesForStudio", 'activeTab === "overview"'],
+    ["getLatestSignaturesForPractitionerView", 'activeTab === "overview"'],
+    ["getActiveCardForStudioClient", 'activeTab === "overview"'],
+    ["getImportedTreatmentMemoriesForClient", 'activeTab === "overview"'],
+    ["getRecentPortalAccessEvents", 'activeTab === "overview"'],
   ];
 
-  for (const [helper, flag] of GATED) {
-    it(`${helper} only runs for its own tab`, () => {
+  for (const [helper, predicate] of GATED) {
+    it(`${helper} is gated by ${predicate}`, () => {
       const calls = callsTo(helper);
       expect(calls.length, `${helper} not called`).toBeGreaterThan(0);
       for (const call of calls) {
+        const resolved = resolveCondition(enclosingConditionText(call));
         expect(
-          enclosingConditionText(call),
-          `${helper} is not gated by ${flag}`,
-        ).toMatch(flag);
+          resolved,
+          `${helper} resolves to \`${resolved}\`, not ${predicate}`,
+        ).toContain(predicate);
       }
     });
   }
+
+  it("pins every flag's definition, so a redefinition cannot pass silently", () => {
+    // The hole Codex found: the loop above used to match the flag's NAME.
+    // Redefining needsTreatmentPlans to the sessions tab kept the suite green
+    // while the Treatment tab rendered no plans.
+    expect(flagDefinition("isOverview")).toBe('activeTab === "overview"');
+    expect(flagDefinition("needsIntake")).toBe('isOverview || activeTab === "health"');
+    expect(flagDefinition("needsPortalMessages")).toBe('isOverview || activeTab === "messages"');
+    expect(flagDefinition("needsSessionsData")).toBe('activeTab === "sessions"');
+    expect(flagDefinition("needsTreatmentPlans")).toBe('activeTab === "treatment"');
+    expect(flagDefinition("needsPersonalNotes")).toBe('activeTab === "personal"');
+    expect(flagDefinition("needsLastTreatment")).toBe('isOverview || activeTab === "sessions"');
+  });
 
   it("keeps reads that feed the overview card ungated by their own tab", () => {
     // `intake` renders on health AND feeds computePortalPendingTasks, an
@@ -271,10 +328,37 @@ describe("nothing widened", () => {
     expect(waveIdx).toBeLessThan(endIdx);
   });
 
-  it("does not widen any SELECT projection", () => {
-    // PERF2 is decomposition only. The two session_blocks selects keep their
-    // exact column lists.
+  it("does not widen either session_blocks projection", () => {
+    // Checking only for the absence of `*` and the presence of one nested
+    // fragment let ANY added column through — a future widening that exposed
+    // further clinical fields would have kept this green. Both projections are
+    // now compared in full against their baselines.
+    const BASELINES = [
+      "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
+      "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
+    ];
+
+    // Pull the argument of every `.from("session_blocks").select(<string>)`.
+    const found: string[] = [];
+    const visit = (n: ts.Node) => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        n.expression.name.text === "select" &&
+        n.arguments.length > 0 &&
+        ts.isStringLiteral(n.arguments[0])
+      ) {
+        const chain = n.expression.expression.getText(SF);
+        if (chain.includes('from("session_blocks")')) {
+          found.push((n.arguments[0] as ts.StringLiteral).text.replace(/\s+/g, " ").trim());
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(SF);
+
+    expect(found, "expected exactly two session_blocks projections").toHaveLength(2);
+    expect(found.sort()).toEqual([...BASELINES].sort());
     expect(SOURCE).not.toContain('.select("*")');
-    expect(SOURCE).toContain("electrolysis_entries(hairs_treated, observation_chips, deleted_at)");
   });
 });
