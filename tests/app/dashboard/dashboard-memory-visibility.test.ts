@@ -39,10 +39,18 @@ const WORKFLOW = read("lib/dashboard/today-workflow.ts");
 // The preparation block of the combined Today card. The old generic
 // "{beforeToday.recordsLine}" end-marker is gone with the record-count line, so
 // the block now ends at the missing-record chips that replaced it.
-const PREVIEW_BLOCK = PAGE.slice(
-  PAGE.indexOf("Before today"),
-  PAGE.indexOf("workflow.missingRecords.length > 0"),
-);
+// The preparation lines now live in their OWN component, rendered identically
+// on Today and on any other selected day. That is what finally makes this suite
+// day-independent: it used to slice the page's Today-only branch, so the
+// clipping contract it protects was never asserted for the day a practitioner
+// actually opens to prepare.
+const RAW_BLOCK = read("app/(app)/dashboard/pre-visit-prep-block.tsx");
+const BLOCK = RAW_BLOCK.split("\n")
+  .filter((l) => !/^\s*\/\//.test(l))
+  .join("\n")
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+  .replace(/\/\*[\s\S]*?\*\//g, "");
+const PREVIEW_BLOCK = BLOCK.slice(BLOCK.indexOf("return ("));
 
 describe("Today appointment card shows the memory lines in full", () => {
   it("isolated the right block of JSX", () => {
@@ -52,13 +60,17 @@ describe("Today appointment card shows the memory lines in full", () => {
   });
 
   it("the Remember note is rendered whole — no character cap", () => {
-    expect(PREVIEW_BLOCK).toMatch(/Remember: \{workflow\.remember\}/);
-    expect(PREVIEW_BLOCK).not.toMatch(/truncate\(workflow\.remember/);
+    expect(PREVIEW_BLOCK).toMatch(/Remember: \{prep\.remember\.text\}/);
+    expect(PREVIEW_BLOCK).not.toMatch(/truncate\(/);
   });
 
   it("the latest-settings line is rendered whole", () => {
-    expect(PREVIEW_BLOCK).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
-    expect(PREVIEW_BLOCK).not.toMatch(/truncate\(beforeToday\.setupLine/);
+    expect(PREVIEW_BLOCK).toMatch(/Latest setup: \{prep\.latestSetup\.line\}/);
+    expect(PREVIEW_BLOCK).not.toMatch(/truncate\(/);
+    // AND it carries no fallback copy. The `?? "Not recorded"` that used to sit
+    // here turned an unread setup into a confident denial at the render site.
+    expect(PREVIEW_BLOCK).not.toMatch(/Not recorded/);
+    expect(PREVIEW_BLOCK).not.toMatch(/\?\?/);
   });
 
   it("NEITHER line carries a CSS clamp any more", () => {
@@ -73,23 +85,23 @@ describe("Today appointment card shows the memory lines in full", () => {
     // Remember and Caution are now independent optional blocks (the old single
     // ternary folded the caution into Remember).
     const remember = PREVIEW_BLOCK.slice(
-      PREVIEW_BLOCK.indexOf("{workflow.remember && ("),
-      PREVIEW_BLOCK.indexOf("No watch/plan note."),
+      PREVIEW_BLOCK.indexOf("{prep.remember && ("),
+      PREVIEW_BLOCK.indexOf("{prep.caution && ("),
     );
     expect(remember).toMatch(/whitespace-pre-wrap break-words/);
     const setup = PREVIEW_BLOCK.slice(PREVIEW_BLOCK.indexOf("Latest setup:") - 300);
     expect(setup).toMatch(/whitespace-pre-wrap break-words/);
     // The caution is its own wrapped block, in the rose convention.
     const caution = PREVIEW_BLOCK.slice(
-      PREVIEW_BLOCK.indexOf("{workflow.caution && ("),
-      PREVIEW_BLOCK.indexOf("No watch/plan note."),
+      PREVIEW_BLOCK.indexOf("{prep.caution && ("),
+      PREVIEW_BLOCK.indexOf("{prep.latestSetup && ("),
     );
     expect(caution).toMatch(/whitespace-pre-wrap break-words/);
     expect(caution).toMatch(/text-rose-900/);
   });
 
   it("the desktop hover title is preserved on the Remember line", () => {
-    expect(PREVIEW_BLOCK).toMatch(/title=\{workflow\.remember\}/);
+    expect(PREVIEW_BLOCK).toMatch(/title=\{prep\.remember\.text\}/);
   });
 });
 
@@ -99,13 +111,15 @@ describe("nothing else on the dashboard changed", () => {
     expect(PAGE).toMatch(/\{truncate\(pinnedNoteText, 50\)\}/);
   });
 
-  it("the combined workflow model carries the memory notes uncapped", () => {
+  it("the prep model carries the memory notes uncapped", () => {
     // The 90-character cap that once lived in the brief is gone with the brief
-    // itself. The combined model trims only the outer edges and never slices.
-    expect(WORKFLOW).not.toMatch(/function truncate\(/);
-    expect(WORKFLOW).not.toMatch(/\.slice\(0,|substring\(|line-clamp|…/);
-    expect(WORKFLOW).toMatch(/const remember = trimmedOrNull\(input\.nextVisitNote\)/);
-    expect(WORKFLOW).toMatch(/const caution = trimmedOrNull\(input\.cautionNote\)/);
+    // itself, and the model that replaced it trims only the outer edges.
+    const BUILD = read("lib/dashboard/prep/build-pre-visit-prep.ts");
+    expect(BUILD).not.toMatch(/function truncate\(/);
+    expect(BUILD).not.toMatch(/\.slice\(0,|substring\(|line-clamp|…/);
+    expect(BUILD).toMatch(/const planText = plan\?\.text\?\.trim\(\)/);
+    // Practitioner text is passed through verbatim, never summarised.
+    expect(BUILD).toMatch(/text: caution\.text/);
   });
 
   it("the ONE appointment card wraps instead of clipping", () => {
@@ -114,8 +128,14 @@ describe("nothing else on the dashboard changed", () => {
       PAGE.indexOf("function AppointmentRow("),
       PAGE.indexOf("function AppointmentStatusPill("),
     );
-    expect(row).toMatch(/whitespace-pre-wrap break-words/);
+    // The wrapping text now lives in the preparation block the row renders, so
+    // the contract holds across the pair: the block wraps, and NEITHER clips.
+    expect(RAW_BLOCK).toMatch(/whitespace-pre-wrap break-words/);
+    expect(RAW_BLOCK).not.toMatch(/line-clamp/);
     expect(row).not.toMatch(/line-clamp/);
+    // And the row really does render it, rather than having quietly dropped the
+    // text — an empty slice would satisfy every negative assertion above.
+    expect(row).toMatch(/<PreVisitPrepBlock/);
   });
 
   it("the preview data helper still truncates nothing (the fix is render-only)", () => {

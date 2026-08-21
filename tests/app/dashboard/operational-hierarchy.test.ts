@@ -518,8 +518,8 @@ describe("dashboard hierarchy — no new data loading", () => {
   it("no loader is invoked from inside a map over appointments", () => {
     // Cheap structural N+1 guard: the appointment mapping must stay pure.
     const map = DASH.slice(
-      DASH.indexOf("const todayWorkflowInputs"),
-      DASH.indexOf("const todayWorkflow ="),
+      DASH.indexOf("const prepSummaryByAppointment"),
+      DASH.indexOf("// PR #214: recorded-history attention list"),
     );
     expect(map.length).toBeGreaterThan(0);
     expect(map).not.toMatch(/await /);
@@ -567,10 +567,20 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
     expect(line, "Birthdays must not be behind a && guard").not.toMatch(/&&/);
   });
 
-  it("Today still renders appointments, intake actions and treatment memory", () => {
-    expect(DASH).toMatch(/todayWorkflowByAppointment|todayWorkflow/);
+  it("every selected day renders appointments, intake actions and treatment memory", () => {
+    // `getBeforeTodayPreviews` is deliberately NO LONGER here. It was the
+    // Today-only half of a two-pipeline split that gave a selected day almost
+    // no preparation, and it asked a weaker question than the loader that
+    // replaced it: no appointment bound, no void filter, no own-appointment
+    // exclusion, and `error` discarded on all four of its reads. The module and
+    // its unit tests are retained on disk; only this wiring is gone.
+    // CODE ONLY: the page keeps a comment explaining what was removed and why,
+    // and a guard that cannot tell a rationale from a call site punishes
+    // documenting the change.
+    expect(DASH_CODE).not.toMatch(/getBeforeTodayPreviews/);
+    expect(DASH).toMatch(/loadLastChartedTreatmentsForClients\(\{/);
+    expect(DASH).toMatch(/<PreVisitPrepBlock prep=\{prep\}/);
     expect(DASH).toMatch(/resolveTodayIntakeAction/);
-    expect(DASH).toMatch(/getBeforeTodayPreviews/);
     expect(DASH).toMatch(/getLatestPinnedNoteByClient/);
   });
 

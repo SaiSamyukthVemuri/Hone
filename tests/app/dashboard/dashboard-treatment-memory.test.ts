@@ -255,7 +255,9 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
       "DashboardTreatmentMemory must not be a descendant of the row-body link",
     ).not.toContain("<DashboardTreatmentMemory");
     // Self-check: the span really is the row body and not an empty slice.
-    expect(link).toContain("Latest setup:");
+    // The preparation lines moved into <PreVisitPrepBlock>, which renders INSIDE
+    // this link exactly where they were, so it is the anchor now.
+    expect(link).toContain("<PreVisitPrepBlock");
     // ...and it is still rendered on the page, as a sibling.
     expect(DASH).toContain("<DashboardTreatmentMemory");
     expect(DASH.indexOf("<DashboardTreatmentMemory")).toBeGreaterThan(
@@ -270,7 +272,7 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
     // control someone adds cannot recreate this.
     const children = rowBodyLinkChildren();
     // Self-check first: an empty or mis-sliced string would pass every guard.
-    expect(children).toContain("Latest setup:");
+    expect(children).toContain("<PreVisitPrepBlock");
     expect(children, "no nested link").not.toMatch(/<Link\b|<a\b/);
     expect(children, "no nested button").not.toMatch(/<button\b/);
     expect(children, "no click handler inside the link body").not.toMatch(
@@ -399,7 +401,7 @@ describe("the Today row wires it correctly", () => {
     // The fold that turns loads into per-appointment memories is pure.
     const fold = DASH.slice(
       DASH.indexOf("const prepSummaryByAppointment"),
-      DASH.indexOf("const todayWorkflowInputs"),
+      DASH.indexOf("// PR #214: recorded-history attention list"),
     );
     expect(fold.length).toBeGreaterThan(0);
     expect(fold, "no await inside the per-appointment fold").not.toMatch(/\bawait\b/);
@@ -424,9 +426,14 @@ describe("the Today row wires it correctly", () => {
     expect(MEMORY_UI.indexOf("if (summary.unavailable)")).toBeLessThan(
       MEMORY_UI.indexOf("if (!summary.hasTreatment) return null"),
     );
-    // …and the same distinction survives the on-demand load.
+    // …and the same distinction survives the on-demand load. `none` no longer
+    // gets its own copy here — this disclosure only exists on a row that already
+    // showed a treatment, so a re-read returning nothing is an unreproduced read,
+    // not proof the client has no history. The server action keeps all three
+    // states (pinned in prep-memory-action-authority.test.ts); it is the WORDING
+    // on this surface that must not overclaim.
     expect(MEMORY_UI).toMatch(/result\.status === "loaded"/);
-    expect(MEMORY_UI).toMatch(/result\.status === "none"/);
+    expect(MEMORY_UI).not.toMatch(/No previous treatment to show/);
   });
 
   it("does not repeat the plan note that the row already shows as 'Remember'", () => {
@@ -434,14 +441,21 @@ describe("the Today row wires it correctly", () => {
     // model's forNextVisit. Printing one note twice under two labels is a bug
     // this row has already had once.
     expect(MEMORY_UI_CODE).not.toMatch(/For next visit/);
-    // …and the reason is recorded where the next reader will look: the page
-    // prints the plan note ONLY off Today, where the Before-Today "Remember"
-    // line does not run.
+    // …and there is now exactly ONE renderer of that note, on every day.
+    //
+    // It used to be two: Today printed it from the Before-Today model inside the
+    // row body, and every other day printed it from the prep loader as a
+    // sibling, under a `!workflow` guard. Two renderers meant two authorities,
+    // and they disagreed — the Today one had no appointment bound, so the same
+    // appointment could show different text the day before versus on the day.
     const DASH_CODE = DASH.replace(/\/\*[\s\S]*?\*\//g, "").replace(
       /^\s*\/\/.*$/gm,
       "",
     );
-    expect(DASH_CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
+    expect(DASH_CODE).not.toMatch(/prepSummary\.remember/);
+    expect(DASH_CODE).toMatch(/<PreVisitPrepBlock prep=\{prep\}/);
+    const BLOCK = read("app/(app)/dashboard/pre-visit-prep-block.tsx");
+    expect(BLOCK.match(/Remember: /g) ?? []).toHaveLength(1);
   });
 
   it("writes nothing and touches no appointment mutation surface", () => {

@@ -169,11 +169,17 @@ export function DashboardTreatmentMemory({
                 embedded
                 showFullChartLink={false}
               />
-            ) : result.status === "none" ? (
-              <p className="text-xs text-neutral-500">
-                No previous treatment to show.
-              </p>
             ) : (
+              /* `none` and `unavailable` COLLAPSE here, deliberately.
+                 This disclosure only exists on a row that already showed a
+                 previous treatment, so a re-read that comes back without one is
+                 not evidence that the client has no history — it is evidence
+                 that this second read did not reproduce the first. Saying "No
+                 previous treatment to show." there was an affirmative denial
+                 built from a re-read we could not confirm.
+                 The server action keeps all three states, because the
+                 distinction is real at the boundary; it is only the WORDING on
+                 this surface that must not overclaim. */
               <p
                 data-testid="dashboard-memory-unavailable"
                 className="text-xs text-neutral-500"

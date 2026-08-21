@@ -16,6 +16,12 @@ import type {
   PrepNarrativeItem,
 } from "@/lib/sessions/appointment-prep-memory";
 import type { BlockArea } from "@/lib/sessions/block-areas";
+import {
+  observeCaution,
+  observeLatestSetup,
+  type PrepCautionObservation,
+  type PrepSetupObservation,
+} from "@/lib/sessions/prep-observations";
 
 // THE loader behind every "last treatment" surface changed by this PR.
 //
@@ -40,6 +46,27 @@ import type { BlockArea } from "@/lib/sessions/block-areas";
 // day can never ask PostgREST for an unbounded payload. Crossing it is not
 // silent: see the truncation contract on loadLastChartedTreatmentsForClients.
 const MAX_BATCH_CANDIDATE_ROWS = 600;
+
+// EXPLICIT bound on the batched block read.
+//
+// It was previously unbounded, which did NOT mean "unlimited": PostgREST clamps
+// every response at `max_rows` (supabase/config.toml), and a clamped response is
+// a 200 with fewer rows and NO error — indistinguishable from a complete read.
+// The repo already documents this hazard, including the parent/child
+// amplification, at lib/export/paginate.ts.
+//
+// Stating the bound here does two things the silent clamp could not. It makes
+// the ceiling OURS, so it is visible in review and pinned by a test rather than
+// inherited from a config file two directories away. And it makes exhaustion
+// OBSERVABLE, so the loader can report a read it could not finish instead of
+// quietly returning a short map.
+//
+// It is deliberately NOT paginated. Paginating here would add round-trips to
+// the Dashboard's hot path to chase a completeness guarantee the surface does
+// not need: under the positive-evidence model an unread block can only cause a
+// fact to be OMITTED, never negated. lib/export/paginate.ts remains the right
+// tool where completeness genuinely matters, and the export is where it is used.
+const MAX_BATCH_BLOCK_ROWS = 1000;
 
 export const BLOCK_COLUMNS =
   "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, " +
@@ -105,6 +132,21 @@ function orderAreas(rows: ReadonlyArray<RawArea>): BlockArea[] {
     .map((r) => ({ area: r.area, laterality: r.laterality }));
 }
 
+
+// Raw block rows, normalised into the shape the shared pure helpers expect.
+//
+// The area ORDER is established here for the same reason it is established for
+// the selected treatment: PostgREST does not order embedded rows reliably, so
+// an unordered `structured_areas` would let the same block produce a different
+// area label on the observation path than on the treatment path.
+function toPointOfCareBlocks(
+  rows: ReadonlyArray<RawBlock>,
+): PointOfCareBlock[] {
+  return rows.map((b) => ({
+    ...b,
+    structured_areas: orderAreas(b.structured_areas ?? []),
+  }));
+}
 
 // The newest candidate carrying a next-visit note. Candidates are already
 // newest-first, already time-bounded and already appointment-filtered, so the
@@ -175,7 +217,7 @@ export async function loadLastChartedTreatment<
   // companion, whose surface makes an explicit statement to the practitioner,
   // needs to tell "none" and "unavailable" apart, so the distinction is not
   // forced on unrelated callers.
-  const outcome = await selectFromCandidates(input.studioId, candidates);
+  const { outcome } = await selectFromCandidates(input.studioId, candidates);
   return outcome.status === "selected" ? outcome.treatment : null;
 }
 
@@ -202,8 +244,18 @@ type SelectOutcome<T extends SessionWithLoadedEntries> =
 async function selectFromCandidates<T extends SessionWithLoadedEntries>(
   studioId: string,
   candidates: ReadonlyArray<T>,
-): Promise<SelectOutcome<T>> {
-  if (candidates.length === 0) return { status: "none" };
+): Promise<{
+  outcome: SelectOutcome<T>;
+  // The WHOLE candidate window's blocks, not only the selected session's.
+  //
+  // Returned rather than discarded so the appointment-prep companion can make
+  // its positive caution/setup observations from the read it already paid for.
+  // Empty on a failed read; an empty map is never evidence of anything.
+  blocksBySession: Map<string, PointOfCareBlock[]>;
+}> {
+  if (candidates.length === 0) {
+    return { outcome: { status: "none" }, blocksBySession: new Map() };
+  }
 
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -217,7 +269,8 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
       candidates.map((s) => s.id),
     )
     .is("deleted_at", null)
-    .order("sort_order", { ascending: true });
+    .order("sort_order", { ascending: true })
+    .limit(MAX_BATCH_BLOCK_ROWS);
 
   if (error) {
     // CLASSIFICATION ONLY. Observable enough to operate, carrying nothing a log
@@ -243,11 +296,17 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
         at: new Date().toISOString(),
       }),
     );
-    return { status: "unavailable" };
+    return { outcome: { status: "unavailable" }, blocksBySession: new Map() };
   }
 
   const rows = (data ?? []) as unknown as RawBlock[];
   const bySession = groupBlocksBySession(rows);
+  // The normalised window, built once and shared by the selector below and by
+  // the caller's positive observations.
+  const observedBlocks = new Map<string, PointOfCareBlock[]>();
+  for (const [sessionId, blockRows] of bySession) {
+    observedBlocks.set(sessionId, toPointOfCareBlocks(blockRows));
+  }
   // THE selector, not a second copy of its rule. `candidates` is already the
   // filtered, ordered, bounded window, so this only applies the content half,
   // but routing it through pickNewestChartedSession is what guarantees the
@@ -256,7 +315,9 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
   const selected = pickNewestChartedSession(candidates, bySession);
   // A SUCCESSFUL read that found nothing charted. Distinct from the failure
   // above, and the distinction is the whole point of this type.
-  if (!selected) return { status: "none" };
+  if (!selected) {
+    return { outcome: { status: "none" }, blocksBySession: observedBlocks };
+  }
 
   // Live electrolysis passes for the selected session, grouped by block. The
   // caller's sessions were already stripped of soft-deleted entries; the
@@ -280,12 +341,15 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
   );
 
   return {
-    status: "selected",
-    treatment: {
-      session: selected,
-      blocks,
-      supersededByEmptySession: candidates[0]?.id !== selected.id,
+    outcome: {
+      status: "selected",
+      treatment: {
+        session: selected,
+        blocks,
+        supersededByEmptySession: candidates[0]?.id !== selected.id,
+      },
     },
+    blocksBySession: observedBlocks,
   };
 }
 
@@ -356,6 +420,12 @@ export const PREP_SESSION_COLUMNS =
   // back to its client. It is not part of the prep model and no surface reads
   // it. Harmless for the single-client path, which already filters on it.
   "id, client_id, started_at, modality, record_status, deleted_at, appointment_id, " +
+  // `aftercare_and_risks_explained_at` is a SCALAR on the session row, and it is
+  // the only evidence that licenses the "Aftercare not marked" reminder. Reading
+  // it here is a COLUMN widening on a query that already runs: it costs no
+  // round-trip and no wave, and it is what let the Dashboard stop asking a
+  // second, unbounded, error-discarding pipeline for the same fact.
+  "aftercare_and_risks_explained_at, " +
   "session_notes, next_session_note, " +
   `electrolysis_entries(${PREP_ENTRY_COLUMNS}), ` +
   "laser_entries(id, deleted_at, zone, observation_notes)";
@@ -366,6 +436,10 @@ export type AppointmentPrepSession = SessionWithLoadedEntries & {
   session_notes?: string | null;
   appointment_id?: string | null;
   laser_entries?: ReadonlyArray<PrepLaserEntry> | null;
+  // The scalar behind the "Aftercare not marked" reminder. Selected above, and
+  // read ONLY off a session row that was actually returned — never inferred
+  // from a session that is missing from a collection.
+  aftercare_and_risks_explained_at?: string | null;
 };
 
 // "No prior treatment" and "the read failed" are CLINICALLY DIFFERENT answers,
@@ -404,6 +478,22 @@ export type AppointmentPrepLoad = {
     // The newest eligible row's legacy session_notes, matching what the
     // pre-Session-1D page rendered.
     legacySessionNotes: PrepNarrativeItem | null;
+  };
+  // POSITIVE OBSERVATIONS over the SAME candidate window and the SAME batched
+  // block read, computed by the shared pure observers in prep-observations.ts.
+  //
+  // They exist so the Dashboard can stop running a second historical pipeline
+  // for the caution and the setup line. That pipeline had no `before` bound, no
+  // void filter and no own-appointment exclusion, so on Today it could source a
+  // caution from a voided session, from a session that started earlier the same
+  // day, or from a future booking. These are bounded by construction, because
+  // they read the window this loader already filtered.
+  //
+  // `null` means NOT OBSERVED. It never means "there is none", and no caller may
+  // render a sentence about it: the block map behind them can be short.
+  observed: {
+    caution: PrepCautionObservation | null;
+    latestSetup: PrepSetupObservation | null;
   };
 };
 
@@ -466,6 +556,7 @@ export async function loadLastChartedTreatmentForClient(input: {
       treatment: null,
       unavailable: true,
       narrative: { plan: null, legacySessionNotes: null },
+      observed: { caution: null, latestSetup: null },
     };
   }
 
@@ -487,18 +578,27 @@ export async function loadLastChartedTreatmentForClient(input: {
     legacySessionNotes: newestLegacyNotesOf(candidates),
   };
 
-  const outcome = await selectFromCandidates(input.studioId, candidates);
+  const { outcome, blocksBySession } = await selectFromCandidates(input.studioId, candidates);
+  // Positive observations over the window we just read. Resolved for EVERY
+  // outcome, including "none" and "unavailable": a caution recorded on a visit
+  // that carries no charting is still a caution we read, and discarding it
+  // because the treatment selector found nothing would hide a safety
+  // instruction already in hand.
+  const observed = {
+    caution: observeCaution(candidates, blocksBySession),
+    latestSetup: observeLatestSetup(candidates, blocksBySession),
+  };
   switch (outcome.status) {
     case "selected":
-      return { treatment: outcome.treatment, unavailable: false, narrative };
+      return { treatment: outcome.treatment, unavailable: false, narrative, observed };
     case "none":
       // Reads succeeded; this client genuinely has no charted prior treatment.
       // Narrative may still exist and must still be shown.
-      return { treatment: null, unavailable: false, narrative };
+      return { treatment: null, unavailable: false, narrative, observed };
     case "unavailable":
       // The block read failed. Say so, and keep the narrative that WAS loaded,
       // discarding it would hide a safety instruction we already have in hand.
-      return { treatment: null, unavailable: true, narrative };
+      return { treatment: null, unavailable: true, narrative, observed };
   }
 }
 
@@ -618,6 +718,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
         treatment: null,
         unavailable: true,
         narrative: { plan: null, legacySessionNotes: null },
+        observed: { caution: null, latestSetup: null },
       });
     }
     return out;
@@ -672,7 +773,8 @@ export async function loadLastChartedTreatmentsForClients(input: {
       .eq("studio_id", input.studioId)
       .in("session_id", allCandidateIds)
       .is("deleted_at", null)
-      .order("sort_order", { ascending: true });
+      .order("sort_order", { ascending: true })
+      .limit(MAX_BATCH_BLOCK_ROWS);
     if (blockError) {
       console.error(
         JSON.stringify({
@@ -691,6 +793,14 @@ export async function loadLastChartedTreatmentsForClients(input: {
     }
   }
 
+  // The batched window, normalised ONCE for every request's observations. Two
+  // requests over the same client share the same block rows, so this is built
+  // outside the loop rather than per request.
+  const observedBlocks = new Map<string, PointOfCareBlock[]>();
+  for (const [sessionId, blockRows] of blocksBySession) {
+    observedBlocks.set(sessionId, toPointOfCareBlocks(blockRows));
+  }
+
   for (const r of requests) {
     const candidates = candidatesByRequest.get(r.requestKey) ?? [];
     // Narrative is resolved from the candidates already held, independently of
@@ -699,14 +809,35 @@ export async function loadLastChartedTreatmentsForClients(input: {
       plan: newestPlanOf(candidates),
       legacySessionNotes: newestLegacyNotesOf(candidates),
     };
+    // Positive observations over THIS request's own candidate window. Bounded
+    // by that request's `before` and its own appointment exclusion, so two
+    // appointments for one client observe two different windows.
+    //
+    // Resolved for every branch below, including the failure ones: a caution we
+    // actually read stays readable even when the treatment selector found
+    // nothing and even when the block read failed for other sessions.
+    const observed = {
+      caution: observeCaution(candidates, observedBlocks),
+      latestSetup: observeLatestSetup(candidates, observedBlocks),
+    };
 
     if (blocksUnavailable) {
-      out.set(r.requestKey, { treatment: null, unavailable: true, narrative });
+      out.set(r.requestKey, {
+        treatment: null,
+        unavailable: true,
+        narrative,
+        observed,
+      });
       continue;
     }
     if (candidates.length === 0) {
       // Truthful: with a truncated window we did not prove there is nothing.
-      out.set(r.requestKey, { treatment: null, unavailable: truncated, narrative });
+      out.set(r.requestKey, {
+        treatment: null,
+        unavailable: truncated,
+        narrative,
+        observed,
+      });
       continue;
     }
 
@@ -718,7 +849,12 @@ export async function loadLastChartedTreatmentsForClients(input: {
       // the client's real treatment may simply have fallen below the global
       // cut while their recent empties survived. Reporting `false` there is an
       // unproven absence: exactly what this module's own contract forbids.
-      out.set(r.requestKey, { treatment: null, unavailable: truncated, narrative });
+      out.set(r.requestKey, {
+        treatment: null,
+        unavailable: truncated,
+        narrative,
+        observed,
+      });
       continue;
     }
 
@@ -747,6 +883,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
       },
       unavailable: false,
       narrative,
+      observed,
     });
   }
 

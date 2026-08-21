@@ -256,8 +256,16 @@ const DEFAULT_EXCERPT_CHARS = 180;
 // different things about the same session.
 export const BLOCKLESS_LASER_COPY =
   "This previous visit was charted as laser passes. Open the full chart to review what was recorded.";
+// The positive half of the old sentence, and only the positive half.
+//
+// It used to end "...legacy treatment entries WITHOUT SETTINGS BLOCKS", which
+// is an assertion about a child collection. The settings blocks for this visit
+// may simply not have been returned — the batched block read is bounded, and a
+// bounded read that comes back short is indistinguishable from an empty one.
+// "was charted as legacy treatment entries" is licensed by the live entries we
+// actually hold, and the link tells her where the rest of the record is.
 export const BLOCKLESS_LEGACY_ENTRIES_COPY =
-  "This previous visit contains legacy treatment entries without settings blocks. Open the full chart to review what was recorded.";
+  "This previous visit was charted as legacy treatment entries. Open the full chart to review what was recorded.";
 
 // The truthful line for a charted visit that has no settings blocks, or null
 // when the visit does have blocks (so the caller renders the normal summary).

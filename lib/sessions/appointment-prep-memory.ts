@@ -79,8 +79,20 @@ import { formatAreaLabel, resolveBlockAreas } from "@/lib/sessions/block-areas";
 // narrative at all. The section is NEVER suppressed: an absent section is
 // indistinguishable from a failed query, and "did the notes not load?" is
 // exactly the doubt this whole feature exists to remove.
+// Scoped to THIS SURFACE, deliberately, and not to the record.
+//
+// It used to read "No notes recorded at the last session." — an affirmative
+// clinical denial. Four of the five note families on this card are harvested per
+// AREA (caution_note, reaction_notes, numbing_notes, entry comments), so they
+// come from the block collection; a block that was not returned takes its notes
+// with it and the card would then deny notes that exist.
+//
+// The section is still NEVER suppressed, for the reason it always was: an absent
+// section is indistinguishable from a failed query, and "did the notes not
+// load?" is exactly the doubt this feature exists to remove. The fix is not to
+// hide the section, it is to stop the sentence claiming more than was read.
 export const NO_LAST_SESSION_NOTES_COPY =
-  "No notes recorded at the last session.";
+  "No notes to show for this visit. Open the full chart to review what was recorded.";
 
 // The sentence the compact summary has always used for a caution FLAG carrying
 // no note (lib/sessions/clinical-summary.ts / point-of-care-memory watchLines).

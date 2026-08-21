@@ -292,8 +292,10 @@ describe("dashboard wiring (source pins)", () => {
 
   it("the existing Daily Prep Brief and Today next actions stay intact", () => {
     // The Daily Prep Brief card is retired; its preparation facts now render
-    // once inside the combined Today appointment card.
-    expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
+    // once inside the appointment row, from the appointment-bounded prep
+    // projection. (This used to pin `buildTodayWorkflow(todayWorkflowInputs)`,
+    // which was only ever a proxy for "preparation renders in the row".)
+    expect(PAGE).toMatch(/<PreVisitPrepBlock prep=\{prep\}/);
     expect(PAGE).not.toMatch(/DailyPrepBriefCard/);
     expect(PAGE).toMatch(/resolveDayNextAction\(/);
   });

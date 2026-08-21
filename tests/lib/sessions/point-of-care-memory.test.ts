@@ -589,9 +589,16 @@ describe("blockless charted visits get a truthful line, never an empty shell", (
   it("a LEGACY entry-only electrolysis visit says so", () => {
     const m = blockless({ hasLiveElectrolysisEntries: true });
     expect(m.blocklessNote).toBe(BLOCKLESS_LEGACY_ENTRIES_COPY);
-    expect(m.blocklessNote).toMatch(
-      /legacy treatment entries without settings blocks/i,
-    );
+    expect(m.blocklessNote).toMatch(/charted as legacy treatment entries/i);
+    // AND IT MUST NOT SAY WHY IT HAS NO BLOCKS.
+    //
+    // The copy used to end "...without settings blocks". That is an assertion
+    // about a child collection, and the batched block read is bounded — a short
+    // result is indistinguishable from an empty one, so the visit may well have
+    // settings blocks we did not receive. The live entries license the positive
+    // half of the sentence; nothing licenses the negative half.
+    expect(m.blocklessNote).not.toMatch(/without settings blocks/i);
+    expect(m.blocklessNote).not.toMatch(/\bno\b.*\bblocks?\b/i);
   });
 
   it("neither line ever claims the area was unrecorded", () => {

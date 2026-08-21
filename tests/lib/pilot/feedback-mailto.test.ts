@@ -170,8 +170,9 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
   });
 
   it("the operational surfaces it sat beside are untouched", () => {
-    // The Daily Prep Brief card is retired into the combined Today workflow.
-    expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
+    // The Daily Prep Brief card is retired into the appointment row's own
+    // preparation block, which renders on every selected day, not only Today.
+    expect(PAGE).toMatch(/<PreVisitPrepBlock prep=\{prep\}/);
     expect(PAGE).toMatch(/<DashboardTodoList todo=\{dashboardTodo\}/);
   });
 

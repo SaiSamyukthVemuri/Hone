@@ -1115,8 +1115,19 @@ describe("narrative — complete, whole, grouped, deduplicated", () => {
     expect(m.notes.cautions).toEqual([]);
     expect(m.notes.responses).toEqual([]);
     expect(m.notes.additional).toEqual([]);
+    // SCOPED TO THE SURFACE, NOT TO THE RECORD.
+    //
+    // Four of the five note families are harvested per AREA, i.e. from the
+    // block collection, which is read under a bound. "No notes recorded at the
+    // last session." denied notes that a short read simply did not return.
     expect(NO_LAST_SESSION_NOTES_COPY).toBe(
-      "No notes recorded at the last session.",
+      "No notes to show for this visit. Open the full chart to review what was recorded.",
+    );
+    expect(NO_LAST_SESSION_NOTES_COPY).not.toMatch(/no notes recorded/i);
+    // The section is still never suppressed, so she is never left wondering
+    // whether the notes failed to load — that is why copy exists here at all.
+    expect(NO_LAST_SESSION_NOTES_COPY).toMatch(
+      /Open the full chart to review what was recorded/,
     );
   });
 
@@ -1219,9 +1230,11 @@ describe("blockless treatments — truthful, never 'not recorded'", () => {
       hasLiveElectrolysisEntries: true,
     });
     expect(m.blocklessNote).toBe(
-      "This previous visit contains legacy treatment entries without settings blocks. Open the full chart to review what was recorded.",
+      "This previous visit was charted as legacy treatment entries. Open the full chart to review what was recorded.",
     );
     expect(m.blocklessNote).not.toMatch(/Area not recorded|Setup not recorded/i);
+    // Says what the record IS. Never what a bounded read did not return.
+    expect(m.blocklessNote).not.toMatch(/without settings blocks/i);
   });
 
   it("35b. a BLOCKLESS legacy pass's notes reach the card — they have no other channel", () => {

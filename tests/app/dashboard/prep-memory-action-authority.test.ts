@@ -38,14 +38,18 @@ describe("cross-studio lookup is fenced, and says nothing about existence", () =
   });
 
   it("a second, redundant tenancy check guards a silent query change", () => {
-    expect(CODE).toMatch(/if \(data\.studio_id !== studio\.id\) return \{ status: "none" \}/);
+    expect(CODE).toMatch(/if \(data\.studio_id !== studio\.id\) return \{ status: "unavailable" \}/);
   });
 
   it("a foreign appointment is INDISTINGUISHABLE from a missing one", () => {
-    // Both return `none`. Returning a different shape would let the Dashboard
-    // be used to probe whether an appointment id exists in another studio.
-    const foreign = CODE.indexOf('if (data.studio_id !== studio.id) return { status: "none" }');
-    const missing = CODE.indexOf('if (!data) return { status: "none" }');
+    // BOTH are now "unavailable", and both must stay the SAME shape — that
+    // sameness is what stops this being usable to probe whether an id exists.
+    //
+    // They used to be "none", which additionally asserted that the client has no
+    // previous treatment. A row we could not read says nothing about history; it
+    // says we could not look.
+    const foreign = CODE.indexOf('if (data.studio_id !== studio.id) return { status: "unavailable" }');
+    const missing = CODE.indexOf('if (!data) return { status: "unavailable" }');
     expect(foreign).toBeGreaterThan(-1);
     expect(missing).toBeGreaterThan(-1);
   });
@@ -158,15 +162,20 @@ describe("four distinct failure/success paths, and they stay distinct", () => {
     expect(COMPONENT).not.toMatch(/console\./);
   });
 
-  it("all four paths render their own state", () => {
-    // loaded → the card; none → a quiet no-detail line; unavailable →
-    // the truthful failure copy, whether it came from the server or from a
-    // rejected invocation. A transport failure and a server-reported failure
-    // deliberately converge, because they are the same fact to the reader.
+  it("loaded renders the card; every other outcome renders the failure copy", () => {
+    // The SERVER still distinguishes three outcomes — that distinction is real
+    // at the boundary and is asserted above. What changed is the WORDING on this
+    // surface: `none` no longer gets its own "No previous treatment to show."
+    //
+    // Why it must not: this disclosure only exists on a row that ALREADY showed
+    // a previous treatment. A re-read that comes back without one is not
+    // evidence that the client has no history — it is evidence that the second
+    // read did not reproduce the first. Saying otherwise turned an unreproduced
+    // read into an affirmative clinical denial.
     expect(COMPONENT).toMatch(/result\.status === "loaded"/);
-    expect(COMPONENT).toMatch(/result\.status === "none"/);
     expect(COMPONENT).toMatch(/Previous treatment could not be loaded/);
     expect(COMPONENT).toMatch(/<AppointmentPrepMemoryCard/);
+    expect(COMPONENT).not.toMatch(/No previous treatment to show/);
   });
 
   it("containment does not disturb the cache — one fetch per mounted row", () => {

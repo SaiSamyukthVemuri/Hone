@@ -67,10 +67,19 @@ export async function loadAppointmentPrepMemory(
       .maybeSingle();
 
     if (error) return { status: "unavailable" };
-    if (!data) return { status: "none" };
+    // A row we could not read is UNAVAILABLE, never "none".
+    //
+    // `none` is a statement about the client's history. Not getting the
+    // appointment row back says nothing about history — it says we could not
+    // look. Mapping it to `none` let a row that failed its tenancy fence render
+    // as an affirmative "no previous treatment".
+    //
+    // Both branches still return the SAME shape, which is what keeps this from
+    // being usable to probe whether an appointment id exists.
+    if (!data) return { status: "unavailable" };
     // Belt and braces: the query already fences this, and a silent change to
     // the query above must not become a tenancy hole.
-    if (data.studio_id !== studio.id) return { status: "none" };
+    if (data.studio_id !== studio.id) return { status: "unavailable" };
 
     const loads = await loadLastChartedTreatmentsForClients({
       studioId: studio.id,

@@ -109,23 +109,36 @@ describe("compactBeforeToday", () => {
 });
 
 describe("placement + reuse", () => {
-  it("each Today roster row renders the compact preview", () => {
-    // The preview now feeds the combined workflow model (keyed by APPOINTMENT
-    // id) instead of being handed to the row directly, so the same facts can no
-    // longer be rendered twice from two sources.
-    expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.client_id\)/);
-    expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
-    expect(PAGE).toMatch(/Before today/);
-    // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
-    // 70-char cap is gone. Full-visibility is pinned in its own suite
-    // (tests/app/dashboard/dashboard-memory-visibility.test.ts).
-    expect(PAGE).toMatch(/Remember: \{workflow\.remember\}/);
-    expect(PAGE).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
-    // ONE relationship line now: the old card said "No charted history yet."
-    // and the brief separately said "No prior treatment history yet".
-    expect(PAGE).toMatch(/New client · No charted history yet/);
-    expect(PAGE).toMatch(/No watch\/plan note\./);
-    // Empty roster state untouched.
+  it("this module no longer feeds the Dashboard roster", () => {
+    // RETIRED FROM THE PAGE, kept on disk with the contracts below.
+    //
+    // Its shape is the reason: `BeforeTodayPreview.hasHistory` is a boolean, so
+    // a failed or truncated read is FORCED to render as an affirmative "New
+    // client · No charted history yet". Four of its reads never bind `error`,
+    // so one failed query does that to the whole roster at once. No amount of
+    // guarding downstream can recover a distinction the type cannot carry.
+    //
+    // The roster now derives preparation from the appointment-bounded loader,
+    // whose answer is a set of observations rather than a boolean.
+    const PAGE_CODE = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+      /^\s*\/\/.*$/gm,
+      "",
+    );
+    expect(PAGE_CODE).not.toMatch(/getBeforeTodayPreviews/);
+    expect(PAGE_CODE).not.toMatch(/beforeTodayPreviews/);
+    expect(PAGE_CODE).not.toMatch(/compactBeforeToday/);
+    // And every claim its boolean used to license is gone from the page.
+    for (const claim of [
+      /New client · No charted history yet/,
+      /No watch\/plan note\./,
+      /Latest setup: \{[^}]*\?\?/,
+      /Treatment area not recorded/,
+    ]) {
+      expect(PAGE_CODE).not.toMatch(claim);
+    }
+    // The row still labels its preparation, and the empty roster state is
+    // untouched.
+    expect(PAGE).toMatch(/<PreVisitPrepBlock prep=\{prep\}/);
     expect(PAGE).toMatch(/No appointments today\./);
   });
 
@@ -156,10 +169,10 @@ describe("placement + reuse", () => {
     expect(PREVIEWS).toMatch(/\.in\("session_id", sessionIds\)/);
     expect(PREVIEWS).toMatch(/\.from\("session_block_areas"\)/);
     expect(PREVIEWS).toMatch(/\.in\(\s*\n?\s*"session_block_id",/);
-    // One previews call per page load, fed with the whole roster.
-    expect(PAGE).toMatch(
-      /getBeforeTodayPreviews\(\s*\n?\s*studio\.id,\s*\n?\s*visibleAppointments\.map/,
-    );
+    // The page-side call assertion is deliberately gone: the Dashboard no longer
+    // invokes this module. These four reads remain pinned because the module
+    // itself is retained, and its own shape is what the retirement rationale
+    // above rests on.
   });
 });
 

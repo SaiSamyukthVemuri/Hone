@@ -363,10 +363,20 @@ describe("dashboard wiring", () => {
     "utf8",
   );
 
-  it("builds the combined workflow and looks it up by appointment id", () => {
-    expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
-    expect(PAGE).toMatch(/todayWorkflowByAppointment\(todayWorkflow\)/);
-    expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
+  // NOTE ON SCOPE. This module is no longer wired into the Dashboard: the row
+  // read only its five PREPARATION fields, and those now come from the
+  // appointment-bounded projection in lib/dashboard/prep/. The pure-model tests
+  // above still apply (the module is retained with its contracts), but the
+  // WIRING assertions below have been re-pointed at the path that actually
+  // renders, because a source pin on a retired call site protects nothing.
+  it("derives the row's preparation keyed by APPOINTMENT id", () => {
+    // The property that matters, and the one that broke before: a client with
+    // two bookings in a day must not have one answer overwrite the other.
+    expect(PAGE).toMatch(/const prepByAppointment = new Map<string, PreVisitPrep>\(\)/);
+    expect(PAGE).toMatch(/prepByAppointment\.set\(\s*appt\.id,/);
+    expect(PAGE).toMatch(/prep=\{prepByAppointment\.get\(appt\.id\) \?\? EMPTY_PREP\}/);
+    // And it is never keyed by the client.
+    expect(PAGE).not.toMatch(/prepByAppointment\.get\(appt\.client_id\)/);
   });
 
   it("renders exactly ONE appointment list — the separate brief card is gone", () => {
@@ -406,32 +416,57 @@ describe("dashboard wiring", () => {
     expect(code).not.toMatch(/Last recorded:/);
     expect(code).not.toMatch(/For next visit:/);
     expect(code).not.toMatch(/Caution noted:/);
-    // Exactly one rendered Remember, Caution and Latest setup label.
-    expect(code.match(/Remember: \{workflow\.remember\}/g) ?? []).toHaveLength(1);
-    expect(code.match(/Caution: \{workflow\.caution\}/g) ?? []).toHaveLength(1);
-    expect(
-      code.match(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/g) ?? [],
-    ).toHaveLength(1);
+    // Exactly one rendered Remember, Caution and Latest setup label — now in
+    // the shared block, which is what makes "exactly once" true on BOTH days.
+    // It previously had to be asserted per-day because Today and off-Today used
+    // two different renderers fed by two different authorities.
+    const BLOCK = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/pre-visit-prep-block.tsx"),
+      "utf8",
+    );
+    expect(BLOCK.match(/Remember: \{prep\.remember\.text\}/g) ?? []).toHaveLength(1);
+    expect(BLOCK.match(/Caution: \{prep\.caution\.text\}/g) ?? []).toHaveLength(1);
+    expect(BLOCK.match(/Latest setup: \{prep\.latestSetup\.line\}/g) ?? []).toHaveLength(1);
+    // And the setup line carries NO fallback copy. A null must not acquire a
+    // sentence at the render site.
+    //
+    // CODE ONLY: the comments in that file legitimately quote the copy that was
+    // removed, and a guard that cannot tell a quotation from a render is a guard
+    // that punishes documenting the fix.
+    const BLOCK_CODE = BLOCK.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+      /^\s*\/\/.*$/gm,
+      "",
+    );
+    expect(BLOCK_CODE).not.toMatch(/Not recorded/);
+    expect(BLOCK_CODE).not.toMatch(/\?\?\s*"/);
+    // The page itself no longer renders a second Remember anywhere.
+    expect(code.match(/Remember: /g) ?? []).toHaveLength(0);
   });
 
   it("full-text rendering from #486/#489 is preserved (no cap, no clamp)", () => {
     const start = PAGE.indexOf("function AppointmentRow(");
     const row = PAGE.slice(start, PAGE.indexOf("function AppointmentStatusPill("));
-    for (const field of ["workflow.remember", "workflow.caution", "workflow.setup"]) {
-      expect(row).toContain(field);
+    const BLOCK = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/pre-visit-prep-block.tsx"),
+      "utf8",
+    );
+    for (const field of ["prep.remember.text", "prep.caution.text", "prep.latestSetup.line"]) {
+      expect(BLOCK).toContain(field);
     }
-    expect(row).toMatch(/whitespace-pre-wrap break-words/);
+    expect(BLOCK).toMatch(/whitespace-pre-wrap break-words/);
+    expect(BLOCK).not.toMatch(/line-clamp/);
     expect(row).not.toMatch(/line-clamp/);
     // truncate() survives only for the pinned note, which is out of scope here.
     const truncs = row.match(/truncate\(/g) ?? [];
     expect(truncs.length).toBeLessThanOrEqual(1);
   });
 
-  it("adds NO new database query for the combined view", () => {
-    // The workflow is derived from facts already loaded; it must not await.
-    const start = PAGE.indexOf("const todayWorkflowInputs");
-    const end = PAGE.indexOf("const workflowByAppointment");
+  it("adds NO new database query for the row's preparation", () => {
+    // The projection is derived from facts already loaded; it must not await.
+    const start = PAGE.indexOf("const prepSummaryByAppointment");
+    const end = PAGE.indexOf("// PR #214: recorded-history attention list");
     expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
     expect(PAGE.slice(start, end)).not.toContain("await ");
   });
 

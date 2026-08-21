@@ -120,7 +120,17 @@ describe("combined Today workflow (replaces the Daily Prep Brief card)", () => {
       PAGE.indexOf("function AppointmentRow("),
       PAGE.indexOf("function AppointmentStatusPill("),
     );
-    expect((row.match(/break-words/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    // The three wrapping prep lines (Remember, Caution, Latest setup) moved into
+    // <PreVisitPrepBlock>, which the row renders on EVERY selected day — so at
+    // 390px this contract is now asserted for the future days a practitioner
+    // opens to prepare, not only for Today.
+    const BLOCK = readFileSync(
+      join(process.cwd(), "app/(app)/dashboard/pre-visit-prep-block.tsx"),
+      "utf8",
+    );
+    expect((BLOCK.match(/break-words/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(BLOCK).not.toMatch(/whitespace-nowrap|w-\[\d/);
+    expect(row).toMatch(/<PreVisitPrepBlock/);
     expect(row).not.toMatch(/whitespace-nowrap|w-\[\d/);
   });
 

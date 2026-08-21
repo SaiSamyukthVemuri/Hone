@@ -207,8 +207,13 @@ export function AppointmentPrepMemoryCard({
             data-testid="prep-superseded"
             className="text-xs text-neutral-500"
           >
-            Most recent charted treatment. A newer session has no treatment
-            details yet.
+            {/* The second sentence used to read "A newer session has no
+                treatment details yet." That asserts a newer session is empty,
+                which is inferred from that session missing from the block map —
+                a bounded read. The qualifier below is the part that matters to
+                her (do not read this as the very last visit) and it is licensed
+                by the selection itself. */}
+            Most recent charted treatment.
           </p>
         )}
       </header>
@@ -221,11 +226,13 @@ export function AppointmentPrepMemoryCard({
             data-testid="prep-areas"
             className="mt-1 break-words text-sm font-medium text-neutral-900 dark:text-neutral-100"
           >
-            {memory.areaHeadline ?? (
-              <span className="font-normal text-neutral-400">
-                Area not recorded
-              </span>
-            )}
+            {/* Omission, not a denial. An area name is resolved from the
+                block's structured area rows and falls back to its own
+                `primary_area` column, so a null headline means every block we
+                RECEIVED was unnamed — which is not the same as the visit having
+                no recorded area, because the block set itself is bounded. The
+                per-area cards below still speak for whatever did come back. */}
+            {memory.areaHeadline}
           </p>
         </div>
       ) : (
@@ -238,8 +245,16 @@ export function AppointmentPrepMemoryCard({
                 /sessions/new panel. Never "Setup not recorded": a laser zone or
                 a legacy entry area does exist, it simply is not in the
                 block-shaped model this surface renders. */}
+            {/* NO `??`-ACQUIRES-COPY HERE.
+                The old fallback read "This previous visit has no charted
+                treatment areas." — a claim about a child collection, made at
+                the render site, where the information needed to tell "none"
+                from "not returned" is long out of scope. The block read is
+                bounded, so a short result cannot license that sentence. This
+                wording is about what THIS CARD is showing, which is true either
+                way, and the link says where the rest of the record is. */}
             {memory.blocklessNote
-              ?? "This previous visit has no charted treatment areas. Open the full chart to review what was recorded."}
+              ?? "No treatment areas to show for this visit. Open the full chart to review what was recorded."}
           </p>
           {/* The SECOND full-chart affordance, and it obeys the same
               capability. The blockless COPY above is shared with the charting
