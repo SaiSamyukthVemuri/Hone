@@ -202,13 +202,14 @@ describe("shared helper usage (both context surfaces)", () => {
     // This is the invariant that actually matters, and it is stronger than the
     // pin it replaces: neither page decides for itself what a prior treatment
     // is, and neither can drift from the live charting screen.
-    // The appointment page is migrated to the historical authority; the
-    // new-session page follows in its own commit, with its own browser proof.
-    // Until then this pins BOTH halves honestly rather than pretending.
-    expect(APPOINTMENT_PAGE).toMatch(/loadVisitPreparation\(\{/);
-    expect(APPOINTMENT_PAGE).toMatch(/from "@\/lib\/sessions\/history\/prepare-visit"/);
-    expect(NEW_SESSION_PAGE).toMatch(/loadLastChartedTreatment\(\{/);
-    expect(NEW_SESSION_PAGE).toMatch(/from "@\/lib\/sessions\/last-treatment-loader"/);
+    // BOTH surfaces now reach the same authority, which is the invariant that
+    // actually matters: neither page decides for itself what a prior treatment
+    // is, and neither can drift from the live charting screen.
+    for (const page of [APPOINTMENT_PAGE, NEW_SESSION_PAGE]) {
+      expect(page).toMatch(/loadVisitPreparation\(\{/);
+      expect(page).toMatch(/from "@\/lib\/sessions\/history\/prepare-visit"/);
+      expect(page).not.toMatch(/from "@\/lib\/sessions\/last-treatment-loader"/);
+    }
   });
 
   it("blocks are read with a narrow select scoped to studio, batched, deleted excluded", () => {

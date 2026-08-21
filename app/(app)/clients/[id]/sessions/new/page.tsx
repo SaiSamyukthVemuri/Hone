@@ -9,7 +9,7 @@ import {
   buildLastSessionSummary,
   type LastSessionSummary,
 } from "@/lib/sessions/clinical-summary";
-import { loadLastChartedTreatment } from "@/lib/sessions/last-treatment-loader";
+import { loadVisitPreparation } from "@/lib/sessions/history/prepare-visit";
 import {
   blocklessTreatmentCopy,
   toClinicalSummaryBlocks,
@@ -69,10 +69,24 @@ export default async function NewSessionPage({
   // entries already arrived with getClientById above, and the prior blocks now
   // carry their structured areas in the same select instead of needing a
   // separate attachStructuredAreas pass.
-  const lastTreatment = await loadLastChartedTreatment({
+  // THROUGH THE HISTORICAL AUTHORITY.
+  //
+  // This page used to hand the loader `data.sessions` — a bare array the page
+  // already had in memory. That is the shape that lets a caller decide "which
+  // of these is the newest charted one?" for itself, and it inherited that
+  // read's weaknesses: `getClientById`'s sessions select declares no `.limit()`
+  // (so a silent cap at PostgREST's max_rows) and orders `started_at DESC` with
+  // no tie-break, which is not a total order.
+  //
+  // `before: null` is correct and is NOT a clock read: /sessions/new has no
+  // appointment to be relative to, so it asks "what did we last do for this
+  // client" with no horizon rather than inventing one from now().
+  const prep = await loadVisitPreparation({
     studioId: studio.id,
-    sessions: data.sessions,
+    clientId: id,
+    before: null,
   });
+  const selectedVisit = prep.preparation.treatment;
 
   let previousSummary: LastSessionSummary | null = null;
   let previousMeta: { startedAt: string; modality: string; sessionId: string } | null =
@@ -88,25 +102,30 @@ export default async function NewSessionPage({
   // over nothing at all. It now says what the record actually is, using the
   // SAME copy the charting screen's memory card uses.
   let blocklessNote: string | null = null;
-  if (lastTreatment) {
+  if (selectedVisit.kind === "visit" && prep.session && prep.detail) {
     previousSummary = buildLastSessionSummary({
-      // Charting unification: the adapter feeds each block's LIVE entries'
-      // observation_chips through so the reaction line reads the unified
-      // representation.
-      blocks: toClinicalSummaryBlocks(lastTreatment.blocks),
-      nextSessionNote: lastTreatment.session.next_session_note ?? null,
+      // Charting unification: each block carries its LIVE entries so the
+      // reaction line reads the unified representation. They arrive attached to
+      // the block by the canonical record rather than being re-joined here.
+      blocks: toClinicalSummaryBlocks(prep.detail.blocks),
+      nextSessionNote: prep.session.next_session_note ?? null,
     });
     previousMeta = {
-      startedAt: lastTreatment.session.started_at,
-      modality: lastTreatment.session.modality,
-      sessionId: lastTreatment.session.id,
+      startedAt: prep.session.started_at,
+      modality: prep.session.modality ?? "",
+      sessionId: prep.session.id,
     };
-    if (lastTreatment.blocks.length === 0) {
+    // FROM THE VARIANT, not from `blocks.length === 0`.
+    //
+    // A count of zero is ambiguous: it is a laser visit, a legacy entry-only
+    // visit, or a read that lost the blocks. The authority has already
+    // distinguished them, and reading `hasLiveElectrolysisEntries` off embedded
+    // rows — as this did — is exactly the inference a row cap can falsify.
+    if (selectedVisit.treatment.kind !== "charted-areas") {
       blocklessNote = blocklessTreatmentCopy({
-        modality: lastTreatment.session.modality,
-        hasLiveElectrolysisEntries: (
-          lastTreatment.session.electrolysis_entries ?? []
-        ).some((e) => e.deleted_at == null),
+        modality: prep.session.modality ?? "",
+        hasLiveElectrolysisEntries:
+          selectedVisit.treatment.kind === "legacy-entry-only",
       });
     }
   }

@@ -101,8 +101,19 @@ describe("both previous-context surfaces use the ONE shared selector", () => {
     expect(SESSION_PAGE).toMatch(/before: session\.started_at/);
   });
 
-  it("the new-session page loads the last CHARTED treatment", () => {
-    expect(NEW_SESSION_PAGE).toMatch(/loadLastChartedTreatment\(\{/);
+  it("the new-session page asks the AUTHORITY, and holds no session array", () => {
+    // Re-pointed, not deleted. The property was "the last CHARTED treatment,
+    // not the newest row"; it is now answered by the authority, and the page
+    // additionally cannot re-answer it, because it no longer receives an array.
+    //
+    // It used to hand the loader `data.sessions` — the very array the page
+    // already had — which is the shape acceptance question 1 is about.
+    expect(NEW_SESSION_PAGE).toMatch(/loadVisitPreparation\(\{/);
+    expect(NEW_SESSION_PAGE).toMatch(/from "@\/lib\/sessions\/history\/prepare-visit"/);
+    expect(codeOnly(NEW_SESSION_PAGE)).not.toMatch(/sessions: data\.sessions/);
+    for (const retired of ["loadLastChartedTreatment", "pickNewestChartedSession"]) {
+      expect(codeOnly(NEW_SESSION_PAGE)).not.toMatch(new RegExp(`\\b${retired}\\b`));
+    }
   });
 
   it("the new-session page no longer picks the newest session ROW", () => {
