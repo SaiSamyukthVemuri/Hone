@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,21 +28,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The fakes return minimal values matching each loader's real contract and do
 // nothing to help a tab pass; none of them inspects the tab.
 //
-// TWO PROPERTIES THIS OBSERVATION DEPENDS ON
-// ------------------------------------------
+// WHAT THIS FILE MEASURES, AND WHAT MAKES THAT COMPLETE
+// -----------------------------------------------------
+// It runs the real page function for a tab and records the loaders THE PAGE
+// BODY invokes. It does not render anything. Completeness comes from a separate,
+// structural fact proved at the bottom of this file: the child graph the page
+// returns is data-passive, so the page body is the only place a read can start.
+//
+// That is an inversion. Earlier revisions tried to observe child reads by
+// EXECUTING the returned tree, which meant reimplementing React's render
+// semantics by hand — and every correction traded one divergence for another:
+// async-only execution missed sync wrappers, a global visited-set under-counted
+// reused elements, fixing that over-counted passthrough wrappers, and each call
+// form (memo, lazy, element access, Reflect.apply) needed its own rule. Proving
+// children CANNOT read is bounded; simulating what they WOULD do is not.
+//
+// Two supporting properties:
+//
 // 1. MULTIPLICITY IS KEPT. Expectations are call COUNTS, not a set of names.
 //    `attachStructuredAreas` runs twice on Overview, under two separate gates;
 //    with a deduplicated set, deleting one of them stayed green.
-// 2. THE RETURNED TREE IS EXECUTED. Awaiting the page runs its body and returns
-//    an element tree — Next, not the await, runs the components in it. So the
-//    tree is walked and its async server components are run too (see
-//    renderDeep), and a read added to one of them is observed rather than
-//    missed.
-//
-// 3. EVERY QUERY IS RECORDED, BY TABLE. Both Supabase factories are faked; the
-//    server factory records each `.from(table)` rather than each client
-//    construction, so a read issued through an already-existing client, against
-//    any table, is still observed.
+// 2. EVERY QUERY IS RECORDED, BY TABLE. Both Supabase factories are faked; the
+//    server factory records each `.from(table)` and records any other surface
+//    the instant it is touched, so a read through an already-built client, or
+//    through rpc/storage/schema, still shows up in the counts.
 //
 // KNOWN LIMITATIONS, STATED RATHER THAN IMPLIED
 // ---------------------------------------------
@@ -323,167 +332,6 @@ const ClientProfilePage = (await import("@/app/(app)/clients/[id]/page"))
 }) => Promise<unknown>;
 
 /**
- * Execute the async server components inside a returned RSC tree.
- *
- * Awaiting the page function runs its body and hands back an element tree; it
- * does not run the components in that tree — Next does. So a read added to an
- * async child server component would happen in production and be invisible
- * here. The tree is therefore walked and every async component in it executed.
- *
- * Sync function components are deliberately NOT invoked: a "use client"
- * component is just a function under vitest, and calling it would run browser
- * code and make this test fail for reasons unrelated to tab gating. The walk
- * still descends through children and element-valued props, so an async
- * component handed to one of them is still reached and run.
- */
-/**
- * Call one component and return what it rendered, or undefined if it refused.
- *
- * A client component invoked outside a React render throws on its first hook,
- * which is expected here and means "not a server component" — but React logs
- * that error before throwing, so the message is filtered while the call is in
- * flight. Only the hook-call message is suppressed, and console.error is always
- * restored, so a genuine error from a server component still surfaces.
- */
-async function callComponent(fn: (p: unknown) => unknown, props: unknown): Promise<unknown> {
-  const realError = console.error;
-  console.error = (...args: unknown[]) => {
-    const first = typeof args[0] === "string" ? args[0] : "";
-    if (first.includes("Invalid hook call") || first.includes("Rules of Hooks")) return;
-    realError(...args);
-  };
-  try {
-    const out = fn(props);
-    return out && typeof (out as { then?: unknown }).then === "function" ? await out : out;
-  } catch {
-    // A client component throws here — on its first hook, as an "Invalid hook
-    // call" or as a raw TypeError from a null dispatcher, depending on the
-    // path. Distinguishing those from a genuine server-component failure by
-    // message is exactly the recognise-every-form trap this file keeps falling
-    // into, so it is not attempted.
-    //
-    // Swallowing is sound instead because of where the guard sits: the Supabase
-    // fake RECORDS a surface before refusing it, so a read through rpc/storage/
-    // schema lands in the log even though the call then throws and is caught
-    // here. The count changes and the tab map fails.
-    //
-    // Residual, stated plainly: reads a component would have performed AFTER a
-    // throw are not observed. In production that component throws too, so this
-    // is a broken page rather than a silent extra read — a different failure
-    // class from the one this file exists to catch.
-    return undefined;
-  } finally {
-    console.error = realError;
-  }
-}
-
-/**
- * Resolve a component type through the wrappers React allows, or return null
- * when this walker cannot classify it.
- *
- * Returning null is a FAILURE upstream, not a skip — the same inversion the
- * projection guard uses. A memo- or lazy-wrapped async component is an object,
- * not a function, so the previous walker stepped over it and the read inside it
- * was never seen. Rather than enumerate wrappers forever, anything unrecognised
- * now fails the test and has to be taught to this function before it can be
- * used.
- */
-function resolveComponent(type: unknown): { fn: ((p: unknown) => unknown) | null; ok: boolean } {
-  if (typeof type === "function") return { fn: type as (p: unknown) => unknown, ok: true };
-  // Host elements ("div") and Fragment/Suspense (symbols) render no reads
-  // themselves; their children are walked below.
-  if (typeof type === "string" || typeof type === "symbol") return { fn: null, ok: true };
-  if (type && typeof type === "object") {
-    const t = type as { $$typeof?: symbol; type?: unknown; render?: unknown; _init?: unknown; _payload?: unknown };
-    const tag = typeof t.$$typeof === "symbol" ? String(t.$$typeof.description ?? "") : "";
-    if (tag.includes("memo")) return resolveComponent(t.type);
-    if (tag.includes("forward_ref")) return resolveComponent(t.render);
-    if (tag.includes("lazy")) {
-      try {
-        return resolveComponent((t._init as (p: unknown) => unknown)(t._payload));
-      } catch {
-        return { fn: null, ok: false };
-      }
-    }
-    return { fn: null, ok: false };
-  }
-  return { fn: null, ok: true };
-}
-
-const isElement = (n: object): boolean =>
-  typeof (n as { $$typeof?: unknown }).$$typeof === "symbol" && "type" in n;
-
-// The real tree bottoms out between depth 10 and 20 (measured by lowering this
-// cap until the suite breaks), so 200 is roughly ten times the headroom needed
-// and the limit is a runaway guard rather than a silent truncation point.
-const MAX_RENDER_DEPTH = 200;
-
-async function renderDeep(node: unknown, depth = 0, path = new Set<object>()): Promise<void> {
-  if (node == null || typeof node !== "object") return;
-  // Depth exhaustion is a FAILURE, not an empty subtree. Returning quietly left
-  // everything past the limit unexecuted while this file claimed to fail closed,
-  // and React applies no such cutoff, so the read would happen in production.
-  expect(
-    depth,
-    "renderDeep hit its depth limit, so part of the tree went unexecuted and any read inside it would be invisible",
-  ).toBeLessThanOrEqual(MAX_RENDER_DEPTH);
-  // Cycle protection tracks the ACTIVE PATH only, added on the way down and
-  // removed on the way back up. A set spanning the whole walk deduplicated an
-  // element object reused in two positions — `const r = <R/>; {r}{r}` — which
-  // React renders twice and this walked once, hiding a doubled read behind an
-  // unchanged count.
-  if (path.has(node)) return;
-  path.add(node);
-  try {
-    await renderDeepNode(node, depth, path);
-  } finally {
-    path.delete(node);
-  }
-}
-
-async function renderDeepNode(node: object, depth: number, path: Set<object>): Promise<void> {
-  if (Array.isArray(node)) {
-    for (const child of node) await renderDeep(child, depth + 1, path);
-    return;
-  }
-  if (!isElement(node)) {
-    // Plain objects and iterables are walked too: an element nested in an
-    // object-valued prop, or yielded by a generator, is rendered for real by
-    // Next and was previously invisible here.
-    const iter = (node as { [Symbol.iterator]?: unknown })[Symbol.iterator];
-    if (typeof iter === "function") {
-      for (const child of node as Iterable<unknown>) await renderDeep(child, depth + 1, path);
-      return;
-    }
-    for (const value of Object.values(node)) await renderDeep(value, depth + 1, path);
-    return;
-  }
-  const el = node as { type?: unknown; props?: unknown };
-  const props = (el.props ?? {}) as Record<string, unknown>;
-  const resolved = resolveComponent(el.type);
-  expect(
-    resolved.ok,
-    `renderDeep met a component type it cannot classify, so any read inside it would be invisible: ${String(el.type)}`,
-  ).toBe(true);
-  if (resolved.fn) {
-    // EVERY function component is executed, not only `async`-declared ones.
-    //
-    // Predicating on AsyncFunction missed two forms Next renders for real: a
-    // sync wrapper `function W() { return <AsyncReads /> }`, whose async child
-    // lives in W's RETURN VALUE rather than its props, and a component that
-    // returns a promise without the async keyword. Both left every loader map
-    // green while the read really happened.
-    //
-    // Client components are plain functions under vitest, so calling one may
-    // throw (a hook outside a render) — that is caught and its subtree skipped,
-    // which is sound: a client component cannot RETURN a server component. It
-    // can only receive one as a prop, and props are walked below regardless.
-    await renderDeep(await callComponent(resolved.fn, props), depth + 1, path);
-  }
-  for (const value of Object.values(props)) await renderDeep(value, depth + 1, path);
-}
-
-/**
  * Render the real page for one tab and return how many times each loader ran.
  *
  * COUNTS, not a set. Deduplicating loses real regressions: `attachStructuredAreas`
@@ -494,14 +342,21 @@ async function renderDeepNode(node: object, depth: number, path: Set<object>): P
  */
 async function invocationsFor(tab: string): Promise<Record<string, number>> {
   invoked.log.length = 0;
-  const tree = await ClientProfilePage({
+  await ClientProfilePage({
     params: Promise.resolve({ id: CLIENT.id }),
     searchParams: Promise.resolve({ tab }),
   });
-  await renderDeep(tree);
   const counts: Record<string, number> = {};
   for (const name of invoked.log) counts[name] = (counts[name] ?? 0) + 1;
   return counts;
+}
+
+/** The element tree the page returns for a tab. Never executed — only inspected. */
+async function treeFor(tab: string): Promise<unknown> {
+  return ClientProfilePage({
+    params: Promise.resolve({ id: CLIENT.id }),
+    searchParams: Promise.resolve({ tab }),
+  });
 }
 
 /** The names of the loaders that ran, for leak checks that ignore multiplicity. */
@@ -530,6 +385,41 @@ const ALL_TABS: string[] = (() => {
     return m.literal.text;
   });
 })();
+
+/**
+ * Every component module the page imports, as lazy loaders.
+ *
+ * Used to give the components in the returned tree a MODULE IDENTITY without
+ * calling any of them. Anything in the tree that is not one of these is a
+ * component this proof has never audited, and that fails.
+ */
+const PAGE_COMPONENT_MODULES: Array<[string, () => Promise<Record<string, unknown>>]> = [
+  ["./BookAppointment", () => import("@/app/(app)/clients/[id]/BookAppointment")],
+  ["./PortalAccessCard", () => import("@/app/(app)/clients/[id]/PortalAccessCard")],
+  ["./intake/IntakeResendCard", () => import("@/app/(app)/clients/[id]/intake/IntakeResendCard")],
+  ["./intake/StartAssistedIntakeButton", () => import("@/app/(app)/clients/[id]/intake/StartAssistedIntakeButton")],
+  ["@/components/add-pricing-form", () => import("@/components/add-pricing-form")],
+  ["@/components/before-today-card", () => import("@/components/before-today-card")],
+  ["@/components/client-appointment-timeline", () => import("@/components/client-appointment-timeline")],
+  ["@/components/client-birthday-card", () => import("@/components/client-birthday-card")],
+  ["@/components/client-budget-card", () => import("@/components/client-budget-card")],
+  ["@/components/client-personal-notes-editor", () => import("@/components/client-personal-notes-editor")],
+  ["@/components/client-pinned-notes-card", () => import("@/components/client-pinned-notes-card")],
+  ["@/components/clinical-notes-section", () => import("@/components/clinical-notes-section")],
+  ["@/components/clinical-notes-summary", () => import("@/components/clinical-notes-summary")],
+  ["@/components/consent-signatures-card", () => import("@/components/consent-signatures-card")],
+  ["@/components/entry-row", () => import("@/components/entry-row")],
+  ["@/components/formatted-date-time", () => import("@/components/formatted-date-time")],
+  ["@/components/last-session-summary", () => import("@/components/last-session-summary")],
+  ["@/components/last-visit-card", () => import("@/components/last-visit-card")],
+  ["@/components/payment-method-card", () => import("@/components/payment-method-card")],
+  ["@/components/portal-messages-card", () => import("@/components/portal-messages-card")],
+  ["@/components/profile-tab-bar", () => import("@/components/profile-tab-bar")],
+  ["@/components/session-timeline", () => import("@/components/session-timeline")],
+  ["@/components/treatment-intelligence-card", () => import("@/components/treatment-intelligence-card")],
+  ["@/components/treatment-plans-card", () => import("@/components/treatment-plans-card")],
+  ["@/components/treatment-time-card", () => import("@/components/treatment-time-card")],
+];
 
 /** Loaders every tab must run, once each: identity, the client itself, services. */
 const ALWAYS = { identity: 1, getClientById: 1, getActiveServices: 1 };
@@ -657,5 +547,207 @@ describe("the notFound boundary holds", () => {
     const ran: Record<string, number> = {};
     for (const name of invoked.log) ran[name] = (ran[name] ?? 0) + 1;
     expect(ran).toEqual({ identity: 1, getClientById: 1 });
+  });
+});
+
+// ===========================================================================
+// THE OTHER HALF OF THE GUARANTEE: THE RETURNED CHILD GRAPH IS DATA-PASSIVE.
+//
+// The recorder above observes the PAGE BODY. That set is only COMPLETE if
+// nothing the page returns can perform a read of its own. Earlier revisions
+// tried to establish that by executing the returned tree — reimplementing
+// React's render semantics by hand — and every correction traded one
+// divergence for another: async-only execution missed sync wrappers, a global
+// visited-set under-counted reused elements, fixing that over-counted
+// passthrough wrappers, and each new call form (memo, lazy, element access,
+// Reflect.apply) needed its own rule. That is an interpreter, and it does not
+// converge.
+//
+// So the guarantee is inverted. Nothing here is executed. Instead:
+//
+//   A. every component reachable in the returned tree is one of the component
+//      modules the page imports — established by MODULE IDENTITY, not by name
+//      or by rendering; and
+//
+//   B. every SERVER component among those is structurally incapable of a read:
+//      it is not async, it does not take React `use`, and it imports no
+//      Supabase client, no server action, and no async binding from any module.
+//
+// A + B means a read can only originate in the page body, which is exactly what
+// the recorder above measures. Client components are the boundary: they cannot
+// perform a server read during the server render, and a server component handed
+// to one as a child is created in the page body and so appears in this walk.
+//
+// Both halves are mechanical module-boundary facts. Neither evaluates a
+// JavaScript expression, so neither can be defeated by how an expression is
+// written — which is what made every previous revision unbounded.
+// ===========================================================================
+
+const REPO_ROOT = path.resolve(__dirname, "../../..");
+const PAGE_FILE = path.join(REPO_ROOT, "app/(app)/clients/[id]/page.tsx");
+
+const readFile = (file: string) => readFileSync(file, "utf8");
+const isClientModule = (file: string) => /^\s*["']use client["']/.test(readFile(file));
+const isServerActionModule = (file: string) => /^\s*["']use server["']/.test(readFile(file));
+
+/** Resolve an import specifier to a file, or null when it leaves the repo. */
+function resolveModule(spec: string, fromFile: string): string | null {
+  let base: string;
+  if (spec.startsWith("@/")) base = path.join(REPO_ROOT, spec.slice(2));
+  else if (spec.startsWith(".")) base = path.resolve(path.dirname(fromFile), spec);
+  else return null;
+  for (const cand of [`${base}.tsx`, `${base}.ts`, `${base}/index.tsx`, `${base}/index.ts`]) {
+    if (existsSync(cand)) return cand;
+  }
+  return null;
+}
+
+/** Names a module exports as async — declaration level, never a call graph. */
+function asyncExports(file: string): Set<string> {
+  const src = readFile(file);
+  const names = new Set<string>();
+  for (const m of src.matchAll(/export\s+async\s+function\s+(\w+)/g)) names.add(m[1]);
+  for (const m of src.matchAll(/export\s+const\s+(\w+)\s*[:=][^=]*=\s*async\b/g)) names.add(m[1]);
+  return names;
+}
+
+/** Value imports of a module as (specifier, bound names); "*" marks a namespace. */
+function valueImports(file: string): Array<{ spec: string; names: Set<string> }> {
+  const src = readFile(file);
+  const out: Array<{ spec: string; names: Set<string> }> = [];
+  for (const m of src.matchAll(/import\s+(type\s+)?([\s\S]*?)\s+from\s+"([^"]+)"/g)) {
+    if (m[1]) continue; // `import type` is erased at runtime
+    const clause = m[2].trim();
+    const names = new Set<string>();
+    if (/^\*\s+as\s+\w+/.test(clause)) {
+      names.add("*");
+    } else {
+      const braced = clause.match(/\{([\s\S]*)\}/);
+      if (braced) {
+        for (const raw of braced[1].split(",")) {
+          const part = raw.trim();
+          if (!part || part.startsWith("type ")) continue;
+          names.add(part.split(" as ")[0].trim());
+        }
+      }
+      const dflt = clause.split("{")[0].trim().replace(/,$/, "").trim();
+      if (dflt && !dflt.startsWith("*")) names.add(dflt);
+    }
+    out.push({ spec: m[3], names });
+  }
+  return out;
+}
+
+/** Component modules the page imports, resolved to files. */
+function pageComponentFiles(): Array<{ spec: string; file: string }> {
+  const src = readFile(PAGE_FILE);
+  const specs = [...new Set([...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1]))].sort();
+  const out: Array<{ spec: string; file: string }> = [];
+  for (const spec of specs) {
+    const file = resolveModule(spec, PAGE_FILE);
+    if (file && file.endsWith(".tsx")) out.push({ spec, file });
+  }
+  return out;
+}
+
+describe("the returned child graph is data-passive", () => {
+  it("renders only components the page itself imports", async () => {
+    // Module identity, established without calling anything. A component that
+    // is not one of these has never been through the audit below.
+    const known = new Map<unknown, string>();
+    for (const [spec, load] of PAGE_COMPONENT_MODULES) {
+      for (const value of Object.values(await load())) {
+        if (typeof value === "function" || (value && typeof value === "object")) {
+          known.set(value, spec);
+        }
+      }
+    }
+    known.set((await import("next/link")).default, "next/link");
+
+    const unrecognised = new Set<string>();
+    const walk = (node: unknown, depth = 0) => {
+      if (node == null || typeof node !== "object" || depth > 200) return;
+      if (Array.isArray(node)) {
+        for (const child of node) walk(child, depth + 1);
+        return;
+      }
+      const el = node as { type?: unknown; props?: Record<string, unknown> };
+      const type = el.type;
+      if (
+        el.props !== undefined &&
+        (typeof type === "function" || (type && typeof type === "object")) &&
+        !known.has(type)
+      ) {
+        unrecognised.add(
+          typeof type === "function"
+            ? (type as { name?: string }).name || "(anonymous)"
+            : `object component ${String((type as { $$typeof?: symbol }).$$typeof?.description)}`,
+        );
+      }
+      for (const value of Object.values((el.props ?? {}) as Record<string, unknown>)) {
+        walk(value, depth + 1);
+      }
+    };
+    for (const tab of ALL_TABS) walk(await treeFor(tab));
+
+    expect(
+      [...unrecognised],
+      "the page rendered a component this proof has not audited",
+    ).toEqual([]);
+  });
+
+  it("keeps every rendered server component incapable of reading data", () => {
+    // The terminating invariant. Each condition is a declaration- or
+    // import-level fact; none inspects a function body or evaluates anything.
+    const violations: string[] = [];
+    const audited = new Set<string>();
+
+    const audit = (file: string) => {
+      if (audited.has(file)) return;
+      audited.add(file);
+      const rel = path.relative(REPO_ROOT, file);
+      const src = readFile(file);
+
+      for (const m of src.matchAll(/export\s+(default\s+)?async\s+function\s*(\w*)/g)) {
+        violations.push(`${rel}: async server component "${m[2] || "default"}"`);
+      }
+      for (const { spec, names } of valueImports(file)) {
+        if (spec === "react" && names.has("use")) {
+          violations.push(`${rel}: imports React use(), which can await server data`);
+          continue;
+        }
+        const target = resolveModule(spec, file);
+        if (!target) continue;
+        const targetRel = path.relative(REPO_ROOT, target);
+        if (targetRel === "lib/supabase/server.ts" || targetRel === "lib/supabase/admin-server.ts") {
+          violations.push(`${rel}: imports a Supabase client from ${spec}`);
+          continue;
+        }
+        if (isServerActionModule(target)) {
+          violations.push(`${rel}: imports the server-action module ${spec}`);
+          continue;
+        }
+        const asyncNames = asyncExports(target);
+        if (names.has("*") && asyncNames.size > 0) {
+          violations.push(`${rel}: namespace-imports ${spec}, which exports async functions`);
+          continue;
+        }
+        const asyncBindings = [...names].filter((n) => asyncNames.has(n)).sort();
+        if (asyncBindings.length > 0) {
+          violations.push(`${rel}: imports async binding(s) ${asyncBindings.join(", ")} from ${spec}`);
+          continue;
+        }
+        // Follow only server COMPONENT modules. A pure binding imported from a
+        // data module is fine — the loader itself is not in scope here — and
+        // descending into that module would audit exports nobody can reach.
+        if (target.endsWith(".tsx") && !isClientModule(target)) audit(target);
+      }
+    };
+
+    const servers = pageComponentFiles().filter(({ file }) => !isClientModule(file));
+    expect(servers.length, "expected the page to render server components").toBeGreaterThan(0);
+    for (const { file } of servers) audit(file);
+
+    expect(violations, "a rendered server component can reach server data").toEqual([]);
   });
 });
