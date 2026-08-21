@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // ===========================================================================
 // Dashboard V2 Part 2A — the BATCHED previous-treatment loader.
@@ -762,5 +764,32 @@ describe("7. a newer BLOCK-ONLY treatment cannot be hidden into a stale 'Last tr
     const load = out.get("appt-1");
     expect(load?.unavailable).toBe(true);
     expect(load?.narrative.plan?.text).toBe("Started doxycycline, do not treat");
+  });
+});
+
+describe("7b. the recency guard's premise FAILS SAFE", () => {
+  it("a newer row whose entries are invisible errs toward 'unavailable', never toward stale", () => {
+    // The guard treats "no live entries" as authoritative because entries ride
+    // the SESSION read. If that premise were ever weakened — PostgREST bounds
+    // embedded collections too — the failure direction is what matters: fewer
+    // visible entries makes `liveEntries` false, which makes the guard fire
+    // MORE often and yields "could not be loaded". It cannot produce a stale
+    // "Last treatment".
+    //
+    // Pinned as a DIRECTION rather than a scenario, because the scenario is a
+    // property of the database driver and this is a property of our code.
+    const LOADER = readFileSync(
+      join(process.cwd(), "lib/sessions/last-treatment-loader.ts"),
+      "utf8",
+    );
+    const guard = LOADER.slice(
+      LOADER.indexOf("function newerCandidateUnresolved<T extends"),
+      LOADER.indexOf("// The newest candidate carrying a next-visit note."),
+    );
+    expect(guard.length).toBeGreaterThan(200);
+    // Unresolvable => true => caller reports unavailable. There is no branch
+    // here that returns a treatment.
+    expect(guard).toMatch(/return true; \/\/ no blocks read, no entries/);
+    expect(guard).not.toMatch(/return .*treatment/);
   });
 });

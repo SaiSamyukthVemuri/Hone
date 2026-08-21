@@ -188,7 +188,13 @@ function newerCandidateUnresolved<T extends SessionWithLoadedEntries>(
     const liveEntries =
       (candidate.electrolysis_entries ?? []).some((e) => e.deleted_at == null) ||
       (candidate.laser_entries ?? []).some((e) => e.deleted_at == null);
-    // Entries came from the SESSION read, so their absence IS authoritative.
+    // Entries came from the SESSION read, so their absence is authoritative for
+    // this purpose — and it FAILS SAFE even if it were not. PostgREST bounds
+    // embedded collections too, so in principle a session with entries could
+    // return fewer of them; but a bound returns the first rows rather than
+    // none, and any under-reporting pushes `liveEntries` toward FALSE, which
+    // makes this guard fire MORE often. The error direction is extra caution,
+    // never a stale superlative.
     if (liveEntries) continue;
     return true; // no blocks read, no entries: we cannot say whether it charted.
   }
