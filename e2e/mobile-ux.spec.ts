@@ -216,11 +216,16 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     const todaySection = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Today", exact: true }) });
+    // NO relationship line at all, in any phrasing. A client the page has
+    // observed nothing about gets a quieter row, not a sentence about what does
+    // not exist — and at 390px that is also the calmest thing to render.
     await expect(
-      todaySection.getByText(/New client · No charted history yet/).first(),
-    ).toBeVisible();
-    // ONE relationship phrasing, not two.
+      todaySection.getByText(/New client · No charted history yet/),
+    ).toHaveCount(0);
     await expect(page.getByText(/No prior treatment history yet/)).toHaveCount(0);
+    // The row is still there and still usable, which is what stops this
+    // assertion passing on an empty section.
+    await expect(todaySection.locator("li").first()).toBeVisible();
     await expectNoPageOverflow(page, "dashboard with combined Today workflow");
     // PR #236: the booked appointment shows ONE obvious action. The
     // client is brand new (no history yet), so it reads Open client.

@@ -136,14 +136,31 @@ test.describe("preparing a future day", () => {
       await expect(page.getByRole("link", { name: /review intake/i }).first()).toBeVisible();
     });
 
-    await test.step("7. NO relationship claim is made on either row", async () => {
-      // The rule that survives from V1: off Today the page does not ask
-      // new-vs-returning, so it must not answer it — in either direction, and
-      // for either client.
+    await test.step("7. the preparation is LABELLED for this visit, and claims no relationship", async () => {
+      // V2 asks the history question on every day and answers it only with
+      // facts. So the labelled block IS here now — under the temporal wording
+      // for a day that is not today — while every relationship claim stays
+      // absent in both directions, for both clients.
+      await expect(
+        returning.getByText("Before this visit", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("Before today", { exact: true })).toHaveCount(0);
       await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
       await expect(page.getByText("Returning client")).toHaveCount(0);
-      await expect(page.getByText("Before today", { exact: true })).toHaveCount(0);
+      await expect(page.getByText("No watch/plan note.")).toHaveCount(0);
+      await expect(page.getByText("Latest setup: Not recorded")).toHaveCount(0);
+      await expect(page.getByText("Treatment area not recorded")).toHaveCount(0);
+      // The primary action stays neutral off Today: the row offers no
+      // returning-client affordance, because the page does not label people.
       await expect(page.getByText("Review Before Today")).toHaveCount(0);
+    });
+
+    await test.step("7b. the CAUTION reaches her on a future day — it never used to", async () => {
+      // The biggest clinical loss of the old split: off Today the caution line
+      // did not render at all, on exactly the day she opens to prepare.
+      await expect(returning.getByTestId("dashboard-prep-caution")).toContainText(
+        "Avoid the jawline",
+      );
     });
 
     await test.step("8. the genuinely new client gets no fabricated history", async () => {
@@ -151,6 +168,11 @@ test.describe("preparing a future day", () => {
       await expect(fresh.getByTestId("dashboard-memory-compact")).toHaveCount(0);
       await expect(fresh.getByTestId("dashboard-memory-unavailable")).toHaveCount(0);
       await expect(fresh.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      // QUIET OMISSION. Nothing observed, so the whole labelled block is
+      // absent — not a sentence describing what does not exist.
+      await expect(fresh.getByTestId("dashboard-prep-label")).toHaveCount(0);
+      await expect(fresh.getByTestId("dashboard-prep-caution")).toHaveCount(0);
+      await expect(fresh.getByTestId("dashboard-prep-setup")).toHaveCount(0);
     });
   });
 
@@ -177,11 +199,13 @@ test.describe("preparing a future day", () => {
       await expect(page.getByText("Review Before Today").first()).toBeVisible();
     });
 
-    await test.step("10. the plan note is NOT printed twice on Today", async () => {
-      // It is the same field as the Before-Today "Remember" line; printing it
-      // under two labels is a bug this row has had once already.
+    await test.step("10. the plan note is printed EXACTLY ONCE on Today", async () => {
+      // It used to be rendered by two different components fed by two different
+      // authorities — and they disagreed, because the Today one had no
+      // appointment bound. There is now ONE renderer on every day, which is
+      // what makes "exactly once" assertable rather than day-specific.
       const today = row(page, "Memory Client");
-      await expect(today.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      await expect(today.getByTestId("dashboard-prep-remember")).toHaveCount(1);
       await expect(today.getByText(/Lower the energy one step/)).toHaveCount(1);
     });
 
@@ -582,14 +606,12 @@ test.describe("the plan note is server-rendered where it is shown", () => {
   // NOTE ON WHAT IS PROVEN WHERE.
   //
   // The decisive proof for the disclosure boundary is the RUNTIME unit test in
-  // tests/app/dashboard/today-two-authority-truth.test.ts: `toDisclosureSummary`
+  // tests/app/dashboard/prep-relationship-truth.test.ts: `toDisclosureSummary`
   // returns a new object with exactly three keys, so the plan note cannot be on
   // the wire as a disclosure prop regardless of what the type says.
   //
-  // A browser proof of the same property is NOT constructible by seeding:
-  // Before-Today resolves its "Remember" line from the newest session that
-  // recorded a plan note — the same session the prep loader picks — so on Today
-  // the note is visible whenever it exists at all. There is no seedable state
+  // A browser proof of the same property is NOT constructible by seeding: the
+  // note is visible whenever it exists at all, so there is no seedable state
   // where it is present but unrendered. Asserting its absence from Today's
   // payload would therefore be asserting something false, and counting
   // occurrences cannot separate the rendered copy from a prop, because Next
@@ -619,20 +641,38 @@ test.describe("the plan note is server-rendered where it is shown", () => {
       await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(1);
     });
 
-    await test.step("29. on Today the Before-Today line owns it, not the prep strip", async () => {
+    await test.step("29. on Today the SAME renderer paints it, also once", async () => {
       await page.goto("/dashboard");
       await expect(
         page.getByRole("heading", { level: 2, name: "Today", exact: true }),
       ).toBeVisible({ timeout: T });
-      // One note, one label. The prep strip does not repeat it.
-      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      // One note, one label, one renderer — on BOTH days. There is no longer a
+      // second authority that could print it again under different wording.
+      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(1);
       await expect(page.getByText(`Remember: ${PLAN}`)).toBeVisible();
+    });
+
+    await test.step("30. the same note, the same text, only the label differs", async () => {
+      // THE PARITY CONTRACT, asserted end to end in the browser.
+      await page.goto("/dashboard");
+      await expect(page.getByTestId("dashboard-prep-label").first()).toHaveText(
+        "Before today",
+      );
+      const onToday = await page.getByTestId("dashboard-prep-remember").textContent();
+      await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+      await expect(page.getByTestId("dashboard-prep-label").first()).toHaveText(
+        "Before this visit",
+      );
+      const onFutureDay = await page
+        .getByTestId("dashboard-prep-remember")
+        .textContent();
+      expect(onFutureDay).toBe(onToday);
     });
   });
 });
 
-test.describe("Today never says 'no history' beside a proven treatment", () => {
-  test("a client the prep loader proves has history is not called new", async ({
+test.describe("Today never says 'no history' — about anyone, ever", () => {
+  test("the relationship claim does not exist on the page at all", async ({
     page,
   }) => {
     const seed = await seedE2eStudio();
@@ -646,20 +686,22 @@ test.describe("Today never says 'no history' beside a proven treatment", () => {
       page.getByRole("heading", { level: 2, name: "Today", exact: true }),
     ).toBeVisible({ timeout: T });
 
-    await test.step("30. the two statements never appear together on one row", async () => {
+    await test.step("31. the claim is absent, not merely guarded", async () => {
+      // This used to assert the two statements never appeared TOGETHER, because
+      // the claim itself was still shippable and only a guard kept it off a row
+      // with proven history. Both authorities could go silent for the same
+      // reason, so the guard could not be the last line of defence.
+      //
+      // The claim is now unrepresentable, so the assertion is unconditional.
+      await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
+      await expect(page.getByText("No charted history yet")).toHaveCount(0);
+      await expect(page.getByText("No prior charted treatment")).toHaveCount(0);
+      // …while the evidence that IS observed still renders.
       const row = page.locator("li").filter({ hasText: "Memory Client" }).first();
-      const saysNew = await row
-        .getByText("New client · No charted history yet")
-        .count();
-      const showsTreatment = await row
-        .getByTestId("dashboard-memory-compact")
-        .count();
-      // Whatever the two authorities each concluded, the row must never carry
-      // both at once.
-      expect(
-        saysNew === 0 || showsTreatment === 0,
-        "row asserted 'New client' beside a proven last treatment",
-      ).toBe(true);
+      await expect(row.getByTestId("dashboard-memory-compact")).toBeVisible();
+      await expect(row.getByTestId("dashboard-prep-caution")).toContainText(
+        "Avoid the jawline",
+      );
     });
   });
 });

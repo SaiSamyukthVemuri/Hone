@@ -386,11 +386,12 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       await loginAsOwner(page, seed);
       await openDashboard(page);
 
-      // Whichever cards show the no-history state say it once, one way.
-      const combined = page.getByText("New client · No charted history yet");
-      const oldPhrase = page.getByText("No prior treatment history yet");
-      await expect(oldPhrase).toHaveCount(0);
-      expect(await combined.count()).toBeGreaterThanOrEqual(0);
+      // NO card states a no-history case, in any phrasing. The Dashboard does
+      // not label people: a client it has observed nothing about simply gets a
+      // quieter row.
+      await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
+      await expect(page.getByText("No prior treatment history yet")).toHaveCount(0);
+      await expect(page.getByText("No charted history yet")).toHaveCount(0);
       await expectNoHorizontalScroll(page);
     });
   });

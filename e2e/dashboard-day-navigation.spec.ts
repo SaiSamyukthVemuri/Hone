@@ -288,29 +288,40 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       const tomorrowRow = row(page, "Memory Client");
       await expect(tomorrowRow).toBeVisible();
 
-      // SUPERSEDED BY PRODUCTION FEEDBACK. This step used to assert that the
-      // ENTIRE preparation block was absent off Today. That was the V1 truth
-      // rule applied too widely: it also removed the clinical preparation a
-      // practitioner opens a future day to read, and she reported the result
-      // as "no pinned notes or anything else I usually see".
+      // TWO SUCCESSIVE CORRECTIONS, both recorded because each was right about
+      // something.
       //
-      // What survives is the part that was actually load-bearing: the page
-      // still asks no new-vs-returning question off Today, so it still states
-      // no answer in either direction. The Before-Today history model does not
-      // run, and none of its vocabulary appears.
-      await expect(tomorrowRow.getByText("Before today", { exact: true })).toHaveCount(0);
+      // V1 asserted the ENTIRE preparation block was absent off Today. That was
+      // the truth rule applied too widely: it also removed the clinical
+      // preparation a practitioner opens a future day to read, and she reported
+      // the result as "no pinned notes or anything else I usually see".
+      //
+      // V2 removes the remaining asymmetry. Preparation is now a set of
+      // OBSERVATIONS, so a future day can carry all of it without asserting
+      // anything: a fact renders when it was read and is silent when it was
+      // not. Only the temporal LABEL differs between days.
+      //
+      // What survives from both: no new-vs-returning claim, in either direction.
       await expect(tomorrowRow.getByText("New client · No charted history yet")).toHaveCount(0);
-      await expect(tomorrowRow.getByText(/^Latest setup:/)).toHaveCount(0);
-      await expect(tomorrowRow.getByTestId("missing-record-chip")).toHaveCount(0);
-      await expect(page.getByText("History unavailable")).toHaveCount(0);
       await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
+      await expect(page.getByText("History unavailable")).toHaveCount(0);
+      await expect(tomorrowRow.getByText("No watch/plan note.")).toHaveCount(0);
+      await expect(tomorrowRow.getByText("Latest setup: Not recorded")).toHaveCount(0);
 
-      // …and what is NOW expected: appointment-bounded preparation from the
-      // prep-memory authority, which is a different loader with a three-state
-      // contract and no clock in it.
+      // The temporal wording, and ONLY the temporal wording, changes.
+      await expect(tomorrowRow.getByText("Before today", { exact: true })).toHaveCount(0);
+      await expect(
+        tomorrowRow.getByText("Before this visit", { exact: true }),
+      ).toBeVisible();
+
+      // …and the preparation itself is here: the treatment, the plan note, and
+      // the caution that a future day never used to show.
       await expect(tomorrowRow.getByTestId("dashboard-memory-compact")).toBeVisible();
       await expect(tomorrowRow.getByTestId("dashboard-prep-remember")).toContainText(
         "Lower the energy one step",
+      );
+      await expect(tomorrowRow.getByTestId("dashboard-prep-caution")).toContainText(
+        "Avoid the jawline",
       );
     });
 
@@ -334,10 +345,13 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       await page.getByTestId("dashboard-next-day").click();
       await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
       await expect(row(page, brandNew.name)).toBeVisible();
-      // Even though this client really IS new, V1 did not ask, so it does not
-      // say. A returning client and a new one are indistinguishable here by
-      // design — the alternative is a claim that was never established.
+      // Even though this client really IS new, the page does not say so. A
+      // returning client and a new one are distinguished by what their rows
+      // CARRY, never by a label: this row simply has no preparation under it.
+      // The alternative is a claim the page cannot establish, because proving
+      // someone has no history needs a complete read of their history.
       await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
+      await expect(row(page, brandNew.name).getByTestId("dashboard-prep-label")).toHaveCount(0);
       await expect(page.getByRole("link", { name: "Open client" }).first()).toBeVisible();
     });
   });

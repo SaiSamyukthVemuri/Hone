@@ -167,13 +167,23 @@ test.describe("iPhone profile", () => {
     expect(wordBreak).toBe("break-word");
   });
 
-  test("the no-history and no-note states are unchanged", async ({ page }) => {
+  test("a visit with no recorded note says NOTHING about notes", async ({ page }) => {
     const seed = await seedE2eStudio();
     await seedE2eDashboardMemoryClient(seed, { cautionNote: null });
     await loginAsOwner(page, seed);
     await page.goto("/dashboard");
-    // History exists (a charted block) but no watch/plan note was recorded.
-    await expect(page.getByText("No watch/plan note.").first()).toBeVisible({ timeout: T });
+    // History exists (a charted block) and no watch/plan note was returned.
+    //
+    // It used to print "No watch/plan note." here. That sentence was derived
+    // from two collection reads — a 400-row slice shared across the whole
+    // roster, and an unbounded block read whose error was discarded — so it
+    // could deny a caution that was recorded and simply not read.
+    await expect(page.getByText("No watch/plan note.")).toHaveCount(0);
+    // The evidence that WAS read still renders, which is how we know the row
+    // rendered at all rather than the assertion passing on an empty page.
+    await expect(page.getByTestId("dashboard-prep-setup").first()).toBeVisible({
+      timeout: T,
+    });
   });
 });
 
