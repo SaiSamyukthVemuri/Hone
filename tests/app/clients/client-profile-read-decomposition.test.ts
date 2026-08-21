@@ -28,8 +28,9 @@ import { describe, expect, it } from "vitest";
 //      than a chain of awaits. Invocation records cannot distinguish those.
 //   2. DATA MINIMISATION — the exact session_blocks SELECT projections. A
 //      rendered page looks identical whether or not a column was added, so this
-//      guard stays source-level by design. It resolves local aliases and fails
-//      closed on any projection it cannot read as a literal.
+//      guard stays source-level by design, and it FAILS CLOSED: every .select()
+//      in the page must have a provably resolvable table, so a construct the
+//      resolver does not understand is a failure rather than a silent skip.
 //   3. INSTRUMENTATION PLACEMENT — that the #610 span still encloses the
 //      domain work, so a remeasurement stays comparable to the 584ms baseline.
 // ===========================================================================
@@ -293,56 +294,88 @@ describe("nothing widened", () => {
     // read counter was unmoved too. Aliases are now resolved, and a projection
     // that is not a plain string literal is a failure rather than a skip.
     const aliases = new Map<string, ts.Node>();
-    const collectAliases = (n: ts.Node) => {
+    const reassigned = new Set<string>();
+    const collect = (n: ts.Node) => {
       if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
         aliases.set(n.name.text, n.initializer);
       }
-      ts.forEachChild(n, collectAliases);
+      if (
+        ts.isBinaryExpression(n) &&
+        n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(n.left)
+      ) {
+        // A rebound name cannot be resolved from its declaration alone.
+        reassigned.add(n.left.text);
+      }
+      ts.forEachChild(n, collect);
     };
-    collectAliases(SF);
+    collect(SF);
 
-    /** Does this expression bottom out in `.from("session_blocks")`? */
-    const isSessionBlocks = (n: ts.Node | undefined, depth = 0): boolean => {
-      if (!n || depth > 20) return false;
+    const UNKNOWN = Symbol("unresolved");
+
+    /**
+     * The table a query builder reads from: a literal name, or UNKNOWN.
+     *
+     * UNKNOWN is a FAILURE, not a skip. That inversion is the point. Each
+     * previous version of this scan had to RECOGNISE an evasion to catch it —
+     * first any text containing `from("session_blocks")`, then local aliases —
+     * and each time an adjacent construct walked past it: a builder returned
+     * from a helper, a reassigned binding. Recognising evasions is unbounded.
+     * Requiring proof is not: anything this cannot resolve fails the test, so a
+     * new construct has to be taught to the resolver before it can be used at
+     * all.
+     */
+    const tableOf = (n: ts.Node | undefined, depth = 0): string | symbol => {
+      if (!n || depth > 20) return UNKNOWN;
       if (ts.isAwaitExpression(n) || ts.isParenthesizedExpression(n)) {
-        return isSessionBlocks(n.expression, depth + 1);
+        return tableOf(n.expression, depth + 1);
       }
-      if (ts.isIdentifier(n)) return isSessionBlocks(aliases.get(n.text), depth + 1);
-      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
-        if (
-          n.expression.name.text === "from" &&
-          n.arguments.length > 0 &&
-          ts.isStringLiteral(n.arguments[0]) &&
-          n.arguments[0].text === "session_blocks"
-        ) {
-          return true;
+      if (ts.isIdentifier(n)) {
+        if (reassigned.has(n.text)) return UNKNOWN;
+        return tableOf(aliases.get(n.text), depth + 1);
+      }
+      if (ts.isCallExpression(n)) {
+        // A builder produced by a plain function call cannot be resolved here.
+        if (!ts.isPropertyAccessExpression(n.expression)) return UNKNOWN;
+        if (n.expression.name.text === "from") {
+          const arg = n.arguments[0];
+          return arg && ts.isStringLiteral(arg) ? arg.text : UNKNOWN;
         }
-        // Any other builder link (.eq/.in/.is/.order/.limit/.select/…) — keep walking.
-        return isSessionBlocks(n.expression.expression, depth + 1);
+        return tableOf(n.expression.expression, depth + 1);
       }
-      return false;
+      return UNKNOWN;
     };
 
     const found: string[] = [];
+    const unresolved: string[] = [];
     const unreadable: string[] = [];
     const visit = (n: ts.Node) => {
       if (
         ts.isCallExpression(n) &&
         ts.isPropertyAccessExpression(n.expression) &&
-        n.expression.name.text === "select" &&
-        isSessionBlocks(n.expression.expression)
+        n.expression.name.text === "select"
       ) {
-        const arg = n.arguments[0];
-        if (arg && ts.isStringLiteral(arg)) {
-          found.push(arg.text.replace(/\s+/g, " ").trim());
-        } else {
-          unreadable.push(n.getText(SF).replace(/\s+/g, " ").slice(0, 120));
+        const table = tableOf(n.expression.expression);
+        const where = n.getText(SF).replace(/\s+/g, " ").slice(0, 120);
+        if (table === UNKNOWN) {
+          unresolved.push(where);
+        } else if (table === "session_blocks") {
+          const arg = n.arguments[0];
+          if (arg && ts.isStringLiteral(arg)) {
+            found.push(arg.text.replace(/\s+/g, " ").trim());
+          } else {
+            unreadable.push(where);
+          }
         }
       }
       ts.forEachChild(n, visit);
     };
     visit(SF);
 
+    expect(
+      unresolved,
+      "a .select() was found whose table could not be proven; it may be session_blocks",
+    ).toEqual([]);
     expect(
       unreadable,
       "a session_blocks projection could not be read as a literal, so it cannot be compared",

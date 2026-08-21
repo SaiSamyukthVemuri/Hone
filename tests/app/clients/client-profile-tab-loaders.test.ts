@@ -39,9 +39,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //    renderDeep), and a read added to one of them is observed rather than
 //    missed.
 //
-// Both Supabase client factories are also faked and recorded, so any read that
-// reaches the database WITHOUT going through a loader stubbed below still shows
-// up in the counts instead of passing unseen.
+// 3. EVERY QUERY IS RECORDED, BY TABLE. Both Supabase factories are faked; the
+//    server factory records each `.from(table)` rather than each client
+//    construction, so a read issued through an already-existing client, against
+//    any table, is still observed.
+//
+// KNOWN LIMITATIONS, STATED RATHER THAN IMPLIED
+// ---------------------------------------------
+// Two things this file does NOT prove. Both are written down because a proof
+// whose edges are undocumented gets read as proving more than it does.
+//
+// 1. ARGUMENTS. Invocation recording proves WHICH reads run and HOW OFTEN, not
+//    that a call got the right arguments: `attachStructuredAreas([], …)` keeps
+//    Overview's count at two while enriching nothing. Argument-level
+//    correctness belongs to the tests that own those helpers.
+//
+// 2. BRANCH COVERAGE. Every read is observed for ONE client shape — the fixture
+//    below, whose lists are empty and whose session carries no blocks. A read
+//    added inside a branch this fixture never enters (`if (lastTreatment) {…}`,
+//    for instance) runs in production and is invisible here. Verified, not
+//    assumed: such a mutation survives green today. Closing it means running
+//    each tab against a second, populated fixture and asserting an exact map
+//    for that one too — worth doing, and deliberately not smuggled into this
+//    change.
 // ===========================================================================
 
 const invoked = vi.hoisted(() => ({ log: [] as string[] }));
@@ -107,25 +127,61 @@ vi.mock("@/lib/app-origin", () => ({
   getRequiredAppOrigin: () => "https://hone.care",
 }));
 
+/**
+ * A query builder that accepts any chain and resolves to an empty result.
+ *
+ * Every method returns the same proxy, so `.select().eq().in().is().order()
+ * .limit()` — or any other shape a future read uses — works without this fake
+ * having to know it in advance.
+ */
+const queryBuilder = (): unknown => {
+  const proxy: unknown = new Proxy(
+    {},
+    {
+      get: (_t, prop) => {
+        if (prop === "then") {
+          return (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null });
+        }
+        return () => proxy;
+      },
+    },
+  );
+  return proxy;
+};
+
 // The two session_blocks reads go through the Supabase server client directly
-// rather than a named helper, so the client factory itself is the observable.
+// rather than a named helper, so the client is the observable.
+//
+// Recording happens at `.from(table)`, NOT at createClient(). Counting client
+// CONSTRUCTION missed any read issued through a client that already existed:
+// adding `supabaseForSummary.from("sessions").select(…)` left the factory count
+// unchanged, escaped the session_blocks projection scan because it names another
+// table, and kept every per-tab map green. Recording each query by its table
+// makes any read of anything observable, whoever issued it.
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => {
-    invoked.log.push("sessionBlocksRead");
-    return {
-      from: () => ({
-        select: () => ({
-          eq: () => ({
-            in: () => ({
-              is: () => ({
-                order: () => ({ limit: async () => ({ data: [] }) }),
-              }),
-            }),
-          }),
-        }),
-      }),
-    };
-  },
+  createClient: async () =>
+    new Proxy(
+      {},
+      {
+        get: (_t, prop) => {
+          if (prop === "from") {
+            return (table: string) => {
+              invoked.log.push(`query:${table}`);
+              return queryBuilder();
+            };
+          }
+          if (prop === "then") return undefined;
+          // Any OTHER route to the database through this client — rpc, storage,
+          // schema — is recorded and then refused. Exposing only `from` left
+          // those surfaces undefined, so a read through one crashed instead of
+          // being reported, and inside a component the crash was swallowed.
+          return () => {
+            invoked.log.push(`unrecordedSupabaseSurface:${String(prop)}`);
+            throw new Error(`unrecorded Supabase surface used: ${String(prop)}`);
+          };
+        },
+      },
+    ),
 }));
 
 // Every remaining query helper reaches Supabase through one of two factories.
@@ -262,19 +318,126 @@ const ClientProfilePage = (await import("@/app/(app)/clients/[id]/page"))
  * still descends through children and element-valued props, so an async
  * component handed to one of them is still reached and run.
  */
-async function renderDeep(node: unknown, depth = 0): Promise<void> {
-  if (node == null || typeof node !== "object" || depth > 40) return;
+/**
+ * Call one component and return what it rendered, or undefined if it refused.
+ *
+ * A client component invoked outside a React render throws on its first hook,
+ * which is expected here and means "not a server component" — but React logs
+ * that error before throwing, so the message is filtered while the call is in
+ * flight. Only the hook-call message is suppressed, and console.error is always
+ * restored, so a genuine error from a server component still surfaces.
+ */
+async function callComponent(fn: (p: unknown) => unknown, props: unknown): Promise<unknown> {
+  const realError = console.error;
+  console.error = (...args: unknown[]) => {
+    const first = typeof args[0] === "string" ? args[0] : "";
+    if (first.includes("Invalid hook call") || first.includes("Rules of Hooks")) return;
+    realError(...args);
+  };
+  try {
+    const out = fn(props);
+    return out && typeof (out as { then?: unknown }).then === "function" ? await out : out;
+  } catch {
+    // A client component throws here — on its first hook, as an "Invalid hook
+    // call" or as a raw TypeError from a null dispatcher, depending on the
+    // path. Distinguishing those from a genuine server-component failure by
+    // message is exactly the recognise-every-form trap this file keeps falling
+    // into, so it is not attempted.
+    //
+    // Swallowing is sound instead because of where the guard sits: the Supabase
+    // fake RECORDS a surface before refusing it, so a read through rpc/storage/
+    // schema lands in the log even though the call then throws and is caught
+    // here. The count changes and the tab map fails.
+    //
+    // Residual, stated plainly: reads a component would have performed AFTER a
+    // throw are not observed. In production that component throws too, so this
+    // is a broken page rather than a silent extra read — a different failure
+    // class from the one this file exists to catch.
+    return undefined;
+  } finally {
+    console.error = realError;
+  }
+}
+
+/**
+ * Resolve a component type through the wrappers React allows, or return null
+ * when this walker cannot classify it.
+ *
+ * Returning null is a FAILURE upstream, not a skip — the same inversion the
+ * projection guard uses. A memo- or lazy-wrapped async component is an object,
+ * not a function, so the previous walker stepped over it and the read inside it
+ * was never seen. Rather than enumerate wrappers forever, anything unrecognised
+ * now fails the test and has to be taught to this function before it can be
+ * used.
+ */
+function resolveComponent(type: unknown): { fn: ((p: unknown) => unknown) | null; ok: boolean } {
+  if (typeof type === "function") return { fn: type as (p: unknown) => unknown, ok: true };
+  // Host elements ("div") and Fragment/Suspense (symbols) render no reads
+  // themselves; their children are walked below.
+  if (typeof type === "string" || typeof type === "symbol") return { fn: null, ok: true };
+  if (type && typeof type === "object") {
+    const t = type as { $$typeof?: symbol; type?: unknown; render?: unknown; _init?: unknown; _payload?: unknown };
+    const tag = typeof t.$$typeof === "symbol" ? String(t.$$typeof.description ?? "") : "";
+    if (tag.includes("memo")) return resolveComponent(t.type);
+    if (tag.includes("forward_ref")) return resolveComponent(t.render);
+    if (tag.includes("lazy")) {
+      try {
+        return resolveComponent((t._init as (p: unknown) => unknown)(t._payload));
+      } catch {
+        return { fn: null, ok: false };
+      }
+    }
+    return { fn: null, ok: false };
+  }
+  return { fn: null, ok: true };
+}
+
+const isElement = (n: object): boolean =>
+  typeof (n as { $$typeof?: unknown }).$$typeof === "symbol" && "type" in n;
+
+async function renderDeep(node: unknown, depth = 0, seen = new Set<object>()): Promise<void> {
+  if (node == null || typeof node !== "object" || depth > 60) return;
+  if (seen.has(node)) return;
+  seen.add(node);
   if (Array.isArray(node)) {
-    for (const child of node) await renderDeep(child, depth + 1);
+    for (const child of node) await renderDeep(child, depth + 1, seen);
+    return;
+  }
+  if (!isElement(node)) {
+    // Plain objects and iterables are walked too: an element nested in an
+    // object-valued prop, or yielded by a generator, is rendered for real by
+    // Next and was previously invisible here.
+    const iter = (node as { [Symbol.iterator]?: unknown })[Symbol.iterator];
+    if (typeof iter === "function") {
+      for (const child of node as Iterable<unknown>) await renderDeep(child, depth + 1, seen);
+      return;
+    }
+    for (const value of Object.values(node)) await renderDeep(value, depth + 1, seen);
     return;
   }
   const el = node as { type?: unknown; props?: unknown };
   const props = (el.props ?? {}) as Record<string, unknown>;
-  if (typeof el.type === "function" && el.type.constructor?.name === "AsyncFunction") {
-    const fn = el.type as (p: unknown) => Promise<unknown>;
-    await renderDeep(await fn(props), depth + 1);
+  const resolved = resolveComponent(el.type);
+  expect(
+    resolved.ok,
+    `renderDeep met a component type it cannot classify, so any read inside it would be invisible: ${String(el.type)}`,
+  ).toBe(true);
+  if (resolved.fn) {
+    // EVERY function component is executed, not only `async`-declared ones.
+    //
+    // Predicating on AsyncFunction missed two forms Next renders for real: a
+    // sync wrapper `function W() { return <AsyncReads /> }`, whose async child
+    // lives in W's RETURN VALUE rather than its props, and a component that
+    // returns a promise without the async keyword. Both left every loader map
+    // green while the read really happened.
+    //
+    // Client components are plain functions under vitest, so calling one may
+    // throw (a hook outside a render) — that is caught and its subtree skipped,
+    // which is sound: a client component cannot RETURN a server component. It
+    // can only receive one as a prop, and props are walked below regardless.
+    await renderDeep(await callComponent(resolved.fn, props), depth + 1, seen);
   }
-  for (const value of Object.values(props)) await renderDeep(value, depth + 1);
+  for (const value of Object.values(props)) await renderDeep(value, depth + 1, seen);
 }
 
 /**
@@ -345,7 +508,7 @@ const EXPECTED: Record<string, Record<string, number>> = {
     // TWICE: last treatment AND treatment intelligence. Both are gated
     // separately, so both counts are load-bearing.
     attachStructuredAreas: 2,
-    sessionBlocksRead: 2,
+    "query:session_blocks": 2,
   },
   sessions: {
     ...ALWAYS,
@@ -355,7 +518,7 @@ const EXPECTED: Record<string, Record<string, number>> = {
     getTreatmentGoal: 1,
     // ONCE: last treatment only — intelligence is Overview-exclusive.
     attachStructuredAreas: 1,
-    sessionBlocksRead: 1,
+    "query:session_blocks": 1,
   },
   treatment: { ...ALWAYS, getTreatmentPlansForClient: 1 },
   personal: { ...ALWAYS, getClientPersonalNotes: 1 },
@@ -426,7 +589,7 @@ describe("which server reads actually run, per tab", () => {
   it("runs the treatment-intelligence session_blocks read on Overview only", async () => {
     // Overview performs two session_blocks reads (last treatment + intelligence);
     // Sessions performs one; every other tab performs none.
-    const count = async (tab: string) => (await invocationsFor(tab)).sessionBlocksRead ?? 0;
+    const count = async (tab: string) => (await invocationsFor(tab))["query:session_blocks"] ?? 0;
     expect(await count("overview")).toBe(2);
     expect(await count("sessions")).toBe(1);
     for (const tab of ALL_TABS.filter((t) => t !== "overview" && t !== "sessions")) {
