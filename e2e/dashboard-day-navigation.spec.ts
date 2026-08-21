@@ -250,8 +250,8 @@ test.describe("Dashboard day navigation", () => {
 // THE LOAD-BEARING RULE: off Today, V1 asks no history question.
 // ===========================================================================
 
-test.describe("history is not asked, and therefore not answered, off Today", () => {
-  test("a returning client booked TOMORROW gets no history claim in either direction", async ({
+test.describe("history is asked the SAME way on every day, and never answered with a label", () => {
+  test("a returning client booked TOMORROW gets real preparation and no history claim", async ({
     page,
   }) => {
     const seed = await seedE2eStudio();

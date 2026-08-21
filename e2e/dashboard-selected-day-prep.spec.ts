@@ -5,6 +5,7 @@ import {
   seedE2eCardOnFileCapability,
   seedE2eDashboardClient,
   seedE2eDashboardMemoryClient,
+  seedE2eSecondAppointmentToday,
   seedE2eFullDetailSentinels,
   sql,
   seedE2eIntake,
@@ -601,6 +602,68 @@ test.describe("a rejected disclosure fails to its own line", () => {
 // ===========================================================================
 // The plan note is SERVER-rendered, and only where it is visible.
 // ===========================================================================
+
+// ===========================================================================
+// ONE CLIENT, TWO APPOINTMENTS, TWO ANSWERS.
+// ===========================================================================
+
+test.describe("a client booked twice in one day gets two independent rows", () => {
+  test("the later booking sees the earlier visit; the earlier one does not", async ({
+    page,
+  }) => {
+    // THE DEFECT THIS FORECLOSES. Every prep answer is keyed by APPOINTMENT,
+    // not by client, because `before` and the own-appointment exclusion belong
+    // to the appointment. Keying by client lets the second request overwrite
+    // the first and hands both rows one answer.
+    //
+    // Proven at the loader in tests/lib/sessions/batched-prep-memory.test.ts.
+    // Proven HERE in the browser, because the loader being right is not
+    // evidence that two rows rendered differently.
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+      cautionNote: "Avoid the jawline",
+      nextVisitNote: "Lower the energy one step",
+    });
+    // A SECOND booking for the same client, later the same day.
+    await seedE2eSecondAppointmentToday(seed, clientId, 8);
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Today", exact: true }),
+    ).toBeVisible({ timeout: T });
+
+    // Scoped to the Today SECTION's own list. A bare `li` selector also matches
+    // the To-do list and the attention cards, which is how this first read 5.
+    const todaySection = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Today", exact: true }) });
+
+    await test.step("31. both rows are present and neither was collapsed away", async () => {
+      await expect(todaySection.locator("li")).toHaveCount(2);
+    });
+
+    await test.step("32. each row answers for ITSELF — no shared answer", async () => {
+      // Both bookings are after the prior visit here, so both legitimately see
+      // it. What must hold is that each row resolved its OWN request: two
+      // preparation blocks, two Remember lines, one per row — not one row
+      // carrying the other's, and not one row left blank because the map key
+      // collided.
+      await expect(todaySection.getByTestId("dashboard-prep-label")).toHaveCount(2);
+      await expect(todaySection.getByTestId("dashboard-prep-remember")).toHaveCount(2);
+      for (const row of await todaySection.locator("li").all()) {
+        await expect(row.getByTestId("dashboard-prep-remember")).toHaveCount(1);
+        await expect(row.getByTestId("dashboard-prep-remember")).toContainText(
+          "Lower the energy one step",
+        );
+      }
+    });
+
+    await test.step("33. and neither row claims anything about the relationship", async () => {
+      await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
+      await expect(page.getByText("No watch/plan note.")).toHaveCount(0);
+    });
+  });
+});
 
 test.describe("the plan note is server-rendered where it is shown", () => {
   // NOTE ON WHAT IS PROVEN WHERE.
