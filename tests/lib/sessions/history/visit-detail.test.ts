@@ -7,6 +7,7 @@ const STUDIO = "11111111-1111-1111-1111-111111111111";
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
 import { createClient } from "@/lib/supabase/server";
+import type { HistoricalVisitDetailResult } from "@/lib/sessions/history/visit-detail";
 import {
   DETAIL_MAX_AREA_ROWS,
   DETAIL_MAX_BLOCK_ROWS,
@@ -67,6 +68,12 @@ async function run(
     expectedLiveBlocks: expected,
   });
   return { out, issued };
+}
+
+/** Narrow a result to its detail, failing loudly if the read did not happen. */
+function detailOf(r: HistoricalVisitDetailResult | undefined) {
+  if (!r || r.kind === "failed") throw new Error(`expected a detail, got ${r?.kind}`);
+  return r.detail;
 }
 
 const block = (id: string, session_id: string, over: Row = {}) => ({
@@ -156,14 +163,10 @@ describe("every channel a visit can record treatment through survives", () => {
     );
     const r = out.get("s1")!;
     expect(r.kind).toBe("complete");
-    const d = (r as { detail: NonNullable<unknown> }).detail as {
-      blocks: Array<{ entries: unknown[]; structured_areas: unknown[] }>;
-      orphanEntries: unknown[];
-      laserEntries: Array<{ observation_notes: string }>;
-    };
+    const d = detailOf(r);
     // hairs_treated reaches the block's own pass — the "65 hairs" failure.
     expect(d.blocks[0]!.entries).toHaveLength(1);
-    expect((d.blocks[0]!.entries[0] as { hairs_treated: number }).hairs_treated).toBe(65);
+    expect((d.blocks[0]!.entries![0] as { hairs_treated: number }).hairs_treated).toBe(65);
     // Multi-area blocks keep EVERY treated area.
     expect(d.blocks[0]!.structured_areas).toEqual([
       { area: "Cheek", laterality: "left" },
@@ -184,7 +187,7 @@ describe("every channel a visit can record treatment through survives", () => {
       ["s1"],
       new Map([["s1", 1]]),
     );
-    const d = (out.get("s1") as { detail: { orphanEntries: unknown[] } }).detail;
+    const d = detailOf(out.get("s1"));
     expect(d.orphanEntries).toHaveLength(0);
   });
 
@@ -198,7 +201,7 @@ describe("every channel a visit can record treatment through survives", () => {
     );
     const r = out.get("s1")!;
     expect(r.kind).toBe("complete");
-    const d = (r as { detail: { blocks: unknown[]; orphanEntries: unknown[] } }).detail;
+    const d = detailOf(r);
     expect(d.blocks).toHaveLength(0);
     expect(d.orphanEntries).toHaveLength(2);
   });
@@ -213,8 +216,8 @@ describe("every channel a visit can record treatment through survives", () => {
       ["s1", "s2"],
       new Map([["s1", 1], ["s2", 1]]),
     );
-    const s1 = (out.get("s1") as { detail: { blocks: Array<{ id: string }>; laserEntries: unknown[] } }).detail;
-    const s2 = (out.get("s2") as { detail: { blocks: Array<{ id: string }>; laserEntries: unknown[] } }).detail;
+    const s1 = detailOf(out.get("s1"));
+    const s2 = detailOf(out.get("s2"));
     expect(s1.blocks.map((b) => b.id)).toEqual(["b1"]);
     expect(s2.blocks.map((b) => b.id)).toEqual(["b2"]);
     expect(s1.laserEntries).toHaveLength(1);
@@ -332,7 +335,7 @@ describe("the on-demand single-visit read is the SAME implementation", () => {
       expectedLiveBlocks: 1,
     });
     expect(r.kind).toBe("complete");
-    expect((r as { detail: { laserEntries: unknown[] } }).detail.laserEntries).toHaveLength(1);
+    expect(detailOf(r).laserEntries).toHaveLength(1);
   });
 
   it("an unknown expectation on the on-demand path is still partial", async () => {
