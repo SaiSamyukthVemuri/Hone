@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { Button, buttonClasses } from "@/components/ui/button";
+import { fieldControlClass } from "@/components/ui/field";
 import {
   confirmImportAction,
   previewImportAction,
@@ -17,10 +19,10 @@ const SOURCE_OPTIONS: { value: string; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
-const BTN =
-  "rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed";
-const BTN_PRIMARY = `${BTN} bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200`;
-const BTN_SECONDARY = `${BTN} border border-neutral-300 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900`;
+// UI0: the file-local BTN / BTN_PRIMARY / BTN_SECONDARY constants that used to
+// live here are gone. They were one of ~seven such private button systems in
+// the tree; components/ui/button.tsx now owns the shape, the 44px floor and
+// the focus ring for all of them.
 
 export function QuickImport({ template }: { template: string }) {
   const [text, setText] = useState("");
@@ -81,15 +83,15 @@ export function QuickImport({ template }: { template: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onCopyTemplate} className={BTN_SECONDARY}>
+        <Button onClick={onCopyTemplate}>
           {copied ? "Template copied" : "Copy template"}
-        </button>
+        </Button>
         <label className="flex items-center gap-2 text-sm">
           <span className="text-neutral-600 dark:text-neutral-400">Source</span>
           <select
             value={sourceType}
             onChange={(e) => setSourceType(e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            className={fieldControlClass({ fullWidth: false })}
           >
             {SOURCE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -111,7 +113,7 @@ export function QuickImport({ template }: { template: string }) {
           rows={10}
           spellCheck={false}
           placeholder="Paste rows from Google Sheets, Excel, or a CSV/TSV file (include the header row)…"
-          className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 font-mono text-xs text-neutral-900 shadow-sm focus:border-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+          className={fieldControlClass({ className: "font-mono shadow-sm" })}
         />
       </div>
 
@@ -125,28 +127,35 @@ export function QuickImport({ template }: { template: string }) {
       ) : null}
 
       <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
+        {/* `disabled` carries the FULL lock and does not depend on which busy
+            label is showing. `isPending` is shared by preview and confirm, so
+            gating this button on the preview-shaped pending state alone
+            (`isPending && !preview`) left it live while a CONFIRM import was
+            in flight: overlapping server actions, and a late re-preview
+            response able to land out of order on top of a finished import.
+            `pending` below is PRESENTATION only. Button ORs the two, so the
+            effective disabled state is exactly `isPending || empty`. */}
+        <Button
           onClick={onPreview}
           disabled={isPending || text.trim().length === 0}
-          className={BTN_SECONDARY}
+          pending={isPending && !preview}
+          busyLabel="Reading…"
         >
-          {isPending && !preview ? "Reading…" : "Preview import"}
-        </button>
+          Preview import
+        </Button>
         {preview ? (
-          <button
-            type="button"
+          <Button
+            variant="primary"
             onClick={onConfirm}
-            disabled={isPending || preview.readyGroups + preview.warningGroups === 0}
-            className={BTN_PRIMARY}
+            disabled={preview.readyGroups + preview.warningGroups === 0}
+            pending={isPending}
+            busyLabel="Importing…"
           >
-            {isPending ? "Importing…" : "Confirm import"}
-          </button>
+            Confirm import
+          </Button>
         ) : null}
         {(preview || text) && (
-          <button type="button" onClick={reset} className={BTN_SECONDARY}>
-            Cancel
-          </button>
+          <Button onClick={reset}>Cancel</Button>
         )}
       </div>
 
@@ -281,10 +290,8 @@ function ImportSummaryView({
         </div>
       ) : null}
       <div className="flex flex-wrap gap-3">
-        <button type="button" onClick={onDone} className={BTN_SECONDARY}>
-          Import more
-        </button>
-        <Link href="/clients" className={BTN_PRIMARY}>
+        <Button onClick={onDone}>Import more</Button>
+        <Link href="/clients" className={buttonClasses({ variant: "primary" })}>
           View clients
         </Link>
       </div>
