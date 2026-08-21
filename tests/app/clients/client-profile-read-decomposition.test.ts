@@ -155,8 +155,23 @@ describe("independent reads run in one parallel wave", () => {
     const waves = serialWaves();
     const wave = waves.find((w) => w.getText(SF).includes("Promise.all"));
     expect(wave, "no Promise.all wave found").toBeTruthy();
-    const text = (wave as ts.Statement).getText(SF);
-    // Every read that depends only on (studio.id, client.id) belongs here.
+
+    // Collect the helpers ACTUALLY CALLED in the wave, from the AST.
+    //
+    // This used to assert `waveText.toContain(helper)`, which a mutation walked
+    // straight through: replacing `getActiveServices(studio.id)` with
+    // `Promise.resolve([] as Awaited<ReturnType<typeof getActiveServices>>)`
+    // removes the call while KEEPING the name in the type annotation, so the
+    // substring assertion stayed green while the page stopped reading services.
+    const called = new Set<string>();
+    const visit = (n: ts.Node) => {
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
+        called.add(n.expression.text);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(wave as ts.Statement);
+
     for (const helper of [
       "getAppointmentsForClientProfile",
       "getActiveServices",
@@ -171,7 +186,7 @@ describe("independent reads run in one parallel wave", () => {
       "getActiveCardForStudioClient",
       "getRecentPortalAccessEvents",
     ]) {
-      expect(text, `${helper} is not in the parallel wave`).toContain(helper);
+      expect(called, `${helper} is not CALLED in the parallel wave`).toContain(helper);
     }
   });
 
