@@ -5,6 +5,7 @@ import {
   memoryFromCanonicalVisit,
   summariseVisit,
 } from "@/lib/sessions/history/visit-summary";
+import type { HistoricalVisitSummary } from "@/lib/sessions/history/visit-summary";
 import type { HistoricalVisitDetail } from "@/lib/sessions/history/visit-detail";
 
 const ROOT = path.resolve(__dirname, "../../../..");
@@ -36,6 +37,12 @@ const block = (id: string, over: Record<string, unknown> = {}) =>
     ...over,
   }) as never;
 
+/** Narrow a summary to its visit variant, failing loudly otherwise. */
+function visitOf(summary: HistoricalVisitSummary) {
+  if (summary.kind !== "visit") throw new Error(`expected a visit, got ${summary.kind}`);
+  return summary;
+}
+
 const run = (over: Partial<Parameters<typeof summariseVisit>[0]> = {}) =>
   summariseVisit({
     session: SESSION,
@@ -52,7 +59,8 @@ describe("every treatment channel is a VARIANT, so none can be described as anot
   it("a settings-charted visit reports its areas and totals", () => {
     const { summary } = run({ detail: detail({ blocks: [block("b1")] }) });
     expect(summary.kind).toBe("visit");
-    const t = (summary as { treatment: { kind: string; headline: string; totalHairs: number | null } }).treatment;
+    const t = visitOf(summary).treatment;
+    if (t.kind !== "charted-areas") throw new Error("expected charted areas");
     expect(t.kind).toBe("charted-areas");
     expect(t.headline).toContain("Chin");
     // `hairs_treated` reaching the model at all is the P1-B fix arriving here.
@@ -72,7 +80,7 @@ describe("every treatment channel is a VARIANT, so none can be described as anot
       hasLiveElectrolysisEntries: true,
     });
     expect(summary.kind).toBe("visit");
-    expect((summary as { treatment: { kind: string; passCount: number } }).treatment).toEqual({
+    expect(visitOf(summary).treatment).toEqual({
       kind: "legacy-entry-only",
       passCount: 2,
     });
@@ -88,8 +96,8 @@ describe("every treatment channel is a VARIANT, so none can be described as anot
       }),
       session: { ...SESSION, modality: "laser" },
     });
-    const t = (summary as { treatment: { kind: string; passCount: number; narrative: string[] } }).treatment;
-    expect(t.kind).toBe("laser");
+    const t = visitOf(summary).treatment;
+    if (t.kind !== "laser") throw new Error("expected laser");
     expect(t.passCount).toBe(2);
     expect(t.narrative).toEqual(["Zone cleared well."]);
   });
@@ -101,7 +109,7 @@ describe("every treatment channel is a VARIANT, so none can be described as anot
         orphanEntries: [{ id: "e1", block_id: null, deleted_at: null }],
       }),
     });
-    expect((summary as { treatment: { kind: string } }).treatment.kind).toBe("charted-areas");
+    expect(visitOf(summary).treatment.kind).toBe("charted-areas");
   });
 });
 
@@ -149,7 +157,7 @@ describe("the superseded claim reaches the model", () => {
       detail: detail({ blocks: [block("b1")] }),
       supersededByUnchartedVisit: true,
     });
-    expect((summary as { supersededByUnchartedVisit: boolean }).supersededByUnchartedVisit).toBe(true);
+    expect(visitOf(summary).supersededByUnchartedVisit).toBe(true);
   });
 });
 
