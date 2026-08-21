@@ -123,10 +123,35 @@ export function observeLatestSetup(
   for (const candidate of candidatesNewestFirst) {
     const blocks = blocksBySession.get(candidate.id);
     if (!blocks || blocks.length === 0) continue;
-    for (const area of memoryFor(candidate, blocks).areas) {
+    // `buildPointOfCareMemory` sorts by sort_order and maps blocks to areas
+    // index-for-index, so sorting the same way keeps the two aligned and lets
+    // each part be taken from whichever of the pair is CORRECT for it.
+    const ordered = [...blocks].sort(
+      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+    );
+    const { areas } = memoryFor(candidate, ordered);
+    for (let i = 0; i < areas.length; i += 1) {
+      const area = areas[i];
+      const block = ordered[i];
+      if (!area || !block) continue;
       const parts = [
         area.frequency,
-        area.probeLine,
+        // THE PROBE LABEL, NOT `area.probeLine`.
+        //
+        // `probeLine` is the point-of-care card's string and it embeds the
+        // probe LOT NUMBER ("Ballet F3 · Lot #A12 (confirmed)"). This line is
+        // painted on the COLLAPSED row, which the practitioner has not asked to
+        // open, and the lot is part of the full treatment record that must not
+        // cross to the browser until she does — the contract
+        // `toDisclosureSummary` and the on-demand server action exist to keep.
+        //
+        // It is also what the retired pipeline showed here
+        // (treatment-intelligence's `latestProbe` is `probe_label`), so keeping
+        // the label keeps the rendered copy identical rather than quietly
+        // widening it.
+        typeof block.probe_label === "string" && block.probe_label.trim()
+          ? block.probe_label.trim()
+          : null,
         area.modeLabel,
         area.energyLevel != null ? `EL ${area.energyLevel}` : null,
       ].filter((p): p is string => Boolean(p && String(p).trim()));
