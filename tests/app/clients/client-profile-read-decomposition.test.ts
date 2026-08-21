@@ -12,7 +12,15 @@ import { describe, expect, it } from "vitest";
 // surface was only ~11% of measured span time. So the fix is decomposition of
 // the page's reads, not identity memoisation.
 //
-// SCOPE: this file now proves ONLY what executing the page cannot show.
+// SCOPE: what the REAL-QUERY proof cannot show.
+//
+// tests/db/client-profile-tab-queries.db.test.ts is the authority for which
+// reads happen per tab, and for the session_blocks projections: it runs the
+// real page against local Supabase and asserts on the PostgREST requests that
+// actually leave the process. Tab gating, read counts and data minimisation all
+// moved there, and the static harness that used to model them is deleted.
+//
+// Two properties survive here because no request log shows them.
 //
 // Tab gating moved to tests/app/clients/client-profile-tab-loaders.test.ts,
 // which invokes the real component once per tab against a faked loader
@@ -26,13 +34,7 @@ import { describe, expect, it } from "vitest";
 //
 //   1. PARALLELISM — that the independent reads sit in one Promise.all rather
 //      than a chain of awaits. Invocation records cannot distinguish those.
-//   2. DATA MINIMISATION — the exact session_blocks SELECT projections. A
-//      rendered page looks identical whether or not a column was added, so this
-//      guard stays source-level by design. It COUNTS rather than resolves: the
-//      page is allowed exactly two selects and two session_blocks builders, so
-//      an extra read fails however it is spelled, and no expression has to be
-//      understood.
-//   3. INSTRUMENTATION PLACEMENT — that the #610 span still encloses the
+//   2. INSTRUMENTATION PLACEMENT — that the #610 span still encloses the
 //      domain work, so a remeasurement stays comparable to the 584ms baseline.
 // ===========================================================================
 
@@ -227,37 +229,6 @@ describe("independent reads run in one parallel wave", () => {
 });
 
 describe("nothing widened", () => {
-  it("adds no new query helper to the page", () => {
-    // Decomposition must not become "fetch more, in parallel". Every helper in
-    // the wave existed on this page before PERF2.
-    const known = [
-      "getAppointmentsForClientProfile","getActiveServices","getLatestIntakeForClient",
-      "getPortalAccessSummary","getLatestSubmittedOrReviewedIntakeForClient",
-      "getPinnedNotesForClient","getTreatmentPlansForClient","getTotalTreatmentTime",
-      "getTreatmentTimeByArea","getTreatmentGoal","getClientPersonalNotes",
-      "getPortalMessagesForPractitionerView","getPortalMessageRepliesForPractitionerView",
-      "getConsentTemplatesForStudio","getLatestSignaturesForPractitionerView",
-      "getActiveCardForStudioClient","getImportedTreatmentMemoriesForClient",
-      "getRecentPortalAccessEvents","getClientById","getCurrentPractitionerWithStudio",
-      "buildClinicalNoteSections","getClientBudgetContext","getClinicalNotesSummary",
-      "attachStructuredAreas","createClient",
-    ];
-    const wave = serialWaves().find((w) => w.getText(SF).includes("Promise.all"));
-    const called = new Set<string>();
-    const visit = (n: ts.Node) => {
-      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
-        called.add(n.expression.text);
-      }
-      ts.forEachChild(n, visit);
-    };
-    visit(wave as ts.Statement);
-    for (const name of called) {
-      if (name.startsWith("get") || name.startsWith("build")) {
-        expect(known, `unexpected new read in the wave: ${name}`).toContain(name);
-      }
-    }
-  });
-
   it("preserves the #610 measurement span so results stay comparable", () => {
     // The span must still open before the first domain read and close after
     // the last, or a future remeasurement cannot be compared to the 584ms p50.
@@ -270,43 +241,4 @@ describe("nothing widened", () => {
     expect(waveIdx).toBeLessThan(endIdx);
   });
 
-  it("does not widen either session_blocks projection", () => {
-    // COUNTED, NOT PARSED.
-    //
-    // Every previous version of this guard resolved `.select(...)` back to a
-    // table through the expression that produced the builder, and every version
-    // was defeated by a way of writing that expression: an alias, a reassigned
-    // binding, a builder returned from a helper, `blocks["select"](…)`,
-    // `Reflect.apply(blocks.select, …)`. Recognising expression forms is
-    // unbounded, and chasing it was turning this file into a JavaScript
-    // evaluator.
-    //
-    // So nothing is resolved. The page is allowed exactly two selects and
-    // exactly two session_blocks builders, and both projections must appear
-    // verbatim. Any additional read — however it is spelled, through whatever
-    // alias or indirection — changes one of these counts and fails, because a
-    // select cannot be performed without the word appearing somewhere.
-    const BASELINES = [
-      "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
-      "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
-    ];
-
-    const count = (re: RegExp) => (SOURCE.match(re) ?? []).length;
-
-    expect(
-      count(/\bselect\b/g),
-      "the page performs a select this contract has not pinned",
-    ).toBe(2);
-    expect(
-      count(/from\("session_blocks"\)/g),
-      "the page builds a session_blocks query this contract has not pinned",
-    ).toBe(2);
-    for (const baseline of BASELINES) {
-      expect(
-        SOURCE.split(baseline).length - 1,
-        `a session_blocks projection no longer appears verbatim: ${baseline.slice(0, 60)}…`,
-      ).toBe(1);
-    }
-    expect(SOURCE).not.toContain('.select("*")');
-  });
 });
