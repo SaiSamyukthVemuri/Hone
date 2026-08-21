@@ -56,6 +56,7 @@ import {
   monthYearLabel,
 } from "@/lib/booking/month-grid";
 import { formatTimeForStudio, resolveTimeFormat, type TimeFormat } from "@/lib/booking/tz";
+import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 
 type Search = Promise<{
   week?: string;
@@ -75,7 +76,10 @@ export default async function CalendarPage({
 }: {
   searchParams: Search;
 }) {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Measurement only (perf/route-timing-baseline).
+  const { practitioner, studio } = await timed("calendar.identity", () =>
+    getCurrentPractitionerWithStudio(),
+  );
   const timeFormat = resolveTimeFormat(studio); // 0109: 12h/24h display pref
   const isOwner = practitioner.role === "owner"; // PR C: owner-only block editing
   const params = await searchParams;
@@ -113,6 +117,10 @@ export default async function CalendarPage({
   const startUtc = utcInstantFromLocal(weekStart, "00:00", studio.timezone);
   const endUtc = utcInstantFromLocal(addDays(weekStart, 7), "00:00", studio.timezone);
 
+  // Week-view domain window. Bracketed rather than wrapped so the parallel
+  // wave below keeps its exact shape and indentation — this PR measures the
+  // calendar, it does not restructure it.
+  const domain = startPerfSpan("calendar.domain");
   const [
     appointments,
     blockouts,
@@ -143,6 +151,7 @@ export default async function CalendarPage({
     // else closed. Display-only; never feeds booking math.
     getOverridesForRange(studio.id, weekStart, weekEnd),
   ]);
+  domain.end();
 
   // Index weekly availability by day_of_week (0=Sun..6=Sat), matching the
   // Sunday-start `days` array below. Days with no configured default map
@@ -473,6 +482,9 @@ async function renderMonthView(opts: {
   const startUtc = utcInstantFromLocal(monthAnchor, "00:00", studio.timezone);
   const endUtc = utcInstantFromLocal(monthEnd, "00:00", studio.timezone);
 
+  // Month-view domain window. Same span name as the week view: the two paths
+  // are mutually exclusive, so one request records exactly one of them.
+  const domain = startPerfSpan("calendar.domain");
   const [
     appointments,
     availabilityDefaults,
@@ -500,6 +512,7 @@ async function renderMonthView(opts: {
       endUtc.toISOString(),
     ),
   ]);
+  domain.end();
 
   const availabilityByDow = new Map<number, boolean>();
   for (const d of availabilityDefaults) {

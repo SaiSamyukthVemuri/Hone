@@ -49,6 +49,7 @@ import {
   EditSterileItemForm,
 } from "./record-forms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 
 // PR #205 (migration 0085): Record Keeping. Hone's health-inspection
 // operational logbook, built from Chloe's BodySafe / health-inspection
@@ -188,7 +189,10 @@ export default async function RecordKeepingPage({
   const section: SectionKey = isSection(sp.section) ? sp.section : "sterile";
   // PR #213: probe lot traceability search (exact normalized match).
   const lotSearch = normalizeLotSearch(sp.lot);
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // Measurement only (perf/route-timing-baseline).
+  const { practitioner, studio } = await timed("records.identity", () =>
+    getCurrentPractitionerWithStudio(),
+  );
   // PR #222: exposure incident HISTORY is owner-only (RLS-enforced by
   // migration 0088); any member may still file a new incident.
   const isOwner = practitioner.role === "owner";
@@ -281,6 +285,10 @@ async function SterileItemsSection({
   lotSearch: string | null;
   timezone: string;
 }) {
+  // Records renders exactly ONE section per request (see the `section ===`
+  // switch above), so every section opens the same `records.domain` window and
+  // one request records one of them.
+  const domain = startPerfSpan("records.domain");
   const records = await getSterileItemRecords(studioId);
   // PR #316: expiry states for row styling + the summary banner (studio-local
   // "today"). Display-only over the existing expiry_date column.
@@ -295,6 +303,7 @@ async function SterileItemsSection({
     "sterile_item",
     records.map((r) => r.id),
   );
+  domain.end();
   return (
     <div className="flex flex-col gap-5">
       {/* PR #213: probe lot traceability. Search a lot number (exact
@@ -508,6 +517,7 @@ async function DisinfectantsSection({
   currentPractitionerId: string;
   timezone: string;
 }) {
+  const domain = startPerfSpan("records.domain");
   const records = await getDisinfectantRecords(studioId);
   const audit = await getAuditEventsByRecord(
     studioId,
@@ -521,6 +531,7 @@ async function DisinfectantsSection({
     name: p.display_name?.trim() || p.email,
   }));
   const today = todayInTz(timezone);
+  domain.end();
   return (
     <div className="flex flex-col gap-5">
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -634,6 +645,7 @@ async function ExposureIncidentsSection({
   studioId: string;
   isOwner: boolean;
 }) {
+  const domain = startPerfSpan("records.domain");
   // Non-owners get no list query: RLS (migration 0088) would return
   // zero rows anyway, but skipping the read keeps the UI honest (an
   // owner-only note instead of a misleading "no incidents" state).
@@ -657,6 +669,7 @@ async function ExposureIncidentsSection({
     id: p.id,
     name: p.display_name?.trim() || p.email,
   }));
+  domain.end();
   return (
     <div className="flex flex-col gap-5">
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
@@ -763,6 +776,7 @@ async function ClientProcedureRecordsSection({
     filter.to,
     timezone,
   );
+  const domain = startPerfSpan("records.domain");
   const clients = await getClientsForStudio(studioId);
   const filteredClient = filter.clientId
     ? (clients.find((c) => c.id === filter.clientId) ?? null)
@@ -777,6 +791,7 @@ async function ClientProcedureRecordsSection({
     records.map((r) => r.sessionId),
   );
   const filterActive = Boolean(filter.clientId || filter.from || filter.to);
+  domain.end();
   return (
     <div className="flex flex-col gap-3">
       <div>
