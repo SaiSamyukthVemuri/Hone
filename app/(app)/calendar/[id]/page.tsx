@@ -12,15 +12,12 @@ import { referralSourceLabel } from "@/lib/booking/referral-source";
 import { resolveTimeFormat } from "@/lib/booking/tz";
 import { MoveAppointmentButton } from "../MoveAppointmentButton";
 import { FormattedDateTime } from "@/components/formatted-date-time";
-import { loadLastChartedTreatmentForClient } from "@/lib/sessions/last-treatment-loader";
+import { loadVisitPreparation, type PreparedVisit } from "@/lib/sessions/history/prepare-visit";
 import {
-  buildAppointmentPrepMemory,
-  prepMemoryInputFromTreatment,
   buildPrepProvenanceModel,
   type AppointmentPrepMemory,
   type PrepNarrativeRenderItem,
 } from "@/lib/sessions/appointment-prep-memory";
-import type { AppointmentPrepLoad } from "@/lib/sessions/last-treatment-loader";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
 import { ConsultationNotesCard } from "@/components/consultation-notes-card";
 import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
@@ -274,7 +271,7 @@ export default async function AppointmentDetailPage({
   // "nothing charted" and "the block read failed", because a plan can be
   // written on a visit that never got charted and because those rows were
   // already fetched successfully. Rendered only when no treatment card owns it.
-  let prepNarrative: AppointmentPrepLoad["narrative"] = {
+  let prepNarrative: PreparedVisit["narrative"] = {
     plan: null,
     legacySessionNotes: null,
   };
@@ -304,7 +301,7 @@ export default async function AppointmentDetailPage({
       tagsRes,
       intakeRes,
       plansRes,
-      lastTreatment,
+      visitPrep,
       linkedSessionRes,
       clinicalNotesRes,
     ] = await Promise.all([
@@ -321,14 +318,16 @@ export default async function AppointmentDetailPage({
       // Two round-trips, independent of how long the client's history is, how
       // many areas each block treats and how many passes each area carries. It
       // replaces three: newest row → that row's blocks → structured areas.
-      loadLastChartedTreatmentForClient({
+      loadVisitPreparation({
         studioId: studio.id,
         clientId,
         // Strictly before this appointment. Not now(), which would let a
         // session charted after the appointment began win; not omitted, which
         // would let a future booking's session win.
         before: data.starts_at,
-        // This appointment's own visit record is never its own history.
+        // This appointment's own visit record is never its own history — and
+        // by APPOINTMENT, not by session id: `appointment_id` has no unique
+        // constraint, so excluding one row would leave a sibling behind.
         excludeAppointmentId: id,
       }),
       // PR #156 (migration 0068). Explicitly linked session, if one
@@ -382,14 +381,22 @@ export default async function AppointmentDetailPage({
     //
     // Structured areas arrive inside the same block select the loader already
     // performs, so the old attachStructuredAreas round-trip is gone.
-    prepUnavailable = lastTreatment.unavailable;
-    prepNarrative = lastTreatment.narrative;
-    if (lastTreatment.treatment) {
-      const selected = lastTreatment.treatment;
-      prepMemory = buildAppointmentPrepMemory(
-        prepMemoryInputFromTreatment(selected),
-      );
-    }
+    // THROUGH THE HISTORICAL AUTHORITY.
+    //
+    // The page no longer holds a candidate window, so it cannot decide which
+    // visit is the previous one, and it no longer builds the clinical model
+    // itself. The model arrives already built from the ONE canonical record, by
+    // an adapter whose every evidence channel is a required parameter — which is
+    // what keeps a laser visit's narrative, a legacy entry-only visit's passes
+    // and the superseded line from being silently omitted.
+    //
+    // `unavailable` is now a VARIANT rather than a boolean beside the data:
+    // "we could not establish it" and "there is none" are different answers and
+    // only the second may be spoken.
+    prepUnavailable =
+      visitPrep.preparation.treatment.kind === "evidence-unavailable";
+    prepNarrative = visitPrep.narrative;
+    prepMemory = visitPrep.memory;
   }
 
   const activePlans = treatmentPlans.filter((p) => p.status === "active");
@@ -1116,7 +1123,7 @@ function LastTreatmentSection({
 }: {
   memory: AppointmentPrepMemory | null;
   unavailable: boolean;
-  narrative: AppointmentPrepLoad["narrative"];
+  narrative: PreparedVisit["narrative"];
   clientId: string | null;
 }) {
   // WHO OWNS WHAT is decided by one pure helper, not by the shape of this JSX.

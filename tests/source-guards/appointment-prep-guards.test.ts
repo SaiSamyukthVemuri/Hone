@@ -49,11 +49,25 @@ const CARD_CODE = codeOnly(CARD);
 const LOADER_CODE = codeOnly(LOADER);
 
 describe("the appointment page uses the SHARED last-treatment authority", () => {
-  it("imports and calls the companion loader", () => {
+  it("asks the HISTORICAL AUTHORITY, and holds no candidate window", () => {
+    // Re-pointed, not deleted: the property this protected — ONE definition of
+    // "the last treatment", not a second one on this page — is intact and
+    // stronger. The page now receives an ANSWER rather than a window, so it
+    // cannot decide which visit is the previous one at all.
     expect(PAGE).toMatch(
-      /import \{ loadLastChartedTreatmentForClient \} from "@\/lib\/sessions\/last-treatment-loader"/,
+      /import \{ loadVisitPreparation[^}]*\} from "@\/lib\/sessions\/history\/prepare-visit"/,
     );
-    expect(PAGE_CODE).toMatch(/loadLastChartedTreatmentForClient\(\{/);
+    expect(PAGE_CODE).toMatch(/loadVisitPreparation\(\{/);
+    for (const retired of [
+      "loadLastChartedTreatmentForClient",
+      "pickNewestChartedSession",
+      "chartedSessionCandidates",
+      "pickLastTreatment",
+    ]) {
+      expect(PAGE_CODE, `${retired} is reachable again`).not.toMatch(
+        new RegExp(`\\b${retired}\\b`),
+      );
+    }
   });
 
   it("passes the appointment's own start as the strict upper bound", () => {
@@ -66,18 +80,19 @@ describe("the appointment page uses the SHARED last-treatment authority", () => 
     expect(PAGE_CODE).toMatch(/excludeAppointmentId: id/);
   });
 
-  it("builds the view model with the shared pure builder", () => {
-    expect(PAGE).toMatch(
-      /import \{\s*buildAppointmentPrepMemory/,
-    );
-    // The literal input object moved into the SHARED mapper
-    // (prepMemoryInputFromTreatment) when the dashboard became a second
-    // consumer — two hand-written copies of that mapping is how two surfaces
-    // start disagreeing about what a visit looked like. The page must still
-    // call the builder, and must do it through that mapper.
-    expect(PAGE_CODE).toMatch(
-      /buildAppointmentPrepMemory\(\s*prepMemoryInputFromTreatment\(selected\),?\s*\)/,
-    );
+  it("does NOT build the view model itself — the authority hands it over built", () => {
+    // The property is unchanged and its enforcement moved UP: there must be one
+    // mapping from a visit to its clinical model, not a copy per surface.
+    //
+    // It now lives in lib/sessions/history/visit-summary.ts, behind an adapter
+    // whose every evidence channel is a REQUIRED parameter. That matters
+    // because `AppointmentPrepMemoryInput` marks four of them optional, so a
+    // page building the model itself can omit a laser visit's narrative, a
+    // legacy entry-only visit's passes and the superseded line WITHOUT a type
+    // error. This page therefore may not call the builder at all.
+    expect(PAGE_CODE).not.toMatch(/buildAppointmentPrepMemory\(/);
+    expect(PAGE_CODE).not.toMatch(/prepMemoryInputFromTreatment\(/);
+    expect(PAGE_CODE).toMatch(/prepMemory = visitPrep\.memory/);
   });
 
   it("renders the prep card", () => {

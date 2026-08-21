@@ -141,12 +141,22 @@ describe("surfacing: the latest previous note appears when charting", () => {
     // rather than folded into a combined watch/plan band. The loop this file
     // pins — written while charting, read before the next visit — is unchanged;
     // only the surface that reads it is richer.
-    // The literal input object moved into the shared mapper
-    // (prepMemoryInputFromTreatment) when the dashboard became a second
-    // consumer of this model; the page still builds through the same builder.
-    expect(APPOINTMENT_PAGE).toMatch(
-      /buildAppointmentPrepMemory\(\s*prepMemoryInputFromTreatment\(selected\),?\s*\)/,
+    // The mapping moved once more, into the historical authority's own adapter
+    // (lib/sessions/history/visit-summary.ts), where every evidence channel is a
+    // REQUIRED parameter. The page must no longer build the model at all: the
+    // builder's input marks four channels optional, so a page-side build can
+    // drop a laser visit's narrative or a legacy visit's passes silently.
+    //
+    // The LOOP this file pins — written while charting, read before the next
+    // visit — is unchanged; the note now reaches the page through the same
+    // authority that chose the visit.
+    expect(codeOnly(APPOINTMENT_PAGE)).not.toMatch(/buildAppointmentPrepMemory\(/);
+    expect(codeOnly(APPOINTMENT_PAGE)).toMatch(/prepNarrative = visitPrep\.narrative/);
+    const ADAPTER = readFileSync(
+      path.join(ROOT, "lib/sessions/history/visit-summary.ts"),
+      "utf8",
     );
+    expect(ADAPTER).toMatch(/next_session_note: args\.session\.next_session_note/);
     // ...and the plan passthrough is pinned where it now lives — the shared
     // mapper — so it protects the dashboard's copy of this surface too.
     expect(
@@ -192,11 +202,13 @@ describe("shared helper usage (both context surfaces)", () => {
     // This is the invariant that actually matters, and it is stronger than the
     // pin it replaces: neither page decides for itself what a prior treatment
     // is, and neither can drift from the live charting screen.
+    // The appointment page is migrated to the historical authority; the
+    // new-session page follows in its own commit, with its own browser proof.
+    // Until then this pins BOTH halves honestly rather than pretending.
+    expect(APPOINTMENT_PAGE).toMatch(/loadVisitPreparation\(\{/);
+    expect(APPOINTMENT_PAGE).toMatch(/from "@\/lib\/sessions\/history\/prepare-visit"/);
     expect(NEW_SESSION_PAGE).toMatch(/loadLastChartedTreatment\(\{/);
-    expect(APPOINTMENT_PAGE).toMatch(/loadLastChartedTreatmentForClient\(\{/);
-    for (const page of [NEW_SESSION_PAGE, APPOINTMENT_PAGE]) {
-      expect(page).toMatch(/from "@\/lib\/sessions\/last-treatment-loader"/);
-    }
+    expect(NEW_SESSION_PAGE).toMatch(/from "@\/lib\/sessions\/last-treatment-loader"/);
   });
 
   it("blocks are read with a narrow select scoped to studio, batched, deleted excluded", () => {

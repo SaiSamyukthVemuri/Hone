@@ -1,5 +1,8 @@
 import "server-only";
-import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memory";
+import type {
+  AppointmentPrepMemory,
+  PrepNarrativeItem,
+} from "@/lib/sessions/appointment-prep-memory";
 import {
   loadClientHistories,
   type ClientHistory,
@@ -47,7 +50,23 @@ export type PreparedVisit = {
   detail: HistoricalVisitDetail | null;
   /** SERVER ONLY. The selected visit's own row, for the scalars pages render. */
   session: HistorySession | null;
+  /**
+   * SERVER ONLY. Practitioner narrative recovered from the CANDIDATE WINDOW,
+   * independent of whether a treatment was selected.
+   *
+   * A plan can be written on a visit that was never charted — `start_session`
+   * creates the row the moment a modality is tapped and `set_next_session_note`
+   * has no charting gate — so a consultation-only visit can legitimately carry
+   * "started doxycycline, do not treat" with zero blocks. Nesting this inside
+   * the treatment would make it unreachable in exactly that case.
+   */
+  narrative: {
+    plan: PrepNarrativeItem | null;
+    legacySessionNotes: PrepNarrativeItem | null;
+  };
 };
+
+const NO_NARRATIVE = { plan: null, legacySessionNotes: null } as const;
 
 const UNAVAILABLE: VisitPreparation = {
   treatment: { kind: "evidence-unavailable", reason: "read-failed" },
@@ -71,6 +90,10 @@ function observedOr<T>(
 }
 
 /** "27.12 MHz · Ballet F3 · Thermolysis · EL 14", from the visit's own model. */
+function narrativeItem(row: HistorySession, text: string): PrepNarrativeItem {
+  return { sessionId: row.id, startedAt: row.started_at, text };
+}
+
 function setupLineOf(memory: AppointmentPrepMemory): string | null {
   const area = memory.areas[0];
   if (!area) return null;
@@ -121,6 +144,7 @@ export async function loadVisitPreparations(input: {
     setup: ReturnType<typeof observedOr>;
     watch: ReturnType<typeof observedOr>;
     planNote: ReturnType<typeof observedOr>;
+    legacyNotes: ReturnType<typeof observedOr>;
   };
   const resolved = new Map<string, Resolved>();
 
@@ -133,6 +157,7 @@ export async function loadVisitPreparations(input: {
         setup: { row: null, state: "failed" },
         watch: { row: null, state: "failed" },
         planNote: { row: null, state: "failed" },
+        legacyNotes: { row: null, state: "failed" },
       });
       continue;
     }
@@ -142,6 +167,7 @@ export async function loadVisitPreparations(input: {
       setup: observedOr(history.latestVisitWithSetup()),
       watch: observedOr(history.observedCaution()),
       planNote: observedOr(history.latestPlanNote()),
+      legacyNotes: observedOr(history.observedLegacyNotes()),
     };
     resolved.set(request.requestKey, entry);
     for (const answer of [entry.treatment, entry.setup, entry.watch]) {
@@ -188,6 +214,7 @@ export async function loadVisitPreparations(input: {
         memory: null,
         detail: null,
         session: null,
+        narrative: NO_NARRATIVE,
       });
       continue;
     }
@@ -240,11 +267,22 @@ export async function loadVisitPreparations(input: {
       watchPlan = { kind: "unavailable" };
     }
 
+    const legacyText = entry.legacyNotes.row?.session_notes?.trim() ?? null;
     out.set(request.requestKey, {
       preparation: { treatment, setup, watchPlan },
       memory: treatmentModel?.memory ?? null,
       detail: treatmentModel?.detail ?? null,
       session: entry.treatment.row,
+      narrative: {
+        plan:
+          entry.planNote.row && planNote
+            ? narrativeItem(entry.planNote.row, planNote)
+            : null,
+        legacySessionNotes:
+          entry.legacyNotes.row && legacyText
+            ? narrativeItem(entry.legacyNotes.row, legacyText)
+            : null,
+      },
     });
   }
 
@@ -278,6 +316,7 @@ export async function loadVisitPreparation(input: {
       memory: null,
       detail: null,
       session: null,
+      narrative: NO_NARRATIVE,
     }
   );
 }
