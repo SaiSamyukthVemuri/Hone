@@ -22,6 +22,11 @@ import {
   type PrepCautionObservation,
   type PrepSetupObservation,
 } from "@/lib/sessions/prep-observations";
+import {
+  absentMeansEmpty,
+  classifyBlockReadCoverage,
+  type BlockReadCoverage,
+} from "@/lib/sessions/block-read-coverage";
 
 // THE loader behind every "last treatment" surface changed by this PR.
 //
@@ -148,6 +153,48 @@ function toPointOfCareBlocks(
   }));
 }
 
+// COULD A NEWER TREATMENT HAVE BEEN HIDDEN BY THE BOUNDED BLOCK READ?
+//
+// `pickNewestChartedSession` walks candidates newest-first and skips any that
+// fails `hasChartedContent`. That test is satisfied by a live BLOCK or by a live
+// embedded ENTRY, and the entries ride along on the SESSION read — so a
+// candidate with live entries is decidable no matter what the block read
+// returned.
+//
+// The gap is a BLOCK-ONLY session: genuinely charted, zero live entries, and all
+// of its block rows missing from a truncated read. `hasChartedContent` reads
+// that as "not charted", the walk continues, and an OLDER session is selected
+// and rendered as "Last treatment" — the same superlative-from-partial-evidence
+// defect as the setup line, in the more consequential position.
+//
+// This asks the narrow question that actually matters: strictly NEWER than the
+// row we picked, is there a candidate we could not resolve either way? Ties and
+// older rows are irrelevant, and under complete coverage the answer is always
+// no, so the common path pays nothing.
+function newerCandidateUnresolved<T extends SessionWithLoadedEntries>(
+  candidatesNewestFirst: ReadonlyArray<T>,
+  selectedId: string,
+  blocksBySession: ReadonlyMap<string, ReadonlyArray<{ deleted_at?: string | null }>>,
+  coverage: BlockReadCoverage,
+): boolean {
+  if (absentMeansEmpty(coverage)) return false;
+  for (const candidate of candidatesNewestFirst) {
+    // Candidates are newest-first, so everything from here on is older.
+    if (candidate.id === selectedId) return false;
+    const blocks = blocksBySession.get(candidate.id);
+    // A candidate with ANY block read already satisfies hasChartedContent, so
+    // it would have won the selection; reaching here means it did not.
+    if (blocks && blocks.length > 0) continue;
+    const liveEntries =
+      (candidate.electrolysis_entries ?? []).some((e) => e.deleted_at == null) ||
+      (candidate.laser_entries ?? []).some((e) => e.deleted_at == null);
+    // Entries came from the SESSION read, so their absence IS authoritative.
+    if (liveEntries) continue;
+    return true; // no blocks read, no entries: we cannot say whether it charted.
+  }
+  return false;
+}
+
 // The newest candidate carrying a next-visit note. Candidates are already
 // newest-first, already time-bounded and already appointment-filtered, so the
 // first hit is the answer. Charted-ness is deliberately NOT required.
@@ -252,9 +299,17 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
   // its positive caution/setup observations from the read it already paid for.
   // Empty on a failed read; an empty map is never evidence of anything.
   blocksBySession: Map<string, PointOfCareBlock[]>;
+  // How much of that read we actually saw. Travels with the map, because the
+  // map alone cannot say whether a missing key means "empty" or "unread".
+  coverage: BlockReadCoverage;
 }> {
   if (candidates.length === 0) {
-    return { outcome: { status: "none" }, blocksBySession: new Map() };
+    return {
+      outcome: { status: "none" },
+      blocksBySession: new Map(),
+      // No ids were asked for, so nothing could have been cut.
+      coverage: { kind: "complete" },
+    };
   }
 
   const supabase = await createClient();
@@ -296,10 +351,15 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
         at: new Date().toISOString(),
       }),
     );
-    return { outcome: { status: "unavailable" }, blocksBySession: new Map() };
+    return {
+      outcome: { status: "unavailable" },
+      blocksBySession: new Map(),
+      coverage: { kind: "complete" },
+    };
   }
 
   const rows = (data ?? []) as unknown as RawBlock[];
+  const coverage = classifyBlockReadCoverage(rows.length, MAX_BATCH_BLOCK_ROWS);
   const bySession = groupBlocksBySession(rows);
   // The normalised window, built once and shared by the selector below and by
   // the caller's positive observations.
@@ -316,7 +376,21 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
   // A SUCCESSFUL read that found nothing charted. Distinct from the failure
   // above, and the distinction is the whole point of this type.
   if (!selected) {
-    return { outcome: { status: "none" }, blocksBySession: observedBlocks };
+    return {
+      outcome: { status: "none" },
+      blocksBySession: observedBlocks,
+      coverage,
+    };
+  }
+  // A newer candidate we could not resolve means this one cannot be called the
+  // LAST treatment. "Could not be loaded" is the truthful answer to the question
+  // that was asked, and it is the vocabulary this contract already owns.
+  if (newerCandidateUnresolved(candidates, selected.id, bySession, coverage)) {
+    return {
+      outcome: { status: "unavailable" },
+      blocksBySession: observedBlocks,
+      coverage,
+    };
   }
 
   // Live electrolysis passes for the selected session, grouped by block. The
@@ -350,6 +424,7 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
       },
     },
     blocksBySession: observedBlocks,
+    coverage,
   };
 }
 
@@ -578,7 +653,7 @@ export async function loadLastChartedTreatmentForClient(input: {
     legacySessionNotes: newestLegacyNotesOf(candidates),
   };
 
-  const { outcome, blocksBySession } = await selectFromCandidates(input.studioId, candidates);
+  const { outcome, blocksBySession, coverage } = await selectFromCandidates(input.studioId, candidates);
   // Positive observations over the window we just read. Resolved for EVERY
   // outcome, including "none" and "unavailable": a caution recorded on a visit
   // that carries no charting is still a caution we read, and discarding it
@@ -586,7 +661,7 @@ export async function loadLastChartedTreatmentForClient(input: {
   // instruction already in hand.
   const observed = {
     caution: observeCaution(candidates, blocksBySession),
-    latestSetup: observeLatestSetup(candidates, blocksBySession),
+    latestSetup: observeLatestSetup(candidates, blocksBySession, coverage),
   };
   switch (outcome.status) {
     case "selected":
@@ -765,6 +840,8 @@ export async function loadLastChartedTreatmentsForClients(input: {
   ];
   let blocksBySession = new Map<string, RawBlock[]>();
   let blocksUnavailable = false;
+  // Nothing was asked for until the read below runs, so nothing could be cut.
+  let blockCoverage: BlockReadCoverage = { kind: "complete" };
   if (allCandidateIds.length > 0) {
     const { data: blockData, error: blockError } = await supabase
       .from("session_blocks")
@@ -787,9 +864,12 @@ export async function loadLastChartedTreatmentsForClients(input: {
       );
       blocksUnavailable = true;
     } else {
-      blocksBySession = groupBlocksBySession(
-        (blockData ?? []) as unknown as RawBlock[],
+      const blockRows = (blockData ?? []) as unknown as RawBlock[];
+      blockCoverage = classifyBlockReadCoverage(
+        blockRows.length,
+        MAX_BATCH_BLOCK_ROWS,
       );
+      blocksBySession = groupBlocksBySession(blockRows);
     }
   }
 
@@ -818,7 +898,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
     // nothing and even when the block read failed for other sessions.
     const observed = {
       caution: observeCaution(candidates, observedBlocks),
-      latestSetup: observeLatestSetup(candidates, observedBlocks),
+      latestSetup: observeLatestSetup(candidates, observedBlocks, blockCoverage),
     };
 
     if (blocksUnavailable) {
@@ -852,6 +932,21 @@ export async function loadLastChartedTreatmentsForClients(input: {
       out.set(r.requestKey, {
         treatment: null,
         unavailable: truncated,
+        narrative,
+        observed,
+      });
+      continue;
+    }
+
+    // The SAME superlative guard the single-client path applies. A newer
+    // candidate we could not resolve means this row cannot be called the LAST
+    // treatment, so the truthful answer is the one this contract already owns.
+    if (
+      newerCandidateUnresolved(candidates, selected.id, blocksBySession, blockCoverage)
+    ) {
+      out.set(r.requestKey, {
+        treatment: null,
+        unavailable: true,
         narrative,
         observed,
       });

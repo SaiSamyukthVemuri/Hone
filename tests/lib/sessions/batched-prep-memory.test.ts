@@ -621,3 +621,146 @@ describe("7b. BLOCK COLLECTION CAP — at the loader, where the map is built", (
     expect(blockRead!.filters.some((f) => f.startsWith("limit:"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 7. THE SAME SUPERLATIVE ATTACK, AGAINST "Last treatment".
+//
+// Repairing the setup line while leaving this open would fix the symptom and
+// keep the defect: "Last treatment" is the more consequential claim, and it is
+// selected by the same walk over the same possibly-short block map.
+//
+// `hasChartedContent` is satisfied by a live BLOCK **or** a live embedded
+// ENTRY, and entries ride along on the SESSION read — so the attack needs a
+// BLOCK-ONLY newer session: genuinely charted, zero live entries, and all of
+// its block rows missing from a truncated read.
+// ---------------------------------------------------------------------------
+
+describe("7. a newer BLOCK-ONLY treatment cannot be hidden into a stale 'Last treatment'", () => {
+  /** Charted only by blocks: no live electrolysis or laser entries at all. */
+  function blockOnlySession(over: Partial<Row> & { id: string; client_id: string }): Row {
+    return {
+      ...session(over),
+      electrolysis_entries: [],
+      laser_entries: [],
+      ...over,
+    };
+  }
+
+  it("under a TRUNCATED block read, an unresolvable newer row makes the answer unavailable", async () => {
+    // The newer session is charted (it has a block in the database) but its
+    // block rows did not come back. The older one did. Without the guard the
+    // loader selects the older row and the Dashboard calls it "Last treatment".
+    const newer = blockOnlySession({
+      id: "s-newer",
+      client_id: ALICE,
+      started_at: "2026-04-01T10:00:00Z",
+    });
+    const older = session({ id: "s-older", client_id: ALICE, started_at: "2026-03-01T10:00:00Z" });
+
+    // Fill the block read to its bound with the OLDER session's rows only:
+    // that is exactly what a cap does — it returns rows, just not all of them.
+    const blocks = Array.from({ length: 1000 }, (_, i) => ({
+      ...block("s-older"),
+      id: `s-older-b${i}`,
+      sort_order: i,
+    }));
+
+    const { out } = await run({ sessions: [newer, older], session_blocks: blocks }, [
+      { requestKey: "appt-1", clientId: ALICE, before: "2026-05-01T09:00:00Z" },
+    ]);
+    const load = out.get("appt-1");
+    // NOT the older treatment presented as the last one.
+    expect(load?.treatment).toBeNull();
+    // The truthful answer to the question that was actually asked, in the
+    // vocabulary this contract already owns.
+    expect(load?.unavailable).toBe(true);
+    // …and the setup superlative is withheld for the same reason.
+    expect(load?.observed.latestSetup).toBeNull();
+  });
+
+  it("the SAME data under a COMPLETE read selects the older treatment normally", async () => {
+    // The guard must not fire on the ordinary path. One row fewer is the only
+    // difference, and it restores the whole answer.
+    const newer = blockOnlySession({
+      id: "s-newer",
+      client_id: ALICE,
+      started_at: "2026-04-01T10:00:00Z",
+    });
+    const older = session({ id: "s-older", client_id: ALICE, started_at: "2026-03-01T10:00:00Z" });
+    const blocks = Array.from({ length: 999 }, (_, i) => ({
+      ...block("s-older"),
+      id: `s-older-b${i}`,
+      sort_order: i,
+    }));
+
+    const { out } = await run({ sessions: [newer, older], session_blocks: blocks }, [
+      { requestKey: "appt-1", clientId: ALICE, before: "2026-05-01T09:00:00Z" },
+    ]);
+    const load = out.get("appt-1");
+    expect(load?.treatment?.session.id).toBe("s-older");
+    expect(load?.unavailable).toBe(false);
+  });
+
+  it("a newer row with LIVE ENTRIES is resolvable, so truncation changes nothing", async () => {
+    // The entries came from the SESSION read, so their absence is authoritative
+    // and `hasChartedContent` can decide without any block. This is why the
+    // guard is scoped to block-only rows instead of vetoing on truncation.
+    const newer = session({ id: "s-newer", client_id: ALICE, started_at: "2026-04-01T10:00:00Z" });
+    const blocks = Array.from({ length: 1000 }, (_, i) => ({
+      ...block("s-newer"),
+      id: `s-newer-b${i}`,
+      sort_order: i,
+    }));
+    const { out } = await run({ sessions: [newer], session_blocks: blocks }, [
+      { requestKey: "appt-1", clientId: ALICE, before: "2026-05-01T09:00:00Z" },
+    ]);
+    expect(out.get("appt-1")?.treatment?.session.id).toBe("s-newer");
+    expect(out.get("appt-1")?.unavailable).toBe(false);
+  });
+
+  it("an OLDER unresolvable row is irrelevant — only NEWER ones can unseat the pick", async () => {
+    // Precision matters: vetoing on any unread row would make a busy day
+    // useless. The claim is about recency, so only rows newer than the pick can
+    // falsify it.
+    const newer = session({ id: "s-newer", client_id: ALICE, started_at: "2026-04-01T10:00:00Z" });
+    const olderBlockOnly = blockOnlySession({
+      id: "s-older",
+      client_id: ALICE,
+      started_at: "2026-03-01T10:00:00Z",
+    });
+    const blocks = Array.from({ length: 1000 }, (_, i) => ({
+      ...block("s-newer"),
+      id: `s-newer-b${i}`,
+      sort_order: i,
+    }));
+    const { out } = await run(
+      { sessions: [newer, olderBlockOnly], session_blocks: blocks },
+      [{ requestKey: "appt-1", clientId: ALICE, before: "2026-05-01T09:00:00Z" }],
+    );
+    expect(out.get("appt-1")?.treatment?.session.id).toBe("s-newer");
+    expect(out.get("appt-1")?.unavailable).toBe(false);
+  });
+
+  it("the plan note survives the unavailable branch — it has its own authority", async () => {
+    // `newestPlanOf` reads SESSION rows, so a short block read cannot touch it.
+    // Suppressing the treatment must not take the safety instruction with it.
+    const newer = blockOnlySession({
+      id: "s-newer",
+      client_id: ALICE,
+      started_at: "2026-04-01T10:00:00Z",
+      next_session_note: "Started doxycycline, do not treat",
+    });
+    const older = session({ id: "s-older", client_id: ALICE, started_at: "2026-03-01T10:00:00Z" });
+    const blocks = Array.from({ length: 1000 }, (_, i) => ({
+      ...block("s-older"),
+      id: `s-older-b${i}`,
+      sort_order: i,
+    }));
+    const { out } = await run({ sessions: [newer, older], session_blocks: blocks }, [
+      { requestKey: "appt-1", clientId: ALICE, before: "2026-05-01T09:00:00Z" },
+    ]);
+    const load = out.get("appt-1");
+    expect(load?.unavailable).toBe(true);
+    expect(load?.narrative.plan?.text).toBe("Started doxycycline, do not treat");
+  });
+});

@@ -32,6 +32,10 @@ import {
   buildPointOfCareMemory,
   type PointOfCareBlock,
 } from "@/lib/sessions/point-of-care-memory";
+import {
+  absentMeansEmpty,
+  type BlockReadCoverage,
+} from "@/lib/sessions/block-read-coverage";
 
 /** The minimum a candidate must expose for these observers. */
 export type PrepObservationCandidate = {
@@ -75,16 +79,26 @@ function memoryFor(
 }
 
 /**
- * The newest candidate carrying a caution the practitioner recorded.
+ * A caution the practitioner recorded, from the newest candidate that has one.
  *
- * Candidates arrive newest-first, already appointment-bounded, already
- * void-filtered and already stripped of this appointment's own sessions, so the
- * first hit is the answer.
+ * DELIBERATELY NOT GATED ON READ COVERAGE, unlike `observeLatestSetup` below.
+ * The difference is semantic, and it comes from an existing product contract
+ * rather than from convenience:
  *
- * A session whose blocks are absent from `blocksBySession` simply yields
- * nothing and the walk continues. It is NEVER read as "this session had no
- * caution": we did not see its blocks, which is not the same as seeing that it
- * has none.
+ *   lib/sessions/clinical-summary.ts, `pickPreClientWatchPlanSource`:
+ *     "a newer charted session WITHOUT notes no longer hides the previous
+ *      session's still-relevant guidance."
+ *
+ * So surfacing an older caution past a newer session that has none is the
+ * INTENDED behaviour, not a degradation of it — and the rendered line says
+ * "Caution: <text>", which asserts that this caution was recorded and claims
+ * nothing about recency. It is a BARE POSITIVE FACT: an unread newer block can
+ * cost us a caution we would like to have shown, but it cannot make the caution
+ * we DID read false.
+ *
+ * That is why a session absent from `blocksBySession` is skipped here. The skip
+ * is not a claim about that session; the answer this function returns does not
+ * depend on it being empty.
  */
 export function observeCaution(
   candidatesNewestFirst: ReadonlyArray<PrepObservationCandidate>,
@@ -119,10 +133,32 @@ export function observeCaution(
 export function observeLatestSetup(
   candidatesNewestFirst: ReadonlyArray<PrepObservationCandidate>,
   blocksBySession: ReadonlyMap<string, ReadonlyArray<PointOfCareBlock>>,
+  // REQUIRED, and required for a reason: this function makes a SUPERLATIVE
+  // claim, and a superlative cannot be licensed by positive evidence alone.
+  coverage: BlockReadCoverage,
 ): PrepSetupObservation | null {
   for (const candidate of candidatesNewestFirst) {
     const blocks = blocksBySession.get(candidate.id);
-    if (!blocks || blocks.length === 0) continue;
+    if (!blocks || blocks.length === 0) {
+      // THE DEFECT THIS CLOSES.
+      //
+      // Skipping an absent candidate asserts that it has no setup. Under a
+      // truncated read that assertion is unfounded — its blocks may simply not
+      // have been returned — and continuing to an OLDER candidate would return
+      // a setup we then label "Latest".
+      //
+      // The older setup is a real observation; what is false is the ranking.
+      // We cannot demote the claim by renaming it either: the line sits in the
+      // position a practitioner reads as the settings to reproduce, so stale
+      // machine settings there are the harm regardless of the adjective.
+      //
+      // Suppression is the correct fail-soft. An omitted convenience costs her
+      // a glance at the chart; a stale "latest" costs her the wrong energy
+      // level. Deliberately NOT solved by paginating or by a second round trip
+      // on the Dashboard hot path.
+      if (!absentMeansEmpty(coverage)) return null;
+      continue;
+    }
     // `buildPointOfCareMemory` sorts by sort_order and maps blocks to areas
     // index-for-index, so sorting the same way keeps the two aligned and lets
     // each part be taken from whichever of the pair is CORRECT for it.
@@ -163,6 +199,16 @@ export function observeLatestSetup(
         areaLabel: area.areaLabel?.trim() || null,
       };
     }
+    // This candidate WAS read and none of the blocks we got carries a concrete
+    // setup. Under complete coverage that is authoritative and the walk moves
+    // on. Under a truncated read it is not: a session's rows are cut by a global
+    // `sort_order` bound, so we can hold its low-numbered blocks and be missing
+    // the very ones that recorded the settings.
+    //
+    // Moving past it would put an OLDER setup under the word "Latest" on the
+    // strength of blocks we never received — the same defect as the wholly
+    // absent case, one step further in.
+    if (!absentMeansEmpty(coverage)) return null;
   }
   return null;
 }

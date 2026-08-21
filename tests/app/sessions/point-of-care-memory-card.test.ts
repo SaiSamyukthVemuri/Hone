@@ -72,8 +72,17 @@ describe("the memory card is mounted ON the live charting page", () => {
     // surfaces cannot describe the same session differently.
     expect(CARD).toMatch(/memory\.blocklessNote/);
     expect(MEMORY).toMatch(/charted as laser passes/i);
-    expect(MEMORY).toMatch(/legacy treatment entries without settings blocks/i);
+    expect(MEMORY).toMatch(/charted as legacy treatment entries/i);
     expect(MEMORY).toMatch(/Open the full chart to review what was recorded/i);
+    // CODE ONLY for the negative. The module explains at length WHY the old
+    // wording was removed, so a raw grep would match the rationale and pass
+    // whatever the constant actually says — which is how this assertion kept
+    // passing after the copy changed underneath it.
+    const MEMORY_CODE = MEMORY.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+      /^\s*\/\/.*$/gm,
+      "",
+    );
+    expect(MEMORY_CODE).not.toMatch(/without settings blocks/i);
   });
 
   it("the /sessions/new context panel uses the SAME shared copy, not its own", () => {

@@ -215,6 +215,13 @@ test.describe("point-of-care treatment memory", () => {
         `/clients/${fx.clientId}/sessions/${fx.previousSessionId}`,
       );
       // And it says so out loud.
+      //
+      // NOTE ON SCOPE. This is the CHARTING screen's card
+      // (components/last-treatment-memory-card.tsx), not the Dashboard
+      // disclosure. It keeps the longer wording deliberately: it is fed by the
+      // SINGLE-client loader, whose candidate window is at most
+      // DEFAULT_CHARTED_SESSION_LIMIT sessions, so the batched block cap that
+      // made this claim unprovable on the Dashboard is not reachable here.
       await expect(
         card.getByText(/newer session has no treatment details yet/i),
       ).toBeVisible();
@@ -525,9 +532,14 @@ test.describe("point-of-care treatment memory", () => {
     await expect(
       page.locator(`a[href="/clients/${clientId}/sessions/${legacyId}"]`).first(),
     ).toBeVisible();
+    // Says what the record IS. The old copy ended "...WITHOUT SETTINGS BLOCKS",
+    // an assertion about a child collection that a bounded block read cannot
+    // support: a short read is indistinguishable from an empty one, so the
+    // visit may well have blocks that were not returned.
     await expect(page.getByTestId("previous-context-blockless")).toContainText(
-      "This previous visit contains legacy treatment entries without settings blocks. Open the full chart to review what was recorded.",
+      "This previous visit was charted as legacy treatment entries. Open the full chart to review what was recorded.",
     );
+    await expect(page.getByText(/without settings blocks/i)).toHaveCount(0);
     await expect(page.getByText("Area not recorded")).toHaveCount(0);
     await expect(page.getByText("Treatment area 1")).toHaveCount(0);
     await expect(page.getByText("Go gently on the chin")).toBeVisible();

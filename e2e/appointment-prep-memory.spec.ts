@@ -522,11 +522,17 @@ test.describe("appointment prep memory — returning electrolysis client", () =>
     await expect(card).toBeVisible({ timeout: T });
 
     // Present, and explicit — never suppressed, which would read as "the query
-    // failed" rather than "there was nothing to record".
+    // failed" rather than "there is nothing here to show".
+    //
+    // SCOPED TO THIS SURFACE, not to the record. Four of the five note families
+    // are harvested per AREA, i.e. from the block collection, which is read
+    // under a bound — so "No notes recorded at the last session." could deny
+    // notes that exist and were simply not returned.
     await expect(card.getByTestId("prep-notes")).toBeVisible();
     await expect(card.getByTestId("prep-notes-empty")).toHaveText(
-      "No notes recorded at the last session.",
+      "No notes to show for this visit. Open the full chart to review what was recorded.",
     );
+    await expect(card.getByText(/No notes recorded/i)).toHaveCount(0);
   });
 
   // SCOPE OF THIS TEST, stated plainly. The AUTHORITATIVE tenant-isolation

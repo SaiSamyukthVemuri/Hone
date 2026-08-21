@@ -268,6 +268,107 @@ describe("the retired pipelines cannot come back through the page", () => {
   });
 });
 
+describe("a SUPERLATIVE needs recency authority, not just positive evidence", () => {
+  const COVERAGE = read("lib/sessions/block-read-coverage.ts");
+  const OBSERVERS = read("lib/sessions/prep-observations.ts");
+  const LOADER = read("lib/sessions/last-treatment-loader.ts");
+  const MODEL = read("lib/dashboard/prep/pre-visit-prep.ts");
+  const BUILD = read("lib/dashboard/prep/build-pre-visit-prep.ts");
+
+  it("read coverage is a DISCRIMINATED UNION, not another boolean", () => {
+    // A general-purpose completeness boolean on a shared model is the shape
+    // PR #608 died of: the next caller uses it to license some other sentence,
+    // and it then has to be right about a read it does not describe.
+    expect(COVERAGE).toMatch(/kind: "complete"/);
+    expect(COVERAGE).toMatch(/kind: "possibly_truncated"/);
+    // Scoped to the TYPE ITSELF. `absentMeansEmpty` legitimately RETURNS a
+    // boolean — it is a predicate over the union, which is the point: callers
+    // ask it a question instead of reading a stored flag they can misuse.
+    const union = COVERAGE.slice(
+      COVERAGE.indexOf("export type BlockReadCoverage ="),
+      COVERAGE.indexOf(";", COVERAGE.indexOf("export type BlockReadCoverage =")),
+    );
+    expect(union.length).toBeGreaterThan(40);
+    expect(union).not.toMatch(/boolean/);
+  });
+
+  it("coverage NEVER reaches the Dashboard model or the renderer", () => {
+    // The UI receives facts, or nothing. It is not handed completeness
+    // authority to interpret.
+    for (const [label, src] of [
+      ["prep model", MODEL],
+      ["prep builder", BUILD],
+      ["prep renderer", read("app/(app)/dashboard/pre-visit-prep-block.tsx")],
+      ["dashboard page", read("app/(app)/dashboard/page.tsx")],
+    ] as const) {
+      expect(codeOnly(src), label).not.toMatch(/BlockReadCoverage/);
+      expect(codeOnly(src), label).not.toMatch(/possibly_truncated/);
+    }
+  });
+
+  it("no generic completeness flag was added to the public prep model", () => {
+    for (const flag of [
+      "blocksComplete",
+      "hasCompleteHistory",
+      "latestKnown",
+      "coverage",
+      "complete",
+    ]) {
+      expect(codeOnly(MODEL), flag).not.toMatch(new RegExp(`\\b${flag}\\b`));
+    }
+  });
+
+  it("the setup observer CANNOT be called without coverage", () => {
+    // Structural, not conventional: the parameter is required, so every call
+    // site is a compile error until it supplies the evidence.
+    expect(OBSERVERS).toMatch(
+      /export function observeLatestSetup\([\s\S]{0,400}coverage: BlockReadCoverage,\s*\)/,
+    );
+    // …and it refuses to walk past an unread candidate under truncation.
+    expect(OBSERVERS).toMatch(/if \(!absentMeansEmpty\(coverage\)\) return null;/);
+  });
+
+  it("the CAUTION observer deliberately takes no coverage — the asymmetry is real", () => {
+    // It is a bare positive fact under an existing product contract
+    // (clinical-summary.ts, pickPreClientWatchPlanSource), so gating it would
+    // suppress guidance the product intends to surface.
+    expect(OBSERVERS).toMatch(
+      /export function observeCaution\([\s\S]{0,300}\): PrepCautionObservation \| null/,
+    );
+    const cautionSig = OBSERVERS.slice(
+      OBSERVERS.indexOf("export function observeCaution("),
+      OBSERVERS.indexOf("): PrepCautionObservation | null"),
+    );
+    expect(cautionSig).not.toMatch(/coverage/);
+  });
+
+  it("'Last treatment' is guarded against the SAME attack", () => {
+    // Repairing the setup line alone would fix the symptom and keep the defect
+    // in the more consequential position.
+    expect(LOADER).toMatch(/function newerCandidateUnresolved<T extends/);
+    // Applied on BOTH selection paths: the single-client one inside
+    // `selectFromCandidates`, and the batched one the Dashboard uses. The
+    // generic definition does not match a bare call, so this counts CALL SITES.
+    expect((LOADER.match(/newerCandidateUnresolved\(/g) ?? []).length).toBe(2);
+    // Scoped to rows NEWER than the pick: an older unread row cannot falsify a
+    // recency claim, and vetoing on it would make a busy day useless.
+    expect(LOADER).toMatch(/if \(candidate\.id === selectedId\) return false;/);
+  });
+
+  it("the block bound cannot exceed PostgREST's own max_rows", () => {
+    // THE LATENT HOLE THIS CLOSES. Truncation is detected as
+    // `returned >= MAX_BATCH_BLOCK_ROWS`. If that bound were ever raised above
+    // `max_rows`, the server would clamp BELOW our limit, `returned` would never
+    // reach it, and a truncated read would report `complete` — the same failure
+    // wearing a different number.
+    const configured = read("supabase/config.toml").match(/^max_rows\s*=\s*(\d+)/m);
+    expect(configured, "max_rows must be declared in supabase/config.toml").not.toBeNull();
+    const ours = LOADER.match(/const MAX_BATCH_BLOCK_ROWS = (\d+)/);
+    expect(ours, "MAX_BATCH_BLOCK_ROWS must be declared").not.toBeNull();
+    expect(Number(ours![1])).toBeLessThanOrEqual(Number(configured![1]));
+  });
+});
+
 describe("bounded reads are bounded EXPLICITLY, not by a silent clamp", () => {
   const LOADER = read("lib/sessions/last-treatment-loader.ts");
 
