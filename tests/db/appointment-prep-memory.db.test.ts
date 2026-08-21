@@ -102,6 +102,10 @@ const BLOCK_SQL = `
 const SESSION_SQL = `
   select s.id, s.started_at, s.modality, s.record_status, s.deleted_at,
          s.appointment_id, s.session_notes, s.next_session_note,
+         -- The scalar behind the "Aftercare not marked" reminder. It is read
+         -- off the SELECTED SESSION ROW, which is what licenses the chip: a
+         -- field null on a row we hold, never an inference from a collection.
+         s.aftercare_and_risks_explained_at,
          coalesce(
            (select json_agg(json_build_object(
                      'id', e.id, 'block_id', e.block_id, 'area', e.area,
