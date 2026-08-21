@@ -27,6 +27,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //
 // The fakes return minimal values matching each loader's real contract and do
 // nothing to help a tab pass; none of them inspects the tab.
+//
+// TWO PROPERTIES THIS OBSERVATION DEPENDS ON
+// ------------------------------------------
+// 1. MULTIPLICITY IS KEPT. Expectations are call COUNTS, not a set of names.
+//    `attachStructuredAreas` runs twice on Overview, under two separate gates;
+//    with a deduplicated set, deleting one of them stayed green.
+// 2. THE RETURNED TREE IS EXECUTED. Awaiting the page runs its body and returns
+//    an element tree — Next, not the await, runs the components in it. So the
+//    tree is walked and its async server components are run too (see
+//    renderDeep), and a read added to one of them is observed rather than
+//    missed.
+//
+// Both Supabase client factories are also faked and recorded, so any read that
+// reaches the database WITHOUT going through a loader stubbed below still shows
+// up in the counts instead of passing unseen.
 // ===========================================================================
 
 const invoked = vi.hoisted(() => ({ log: [] as string[] }));
@@ -97,13 +112,6 @@ vi.mock("@/lib/app-origin", () => ({
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => {
     invoked.log.push("sessionBlocksRead");
-    const chain: Record<string, unknown> = {};
-    const proxy: unknown = new Proxy(chain, {
-      get: (_t, prop) => {
-        if (prop === "then") return undefined;
-        return () => proxy;
-      },
-    });
     return {
       from: () => ({
         select: () => ({
@@ -117,6 +125,17 @@ vi.mock("@/lib/supabase/server", () => ({
         }),
       }),
     };
+  },
+}));
+
+// Every remaining query helper reaches Supabase through one of two factories.
+// Faking BOTH means an unaccounted read cannot slip past the per-tab counts:
+// admin-client reads must never be constructed here, because every loader that
+// uses one is itself stubbed below.
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => {
+    invoked.log.push("adminClientRead");
+    throw new Error("unexpected admin-client read from the Client Profile page");
   },
 }));
 
@@ -229,14 +248,59 @@ const ClientProfilePage = (await import("@/app/(app)/clients/[id]/page"))
   searchParams: Promise<Record<string, string | undefined>>;
 }) => Promise<unknown>;
 
-/** Render the real page for one tab and return the loaders it actually ran. */
-async function loadersFor(tab: string): Promise<string[]> {
+/**
+ * Execute the async server components inside a returned RSC tree.
+ *
+ * Awaiting the page function runs its body and hands back an element tree; it
+ * does not run the components in that tree — Next does. So a read added to an
+ * async child server component would happen in production and be invisible
+ * here. The tree is therefore walked and every async component in it executed.
+ *
+ * Sync function components are deliberately NOT invoked: a "use client"
+ * component is just a function under vitest, and calling it would run browser
+ * code and make this test fail for reasons unrelated to tab gating. The walk
+ * still descends through children and element-valued props, so an async
+ * component handed to one of them is still reached and run.
+ */
+async function renderDeep(node: unknown, depth = 0): Promise<void> {
+  if (node == null || typeof node !== "object" || depth > 40) return;
+  if (Array.isArray(node)) {
+    for (const child of node) await renderDeep(child, depth + 1);
+    return;
+  }
+  const el = node as { type?: unknown; props?: unknown };
+  const props = (el.props ?? {}) as Record<string, unknown>;
+  if (typeof el.type === "function" && el.type.constructor?.name === "AsyncFunction") {
+    const fn = el.type as (p: unknown) => Promise<unknown>;
+    await renderDeep(await fn(props), depth + 1);
+  }
+  for (const value of Object.values(props)) await renderDeep(value, depth + 1);
+}
+
+/**
+ * Render the real page for one tab and return how many times each loader ran.
+ *
+ * COUNTS, not a set. Deduplicating loses real regressions: `attachStructuredAreas`
+ * runs twice on Overview — once for the last-treatment rows and once for the
+ * treatment-intelligence rows — so with a set, deleting the intelligence call
+ * left the name present via the other call site and every assertion stayed
+ * green while the intelligence card silently lost its structured areas.
+ */
+async function invocationsFor(tab: string): Promise<Record<string, number>> {
   invoked.log.length = 0;
-  await ClientProfilePage({
+  const tree = await ClientProfilePage({
     params: Promise.resolve({ id: CLIENT.id }),
     searchParams: Promise.resolve({ tab }),
   });
-  return [...new Set(invoked.log)].sort();
+  await renderDeep(tree);
+  const counts: Record<string, number> = {};
+  for (const name of invoked.log) counts[name] = (counts[name] ?? 0) + 1;
+  return counts;
+}
+
+/** The names of the loaders that ran, for leak checks that ignore multiplicity. */
+async function loadersFor(tab: string): Promise<string[]> {
+  return Object.keys(await invocationsFor(tab)).sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -261,46 +325,47 @@ const ALL_TABS: string[] = (() => {
   });
 })();
 
-/** Loaders every tab must run: identity, the client itself, and services. */
-const ALWAYS = ["getActiveServices", "getClientById", "identity"];
+/** Loaders every tab must run, once each: identity, the client itself, services. */
+const ALWAYS = { identity: 1, getClientById: 1, getActiveServices: 1 };
 
-const EXPECTED: Record<string, string[]> = {
-  overview: [
+const EXPECTED: Record<string, Record<string, number>> = {
+  overview: {
     ...ALWAYS,
-    "getActiveCardForStudioClient",
-    "getClinicalNotesSummary",
-    "getConsentTemplatesForStudio",
-    "getImportedTreatmentMemoriesForClient",
-    "getLatestIntakeForClient",
-    "getLatestSignaturesForPractitionerView",
-    "getLatestSubmittedOrReviewedIntakeForClient",
-    "getPinnedNotesForClient",
-    "getPortalAccessSummary",
-    "getPortalMessagesForPractitionerView",
-    "getRecentPortalAccessEvents",
-    // Both session_blocks reads: last treatment AND treatment intelligence.
-    "attachStructuredAreas",
-    "sessionBlocksRead",
-  ],
-  sessions: [
+    getActiveCardForStudioClient: 1,
+    getClinicalNotesSummary: 1,
+    getConsentTemplatesForStudio: 1,
+    getImportedTreatmentMemoriesForClient: 1,
+    getLatestIntakeForClient: 1,
+    getLatestSignaturesForPractitionerView: 1,
+    getLatestSubmittedOrReviewedIntakeForClient: 1,
+    getPinnedNotesForClient: 1,
+    getPortalAccessSummary: 1,
+    getPortalMessagesForPractitionerView: 1,
+    getRecentPortalAccessEvents: 1,
+    // TWICE: last treatment AND treatment intelligence. Both are gated
+    // separately, so both counts are load-bearing.
+    attachStructuredAreas: 2,
+    sessionBlocksRead: 2,
+  },
+  sessions: {
     ...ALWAYS,
-    "getAppointmentsForClientProfile",
-    "getTotalTreatmentTime",
-    "getTreatmentTimeByArea",
-    "getTreatmentGoal",
-    // Last treatment only — intelligence is Overview-exclusive.
-    "attachStructuredAreas",
-    "sessionBlocksRead",
-  ],
-  treatment: [...ALWAYS, "getTreatmentPlansForClient"],
-  personal: [...ALWAYS, "getClientPersonalNotes"],
-  messages: [
+    getAppointmentsForClientProfile: 1,
+    getTotalTreatmentTime: 1,
+    getTreatmentTimeByArea: 1,
+    getTreatmentGoal: 1,
+    // ONCE: last treatment only — intelligence is Overview-exclusive.
+    attachStructuredAreas: 1,
+    sessionBlocksRead: 1,
+  },
+  treatment: { ...ALWAYS, getTreatmentPlansForClient: 1 },
+  personal: { ...ALWAYS, getClientPersonalNotes: 1 },
+  messages: {
     ...ALWAYS,
-    "getPortalMessagesForPractitionerView",
-    "getPortalMessageRepliesForPractitionerView",
-  ],
-  health: [...ALWAYS, "getLatestIntakeForClient"],
-  consultation: [...ALWAYS, "buildClinicalNoteSections", "getClientBudgetContext"],
+    getPortalMessagesForPractitionerView: 1,
+    getPortalMessageRepliesForPractitionerView: 1,
+  },
+  health: { ...ALWAYS, getLatestIntakeForClient: 1 },
+  consultation: { ...ALWAYS, buildClinicalNoteSections: 1, getClientBudgetContext: 1 },
 };
 
 beforeEach(() => {
@@ -318,10 +383,11 @@ describe("the tab vocabulary is covered", () => {
 
 describe("which server reads actually run, per tab", () => {
   for (const tab of Object.keys(EXPECTED)) {
-    it(`${tab} runs exactly its expected loaders`, async () => {
-      const actual = await loadersFor(tab);
-      // Set equality: a missing loader AND an unnecessary one both fail.
-      expect(actual).toEqual([...EXPECTED[tab]].sort());
+    it(`${tab} runs exactly its expected loaders, exactly as often`, async () => {
+      const actual = await invocationsFor(tab);
+      // Exact map equality: a missing loader, an unnecessary loader, AND a
+      // changed call count all fail.
+      expect(actual).toEqual(EXPECTED[tab]);
     });
   }
 
@@ -360,14 +426,7 @@ describe("which server reads actually run, per tab", () => {
   it("runs the treatment-intelligence session_blocks read on Overview only", async () => {
     // Overview performs two session_blocks reads (last treatment + intelligence);
     // Sessions performs one; every other tab performs none.
-    const count = async (tab: string) => {
-      invoked.log.length = 0;
-      await ClientProfilePage({
-        params: Promise.resolve({ id: CLIENT.id }),
-        searchParams: Promise.resolve({ tab }),
-      });
-      return invoked.log.filter((n) => n === "sessionBlocksRead").length;
-    };
+    const count = async (tab: string) => (await invocationsFor(tab)).sessionBlocksRead ?? 0;
     expect(await count("overview")).toBe(2);
     expect(await count("sessions")).toBe(1);
     for (const tab of ALL_TABS.filter((t) => t !== "overview" && t !== "sessions")) {
@@ -388,8 +447,9 @@ describe("the notFound boundary holds", () => {
     ).rejects.toThrow(/NEXT_NOT_FOUND/);
 
     // Observed from invocation, not source position: identity and the client
-    // lookup itself may run; nothing downstream may.
-    const ran = [...new Set(invoked.log)].sort();
-    expect(ran).toEqual(["getClientById", "identity"]);
+    // lookup itself may run, once each; nothing downstream may.
+    const ran: Record<string, number> = {};
+    for (const name of invoked.log) ran[name] = (ran[name] ?? 0) + 1;
+    expect(ran).toEqual({ identity: 1, getClientById: 1 });
   });
 });

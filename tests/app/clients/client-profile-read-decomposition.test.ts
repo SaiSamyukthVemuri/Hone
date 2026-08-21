@@ -27,7 +27,9 @@ import { describe, expect, it } from "vitest";
 //   1. PARALLELISM — that the independent reads sit in one Promise.all rather
 //      than a chain of awaits. Invocation records cannot distinguish those.
 //   2. DATA MINIMISATION — the exact session_blocks SELECT projections. A
-//      rendered page looks identical whether or not a column was added.
+//      rendered page looks identical whether or not a column was added, so this
+//      guard stays source-level by design. It resolves local aliases and fails
+//      closed on any projection it cannot read as a literal.
 //   3. INSTRUMENTATION PLACEMENT — that the #610 span still encloses the
 //      domain work, so a remeasurement stays comparable to the 584ms baseline.
 // ===========================================================================
@@ -276,25 +278,75 @@ describe("nothing widened", () => {
       "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
     ];
 
-    // Pull the argument of every `.from("session_blocks").select(<string>)`.
+    // Resolve every session_blocks SELECT, following local aliases, and FAIL
+    // CLOSED on any that cannot be normalised and compared.
+    //
+    // Matching on the enclosing text containing `from("session_blocks")` was
+    // walked straight past by an aliased builder:
+    //
+    //     const blocks = supabaseForIntel.from("session_blocks");
+    //     await blocks.select("… , caution_note_internal").eq(…)
+    //
+    // The receiver of that `.select` is a bare identifier, so the widened
+    // projection was never collected, `found` still equalled the two baselines,
+    // and — because the alias reuses the existing client — the behavioural
+    // read counter was unmoved too. Aliases are now resolved, and a projection
+    // that is not a plain string literal is a failure rather than a skip.
+    const aliases = new Map<string, ts.Node>();
+    const collectAliases = (n: ts.Node) => {
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
+        aliases.set(n.name.text, n.initializer);
+      }
+      ts.forEachChild(n, collectAliases);
+    };
+    collectAliases(SF);
+
+    /** Does this expression bottom out in `.from("session_blocks")`? */
+    const isSessionBlocks = (n: ts.Node | undefined, depth = 0): boolean => {
+      if (!n || depth > 20) return false;
+      if (ts.isAwaitExpression(n) || ts.isParenthesizedExpression(n)) {
+        return isSessionBlocks(n.expression, depth + 1);
+      }
+      if (ts.isIdentifier(n)) return isSessionBlocks(aliases.get(n.text), depth + 1);
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+        if (
+          n.expression.name.text === "from" &&
+          n.arguments.length > 0 &&
+          ts.isStringLiteral(n.arguments[0]) &&
+          n.arguments[0].text === "session_blocks"
+        ) {
+          return true;
+        }
+        // Any other builder link (.eq/.in/.is/.order/.limit/.select/…) — keep walking.
+        return isSessionBlocks(n.expression.expression, depth + 1);
+      }
+      return false;
+    };
+
     const found: string[] = [];
+    const unreadable: string[] = [];
     const visit = (n: ts.Node) => {
       if (
         ts.isCallExpression(n) &&
         ts.isPropertyAccessExpression(n.expression) &&
         n.expression.name.text === "select" &&
-        n.arguments.length > 0 &&
-        ts.isStringLiteral(n.arguments[0])
+        isSessionBlocks(n.expression.expression)
       ) {
-        const chain = n.expression.expression.getText(SF);
-        if (chain.includes('from("session_blocks")')) {
-          found.push((n.arguments[0] as ts.StringLiteral).text.replace(/\s+/g, " ").trim());
+        const arg = n.arguments[0];
+        if (arg && ts.isStringLiteral(arg)) {
+          found.push(arg.text.replace(/\s+/g, " ").trim());
+        } else {
+          unreadable.push(n.getText(SF).replace(/\s+/g, " ").slice(0, 120));
         }
       }
       ts.forEachChild(n, visit);
     };
     visit(SF);
 
+    expect(
+      unreadable,
+      "a session_blocks projection could not be read as a literal, so it cannot be compared",
+    ).toEqual([]);
     expect(found, "expected exactly two session_blocks projections").toHaveLength(2);
     expect(found.sort()).toEqual([...BASELINES].sort());
     expect(SOURCE).not.toContain('.select("*")');
