@@ -383,19 +383,22 @@ describe("the Today row wires it correctly", () => {
     // The other half of the same bug: even with distinct requests, reading the
     // result back by `appt.client_id` hands both of a client's appointments
     // whichever entry was written last.
-    expect(DASH).toMatch(/prepLoads\.get\(appt\.id\)/);
+    expect(DASH).toMatch(/visitPreps\.get\(appt\.id\)/);
     expect(DASH, "a client-keyed lookup would collide").not.toMatch(
-      /prepLoads\.get\(appt\.client_id\)/,
+      /visitPreps\.get\(appt\.client_id\)/,
     );
   });
 
   it("loads the whole day in ONE batched call — no loop, no per-row await", () => {
     expect(
-      (DASH.match(/loadLastChartedTreatmentsForClients\(/g) ?? []).length,
+      (DASH.match(/loadVisitPreparations\(/g) ?? []).length,
       "exactly one batched call",
     ).toBe(1);
-    // The per-client loader must not appear on this page at all.
+    // Neither retired loader may appear on this page at all.
+    expect(DASH).not.toMatch(/loadLastChartedTreatmentsForClients\b/);
     expect(DASH).not.toMatch(/loadLastChartedTreatmentForClient\b/);
+    // ...and the single-appointment entry point would be an N+1 here.
+    expect(DASH).not.toMatch(/loadVisitPreparation\(\{/);
     // The fold that turns loads into per-appointment memories is pure.
     const fold = DASH.slice(
       DASH.indexOf("const prepSummaryByAppointment"),
@@ -406,12 +409,22 @@ describe("the Today row wires it correctly", () => {
     expect(fold, "no query inside the per-appointment fold").not.toMatch(/supabase|\.from\(/);
   });
 
-  it("uses the SHARED mapper rather than a second hand-written input", () => {
-    expect(DASH).toMatch(/prepMemoryInputFromTreatment\(load\.treatment\)/);
-    // ...the same mapper the calendar appointment page uses.
-    expect(read("app/(app)/calendar/[id]/page.tsx")).toMatch(
-      /prepMemoryInputFromTreatment\(selected\)/,
-    );
+  it("builds NO clinical model of its own — the authority hands it over built", () => {
+    // The property is unchanged and its enforcement moved up. There must be ONE
+    // mapping from a visit to its clinical model, not a copy per surface — and
+    // it now lives behind an adapter whose every evidence channel is a REQUIRED
+    // parameter, because the builder's own input marks four of them optional
+    // and a page-side build can drop them without a type error.
+    for (const page of ["app/(app)/dashboard/page.tsx", "app/(app)/calendar/[id]/page.tsx"]) {
+      const src = read(page);
+      expect(src, `${page} builds the model itself`).not.toMatch(
+        /buildAppointmentPrepMemory\(/,
+      );
+      expect(src, `${page} maps its own input`).not.toMatch(
+        /prepMemoryInputFromTreatment\(/,
+      );
+    }
+    expect(DASH).toMatch(/memory: prep\.memory/);
   });
 
   it("a failed or truncated read renders as 'could not load', never as 'new client'", () => {

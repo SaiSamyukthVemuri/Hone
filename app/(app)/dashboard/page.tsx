@@ -57,15 +57,8 @@ import {
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
-import {
-  loadLastChartedTreatmentsForClients,
-  type AppointmentPrepLoad,
-} from "@/lib/sessions/last-treatment-loader";
-import {
-  buildAppointmentPrepMemory,
-  prepMemoryInputFromTreatment,
-  type AppointmentPrepMemory,
-} from "@/lib/sessions/appointment-prep-memory";
+import { loadVisitPreparations } from "@/lib/sessions/history/prepare-visit";
+import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memory";
 import { DashboardTreatmentMemory } from "./dashboard-treatment-memory";
 import {
   toDashboardPrepSummary,
@@ -482,7 +475,7 @@ export default async function DashboardPage({
   // One batch is ONE DAY. The shared row budget is spent between the loosest
   // and tightest `before` in the batch, so widening a batch across several days
   // would let one day's rows evict another's and reappear as a false absence.
-  const prepLoads = await loadLastChartedTreatmentsForClients({
+  const visitPreps = await loadVisitPreparations({
     studioId: studio.id,
     requests: visibleAppointments.map((a) => ({
       // The APPOINTMENT is the unit of identity, not the client. A client with
@@ -510,8 +503,8 @@ export default async function DashboardPage({
   // disclosure and the server has re-checked that the appointment is hers.
   const prepSummaryByAppointment = new Map<string, DashboardPrepSummary>();
   for (const appt of visibleAppointments) {
-    const load = prepLoads.get(appt.id);
-    if (!load) {
+    const prep = visitPreps.get(appt.id);
+    if (!prep) {
       prepSummaryByAppointment.set(
         appt.id,
         toDashboardPrepSummary({ memory: null, unavailable: false, planNote: null }),
@@ -521,14 +514,18 @@ export default async function DashboardPage({
     prepSummaryByAppointment.set(
       appt.id,
       toDashboardPrepSummary({
-        memory: load.treatment
-          ? buildAppointmentPrepMemory(prepMemoryInputFromTreatment(load.treatment))
-          : null,
-        unavailable: load.unavailable,
-        // `narrative.plan` is the newest recorded "for next visit" note. The
-        // loader builds it to survive both "nothing charted" and a failed block
-        // read, so a note-only visit still reaches the practitioner.
-        planNote: load.narrative.plan?.text?.trim() || null,
+        // Already built, from the ONE canonical record, by the adapter whose
+        // every evidence channel is required. This page no longer builds the
+        // clinical model itself and therefore cannot omit a channel.
+        memory: prep.memory,
+        // A VARIANT, not a boolean beside the data: only `no-prior-visit` is a
+        // proven absence, and it is the only one that licenses a claim.
+        unavailable:
+          prep.preparation.treatment.kind === "evidence-unavailable",
+        // The newest recorded "for next visit" note. Recovered from the
+        // candidate window independently of whether a treatment was selected,
+        // so a note-only visit still reaches the practitioner.
+        planNote: prep.narrative.plan?.text?.trim() || null,
       }),
     );
   }
@@ -549,6 +546,8 @@ export default async function DashboardPage({
   ).map(
     (appt) => {
       const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+      const prep = visitPreps.get(appt.id) ?? null;
+      const preparation = prep?.preparation ?? null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
       const charting: TodayCharting = linked
         ? linked.hasChartedArea
@@ -566,10 +565,32 @@ export default async function DashboardPage({
         timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
         status: appt.status,
         serviceName: appt.service?.name ?? null,
-        hasHistory: preview?.hasHistory ?? false,
-        nextVisitNote: preview?.nextVisitNote ?? null,
-        cautionNote: preview?.cautionNote ?? null,
-        setupLine: preview?.setupLine ?? null,
+        // EVERY HISTORICAL FIELD NOW COMES FROM THE AUTHORITY.
+        //
+        // These used to come from `getBeforeTodayPreviews`, whose four reads
+        // never bind `error`, so one failed query rendered the whole roster as
+        // new clients. Its only output channel for "do we know?" was a boolean,
+        // which forced every unknown to be spoken as an affirmative `false`.
+        //
+        // `hasHistory` is now a POSITIVE OBSERVATION and nothing else: true only
+        // when a visit was actually observed. It is never `true` from a guess,
+        // and — critically — the "New client" line below is NOT gated on its
+        // negation, but on the authority having PROVEN there is no prior visit.
+        hasHistory: preparation?.treatment.kind === "visit",
+        nextVisitNote:
+          preparation?.watchPlan.kind === "recorded"
+            ? preparation.watchPlan.planNote
+            : null,
+        cautionNote:
+          preparation?.watchPlan.kind === "recorded"
+            ? preparation.watchPlan.caution
+            : null,
+        setupLine:
+          preparation?.setup.kind === "recorded" ? preparation.setup.line : null,
+        // Records-completeness chips about the CLIENT, not a recency claim about
+        // a visit — a distinction this product already draws. Deliberately still
+        // sourced from the previews read: it makes no latest/last/absence claim
+        // about treatment, so it is not in the family this authority governs.
         reminders: preview?.reminders ?? [],
         intake,
         charting,
@@ -1227,20 +1248,24 @@ function AppointmentRow({
                   // ONE relationship line, not "New client" here and "No prior
                   // treatment history yet" somewhere else.
                   //
-                  // GUARDED BY BOTH AUTHORITIES. Today carries two independent
-                  // evidence sources — the Before-Today workflow and the
-                  // appointment-prep loader — and they can disagree, because
-                  // they differ on void records, truncation and error
-                  // handling. Once the prep memory renders on its own
-                  // authority, the unguarded form could print "New client · No
-                  // charted history yet" directly above "Last treatment: …"
-                  // for the same person.
+                  // NOW PROVABLE, NOT MERELY DOUBLE-GUARDED.
                   //
-                  // So this claim now requires that NEITHER source contradicts
-                  // it: the workflow says no history, the prep loader proved no
-                  // treatment, and the prep read actually answered. A
-                  // truncated or failed prep read is not permission to call
-                  // someone new.
+                  // There used to be two independent evidence sources here that
+                  // could disagree — they differed on void records, truncation
+                  // and error handling — so this claim was defended by asking
+                  // both and requiring neither to contradict it.
+                  //
+                  // There is one source now, and this conjunction reduces
+                  // EXACTLY to its proven variant: `hasTreatment` is false only
+                  // when no visit was observed, `unavailable` is true only for
+                  // `evidence-unavailable`, so the two together hold if and only
+                  // if the authority answered `no-prior-visit` — a COMPLETE
+                  // window that reached the end and found nothing.
+                  //
+                  // A truncated or failed read is `evidence-unavailable`, which
+                  // fails the second test. It is still not permission to call
+                  // someone new; the difference is that this is now a theorem
+                  // about the window rather than an agreement between two reads.
                   <span className="text-neutral-500">
                     New client · No charted history yet
                   </span>

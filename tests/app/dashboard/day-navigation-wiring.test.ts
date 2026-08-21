@@ -85,10 +85,8 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     // `starts_at`, and reports a failed or truncated read as `unavailable`
     // rather than as an absence. That is what makes it safe on any day — and
     // it is what gives a practitioner something to prepare with.
-    expect(CODE).not.toMatch(/const prepLoads = !viewingToday/);
-    expect(CODE).toMatch(
-      /const prepLoads = await loadLastChartedTreatmentsForClients\(\{/,
-    );
+    expect(CODE).not.toMatch(/const visitPreps = !viewingToday/);
+    expect(CODE).toMatch(/const visitPreps = await loadVisitPreparations\(\{/);
     // Still one request PER APPOINTMENT, carrying its own boundary.
     expect(CODE).toMatch(/requestKey: a\.id/);
     expect(CODE).toMatch(/before: a\.starts_at/);
@@ -136,7 +134,7 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     // charted" and a failed block read, and on a future day it is the single
     // most useful thing the practitioner can read.
     expect(CODE).toMatch(
-      /planNote: load\.narrative\.plan\?\.text\?\.trim\(\) \|\| null/,
+      /planNote: prep\.narrative\.plan\?\.text\?\.trim\(\) \|\| null/,
     );
     // …and the no-load fallback must not invent one.
     expect(CODE).toMatch(/memory: null,\s*unavailable: false,\s*planNote: null,/);
