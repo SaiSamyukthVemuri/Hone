@@ -24,7 +24,13 @@ describe("(15) reaction consumers read the unified rep via ONE set-based embedde
   for (const { label, file } of CONSUMERS) {
     it(`${label}: embeds electrolysis_entries(observation_chips ...) — not a per-row query`, () => {
       const src = read(file);
-      expect(src).toMatch(/electrolysis_entries\(observation_chips[^)]*\)/);
+      // Order-insensitive on purpose: the property is that the unified
+      // representation is read through ONE set-based embed, not that
+      // `observation_chips` happens to be the first column named. The client
+      // page's own summary projection was retired in favour of the single
+      // canonical historical projection, and the embed that remains there lists
+      // its columns in a different order.
+      expect(src).toMatch(/electrolysis_entries\([^)]*observation_chips[^)]*\)/);
       // No per-block/per-client await inside a loop for reactions.
       expect(src).not.toMatch(/for\s*\([^)]*\)\s*\{[\s\S]{0,200}await[\s\S]{0,120}from\("electrolysis_entries"\)/);
       expect(src).not.toMatch(/\.map\([^)]*await[\s\S]{0,120}\.from\("session_blocks"\)/);

@@ -65,6 +65,7 @@ export type HistorySession = ChartedEvidenceRow & {
   next_session_note?: string | null;
   price_paid_cents?: number | null;
   practitioner_id?: string | null;
+  performed_by_practitioner_id?: string | null;
   aftercare_and_risks_explained_at?: string | null;
 };
 

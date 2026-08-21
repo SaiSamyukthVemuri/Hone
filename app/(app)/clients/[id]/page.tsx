@@ -4,8 +4,6 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
-  pickLastTreatment,
-  pickPreClientWatchPlanSource,
   type ClinicalSummaryBlock,
   type LastSessionSummary,
 } from "@/lib/sessions/clinical-summary";
@@ -18,6 +16,8 @@ import { TreatmentIntelligenceCard } from "@/components/treatment-intelligence-c
 import { LastVisitCard } from "@/components/last-visit-card";
 import { BeforeTodayCard } from "@/components/before-today-card";
 import { buildBeforeToday } from "@/lib/sessions/before-today";
+import { loadVisitPreparation } from "@/lib/sessions/history/prepare-visit";
+import { toClinicalSummaryBlocks } from "@/lib/sessions/point-of-care-memory";
 import { getImportedTreatmentMemoriesForClient } from "@/lib/imported-treatment-memory";
 import { attachStructuredAreas } from "@/lib/supabase/queries";
 
@@ -352,83 +352,68 @@ export default async function ClientCheatSheetPage({
   // (or, for laser/legacy sessions, raw entries) wins. An uncharted
   // newer session still appears under Needs charting; it just can't
   // blank out the summary.
-  const recentSessions = sessions.slice(0, 25);
-  let lastTreatment: (typeof sessions)[number] | null = null;
-  let lastTreatmentSummary: LastSessionSummary | null = null;
-  let lastTreatmentBlocks: ClinicalSummaryBlock[] = [];
-  // PR #203: pre-client Watch/Plan context for the card's footer band
-  // (may come from a different session than lastTreatment).
-  let preClientWatchPlan: LastSessionSummary | null = null;
-  if (recentSessions.length > 0) {
-    const supabaseForSummary = await createClient();
-    const { data: recentBlocks } = await supabaseForSummary
-      .from("session_blocks")
-      .select(
-        "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
-      )
-      .eq("studio_id", studio.id)
-      .in(
-        "session_id",
-        recentSessions.map((s) => s.id),
-      )
-      .is("deleted_at", null)
-      .order("sort_order", { ascending: true });
-    // Migration 0128: attach structured areas so the Last treatment / Watch-plan
-    // summaries render EVERY treated area + laterality, not just primary_area.
-    const summaryBlockRows = (recentBlocks ?? []) as Array<
-      ClinicalSummaryBlock & {
-        id: string;
-        session_id: string;
-        electrolysis_entries?:
-          | Array<{ observation_chips: unknown; deleted_at: string | null }>
-          | null;
-      }
-    >;
-    await attachStructuredAreas(summaryBlockRows, studio.id);
-    const blocksBySession = new Map<string, ClinicalSummaryBlock[]>();
-    for (const block of summaryBlockRows) {
-      const sessionId = block.session_id;
-      const list = blocksBySession.get(sessionId) ?? [];
-      // Charting unification: carry live entries' observation_chips so the
-      // reaction line reads the unified representation.
-      list.push({
-        ...block,
-        observation_chips_list: (block.electrolysis_entries ?? [])
-          .filter((e) => e.deleted_at == null)
-          .map((e) => e.observation_chips),
-      });
-      blocksBySession.set(sessionId, list);
-    }
-    lastTreatment = pickLastTreatment(recentSessions, blocksBySession);
-    if (lastTreatment) {
-      lastTreatmentBlocks = blocksBySession.get(lastTreatment.id) ?? [];
-      lastTreatmentSummary = buildLastSessionSummary({
-        blocks: lastTreatmentBlocks,
+  // THROUGH THE HISTORICAL AUTHORITY.
+  //
+  // This page ran the worst historical pipeline in the product: a JS
+  // `.slice(0, 25)` over an unbounded sessions read, then its OWN inline
+  // eighteen-column `session_blocks` projection with no `.limit()` — silently
+  // capped at PostgREST's max_rows — ordered globally by `sort_order`, an
+  // INTRA-session display key, with its `error` discarded entirely.
+  // `pickLastTreatment` and `pickPreClientWatchPlanSource` then answered recency
+  // questions by walking those arrays, and `blocksBySession.get(id) ?? []` read
+  // a truncated visit as an empty one.
+  //
+  // All of it is replaced by one governed answer. There is no candidate array on
+  // this page any more, and the inline projection — the seventh copy of the same
+  // clinical select in this repository — is gone rather than corrected.
+  const clientPrep = await loadVisitPreparation({
+    studioId: studio.id,
+    clientId: id,
+    // No appointment horizon: the profile asks "what did we last do for this
+    // client", not "what happened before a particular visit".
+    before: null,
+  });
+  const selectedVisit = clientPrep.preparation.treatment;
+  const lastTreatment = clientPrep.session;
+  // The canonical record's blocks, kept as themselves for anything that reads a
+  // clinical column, and projected to the summary shape only for the renderer
+  // that wants that shape. Two views of ONE record — never two reads.
+  const canonicalBlocks = clientPrep.detail?.blocks ?? [];
+  const lastTreatmentBlocks: ClinicalSummaryBlock[] =
+    toClinicalSummaryBlocks(canonicalBlocks);
+  const lastTreatmentSummary: LastSessionSummary | null =
+    selectedVisit.kind === "visit" && lastTreatment
+      ? buildLastSessionSummary({
+          blocks: lastTreatmentBlocks,
+          nextSessionNote: lastTreatment.next_session_note ?? null,
+        })
+      : null;
+  // PR #203: the Watch/Plan band. Frequently a DIFFERENT visit from the
+  // treatment, by product rule — guidance from an earlier visit is not hidden by
+  // a newer charted visit that recorded none — so the authority hands back that
+  // visit's own record rather than letting this page fetch it and grow an eighth
+  // projection.
+  const preClientWatchPlan: LastSessionSummary | null = clientPrep.watchPlanVisit
+    ? buildLastSessionSummary({
+        blocks: toClinicalSummaryBlocks(clientPrep.watchPlanVisit.detail.blocks),
         nextSessionNote:
-          (lastTreatment as { next_session_note?: string | null })
-            .next_session_note ?? null,
-      });
-    }
-    // PR #203: the Watch/Plan band uses the same pre-client context
-    // the charting page shows; the newest session carrying any
-    // watch/plan content, even if a newer charted session has none of
-    // its own. Same blocks read; no extra query.
-    const watchPlanSource = pickPreClientWatchPlanSource(
-      recentSessions as Array<
-        (typeof sessions)[number] & { next_session_note?: string | null }
-      >,
-      blocksBySession,
-    );
-    if (watchPlanSource) {
-      preClientWatchPlan = buildLastSessionSummary({
-        blocks: blocksBySession.get(watchPlanSource.id) ?? [],
-        nextSessionNote: watchPlanSource.next_session_note ?? null,
-      });
-    }
-  }
+          clientPrep.watchPlanVisit.session.next_session_note ?? null,
+      })
+    : null;
 
   const lastTreatmentPerformer = lastTreatment
-    ? sessionPerformerName(lastTreatment, practitioners)
+    ? sessionPerformerName(
+        {
+          performed_by_practitioner_id:
+            lastTreatment.performed_by_practitioner_id ?? null,
+          // `sessions.practitioner_id` is NOT NULL in the schema and this row
+          // came from `select("*")`, so the fallback is unreachable; an empty id
+          // matches no practitioner, so the line simply omits rather than
+          // naming the wrong person.
+          practitioner_id: lastTreatment.practitioner_id ?? "",
+        },
+        practitioners,
+      )
     : null;
 
   // Overview "Last visit" card: derived from the SINGLE last session
@@ -507,22 +492,29 @@ export default async function ClientCheatSheetPage({
     lastTreatment: lastTreatment
       ? {
           startedAt: lastTreatment.started_at,
-          modality: lastTreatment.modality,
+          modality: lastTreatment.modality ?? "",
           areaNames: lastTreatmentSummary?.areas.map((a) => a.name) ?? [],
           aftercareExplainedAt:
-            (lastTreatment as { aftercare_and_risks_explained_at?: string | null })
-              .aftercare_and_risks_explained_at ?? null,
-          blockLots: lastTreatmentBlocks.map(
-            (b) =>
-              (b as { probe_lot_number?: string | null }).probe_lot_number ??
-              null,
-          ),
-          blockMinutes: lastTreatmentBlocks.map(
-            (b) => b.minutes_performed ?? null,
-          ),
-          blockReactionNotes: lastTreatmentBlocks.map(
-            (b) => b.reaction_notes ?? null,
-          ),
+            lastTreatment.aftercare_and_risks_explained_at ?? null,
+          // FROM THE CANONICAL RECORD, not from the summary projection.
+          //
+          // `ClinicalSummaryBlock` is a Pick that does NOT name
+          // `probe_lot_number`; the page used to pass its own raw rows straight
+          // through, so the column survived as an untyped runtime field and a
+          // cast read it back. Routing those rows through a typed mapper
+          // legitimately dropped it — and the probe lot silently disappeared
+          // from the aftercare line.
+          //
+          // That is this project's own P1-B in miniature, caught by the browser
+          // exactly where the migration order says it should be. The fix is not
+          // to widen the summary type: it is to read clinical values from the
+          // one canonical record, where every column is present and typed.
+          // Only the column the summary type does not name comes from the raw
+          // record; minutes stay on the projection, which NORMALISES a numeric
+          // that PostgREST can return as a string.
+          blockLots: canonicalBlocks.map((b) => b.probe_lot_number ?? null),
+          blockMinutes: lastTreatmentBlocks.map((b) => b.minutes_performed ?? null),
+          blockReactionNotes: lastTreatmentBlocks.map((b) => b.reaction_notes ?? null),
         }
       : null,
     watchPlan: preClientWatchPlan,
@@ -760,7 +752,17 @@ export default async function ClientCheatSheetPage({
             performerName={lastTreatmentPerformer}
             aftercareExplainedAt={lastTreatmentAftercareAt}
             totalMinutes={lastTreatmentTotalMinutes}
-            isLatestSession={lastTreatment?.id === sessions[0]?.id}
+            // ANSWERED BY THE AUTHORITY. "Is this the most recent visit" is a
+            // recency claim, and it was settled against this page's own array —
+            // which is ordered `started_at DESC` with no tie-break, declares no
+            // `.limit()`, and carries VOID records. A newer visit's emptiness
+            // now comes from a COUNT, and an undecidable newer visit withholds
+            // the claim rather than guessing.
+            isLatestSession={
+              selectedVisit.kind === "visit"
+                ? !selectedVisit.supersededByUnchartedVisit
+                : false
+            }
             summary={lastTreatmentSummary}
           />
 
@@ -1236,7 +1238,8 @@ export default async function ClientCheatSheetPage({
                     {/* A newer uncharted session exists; say so quietly
                         instead of letting it blank out this card. It
                         still shows under Needs charting below. */}
-                    {lastTreatment.id !== sessions[0]?.id && (
+                    {selectedVisit.kind === "visit" &&
+                      selectedVisit.supersededByUnchartedVisit && (
                       <p className="mt-1 text-xs text-neutral-500">
                         Most recent charted treatment. A newer session has no
                         treatment details yet.
@@ -1262,9 +1265,23 @@ export default async function ClientCheatSheetPage({
                   </div>
                 ) : (
                   <LastSessionEntries
-                    modality={lastTreatment.modality}
-                    electrolysisEntries={lastTreatment.electrolysis_entries}
-                    laserEntries={lastTreatment.laser_entries}
+                    // FROM THE CANONICAL RECORD. This branch renders only for a
+                    // visit with no settings areas — a laser visit or a legacy
+                    // entry-only one — and both channels come from the same
+                    // record the summary above was built from, so the card
+                    // cannot show a different subset from the one that decided
+                    // which visit this is.
+                    modality={
+                      lastTreatment.modality === "laser" ? "laser" : "electrolysis"
+                    }
+                    electrolysisEntries={
+                      (clientPrep.detail?.orphanEntries ??
+                        []) as unknown as import("@/lib/types/database").ElectrolysisEntry[]
+                    }
+                    laserEntries={
+                      (clientPrep.detail?.laserEntries ??
+                        []) as unknown as import("@/lib/types/database").LaserEntry[]
+                    }
                   />
                 )}
                 {/* PR #200 (Chloe iPad retest): the Watch/Plan box is

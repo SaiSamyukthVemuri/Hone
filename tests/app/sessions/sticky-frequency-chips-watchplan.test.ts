@@ -32,6 +32,21 @@ const MIGRATION = read(
 // 1. Sticky machine frequency
 // ---------------------------------------------------------------------------
 
+/**
+ * The page with COMMENTS REMOVED.
+ *
+ * These files explain at length which call sites were retired and why, so a
+ * guard matching raw text cannot tell a rationale from a call — and would
+ * punish recording the reason, which is how a guard quietly becomes a reason
+ * not to document anything.
+ */
+function codeOnlyClientPage(): string {
+  return CLIENT_PAGE
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+
 describe("machine frequency: tap toggle with a sticky last-used default", () => {
   it("renders as a tap-friendly two-value toggle (no free text input)", () => {
     // PR #204 moved Probe (and PR #205 added its lot input) between
@@ -211,9 +226,12 @@ describe("Sessions tab wiring", () => {
       CLIENT_PAGE.indexOf('{activeTab === "sessions"'),
       CLIENT_PAGE.indexOf('{activeTab === "treatment"'),
     );
-    expect(CLIENT_PAGE).toMatch(
-      /pickPreClientWatchPlanSource\(\s*\n?\s*recentSessions/,
-    );
+    // The watch/plan visit is chosen by the authority and its own record comes
+    // back with it, so the page renders a DIFFERENT visit's blocks without
+    // fetching them — which is how an eighth clinical projection would have
+    // been born.
+    expect(CLIENT_PAGE).toMatch(/clientPrep\.watchPlanVisit/);
+    expect(codeOnlyClientPage()).not.toMatch(/\bpickPreClientWatchPlanSource\b/);
     expect(tab).toMatch(
       /<FromLastVisitForToday[\s\S]{0,60}summary=\{preClientWatchPlan\}[\s\S]{0,40}attached/,
     );

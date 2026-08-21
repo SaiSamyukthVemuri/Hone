@@ -51,6 +51,20 @@ export type PreparedVisit = {
   /** SERVER ONLY. The selected visit's own row, for the scalars pages render. */
   session: HistorySession | null;
   /**
+   * SERVER ONLY. The visit carrying watch/plan guidance, and its own record.
+   *
+   * FREQUENTLY A DIFFERENT VISIT from the treatment, by product rule rather than
+   * by accident: guidance from an earlier visit is not hidden by a newer charted
+   * visit that recorded none. A surface rendering that band needs THAT visit's
+   * blocks, and the alternative — letting the page fetch them — is how a second
+   * clinical projection gets born.
+   */
+  watchPlanVisit: {
+    session: HistorySession;
+    detail: HistoricalVisitDetail;
+    memory: AppointmentPrepMemory;
+  } | null;
+  /**
    * SERVER ONLY. Practitioner narrative recovered from the CANDIDATE WINDOW,
    * independent of whether a treatment was selected.
    *
@@ -67,6 +81,8 @@ export type PreparedVisit = {
 };
 
 const NO_NARRATIVE = { plan: null, legacySessionNotes: null } as const;
+
+const NO_WATCH_PLAN_VISIT = null;
 
 const UNAVAILABLE: VisitPreparation = {
   treatment: { kind: "evidence-unavailable", reason: "read-failed" },
@@ -214,6 +230,7 @@ export async function loadVisitPreparations(input: {
         memory: null,
         detail: null,
         session: null,
+        watchPlanVisit: NO_WATCH_PLAN_VISIT,
         narrative: NO_NARRATIVE,
       });
       continue;
@@ -251,12 +268,13 @@ export async function loadVisitPreparations(input: {
     // 3. THE GUIDANCE — bare positive facts, which may be older than both.
     const planNote = entry.planNote.row?.next_session_note?.trim() ?? null;
     let caution: string | null = null;
+    let watchModel: ReturnType<typeof modelFor> | null = null;
     if (entry.watch.row) {
-      const model =
+      watchModel =
         entry.watch.row.id === entry.treatment.row?.id
           ? treatmentModel
           : modelFor(history, entry.watch.row);
-      caution = model?.memory ? cautionTextOf(model.memory) : null;
+      caution = watchModel?.memory ? cautionTextOf(watchModel.memory) : null;
     }
     let watchPlan: WatchPlanEvidence;
     if (caution || planNote) {
@@ -273,6 +291,14 @@ export async function loadVisitPreparations(input: {
       memory: treatmentModel?.memory ?? null,
       detail: treatmentModel?.detail ?? null,
       session: entry.treatment.row,
+      watchPlanVisit:
+        entry.watch.row && watchModel?.memory && watchModel.detail
+          ? {
+              session: entry.watch.row,
+              detail: watchModel.detail,
+              memory: watchModel.memory,
+            }
+          : null,
       narrative: {
         plan:
           entry.planNote.row && planNote
@@ -316,6 +342,7 @@ export async function loadVisitPreparation(input: {
       memory: null,
       detail: null,
       session: null,
+      watchPlanVisit: NO_WATCH_PLAN_VISIT,
       narrative: NO_NARRATIVE,
     }
   );

@@ -57,6 +57,21 @@ function session(
   };
 }
 
+/**
+ * The page with COMMENTS REMOVED.
+ *
+ * These files explain at length which call sites were retired and why, so a
+ * guard matching raw text cannot tell a rationale from a call — and would
+ * punish recording the reason, which is how a guard quietly becomes a reason
+ * not to document anything.
+ */
+function codeOnlyPage(): string {
+  return PAGE
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+
 describe("pickLastTreatment: most recent session with actual treatment details", () => {
   it("newest session has no entries/areas; the older charted session wins", () => {
     const newestEmpty = session("new");
@@ -107,16 +122,63 @@ describe("Last treatment card (Sessions tab)", () => {
   it("the heading is Last treatment and the page wires the helper", () => {
     expect(PAGE).toMatch(/>Last treatment<\/h2>/);
     expect(PAGE).not.toMatch(/>Last session<\/h2>/);
-    expect(PAGE).toMatch(/pickLastTreatment\(recentSessions, blocksBySession\)/);
+    // Re-pointed: the selection moved to the authority, and the page can no
+    // longer make it — there is no candidate array here to pick from.
+    expect(PAGE).toMatch(/loadVisitPreparation\(\{/);
+    expect(codeOnlyPage()).not.toMatch(/\bpickLastTreatment\b/);
+    expect(codeOnlyPage()).not.toMatch(/recentSessions/);
   });
 
-  it("blocks are read across the recent sessions, not just sessions[0]", () => {
-    expect(PAGE).toMatch(/\.in\(\s*"session_id",\s*recentSessions\.map/);
+  it("a clinical column absent from the SUMMARY type is read from the RECORD", () => {
+    // THE MISTAKE THIS PROJECT ALMOST SHIPPED, caught by the browser lane.
+    //
+    // `ClinicalSummaryBlock` is a Pick that does not name `probe_lot_number`.
+    // The page used to pass its own raw rows straight through, so the column
+    // survived as an untyped runtime field and a cast read it back. Routing
+    // those rows through a typed mapper legitimately dropped it, and the probe
+    // lot silently vanished from the aftercare line — the same shape as the
+    // defect this whole authority exists to remove, one layer further out.
+    //
+    // The rule: a clinical value the summary type does not name is read from
+    // the canonical record, never cast back out of the projection.
+    const code = codeOnlyPage();
+    expect(code).toMatch(/blockLots: canonicalBlocks\.map\(\(b\) => b\.probe_lot_number/);
+    expect(code, "a cast back out of the summary projection").not.toMatch(
+      /as \{ probe_lot_number\?: string \| null \}/,
+    );
+    // ...and the mapper really does narrow, so this is not a hypothetical.
+    const mapper = readFileSync(
+      join(process.cwd(), "lib/sessions/point-of-care-memory.ts"),
+      "utf8",
+    );
+    const body = mapper.slice(
+      mapper.indexOf("export function toClinicalSummaryBlocks"),
+      mapper.indexOf("export function buildPointOfCareMemory"),
+    );
+    expect(body, "if the mapper ever carries it, revisit this guard").not.toContain(
+      "probe_lot_number",
+    );
+  });
+
+  it("the page reads NO blocks of its own — one canonical projection", () => {
+    // The property was "across the recent sessions, not just sessions[0]". It is
+    // now stronger: this page issues no clinical block read at all. Its inline
+    // eighteen-column select was the SEVENTH copy of the same projection in this
+    // repository, capped invisibly at max_rows and with its error discarded.
+    const summaryRegion = PAGE.slice(0, PAGE.indexOf("buildTreatmentIntelligence"));
+    expect(summaryRegion).not.toMatch(/\.from\("session_blocks"\)/);
+    expect(codeOnlyPage()).not.toMatch(/blocksBySession/);
   });
 
   it("a newer uncharted session is called out, not allowed to blank the card", () => {
     expect(PAGE).toMatch(/Most recent charted treatment/);
-    expect(PAGE).toMatch(/lastTreatment\.id !== sessions\[0\]\?\.id/);
+    // FROM THE AUTHORITY, not from an array position. `sessions[0]` was a
+    // recency answer taken from a list ordered `started_at DESC` with no
+    // tie-break, no `.limit()`, and void records included.
+    expect(PAGE).toMatch(/selectedVisit\.supersededByUnchartedVisit/);
+    expect(codeOnlyPage(), "an array position is not a recency answer").not.toMatch(
+      /sessions\[0\]\?\.id/,
+    );
   });
 
   it("empty state says no charted treatments yet; 'No entries logged' is gone", () => {
