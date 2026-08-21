@@ -202,15 +202,36 @@ describe("telemetry backend failure is contained", () => {
     ).resolves.toBe("still fine");
   });
 
-  it("returns normally when the payload cannot be serialised", async () => {
-    // A cyclic value can only reach the serialiser through the module's own
-    // payload, so this exercises the JSON.stringify fallback path directly.
-    const cyclic: Record<string, unknown> = {};
-    cyclic.self = cyclic;
-    expect(() => buildPerfSummary([], 0, "t")).not.toThrow();
-    await expect(timed("records.identity", async () => cyclic)).resolves.toBe(
-      cyclic,
-    );
+  it("falls back to a fixed marker when the payload cannot be serialised", async () => {
+    // This test used to pass a cyclic value as the callback's RETURN value and
+    // assert it came back. That never reached the serialiser at all — the
+    // payload carries only fixed span metadata, never the callback's result —
+    // so the assertion held even with the entire fallback deleted. Sabotaging
+    // JSON.stringify for the duration of the flush is what actually exercises
+    // it.
+    const stringifySpy = vi
+      .spyOn(JSON, "stringify")
+      .mockImplementation(() => {
+        throw new Error("cannot serialise");
+      });
+
+    let result: string;
+    try {
+      result = await timed("records.identity", async () => "still fine");
+    } finally {
+      // Restore BEFORE asserting: vitest's own matchers serialise.
+      stringifySpy.mockRestore();
+    }
+
+    // Containment: the page's work is unaffected by a telemetry failure.
+    expect(result).toBe("still fine");
+    // The last-resort marker went out, and no half-built payload did.
+    expect(written).toContain("perf_timing_serialize_failed");
+    expect(emitted()).toHaveLength(0);
+  });
+
+  it("builds a summary without throwing on an empty span list", async () => {
+    expect(() => buildPerfSummary([], 0, "2026-08-20T00:00:00Z")).not.toThrow();
   });
 
   it("still runs the work when the span recorder is disabled mid-flight", async () => {
