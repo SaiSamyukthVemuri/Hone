@@ -111,11 +111,32 @@ describe("capture surface: session detail page", () => {
 });
 
 describe("surfacing: the latest previous note appears when charting", () => {
-  it("session detail queries the most recent PREVIOUS session with a note", () => {
+  it("session detail gets the most recent PREVIOUS note FROM THE AUTHORITY", () => {
+    // This used to pin the page's OWN query: `.not(next_session_note is null)`
+    // then `.lt("started_at", session.started_at)` under `LIMIT 1`. The LOOP it
+    // protects is unchanged — written while charting, read before the next
+    // visit — but pinning the retired query would have kept a governed
+    // historical read alive on the page just to satisfy a test.
+    //
+    // What the move bought, and what this now pins: a TOTAL order (the old one
+    // was `started_at` alone, so a tie let the planner pick which note was
+    // shown), void exclusion, a declared bound, and a BOUND ERROR — the old
+    // `const { data }` discarded it, so a failed read rendered exactly like
+    // "there was no note".
     const CODE = codeOnly(SESSION_PAGE);
-    expect(CODE).toMatch(
-      /\.not\("next_session_note", "is", null\)\s*\n?\s*\.lt\("started_at", session\.started_at\)\s*\n?\s*\.order\("started_at", \{ ascending: false \}\)\s*\n?\s*\.limit\(1\)/,
+    expect(CODE, "the page must not re-issue its own historical read").not.toMatch(
+      /\.lt\("started_at"/,
     );
+    expect(CODE).toMatch(/const fromLastVisit = prep\.narrative\.plan\?\.text \?\? null;/);
+    expect(CODE).toMatch(/before: session\.started_at/);
+    expect(CODE).toMatch(/excludeSessionId: session\.id/);
+    // ...and the authority really is answering THIS question.
+    const AUTHORITY = readFileSync(
+      path.join(ROOT, "lib/sessions/history/select-visit.ts"),
+      "utf8",
+    );
+    expect(AUTHORITY).toMatch(/latestPlanNote\(\): HistoricalAnswer<HistorySession>/);
+    expect(AUTHORITY).toMatch(/row\.next_session_note\?\.trim\(\)/);
   });
 
   it("renders the From last visit banner only when a note exists", () => {

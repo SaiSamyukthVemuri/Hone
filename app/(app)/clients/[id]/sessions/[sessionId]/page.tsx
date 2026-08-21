@@ -62,7 +62,7 @@ import {
   reviseClinicalNoteAction,
 } from "../../clinical-notes-actions";
 import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
-import { loadLastChartedTreatment } from "@/lib/sessions/last-treatment-loader";
+import { loadVisitPreparation } from "@/lib/sessions/history/prepare-visit";
 import { buildPointOfCareMemory } from "@/lib/sessions/point-of-care-memory";
 import { LastTreatmentMemoryCard } from "@/components/last-treatment-memory-card";
 import {
@@ -378,23 +378,6 @@ export default async function SessionDetailPage({
     session.modality === "electrolysis"
       ? await getPriorLaserSessionCount(studio.id, id, session.started_at)
       : 0;
-  // PR #190 (clinical memory). The note the practitioner left FOR
-  // this visit while charting the previous one. Narrow select; only
-  // rendered when a note exists, so historical clients see nothing.
-  const supabaseForNote = await createClient();
-  const { data: previousWithNote } = await supabaseForNote
-    .from("sessions")
-    .select("id, started_at, next_session_note")
-    .eq("studio_id", studio.id)
-    .eq("client_id", id)
-    .is("deleted_at", null)
-    .not("next_session_note", "is", null)
-    .lt("started_at", session.started_at)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const fromLastVisit =
-    previousWithNote?.next_session_note?.trim() || null;
 
   // POINT-OF-CARE TREATMENT MEMORY (Chloe). Everything she needs to reproduce
   // last time's treatment: areas + laterality, frequency, probe and lot, mode
@@ -410,12 +393,40 @@ export default async function SessionDetailPage({
   // The candidate is the newest CHARTED session, not the newest session ROW,
   // tapping a modality on /sessions/new creates an empty session immediately,
   // and an abandoned one used to win every "previous session" lookup.
-  const lastTreatment = await loadLastChartedTreatment({
+  // THROUGH THE HISTORICAL AUTHORITY.
+  //
+  // The page handed the loader `clientData.sessions` — a bare array it already
+  // held, which is the shape that lets a caller re-decide which visit is the
+  // previous one. It now receives ONE answer and no array.
+  const prep = await loadVisitPreparation({
     studioId: studio.id,
-    sessions: clientData.sessions,
+    clientId: id,
+    // Strictly before the session being charted, so a session charted later the
+    // same day can never be presented as "last time".
     before: session.started_at,
     excludeSessionId: session.id,
   });
+  const selectedVisit = prep.preparation.treatment;
+  // PR #190 (clinical memory). The note the practitioner left FOR this visit
+  // while charting the previous one — from the read ALREADY issued above, so
+  // this replaced a round-trip rather than adding one.
+  //
+  // It used to be this page's own query, and it was the last governed
+  // historical read on the page: `.lt("started_at", session.started_at)` is a
+  // historical horizon, which is the authority's entire job. Four properties
+  // changed by asking for it instead:
+  //
+  //   * the order is TOTAL. The old read ordered `started_at DESC` alone under
+  //     `LIMIT 1`, so a tie at the newest note-carrying instant let the planner
+  //     choose which note the practitioner was shown;
+  //   * VOID records are excluded. The old read filtered only `deleted_at`, so
+  //     a voided visit's plan could still be presented as standing guidance;
+  //   * the error is BOUND. The old `const { data } =` discarded it, so a
+  //     failed read rendered exactly like "there was no note";
+  //   * a whitespace-only note no longer HIDES a real one. `.not(…is.null)`
+  //     selected it, `.trim() || null` then discarded it, and the genuine older
+  //     note below it was never reached.
+  const fromLastVisit = prep.narrative.plan?.text ?? null;
   // Latest non-superseded entry per note kind, from the sections ALREADY
   // loaded above. No extra query, no note body in any log line.
   const noteHead = (kind: "consultation" | "skin_hair_analysis") => {
@@ -430,36 +441,42 @@ export default async function SessionDetailPage({
         }
       : null;
   };
-  const pointOfCareMemory = lastTreatment
-    ? buildPointOfCareMemory({
-        session: {
-          id: lastTreatment.session.id,
-          started_at: lastTreatment.session.started_at,
-          modality: lastTreatment.session.modality,
-          next_session_note: lastTreatment.session.next_session_note ?? null,
-        },
-        blocks: lastTreatment.blocks,
-        consultationNote: noteHead("consultation"),
-        skinHairNote: noteHead("skin_hair_analysis"),
-        // The "From last visit, for today" band below already carries this
-        // exact text; the card omits it rather than repeating it.
-        planAlreadyShown: fromLastVisit,
-        supersededByEmptySession: lastTreatment.supersededByEmptySession,
-        // Distinguishes a legacy entry-only electrolysis visit from a laser one
-        // when the selected treatment carries no settings blocks.
-        hasLiveElectrolysisEntries:
-          (lastTreatment.session.electrolysis_entries ?? []).some(
-            (e) => e.deleted_at == null,
-          ),
-      })
-    : null;
+  const pointOfCareMemory =
+    selectedVisit.kind === "visit" && prep.session && prep.detail
+      ? buildPointOfCareMemory({
+          session: {
+            id: prep.session.id,
+            started_at: prep.session.started_at,
+            modality: prep.session.modality ?? "",
+            next_session_note: prep.session.next_session_note ?? null,
+          },
+          blocks: prep.detail.blocks,
+          consultationNote: noteHead("consultation"),
+          skinHairNote: noteHead("skin_hair_analysis"),
+          // The "From last visit, for today" band below already carries this
+          // exact text; the card omits it rather than repeating it.
+          planAlreadyShown: fromLastVisit,
+          // A recency assertion, so it is answered by the authority rather than
+          // by comparing rows here — and it is withheld rather than guessed when
+          // a newer visit's evidence did not arrive.
+          supersededByEmptySession: selectedVisit.supersededByUnchartedVisit,
+          // FROM THE VARIANT. Reading this off embedded rows is the inference a
+          // row cap can falsify, and it is what makes a legacy entry-only visit
+          // look like a laser one.
+          hasLiveElectrolysisEntries:
+            selectedVisit.treatment.kind === "legacy-entry-only",
+        })
+      : null;
 
   // Whole-session copy (0157): the ONE canonical authority for whether an
   // eligible previous session exists is whole_session_copy_source_descriptor,
   // the SAME function the commit RPC derives its source from. We gate the panel
   // on it (not a separate "latest previous session" query), so page gating and
   // commit can never disagree about which session is the source.
-  const { data: copyDescriptor } = await supabaseForNote.rpc(
+  // Its own client: this call used to borrow the one the removed
+  // `previousWithNote` query created, and the name outlived the query.
+  const supabaseForCopy = await createClient();
+  const { data: copyDescriptor } = await supabaseForCopy.rpc(
     "whole_session_copy_source_descriptor",
     { p_studio_id: studio.id, p_target_session_id: session.id },
   );

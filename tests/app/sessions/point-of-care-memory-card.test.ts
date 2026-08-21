@@ -95,10 +95,14 @@ describe("the memory card is mounted ON the live charting page", () => {
 });
 
 describe("both previous-context surfaces use the ONE shared selector", () => {
-  it("the charting page loads the last CHARTED treatment", () => {
-    expect(SESSION_PAGE).toMatch(/loadLastChartedTreatment\(\{/);
+  it("the charting page asks the AUTHORITY, bounded by the visit being charted", () => {
+    expect(SESSION_PAGE).toMatch(/loadVisitPreparation\(\{/);
+    // The two bounds that stop a session charted later the same day, or this
+    // session itself, from becoming "last time".
     expect(SESSION_PAGE).toMatch(/excludeSessionId: session\.id/);
     expect(SESSION_PAGE).toMatch(/before: session\.started_at/);
+    expect(codeOnly(SESSION_PAGE)).not.toMatch(/sessions: clientData\.sessions/);
+    expect(codeOnly(SESSION_PAGE)).not.toMatch(/\bloadLastChartedTreatment\b/);
   });
 
   it("the new-session page asks the AUTHORITY, and holds no session array", () => {
