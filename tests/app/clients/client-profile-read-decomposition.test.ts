@@ -12,18 +12,24 @@ import { describe, expect, it } from "vitest";
 // surface was only ~11% of measured span time. So the fix is decomposition of
 // the page's reads, not identity memoisation.
 //
-// Two structural claims are asserted here, because both are invisible to a
-// rendering test and both silently regress under ordinary editing:
+// SCOPE: this file now proves ONLY what executing the page cannot show.
 //
-//   1. reads that depend only on (studio.id, client.id) run in ONE parallel
-//      wave rather than a chain of single-await statements;
-//   2. reads whose values are rendered by exactly one tab are SKIPPED on the
-//      other tabs, rather than fetched and discarded.
+// Tab gating moved to tests/app/clients/client-profile-tab-loaders.test.ts,
+// which invokes the real component once per tab against a faked loader
+// boundary and asserts the exact set of reads that run. Four generations of
+// source-level gate proof were defeated in turn — identifier presence, then a
+// resolved substring, then an evaluated predicate blind to branch position and
+// binding provenance — so that authority is retired rather than extended, and
+// there is exactly one authority for tab behaviour.
 //
-// The page is a server component that cannot be rendered without a database,
-// so these are proved from the AST, the way the repo's other source guards do.
-// A comment is never an AwaitExpression and never a CallExpression, so prose
-// about a read cannot satisfy or break these assertions.
+// What remains here are properties execution genuinely cannot establish:
+//
+//   1. PARALLELISM — that the independent reads sit in one Promise.all rather
+//      than a chain of awaits. Invocation records cannot distinguish those.
+//   2. DATA MINIMISATION — the exact session_blocks SELECT projections. A
+//      rendered page looks identical whether or not a column was added.
+//   3. INSTRUMENTATION PLACEMENT — that the #610 span still encloses the
+//      domain work, so a remeasurement stays comparable to the 584ms baseline.
 // ===========================================================================
 
 const PAGE = path.resolve(__dirname, "../../../app/(app)/clients/[id]/page.tsx");
@@ -213,89 +219,6 @@ describe("independent reads run in one parallel wave", () => {
         `stranded serial read: ${text.split("\n")[0]}`,
       ).toBe(true);
     }
-  });
-});
-
-describe("tab-exclusive reads are skipped on other tabs", () => {
-  // helper -> the flag its call site must be gated by.
-  // helper -> the TAB SEMANTICS its call site must resolve to, after flag
-  // substitution. Asserting the resolved predicate (not the flag's name) is
-  // what makes a redefinition of the flag fail here.
-  const GATED: Array<[string, string]> = [
-    ["getAppointmentsForClientProfile", 'activeTab === "sessions"'],
-    ["getTotalTreatmentTime", 'activeTab === "sessions"'],
-    ["getTreatmentTimeByArea", 'activeTab === "sessions"'],
-    ["getTreatmentGoal", 'activeTab === "sessions"'],
-    ["getTreatmentPlansForClient", 'activeTab === "treatment"'],
-    ["getClientPersonalNotes", 'activeTab === "personal"'],
-    ["getPortalMessageRepliesForPractitionerView", 'activeTab === "messages"'],
-    ["getPortalAccessSummary", 'activeTab === "overview"'],
-    ["getLatestSubmittedOrReviewedIntakeForClient", 'activeTab === "overview"'],
-    ["getPinnedNotesForClient", 'activeTab === "overview"'],
-    ["getConsentTemplatesForStudio", 'activeTab === "overview"'],
-    ["getLatestSignaturesForPractitionerView", 'activeTab === "overview"'],
-    ["getActiveCardForStudioClient", 'activeTab === "overview"'],
-    ["getImportedTreatmentMemoriesForClient", 'activeTab === "overview"'],
-    ["getRecentPortalAccessEvents", 'activeTab === "overview"'],
-  ];
-
-  for (const [helper, predicate] of GATED) {
-    it(`${helper} is gated by ${predicate}`, () => {
-      const calls = callsTo(helper);
-      expect(calls.length, `${helper} not called`).toBeGreaterThan(0);
-      for (const call of calls) {
-        const resolved = resolveCondition(enclosingConditionText(call));
-        expect(
-          resolved,
-          `${helper} resolves to \`${resolved}\`, not ${predicate}`,
-        ).toContain(predicate);
-      }
-    });
-  }
-
-  it("pins every flag's definition, so a redefinition cannot pass silently", () => {
-    // The hole Codex found: the loop above used to match the flag's NAME.
-    // Redefining needsTreatmentPlans to the sessions tab kept the suite green
-    // while the Treatment tab rendered no plans.
-    expect(flagDefinition("isOverview")).toBe('activeTab === "overview"');
-    expect(flagDefinition("needsIntake")).toBe('isOverview || activeTab === "health"');
-    expect(flagDefinition("needsPortalMessages")).toBe('isOverview || activeTab === "messages"');
-    expect(flagDefinition("needsSessionsData")).toBe('activeTab === "sessions"');
-    expect(flagDefinition("needsTreatmentPlans")).toBe('activeTab === "treatment"');
-    expect(flagDefinition("needsPersonalNotes")).toBe('activeTab === "personal"');
-    expect(flagDefinition("needsLastTreatment")).toBe('isOverview || activeTab === "sessions"');
-  });
-
-  it("keeps reads that feed the overview card ungated by their own tab", () => {
-    // `intake` renders on health AND feeds computePortalPendingTasks, an
-    // overview card. `portalMessages` renders on messages AND feeds the same
-    // card. Gating either to one tab would silently blank that list — a
-    // product change, not an optimisation.
-    for (const [helper, flag] of [
-      ["getLatestIntakeForClient", /needsIntake/],
-      ["getPortalMessagesForPractitionerView", /needsPortalMessages/],
-    ] as Array<[string, RegExp]>) {
-      for (const call of callsTo(helper)) {
-        expect(enclosingConditionText(call)).toMatch(flag);
-      }
-    }
-    expect(SOURCE).toMatch(/const needsIntake =\s*isOverview \|\| activeTab === "health"/);
-    expect(SOURCE).toMatch(
-      /const needsPortalMessages =\s*isOverview \|\| activeTab === "messages"/,
-    );
-  });
-
-  it("gates the two session_blocks reads by the tabs that render them", () => {
-    // The widest reads on the page: every session's blocks plus
-    // attachStructuredAreas. Last-treatment renders on overview+sessions;
-    // treatment intelligence renders on overview only.
-    expect(SOURCE).toMatch(
-      /const needsLastTreatment = isOverview \|\| activeTab === "sessions";/,
-    );
-    expect(SOURCE).toMatch(
-      /if \(needsLastTreatment && recentSessions\.length > 0\) \{/,
-    );
-    expect(SOURCE).toMatch(/if \(isOverview && sessions\.length > 0\) \{/);
   });
 });
 
