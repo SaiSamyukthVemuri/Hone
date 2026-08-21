@@ -422,3 +422,202 @@ describe("batched prep memory — no per-appointment query loop", () => {
     expect(issued.map((q) => q.table)).toEqual(["sessions"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SELECTED-DAY PREP V2 — the appointment-boundary matrix, and the block cap.
+//
+// Cases 10-13 of the load-bearing matrix. They live here rather than beside the
+// projection because the properties are about WHICH ROWS the loader admits into
+// an appointment's window, which no amount of render testing can observe.
+// ---------------------------------------------------------------------------
+
+describe("10. SAME CLIENT, TWO APPOINTMENTS — each gets its own cutoff and prep", () => {
+  it("the morning and afternoon bookings observe different windows", async () => {
+    const morning = "2026-04-01T09:00:00Z";
+    const afternoon = "2026-04-01T16:00:00Z";
+    // A session charted between the two: it is history for the afternoon
+    // appointment and the FUTURE for the morning one.
+    const between = session({
+      id: "s-between",
+      client_id: ALICE,
+      started_at: "2026-04-01T12:00:00Z",
+      next_session_note: "Between-visit note",
+    });
+    const older = session({
+      id: "s-older",
+      client_id: ALICE,
+      started_at: "2026-03-01T10:00:00Z",
+      next_session_note: "Older note",
+    });
+
+    const { out } = await run(
+      { sessions: [between, older], session_blocks: [block("s-between"), block("s-older")] },
+      [
+        { requestKey: "appt-morning", clientId: ALICE, before: morning, excludeAppointmentId: "appt-morning" },
+        { requestKey: "appt-afternoon", clientId: ALICE, before: afternoon, excludeAppointmentId: "appt-afternoon" },
+      ],
+    );
+
+    // Two requests, two answers. Keying anything by clientId hands both the
+    // same one — a client with two bookings saw one memory on both rows.
+    expect(out.get("appt-morning")?.narrative.plan?.text).toBe("Older note");
+    expect(out.get("appt-afternoon")?.narrative.plan?.text).toBe("Between-visit note");
+    expect(out.get("appt-morning")?.treatment?.session.id).toBe("s-older");
+    expect(out.get("appt-afternoon")?.treatment?.session.id).toBe("s-between");
+  });
+
+  it("the OBSERVATIONS are per-appointment too, not shared", async () => {
+    // Regression shape: caution and setup are new fields on the load, and the
+    // batched block map is shared across requests. If the observers were run
+    // once over the union instead of per request, the morning appointment would
+    // inherit a caution recorded at midday — after it.
+    const between = session({
+      id: "s-between",
+      client_id: ALICE,
+      started_at: "2026-04-01T12:00:00Z",
+    });
+    const { out } = await run(
+      {
+        sessions: [between],
+        session_blocks: [
+          { ...block("s-between"), caution_note: "midday caution", machine_frequency: "27.12 MHz" },
+        ],
+      },
+      [
+        { requestKey: "appt-morning", clientId: ALICE, before: "2026-04-01T09:00:00Z" },
+        { requestKey: "appt-afternoon", clientId: ALICE, before: "2026-04-01T16:00:00Z" },
+      ],
+    );
+    expect(out.get("appt-morning")?.observed.caution).toBeNull();
+    expect(out.get("appt-morning")?.observed.latestSetup).toBeNull();
+    expect(out.get("appt-afternoon")?.observed.caution?.text).toContain("midday caution");
+    expect(out.get("appt-afternoon")?.observed.latestSetup?.line).toContain("27.12 MHz");
+  });
+});
+
+describe("11. OWN SESSION EXCLUSION — a visit is never its own previous treatment", () => {
+  it("a session linked to THIS appointment is excluded from every fact", async () => {
+    const own = session({
+      id: "s-own",
+      client_id: ALICE,
+      started_at: "2026-04-01T08:00:00Z",
+      appointment_id: "appt-1",
+      next_session_note: "note written during THIS visit",
+    });
+    const { out } = await run(
+      {
+        sessions: [own],
+        session_blocks: [{ ...block("s-own"), caution_note: "caution from THIS visit", machine_frequency: "13.56 MHz" }],
+      },
+      [{ requestKey: "appt-1", clientId: ALICE, before: "2026-04-01T09:00:00Z", excludeAppointmentId: "appt-1" }],
+    );
+    const load = out.get("appt-1");
+    expect(load?.treatment).toBeNull();
+    expect(load?.narrative.plan).toBeNull();
+    // …and the NEW observation fields obey the same exclusion. They read the
+    // candidate window, which is where the exclusion is applied.
+    expect(load?.observed.caution).toBeNull();
+    expect(load?.observed.latestSetup).toBeNull();
+  });
+});
+
+describe("12. VOID — a voided session speaks about nothing", () => {
+  it("a void record contributes no treatment, no note, no caution, no setup", async () => {
+    const voided = session({
+      id: "s-void",
+      client_id: ALICE,
+      started_at: "2026-03-01T10:00:00Z",
+      record_status: "void",
+      next_session_note: "note on a voided record",
+    });
+    const { out } = await run(
+      {
+        sessions: [voided],
+        session_blocks: [{ ...block("s-void"), caution_note: "caution on a voided record", machine_frequency: "27.12 MHz" }],
+      },
+      [{ requestKey: "appt-1", clientId: ALICE, before: "2026-04-01T09:00:00Z" }],
+    );
+    const load = out.get("appt-1");
+    expect(load?.treatment).toBeNull();
+    expect(load?.narrative.plan).toBeNull();
+    expect(load?.observed.caution).toBeNull();
+    expect(load?.observed.latestSetup).toBeNull();
+  });
+});
+
+describe("13. FUTURE LEAK — a treatment after the appointment never appears before it", () => {
+  it("a session starting AFTER this appointment is not its history", async () => {
+    const future = session({
+      id: "s-future",
+      client_id: ALICE,
+      started_at: "2026-05-01T10:00:00Z",
+      next_session_note: "note from a future visit",
+    });
+    const { out } = await run(
+      {
+        sessions: [future],
+        session_blocks: [{ ...block("s-future"), caution_note: "future caution", machine_frequency: "27.12 MHz" }],
+      },
+      [{ requestKey: "appt-1", clientId: ALICE, before: "2026-04-01T09:00:00Z" }],
+    );
+    const load = out.get("appt-1");
+    expect(load?.treatment).toBeNull();
+    expect(load?.narrative.plan).toBeNull();
+    expect(load?.observed.caution).toBeNull();
+    expect(load?.observed.latestSetup).toBeNull();
+  });
+
+  it("the bound is the APPOINTMENT's start, never a clock read", async () => {
+    // A session that started earlier TODAY is history for an afternoon
+    // appointment and NOT for a morning one, regardless of when the page
+    // renders. The retired Today-only pipeline had no bound at all here.
+    const earlierToday = session({
+      id: "s-earlier",
+      client_id: ALICE,
+      started_at: "2026-04-01T10:00:00Z",
+      next_session_note: "charted earlier today",
+    });
+    const tables = { sessions: [earlierToday], session_blocks: [block("s-earlier")] };
+    const morning = await run(tables, [
+      { requestKey: "m", clientId: ALICE, before: "2026-04-01T09:00:00Z" },
+    ]);
+    const afternoon = await run(tables, [
+      { requestKey: "a", clientId: ALICE, before: "2026-04-01T16:00:00Z" },
+    ]);
+    expect(morning.out.get("m")?.narrative.plan).toBeNull();
+    expect(afternoon.out.get("a")?.narrative.plan?.text).toBe("charted earlier today");
+  });
+});
+
+describe("7b. BLOCK COLLECTION CAP — at the loader, where the map is built", () => {
+  it("a session selected from its ENTRIES with NO block rows returns zero blocks and no denial", async () => {
+    // The exact shape of the finding that closed PR #608: the session qualifies
+    // as charted via its embedded live entries, and the bounded block read
+    // returned nothing for it.
+    const s = session({ id: "s-1", client_id: ALICE });
+    const { out } = await run({ sessions: [s], session_blocks: [] }, [
+      { requestKey: "appt-1", clientId: ALICE, before: "2026-04-01T09:00:00Z" },
+    ]);
+    const load = out.get("appt-1");
+    // It IS still selected — the entries are real evidence.
+    expect(load?.treatment?.session.id).toBe("s-1");
+    expect(load?.treatment?.blocks).toEqual([]);
+    // And the block-derived observations are simply ABSENT. Nothing in the load
+    // asserts that this visit has no treatment area or no recorded setup.
+    expect(load?.observed.caution).toBeNull();
+    expect(load?.observed.latestSetup).toBeNull();
+    expect(load?.unavailable).toBe(false);
+  });
+
+  it("the block read is bounded EXPLICITLY, so the ceiling is ours", async () => {
+    const { issued } = await run(
+      { sessions: [session({ id: "s-1", client_id: ALICE })], session_blocks: [block("s-1")] },
+      [{ requestKey: "appt-1", clientId: ALICE, before: "2026-04-01T09:00:00Z" }],
+    );
+    const blockRead = issued.find((q) => q.table === "session_blocks");
+    expect(blockRead).toBeDefined();
+    // Previously unbounded, which did not mean unlimited: PostgREST clamped it
+    // silently at max_rows and a clamped response is a 200 with fewer rows.
+    expect(blockRead!.filters.some((f) => f.startsWith("limit:"))).toBe(true);
+  });
+});
