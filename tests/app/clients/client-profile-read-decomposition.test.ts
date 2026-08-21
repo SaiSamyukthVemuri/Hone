@@ -335,7 +335,8 @@ describe("nothing widened", () => {
         return tableOf(aliases.get(n.text), depth + 1);
       }
       if (ts.isCallExpression(n)) {
-        // A builder produced by a plain function call cannot be resolved here.
+        // A builder produced by a plain function call, or reached through an
+        // element access, cannot be resolved here.
         if (!ts.isPropertyAccessExpression(n.expression)) return UNKNOWN;
         if (n.expression.name.text === "from") {
           const arg = n.arguments[0];
@@ -350,6 +351,18 @@ describe("nothing widened", () => {
     const unresolved: string[] = [];
     const unreadable: string[] = [];
     const visit = (n: ts.Node) => {
+      // `blocks["select"](WIDER)` is the same call written with an element
+      // access, and the property-access matcher below stepped over it: the
+      // widened projection was never collected, and because it reuses one
+      // `.from("session_blocks")` the behavioural query counter did not move
+      // either. Any element-access call on a receiver that is, or might be,
+      // session_blocks is therefore unresolvable and fails.
+      if (ts.isCallExpression(n) && ts.isElementAccessExpression(n.expression)) {
+        const table = tableOf(n.expression.expression);
+        if (table === UNKNOWN || table === "session_blocks") {
+          unresolved.push(n.getText(SF).replace(/\s+/g, " ").slice(0, 120));
+        }
+      }
       if (
         ts.isCallExpression(n) &&
         ts.isPropertyAccessExpression(n.expression) &&

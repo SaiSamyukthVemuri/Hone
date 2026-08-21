@@ -158,6 +158,26 @@ const queryBuilder = (): unknown => {
 // unchanged, escaped the session_blocks projection scan because it names another
 // table, and kept every per-tab map green. Recording each query by its table
 // makes any read of anything observable, whoever issued it.
+/**
+ * A stand-in for any Supabase surface that is not `from`.
+ *
+ * It records AT THE MOMENT OF PROPERTY ACCESS and then keeps answering, rather
+ * than recording when called and throwing. Recording on call missed the normal
+ * nested shape `supabase.storage.from(bucket).list(…)`: reading `storage`
+ * returned a function without invoking it, so nothing was recorded, and the
+ * `.from` on that function then threw a TypeError which callComponent swallowed.
+ * Refusing loudly is the wrong instinct here — a throw can be caught, whereas a
+ * log entry cannot be un-written.
+ */
+const refusedSurface = (path: string): unknown =>
+  new Proxy(() => refusedSurface(path), {
+    get: (_t, prop) => {
+      if (prop === "then" || typeof prop === "symbol") return undefined;
+      return refusedSurface(`${path}.${String(prop)}`);
+    },
+    apply: () => refusedSurface(path),
+  });
+
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () =>
     new Proxy(
@@ -170,15 +190,13 @@ vi.mock("@/lib/supabase/server", () => ({
               return queryBuilder();
             };
           }
-          if (prop === "then") return undefined;
-          // Any OTHER route to the database through this client — rpc, storage,
-          // schema — is recorded and then refused. Exposing only `from` left
-          // those surfaces undefined, so a read through one crashed instead of
-          // being reported, and inside a component the crash was swallowed.
-          return () => {
-            invoked.log.push(`unrecordedSupabaseSurface:${String(prop)}`);
-            throw new Error(`unrecorded Supabase surface used: ${String(prop)}`);
-          };
+          if (prop === "then" || typeof prop === "symbol") return undefined;
+          // Every other route to the database through this client — rpc,
+          // storage, schema, and anything nested under them — is recorded the
+          // instant it is touched, so the tab map fails whether or not the call
+          // that follows succeeds, throws, or is swallowed.
+          invoked.log.push(`unrecordedSupabaseSurface:${String(prop)}`);
+          return refusedSurface(String(prop));
         },
       },
     ),
@@ -395,12 +413,37 @@ function resolveComponent(type: unknown): { fn: ((p: unknown) => unknown) | null
 const isElement = (n: object): boolean =>
   typeof (n as { $$typeof?: unknown }).$$typeof === "symbol" && "type" in n;
 
-async function renderDeep(node: unknown, depth = 0, seen = new Set<object>()): Promise<void> {
-  if (node == null || typeof node !== "object" || depth > 60) return;
-  if (seen.has(node)) return;
-  seen.add(node);
+// The real tree bottoms out between depth 10 and 20 (measured by lowering this
+// cap until the suite breaks), so 200 is roughly ten times the headroom needed
+// and the limit is a runaway guard rather than a silent truncation point.
+const MAX_RENDER_DEPTH = 200;
+
+async function renderDeep(node: unknown, depth = 0, path = new Set<object>()): Promise<void> {
+  if (node == null || typeof node !== "object") return;
+  // Depth exhaustion is a FAILURE, not an empty subtree. Returning quietly left
+  // everything past the limit unexecuted while this file claimed to fail closed,
+  // and React applies no such cutoff, so the read would happen in production.
+  expect(
+    depth,
+    "renderDeep hit its depth limit, so part of the tree went unexecuted and any read inside it would be invisible",
+  ).toBeLessThanOrEqual(MAX_RENDER_DEPTH);
+  // Cycle protection tracks the ACTIVE PATH only, added on the way down and
+  // removed on the way back up. A set spanning the whole walk deduplicated an
+  // element object reused in two positions — `const r = <R/>; {r}{r}` — which
+  // React renders twice and this walked once, hiding a doubled read behind an
+  // unchanged count.
+  if (path.has(node)) return;
+  path.add(node);
+  try {
+    await renderDeepNode(node, depth, path);
+  } finally {
+    path.delete(node);
+  }
+}
+
+async function renderDeepNode(node: object, depth: number, path: Set<object>): Promise<void> {
   if (Array.isArray(node)) {
-    for (const child of node) await renderDeep(child, depth + 1, seen);
+    for (const child of node) await renderDeep(child, depth + 1, path);
     return;
   }
   if (!isElement(node)) {
@@ -409,10 +452,10 @@ async function renderDeep(node: unknown, depth = 0, seen = new Set<object>()): P
     // Next and was previously invisible here.
     const iter = (node as { [Symbol.iterator]?: unknown })[Symbol.iterator];
     if (typeof iter === "function") {
-      for (const child of node as Iterable<unknown>) await renderDeep(child, depth + 1, seen);
+      for (const child of node as Iterable<unknown>) await renderDeep(child, depth + 1, path);
       return;
     }
-    for (const value of Object.values(node)) await renderDeep(value, depth + 1, seen);
+    for (const value of Object.values(node)) await renderDeep(value, depth + 1, path);
     return;
   }
   const el = node as { type?: unknown; props?: unknown };
@@ -435,9 +478,9 @@ async function renderDeep(node: unknown, depth = 0, seen = new Set<object>()): P
     // throw (a hook outside a render) — that is caught and its subtree skipped,
     // which is sound: a client component cannot RETURN a server component. It
     // can only receive one as a prop, and props are walked below regardless.
-    await renderDeep(await callComponent(resolved.fn, props), depth + 1, seen);
+    await renderDeep(await callComponent(resolved.fn, props), depth + 1, path);
   }
-  for (const value of Object.values(props)) await renderDeep(value, depth + 1, seen);
+  for (const value of Object.values(props)) await renderDeep(value, depth + 1, path);
 }
 
 /**
