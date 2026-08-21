@@ -2,10 +2,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
+import { loadVisitPreparation } from "@/lib/sessions/history/prepare-visit";
 import {
-  buildAppointmentPrepMemory,
-  prepMemoryInputFromTreatment,
   type AppointmentPrepMemory,
 } from "@/lib/sessions/appointment-prep-memory";
 
@@ -72,31 +70,36 @@ export async function loadAppointmentPrepMemory(
     // the query above must not become a tenancy hole.
     if (data.studio_id !== studio.id) return { status: "none" };
 
-    const loads = await loadLastChartedTreatmentsForClients({
+    // THE EXACT-VISIT DISCLOSURE, through the same authority the row used.
+    //
+    // Authority is re-derived here, not carried from the browser: the studio,
+    // the client, the boundary and the exclusion all come from the appointment
+    // row fetched above, so an id from another studio resolves to nothing.
+    //
+    // The full clinical record is read ONLY at this point — one visit, on
+    // demand, because the practitioner asked. Nothing on the roster path
+    // transported it.
+    const prep = await loadVisitPreparation({
       studioId: studio.id,
-      requests: [
-        {
-          // Same appointment-bounded request shape the page uses. The
-          // boundary and the exclusion are server-derived from the row.
-          requestKey: data.id,
-          clientId: data.client_id,
-          before: data.starts_at,
-          excludeAppointmentId: data.id,
-        },
-      ],
+      // Same appointment-bounded request shape the page uses. The boundary and
+      // the exclusion are server-derived from the row.
+      clientId: data.client_id,
+      before: data.starts_at,
+      excludeAppointmentId: data.id,
     });
 
-    const load = loads.get(data.id);
-    if (!load) return { status: "unavailable" };
-    if (load.unavailable) return { status: "unavailable" };
-    if (!load.treatment) return { status: "none" };
+    const treatment = prep.preparation.treatment;
+    // A VARIANT, not a boolean beside the data. `no-prior-visit` is the only
+    // proven absence; everything else is "we could not establish it", and the
+    // row already owns truthful operational copy for that.
+    if (treatment.kind === "evidence-unavailable") return { status: "unavailable" };
+    if (treatment.kind === "no-prior-visit") return { status: "none" };
+    if (!prep.memory) return { status: "unavailable" };
 
-    return {
-      status: "loaded",
-      memory: buildAppointmentPrepMemory(
-        prepMemoryInputFromTreatment(load.treatment),
-      ),
-    };
+    // Built by the authority's own adapter, whose every evidence channel is a
+    // required parameter — so this surface cannot receive a different subset of
+    // the clinical record from the one the appointment page renders.
+    return { status: "loaded", memory: prep.memory };
   } catch {
     // Never surface a provider or Postgres message to the browser. The row
     // renders "could not be loaded", which is the truthful thing to say and

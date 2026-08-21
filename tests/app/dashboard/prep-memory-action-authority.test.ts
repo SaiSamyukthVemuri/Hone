@@ -27,7 +27,10 @@ describe("the browser supplies an appointment id and NOTHING else", () => {
     expect(CODE).toMatch(/clientId: data\.client_id/);
     expect(CODE).toMatch(/before: data\.starts_at/);
     expect(CODE).toMatch(/excludeAppointmentId: data\.id/);
-    expect(CODE).toMatch(/requestKey: data\.id/);
+    // `requestKey` is no longer the action's to supply: the single-appointment
+    // entry point owns its own key, which removes one more caller-shaped value
+    // from a surface whose whole job is to re-derive them.
+    expect(CODE).not.toMatch(/requestKey:/);
   });
 });
 
@@ -66,9 +69,20 @@ describe("failures are truthful and opaque", () => {
     for (const status of ['"loaded"', '"none"', '"unavailable"']) {
       expect(CODE, status).toContain(status);
     }
-    // A failed read is never reported as "no treatment".
-    expect(CODE).toMatch(/if \(load\.unavailable\) return \{ status: "unavailable" \}/);
-    expect(CODE).toMatch(/if \(!load\.treatment\) return \{ status: "none" \}/);
+    // A failed read is never reported as "no treatment" — and the distinction
+    // is now carried by a VARIANT rather than by a boolean beside the data, so
+    // the two branches cannot be reordered into each other.
+    expect(CODE).toMatch(
+      /treatment\.kind === "evidence-unavailable"\) return \{ status: "unavailable" \}/,
+    );
+    expect(CODE).toMatch(
+      /treatment\.kind === "no-prior-visit"\) return \{ status: "none" \}/,
+    );
+    // The unavailable branch is tested FIRST, so an unestablished answer can
+    // never fall through into a proven absence.
+    expect(CODE.indexOf('"evidence-unavailable"')).toBeLessThan(
+      CODE.indexOf('"no-prior-visit"'),
+    );
   });
 });
 
