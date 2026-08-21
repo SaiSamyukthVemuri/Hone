@@ -497,6 +497,43 @@ describe("14. NO POSITIVE FACT — quiet omission, not a sentence", () => {
     expect(otherDay).toBe("");
   });
 
+  it("record chips ANNOTATE a block, they never create one", () => {
+    // A first-time client with an incomplete profile. The chips are truthful —
+    // the client row was read and those scalars are null — but they are facts
+    // about the CLIENT RECORD, not about the visit before this one, and this
+    // block is headed "Before this visit". Rendering it for someone with no
+    // previous visit would head a block as though one existed.
+    //
+    // The code this replaces could not do it either: `buildBeforeToday` returns
+    // `reminders: []` when there is no last treatment, so the chips only ever
+    // annotated a briefing that already existed.
+    const { prep, today, otherDay } = render({
+      load: load(),
+      client: { id: "c-new", date_of_birth: null, phone: null, address: null },
+      compactSummary: null,
+    });
+    // The chips ARE licensed and present on the model…
+    expect(prep.directRecordReminders.map((r) => r.text)).toEqual([
+      "Date of birth missing from record",
+      "Phone missing from record",
+      "Address missing from record",
+    ]);
+    // …and nothing renders, because no visit fact was observed.
+    expect(today).toBe("");
+    expect(otherDay).toBe("");
+  });
+
+  it("the same chips DO render once a visit fact is observed", () => {
+    const { today } = render({
+      load: load({ narrative: { plan: PLAN, legacySessionNotes: null } }),
+      client: { id: "c-new", date_of_birth: null, phone: null, address: null },
+      compactSummary: null,
+    });
+    expect(today).toContain("Date of birth missing from record");
+    expect(today).toContain("Started doxycycline, do not treat");
+    expectNoAbsenceClaim(today);
+  });
+
   it("a load failure alone is enough to render (it is an observation)", () => {
     const { today } = render({
       load: load({ unavailable: true }),

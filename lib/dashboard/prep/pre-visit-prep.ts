@@ -94,11 +94,7 @@ export type PreVisitPrep = {
  */
 export function hasObservedPrepFact(prep: PreVisitPrep): boolean {
   return Boolean(
-    prep.remember ||
-      prep.caution ||
-      prep.latestSetup ||
-      prep.lastTreatment ||
-      prep.directRecordReminders.length > 0,
+    prep.remember || prep.caution || prep.latestSetup || prep.lastTreatment,
   );
 }
 
@@ -108,6 +104,25 @@ export function hasObservedPrepFact(prep: PreVisitPrep): boolean {
  * When this is false the whole block is omitted — QUIETLY. The old model
  * rendered "New client · No charted history yet" here, which was a claim built
  * from two capped collections.
+ *
+ * WHY RECORD REMINDERS DO NOT COUNT.
+ * ----------------------------------
+ * The client-record chips (date of birth, phone, address) are witness-licensed
+ * and truthful — they are read off the appointment's own client row. But they
+ * are facts about the CLIENT RECORD, not about the visit before this one, and
+ * this block is headed "Before today" / "Before this visit". A first-time
+ * client with an incomplete profile would otherwise get a preparation block
+ * headed as though a previous visit existed, with nothing in it but profile
+ * chips.
+ *
+ * They also could not appear that way in the code this replaces:
+ * `buildBeforeToday` returns `reminders: []` whenever there is no last
+ * treatment, so the chips only ever annotated a briefing that already existed.
+ * That was an implicit consequence of an early return rather than a stated
+ * rule, and rebuilding the model made the path reachable — so the rule is
+ * stated here instead.
+ *
+ * So the chips ANNOTATE a block; they never create one.
  */
 export function hasRenderablePrep(prep: PreVisitPrep): boolean {
   return hasObservedPrepFact(prep) || prep.loadFailure !== undefined;
