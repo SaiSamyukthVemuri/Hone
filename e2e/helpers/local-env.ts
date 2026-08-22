@@ -17,6 +17,13 @@
 //   * Live payments stay structurally disabled (sk_test_ dummy key;
 //     STRIPE_ALLOW_LIVE_MODE unset).
 
+// TEST-PORT-01. The app PORT is derived per worktree so two worktrees cannot
+// bind the same server, and a run in one can never attach to another's. Only
+// the port varies: the host is a literal, so nothing here can be pointed off
+// the local machine. See scripts/worktree-resources.mjs.
+// @ts-expect-error - .mjs utility ships without type declarations
+import { resolveResources } from "../../scripts/worktree-resources.mjs";
+
 const LOCAL_SUPABASE_URL = "http://127.0.0.1:54321";
 const LOCAL_DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const LOCAL_MAILPIT_URL = "http://127.0.0.1:54324";
@@ -55,10 +62,35 @@ function refuseHostedOverrides() {
 
 refuseHostedOverrides();
 
+// Derived only AFTER the hostile-environment guard above has run, so the order
+// reads the way the safety model works: refuse anything pointing off this
+// machine first, then decide which local port this worktree owns.
+const RESOURCES: {
+  port: number;
+  origin: string;
+  host: string;
+  worktree: string;
+  reuseExistingServer: boolean;
+} = resolveResources();
+
 // localhost, NOT 127.0.0.1: the auth callback redirects to the
 // request origin as the browser presents it, and the session cookie
-// must live on the SAME host string end to end.
-export const E2E_APP_ORIGIN = "http://localhost:3111";
+// must live on the SAME host string end to end. The host is a literal
+// in scripts/worktree-resources.mjs for that reason; only the PORT is
+// derived per worktree.
+//
+// The local GoTrue accepts this origin without any config change: it
+// treats every LOOPBACK redirect target as valid regardless of port
+// (verified against the running stack — localhost/127.0.0.1/[::1] on
+// any port are kept, while example.com and localhost.evil.com fall
+// back to site_url). So supabase/config.toml stays untouched.
+export const E2E_APP_ORIGIN: string = RESOURCES.origin;
+export const E2E_APP_PORT: number = RESOURCES.port;
+export const E2E_WORKTREE: string = RESOURCES.worktree;
+
+// Reusing an already-running server is the exact mechanism that let a run in
+// one worktree attach to another's. It is OFF unless deliberately requested.
+export const E2E_REUSE_EXISTING_SERVER: boolean = RESOURCES.reuseExistingServer;
 export const E2E_SUPABASE_URL = LOCAL_SUPABASE_URL;
 export const E2E_DB_URL = LOCAL_DB_URL;
 export const E2E_MAILPIT_URL = LOCAL_MAILPIT_URL;
@@ -83,6 +115,10 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // this hardcoded-to-127.0.0.1 lane. Set here rather than passed through from
   // the outer process because webServer.env REPLACES process.env.
   HONE_E2E_ROUTE_FAULT: "1",
+  // `next start` reads PORT when no -p flag is given (commander `.env("PORT")`),
+  // so the derived port reaches the server without any shell interpolation in
+  // package.json — which also keeps the npm script portable.
+  PORT: String(E2E_APP_PORT),
   NEXT_PUBLIC_APP_ORIGIN: E2E_APP_ORIGIN,
   NEXT_PUBLIC_SUPABASE_URL: LOCAL_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: LOCAL_ANON_KEY,

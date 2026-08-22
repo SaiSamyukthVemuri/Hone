@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
-import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "./e2e/helpers/local-env";
+import {
+  E2E_APP_ORIGIN,
+  E2E_REUSE_EXISTING_SERVER,
+  E2E_WEB_SERVER_ENV,
+} from "./e2e/helpers/local-env";
 
 // Browser E2E lane (PR #227). One browser (Chromium), one core flow
 // (the treatment-memory loop), against a LOCAL Next dev server and
@@ -36,7 +40,14 @@ export default defineConfig({
     command: "npm run e2e:server",
     url: E2E_APP_ORIGIN,
     env: E2E_WEB_SERVER_ENV,
-    reuseExistingServer: !process.env.CI,
+    // TEST-PORT-01. This was `!process.env.CI`, i.e. TRUE locally, which is how
+    // a run started in one worktree attached to another worktree's server on
+    // the shared port 3111 and reported green about code it never loaded. The
+    // port is now derived per worktree, and reuse is opt-in
+    // (HONE_E2E_REUSE_SERVER=1) so that if two worktrees ever do derive the
+    // same port, Playwright refuses the stranger's server loudly instead of
+    // silently borrowing it.
+    reuseExistingServer: E2E_REUSE_EXISTING_SERVER,
     timeout: 300_000,
   },
 });

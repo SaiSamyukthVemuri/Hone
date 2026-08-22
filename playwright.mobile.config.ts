@@ -3,6 +3,7 @@ import {
   PAYMENT_E2E_APP_ORIGIN,
   PAYMENT_WEB_SERVER_ENV,
 } from "./e2e-payment/helpers/payment-env";
+import { E2E_REUSE_EXISTING_SERVER } from "./e2e/helpers/local-env";
 
 // Mobile-completion browser E2E lane (Chloe workflow fix).
 //
@@ -65,7 +66,11 @@ export default defineConfig({
     command: "npm run e2e:payment-server",
     url: PAYMENT_E2E_APP_ORIGIN,
     env: PAYMENT_WEB_SERVER_ENV,
-    reuseExistingServer: !process.env.CI,
+    // TEST-PORT-01: opt-in reuse, same reasoning as playwright.config.ts. The
+    // lane may still share one build across lanes inside ONE worktree by
+    // setting HONE_E2E_REUSE_SERVER=1; it may no longer do so by accident
+    // across worktrees.
+    reuseExistingServer: E2E_REUSE_EXISTING_SERVER,
     timeout: 300_000,
   },
 });

@@ -16,11 +16,14 @@ import {
 // ONLY for this server (HONE_E2E_FAKE_STRIPE=1 + a valid HONE_E2E_RUN_ID, no
 // Vercel markers), so no real charge, refund, email, or SMS can leave this lane.
 //
-// Port stays 3111 (the proven magic-link redirect/site_url origin): the payment
-// job runs on its OWN CI runner, so there is no port collision with the ordinary
-// browser-e2e job, and reuseExistingServer:false keeps the lanes from sharing a
-// server locally. iPad viewport on chromium (not the webkit iPad preset) so the
-// job reuses the already-installed chromium.
+// PORT. In CI this is still 3111 (the proven magic-link origin), pinned by
+// HONE_E2E_PORT on the job; the payment job also runs on its OWN runner, so
+// there is no collision with the ordinary browser-e2e job. LOCALLY the port is
+// derived per worktree (TEST-PORT-01, scripts/worktree-resources.mjs), so two
+// worktrees cannot share a server. reuseExistingServer:false already kept this
+// lane from attaching to a non-fake dev server and is unchanged.
+// iPad viewport on chromium (not the webkit iPad preset) so the job reuses the
+// already-installed chromium.
 export default defineConfig({
   testDir: "./e2e-payment",
   timeout: 180_000,
