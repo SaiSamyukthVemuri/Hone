@@ -20,8 +20,9 @@ import {
 // HONE_E2E_PORT on the job; the payment job also runs on its OWN runner, so
 // there is no collision with the ordinary browser-e2e job. LOCALLY the port is
 // derived per worktree (TEST-PORT-01, scripts/worktree-resources.mjs), so two
-// worktrees cannot share a server. reuseExistingServer:false already kept this
-// lane from attaching to a non-fake dev server and is unchanged.
+// worktrees do not silently share a server: a candidate collision fails loudly.
+// reuseExistingServer:false already kept this lane from attaching to a non-fake
+// dev server and is unchanged.
 // iPad viewport on chromium (not the webkit iPad preset) so the job reuses the
 // already-installed chromium.
 export default defineConfig({

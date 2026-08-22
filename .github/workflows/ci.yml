@@ -37,8 +37,9 @@ concurrency:
   group: hone-pr-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# TEST-PORT-01. Locally, each git worktree DERIVES its own app port so two
-# worktrees cannot share a server (scripts/worktree-resources.mjs). A CI runner
+# TEST-PORT-01. Locally, each git worktree DERIVES a deterministic candidate app
+# port and server reuse is off, so a candidate collision fails loudly instead of
+# reusing another worktree's server (scripts/worktree-resources.mjs). A CI runner
 # holds exactly one checkout and has no such collision, so every job here pins
 # the historical port explicitly. That keeps CI bit-identical to before this
 # change: same 3111 origin, same site_url seds below, same magic-link flow. The

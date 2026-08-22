@@ -14,7 +14,8 @@ import { GOOGLE_E2E_APP_ORIGIN, GOOGLE_WEB_SERVER_ENV } from "./e2e-google/helpe
 // is fail-closed, so no real Google request can leave this lane. Port 3111 in CI
 // (pinned by HONE_E2E_PORT) on its OWN runner → no collision with the other
 // browser lanes; locally the port is derived per worktree (TEST-PORT-01,
-// scripts/worktree-resources.mjs) so two worktrees cannot share a server.
+// scripts/worktree-resources.mjs) and reuse is off, so a candidate collision
+// fails loudly rather than sharing another worktree's server.
 export default defineConfig({
   testDir: "./e2e-google",
   timeout: 180_000,

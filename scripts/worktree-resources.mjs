@@ -12,10 +12,19 @@
 // code, and nothing in the run said so.
 //
 // That is why concurrent local browser evidence was inadmissible. This module
-// removes the cause: each worktree derives its OWN app port, so a run in A
-// cannot reach B's server at all. Where two worktrees do derive the same port
-// (see PORT_SPAN), Playwright's `reuseExistingServer: false` refuses to attach
-// to the stranger and fails loudly rather than silently borrowing it.
+// removes the cause: each worktree derives a deterministic CANDIDATE port, and
+// local server reuse is off by default, so a candidate collision fails LOUDLY
+// instead of testing another worktree's server.
+//
+// THE CONTRACT, precisely. Global uniqueness across arbitrary filesystem paths
+// is NOT promised and is not achievable from a pure hash into a bounded range.
+// What is promised is: one worktree always derives the same candidate; the
+// candidate stays inside the derived range and never equals the reserved CI
+// port; and when two worktrees do select the same candidate, the second bind is
+// REFUSED rather than silently satisfied by the first worktree's server. The
+// protected property is `collision -> loud failure`, not `hash -> perfect
+// uniqueness`. (Observation, not a guarantee: the 26 Hone worktrees in use when
+// this landed all derived different candidates.)
 //
 // DERIVED, NOT REGISTERED. The port is a pure function of the worktree's
 // absolute root path, so every command run inside one worktree agrees on it

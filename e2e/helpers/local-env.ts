@@ -17,10 +17,11 @@
 //   * Live payments stay structurally disabled (sk_test_ dummy key;
 //     STRIPE_ALLOW_LIVE_MODE unset).
 
-// TEST-PORT-01. The app PORT is derived per worktree so two worktrees cannot
-// bind the same server, and a run in one can never attach to another's. Only
-// the port varies: the host is a literal, so nothing here can be pointed off
-// the local machine. See scripts/worktree-resources.mjs.
+// TEST-PORT-01. The app PORT is a deterministic CANDIDATE derived per worktree,
+// and local server reuse is off by default, so a candidate collision fails
+// loudly instead of testing another worktree's server. Global uniqueness is not
+// promised. Only the port varies: the host is a literal, so nothing here can be
+// pointed off the local machine. See scripts/worktree-resources.mjs.
 // @ts-expect-error - .mjs utility ships without type declarations
 import { resolveResources } from "../../scripts/worktree-resources.mjs";
 
