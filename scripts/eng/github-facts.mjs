@@ -113,7 +113,15 @@ export function projectInlineComment(c) {
     commitId: c.commit_id ?? null,
     originalCommitId: c.original_commit_id ?? null,
     path: c.path ?? null,
+    // `line` is the CURRENT display position and is mutable: GitHub rewrites it
+    // as the head moves and nulls it once the comment goes outdated (on PR #610
+    // a re-anchored finding reads 552 while it was raised at 407, and 8 of 11
+    // findings there have a null line). It is kept for display only.
     line: c.line ?? c.original_line ?? null,
+    // The STABLE original location, which identity keys on. See
+    // scripts/eng/finding-identity.mjs.
+    originalLine: c.original_line ?? null,
+    authorType: c.user?.type ?? null,
     inReplyToId: c.in_reply_to_id ?? null,
     severity,
     title: severity ? title : null,

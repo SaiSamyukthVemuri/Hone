@@ -26,6 +26,7 @@
 // ---------------------------------------------------------------------------
 
 import { AUTHORIZED, COMPLETE, mayAssertPositive, UNKNOWN } from "./evidence.mjs";
+import { classifyEvidence, RAW_EVIDENCE, TRUSTED_FINDING } from "./finding-identity.mjs";
 
 /**
  * Compare a possibly-abbreviated sha against a full one. Codex writes 10-char
@@ -48,7 +49,12 @@ const valueOf = (env) => (!env || env.value === null || env.value === UNKNOWN ? 
  * RAISED, never by where GitHub currently displays it.
  */
 export function classifyInlineComment(c, head) {
-  const isFinding = Boolean(c.severity);
+  // CP-005b-1: severity markup alone no longer makes a finding. It must come
+  // from the trusted reviewer AND not be a reply, or it is retained as raw
+  // evidence attributed to whoever actually wrote it. Both guards are
+  // independent; see scripts/eng/finding-identity.mjs.
+  const evidence = classifyEvidence(c);
+  const isFinding = evidence.kind === TRUSTED_FINDING;
   const raisedAt = c.originalCommitId;
   const displayedAt = c.commitId;
   const reAnchored =
@@ -61,7 +67,11 @@ export function classifyInlineComment(c, head) {
 
   return {
     id: c.id,
-    kind: isFinding ? "finding" : "acknowledgement",
+    kind: isFinding ? "finding" : evidence.kind === RAW_EVIDENCE ? "raw_evidence" : "acknowledgement",
+    identity: evidence.identity?.key ?? null,
+    actor: evidence.actor,
+    actorId: evidence.actorId,
+    evidenceReason: evidence.reason,
     severity: c.severity ?? null,
     title: c.title ?? null,
     path: c.path,
@@ -175,6 +185,8 @@ export function reviewCompletionAtHead(facts) {
     freshFindings,
     carriedFindings,
     acknowledgements: classified.filter((c) => c.kind === "acknowledgement").length,
+    // Retained and attributed: a look-alike stays visible, never a finding.
+    rawEvidence: classified.filter((c) => c.kind === "raw_evidence"),
     reAnchored: classified.filter((c) => c.reAnchored).length,
     requestsAtHead: requestsAtHead.length,
   };
@@ -264,6 +276,10 @@ export function summarize(facts) {
       carried: review.carriedFindings === undefined ? UNKNOWN : review.carriedFindings.length,
       reAnchored: review.reAnchored ?? UNKNOWN,
       acknowledgements: review.acknowledgements ?? UNKNOWN,
+      rawEvidence:
+        review.rawEvidence === undefined
+          ? UNKNOWN
+          : review.rawEvidence.map((e) => ({ id: e.id, actor: e.actor, actorId: e.actorId, severity: e.severity, reason: e.evidenceReason })),
       bySeverity:
         review.freshFindings === UNKNOWN
           ? UNKNOWN

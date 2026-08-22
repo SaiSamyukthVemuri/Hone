@@ -349,10 +349,20 @@ describe("the real fixture histories are still reported correctly", () => {
     expect(s.findings.fresh).toBe(0);
   });
 
-  it("#616: this PR's own three findings are reported at its head", () => {
+  it("#616: the live F4 instance is raw evidence, not a finding", () => {
+    // This fixture is the MERGED head. The one trusted finding raised there is
+    // F4 itself; the badge-carrying comment beside it is the disposition reply
+    // that reproduced F4 in the wild, and it is now attributed rather than
+    // counted. Both guards name themselves in the reason.
     const s = summarize(FIX(616));
-    expect(s.findings.fresh).toBe(3);
-    expect(s.findings.bySeverity).toEqual({ P1: 2, P2: 1 });
+    expect(s.findings.fresh).toBe(1);
+    expect(s.findings.bySeverity).toEqual({ P2: 1 });
+    expect(s.findings.rawEvidence).toHaveLength(1);
+    const raw = s.findings.rawEvidence[0];
+    expect(raw.actorId).toBe(26781116);
+    expect(raw.severity).toBe("P1");
+    expect(raw.reason).toMatch(/not the trusted reviewer/);
+    expect(raw.reason).toMatch(/reply rather than a finding/);
   });
 
   it("every captured fixture's check-run collection is COMPLETE", () => {
