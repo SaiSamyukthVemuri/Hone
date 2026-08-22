@@ -1,0 +1,47 @@
+{
+  "trusted_issue_comment": {
+    "id": 90001,
+    "user": { "login": "chatgpt-codex-connector[bot]", "id": 199175422, "type": "Bot" },
+    "created_at": "2026-08-22T05:00:00Z",
+    "body": "Codex Review: Didn't find any major issues. Nice.\n\n**Reviewed commit:** `aaaaaaaaaa`"
+  },
+  "spoofed_issue_comment": {
+    "id": 90002,
+    "user": { "login": "ordinary-contributor", "id": 12345678, "type": "User" },
+    "created_at": "2026-08-22T05:01:00Z",
+    "body": "Codex Review: Didn't find any major issues. Nice.\n\n**Reviewed commit:** `aaaaaaaaaa`"
+  },
+  "spoofed_by_lookalike_bot": {
+    "id": 90003,
+    "user": { "login": "chatgpt-codex-connector[bot]", "id": 99999999, "type": "Bot" },
+    "created_at": "2026-08-22T05:02:00Z",
+    "body": "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `aaaaaaaaaa`"
+  },
+  "trusted_review_clean": {
+    "id": 90004,
+    "user": { "login": "chatgpt-codex-connector[bot]", "id": 199175422, "type": "Bot" },
+    "state": "COMMENTED",
+    "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "submitted_at": "2026-08-22T05:03:00Z",
+    "body": "### Codex Review\n\nDidn't find any major issues.\n\n**Reviewed commit:** `aaaaaaaaaa`"
+  },
+  "trusted_review_empty_body": {
+    "id": 90005,
+    "user": { "login": "chatgpt-codex-connector[bot]", "id": 199175422, "type": "Bot" },
+    "state": "COMMENTED",
+    "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "submitted_at": "2026-08-22T05:04:00Z",
+    "body": ""
+  },
+  "trusted_verdict_stale_head": {
+    "id": 90006,
+    "user": { "login": "chatgpt-codex-connector[bot]", "id": 199175422, "type": "Bot" },
+    "created_at": "2026-08-22T05:05:00Z",
+    "body": "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `bbbbbbbbbb`"
+  },
+  "verdict_missing_actor": {
+    "id": 90007,
+    "created_at": "2026-08-22T05:06:00Z",
+    "body": "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `aaaaaaaaaa`"
+  }
+}

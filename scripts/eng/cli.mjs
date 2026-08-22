@@ -56,10 +56,11 @@ function renderHuman(facts) {
       ? ` failing: ${ci.failing.join(", ")}`
       : ci.status === "PENDING"
         ? ` pending: ${ci.pending.join(", ")}`
-        : ci.status === UNKNOWN
-          ? ` ${DIM}(${ci.reason})${RESET}`
-          : ` ${DIM}(${ci.atHead} checks bound to this head)${RESET}`;
+        : ` ${DIM}(${ci.reason})${RESET}`;
   out.push(`CI ${ci.status} @ ${head}${ciDetail}`);
+  // Completeness is shown, not implied: GREEN from a partial collection is the
+  // defect this reporting exists to make impossible to miss.
+  out.push(`  ${DIM}evidence: ${ci.completeness} collection, ${ci.atHead} run(s) bound to this head${RESET}`);
 
   out.push(`REVIEW ${review.status} @ ${head}`);
   out.push(`  ${DIM}${review.reason}${RESET}`);
@@ -78,6 +79,15 @@ function renderHuman(facts) {
   out.push(
     `STALE REVIEW EVIDENCE ${review.staleEvidence?.length ?? UNKNOWN} ${DIM}bound to other heads${RESET}`,
   );
+  // A look-alike verdict from an untrusted actor is shown rather than hidden,
+  // precisely so it is visible WITHOUT ever counting as clean.
+  const unauth = review.unauthorizedEvidence?.length ?? 0;
+  if (unauth > 0) {
+    out.push(`UNAUTHORIZED VERDICT-LIKE OBJECTS ${unauth} ${DIM}named this head but are not from the trusted reviewer${RESET}`);
+    for (const u of review.unauthorizedEvidence) {
+      out.push(`  ${DIM}${u.sourceType} ${u.sourceId} by ${u.actor} (id ${u.actorId})${RESET}`);
+    }
+  }
 
   if (review.freshFindings !== UNKNOWN && review.freshFindings.length) {
     out.push("");
@@ -95,7 +105,10 @@ function renderHuman(facts) {
   }
 
   out.push("");
-  out.push(`${DIM}Facts only. Release readiness, findings state and stop laws are not evaluated here.${RESET}`);
+  out.push(
+    `${DIM}Facts only. A positive state (GREEN/CLEAN) is emitted only from complete AND authorized evidence.${RESET}`,
+  );
+  out.push(`${DIM}Release readiness, findings state and stop laws are not evaluated here.${RESET}`);
   out.push("");
   return out.join("\n");
 }
