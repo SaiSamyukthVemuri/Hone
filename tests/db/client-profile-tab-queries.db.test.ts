@@ -55,11 +55,44 @@ vi.mock("next/headers", () => ({
   }),
 }));
 
+// The browser half of the App Router, which client components call while the
+// returned tree renders. Next supplies these from router context; this process
+// has no router mounted, so they are shimmed exactly as `next/headers` is
+// above. Only the client hooks are overridden — `notFound()` keeps its real
+// implementation, because the unknown-client case below depends on it.
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useRouter: () => ({
+    push: () => {},
+    replace: () => {},
+    refresh: () => {},
+    back: () => {},
+    forward: () => {},
+    prefetch: () => {},
+  }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/clients/tab-queries",
+  useParams: () => ({}),
+  useSelectedLayoutSegment: () => null,
+}));
+
 type Captured = { table: string; select: string; url: string };
 
-/** Every PostgREST request the page issues, in the order it issued them. */
-function captureRequests(): { taken: Captured[]; restore: () => void } {
-  const taken: Captured[] = [];
+/**
+ * Every PostgREST request this process issues, in order.
+ *
+ * Installed ONCE and never uninstalled for the lifetime of the suite. An
+ * earlier version wrapped each invocation and restored the real fetch in a
+ * `finally`, which meant a read the page had detached — an `after()` callback,
+ * or a floated helper that awaits `createClient()` first — could reach the
+ * database AFTER the page promise resolved and never enter the log, silently
+ * satisfying the very boundary this file claims. With capture permanently on,
+ * such a read still lands here; it lands in the NEXT window, where it breaks
+ * that tab's counts loudly instead of vanishing.
+ */
+const ALL_REQUESTS: Captured[] = [];
+
+function installCapture(): void {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
@@ -74,11 +107,10 @@ function captureRequests(): { taken: Captured[]; restore: () => void } {
       const select = decodeURIComponent(
         query.split("&").find((p) => p.startsWith("select="))?.slice("select=".length) ?? "",
       );
-      taken.push({ table, select, url: rel });
+      ALL_REQUESTS.push({ table, select, url: rel });
     }
     return realFetch(input as RequestInfo, init);
   }) as typeof fetch;
-  return { taken, restore: () => void (globalThis.fetch = realFetch) };
 }
 
 /** The product's tab vocabulary, read from the ProfileTab contract. */
@@ -106,7 +138,10 @@ const ALWAYS = {
 const EXPECTED: Record<string, Record<string, number>> = {
   overview: {
     ...ALWAYS,
-    practitioners: 2,
+    // 2 base + 2 for getClinicalNotesSummary attributing the seeded notes to
+    // the practitioner who wrote them. With no notes on file that loader
+    // returns before its lookup, which is why this used to read 2.
+    practitioners: 4,
     client_intake_forms: 2, // latest, and latest submitted-or-reviewed
     client_portal_magic_links: 1,
     client_portal_sessions: 1,
@@ -123,13 +158,23 @@ const EXPECTED: Record<string, Record<string, number>> = {
   },
   sessions: {
     ...ALWAYS,
-    sessions: 3,
+    // 3 + the second `sessions` request inside getAppointmentsForClientProfile,
+    // which resolves the session linked to each appointment. It returns early
+    // before that request when the client has no appointments, which is why
+    // this used to read 3.
+    sessions: 4,
     appointments: 1,
     treatment_goals: 1,
     session_blocks: 1, // last treatment only
     session_block_areas: 1,
   },
-  consultation: { ...ALWAYS, client_clinical_notes: 4, client_budget_context: 1 },
+  consultation: {
+    ...ALWAYS,
+    // 2 base + 2 for the note loaders attributing the seeded notes.
+    practitioners: 4,
+    client_clinical_notes: 4,
+    client_budget_context: 1,
+  },
   treatment: { ...ALWAYS, treatment_plans: 1 },
   personal: { ...ALWAYS, client_personal_notes: 1 },
   messages: { ...ALWAYS, client_portal_messages: 1, client_portal_message_replies: 1 },
@@ -161,18 +206,31 @@ let renderPage: (props: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) => Promise<unknown>;
 
-/** Run the real page for a tab and return the requests it made. */
+/**
+ * Run the real page for a tab and return the requests it made.
+ *
+ * The returned element tree is RENDERED, not discarded. Awaiting the page
+ * function alone executes its body but never invokes the components it
+ * returns, so a read moved into a child would issue no request here and leave
+ * every count below green while the page still paid for it at runtime. Real
+ * react-dom/server closes that: whatever the tree does on the way to markup
+ * happens inside the window.
+ */
 async function requestsFor(tab: string, id = clientId): Promise<Captured[]> {
-  const cap = captureRequests();
-  try {
-    await renderPage({
-      params: Promise.resolve({ id }),
-      searchParams: Promise.resolve({ tab }),
-    });
-  } finally {
-    cap.restore();
-  }
-  return cap.taken;
+  const from = ALL_REQUESTS.length;
+  const el = await renderPage({
+    params: Promise.resolve({ id }),
+    searchParams: Promise.resolve({ tab }),
+  });
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  renderToStaticMarkup(el as never);
+  await settle();
+  return ALL_REQUESTS.slice(from);
+}
+
+/** Give anything the page detached a chance to reach fetch before we count. */
+async function settle(ms = 50): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const tally = (taken: Captured[]): Record<string, number> => {
@@ -190,7 +248,36 @@ describe("Client Profile — real per-tab query behaviour", () => {
     const seed = await seedStudio(`perf2-${randomUUID().slice(0, 6)}`);
     clientId = seed.clientId;
     // A session with a block, so the gated session_blocks reads are reachable.
-    await seedSession(seed);
+    const { sessionId } = await seedSession(seed);
+
+    // The data-dependent follow-up paths. Several reads below only happen when
+    // there is something to follow up on, so an empty client silently pins the
+    // SHORT path and lets a change inside the long one pass unnoticed:
+    //   * getAppointmentsForClientProfile() returns early, before its second
+    //     `sessions` request, when the client has no appointment;
+    //   * the clinical-note loaders skip their `practitioners` lookup when
+    //     there are no note rows to attribute.
+    // Seeding both means the counts asserted here are the counts a real client
+    // with history produces.
+    const appointmentId = randomUUID();
+    await adminQuery(
+      `insert into public.appointments
+         (id, studio_id, client_id, starts_at, ends_at, duration_minutes,
+          buffer_minutes_snapshot, blocked_ends_at, status)
+       values ($1, $2, $3, now() - interval '7 days', now() - interval '7 days' + interval '60 minutes',
+               60, 0, now() - interval '7 days' + interval '60 minutes', 'completed')`,
+      [appointmentId, seed.studioId, seed.clientId],
+    );
+    await adminQuery("update public.sessions set appointment_id = $2 where id = $1", [
+      sessionId,
+      appointmentId,
+    ]);
+    await adminQuery(
+      `insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body)
+       values ($1, $2, $3, 'consultation', 'seeded consultation note'),
+              ($1, $2, $3, 'skin_hair_analysis', 'seeded skin and hair note')`,
+      [seed.clientId, seed.studioId, seed.practitionerId],
+    );
 
     // A REAL local GoTrue user with a password. The DB harness inserts auth
     // rows directly, which GoTrue does not own, so the practitioner is
@@ -235,6 +322,8 @@ describe("Client Profile — real per-tab query behaviour", () => {
     if (jar.size === 0) throw new Error("no auth cookie was written");
 
     renderPage = (await import("@/app/(app)/clients/[id]/page")).default as typeof renderPage;
+    // On for the rest of the suite; see ALL_REQUESTS.
+    installCapture();
   }, 60_000);
 
   it("has an expectation for every tab in the product contract", () => {
@@ -284,8 +373,7 @@ describe("Client Profile — real per-tab query behaviour", () => {
     // A client id that is not in this studio. The page must stop at the client
     // lookup — observed from real requests, not from where notFound() sits.
     let threw = false;
-    let taken: Captured[] = [];
-    const cap = captureRequests();
+    const from = ALL_REQUESTS.length;
     try {
       await renderPage({
         params: Promise.resolve({ id: randomUUID() }),
@@ -293,13 +381,29 @@ describe("Client Profile — real per-tab query behaviour", () => {
       });
     } catch {
       threw = true;
-    } finally {
-      cap.restore();
-      taken = cap.taken;
     }
+    await settle();
     expect(threw, "an unknown client should not render").toBe(true);
-    const tables = [...new Set(taken.map((r) => r.table))].sort();
+    const tables = [...new Set(ALL_REQUESTS.slice(from).map((r) => r.table))].sort();
     expect(tables).toEqual(["clients", "practitioners"]);
+    // The per-tab form of this claim — every canonical tab, and an
+    // out-of-studio client as well as a nonexistent one — lives in
+    // tests/db/client-profile-tab-behaviour.db.test.ts, which renders the real
+    // page for each tab. This case stays here because it is what the counts
+    // above are measured against.
+  }, 30_000);
+
+  it("leaves nothing in flight once the page has resolved", async () => {
+    // The counts above are only a boundary if the page has no read that
+    // arrives late. Render, let the window settle, then wait a further
+    // quarter-second: a detached read would land in this gap.
+    await requestsFor("overview");
+    const settled = ALL_REQUESTS.length;
+    await settle(250);
+    expect(
+      ALL_REQUESTS.slice(settled).map((r) => r.table),
+      "a read reached the database after the page resolved",
+    ).toEqual([]);
   }, 30_000);
 
   it("reads session_blocks only on the tabs that render it", async () => {

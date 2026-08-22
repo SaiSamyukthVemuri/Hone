@@ -12,7 +12,9 @@ import { describe, expect, it } from "vitest";
 // surface was only ~11% of measured span time. So the fix is decomposition of
 // the page's reads, not identity memoisation.
 //
-// SCOPE: what the REAL-QUERY proof cannot show.
+// SCOPE: what the REAL-QUERY proof cannot show. This file is a structural
+// tripwire, not release authority. Nothing here claims completeness over the
+// page's reads; the suites named below are what a release rests on.
 //
 // tests/db/client-profile-tab-queries.db.test.ts is the authority for which
 // reads happen per tab, and for the session_blocks projections: it runs the
@@ -22,15 +24,24 @@ import { describe, expect, it } from "vitest";
 //
 // Two properties survive here because no request log shows them.
 //
-// Tab gating moved to tests/app/clients/client-profile-tab-loaders.test.ts,
-// which invokes the real component once per tab against a faked loader
-// boundary and asserts the exact set of reads that run. Four generations of
-// source-level gate proof were defeated in turn — identifier presence, then a
-// resolved substring, then an evaluated predicate blind to branch position and
-// binding provenance — so that authority is retired rather than extended, and
-// there is exactly one authority for tab behaviour.
+// Tab gating is NOT proved here and no longer can be. Five generations of
+// source-level gate proof were defeated in turn — identifier presence, a
+// resolved substring, an evaluated predicate blind to branch position, a
+// binding-provenance walker, a hand-written React renderer — and that whole
+// evidence class is retired rather than extended. The machinery it needed
+// (flag resolution, enclosing-condition lookup, call census) is deleted from
+// this file along with it.
 //
-// What remains here are properties execution genuinely cannot establish:
+// The authorities that replaced it, all of which run the real page:
+//
+//   * tests/db/client-profile-tab-queries.db.test.ts — which reads each tab
+//     issues, off the wire, against the local stack;
+//   * tests/db/client-profile-tab-behaviour.db.test.ts — what a practitioner
+//     actually sees on each tab, rendered by real react-dom/server;
+//   * app/(app)/clients/[id]/deferred-reads.ts — a dev/test invariant that
+//     throws if a tab renders data whose read was deferred.
+//
+// What remains here are two properties execution genuinely cannot establish:
 //
 //   1. PARALLELISM — that the independent reads sit in one Promise.all rather
 //      than a chain of awaits. Invocation records cannot distinguish those.
@@ -72,77 +83,6 @@ function containsAwait(node: ts.Node): boolean {
 /** Top-level statements of the component that perform any awaited work. */
 function serialWaves(): ts.Statement[] {
   return pageComponent().body!.statements.filter(containsAwait);
-}
-
-/** Every call to `name(` anywhere in the page, with its enclosing text. */
-function callsTo(name: string): ts.CallExpression[] {
-  const out: ts.CallExpression[] = [];
-  const visit = (n: ts.Node) => {
-    if (
-      ts.isCallExpression(n) &&
-      ts.isIdentifier(n.expression) &&
-      n.expression.text === name
-    ) {
-      out.push(n);
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(SF);
-  return out;
-}
-
-/**
- * The source text of the nearest enclosing conditional (ternary or `if`).
- * A read is "gated" when that condition mentions the expected tab flag.
- */
-function enclosingConditionText(node: ts.Node): string {
-  let cur: ts.Node | undefined = node.parent;
-  while (cur) {
-    if (ts.isConditionalExpression(cur)) return cur.condition.getText(SF);
-    if (ts.isIfStatement(cur)) return cur.expression.getText(SF);
-    cur = cur.parent;
-  }
-  return "";
-}
-
-/**
- * The declared meaning of a `const <name> = <expr>` flag in the page, with
- * whitespace normalised.
- *
- * Checking that a read is wrapped in a condition MENTIONING `needsTreatmentPlans`
- * proves nothing on its own: redefining that flag to `activeTab === "sessions"`
- * leaves every such assertion green while the Treatment tab silently renders no
- * plans. The gate tests below therefore resolve the flag to its predicate and
- * assert the predicate itself.
- */
-function flagDefinition(name: string): string {
-  let text: string | undefined;
-  const visit = (n: ts.Node) => {
-    if (
-      ts.isVariableDeclaration(n) &&
-      ts.isIdentifier(n.name) &&
-      n.name.text === name &&
-      n.initializer
-    ) {
-      text = n.initializer.getText(SF).replace(/\s+/g, " ").trim();
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(SF);
-  if (text === undefined) throw new Error(`flag not found: ${name}`);
-  return text;
-}
-
-/** Fully expand a gate condition by substituting any flags it references. */
-function resolveCondition(condition: string): string {
-  let out = condition.replace(/\s+/g, " ").trim();
-  for (let i = 0; i < 5; i += 1) {
-    const before = out;
-    out = out.replace(/\b(isOverview|needsIntake|needsPortalMessages|needsSessionsData|needsTreatmentPlans|needsPersonalNotes|needsLastTreatment)\b/g,
-      (m) => `(${flagDefinition(m)})`);
-    if (out === before) break;
-  }
-  return out;
 }
 
 describe("independent reads run in one parallel wave", () => {
