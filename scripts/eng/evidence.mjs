@@ -25,6 +25,8 @@
 // pass through `mayAssertPositive`.
 // ---------------------------------------------------------------------------
 
+import { matchSourceField } from "./source-field.mjs";
+
 export const UNKNOWN = "UNKNOWN";
 
 /** Is the evidence all of what exists? */
@@ -49,6 +51,61 @@ export function evidence(value, { completeness, authority, reason }) {
  */
 export function mayAssertPositive(env) {
   return env?.completeness === COMPLETE && env?.authority === AUTHORIZED;
+}
+
+/** Certainty outcomes. UNKNOWN, declared above, is the third. */
+export const POSITIVE = "POSITIVE";
+export const PROVEN_NEGATIVE = "PROVEN_NEGATIVE";
+
+/** Reply and provenance vocabulary - certainty terms, so they live here. */
+export const PROVEN_TOP_LEVEL = "PROVEN_TOP_LEVEL";
+export const PROVEN_REPLY = "PROVEN_REPLY";
+export const PROVEN = "PROVEN";
+
+/**
+ * THE ONE SEMANTIC AUTHORITY for evidence certainty. Every positive delivery
+ * fact - CLEAN, GREEN, TRUSTED_FINDING - routes through here.
+ *
+ *   UNKNOWN never proves a negative, and never permits a positive.
+ *   A negative must be PROVEN, never inferred from absence.
+ *
+ * It extends `mayAssertPositive` with the split that gate cannot make on its
+ * own: NOT-POSITIVE divides into PROVEN_NEGATIVE and UNKNOWN. Verified, not
+ * assumed - that gate returns false for BOTH `UNAUTHORIZED` and `UNKNOWN`
+ * authority, while those two require opposite outcomes.
+ *
+ * `provenNegative` carries negatives not expressible on the two dimensions - a
+ * comment PROVEN to be a reply is one. It is never used for absence.
+ */
+export function evidenceCertainty(env, { provenNegative = false } = {}) {
+  if (provenNegative) return PROVEN_NEGATIVE;
+  if (env?.authority === UNAUTHORIZED) return PROVEN_NEGATIVE;
+  if (mayAssertPositive(env)) return POSITIVE;
+  return UNKNOWN;
+}
+
+/** A GitHub numeric id is only proof when it is actually a positive integer. */
+export const isValidId = (v) => typeof v === "number" && Number.isInteger(v) && v > 0;
+
+/**
+ * Actor authority, read through checked source presence so absence can never be
+ * mistaken for a value and a type is never fabricated.
+ *
+ * An earlier vehicle discarded `user.type` at projection and synthesized
+ * `"Bot"` at the classifier, so a payload carrying the trusted id with an
+ * absent or CONTRADICTORY type was authorized. Both are handled explicitly now.
+ */
+export function actorAuthorityFrom(user, trusted = CODEX_ACTOR) {
+  const id = matchSourceField(user, "id", { absent: () => UNKNOWN, present: (v) => v });
+  const type = matchSourceField(user, "type", { absent: () => UNKNOWN, present: (v) => v });
+  if (id === UNKNOWN || type === UNKNOWN) {
+    return { authority: UNKNOWN, reason: "actor identity is incomplete in the source object" };
+  }
+  if (!isValidId(id)) return { authority: UNKNOWN, reason: `actor id ${String(id)} is not a valid identifier` };
+  if (id === trusted.id && type === trusted.type) {
+    return { authority: AUTHORIZED, reason: `actor id ${id} is the trusted reviewer` };
+  }
+  return { authority: UNAUTHORIZED, reason: `actor id ${id} (type ${String(type)}) is not the trusted reviewer` };
 }
 
 /**

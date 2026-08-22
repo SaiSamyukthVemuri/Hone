@@ -6,12 +6,10 @@
 // question about WHAT IS TRUE AT ONE EXACT HEAD. Nothing here decides release
 // readiness, applies a stop law, or records a finding state - CP-005b/CP-005c.
 //
-// EVERY POSITIVE FACT PASSES THROUGH ONE GATE. `mayAssertPositive` in
-// evidence.mjs is the only way GREEN or CLEAN is reachable, and it requires the
-// evidence to be both COMPLETE and AUTHORIZED. That mechanism exists because
-// this module previously stated the rule in prose and broke it twice: reporting
-// GREEN from an unpaginated read, and accepting any actor's comment as a Codex
-// verdict.
+// EVERY SURFACE ROUTES THROUGH ONE AUTHORITY. `evidenceCertainty` in
+// evidence.mjs is the only place POSITIVE / PROVEN_NEGATIVE / UNKNOWN is
+// decided - for check collections, verdicts and findings alike. This module
+// holds no interpretation of its own.
 //
 // THE FOUR CONFUSIONS, each observed on a real Hone PR:
 //   1. RE-ANCHORING - GitHub moves an old comment onto a newer head, so
@@ -25,7 +23,8 @@
 //      dropped.
 // ---------------------------------------------------------------------------
 
-import { AUTHORIZED, COMPLETE, mayAssertPositive, UNKNOWN } from "./evidence.mjs";
+import { evidenceCertainty, POSITIVE, PROVEN_NEGATIVE, UNKNOWN } from "./evidence.mjs";
+import { classifyEvidence, RAW_EVIDENCE, TRUSTED_FINDING } from "./finding-identity.mjs";
 
 /**
  * Compare a possibly-abbreviated sha against a full one. Codex writes 10-char
@@ -48,20 +47,27 @@ const valueOf = (env) => (!env || env.value === null || env.value === UNKNOWN ? 
  * RAISED, never by where GitHub currently displays it.
  */
 export function classifyInlineComment(c, head) {
-  const isFinding = Boolean(c.severity);
+  // Recognition is decided by finding-identity.mjs on the shared authority.
+  const evidence = classifyEvidence(c);
+  const isFinding = evidence.kind === TRUSTED_FINDING;
   const raisedAt = c.originalCommitId;
   const displayedAt = c.commitId;
   const reAnchored =
     Boolean(raisedAt) && Boolean(displayedAt) && !shaMatches(raisedAt, displayedAt);
 
   let freshness;
-  if (!raisedAt || head === UNKNOWN) freshness = UNKNOWN;
+  // An unproven raised-at sha stays UNKNOWN. It must not fall through to
+  // "carried", which is a proven value.
+  if (!raisedAt || raisedAt === UNKNOWN || head === UNKNOWN) freshness = UNKNOWN;
   else if (shaMatches(raisedAt, head)) freshness = "fresh";
   else freshness = "carried";
 
   return {
     id: c.id,
-    kind: isFinding ? "finding" : "acknowledgement",
+    kind: isFinding ? "finding" : evidence.kind === RAW_EVIDENCE ? "raw_evidence" : "acknowledgement",
+    certainty: evidence.certainty,
+    identity: evidence.identity?.key ?? null,
+    actor: evidence.actor, actorId: evidence.actorId, evidenceReason: evidence.reason,
     severity: c.severity ?? null,
     title: c.title ?? null,
     path: c.path,
@@ -96,7 +102,7 @@ export function collectVerdicts(facts) {
   return all.map((v) => ({
     ...v,
     atHead: shaMatches(v.reviewedCommit ?? "", head),
-    usable: mayAssertPositive(v),
+    certainty: evidenceCertainty(v),
   }));
 }
 
@@ -126,13 +132,21 @@ export function reviewCompletionAtHead(facts) {
   }
 
   const atHead = verdicts.filter((v) => v.atHead);
-  const usable = atHead.filter((v) => v.usable);
-  const unauthorizedEvidence = atHead.filter((v) => v.authority !== AUTHORIZED);
-  const incompleteAtHead = atHead.filter((v) => v.authority === AUTHORIZED && v.completeness !== COMPLETE);
+  const usable = atHead.filter((v) => v.certainty === POSITIVE);
+  // A PROVEN_NEGATIVE verdict (a known spoof) is nonblocking. An UNKNOWN one is
+  // not: it may well be the reviewer, so it must not be ignored.
+  const unauthorizedEvidence = atHead.filter((v) => v.certainty === PROVEN_NEGATIVE);
+  const unknownVerdictsAtHead = atHead.filter((v) => v.certainty === UNKNOWN);
   const staleEvidence = verdicts.filter((v) => !v.atHead);
 
   const classified = inline.map((c) => classifyInlineComment(c, head));
   const freshFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "fresh");
+  // Anything at this head of UNKNOWN certainty blocks a positive result,
+  // whichever surface produced it.
+  const blockingAtHead = [
+    ...classified.filter((c) => c.certainty === UNKNOWN && c.freshness !== "carried"),
+    ...unknownVerdictsAtHead,
+  ];
   const carriedFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "carried");
 
   const requestsAtHead = issues.filter(
@@ -141,13 +155,15 @@ export function reviewCompletionAtHead(facts) {
 
   let status;
   let reason;
-  if (usable.length === 0) {
+  if (blockingAtHead.length > 0) {
+    // Checked BEFORE any positive branch: UNKNOWN evidence must never be
+    // papered over by a clean verdict for the same head.
+    status = UNKNOWN;
+    reason = `${blockingAtHead.length} item(s) at this head are of unknown certainty (${blockingAtHead[0].evidenceReason ?? blockingAtHead[0].reason})`;
+  } else if (usable.length === 0) {
     if (unauthorizedEvidence.length > 0) {
       status = UNKNOWN;
-      reason = `a verdict names this head but its actor is not the trusted reviewer (${unauthorizedEvidence[0].reason})`;
-    } else if (incompleteAtHead.length > 0) {
-      status = UNKNOWN;
-      reason = `a trusted review object exists at this head but states no verdict (${incompleteAtHead[0].reason})`;
+      reason = `a verdict names this head but its actor is proven not to be the trusted reviewer (${unauthorizedEvidence[0].reason})`;
     } else if (requestsAtHead.length > 0) {
       status = "REQUESTED_UNANSWERED";
       reason = "a review was requested for this head and no usable verdict for this head exists yet";
@@ -175,6 +191,8 @@ export function reviewCompletionAtHead(facts) {
     freshFindings,
     carriedFindings,
     acknowledgements: classified.filter((c) => c.kind === "acknowledgement").length,
+    rawEvidence: classified.filter((c) => c.kind === "raw_evidence"),
+    blockingAtHead,
     reAnchored: classified.filter((c) => c.reAnchored).length,
     requestsAtHead: requestsAtHead.length,
   };
@@ -204,7 +222,7 @@ export function ciAtHead(facts) {
     };
   }
 
-  const bound = runs.filter((c) => shaMatches(c.headSha ?? "", head));
+  const bound = runs.filter((c) => c.headSha !== UNKNOWN && shaMatches(c.headSha, head));
   const foreign = runs.length - bound.length;
   const pending = bound.filter((c) => c.status !== "completed").map((c) => c.name);
   const failing = bound
@@ -224,7 +242,7 @@ export function ciAtHead(facts) {
   if (failing.length > 0) return { status: "RED", reason: `${failing.length} check(s) failing at this head`, ...base };
 
   // Every remaining answer is positive-ish, so it must pass the gate.
-  if (!mayAssertPositive(env)) {
+  if (evidenceCertainty(env) !== POSITIVE) {
     return { status: UNKNOWN, reason: env.reason, ...base };
   }
   if (bound.length === 0) {

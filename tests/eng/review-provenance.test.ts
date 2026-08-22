@@ -242,7 +242,7 @@ describe("verdict authority", () => {
     expect(vs.length).toBe(2);
     for (const v of vs) {
       expect(Object.keys(v).sort()).toEqual(
-        ["actor", "actorId", "atHead", "authority", "clean", "completeness", "reason", "reviewedCommit", "sourceId", "sourceType", "usable"].sort(),
+        ["actor", "actorId", "atHead", "authority", "clean", "completeness", "certainty", "reason", "reviewedCommit", "sourceId", "sourceType"].sort(),
       );
     }
   });
@@ -349,10 +349,13 @@ describe("the real fixture histories are still reported correctly", () => {
     expect(s.findings.fresh).toBe(0);
   });
 
-  it("#616: this PR's own three findings are reported at its head", () => {
+  it("#616: only trusted findings count; the human reply is raw evidence", () => {
+    // This fixture is the MERGED head. The badge-carrying comment beside the
+    // real finding is a reply written by a human, now attributed rather than
+    // counted.
     const s = summarize(FIX(616));
-    expect(s.findings.fresh).toBe(3);
-    expect(s.findings.bySeverity).toEqual({ P1: 2, P2: 1 });
+    expect(s.findings.fresh).toBe(1);
+    expect(s.findings.bySeverity).toEqual({ P2: 1 });
   });
 
   it("every captured fixture's check-run collection is COMPLETE", () => {

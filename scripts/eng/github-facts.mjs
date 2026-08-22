@@ -31,7 +31,8 @@
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from "node:child_process";
-import { collectionEvidence, evidence, verdictEvidence, UNKNOWN } from "./evidence.mjs";
+import { collectionEvidence, evidence, isValidId, verdictEvidence, PROVEN, PROVEN_REPLY, PROVEN_TOP_LEVEL, UNKNOWN } from "./evidence.mjs";
+import { matchSourceField } from "./source-field.mjs";
 
 export { UNKNOWN };
 
@@ -94,6 +95,42 @@ export function ghFetcher({ repo = DEFAULT_REPO } = {}) {
 
 const shortSha = (sha) => (typeof sha === "string" ? sha.slice(0, 10) : sha);
 
+/** Read a field, treating an absent property as UNKNOWN. The default rule. */
+const field = (raw, key) => matchSourceField(raw, key, { absent: () => UNKNOWN, present: (v) => v });
+
+/**
+ * REVIEW-COMMENT PROVENANCE. `pull_request_review_id` proves the object came
+ * from the review-comments API - present on all 97 comments censused across
+ * #610, #612, #613, #615 and #616.
+ *
+ * A PRESENT-but-null or invalid id proves nothing. An earlier vehicle treated
+ * mere property presence as proof, so a null discriminator unlocked the
+ * omission exception below and manufactured a positive finding.
+ */
+export function provenanceOf(comment) {
+  return matchSourceField(comment, "pull_request_review_id", {
+    absent: () => UNKNOWN,
+    present: (id) => (isValidId(id) ? PROVEN : UNKNOWN),
+  });
+}
+
+/**
+ * THE ONE FIELD WHOSE ABSENCE IS A SEMANTIC VALUE, and only once provenance is
+ * proven. GitHub returns `in_reply_to_id` ONLY on replies and omits it entirely
+ * on top-level review comments, so omission IS the statement "top-level".
+ *
+ * Censused across the five PRs above - 97 comments: 52 key-absent, every one
+ * top-level; 45 key-present, every one carrying a real id; PRESENT+null never
+ * observed once. Every OTHER field keeps the default: absent means UNKNOWN.
+ */
+export function replyStatusOf(comment) {
+  if (provenanceOf(comment) !== PROVEN) return UNKNOWN;
+  return matchSourceField(comment, "in_reply_to_id", {
+    absent: () => PROVEN_TOP_LEVEL,
+    present: (id) => (isValidId(id) ? PROVEN_REPLY : UNKNOWN),
+  });
+}
+
 /**
  * Project one inline review comment.
  *
@@ -107,14 +144,23 @@ export function projectInlineComment(c) {
   const severity = body.match(SEVERITY_BADGE)?.[1] ?? null;
   const title = body.match(FINDING_TITLE)?.[1]?.trim().replace(/\*+$/, "") ?? null;
   return {
-    id: c.id,
-    author: c.user?.login ?? UNKNOWN,
-    authorId: c.user?.id ?? null,
-    commitId: c.commit_id ?? null,
-    originalCommitId: c.original_commit_id ?? null,
-    path: c.path ?? null,
-    line: c.line ?? c.original_line ?? null,
-    inReplyToId: c.in_reply_to_id ?? null,
+    id: field(c, "id"),
+    // The raw actor is carried through so authority is decided from the SOURCE,
+    // never from a fabricated shape. See actorAuthorityFrom in evidence.mjs.
+    actor: field(c, "user"),
+    author: matchSourceField(c, "user", { absent: () => UNKNOWN, present: (u) => field(u, "login") }),
+    authorId: matchSourceField(c, "user", { absent: () => UNKNOWN, present: (u) => field(u, "id") }),
+    commitId: field(c, "commit_id"),
+    originalCommitId: field(c, "original_commit_id"),
+    path: field(c, "path"),
+    // Display only, and read like everything else: GitHub rewrites `line` as
+    // the head moves and nulls it once the comment is outdated. It deliberately
+    // does NOT fall back to `original_line` - conflating the mutable display
+    // position with the stable one is what made identity unkeyable before.
+    line: field(c, "line"),
+    originalLine: field(c, "original_line"),
+    provenance: provenanceOf(c),
+    replyStatus: replyStatusOf(c),
     severity,
     title: severity ? title : null,
     reactionCount: c.reactions?.total_count ?? 0,
@@ -133,17 +179,18 @@ export function projectReview(r) {
   const hasBody = body.trim().length > 0;
   const reviewedCommit = body.match(REVIEWED_COMMIT)?.[1] ?? null;
   return {
-    id: r.id,
-    author: r.user?.login ?? UNKNOWN,
-    authorId: r.user?.id ?? null,
-    state: r.state ?? UNKNOWN,
-    commitId: r.commit_id ?? null,
+    id: field(r, "id"),
+    actor: field(r, "user"),
+    author: matchSourceField(r, "user", { absent: () => UNKNOWN, present: (u) => field(u, "login") }),
+    authorId: matchSourceField(r, "user", { absent: () => UNKNOWN, present: (u) => field(u, "id") }),
+    state: field(r, "state"),
+    commitId: field(r, "commit_id"),
     submittedAt: r.submitted_at ?? null,
     hasBody,
     verdict: verdictEvidence({
       sourceType: "review_object",
       sourceId: r.id,
-      user: r.user,
+      user: field(r, "user"),
       // A review body may state its head explicitly; otherwise the object's own
       // commit_id is the head it was submitted against.
       reviewedCommit: reviewedCommit ?? r.commit_id ?? null,
@@ -166,9 +213,10 @@ export function projectIssueComment(c) {
   const verdictCommit = body.match(REVIEWED_COMMIT)?.[1] ?? null;
   const isRequest = REVIEW_REQUEST.test(body);
   return {
-    id: c.id,
-    author: c.user?.login ?? UNKNOWN,
-    authorId: c.user?.id ?? null,
+    id: field(c, "id"),
+    actor: field(c, "user"),
+    author: matchSourceField(c, "user", { absent: () => UNKNOWN, present: (u) => field(u, "login") }),
+    authorId: matchSourceField(c, "user", { absent: () => UNKNOWN, present: (u) => field(u, "id") }),
     createdAt: c.created_at ?? null,
     isVerdictCandidate: verdictCommit !== null,
     verdict:
@@ -177,7 +225,7 @@ export function projectIssueComment(c) {
         : verdictEvidence({
             sourceType: "issue_comment",
             sourceId: c.id,
-            user: c.user,
+            user: field(c, "user"),
             reviewedCommit: verdictCommit,
             clean: CLEAN_VERDICT.test(body),
             hasBody: body.trim().length > 0,
@@ -190,10 +238,10 @@ export function projectIssueComment(c) {
 /** Project a check run. Every check belongs to exactly one head sha. */
 export function projectCheckRun(c) {
   return {
-    name: c.name ?? UNKNOWN,
-    status: c.status ?? UNKNOWN,
-    conclusion: c.conclusion ?? null,
-    headSha: c.head_sha ?? null,
+    name: field(c, "name"),
+    status: field(c, "status"),
+    conclusion: field(c, "conclusion"),
+    headSha: field(c, "head_sha"),
   };
 }
 
