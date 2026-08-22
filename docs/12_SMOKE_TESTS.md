@@ -1411,7 +1411,22 @@ npm run test:e2e:google    # fake-Google calendar lane
 npm run test:e2e:ui        # interactive debugging
 ```
 
-One-time local setup for the E2E login: `supabase/config.toml` (untracked) must allow-list the E2E app origin for the magic-link redirect. Set `additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]` in the `[auth]` section and restart the stack. The CI `browser-e2e` job materializes the same setting itself.
+**The local browser origin is DERIVED per worktree** (TEST-PORT-01). Hone is developed across many git worktrees that share one checkout, and every browser lane used to bind the same port `3111`; a run started in one worktree could attach to another worktree's server and report green about code it never loaded. Each worktree now derives its own candidate port from its absolute root path, in `3200-3999`, deterministically.
+
+Inspect this worktree's resources before troubleshooting an origin problem:
+
+```bash
+npm run e2e:resources            # human summary
+npm run e2e:resources -- --json  # machine-readable
+```
+
+What follows from that:
+
+- **No `supabase/config.toml` change is needed for the port.** The local GoTrue accepts any **loopback** redirect target regardless of port (`localhost`, `127.0.0.1`, `[::1]`), while a non-loopback host falls back to `site_url`. The magic-link redirect therefore works on a derived port with the stack's existing settings.
+- **CI stays pinned to 3111.** A runner holds one checkout and has no collision to solve, so both workflows set `HONE_E2E_PORT=3111`; the derived range excludes `3111`, so the pinned and derived paths cannot disagree. `HONE_E2E_PORT` is also the supported way to pin a port locally.
+- **Playwright never reuses an already-running server for Hone evidence.** All four configs set `reuseExistingServer: false` and there is no opt-in to re-enable it, precisely because "reuse whatever answers on this port" is what allowed the cross-worktree attach.
+- **An occupied port fails LOUDLY.** If something already holds this worktree's candidate port, the run stops with Playwright's `... is already used` or an `EADDRINUSE` bind failure. It never silently adopts the other server. Check `npm run e2e:resources` and whatever is holding that port, rather than assuming the diff broke something.
+- **Supabase, Postgres and Mailpit are still SHARED across worktrees.** Port isolation does not isolate the database. `supabase db reset --local` in any worktree wipes every other worktree's in-flight run, so concurrent runs involving a reset remain inadmissible.
 
 The E2E flow covers: public booking, intake wizard, REAL practitioner magic-link login (GoTrue email captured by local Mailpit; no auth bypass), Dashboard incl. the Charted-within-24h card wording, charting a treatment area (area, machine frequency, probe brand + lot, minutes, tolerance, reaction), the For-next-visit note, a second booking, Before Today memory on the client page, the filtered Client Procedure Record + print (incl. the aftercare mark), and anonymous lockout of Records/print/Dashboard. It assumes a DISPOSABLE local database. **Scope corrected 2026-07-27:** the suite is Chromium-only and still does not cover real provider sends (Resend/Twilio), real Stripe Elements or real webhook delivery — but it **does** now cover payments (`payment-browser-e2e`, fake-Stripe) and **multi-practitioner permissions** (`e2e/practitioner-schedule-studio-b.spec.ts`, `practitioner-booking-studio-b.spec.ts`, `practitioner-reassignment-studio-b.spec.ts`). Cross-browser variants remain uncovered.
 

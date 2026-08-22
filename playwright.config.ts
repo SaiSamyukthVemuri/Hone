@@ -36,7 +36,11 @@ export default defineConfig({
     command: "npm run e2e:server",
     url: E2E_APP_ORIGIN,
     env: E2E_WEB_SERVER_ENV,
-    reuseExistingServer: !process.env.CI,
+    // TEST-PORT-01. This was `!process.env.CI`, i.e. TRUE locally, which is how
+    // a run started in one worktree attached to another worktree's server on the
+    // shared port 3111 and reported green about code it never loaded. Hone
+    // evidence never reuses a running server: an occupied port fails loudly.
+    reuseExistingServer: false,
     timeout: 300_000,
   },
 });
