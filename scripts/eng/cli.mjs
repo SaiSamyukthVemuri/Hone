@@ -18,6 +18,9 @@
 
 import { collectFacts, UNKNOWN } from "./github-facts.mjs";
 import { reviewCompletionAtHead, ciAtHead, summarize } from "./review-provenance.mjs";
+import {
+  LEDGER_PATH, currentEntry, enrol, forStopLaws, loadLedger, mark, repairRound, saveLedger,
+} from "./ledger.mjs";
 
 const DIM = "[2m";
 const RESET = "[0m";
@@ -27,6 +30,15 @@ function usage() {
 eng - read delivery state for one pull request, at its exact head
 
   npm run eng -- status <pr> [--json]
+
+  Enrol a finding into the durable ledger. Every semantic field is YOURS:
+  nothing is read off the badge and nothing is inferred.
+
+    npm run eng -- enrol <pr> <commentId> --severity P1 --family <slug> --class runtime|evidence
+    npm run eng -- mark <id> REPAIRED --sha <sha>
+    npm run eng -- mark <id> VERIFIED --sha <sha>
+    npm run eng -- mark <id> ACCEPTED_RISK --sha <sha> --reason "..."
+    npm run eng -- ledger [--at <sha>] [--json]
 
 Reports GitHub facts only. It does not decide release readiness, does not
 record findings, and cannot merge.
@@ -113,11 +125,101 @@ function renderHuman(facts) {
   return out.join("\n");
 }
 
+/** `--flag value` only. No positional guessing, no abbreviations. */
+function flag(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[i + 1] : null;
+}
+
+/**
+ * Locate ONE inline comment and return the identity facts for it.
+ *
+ * There is deliberately no candidate listing. A list of machine-selected
+ * "probable findings" is how convenience becomes inference, and six retired
+ * vehicles is enough evidence about that. The operator names the comment id.
+ */
+function sourceFor(prNumber, commentId) {
+  const facts = collectFacts({ pr: prNumber });
+  const inline = facts.inlineComments?.value;
+  if (!inline || inline === UNKNOWN) {
+    throw new Error(`the inline comments for #${prNumber} could not be read, so no identity can be proven`);
+  }
+  const c = inline.find((x) => x.id === commentId);
+  if (!c) throw new Error(`comment ${commentId} is not an inline review comment on #${prNumber}`);
+  return {
+    pr: prNumber,
+    commentId: c.id,
+    raisedAtSha: c.originalCommitId,
+    path: c.path,
+    originalLine: c.originalLine,
+    actorId: c.authorId ?? UNKNOWN,
+    inReplyToId: c.inReplyToId ?? null,
+  };
+}
+
+function renderLedger(ledger, at) {
+  const rows = forStopLaws(ledger, at);
+  if (rows.length === 0) return `\nno findings enrolled (${LEDGER_PATH})\n`;
+  const out = ["", `FINDINGS LEDGER  ${rows.length} enrolled${at ? `  at ${String(at).slice(0, 10)}` : ""}`, ""];
+  for (const r of rows) {
+    const bound = r.state.state === UNKNOWN ? `${UNKNOWN} ${DIM}(${r.state.reason})${RESET}` : r.state.state;
+    const risk = r.acceptedRiskBy ? ` | risk accepted by ${r.acceptedRiskBy}` : "";
+    out.push(`  ${r.severity}  ${r.id}`,
+      `      ${DIM}recorded ${r.recordedState}@${String(r.state.sha).slice(0, 10)} | at this head: ${bound}${RESET}`,
+      `      ${DIM}family ${r.rootCauseFamily} | ${r.runtimeOrEvidence} | repair round ${r.repairRound}${risk}${RESET}`);
+  }
+  out.push("");
+  out.push(`${DIM}Enrolment and every semantic field are the operator's. This ledger tracks state; it decides nothing.${RESET}`);
+  out.push("");
+  return out.join("\n");
+}
+
 if (process.argv[1] && process.argv[1].endsWith("cli.mjs")) {
   const argv = process.argv.slice(2);
   const json = argv.includes("--json");
-  const args = argv.filter((a) => !a.startsWith("--"));
-  const [command, pr] = args;
+  const args = argv.filter((a, i) => !a.startsWith("--") && !(i > 0 && argv[i - 1].startsWith("--")));
+  const [command, pr, third] = args;
+  const now = new Date().toISOString();
+  const who = process.env.ENG_OPERATOR || process.env.USER || "";
+
+  try {
+    if (command === "enrol" || command === "enroll") {
+      const next = enrol(loadLedger(), {
+        source: sourceFor(Number(pr), Number(third)),
+        severity: flag(argv, "severity"),
+        rootCauseFamily: flag(argv, "family"),
+        runtimeOrEvidence: flag(argv, "class"),
+        by: who,
+        at: now,
+      });
+      saveLedger(next);
+      console.log(`enrolled ${next.findings.at(-1).id}\n  ${LEDGER_PATH} now holds ${next.findings.length} finding(s)`);
+      process.exit(0);
+    }
+
+    if (command === "mark") {
+      const next = mark(loadLedger(), pr, third, {
+        sha: flag(argv, "sha"),
+        by: who,
+        at: now,
+        reason: flag(argv, "reason"),
+      });
+      saveLedger(next);
+      const f = next.findings.find((x) => x.id === pr);
+      console.log(`${pr}\n  -> ${currentEntry(f).state}@${String(currentEntry(f).sha).slice(0, 10)} (repair round ${repairRound(f)})`);
+      process.exit(0);
+    }
+
+    if (command === "ledger") {
+      const at = flag(argv, "at");
+      const ledger = loadLedger();
+      console.log(json ? JSON.stringify(forStopLaws(ledger, at), null, 2) : renderLedger(ledger, at));
+      process.exit(0);
+    }
+  } catch (err) {
+    console.error(`error: ${err.message}`);
+    process.exit(2);
+  }
 
   if (command !== "status" || !pr || !/^\d+$/.test(pr)) {
     usage();
@@ -135,4 +237,4 @@ if (process.argv[1] && process.argv[1].endsWith("cli.mjs")) {
   process.exit(facts.unavailable.length > 0 ? 3 : 0);
 }
 
-export { renderHuman };
+export { renderHuman, renderLedger, sourceFor };

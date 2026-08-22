@@ -113,7 +113,13 @@ export function projectInlineComment(c) {
     commitId: c.commit_id ?? null,
     originalCommitId: c.original_commit_id ?? null,
     path: c.path ?? null,
-    line: c.line ?? c.original_line ?? null,
+    // TWO DIFFERENT FACTS. `line` is where GitHub currently DISPLAYS the
+    // comment and is nulled once it goes outdated - 20 of 34 comments measured
+    // across #610/#617/#619/#622 have none. `originalLine` is where it was
+    // RAISED and never moves; it was null in ZERO of those 34. The ledger keys
+    // on the stable one, so they must not be coalesced into a single field.
+    line: c.line ?? null,
+    originalLine: c.original_line ?? null,
     inReplyToId: c.in_reply_to_id ?? null,
     severity,
     title: severity ? title : null,

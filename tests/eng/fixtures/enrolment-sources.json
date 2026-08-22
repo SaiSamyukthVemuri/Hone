@@ -1,0 +1,450 @@
+{
+  "613": [
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Gate the client card on the hist",
+      "commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "id": 3834651492,
+      "line": 377,
+      "original_commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "original_line": 377,
+      "path": "app/(app)/clients/[id]/page.tsx",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Certify every bounded child chan",
+      "commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "id": 3834651495,
+      "line": 274,
+      "original_commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "original_line": 274,
+      "path": "lib/sessions/history/visit-detail.ts",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Keep the selection probe below t",
+      "commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "id": 3834651497,
+      "line": 296,
+      "original_commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "original_line": 296,
+      "path": "lib/sessions/history/select-visit.ts",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Preserve unavailable setup inste",
+      "commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "id": 3834651498,
+      "line": 589,
+      "original_commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "original_line": 589,
+      "path": "app/(app)/dashboard/page.tsx",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Preserve unavailable guidance in",
+      "commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "id": 3834651500,
+      "line": 583,
+      "original_commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "original_line": 583,
+      "path": "app/(app)/dashboard/page.tsx",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Select setup visits by recorded ",
+      "commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "id": 3834651501,
+      "line": 134,
+      "original_commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "original_line": 134,
+      "path": "lib/sessions/history/select-visit.ts",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Search all areas when projecting",
+      "commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "id": 3834651505,
+      "line": 115,
+      "original_commit_id": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+      "original_line": 115,
+      "path": "lib/sessions/history/prepare-visit.ts",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "617": [
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Block clean when a trusted findi",
+      "commit_id": "7817a815dce00c8d4ae39ebcaab0f49b4b3f92cd",
+      "id": 3836554563,
+      "line": 57,
+      "original_commit_id": "848f7339f3348fe79eee905f4f59e8cde0fd7eae",
+      "original_line": 57,
+      "path": "scripts/eng/review-provenance.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Separate unknown authority from ",
+      "commit_id": "bfdb23906fa939681f1363d1577805b3f9b8606f",
+      "id": 3836579405,
+      "line": null,
+      "original_commit_id": "bfdb23906fa939681f1363d1577805b3f9b8606f",
+      "original_line": 145,
+      "path": "scripts/eng/finding-identity.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Block CLEAN on unknown at-head v",
+      "commit_id": "7817a815dce00c8d4ae39ebcaab0f49b4b3f92cd",
+      "id": 3836626909,
+      "line": 153,
+      "original_commit_id": "7817a815dce00c8d4ae39ebcaab0f49b4b3f92cd",
+      "original_line": 153,
+      "path": "scripts/eng/review-provenance.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Preserve absent reply status thr",
+      "commit_id": "7817a815dce00c8d4ae39ebcaab0f49b4b3f92cd",
+      "id": 3836626913,
+      "line": 70,
+      "original_commit_id": "7817a815dce00c8d4ae39ebcaab0f49b4b3f92cd",
+      "original_line": 70,
+      "path": "scripts/eng/finding-identity.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "618": [
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Preserve the actor type before a",
+      "commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "id": 3836884930,
+      "line": 116,
+      "original_commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "original_line": 116,
+      "path": "scripts/eng/finding-identity.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Derive reply reporting from the ",
+      "commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "id": 3836884935,
+      "line": 159,
+      "original_commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "original_line": 159,
+      "path": "scripts/eng/github-facts.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Reject null review-comment discr",
+      "commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "id": 3836884942,
+      "line": 119,
+      "original_commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "original_line": 119,
+      "path": "scripts/eng/github-facts.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Block GREEN when a check run has",
+      "commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "id": 3836893682,
+      "line": 241,
+      "original_commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "original_line": 241,
+      "path": "scripts/eng/github-facts.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Keep an absent inline-comment bo",
+      "commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "id": 3836893683,
+      "line": 111,
+      "original_commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "original_line": 111,
+      "path": "scripts/eng/finding-identity.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Do not classify an unknown concl",
+      "commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "id": 3836893684,
+      "line": 240,
+      "original_commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "original_line": 240,
+      "path": "scripts/eng/github-facts.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Apply the raised-at UNKNOWN guar",
+      "commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "id": 3836893686,
+      "line": 67,
+      "original_commit_id": "203c631aae5c62c791b1ffd7ac5e919c75ace909",
+      "original_line": 67,
+      "path": "scripts/eng/review-provenance.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "619": [
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Reject every JSON-lossy present ",
+      "commit_id": "a24033fa8edc07ec9cbb0d86ca5f781b600b9e57",
+      "id": 3836916017,
+      "line": null,
+      "original_commit_id": "a24033fa8edc07ec9cbb0d86ca5f781b600b9e57",
+      "original_line": 89,
+      "path": "scripts/eng/source-field.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Scan the whole production tree i",
+      "commit_id": "a24033fa8edc07ec9cbb0d86ca5f781b600b9e57",
+      "id": 3836916020,
+      "line": null,
+      "original_commit_id": "a24033fa8edc07ec9cbb0d86ca5f781b600b9e57",
+      "original_line": 180,
+      "path": "tests/eng/source-field.test.ts",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Enforce discriminator checks bef",
+      "commit_id": "d9aded7f1c9e95fa0a632b5713699e4ff09ebaa5",
+      "id": 3836926180,
+      "line": 38,
+      "original_commit_id": "a24033fa8edc07ec9cbb0d86ca5f781b600b9e57",
+      "original_line": 38,
+      "path": "scripts/eng/source-field.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Include executable TypeScript mo",
+      "commit_id": "d9aded7f1c9e95fa0a632b5713699e4ff09ebaa5",
+      "id": 3836950091,
+      "line": 25,
+      "original_commit_id": "d9aded7f1c9e95fa0a632b5713699e4ff09ebaa5",
+      "original_line": 25,
+      "path": "tests/eng/source-field.test.ts",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Recognize query-suffixed module ",
+      "commit_id": "d9aded7f1c9e95fa0a632b5713699e4ff09ebaa5",
+      "id": 3836950095,
+      "line": 38,
+      "original_commit_id": "d9aded7f1c9e95fa0a632b5713699e4ff09ebaa5",
+      "original_line": 38,
+      "path": "tests/eng/source-field.test.ts",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "620": [
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Treat a null actor type as unkno",
+      "commit_id": "56add24c97f0d4d85fbe03c0a7f55a33b3bd3577",
+      "id": 3837018565,
+      "line": 108,
+      "original_commit_id": "56add24c97f0d4d85fbe03c0a7f55a33b3bd3577",
+      "original_line": 108,
+      "path": "scripts/eng/evidence.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Derive isReply from the retained",
+      "commit_id": "56add24c97f0d4d85fbe03c0a7f55a33b3bd3577",
+      "id": 3837018567,
+      "line": 163,
+      "original_commit_id": "56add24c97f0d4d85fbe03c0a7f55a33b3bd3577",
+      "original_line": 163,
+      "path": "scripts/eng/github-facts.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "621": [
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Block clean when any current ver",
+      "commit_id": "0a48a897c60b8b7f95e4d0524baf679bb312fe03",
+      "id": 3837125406,
+      "line": 216,
+      "original_commit_id": "0a48a897c60b8b7f95e4d0524baf679bb312fe03",
+      "original_line": 216,
+      "path": "scripts/eng/review-provenance.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Reject an invalid check-run tota",
+      "commit_id": "0a48a897c60b8b7f95e4d0524baf679bb312fe03",
+      "id": 3837125408,
+      "line": 263,
+      "original_commit_id": "0a48a897c60b8b7f95e4d0524baf679bb312fe03",
+      "original_line": 263,
+      "path": "scripts/eng/evidence.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Classify proven replies before r",
+      "commit_id": "0a48a897c60b8b7f95e4d0524baf679bb312fe03",
+      "id": 3837125411,
+      "line": 86,
+      "original_commit_id": "0a48a897c60b8b7f95e4d0524baf679bb312fe03",
+      "original_line": 86,
+      "path": "scripts/eng/review-provenance.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "622": [
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Do not label arbitrary review te",
+      "commit_id": "6658da445158a665772fadd3653e62efe0300964",
+      "id": 3837171271,
+      "line": null,
+      "original_commit_id": "6658da445158a665772fadd3653e62efe0300964",
+      "original_line": 108,
+      "path": "scripts/eng/review-provenance.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Preserve facts from review surfa",
+      "commit_id": "85430189c9ea0d20ce76578c6c426d6ebd873a5c",
+      "id": 3837201810,
+      "line": 138,
+      "original_commit_id": "85430189c9ea0d20ce76578c6c426d6ebd873a5c",
+      "original_line": 138,
+      "path": "scripts/eng/review-provenance.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Resolve conflicting verdict mark",
+      "commit_id": "85430189c9ea0d20ce76578c6c426d6ebd873a5c",
+      "id": 3837201813,
+      "line": 78,
+      "original_commit_id": "85430189c9ea0d20ce76578c6c426d6ebd873a5c",
+      "original_line": 78,
+      "path": "scripts/eng/github-facts.mjs",
+      "user": {
+        "id": 199175422,
+        "login": "chatgpt-codex-connector[bot]",
+        "type": "Bot"
+      }
+    }
+  ]
+}

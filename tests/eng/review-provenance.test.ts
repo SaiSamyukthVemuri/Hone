@@ -349,10 +349,16 @@ describe("the real fixture histories are still reported correctly", () => {
     expect(s.findings.fresh).toBe(0);
   });
 
-  it("#616: this PR's own three findings are reported at its head", () => {
+  it("#616: findings at its LATEST head are fresh; its earlier ones are carried", () => {
+    // The original capture was a mid-review snapshot with 3 comments. The
+    // fixture now holds #616's COMPLETE history - 8 comments raised across two
+    // heads, plus three replies - so it exercises fresh-vs-carried on real
+    // data instead of a partial one. Verified not to be a behaviour change:
+    // the OLD fixture still reports 3 fresh under this code.
     const s = summarize(FIX(616));
-    expect(s.findings.fresh).toBe(3);
-    expect(s.findings.bySeverity).toEqual({ P1: 2, P2: 1 });
+    expect(s.findings.fresh).toBe(2);
+    expect(s.findings.carried).toBe(3);
+    expect(s.findings.bySeverity).toEqual({ P1: 1, P2: 1 });
   });
 
   it("every captured fixture's check-run collection is COMPLETE", () => {
@@ -372,14 +378,23 @@ describe("the real fixture histories are still reported correctly", () => {
 
 describe("this vehicle has no authority beyond reporting", () => {
   it("exposes no merge, no writes, no findings state and no stop law", () => {
-    const src = ["evidence.mjs", "github-facts.mjs", "review-provenance.mjs", "cli.mjs"]
-      .map((f) => readFileSync(path.resolve(__dirname, "../../scripts/eng", f), "utf8"))
-      .join("\n");
-    const code = src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-    expect(code).not.toMatch(/pr\s+merge|--merge\b|mergePullRequest|squash/);
-    expect(code).not.toMatch(/writeFileSync|appendFileSync|-X\s*(POST|PATCH|PUT|DELETE)|--method/);
-    expect(code).not.toMatch(/REPAIRED@|VERIFIED@|ACCEPTED_RISK|repairRound/);
-    expect(code).not.toMatch(/RELEASE_READY|ARCHITECTURE_REVIEW|TEST_AUTHORITY_STOP|WAIT_FOR_OPERATOR_GO|root_cause_family/);
-    expect(code).not.toMatch(/setInterval|setTimeout|while\s*\(true\)|daemon/);
+    const strip = (f: string) =>
+      readFileSync(path.resolve(__dirname, "../../scripts/eng", f), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+
+    // The FACT modules stay pure: they read GitHub and report. Findings state
+    // now exists in CP-005b, and it must not leak back into these three.
+    const facts = ["evidence.mjs", "github-facts.mjs", "review-provenance.mjs"].map(strip).join("\n");
+    expect(facts).not.toMatch(/REPAIRED@|VERIFIED@|ACCEPTED_RISK|repairRound/);
+    expect(facts).not.toMatch(/writeFileSync|appendFileSync/);
+
+    // cli.mjs is the operator's entry point for BOTH, so it legitimately names
+    // ledger states. What it must never do is decide, write directly, or merge.
+    const all = [...["evidence.mjs", "github-facts.mjs", "review-provenance.mjs", "cli.mjs"].map(strip), strip("ledger.mjs")].join("\n");
+    expect(all).not.toMatch(/pr\s+merge|--merge\b|mergePullRequest|squash/);
+    expect(all).not.toMatch(/-X\s*(POST|PATCH|PUT|DELETE)|--method/);
+    expect(all).not.toMatch(/RELEASE_READY|ARCHITECTURE_REVIEW|TEST_AUTHORITY_STOP|WAIT_FOR_OPERATOR_GO/);
+    expect(all).not.toMatch(/setInterval|setTimeout|while\s*\(true\)|daemon/);
+    // Only the ledger writes, and only to its own declared path.
+    expect(strip("cli.mjs")).not.toMatch(/writeFileSync|appendFileSync/);
   });
 });
