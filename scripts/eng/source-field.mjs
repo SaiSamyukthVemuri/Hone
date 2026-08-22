@@ -73,17 +73,29 @@ export const isAbsent = (d) => d?.kind === ABSENT;
 // cannot reach a value without first acknowledging the discriminator.
 
 /**
- * JSON DURABILITY, and its one honest limit.
+ * JSON DURABILITY - of the DISCRIMINATOR, which is what this primitive promises.
  *
- * `{kind:"ABSENT"}` and `{kind:"PRESENT",value:null}` round-trip intact and
- * remain distinguishable, which is the load-bearing property.
+ * `{kind:"ABSENT"}` and `{kind:"PRESENT",value:null}` round-trip intact and stay
+ * distinguishable. That is the load-bearing property: absence can never be
+ * manufactured by serializing and re-reading.
  *
- * `PRESENT(undefined)` is the exception and it is called out rather than hidden.
- * JSON has no `undefined`, so `JSON.stringify` drops the key and the value does
- * not survive. The DISCRIMINATOR does: it round-trips as PRESENT, never as
- * ABSENT, so absence is never manufactured from it. A JSON source can never
- * produce this shape - only a hand-built object can - and it is left
- * representable rather than rejected so the primitive stays a pure reader.
- * `isValueDurable` states the limit explicitly for anyone serializing.
+ * WHAT IS NOT PROMISED. This primitive does not claim that an arbitrary
+ * JavaScript value survives JSON unchanged, because that is a different problem
+ * and not this module's job:
+ *
+ *     JSON.stringify(NaN)       -> "null"
+ *     JSON.stringify(Infinity)  -> "null"
+ *     JSON.stringify(-0)        -> "0", losing negative-zero identity
+ *     JSON.stringify(1n)        -> throws
+ *     undefined                 -> the key is dropped entirely
+ *
+ * None of that makes ABSENT ambiguous with PRESENT. PRESENT(value) preserves the
+ * source value exactly IN MEMORY, and that is the contract.
+ *
+ * There is deliberately NO durability predicate here. An earlier one answered
+ * only for `undefined` while reporting "durable" for NaN, Infinity, -0 and
+ * BigInt - a helper that lies about its own contract is worse than no helper.
+ * The payloads Foundation-B consumes are JSON-origin data, so these cases
+ * cannot arise from a real source; this stays a source-presence primitive
+ * rather than becoming a generic serializer.
  */
-export const isValueDurable = (d) => !(isPresent(d) && d.value === undefined);
