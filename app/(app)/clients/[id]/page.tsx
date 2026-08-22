@@ -139,6 +139,7 @@ import {
 } from "@/components/client-budget-card";
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
+import { requireLoadedForTab } from "./deferred-reads";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -243,6 +244,8 @@ export default async function ClientCheatSheetPage({
   const needsSessionsData = activeTab === "sessions";
   const needsTreatmentPlans = activeTab === "treatment";
   const needsPersonalNotes = activeTab === "personal";
+  const needsPortalMessageReplies = activeTab === "messages";
+  const needsConsultationNotes = activeTab === "consultation";
 
   const portalLoginUrl = studio.slug
     ? `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(studio.slug)}`
@@ -341,7 +344,7 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve([] as Awaited<ReturnType<typeof getPortalMessagesForPractitionerView>>),
     // PR #129 (migration 0054): client replies, rendered inline under each
     // parent message. Messages tab only.
-    activeTab === "messages"
+    needsPortalMessageReplies
       ? getPortalMessageRepliesForPractitionerView(studio.id, client.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof getPortalMessageRepliesForPractitionerView>>),
     // PR #134 (migration 0057): consent / e-sign. Overview status card, and
@@ -394,7 +397,7 @@ export default async function ClientCheatSheetPage({
   // Migration 0126: dated consultation + skin/hair analysis clinical notes.
   // Loaded only when the Consultation tab is active so other tabs pay no cost.
   const clinicalNoteSections =
-    activeTab === "consultation"
+    needsConsultationNotes
       ? await buildClinicalNoteSections(client.id, { historyLimit: 25 })
       : null;
   // Migration 0183: CURRENT client budget context — practitioner-held client
@@ -402,13 +405,13 @@ export default async function ClientCheatSheetPage({
   // the same tab so other tabs pay no cost. Fails soft to the empty state
   // (no row yet, or 0183 not yet applied), so the tab never 500s.
   const budgetContext =
-    activeTab === "consultation"
+    needsConsultationNotes
       ? await getClientBudgetContext(client.id)
       : null;
   // Read-only latest-of-each-kind summary for the overview appointment-prep
   // briefing. Two light reads; only on the default overview tab.
   const clinicalNotesSummary =
-    activeTab === "overview"
+    isOverview
       ? await getClinicalNotesSummary(client.id)
       : null;
 
@@ -626,6 +629,36 @@ export default async function ClientCheatSheetPage({
     !!client.emergency_contact_name || !!client.emergency_contact_phone;
 
   domain.end();
+
+  // DEV/TEST ONLY. Every entry names a read this tab RENDERS, paired with the
+  // gate that decided whether it ran. The keys are tab literals and the values
+  // are the gate flags, so the two sides cannot be edited by one change: if a
+  // gate stops covering a tab below, this throws instead of letting the tab
+  // render an empty state over data that exists. Returns immediately in
+  // production. See ./deferred-reads for what this does and does not prove.
+  requireLoadedForTab(activeTab, {
+    overview: {
+      // pinned notes, portal access + events, consent, card on file, imported
+      // memory, clinical-notes summary, treatment intelligence
+      overviewOnlyReads: isOverview,
+      intake: needsIntake,
+      portalMessages: needsPortalMessages,
+      lastTreatment: needsLastTreatment,
+    },
+    sessions: {
+      // appointment timeline, treatment totals, time by area, treatment goal
+      sessionsData: needsSessionsData,
+      lastTreatment: needsLastTreatment,
+    },
+    treatment: { treatmentPlans: needsTreatmentPlans },
+    messages: {
+      portalMessages: needsPortalMessages,
+      portalMessageReplies: needsPortalMessageReplies,
+    },
+    health: { intake: needsIntake },
+    consultation: { consultationNotes: needsConsultationNotes },
+    personal: { personalNotes: needsPersonalNotes },
+  });
 
   return (
     <div className="flex flex-col gap-10">
