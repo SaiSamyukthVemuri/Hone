@@ -1,7 +1,6 @@
 import { describe, expect, it, afterEach } from "vitest";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createServer, type AddressInfo, type Server } from "node:net";
-import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,13 +18,21 @@ import { derivePort, parsePortOverride, resolveResources, worktreeIdentity, PORT
 // worktree A found 3111 already answering, ATTACHED TO WORKTREE B'S SERVER, and
 // reported green about code it never loaded.
 //
-// THE CONTRACT PROVEN HERE, and no more:
-//   1. each worktree deterministically derives a CANDIDATE port;
-//   2. the candidate stays in range and never equals CI port 3111;
-//   3. the host is the literal `localhost`;
-//   4. an explicit numeric override is bounded;
-//   5. Playwright NEVER reuses a running server;
-//   6. an occupied candidate port makes startup FAIL LOUDLY.
+// WHAT THIS LANE PROVES:
+//   A. derivation - deterministic per worktree, integer, in range, never the
+//      reserved CI port, bounded override, literal host;
+//   B. an OS-owned occupied port refuses a second bind with EADDRINUSE;
+//   D-equivalent, by CONFIG AUTHORITY - every Hone Playwright config sets
+//      `reuseExistingServer: false` and no opt-in exists to re-enable it.
+//
+// WHAT THIS LANE DOES NOT PROVE. It does NOT execute Playwright, so it does not
+// demonstrate a real Playwright refusal. It cannot: the validate lane
+// deliberately supplies a hosted NEXT_PUBLIC_SUPABASE_URL, under which
+// e2e/helpers/local-env.ts MUST refuse to load, so launching Playwright here
+// would be testing against an environment designed to prevent that invocation.
+// The real refusal is observed in the browser lane and in local runs, where the
+// harness legitimately loads; `reuseExistingServer: false` is what Playwright
+// acts on, and that is asserted here as config authority.
 //
 // NOT PROMISED, therefore NOT ASSERTED ANYWHERE: global uniqueness of
 // candidates across arbitrary filesystem paths. A pure hash into a bounded
@@ -37,7 +44,7 @@ const SCRIPT = path.resolve(__dirname, "../../scripts/worktree-resources.mjs");
 const ROOT = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.resolve(ROOT, rel), "utf8");
 
-const sockets: (Server | HttpServer)[] = [];
+const sockets: Server[] = [];
 const tmpDirs: string[] = [];
 
 afterEach(() => {
@@ -225,7 +232,16 @@ describe("A. derivation is deterministic and bounded", () => {
     expect(human).toMatch(/SHARED across worktrees, NOT isolated/);
   });
 
-  it("no reuse opt-in exists anywhere: reuse is not a setting", () => {
+  it("D-EQUIVALENT CONFIG AUTHORITY: no lane may reuse a running server", () => {
+    // This is a CONFIG-AUTHORITY assertion, not a behavioural one. It proves
+    // what Playwright will be told, not what Playwright then does: this lane
+    // cannot execute Playwright at all, because the validate job supplies a
+    // hosted NEXT_PUBLIC_SUPABASE_URL under which e2e/helpers/local-env.ts must
+    // refuse to load. `reuseExistingServer` is the single input Playwright acts
+    // on, so pinning it false everywhere - with no opt-in able to flip it - is
+    // the authority this lane can honestly carry. The real refusal is observed
+    // where the harness legitimately loads.
+    //
     // The retired vehicle offered HONE_E2E_REUSE_SERVER=1. It was worktree-BLIND
     // ("reuse whatever answers on this port"), so with a candidate collision it
     // recreated the silent cross-worktree attach this work exists to remove.
@@ -277,59 +293,6 @@ describe("B. an occupied port refuses a second bind", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     expect((await bind(port)).listening).toBe(true);
   });
-});
-
-// ===========================================================================
-// D. FORCED OCCUPIED PORT: PLAYWRIGHT REFUSES RATHER THAN REUSES
-// The real binary, a real HTTP occupant, and the real refusal.
-// ===========================================================================
-describe("D. Playwright refuses an already-running server", () => {
-  it("a forced occupied port is REFUSED, not adopted, before any build starts", async () => {
-    // Stand in for another worktree's server: a real HTTP responder on a port
-    // the OS assigned. A raw TCP socket would not do, because Playwright
-    // detects an occupant by probing the URL.
-    const other = createHttpServer((_req, res) => {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end("<html>another worktree</html>");
-    });
-    await new Promise<void>((resolve, reject) => {
-      other.once("error", reject);
-      other.listen(0, "127.0.0.1", () => resolve());
-    });
-    sockets.push(other);
-    const occupied = (other.address() as AddressInfo).port;
-
-    // This worktree, forced onto that exact port: the collision case.
-    expect(resourcesFrom(makeWorktree("forced"), { [PORT_ENV_VAR]: String(occupied) }).port).toBe(
-      occupied,
-    );
-
-    // Run the REAL Playwright binary against it. `--grep` matches nothing, so
-    // this exercises webServer startup and nothing else.
-    // spawn, NOT spawnSync: the occupant above lives in THIS process, and a
-    // synchronous child would block the event loop so it could never answer
-    // Playwright's probe - which would look like "port free" and start a build.
-    const run = await new Promise<{ status: number | null; output: string }>((resolve) => {
-      const child = spawn("npx", ["playwright", "test", "--grep", "___no_such_test___"], {
-        cwd: ROOT,
-        env: { ...process.env, [PORT_ENV_VAR]: String(occupied) },
-      });
-      let output = "";
-      child.stdout.on("data", (d) => (output += d));
-      child.stderr.on("data", (d) => (output += d));
-      child.on("close", (status) => resolve({ status, output }));
-    });
-    const output = run.output;
-
-    // Refused, loudly, naming the port.
-    expect(run.status).not.toBe(0);
-    expect(output).toContain("is already used");
-    expect(output).toContain(String(occupied));
-    // And it refused rather than adopting the stranger: no test run began.
-    expect(output).not.toMatch(/\d+ passed/);
-    // The occupant is untouched and still ours.
-    expect(other.listening).toBe(true);
-  }, 120_000);
 });
 
 // ===========================================================================
