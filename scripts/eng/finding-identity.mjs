@@ -158,9 +158,20 @@ export function classifyEvidence(c) {
 
   const identity = findingIdentity(c);
   if (identity.key === UNKNOWN) {
-    // Trusted and not a reply, but unnameable. Still not a finding: a record
-    // that cannot be identified cannot be tracked monotonically.
-    return { ...base, kind: RAW_EVIDENCE, authority, identity, reason: identity.reason };
+    // Trusted, top-level, finding-shaped - but unnameable, so it cannot become
+    // a tracked record. It must NOT therefore vanish: this is a real reviewer's
+    // finding, and silently dropping it would let a clean verdict for the same
+    // head report CLEAN over the top of it. Flagged so callers can refuse to
+    // assert clean while it is present. A file-level comment (no original_line)
+    // is exactly this shape.
+    return {
+      ...base,
+      kind: RAW_EVIDENCE,
+      authority,
+      identity,
+      trustedButUnidentified: true,
+      reason: identity.reason,
+    };
   }
 
   return { ...base, kind: TRUSTED_FINDING, authority, identity, reason: "trusted reviewer, not a reply, fully provenanced" };

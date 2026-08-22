@@ -69,6 +69,7 @@ export function classifyInlineComment(c, head) {
     id: c.id,
     kind: isFinding ? "finding" : evidence.kind === RAW_EVIDENCE ? "raw_evidence" : "acknowledgement",
     identity: evidence.identity?.key ?? null,
+    trustedButUnidentified: Boolean(evidence.trustedButUnidentified),
     actor: evidence.actor,
     actorId: evidence.actorId,
     evidenceReason: evidence.reason,
@@ -143,6 +144,13 @@ export function reviewCompletionAtHead(facts) {
 
   const classified = inline.map((c) => classifyInlineComment(c, head));
   const freshFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "fresh");
+  // Trusted, non-reply, finding-shaped evidence that could not be NAMED is
+  // still the reviewer speaking. It cannot be tracked, so it is not a finding
+  // record - but it must not be silently dropped either, or a clean verdict for
+  // the same head would report CLEAN over the top of it.
+  const unnameableAtHead = classified.filter(
+    (c) => c.trustedButUnidentified && c.freshness !== "carried",
+  );
   const carriedFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "carried");
 
   const requestsAtHead = issues.filter(
@@ -168,6 +176,10 @@ export function reviewCompletionAtHead(facts) {
   } else if (freshFindings.length > 0) {
     status = "COMPLETE_WITH_FINDINGS";
     reason = `trusted verdict for this head, with ${freshFindings.length} finding(s) raised at it`;
+  } else if (unnameableAtHead.length > 0) {
+    // Never CLEAN over the top of a reviewer's own finding-shaped evidence.
+    status = UNKNOWN;
+    reason = `a trusted verdict reports clean, but ${unnameableAtHead.length} trusted finding-shaped comment(s) at this head lack stable provenance and cannot be reconciled (${unnameableAtHead[0].evidenceReason})`;
   } else if (usable.some((v) => v.clean === true)) {
     status = "COMPLETE_CLEAN";
     reason = "trusted, complete verdict for this head reports no findings";
@@ -187,6 +199,7 @@ export function reviewCompletionAtHead(facts) {
     acknowledgements: classified.filter((c) => c.kind === "acknowledgement").length,
     // Retained and attributed: a look-alike stays visible, never a finding.
     rawEvidence: classified.filter((c) => c.kind === "raw_evidence"),
+    unnameableAtHead,
     reAnchored: classified.filter((c) => c.reAnchored).length,
     requestsAtHead: requestsAtHead.length,
   };

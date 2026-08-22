@@ -221,6 +221,65 @@ describe("identity is keyed only on provenance GitHub does not rewrite", () => {
   });
 });
 
+describe("unnameable TRUSTED evidence must never be papered over by a clean verdict", () => {
+  // The dangerous inverse of F4, found at exact head on #617. A trusted,
+  // top-level, finding-shaped comment that cannot be NAMED (a file-level
+  // comment has no original_line) was dropped as raw evidence, and a trusted
+  // clean verdict for the same head then reported COMPLETE_CLEAN over the top
+  // of a real reviewer finding. Incomplete evidence must never manufacture a
+  // positive clean fact.
+  const verdict = {
+    id: 1,
+    user: CODEX,
+    body: "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `aaaaaaaaaa`",
+  };
+  const withInline = (inline: unknown[]) => ({
+    head: HEAD,
+    issueComments: collectionEvidence([verdict].map(projectIssueComment), {}),
+    reviews: collectionEvidence([], {}),
+    inlineComments: collectionEvidence(inline, {}),
+  });
+
+  it("a trusted FILE-LEVEL finding blocks clean instead of vanishing", () => {
+    const fileLevel = comment({ id: 7, line: null, original_line: null, subject_type: "file" });
+    const r = reviewCompletionAtHead(withInline([fileLevel]));
+    expect(r.status).toBe(UNKNOWN);
+    expect(r.status).not.toBe("COMPLETE_CLEAN");
+    expect(r.reason).toMatch(/lack stable provenance/);
+    expect(r.unnameableAtHead).toHaveLength(1);
+  });
+
+  it("it is still not a trusted FINDING - it cannot be tracked", () => {
+    const fileLevel = comment({ id: 7, line: null, original_line: null });
+    const e = classifyEvidence(fileLevel);
+    expect(e.kind).toBe(RAW_EVIDENCE);
+    expect(e.trustedButUnidentified).toBe(true);
+    expect(reviewCompletionAtHead(withInline([fileLevel])).freshFindings).toHaveLength(0);
+  });
+
+  it("the spoof and reply behaviour is PRESERVED - they still do not block clean", () => {
+    // Only evidence rejected SOLELY for incomplete identity blocks clean.
+    const spoof = comment({ id: 8, user: HUMAN });
+    const trustedReply = comment({ id: 9, in_reply_to_id: 1 });
+    const strangerReply = comment({ id: 10, user: HUMAN, in_reply_to_id: 1 });
+    for (const c of [spoof, trustedReply, strangerReply]) {
+      expect(classifyEvidence(c).trustedButUnidentified).toBeFalsy();
+      expect(reviewCompletionAtHead(withInline([c])).status).toBe("COMPLETE_CLEAN");
+    }
+  });
+
+  it("a clean head with no inline evidence is still clean", () => {
+    expect(reviewCompletionAtHead(withInline([])).status).toBe("COMPLETE_CLEAN");
+  });
+
+  it("each missing provenance field blocks clean, not just original_line", () => {
+    for (const over of [{ original_commit_id: null }, { path: null }, { original_line: null }]) {
+      const r = reviewCompletionAtHead(withInline([comment({ id: 11, ...over })]));
+      expect(r.status).not.toBe("COMPLETE_CLEAN");
+    }
+  });
+});
+
 describe("identity is never invented", () => {
   it("missing stable provenance yields UNKNOWN, naming what is absent", () => {
     for (const [field, over] of [
