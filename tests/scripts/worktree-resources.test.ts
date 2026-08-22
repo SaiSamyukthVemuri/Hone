@@ -40,12 +40,28 @@ function makeWorktree(label: string): string {
   return dir;
 }
 
-/** Resources as a REAL command run inside that directory, not an in-process call. */
+/**
+ * Resources as a REAL command run inside that directory, not an in-process call.
+ *
+ * HERMETIC, and it has to be. The two control variables are stripped from the
+ * inherited environment unless the case under test sets them explicitly.
+ *
+ * Without this the test measures the AMBIENT ENVIRONMENT instead of the
+ * derivation. CI pins HONE_E2E_PORT=3111 for the whole workflow, so every
+ * subprocess here inherited it, every "derives a distinct port" case received
+ * 3111, and the suite compared 3111 against itself — green locally, red in CI.
+ * A developer with the variable exported would have seen the same thing. That
+ * is precisely the failure class this PR exists to remove, one layer up: an
+ * ambient value silently deciding what a test believes it is measuring.
+ */
 function resourcesFrom(cwd: string, env: Record<string, string> = {}) {
+  const inherited = { ...process.env };
+  delete inherited[PORT_ENV_VAR];
+  delete inherited[REUSE_ENV_VAR];
   const out = execFileSync("node", [SCRIPT, "--json"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: { ...inherited, ...env },
   });
   return JSON.parse(out) as {
     worktree: string;
@@ -114,6 +130,37 @@ describe("two worktrees run concurrently without reusing a port", () => {
     expect(forcedB.portSource).toBe(`env:${PORT_ENV_VAR}`);
     await listen(a.port);
     await expect(listen(forcedB.port)).rejects.toThrow(/EADDRINUSE/);
+  });
+
+  it("REGRESSION: an ambient HONE_E2E_PORT cannot decide what these cases measure", () => {
+    // CI pins HONE_E2E_PORT=3111 workflow-wide, so this suite runs with the
+    // variable already set. Every case that asserts DERIVATION must therefore
+    // see a derived port, not the ambient pin. This test fails if the helper
+    // ever stops stripping it, which is exactly how the first CI run went red
+    // while the same code was green locally.
+    const before = process.env[PORT_ENV_VAR];
+    const beforeReuse = process.env[REUSE_ENV_VAR];
+    try {
+      process.env[PORT_ENV_VAR] = String(RESERVED_PORT);
+      process.env[REUSE_ENV_VAR] = "1";
+      const a = resourcesFrom(makeWorktree("wt-ambient-a"));
+      const b = resourcesFrom(makeWorktree("wt-ambient-b"));
+      expect(a.portSource).toBe("derived");
+      expect(b.portSource).toBe("derived");
+      expect(a.port).not.toBe(RESERVED_PORT);
+      expect(a.port).not.toBe(b.port);
+      expect(a.reuseExistingServer).toBe(false);
+      // An explicit value from the case under test still wins, so stripping the
+      // ambient one does not make the override untestable.
+      expect(resourcesFrom(makeWorktree("wt-ambient-c"), {
+        [PORT_ENV_VAR]: String(RESERVED_PORT),
+      }).port).toBe(RESERVED_PORT);
+    } finally {
+      if (before === undefined) delete process.env[PORT_ENV_VAR];
+      else process.env[PORT_ENV_VAR] = before;
+      if (beforeReuse === undefined) delete process.env[REUSE_ENV_VAR];
+      else process.env[REUSE_ENV_VAR] = beforeReuse;
+    }
   });
 
   it("a worktree's port is stable across separate commands", () => {
