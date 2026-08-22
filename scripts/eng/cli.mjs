@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { collectFacts, UNKNOWN } from "./github-facts.mjs";
-import { reviewCompletionAtHead, ciAtHead, summarize } from "./review-provenance.mjs";
+import { reviewFactsAtHead, summarize } from "./review-provenance.mjs";
 
 const DIM = "[2m";
 const RESET = "[0m";
@@ -35,14 +35,13 @@ record findings, and cannot merge.
 
 function renderHuman(facts) {
   const s = summarize(facts);
-  const review = reviewCompletionAtHead(facts);
-  const ci = ciAtHead(facts);
+  const review = reviewFactsAtHead(facts);
+  const ci = s.ci;
   const head = s.head === UNKNOWN ? UNKNOWN : String(s.head).slice(0, 10);
   const out = [];
 
   out.push("");
-  out.push(`PR #${s.pr}`);
-  out.push(`HEAD ${head}`);
+  out.push(`PR #${s.pr}   HEAD ${head}`);
   if (s.pullRequest !== UNKNOWN) {
     const pr = s.pullRequest;
     out.push(
@@ -51,64 +50,70 @@ function renderHuman(facts) {
     out.push(`BASE ${pr.baseRef} @ ${String(pr.baseSha).slice(0, 10)}`);
   }
 
-  const ciDetail =
-    ci.status === "RED"
-      ? ` failing: ${ci.failing.join(", ")}`
-      : ci.status === "PENDING"
-        ? ` pending: ${ci.pending.join(", ")}`
-        : ` ${DIM}(${ci.reason})${RESET}`;
-  out.push(`CI ${ci.status} @ ${head}${ciDetail}`);
-  // Completeness is shown, not implied: GREEN from a partial collection is the
-  // defect this reporting exists to make impossible to miss.
-  out.push(`  ${DIM}evidence: ${ci.completeness} collection, ${ci.atHead} run(s) bound to this head${RESET}`);
+  // CI FACTS. Counts of what was seen - no verdict on what they add up to.
+  out.push("");
+  out.push("CI FACTS");
+  out.push(`  checksObserved ${ci.checksObserved}   boundToHead ${ci.boundToHead}   foreign ${ci.foreign}`);
+  out.push(`  completeness   ${ci.completeness} ${DIM}(${ci.reason})${RESET}`);
+  out.push(`  passed ${ci.passedObserved}   skipped ${ci.skippedObserved}`);
+  out.push(`  failuresObserved ${ci.failuresObserved === UNKNOWN ? UNKNOWN : ci.failuresObserved.length}${
+    ci.failuresObserved !== UNKNOWN && ci.failuresObserved.length ? `  ${ci.failuresObserved.join(", ")}` : ""
+  }`);
+  out.push(`  stillRunning     ${ci.stillRunning === UNKNOWN ? UNKNOWN : ci.stillRunning.length}${
+    ci.stillRunning !== UNKNOWN && ci.stillRunning.length ? `  ${ci.stillRunning.join(", ")}` : ""
+  }`);
 
-  out.push(`REVIEW ${review.status} @ ${head}`);
-  out.push(`  ${DIM}${review.reason}${RESET}`);
-
-  if (review.freshFindings !== UNKNOWN) {
-    const bySev = s.findings.bySeverity;
-    const sev = Object.keys(bySev).length
-      ? ` (${Object.entries(bySev).sort().map(([k, v]) => `${k} ${v}`).join(", ")})`
-      : "";
-    out.push(`FRESH FINDINGS ${s.findings.fresh}${sev} ${DIM}raised at this head${RESET}`);
-    out.push(
-      `CARRIED ${s.findings.carried} ${DIM}raised at an earlier head; ${s.findings.reAnchored} of all comments are re-anchored and would read as current${RESET}`,
-    );
-    out.push(`ACKNOWLEDGEMENTS ${s.findings.acknowledgements} ${DIM}replies; never review completion${RESET}`);
+  // REVIEW FACTS.
+  out.push("");
+  out.push("REVIEW FACTS");
+  out.push(`  verdictObjects ${s.review.verdictObjects}   atHead ${s.review.verdictsAtHead}   staleShas ${s.review.staleEvidence}`);
+  out.push(`  unauthorizedAtHead ${s.review.unauthorizedAtHead}   unknownAuthorityAtHead ${s.review.unknownAuthorityAtHead}`);
+  out.push(`  reviewRequestsAtHead ${s.review.requestsAtHead}`);
+  if (s.review.trustedOutcomesAtHead !== UNKNOWN) {
+    for (const t of s.review.trustedOutcomesAtHead) {
+      out.push(`  ${DIM}trusted ${t.sourceType} ${t.sourceId} stated: ${t.statedOutcome}${RESET}`);
+    }
   }
-  out.push(
-    `STALE REVIEW EVIDENCE ${review.staleEvidence?.length ?? UNKNOWN} ${DIM}bound to other heads${RESET}`,
-  );
-  // A look-alike verdict from an untrusted actor is shown rather than hidden,
-  // precisely so it is visible WITHOUT ever counting as clean.
-  const unauth = review.unauthorizedEvidence?.length ?? 0;
-  if (unauth > 0) {
-    out.push(`UNAUTHORIZED VERDICT-LIKE OBJECTS ${unauth} ${DIM}named this head but are not from the trusted reviewer${RESET}`);
-    for (const u of review.unauthorizedEvidence) {
-      out.push(`  ${DIM}${u.sourceType} ${u.sourceId} by ${u.actor} (id ${u.actorId})${RESET}`);
+  // A look-alike verdict is SHOWN rather than hidden, precisely because it
+  // never counted for anything.
+  if (review.unauthorizedAtHead !== UNKNOWN && review.unauthorizedAtHead.length) {
+    for (const u of review.unauthorizedAtHead) {
+      out.push(`  ${DIM}unauthorized ${u.sourceType} ${u.sourceId} by ${u.actor} (id ${u.actorId})${RESET}`);
     }
   }
 
-  if (review.freshFindings !== UNKNOWN && review.freshFindings.length) {
-    out.push("");
-    out.push("Findings raised at THIS head:");
-    for (const f of review.freshFindings) {
-      out.push(`  ${f.severity}  ${f.path}:${f.line}`);
+  // FINDINGS.
+  out.push("");
+  out.push("FINDINGS");
+  const bySev = s.findings.bySeverity;
+  const sev = bySev !== UNKNOWN && Object.keys(bySev).length
+    ? ` [${Object.entries(bySev).sort().map(([k, v]) => `${k}x${v}`).join(" ")}]`
+    : "";
+  out.push(`  currentHead ${s.findings.currentHead}${sev}   carried ${s.findings.carried}   reAnchored ${s.findings.reAnchored}`);
+  out.push(`  undecidableFreshness ${s.findings.undecidableFreshness}   acknowledgements ${s.findings.acknowledgements}`);
+  if (review.currentFindings !== UNKNOWN) {
+    for (const f of review.currentFindings) {
+      // The ORIGINAL line, never the display line: GitHub rewrites the latter.
+      out.push(`  ${f.severity} ${f.path}:${f.originalLine ?? UNKNOWN}  raised@${String(f.raisedAt ?? UNKNOWN).slice(0, 10)}  id ${f.id}`);
       if (f.title) out.push(`      ${DIM}${f.title}${RESET}`);
     }
   }
 
+  out.push("");
+  out.push("UNKNOWN EVIDENCE");
   if (facts.unavailable.length) {
-    out.push("");
-    out.push("UNAVAILABLE (reported as UNKNOWN, never as none/clean):");
     for (const u of facts.unavailable) out.push(`  ${u.surface}: ${u.reason}`);
+  } else {
+    out.push("  surfaces 0");
   }
 
+  // A CONSTANT. Never computed, never conditional.
   out.push("");
+  out.push(`CONTROL-PLANE RESULT: ${s.controlPlaneResult}`);
   out.push(
-    `${DIM}Facts only. A positive state (GREEN/CLEAN) is emitted only from complete AND authorized evidence.${RESET}`,
+    `${DIM}Observed facts only. This tool does not emit GREEN, CLEAN, TRUSTED or RELEASE_READY,${RESET}`,
   );
-  out.push(`${DIM}Release readiness, findings state and stop laws are not evaluated here.${RESET}`);
+  out.push(`${DIM}and never converts an absence of bad evidence into readiness. The operator decides.${RESET}`);
   out.push("");
   return out.join("\n");
 }

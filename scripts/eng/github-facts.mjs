@@ -113,7 +113,12 @@ export function projectInlineComment(c) {
     commitId: c.commit_id ?? null,
     originalCommitId: c.original_commit_id ?? null,
     path: c.path ?? null,
-    line: c.line ?? c.original_line ?? null,
+    // TWO DIFFERENT FACTS, kept apart. `line` is where GitHub currently
+    // DISPLAYS the comment and is nulled once it goes outdated; `originalLine`
+    // is where it was RAISED and never moves. Coalescing them made one field
+    // hold both, which is how a finding gets keyed to a position that shifts.
+    line: c.line ?? null,
+    originalLine: c.original_line ?? null,
     inReplyToId: c.in_reply_to_id ?? null,
     severity,
     title: severity ? title : null,

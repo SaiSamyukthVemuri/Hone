@@ -6,12 +6,17 @@
 // question about WHAT IS TRUE AT ONE EXACT HEAD. Nothing here decides release
 // readiness, applies a stop law, or records a finding state - CP-005b/CP-005c.
 //
-// EVERY POSITIVE FACT PASSES THROUGH ONE GATE. `mayAssertPositive` in
-// evidence.mjs is the only way GREEN or CLEAN is reachable, and it requires the
-// evidence to be both COMPLETE and AUTHORIZED. That mechanism exists because
-// this module previously stated the rule in prose and broke it twice: reporting
-// GREEN from an unpaginated read, and accepting any actor's comment as a Codex
-// verdict.
+// THIS MODULE EMITS NO POSITIVE CONCLUSION. There is no GREEN, no
+// COMPLETE_CLEAN, no TRUSTED and no RELEASE_READY, because five vehicles
+// (#617-#621) proved that deciding when evidence is "good enough" to say so is
+// the defect, not the guard around it. Each retired for the same family:
+// unknown, invalid or incomplete evidence producing a positive assertion.
+//
+// What remains is what was always sound - OBSERVATIONS, and NEGATIVES proven
+// directly: an observed failing check, an incomplete collection, a verified
+// finding, a stale reviewed sha, and a surface we could not read, stated as
+// UNKNOWN. The absence of bad evidence is NOT converted into "ready". The
+// operator reads the facts and decides.
 //
 // THE FOUR CONFUSIONS, each observed on a real Hone PR:
 //   1. RE-ANCHORING - GitHub moves an old comment onto a newer head, so
@@ -25,7 +30,7 @@
 //      dropped.
 // ---------------------------------------------------------------------------
 
-import { AUTHORIZED, COMPLETE, mayAssertPositive, UNKNOWN } from "./evidence.mjs";
+import { AUTHORIZED, UNKNOWN } from "./evidence.mjs";
 
 /**
  * Compare a possibly-abbreviated sha against a full one. Codex writes 10-char
@@ -66,6 +71,7 @@ export function classifyInlineComment(c, head) {
     title: c.title ?? null,
     path: c.path,
     line: c.line,
+    originalLine: c.originalLine,
     raisedAt,
     displayedAt,
     reAnchored,
@@ -96,19 +102,25 @@ export function collectVerdicts(facts) {
   return all.map((v) => ({
     ...v,
     atHead: shaMatches(v.reviewedCommit ?? "", head),
-    usable: mayAssertPositive(v),
+    // WHAT THE VERDICT SAID, as an observation. `clean === null` means the
+    // review object carried no body and therefore stated nothing: that is
+    // UNKNOWN, and it is reported rather than resolved.
+    statedOutcome: v.clean === true ? "clean" : v.clean === false ? "findings" : UNKNOWN,
   }));
 }
 
 /**
- * Review completion at the exact head.
+ * Review FACTS at the exact head. There is no "completion" here any more,
+ * because deciding when a review counts as complete is exactly what five
+ * retired vehicles got wrong.
  *
- * Completion requires a verdict that is AT this head, COMPLETE and AUTHORIZED.
- * Deliberately NOT completion: an empty-body review at this head, a verdict for
- * another head, a look-alike from an untrusted actor, an acknowledgement, a
- * reaction, or a request that never got an answer.
+ * Each of these was previously folded into a single word and is now reported
+ * on its own, because each means something different to a reader: an
+ * empty-body review at this head, a verdict for another head, a look-alike
+ * from an untrusted actor, a verdict whose actor could not be identified, an
+ * acknowledgement, and a review request that never got an answer.
  */
-export function reviewCompletionAtHead(facts) {
+export function reviewFactsAtHead(facts) {
   const head = facts.head;
   const inline = valueOf(facts.inlineComments);
   const issues = valueOf(facts.issueComments);
@@ -116,67 +128,55 @@ export function reviewCompletionAtHead(facts) {
 
   if (head === UNKNOWN || inline === UNKNOWN || issues === UNKNOWN || verdicts === UNKNOWN) {
     return {
-      status: UNKNOWN,
+      verdictObjects: UNKNOWN,
+      verdictsAtHead: UNKNOWN,
+      staleEvidence: UNKNOWN,
+      unauthorizedAtHead: UNKNOWN,
+      unknownAuthorityAtHead: UNKNOWN,
+      trustedOutcomesAtHead: UNKNOWN,
+      currentFindings: UNKNOWN,
+      carriedFindings: UNKNOWN,
+      undecidableFreshness: UNKNOWN,
+      reAnchored: UNKNOWN,
+      acknowledgements: UNKNOWN,
+      requestsAtHead: UNKNOWN,
       reason: "one or more review surfaces could not be read",
-      evidence: [],
-      staleEvidence: [],
-      unauthorizedEvidence: [],
-      freshFindings: UNKNOWN,
     };
   }
 
   const atHead = verdicts.filter((v) => v.atHead);
-  const usable = atHead.filter((v) => v.usable);
-  const unauthorizedEvidence = atHead.filter((v) => v.authority !== AUTHORIZED);
-  const incompleteAtHead = atHead.filter((v) => v.authority === AUTHORIZED && v.completeness !== COMPLETE);
-  const staleEvidence = verdicts.filter((v) => !v.atHead);
-
   const classified = inline.map((c) => classifyInlineComment(c, head));
-  const freshFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "fresh");
-  const carriedFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "carried");
 
-  const requestsAtHead = issues.filter(
-    (c) => c.isReviewRequest && (c.requestedCommit === null || shaMatches(c.requestedCommit, head)),
-  );
-
-  let status;
-  let reason;
-  if (usable.length === 0) {
-    if (unauthorizedEvidence.length > 0) {
-      status = UNKNOWN;
-      reason = `a verdict names this head but its actor is not the trusted reviewer (${unauthorizedEvidence[0].reason})`;
-    } else if (incompleteAtHead.length > 0) {
-      status = UNKNOWN;
-      reason = `a trusted review object exists at this head but states no verdict (${incompleteAtHead[0].reason})`;
-    } else if (requestsAtHead.length > 0) {
-      status = "REQUESTED_UNANSWERED";
-      reason = "a review was requested for this head and no usable verdict for this head exists yet";
-    } else {
-      status = "NONE";
-      reason = "no usable verdict names this head";
-    }
-  } else if (freshFindings.length > 0) {
-    status = "COMPLETE_WITH_FINDINGS";
-    reason = `trusted verdict for this head, with ${freshFindings.length} finding(s) raised at it`;
-  } else if (usable.some((v) => v.clean === true)) {
-    status = "COMPLETE_CLEAN";
-    reason = "trusted, complete verdict for this head reports no findings";
-  } else {
-    status = UNKNOWN;
-    reason = "a trusted verdict names this head but states neither a clean result nor findings";
-  }
-
+  // Every field below is a COUNT OR LIST OF SOMETHING OBSERVED. Nothing decides
+  // whether the observations add up to a review that "passed".
   return {
-    status,
-    reason,
-    evidence: usable,
-    staleEvidence,
-    unauthorizedEvidence,
-    freshFindings,
-    carriedFindings,
-    acknowledgements: classified.filter((c) => c.kind === "acknowledgement").length,
+    verdictObjects: verdicts.length,
+    verdictsAtHead: atHead.length,
+    // Stale and unauthorized evidence is retained and attributed rather than
+    // dropped: a look-alike stays visible precisely because it never counted.
+    staleEvidence: verdicts.filter((v) => !v.atHead),
+    unauthorizedAtHead: atHead.filter((v) => v.authority !== AUTHORIZED && v.authority !== UNKNOWN),
+    unknownAuthorityAtHead: atHead.filter((v) => v.authority === UNKNOWN),
+    // Every trusted verdict at this head, INCLUDING ones that stated nothing.
+    // Filtering those out would hide the #615 confusion - an empty review
+    // object at the head, which is not a clean verdict and is not an absence
+    // either. `statedOutcome: UNKNOWN` is the fact, so it is reported.
+    trustedOutcomesAtHead: atHead
+      .filter((v) => v.authority === AUTHORIZED)
+      .map((v) => ({
+        sourceType: v.sourceType,
+        sourceId: v.sourceId,
+        statedOutcome: v.statedOutcome,
+        completeness: v.completeness,
+      })),
+    currentFindings: classified.filter((c) => c.kind === "finding" && c.freshness === "fresh"),
+    carriedFindings: classified.filter((c) => c.kind === "finding" && c.freshness === "carried"),
+    undecidableFreshness: classified.filter((c) => c.kind === "finding" && c.freshness === UNKNOWN),
     reAnchored: classified.filter((c) => c.reAnchored).length,
-    requestsAtHead: requestsAtHead.length,
+    acknowledgements: classified.filter((c) => c.kind === "acknowledgement").length,
+    requestsAtHead: issues.filter(
+      (c) => c.isReviewRequest && (c.requestedCommit === null || shaMatches(c.requestedCommit, head)),
+    ).length,
   };
 }
 
@@ -188,90 +188,94 @@ export function reviewCompletionAtHead(facts) {
  * collection cannot be green however green the part that was read looks, which
  * is the specific defect this replaces: 5 of 12 checks read, reported GREEN.
  */
-export function ciAtHead(facts) {
+export function ciFactsAtHead(facts) {
   const head = facts.head;
   const env = facts.checkRuns;
   const runs = valueOf(env);
 
   if (head === UNKNOWN || runs === UNKNOWN) {
     return {
-      status: UNKNOWN,
-      reason: env?.reason ?? "check runs could not be read",
+      checksObserved: UNKNOWN,
+      boundToHead: UNKNOWN,
+      foreign: UNKNOWN,
       completeness: env?.completeness ?? UNKNOWN,
-      atHead: 0,
-      failing: [],
-      pending: [],
+      reason: env?.reason ?? "check runs could not be read",
+      failuresObserved: UNKNOWN,
+      stillRunning: UNKNOWN,
+      passedObserved: UNKNOWN,
+      skippedObserved: UNKNOWN,
     };
   }
 
   const bound = runs.filter((c) => shaMatches(c.headSha ?? "", head));
-  const foreign = runs.length - bound.length;
-  const pending = bound.filter((c) => c.status !== "completed").map((c) => c.name);
-  const failing = bound
-    .filter((c) => c.status === "completed" && !["success", "skipped", "neutral"].includes(c.conclusion))
-    .map((c) => c.name);
+  const done = bound.filter((c) => c.status === "completed");
 
-  const base = {
+  // Observations only. There is deliberately no GREEN: "nothing we saw failed"
+  // is not "nothing failed", and converting the first into the second is the
+  // exact defect that retired five vehicles.
+  return {
+    checksObserved: runs.length,
+    boundToHead: bound.length,
+    foreign: runs.length - bound.length,
     completeness: env.completeness,
-    atHead: bound.length,
-    foreign,
-    failing,
-    pending,
+    reason: env.reason,
+    // A confirmed failure is a NEGATIVE fact, proven directly, so it stands on
+    // its own however incomplete the rest of the collection was.
+    failuresObserved: done
+      .filter((c) => !["success", "skipped", "neutral"].includes(c.conclusion))
+      .map((c) => c.name),
+    stillRunning: bound.filter((c) => c.status !== "completed").map((c) => c.name),
+    passedObserved: done.filter((c) => c.conclusion === "success").length,
+    skippedObserved: done.filter((c) => ["skipped", "neutral"].includes(c.conclusion)).length,
   };
-
-  // A failure is a NEGATIVE fact and stands on its own: one confirmed failing
-  // check is red whether or not the rest of the collection was readable.
-  if (failing.length > 0) return { status: "RED", reason: `${failing.length} check(s) failing at this head`, ...base };
-
-  // Every remaining answer is positive-ish, so it must pass the gate.
-  if (!mayAssertPositive(env)) {
-    return { status: UNKNOWN, reason: env.reason, ...base };
-  }
-  if (bound.length === 0) {
-    return {
-      status: UNKNOWN,
-      reason: "no check run is bound to this head; nothing ran is not the same as nothing failed",
-      ...base,
-    };
-  }
-  if (pending.length > 0) return { status: "PENDING", reason: `${pending.length} check(s) still running`, ...base };
-  return { status: "GREEN", reason: `${bound.length} complete check(s) bound to this head`, ...base };
 }
 
 /**
- * The whole picture at one exact head. A report, not a decision: no release
- * verdict, no stop law, no findings state.
+ * THE OPERATOR PACKET: everything observed at one exact head, and nothing
+ * concluded from it.
+ *
+ * `controlPlaneResult` is a CONSTANT, not a computation. It is never branched
+ * on and can never be anything else. The moment it becomes conditional, this
+ * tool is asserting readiness again - which is precisely what five retired
+ * vehicles established it must not do.
  */
+export const WAIT_FOR_OPERATOR_GO = "WAIT_FOR_OPERATOR_GO";
+
 export function summarize(facts) {
-  const review = reviewCompletionAtHead(facts);
-  const ci = ciAtHead(facts);
+  const review = reviewFactsAtHead(facts);
+  const bySeverity =
+    review.currentFindings === UNKNOWN
+      ? UNKNOWN
+      : review.currentFindings.reduce((acc, f) => {
+          acc[f.severity] = (acc[f.severity] ?? 0) + 1;
+          return acc;
+        }, {});
+  const count = (xs) => (xs === UNKNOWN ? UNKNOWN : xs.length);
   return {
     repo: facts.repo,
     pr: facts.pr,
     head: facts.head,
     pullRequest: facts.pullRequest,
-    ci,
+    ci: ciFactsAtHead(facts),
     review: {
-      status: review.status,
-      reason: review.reason,
-      evidenceCount: review.evidence.length,
-      staleEvidenceCount: review.staleEvidence.length,
-      unauthorizedEvidenceCount: review.unauthorizedEvidence.length,
+      verdictObjects: review.verdictObjects,
+      verdictsAtHead: review.verdictsAtHead,
+      staleEvidence: count(review.staleEvidence),
+      unauthorizedAtHead: count(review.unauthorizedAtHead),
+      unknownAuthorityAtHead: count(review.unknownAuthorityAtHead),
+      trustedOutcomesAtHead: review.trustedOutcomesAtHead,
       requestsAtHead: review.requestsAtHead,
+      reason: review.reason,
     },
     findings: {
-      fresh: review.freshFindings === UNKNOWN ? UNKNOWN : review.freshFindings.length,
-      carried: review.carriedFindings === undefined ? UNKNOWN : review.carriedFindings.length,
-      reAnchored: review.reAnchored ?? UNKNOWN,
-      acknowledgements: review.acknowledgements ?? UNKNOWN,
-      bySeverity:
-        review.freshFindings === UNKNOWN
-          ? UNKNOWN
-          : review.freshFindings.reduce((acc, f) => {
-              acc[f.severity] = (acc[f.severity] ?? 0) + 1;
-              return acc;
-            }, {}),
+      currentHead: count(review.currentFindings),
+      carried: count(review.carriedFindings),
+      undecidableFreshness: count(review.undecidableFreshness),
+      reAnchored: review.reAnchored,
+      acknowledgements: review.acknowledgements,
+      bySeverity,
     },
-    unavailable: facts.unavailable,
+    unknownEvidence: facts.unavailable,
+    controlPlaneResult: WAIT_FOR_OPERATOR_GO,
   };
 }

@@ -1,28 +1,26 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// CP-005a: the evidence envelope.
+// CP-005: the evidence envelope.
 //
-// THE INVARIANT, in one place:
+// THIS MODULE NO LONGER GATES A POSITIVE ASSERTION, BECAUSE THE TOOL NO LONGER
+// MAKES ONE.
 //
-//   A POSITIVE fact - CI GREEN, REVIEW CLEAN - may be emitted ONLY when the
-//   evidence behind it is both sufficiently COMPLETE and sufficiently
-//   AUTHORIZED. Anything else is UNKNOWN, or the raw non-clean state.
+// Five vehicles (#617-#621) tried to decide when evidence was good enough to
+// emit CI GREEN or REVIEW CLEAN. Every one was retired for the same defect:
+// unknown, invalid or incomplete evidence producing a positive conclusion. The
+// last of them broke twice in code written specifically to prevent it - a
+// verdict with unknown actor authority was silently outvoted by a valid one,
+// and a check collection whose advertised total was absent or malformed was
+// labelled COMPLETE.
 //
-// WHY IT IS CENTRAL RATHER THAN PER-CALL-SITE. The first version of this module
-// stated that invariant in prose and enforced it ad hoc at each surface. It
-// then broke it twice, independently, at its first review:
+// The lesson is not that the gate needed another guard. It is that the CLAIM was
+// the liability. So the claim is gone: this envelope now carries observations,
+// and the operator decides readiness.
 //
-//   * check runs were read UNPAGINATED, so with the page forced to 5 the module
-//     reported GREEN from 5 checks while the same response said total_count=12.
-//     Seven checks were never read, and the proof of incompleteness was sitting
-//     in the response it had already parsed.
-//   * ANY comment containing the verdict marker was accepted as a Codex
-//     verdict, so any actor could produce COMPLETE_CLEAN.
-//
-// Both are one family: a positive fact asserted on insufficient evidence. Two
-// independent violations of a stated invariant is a missing mechanism, not two
-// slips, so the mechanism now exists exactly once and every positive fact must
-// pass through `mayAssertPositive`.
+// What survives is everything that reads GitHub honestly - completeness
+// evidence, actor authority, UNKNOWN as a first-class value. Those are facts.
+// `mayAssertPositive` is deliberately absent: there is no positive assertion
+// left for it to guard, and reintroducing it would reintroduce the family.
 // ---------------------------------------------------------------------------
 
 export const UNKNOWN = "UNKNOWN";
@@ -38,17 +36,6 @@ export const UNAUTHORIZED = "UNAUTHORIZED";
 /** One envelope shape for every fact that can contribute to a positive state. */
 export function evidence(value, { completeness, authority, reason }) {
   return Object.freeze({ value, completeness, authority, reason });
-}
-
-/**
- * THE GATE. The only place a positive fact is permitted. Both dimensions are
- * load-bearing and neither substitutes for the other: a check-run collection is
- * authorized (GitHub reported it about itself) but may be incomplete, while a
- * verdict may be complete (the whole comment was read) but unauthorized
- * (someone else wrote it).
- */
-export function mayAssertPositive(env) {
-  return env?.completeness === COMPLETE && env?.authority === AUTHORIZED;
 }
 
 /**
