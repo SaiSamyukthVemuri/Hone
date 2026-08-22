@@ -1,0 +1,30 @@
+{
+  // Scoped compiler check for the engineering evidence boundary.
+  //
+  // These files stay .mjs and keep running under bare `node`, like the other 20
+  // scripts in this repo. This config exists only so the canonical domain
+  // states in evidence.mjs are ENFORCED: a consumer that reads a payload field
+  // without narrowing, or that fails to handle a semantic state, does not
+  // compile. It is deliberately NOT at the repository root, where it would
+  // match the full-matrix trigger /^tsconfig(\.[\w.-]+)?\.json$/.
+  //
+  // Run by tests/eng/compiler-exhaustiveness.test.ts, so the guard executes in
+  // the ordinary unit lane rather than needing a new CI step.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    // Raw GitHub payloads genuinely ARE `any`; annotating every fetcher
+    // parameter buys no safety and just adds noise. Everything that protects
+    // the canonical states - strictNullChecks, discriminated-union narrowing,
+    // exhaustiveness - stays ON. The tests below prove those still fire.
+    "noImplicitAny": false,
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["*.mjs"]
+}

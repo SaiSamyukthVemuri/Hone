@@ -25,7 +25,10 @@
 //      dropped.
 // ---------------------------------------------------------------------------
 
-import { AUTHORIZED, COMPLETE, mayAssertPositive, UNKNOWN } from "./evidence.mjs";
+import {
+  AUTHORIZED, CLEAN, COMPLETE, INCOMPLETE, KNOWN_TRUSTED, KNOWN_UNTRUSTED,
+  NOT_FINDING, PROVEN, REPLY, TOP_LEVEL, UNKNOWN, mayAssertPositive,
+} from "./evidence.mjs";
 
 /**
  * Compare a possibly-abbreviated sha against a full one. Codex writes 10-char
@@ -39,8 +42,13 @@ export function shaMatches(a, b) {
   return a.slice(0, n).toLowerCase() === b.slice(0, n).toLowerCase();
 }
 
-/** Unwrap an evidence envelope's value, or UNKNOWN when it carries none. */
-const valueOf = (env) => (!env || env.value === null || env.value === UNKNOWN ? UNKNOWN : env.value);
+/**
+ * The items a collection actually delivered, or UNKNOWN when it delivered
+ * none. INCOMPLETE still yields its items - a partial read is real evidence,
+ * it just cannot support a POSITIVE claim. That distinction is enforced at the
+ * assertion sites below, never by silently dropping data here.
+ */
+const itemsOf = (c) => (c?.kind === COMPLETE || c?.kind === INCOMPLETE ? c.items : UNKNOWN);
 
 /**
  * A finding is an inline comment carrying a severity badge. Everything else is
@@ -48,29 +56,74 @@ const valueOf = (env) => (!env || env.value === null || env.value === UNKNOWN ? 
  * RAISED, never by where GitHub currently displays it.
  */
 export function classifyInlineComment(c, head) {
-  const isFinding = Boolean(c.severity);
-  const raisedAt = c.originalCommitId;
-  const displayedAt = c.commitId;
+  const { shape, actor, replyStatus, identity } = c;
+
+  // Freshness is decided by where the comment was RAISED. `displayCommitId`
+  // moves when GitHub re-anchors an old comment onto a newer head, and reading
+  // it instead is how a stale finding gets mistaken for a fresh one.
+  const raisedAt = identity.kind === PROVEN ? identity.raisedAt : UNKNOWN;
+  const displayedAt = c.displayCommitId;
   const reAnchored =
-    Boolean(raisedAt) && Boolean(displayedAt) && !shaMatches(raisedAt, displayedAt);
+    raisedAt !== UNKNOWN && displayedAt !== UNKNOWN && !shaMatches(raisedAt, displayedAt);
 
   let freshness;
-  if (!raisedAt || head === UNKNOWN) freshness = UNKNOWN;
-  else if (shaMatches(raisedAt, head)) freshness = "fresh";
-  else freshness = "carried";
+  if (raisedAt === UNKNOWN || head === UNKNOWN) freshness = UNKNOWN;
+  else freshness = shaMatches(raisedAt, head) ? "fresh" : "carried";
+
+  // ONE ordered decision, reading only canonical states. `blocking` is the
+  // single question that matters downstream: could this comment be the trusted
+  // reviewer speaking? If we cannot rule that out, it must block a clean claim.
+  let kind;
+  let blocking;
+  let reason;
+  if (shape.kind === NOT_FINDING) {
+    kind = "acknowledgement";
+    blocking = false;
+    reason = "no severity markup, so it is not finding-shaped";
+  } else if (actor.kind === UNKNOWN) {
+    kind = "raw_evidence";
+    blocking = true;
+    reason = actor.reason;
+  } else if (actor.kind === KNOWN_UNTRUSTED) {
+    kind = "raw_evidence";
+    blocking = false;
+    reason = `finding-shaped markup posted by ${actor.login}, who is not the trusted reviewer`;
+  } else if (replyStatus.kind === REPLY) {
+    kind = "raw_evidence";
+    blocking = false;
+    reason = `answers comment ${replyStatus.inReplyToId}, so it is a reply rather than a finding`;
+  } else if (replyStatus.kind === UNKNOWN) {
+    kind = "raw_evidence";
+    blocking = true;
+    reason = replyStatus.reason;
+  } else if (identity.kind === UNKNOWN) {
+    kind = "raw_evidence";
+    blocking = true;
+    reason = identity.reason;
+  } else {
+    kind = "finding";
+    blocking = false;
+    reason = "trusted reviewer, proven top-level, fully provenanced";
+  }
 
   return {
     id: c.id,
-    kind: isFinding ? "finding" : "acknowledgement",
-    severity: c.severity ?? null,
-    title: c.title ?? null,
-    path: c.path,
-    line: c.line,
+    kind,
+    blocking,
+    reason,
+    // Display metadata, carried so a report can be read by a human. There is no
+    // `isReply` here: `replyStatus` is the only representation of that fact, so
+    // nothing can disagree with it.
+    severity: shape.kind === "FINDING" ? shape.severity : null,
+    title: shape.kind === "FINDING" ? shape.title : null,
+    path: identity.kind === PROVEN ? identity.path : UNKNOWN,
+    originalLine: identity.kind === PROVEN ? identity.originalLine : UNKNOWN,
+    identityKey: identity.kind === PROVEN ? identity.key : UNKNOWN,
+    actorId: actor.kind === UNKNOWN ? UNKNOWN : actor.id,
     raisedAt,
     displayedAt,
     reAnchored,
     freshness,
-    isReply: c.inReplyToId !== null && c.inReplyToId !== undefined,
   };
 }
 
@@ -84,20 +137,29 @@ export function classifyInlineComment(c, head) {
  */
 export function collectVerdicts(facts) {
   const head = facts.head;
-  const reviews = valueOf(facts.reviews);
-  const issues = valueOf(facts.issueComments);
+  const reviews = itemsOf(facts.reviews);
+  const issues = itemsOf(facts.issueComments);
   if (head === UNKNOWN || reviews === UNKNOWN || issues === UNKNOWN) return UNKNOWN;
 
-  const all = [
-    ...issues.filter((c) => c.verdict).map((c) => c.verdict),
-    ...reviews.map((r) => r.verdict),
-  ];
+  const norm = (sourceType) => (v) => ({
+    sourceType,
+    sourceId: v.id,
+    authority: v.authority,
+    outcome: v.outcome,
+    reviewedCommit: v.reviewedCommit,
+    // A verdict names this head or it does not. There is deliberately no
+    // cached `usable` flag beside these states: a stored copy of a derived
+    // fact is a second truth, and it drifts.
+    atHead:
+      typeof v.reviewedCommit === "string" &&
+      v.reviewedCommit !== UNKNOWN &&
+      shaMatches(v.reviewedCommit, head),
+  });
 
-  return all.map((v) => ({
-    ...v,
-    atHead: shaMatches(v.reviewedCommit ?? "", head),
-    usable: mayAssertPositive(v),
-  }));
+  return [
+    ...issues.filter((c) => c.reviewedCommit !== null).map(norm("issue_comment")),
+    ...reviews.map(norm("review_object")),
+  ];
 }
 
 /**
@@ -110,8 +172,8 @@ export function collectVerdicts(facts) {
  */
 export function reviewCompletionAtHead(facts) {
   const head = facts.head;
-  const inline = valueOf(facts.inlineComments);
-  const issues = valueOf(facts.issueComments);
+  const inline = itemsOf(facts.inlineComments);
+  const issues = itemsOf(facts.issueComments);
   const verdicts = collectVerdicts(facts);
 
   if (head === UNKNOWN || inline === UNKNOWN || issues === UNKNOWN || verdicts === UNKNOWN) {
@@ -121,33 +183,43 @@ export function reviewCompletionAtHead(facts) {
       evidence: [],
       staleEvidence: [],
       unauthorizedEvidence: [],
+      blockingEvidence: [],
       freshFindings: UNKNOWN,
     };
   }
 
   const atHead = verdicts.filter((v) => v.atHead);
-  const usable = atHead.filter((v) => v.usable);
-  const unauthorizedEvidence = atHead.filter((v) => v.authority !== AUTHORIZED);
-  const incompleteAtHead = atHead.filter((v) => v.authority === AUTHORIZED && v.completeness !== COMPLETE);
+  // USABLE = the speaker is authorized AND they actually stated an outcome.
+  // Both are read straight off canonical states; neither is cached.
+  const usable = atHead.filter((v) => v.authority.kind === AUTHORIZED && mayAssertPositive(v.outcome));
+  const unauthorizedEvidence = atHead.filter((v) => v.authority.kind === KNOWN_UNTRUSTED || v.authority.kind === "UNAUTHORIZED");
+  const unknownAuthority = atHead.filter((v) => v.authority.kind === UNKNOWN);
+  const statedNothing = atHead.filter((v) => v.authority.kind === AUTHORIZED && v.outcome?.kind === UNKNOWN);
   const staleEvidence = verdicts.filter((v) => !v.atHead);
 
   const classified = inline.map((c) => classifyInlineComment(c, head));
   const freshFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "fresh");
   const carriedFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "carried");
+  // Anything we could not rule out as the trusted reviewer speaking. Checked
+  // BEFORE any positive branch below.
+  const blockingEvidence = classified.filter((c) => c.blocking);
 
   const requestsAtHead = issues.filter(
-    (c) => c.isReviewRequest && (c.requestedCommit === null || shaMatches(c.requestedCommit, head)),
+    (c) => c.requestedCommit !== null && (c.requestedCommit === UNKNOWN || shaMatches(c.requestedCommit, head)),
   );
 
   let status;
   let reason;
   if (usable.length === 0) {
-    if (unauthorizedEvidence.length > 0) {
+    if (unknownAuthority.length > 0) {
       status = UNKNOWN;
-      reason = `a verdict names this head but its actor is not the trusted reviewer (${unauthorizedEvidence[0].reason})`;
-    } else if (incompleteAtHead.length > 0) {
+      reason = `a verdict names this head but its actor could not be identified (${unknownAuthority[0].authority.reason})`;
+    } else if (unauthorizedEvidence.length > 0) {
       status = UNKNOWN;
-      reason = `a trusted review object exists at this head but states no verdict (${incompleteAtHead[0].reason})`;
+      reason = "a verdict names this head but its actor is not the trusted reviewer";
+    } else if (statedNothing.length > 0) {
+      status = UNKNOWN;
+      reason = "a trusted review object exists at this head but states no verdict";
     } else if (requestsAtHead.length > 0) {
       status = "REQUESTED_UNANSWERED";
       reason = "a review was requested for this head and no usable verdict for this head exists yet";
@@ -155,10 +227,16 @@ export function reviewCompletionAtHead(facts) {
       status = "NONE";
       reason = "no usable verdict names this head";
     }
+  } else if (blockingEvidence.length > 0) {
+    // Deliberately ahead of both positive branches. Undecidable evidence can be
+    // the reviewer speaking, and reporting CLEAN over it is the exact defect
+    // that retired four vehicles.
+    status = UNKNOWN;
+    reason = `${blockingEvidence.length} comment(s) at this PR could not be decided: ${blockingEvidence[0].reason}`;
   } else if (freshFindings.length > 0) {
     status = "COMPLETE_WITH_FINDINGS";
     reason = `trusted verdict for this head, with ${freshFindings.length} finding(s) raised at it`;
-  } else if (usable.some((v) => v.clean === true)) {
+  } else if (usable.some((v) => v.outcome.kind === CLEAN)) {
     status = "COMPLETE_CLEAN";
     reason = "trusted, complete verdict for this head reports no findings";
   } else {
@@ -172,6 +250,7 @@ export function reviewCompletionAtHead(facts) {
     evidence: usable,
     staleEvidence,
     unauthorizedEvidence,
+    blockingEvidence,
     freshFindings,
     carriedFindings,
     acknowledgements: classified.filter((c) => c.kind === "acknowledgement").length,
@@ -190,42 +269,43 @@ export function reviewCompletionAtHead(facts) {
  */
 export function ciAtHead(facts) {
   const head = facts.head;
-  const env = facts.checkRuns;
-  const runs = valueOf(env);
+  const collection = facts.checkRuns;
+  const runs = itemsOf(collection);
 
   if (head === UNKNOWN || runs === UNKNOWN) {
     return {
       status: UNKNOWN,
-      reason: env?.reason ?? "check runs could not be read",
-      completeness: env?.completeness ?? UNKNOWN,
+      reason: collection?.kind === UNKNOWN ? collection.reason : "check runs could not be read",
+      completeness: collection?.kind ?? UNKNOWN,
       atHead: 0,
+      foreign: 0,
       failing: [],
       pending: [],
     };
   }
 
-  const bound = runs.filter((c) => shaMatches(c.headSha ?? "", head));
+  // A run with no readable head sha is UNKNOWN and binds to nothing.
+  const bound = runs.filter((c) => c.headSha !== UNKNOWN && shaMatches(c.headSha, head));
   const foreign = runs.length - bound.length;
   const pending = bound.filter((c) => c.status !== "completed").map((c) => c.name);
   const failing = bound
     .filter((c) => c.status === "completed" && !["success", "skipped", "neutral"].includes(c.conclusion))
     .map((c) => c.name);
 
-  const base = {
-    completeness: env.completeness,
-    atHead: bound.length,
-    foreign,
-    failing,
-    pending,
-  };
+  const base = { completeness: collection.kind, atHead: bound.length, foreign, failing, pending };
 
   // A failure is a NEGATIVE fact and stands on its own: one confirmed failing
   // check is red whether or not the rest of the collection was readable.
   if (failing.length > 0) return { status: "RED", reason: `${failing.length} check(s) failing at this head`, ...base };
 
-  // Every remaining answer is positive-ish, so it must pass the gate.
-  if (!mayAssertPositive(env)) {
-    return { status: UNKNOWN, reason: env.reason, ...base };
+  // Every remaining answer is positive, so the collection must be whole. An
+  // INCOMPLETE read cannot be GREEN however green the part we saw looks.
+  if (collection.kind !== COMPLETE) {
+    return {
+      status: UNKNOWN,
+      reason: collection.kind === INCOMPLETE ? collection.reason : "the check collection is not complete",
+      ...base,
+    };
   }
   if (bound.length === 0) {
     return {
@@ -257,6 +337,7 @@ export function summarize(facts) {
       evidenceCount: review.evidence.length,
       staleEvidenceCount: review.staleEvidence.length,
       unauthorizedEvidenceCount: review.unauthorizedEvidence.length,
+      blockingEvidenceCount: review.blockingEvidence.length,
       requestsAtHead: review.requestsAtHead,
     },
     findings: {

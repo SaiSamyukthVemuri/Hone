@@ -85,15 +85,24 @@ function renderHuman(facts) {
   if (unauth > 0) {
     out.push(`UNAUTHORIZED VERDICT-LIKE OBJECTS ${unauth} ${DIM}named this head but are not from the trusted reviewer${RESET}`);
     for (const u of review.unauthorizedEvidence) {
-      out.push(`  ${DIM}${u.sourceType} ${u.sourceId} by ${u.actor} (id ${u.actorId})${RESET}`);
+      const who = u.authority.kind === "UNKNOWN" ? u.authority.reason : `account ${u.authority.id}`;
+      out.push(`  ${DIM}${u.sourceType} ${u.sourceId} by ${who}${RESET}`);
     }
+  }
+
+  // Undecidable evidence is the REASON a clean verdict was withheld, so it is
+  // reported rather than silently absorbed into the status line.
+  const blocking = review.blockingEvidence?.length ?? 0;
+  if (blocking > 0) {
+    out.push(`UNDECIDABLE EVIDENCE ${blocking} ${DIM}could not be ruled out as the reviewer speaking${RESET}`);
+    for (const b of review.blockingEvidence) out.push(`  ${DIM}comment ${b.id}: ${b.reason}${RESET}`);
   }
 
   if (review.freshFindings !== UNKNOWN && review.freshFindings.length) {
     out.push("");
     out.push("Findings raised at THIS head:");
     for (const f of review.freshFindings) {
-      out.push(`  ${f.severity}  ${f.path}:${f.line}`);
+      out.push(`  ${f.severity}  ${f.path}:${f.originalLine}`);
       if (f.title) out.push(`      ${DIM}${f.title}${RESET}`);
     }
   }

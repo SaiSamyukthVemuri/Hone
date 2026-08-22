@@ -13,7 +13,8 @@
     "mergeCommit": "6fe93ccf8d03e0c34fd6c6daa666a73fe3d8eeed"
   },
   "checkRuns": {
-    "value": [
+    "kind": "COMPLETE",
+    "items": [
       {
         "name": "browser e2e (local stack)",
         "status": "completed",
@@ -86,139 +87,172 @@
         "conclusion": "success",
         "headSha": "0bee13502e03979b5fc9b838064722c497ace8aa"
       }
-    ],
-    "completeness": "COMPLETE",
-    "authority": "AUTHORIZED",
-    "reason": "collected 12 of 12 reported by the API"
+    ]
   },
   "reviews": {
-    "value": [
+    "kind": "COMPLETE",
+    "items": [
       {
         "id": 4998885171,
-        "author": "chatgpt-codex-connector[bot]",
-        "authorId": 199175422,
+        "actor": {
+          "kind": "KNOWN_TRUSTED",
+          "id": 199175422,
+          "login": "chatgpt-codex-connector[bot]"
+        },
+        "authority": {
+          "kind": "AUTHORIZED",
+          "id": 199175422
+        },
+        "outcome": {
+          "kind": "WITH_FINDINGS"
+        },
+        "reviewedCommit": "2c3e5baebb",
         "state": "COMMENTED",
-        "commitId": "2c3e5baebbcdd781073483f7e2d68620530151c7",
-        "submittedAt": "2026-08-22T04:01:15Z",
-        "hasBody": true,
-        "verdict": {
-          "sourceType": "review_object",
-          "sourceId": 4998885171,
-          "actor": "chatgpt-codex-connector[bot]",
-          "actorId": 199175422,
-          "reviewedCommit": "2c3e5baebb",
-          "clean": false,
-          "completeness": "COMPLETE",
-          "authority": "AUTHORIZED",
-          "reason": "verdict text and reviewed commit are both present; actor id 199175422 is the trusted reviewer"
-        }
+        "submittedAt": "2026-08-22T04:01:15Z"
       },
       {
         "id": 4998932964,
-        "author": "SaiSamyukthVemuri",
-        "authorId": 26781116,
+        "actor": {
+          "kind": "KNOWN_UNTRUSTED",
+          "id": 26781116,
+          "login": "SaiSamyukthVemuri"
+        },
+        "authority": {
+          "kind": "UNAUTHORIZED",
+          "id": 26781116
+        },
+        "outcome": {
+          "kind": "UNKNOWN",
+          "reason": "the review states no outcome: its body is empty"
+        },
+        "reviewedCommit": "0bee13502e03979b5fc9b838064722c497ace8aa",
         "state": "COMMENTED",
-        "commitId": "0bee13502e03979b5fc9b838064722c497ace8aa",
-        "submittedAt": "2026-08-22T04:23:12Z",
-        "hasBody": false,
-        "verdict": {
-          "sourceType": "review_object",
-          "sourceId": 4998932964,
-          "actor": "SaiSamyukthVemuri",
-          "actorId": 26781116,
-          "reviewedCommit": "0bee13502e03979b5fc9b838064722c497ace8aa",
-          "clean": null,
-          "completeness": "INCOMPLETE",
-          "authority": "UNAUTHORIZED",
-          "reason": "the review object carries no body, so it states no verdict; actor id 26781116 (SaiSamyukthVemuri) is not the trusted reviewer"
-        }
+        "submittedAt": "2026-08-22T04:23:12Z"
       }
-    ],
-    "completeness": "COMPLETE",
-    "authority": "AUTHORIZED",
-    "reason": "collected 2 item(s); the API reported no total to check against"
+    ]
   },
   "inlineComments": {
-    "value": [
+    "kind": "COMPLETE",
+    "items": [
       {
         "id": 3835033640,
-        "author": "chatgpt-codex-connector[bot]",
-        "authorId": 199175422,
-        "commitId": "0bee13502e03979b5fc9b838064722c497ace8aa",
-        "originalCommitId": "2c3e5baebbcdd781073483f7e2d68620530151c7",
-        "path": "e2e/helpers/local-env.ts",
-        "line": 84,
-        "inReplyToId": null,
-        "severity": "P2",
-        "title": "Update the local E2E setup instructions for derived ports",
+        "actor": {
+          "kind": "KNOWN_TRUSTED",
+          "id": 199175422,
+          "login": "chatgpt-codex-connector[bot]"
+        },
+        "provenance": {
+          "kind": "PROVEN",
+          "reviewId": 4998885171
+        },
+        "replyStatus": {
+          "kind": "TOP_LEVEL"
+        },
+        "identity": {
+          "kind": "PROVEN",
+          "key": "gh:3835033640@2c3e5baebbcdd781073483f7e2d68620530151c7:e2e/helpers/local-env.ts:84",
+          "id": 3835033640,
+          "raisedAt": "2c3e5baebbcdd781073483f7e2d68620530151c7",
+          "path": "e2e/helpers/local-env.ts",
+          "originalLine": 84
+        },
+        "shape": {
+          "kind": "FINDING",
+          "severity": "P2",
+          "title": "Update the local E2E setup instructions for derived ports"
+        },
+        "displayCommitId": "0bee13502e03979b5fc9b838064722c497ace8aa",
+        "displayLine": 84,
         "reactionCount": 0,
         "createdAt": "2026-08-22T04:01:15Z"
       },
       {
         "id": 3835072576,
-        "author": "SaiSamyukthVemuri",
-        "authorId": 26781116,
-        "commitId": "0bee13502e03979b5fc9b838064722c497ace8aa",
-        "originalCommitId": "2c3e5baebbcdd781073483f7e2d68620530151c7",
-        "path": "e2e/helpers/local-env.ts",
-        "line": 84,
-        "inReplyToId": 3835033640,
-        "severity": null,
-        "title": null,
+        "actor": {
+          "kind": "KNOWN_UNTRUSTED",
+          "id": 26781116,
+          "login": "SaiSamyukthVemuri"
+        },
+        "provenance": {
+          "kind": "PROVEN",
+          "reviewId": 4998932964
+        },
+        "replyStatus": {
+          "kind": "REPLY",
+          "inReplyToId": 3835033640
+        },
+        "identity": {
+          "kind": "PROVEN",
+          "key": "gh:3835072576@2c3e5baebbcdd781073483f7e2d68620530151c7:e2e/helpers/local-env.ts:84",
+          "id": 3835072576,
+          "raisedAt": "2c3e5baebbcdd781073483f7e2d68620530151c7",
+          "path": "e2e/helpers/local-env.ts",
+          "originalLine": 84
+        },
+        "shape": {
+          "kind": "NOT_FINDING"
+        },
+        "displayCommitId": "0bee13502e03979b5fc9b838064722c497ace8aa",
+        "displayLine": 84,
         "reactionCount": 0,
         "createdAt": "2026-08-22T04:23:12Z"
       }
-    ],
-    "completeness": "COMPLETE",
-    "authority": "AUTHORIZED",
-    "reason": "collected 2 item(s); the API reported no total to check against"
+    ]
   },
   "issueComments": {
-    "value": [
+    "kind": "COMPLETE",
+    "items": [
       {
         "id": 5377735298,
-        "author": "vercel[bot]",
-        "authorId": 35613825,
-        "createdAt": "2026-08-22T03:57:42Z",
-        "isVerdictCandidate": false,
-        "verdict": null,
-        "isReviewRequest": false,
-        "requestedCommit": null
+        "actor": {
+          "kind": "KNOWN_UNTRUSTED",
+          "id": 35613825,
+          "login": "vercel[bot]"
+        },
+        "authority": {
+          "kind": "UNAUTHORIZED",
+          "id": 35613825
+        },
+        "reviewedCommit": null,
+        "outcome": null,
+        "requestedCommit": null,
+        "createdAt": "2026-08-22T03:57:42Z"
       },
       {
         "id": 5377884584,
-        "author": "SaiSamyukthVemuri",
-        "authorId": 26781116,
-        "createdAt": "2026-08-22T04:32:30Z",
-        "isVerdictCandidate": false,
-        "verdict": null,
-        "isReviewRequest": true,
-        "requestedCommit": "0bee13502e03979b5fc9b838064722c497ace8aa"
+        "actor": {
+          "kind": "KNOWN_UNTRUSTED",
+          "id": 26781116,
+          "login": "SaiSamyukthVemuri"
+        },
+        "authority": {
+          "kind": "UNAUTHORIZED",
+          "id": 26781116
+        },
+        "reviewedCommit": null,
+        "outcome": null,
+        "requestedCommit": "0bee13502e03979b5fc9b838064722c497ace8aa",
+        "createdAt": "2026-08-22T04:32:30Z"
       },
       {
         "id": 5377897852,
-        "author": "chatgpt-codex-connector[bot]",
-        "authorId": 199175422,
-        "createdAt": "2026-08-22T04:35:33Z",
-        "isVerdictCandidate": true,
-        "verdict": {
-          "sourceType": "issue_comment",
-          "sourceId": 5377897852,
-          "actor": "chatgpt-codex-connector[bot]",
-          "actorId": 199175422,
-          "reviewedCommit": "0bee13502e",
-          "clean": true,
-          "completeness": "COMPLETE",
-          "authority": "AUTHORIZED",
-          "reason": "verdict text and reviewed commit are both present; actor id 199175422 is the trusted reviewer"
+        "actor": {
+          "kind": "KNOWN_TRUSTED",
+          "id": 199175422,
+          "login": "chatgpt-codex-connector[bot]"
         },
-        "isReviewRequest": true,
-        "requestedCommit": "0bee13502e"
+        "authority": {
+          "kind": "AUTHORIZED",
+          "id": 199175422
+        },
+        "reviewedCommit": "0bee13502e",
+        "outcome": {
+          "kind": "CLEAN"
+        },
+        "requestedCommit": "0bee13502e",
+        "createdAt": "2026-08-22T04:35:33Z"
       }
-    ],
-    "completeness": "COMPLETE",
-    "authority": "AUTHORIZED",
-    "reason": "collected 3 item(s); the API reported no total to check against"
+    ]
   },
   "unavailable": []
 }

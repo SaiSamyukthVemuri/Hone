@@ -31,7 +31,11 @@
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from "node:child_process";
-import { collectionEvidence, evidence, verdictEvidence, UNKNOWN } from "./evidence.mjs";
+import {
+  decodeActorIdentity, decodeCheckCollection, decodeFindingIdentity, decodeFindingShape,
+  decodeReplyStatus, decodeReviewProvenance, decodeVerdictAuthority, decodeVerdictOutcome,
+  UNKNOWN,
+} from "./evidence.mjs";
 
 export { UNKNOWN };
 
@@ -86,7 +90,8 @@ export function ghFetcher({ repo = DEFAULT_REPO } = {}) {
       });
       return { ok: true, data: JSON.parse(out) };
     } catch (err) {
-      const stderr = String(err.stderr ?? err.message ?? "").trim().split("\n")[0];
+      const e = /** @type {any} */ (err);
+      const stderr = String(e?.stderr ?? e?.message ?? "").trim().split("\n")[0];
       return { ok: false, reason: stderr || "gh api call failed" };
     }
   };
@@ -103,22 +108,23 @@ const shortSha = (sha) => (typeof sha === "string" ? sha.slice(0, 10) : sha);
  * wrong one is how a stale finding is mistaken for a fresh one.
  */
 export function projectInlineComment(c) {
-  const body = String(c.body ?? "");
-  const severity = body.match(SEVERITY_BADGE)?.[1] ?? null;
-  const title = body.match(FINDING_TITLE)?.[1]?.trim().replace(/\*+$/, "") ?? null;
   return {
-    id: c.id,
-    author: c.user?.login ?? UNKNOWN,
-    authorId: c.user?.id ?? null,
-    commitId: c.commit_id ?? null,
-    originalCommitId: c.original_commit_id ?? null,
-    path: c.path ?? null,
-    line: c.line ?? c.original_line ?? null,
-    inReplyToId: c.in_reply_to_id ?? null,
-    severity,
-    title: severity ? title : null,
-    reactionCount: c.reactions?.total_count ?? 0,
-    createdAt: c.created_at ?? null,
+    id: c?.id ?? UNKNOWN,
+    // CANONICAL FACTS. Each is decoded once, here, and consumers read only these.
+    actor: decodeActorIdentity(c?.user),
+    provenance: decodeReviewProvenance(c),
+    replyStatus: decodeReplyStatus(c),
+    identity: decodeFindingIdentity(c),
+    shape: decodeFindingShape(c?.body),
+    // DISPLAY ONLY. Cannot authorize anything, and deliberately never consulted
+    // by a decoder. `displayCommitId` is where GitHub currently SHOWS the
+    // comment; the sha it was RAISED at lives in `identity` and never moves.
+    // `displayLine` does NOT fall back to original_line: collapsing the mutable
+    // position onto the stable one is what made findings unkeyable before.
+    displayCommitId: c?.commit_id ?? UNKNOWN,
+    displayLine: c?.line ?? UNKNOWN,
+    reactionCount: c?.reactions?.total_count ?? 0,
+    createdAt: c?.created_at ?? UNKNOWN,
   };
 }
 
@@ -129,27 +135,21 @@ export function projectInlineComment(c) {
  * invisible from the other.
  */
 export function projectReview(r) {
-  const body = String(r.body ?? "");
-  const hasBody = body.trim().length > 0;
+  const body = String(r?.body ?? "");
   const reviewedCommit = body.match(REVIEWED_COMMIT)?.[1] ?? null;
   return {
-    id: r.id,
-    author: r.user?.login ?? UNKNOWN,
-    authorId: r.user?.id ?? null,
-    state: r.state ?? UNKNOWN,
-    commitId: r.commit_id ?? null,
-    submittedAt: r.submitted_at ?? null,
-    hasBody,
-    verdict: verdictEvidence({
-      sourceType: "review_object",
-      sourceId: r.id,
-      user: r.user,
-      // A review body may state its head explicitly; otherwise the object's own
-      // commit_id is the head it was submitted against.
-      reviewedCommit: reviewedCommit ?? r.commit_id ?? null,
-      clean: hasBody ? CLEAN_VERDICT.test(body) : null,
-      hasBody,
-    }),
+    id: r?.id ?? UNKNOWN,
+    actor: decodeActorIdentity(r?.user),
+    authority: decodeVerdictAuthority(r?.user),
+    // An empty review body states NO outcome. That is UNKNOWN, never clean -
+    // production previously encoded it as `clean: null` beside a `hasBody`
+    // flag, which is one fact stored twice in two disagreeing shapes.
+    outcome: decodeVerdictOutcome(body),
+    // A review body may name its head explicitly; otherwise the object's own
+    // commit_id is the head it was submitted against.
+    reviewedCommit: reviewedCommit ?? r?.commit_id ?? UNKNOWN,
+    state: r?.state ?? UNKNOWN,
+    submittedAt: r?.submitted_at ?? UNKNOWN,
   };
 }
 
@@ -162,38 +162,33 @@ export function projectReview(r) {
  * copy the wording, which is exactly the hole this closes.
  */
 export function projectIssueComment(c) {
-  const body = String(c.body ?? "");
+  const body = String(c?.body ?? "");
   const verdictCommit = body.match(REVIEWED_COMMIT)?.[1] ?? null;
-  const isRequest = REVIEW_REQUEST.test(body);
+  const requested = REVIEW_REQUEST.test(body) ? (body.match(SHA_IN_TEXT)?.[1] ?? UNKNOWN) : null;
   return {
-    id: c.id,
-    author: c.user?.login ?? UNKNOWN,
-    authorId: c.user?.id ?? null,
-    createdAt: c.created_at ?? null,
-    isVerdictCandidate: verdictCommit !== null,
-    verdict:
-      verdictCommit === null
-        ? null
-        : verdictEvidence({
-            sourceType: "issue_comment",
-            sourceId: c.id,
-            user: c.user,
-            reviewedCommit: verdictCommit,
-            clean: CLEAN_VERDICT.test(body),
-            hasBody: body.trim().length > 0,
-          }),
-    isReviewRequest: isRequest,
-    requestedCommit: isRequest ? (body.match(SHA_IN_TEXT)?.[1] ?? null) : null,
+    id: c?.id ?? UNKNOWN,
+    actor: decodeActorIdentity(c?.user),
+    authority: decodeVerdictAuthority(c?.user),
+    // `reviewedCommit === null` IS the "not a verdict candidate" fact. A
+    // separate isVerdictCandidate boolean would be a second copy of it.
+    reviewedCommit: verdictCommit,
+    outcome: verdictCommit === null ? null : decodeVerdictOutcome(body),
+    // Likewise: `requestedCommit === null` means "not a review request".
+    requestedCommit: requested,
+    createdAt: c?.created_at ?? UNKNOWN,
   };
 }
 
 /** Project a check run. Every check belongs to exactly one head sha. */
 export function projectCheckRun(c) {
   return {
-    name: c.name ?? UNKNOWN,
-    status: c.status ?? UNKNOWN,
-    conclusion: c.conclusion ?? null,
-    headSha: c.head_sha ?? null,
+    name: c?.name ?? UNKNOWN,
+    status: c?.status ?? UNKNOWN,
+    // A check that has not completed has no conclusion yet; that is not a pass.
+    conclusion: c?.conclusion ?? UNKNOWN,
+    // A run with no readable head sha cannot be bound to any head, so it is
+    // UNKNOWN rather than a value that could accidentally compare equal.
+    headSha: typeof c?.head_sha === "string" ? c.head_sha : UNKNOWN,
   };
 }
 
@@ -228,7 +223,7 @@ function flattenArrayPages(data) {
  * surface instead of failing the whole read or - worse - silently returning an
  * empty list that reads like "there is nothing there".
  */
-export function collectFacts({ pr, fetcher, repo = DEFAULT_REPO }) {
+export function collectFacts({ pr, fetcher = null, repo = DEFAULT_REPO }) {
   const fetch = fetcher ?? ghFetcher({ repo });
   const unavailable = [];
 
@@ -246,9 +241,9 @@ export function collectFacts({ pr, fetcher, repo = DEFAULT_REPO }) {
 
   const listSurface = (name, path, project) => {
     const r = raw(name, path, { paginate: true });
-    if (r.error) return collectionEvidence(null, { error: r.error });
-    const { items, pages } = flattenArrayPages(r.data);
-    return collectionEvidence(items.map(project), { totalCount: null, pages });
+    if (r.error) return decodeCheckCollection(null, { error: r.error });
+    const { items } = flattenArrayPages(r.data);
+    return decodeCheckCollection(items.map(project));
   };
 
   const reviews = listSurface("reviews", `repos/{repo}/pulls/${pr}/reviews`, projectReview);
@@ -259,13 +254,13 @@ export function collectFacts({ pr, fetcher, repo = DEFAULT_REPO }) {
   // a rollup or a first page would happily describe less than the whole truth.
   let checkRuns;
   if (head === UNKNOWN) {
-    checkRuns = collectionEvidence(null, { error: "the head sha is unknown, so no check runs can be bound to it" });
+    checkRuns = decodeCheckCollection(null, { error: "the head sha is unknown, so no check runs can be bound to it" });
   } else {
     const r = raw("check_runs", `repos/{repo}/commits/${head}/check-runs`, { paginate: true });
-    if (r.error) checkRuns = collectionEvidence(null, { error: r.error });
+    if (r.error) checkRuns = decodeCheckCollection(null, { error: r.error });
     else {
-      const { items, totalCount, pages } = flattenCheckRunPages(r.data);
-      checkRuns = collectionEvidence(items, { totalCount, pages });
+      const { items, totalCount } = flattenCheckRunPages(r.data);
+      checkRuns = decodeCheckCollection(items, { totalCount });
     }
   }
 
@@ -295,21 +290,22 @@ export function collectFacts({ pr, fetcher, repo = DEFAULT_REPO }) {
 
 /** Stable ordering + key order, so two reads of one state serialize identically. */
 export function serializeFacts(facts) {
-  const env = (e, sort) =>
-    !e || e.value === UNKNOWN || e.value === null
-      ? { value: UNKNOWN, completeness: e?.completeness ?? UNKNOWN, authority: e?.authority ?? UNKNOWN, reason: e?.reason ?? UNKNOWN }
-      : { value: sort ? sort([...e.value]) : e.value, completeness: e.completeness, authority: e.authority, reason: e.reason };
-  const byId = (xs) => xs.sort((a, b) => a.id - b.id);
+  /** @param {any} c @param {any} [sort] */
+  const collection = (c, sort) =>
+    c?.kind === "COMPLETE" || c?.kind === "INCOMPLETE"
+      ? { ...c, items: sort ? sort([...c.items]) : c.items }
+      : (c ?? { kind: UNKNOWN, reason: "collection was never read" });
+  const byId = (xs) => xs.sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
   return JSON.stringify(
     {
       repo: facts.repo,
       pr: facts.pr,
       head: facts.head,
       pullRequest: facts.pullRequest,
-      checkRuns: env(facts.checkRuns, (xs) => xs.sort((a, b) => a.name.localeCompare(b.name))),
-      reviews: env(facts.reviews, byId),
-      inlineComments: env(facts.inlineComments, byId),
-      issueComments: env(facts.issueComments, byId),
+      checkRuns: collection(facts.checkRuns, (xs) => xs.sort((a, b) => String(a.name).localeCompare(String(b.name)))),
+      reviews: collection(facts.reviews, byId),
+      inlineComments: collection(facts.inlineComments, byId),
+      issueComments: collection(facts.issueComments, byId),
       unavailable: facts.unavailable,
     },
     null,
@@ -317,4 +313,4 @@ export function serializeFacts(facts) {
   );
 }
 
-export { shortSha, evidence };
+export { shortSha };
