@@ -366,20 +366,29 @@ describe("Client Profile — what each tab shows a practitioner", () => {
     }
   }, 120_000);
 
-  it("does no profile work for a client it must not serve", async () => {
+  it("does no profile work for a client it must not serve, on ANY tab", async () => {
+    // Every tab, not just the default one. A tab-exclusive read moved ahead of
+    // getClientById() would leave the valid-client behaviour above untouched
+    // and still do work for a client this studio may not see, so the refusal
+    // has to be checked where that read lives.
     for (const id of [MISSING_CLIENT_ID, otherStudioClientId]) {
-      const cap = captureTables();
-      let signal = "rendered";
-      try {
-        await seen("overview", id);
-      } catch (err) {
-        signal = err instanceof NotFoundSignal ? "notFound" : `threw:${(err as Error).name}`;
-      } finally {
-        cap.restore();
+      for (const tab of ALL_TABS) {
+        const cap = captureTables();
+        let signal = "rendered";
+        try {
+          await seen(tab, id);
+        } catch (err) {
+          signal = err instanceof NotFoundSignal ? "notFound" : `threw:${(err as Error).name}`;
+        } finally {
+          cap.restore();
+        }
+        expect(signal, `tab "${tab}" must refuse this client`).toBe("notFound");
+        // Identity, then the client lookup that fails — and nothing downstream.
+        expect(cap.taken, `tab "${tab}" read more than identity + client`).toEqual([
+          "practitioners",
+          "clients",
+        ]);
       }
-      expect(signal).toBe("notFound");
-      // Identity, then the client lookup that fails — and nothing downstream.
-      expect(cap.taken).toEqual(["practitioners", "clients"]);
     }
-  }, 60_000);
+  }, 120_000);
 });
