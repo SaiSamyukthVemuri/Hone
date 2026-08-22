@@ -1,0 +1,254 @@
+{
+  "repo": "SaiSamyukthVemuri/Hone",
+  "pr": 613,
+  "head": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+  "pullRequest": {
+    "number": 613,
+    "state": "open",
+    "isDraft": false,
+    "head": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+    "baseRef": "claude/build-hone-saas-hOex7",
+    "baseSha": "88bba0e13e2e125610fdd68a2574d35f5f6d3943",
+    "mergedAt": null,
+    "mergeCommit": null
+  },
+  "checkRuns": {
+    "value": [
+      {
+        "name": "browser e2e (local stack)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "browser shard 1 (extended)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "browser shard 2 (extended)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "browser shard 3 (extended)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "browser shard 4 (extended)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "changed-path detection",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "db integration (local supabase)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "google browser e2e (fake google)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "mobile completion e2e (chromium iphone-profile)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "payment browser e2e (fake stripe)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "typecheck / lint / build / test / safety gates",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      },
+      {
+        "name": "Vercel Preview Comments",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      }
+    ],
+    "completeness": "COMPLETE",
+    "authority": "AUTHORIZED",
+    "reason": "collected 12 of 12 reported by the API"
+  },
+  "reviews": {
+    "value": [
+      {
+        "id": 4998446464,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "state": "COMMENTED",
+        "commitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "submittedAt": "2026-08-22T01:05:01Z",
+        "hasBody": true,
+        "verdict": {
+          "sourceType": "review_object",
+          "sourceId": 4998446464,
+          "actor": "chatgpt-codex-connector[bot]",
+          "actorId": 199175422,
+          "reviewedCommit": "14baa34103",
+          "clean": false,
+          "completeness": "COMPLETE",
+          "authority": "AUTHORIZED",
+          "reason": "verdict text and reviewed commit are both present; actor id 199175422 is the trusted reviewer"
+        }
+      }
+    ],
+    "completeness": "COMPLETE",
+    "authority": "AUTHORIZED",
+    "reason": "collected 1 item(s); the API reported no total to check against"
+  },
+  "inlineComments": {
+    "value": [
+      {
+        "id": 3834651492,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "originalCommitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "path": "app/(app)/clients/[id]/page.tsx",
+        "line": 377,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Gate the client card on the historical answer variant",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T01:05:01Z"
+      },
+      {
+        "id": 3834651495,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "originalCommitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "path": "lib/sessions/history/visit-detail.ts",
+        "line": 274,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Certify every bounded child channel before marking complete",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T01:05:01Z"
+      },
+      {
+        "id": 3834651497,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "originalCommitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "path": "lib/sessions/history/select-visit.ts",
+        "line": 296,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Keep the selection probe below the PostgREST row cap",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T01:05:01Z"
+      },
+      {
+        "id": 3834651498,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "originalCommitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "path": "app/(app)/dashboard/page.tsx",
+        "line": 589,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Preserve unavailable setup instead of claiming it was absent",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T01:05:01Z"
+      },
+      {
+        "id": 3834651500,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "originalCommitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "path": "app/(app)/dashboard/page.tsx",
+        "line": 583,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Preserve unavailable guidance instead of claiming none",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T01:05:01Z"
+      },
+      {
+        "id": 3834651501,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "originalCommitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "path": "lib/sessions/history/select-visit.ts",
+        "line": 134,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Select setup visits by recorded setup rather than block presence",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T01:05:01Z"
+      },
+      {
+        "id": 3834651505,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "originalCommitId": "14baa34103ce14fe47cb9ae472bec91baf95a7c1",
+        "path": "lib/sessions/history/prepare-visit.ts",
+        "line": 115,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Search all areas when projecting the selected setup",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T01:05:01Z"
+      }
+    ],
+    "completeness": "COMPLETE",
+    "authority": "AUTHORIZED",
+    "reason": "collected 7 item(s); the API reported no total to check against"
+  },
+  "issueComments": {
+    "value": [
+      {
+        "id": 5376914888,
+        "author": "vercel[bot]",
+        "authorId": 35613825,
+        "createdAt": "2026-08-22T00:58:05Z",
+        "isVerdictCandidate": false,
+        "verdict": null,
+        "isReviewRequest": false,
+        "requestedCommit": null
+      },
+      {
+        "id": 5376920651,
+        "author": "SaiSamyukthVemuri",
+        "authorId": 26781116,
+        "createdAt": "2026-08-22T00:59:16Z",
+        "isVerdictCandidate": false,
+        "verdict": null,
+        "isReviewRequest": true,
+        "requestedCommit": "14baa34103ce14fe47cb9ae472bec91baf95a7c1"
+      }
+    ],
+    "completeness": "COMPLETE",
+    "authority": "AUTHORIZED",
+    "reason": "collected 2 item(s); the API reported no total to check against"
+  },
+  "unavailable": []
+}

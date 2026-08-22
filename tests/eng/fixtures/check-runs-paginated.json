@@ -1,0 +1,16 @@
+[
+  {
+    "total_count": 4,
+    "check_runs": [
+      { "name": "changed-path detection", "status": "completed", "conclusion": "success", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      { "name": "typecheck / lint / build / test / safety gates", "status": "completed", "conclusion": "success", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+    ]
+  },
+  {
+    "total_count": 4,
+    "check_runs": [
+      { "name": "db integration (local supabase)", "status": "completed", "conclusion": "success", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      { "name": "browser shard 3 (extended)", "status": "completed", "conclusion": "failure", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+    ]
+  }
+]

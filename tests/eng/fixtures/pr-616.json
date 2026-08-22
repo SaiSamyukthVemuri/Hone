@@ -1,0 +1,188 @@
+{
+  "repo": "SaiSamyukthVemuri/Hone",
+  "pr": 616,
+  "head": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+  "pullRequest": {
+    "number": 616,
+    "state": "open",
+    "isDraft": false,
+    "head": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+    "baseRef": "claude/build-hone-saas-hOex7",
+    "baseSha": "6fe93ccf8d03e0c34fd6c6daa666a73fe3d8eeed",
+    "mergedAt": null,
+    "mergeCommit": "6510200b72c2a5ce1630807567de708399daf91b"
+  },
+  "checkRuns": {
+    "value": [
+      {
+        "name": "browser e2e (local stack)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "browser shard 1 (extended)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "browser shard 2 (extended)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "browser shard 3 (extended)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "browser shard 4 (extended)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "changed-path detection",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "db integration (local supabase)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "google browser e2e (fake google)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "mobile completion e2e (chromium iphone-profile)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "payment browser e2e (fake stripe)",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "typecheck / lint / build / test / safety gates",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      },
+      {
+        "name": "Vercel Preview Comments",
+        "status": "completed",
+        "conclusion": "success",
+        "headSha": "98b084c04cea5403848cca6ab1dcdb5d4a07143d"
+      }
+    ],
+    "completeness": "COMPLETE",
+    "authority": "AUTHORIZED",
+    "reason": "collected 12 of 12 reported by the API"
+  },
+  "reviews": {
+    "value": [
+      {
+        "id": 5000334174,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "state": "COMMENTED",
+        "commitId": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+        "submittedAt": "2026-08-22T14:09:31Z",
+        "hasBody": true,
+        "verdict": {
+          "sourceType": "review_object",
+          "sourceId": 5000334174,
+          "actor": "chatgpt-codex-connector[bot]",
+          "actorId": 199175422,
+          "reviewedCommit": "98b084c04c",
+          "clean": false,
+          "completeness": "COMPLETE",
+          "authority": "AUTHORIZED",
+          "reason": "verdict text and reviewed commit are both present; actor id 199175422 is the trusted reviewer"
+        }
+      }
+    ],
+    "completeness": "COMPLETE",
+    "authority": "AUTHORIZED",
+    "reason": "collected 1 item(s); the API reported no total to check against"
+  },
+  "inlineComments": {
+    "value": [
+      {
+        "id": 3836208208,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+        "originalCommitId": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+        "path": "scripts/eng/github-facts.mjs",
+        "line": 204,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Paginate check runs before declaring CI green",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T14:09:32Z"
+      },
+      {
+        "id": 3836208210,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+        "originalCommitId": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+        "path": "scripts/eng/github-facts.mjs",
+        "line": 156,
+        "inReplyToId": null,
+        "severity": "P1",
+        "title": "Authenticate the author before accepting a clean verdict",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T14:09:32Z"
+      },
+      {
+        "id": 3836208211,
+        "author": "chatgpt-codex-connector[bot]",
+        "authorId": 199175422,
+        "commitId": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+        "originalCommitId": "98b084c04cea5403848cca6ab1dcdb5d4a07143d",
+        "path": "scripts/eng/github-facts.mjs",
+        "line": 135,
+        "inReplyToId": null,
+        "severity": "P2",
+        "title": "Preserve clean results from submitted reviews",
+        "reactionCount": 0,
+        "createdAt": "2026-08-22T14:09:32Z"
+      }
+    ],
+    "completeness": "COMPLETE",
+    "authority": "AUTHORIZED",
+    "reason": "collected 3 item(s); the API reported no total to check against"
+  },
+  "issueComments": {
+    "value": [
+      {
+        "id": 5380812381,
+        "author": "vercel[bot]",
+        "authorId": 35613825,
+        "createdAt": "2026-08-22T14:05:52Z",
+        "isVerdictCandidate": false,
+        "verdict": null,
+        "isReviewRequest": false,
+        "requestedCommit": null
+      }
+    ],
+    "completeness": "COMPLETE",
+    "authority": "AUTHORIZED",
+    "reason": "collected 1 item(s); the API reported no total to check against"
+  },
+  "unavailable": []
+}

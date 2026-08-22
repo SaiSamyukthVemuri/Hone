@@ -29,7 +29,8 @@
     "ci:classify": "node scripts/classify-changes.mjs",
     "ci:plan": "node scripts/ci-plan.mjs",
     "verify:changed": "node scripts/verify-changed.mjs",
-    "e2e:resources": "node scripts/worktree-resources.mjs"
+    "e2e:resources": "node scripts/worktree-resources.mjs",
+    "eng": "node scripts/eng/cli.mjs"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.66.0",
