@@ -36,7 +36,7 @@
 // RAISED at, the path, and the ORIGINAL line.
 // ---------------------------------------------------------------------------
 
-import { actorAuthority, AUTHORIZED, UNKNOWN } from "./evidence.mjs";
+import { actorAuthority, COMPLETE, evidenceCertainty, POSITIVE, PROVEN_NEGATIVE, UNKNOWN } from "./evidence.mjs";
 
 /** A comment that is genuinely a reviewer's finding. */
 export const TRUSTED_FINDING = "TRUSTED_FINDING";
@@ -57,6 +57,17 @@ export const ACKNOWLEDGEMENT = "ACKNOWLEDGEMENT";
  */
 export function isReply(c) {
   return c?.inReplyToId !== null && c?.inReplyToId !== undefined;
+}
+
+/**
+ * Reply status has THREE states, not two. GitHub returns `in_reply_to_id` on
+ * every review comment - a value for a reply, null for a top-level one - so
+ * `null` PROVES top-level. An object that never carried the field at all proves
+ * nothing, and must not be read as top-level.
+ */
+export function replyCertainty(c) {
+  if (c?.inReplyToId === undefined) return UNKNOWN;
+  return c.inReplyToId === null ? "TOP_LEVEL" : "REPLY";
 }
 
 /**
@@ -131,50 +142,39 @@ export function classifyEvidence(c) {
   };
 
   if (!c?.severity) {
-    return { ...base, kind: ACKNOWLEDGEMENT, identity: null, reason: "no severity markup" };
+    return { ...base, kind: ACKNOWLEDGEMENT, certainty: PROVEN_NEGATIVE, identity: null, reason: "no severity markup" };
   }
 
-  // GUARD 1: authority. `authorType` is not always carried by a projection, so
-  // an absent type is treated as the bot shape only when the id already matches
-  // the trusted reviewer; a wrong id fails regardless.
   const { authority, reason: authorityReason } = actorAuthority(actor);
-
-  // GUARD 2: reply status.
-  const reply = isReply(c);
-
-  if (authority !== AUTHORIZED || reply) {
-    const why = [];
-    if (authority !== AUTHORIZED) why.push(authorityReason);
-    if (reply) why.push(`answers comment ${c.inReplyToId}, so it is a reply rather than a finding`);
-    return {
-      ...base,
-      kind: RAW_EVIDENCE,
-      authority,
-      identity: null,
-      // Retained and attributed: visible, never a finding.
-      reason: why.join("; "),
-    };
-  }
-
+  const reply = replyCertainty(c);
   const identity = findingIdentity(c);
-  if (identity.key === UNKNOWN) {
-    // Trusted, top-level, finding-shaped - but unnameable, so it cannot become
-    // a tracked record. It must NOT therefore vanish: this is a real reviewer's
-    // finding, and silently dropping it would let a clean verdict for the same
-    // head report CLEAN over the top of it. Flagged so callers can refuse to
-    // assert clean while it is present. A file-level comment (no original_line)
-    // is exactly this shape.
-    return {
-      ...base,
-      kind: RAW_EVIDENCE,
-      authority,
-      identity,
-      trustedButUnidentified: true,
-      reason: identity.reason,
-    };
+
+  // Both dimensions feed ONE envelope, and one shared rule reads it. There is
+  // deliberately no per-dimension branch here: that is what produced two
+  // instances of the same defect, one review round apart.
+  const completeness = identity.key === UNKNOWN || reply === UNKNOWN ? UNKNOWN : COMPLETE;
+  const certainty = evidenceCertainty({ completeness, authority }, { provenNegative: reply === "REPLY" });
+
+  const why = [];
+  if (authority !== "AUTHORIZED") why.push(authorityReason);
+  if (reply === "REPLY") why.push(`answers comment ${c.inReplyToId}, so it is a reply rather than a finding`);
+  if (reply === UNKNOWN) why.push("reply status is unknown: the object never carried in_reply_to_id");
+  if (identity.key === UNKNOWN) why.push(identity.reason);
+
+  if (certainty === POSITIVE) {
+    return { ...base, kind: TRUSTED_FINDING, certainty, authority, identity, reason: "trusted reviewer, proven top-level, fully provenanced" };
   }
 
-  return { ...base, kind: TRUSTED_FINDING, authority, identity, reason: "trusted reviewer, not a reply, fully provenanced" };
+  // PROVEN_NEGATIVE -> not the reviewer speaking, so it cannot block a clean
+  // verdict. UNKNOWN -> it may well BE the reviewer speaking, so it must.
+  return {
+    ...base,
+    kind: RAW_EVIDENCE,
+    certainty,
+    authority,
+    identity: identity.key === UNKNOWN ? identity : null,
+    reason: why.join("; ") || "not a trusted finding",
+  };
 }
 
 /** Split a projected comment list into the three kinds, preserving order. */

@@ -51,6 +51,39 @@ export function mayAssertPositive(env) {
   return env?.completeness === COMPLETE && env?.authority === AUTHORIZED;
 }
 
+/** Certainty outcomes. UNKNOWN, declared above, is the third. */
+export const POSITIVE = "POSITIVE";
+export const PROVEN_NEGATIVE = "PROVEN_NEGATIVE";
+
+/**
+ * THE ONE SEMANTIC AUTHORITY for evidence certainty, used by verdicts AND by
+ * finding classification. It extends `mayAssertPositive` with the distinction
+ * that gate cannot make on its own: NOT-POSITIVE splits into a negative that is
+ * PROVEN and one that is merely UNKNOWN.
+ *
+ * THE LAW, in one place:
+ *   UNKNOWN never proves a negative, and never permits a positive.
+ *   A negative must be PROVEN, never inferred from absence.
+ *
+ * This exists because finding classification previously re-implemented that law
+ * by hand, once per dimension, and got it wrong in BOTH: an unnameable finding
+ * and an unattributable finding were each treated as a proven non-finding, so a
+ * clean verdict for the same head reported CLEAN over the top of a real
+ * reviewer's evidence. One family, two instances, one round apart.
+ *
+ * `provenNegative` is for negatives that are not expressible on the two
+ * dimensions - a comment PROVEN to be a reply is one. It is never used for
+ * absence.
+ */
+export function evidenceCertainty(env, { provenNegative = false } = {}) {
+  if (provenNegative) return PROVEN_NEGATIVE;
+  // UNAUTHORIZED is a PROVEN negative: we know who wrote it and it is not the
+  // reviewer. UNKNOWN authority is not - it falls through.
+  if (env?.authority === UNAUTHORIZED) return PROVEN_NEGATIVE;
+  if (mayAssertPositive(env)) return POSITIVE;
+  return UNKNOWN;
+}
+
 /**
  * The reviewer whose verdict counts.
  *

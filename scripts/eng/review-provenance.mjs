@@ -69,7 +69,7 @@ export function classifyInlineComment(c, head) {
     id: c.id,
     kind: isFinding ? "finding" : evidence.kind === RAW_EVIDENCE ? "raw_evidence" : "acknowledgement",
     identity: evidence.identity?.key ?? null,
-    trustedButUnidentified: Boolean(evidence.trustedButUnidentified),
+    certainty: evidence.certainty,
     actor: evidence.actor,
     actorId: evidence.actorId,
     evidenceReason: evidence.reason,
@@ -149,7 +149,7 @@ export function reviewCompletionAtHead(facts) {
   // record - but it must not be silently dropped either, or a clean verdict for
   // the same head would report CLEAN over the top of it.
   const unnameableAtHead = classified.filter(
-    (c) => c.trustedButUnidentified && c.freshness !== "carried",
+    (c) => c.certainty === UNKNOWN && c.freshness !== "carried",
   );
   const carriedFindings = classified.filter((c) => c.kind === "finding" && c.freshness === "carried");
 

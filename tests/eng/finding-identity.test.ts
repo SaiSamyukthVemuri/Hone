@@ -7,7 +7,7 @@ import path from "node:path";
 import { ACKNOWLEDGEMENT, RAW_EVIDENCE, TRUSTED_FINDING, classifyEvidence, findingIdentity, isReply, partitionEvidence } from "../../scripts/eng/finding-identity.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { collectionEvidence, UNKNOWN } from "../../scripts/eng/evidence.mjs";
+import { PROVEN_NEGATIVE, POSITIVE, collectionEvidence, UNKNOWN } from "../../scripts/eng/evidence.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { projectInlineComment, projectIssueComment } from "../../scripts/eng/github-facts.mjs";
@@ -161,6 +161,74 @@ describe("authority and reply-status are independent guards", () => {
 });
 
 // ---------------------------------------------------------------------------
+// THE REQUIRED MATRIX - pinned as one table, read by one shared authority
+// ---------------------------------------------------------------------------
+describe("the certainty matrix", () => {
+  const verdict = {
+    id: 1,
+    user: CODEX,
+    body: "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `aaaaaaaaaa`",
+  };
+  const statusWith = (c: unknown) =>
+    reviewCompletionAtHead({
+      head: HEAD,
+      issueComments: collectionEvidence([verdict].map(projectIssueComment), {}),
+      reviews: collectionEvidence([], {}),
+      inlineComments: collectionEvidence(c ? [c] : [], {}),
+    }).status;
+
+  const noReplyField = () => {
+    const c = comment();
+    delete (c as Record<string, unknown>).inReplyToId;
+    return c;
+  };
+
+  // case -> [kind, certainty, review status with a trusted clean verdict present]
+  const MATRIX: [string, unknown, string | null, string, string][] = [
+    ["authorized + top-level + complete identity", comment(), TRUSTED_FINDING, POSITIVE, "COMPLETE_WITH_FINDINGS"],
+    ["UNAUTHORIZED",                               comment({ user: HUMAN }), RAW_EVIDENCE, PROVEN_NEGATIVE, "COMPLETE_CLEAN"],
+    ["proven REPLY",                               comment({ in_reply_to_id: 1 }), RAW_EVIDENCE, PROVEN_NEGATIVE, "COMPLETE_CLEAN"],
+    ["authority UNKNOWN",                          comment({ user: undefined }), RAW_EVIDENCE, UNKNOWN, UNKNOWN],
+    ["identity UNKNOWN (file-level)",              comment({ line: null, original_line: null }), RAW_EVIDENCE, UNKNOWN, UNKNOWN],
+    ["reply-status UNKNOWN",                       noReplyField(), RAW_EVIDENCE, UNKNOWN, UNKNOWN],
+    ["not finding-shaped",                         comment({ body: "thanks, fixed" }), ACKNOWLEDGEMENT, PROVEN_NEGATIVE, "COMPLETE_CLEAN"],
+  ];
+
+  for (const [label, input, kind, certainty, status] of MATRIX) {
+    it(`${label} -> ${kind} / ${certainty} / ${status}`, () => {
+      const e = classifyEvidence(input);
+      expect(e.kind).toBe(kind);
+      expect(e.certainty).toBe(certainty);
+      expect(statusWith(input)).toBe(status);
+    });
+  }
+
+  it("no inline evidence at all is still clean", () => {
+    expect(statusWith(null)).toBe("COMPLETE_CLEAN");
+  });
+
+  it("UNKNOWN never proves a negative and never permits a positive", () => {
+    // The law, asserted directly rather than inferred from the rows above.
+    for (const [, input] of MATRIX.filter((r) => r[3] === UNKNOWN)) {
+      const e = classifyEvidence(input);
+      expect(e.kind).not.toBe(TRUSTED_FINDING);
+      expect(e.certainty).not.toBe(PROVEN_NEGATIVE);
+    }
+  });
+
+  it("finding classification holds no second interpretation of the vocabulary", () => {
+    // One semantic authority: the certainty rule lives in evidence.mjs and
+    // finding-identity.mjs may only consume it.
+    const src = readFileSync(path.resolve(__dirname, "../../scripts/eng/finding-identity.mjs"), "utf8");
+    const code = src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+    expect(code).toMatch(/evidenceCertainty\(/);
+    // No hand-rolled re-derivation of the gate.
+    expect(code).not.toMatch(/completeness === COMPLETE && .*authority === AUTHORIZED/);
+    expect(code).not.toMatch(/trustedButUnidentified/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // IDENTITY STABILITY
 // ---------------------------------------------------------------------------
 describe("identity is keyed only on provenance GitHub does not rewrite", () => {
@@ -253,7 +321,7 @@ describe("unnameable TRUSTED evidence must never be papered over by a clean verd
     const fileLevel = comment({ id: 7, line: null, original_line: null });
     const e = classifyEvidence(fileLevel);
     expect(e.kind).toBe(RAW_EVIDENCE);
-    expect(e.trustedButUnidentified).toBe(true);
+    expect(e.certainty).toBe(UNKNOWN);
     expect(reviewCompletionAtHead(withInline([fileLevel])).freshFindings).toHaveLength(0);
   });
 
@@ -263,7 +331,7 @@ describe("unnameable TRUSTED evidence must never be papered over by a clean verd
     const trustedReply = comment({ id: 9, in_reply_to_id: 1 });
     const strangerReply = comment({ id: 10, user: HUMAN, in_reply_to_id: 1 });
     for (const c of [spoof, trustedReply, strangerReply]) {
-      expect(classifyEvidence(c).trustedButUnidentified).toBeFalsy();
+      expect(classifyEvidence(c).certainty).toBe(PROVEN_NEGATIVE);
       expect(reviewCompletionAtHead(withInline([c])).status).toBe("COMPLETE_CLEAN");
     }
   });
