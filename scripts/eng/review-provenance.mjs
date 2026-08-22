@@ -102,10 +102,9 @@ export function collectVerdicts(facts) {
   return all.map((v) => ({
     ...v,
     atHead: shaMatches(v.reviewedCommit ?? "", head),
-    // WHAT THE VERDICT SAID, as an observation. `clean === null` means the
-    // review object carried no body and therefore stated nothing: that is
-    // UNKNOWN, and it is reported rather than resolved.
-    statedOutcome: v.clean === true ? "clean" : v.clean === false ? "findings" : UNKNOWN,
+    // `statedOutcome` is decided once, at the parse site, by POSITIVE
+    // identification of the text. It is not re-derived here and there is no
+    // "not clean" branch to get wrong.
   }));
 }
 

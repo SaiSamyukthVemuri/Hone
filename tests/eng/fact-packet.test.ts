@@ -4,7 +4,7 @@ import path from "node:path";
 
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { AUTHORIZED, COMPLETE, INCOMPLETE, UNAUTHORIZED, UNKNOWN, actorAuthority, collectionEvidence, verdictEvidence } from "../../scripts/eng/evidence.mjs";
+import { AUTHORIZED, CLEAN, COMPLETE, FINDINGS, INCOMPLETE, UNAUTHORIZED, UNKNOWN, actorAuthority, collectionEvidence, verdictEvidence } from "../../scripts/eng/evidence.mjs";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
 import { collectFacts, flattenCheckRunPages, projectInlineComment, projectIssueComment, projectReview, serializeFacts } from "../../scripts/eng/github-facts.mjs";
@@ -212,8 +212,79 @@ describe("verdict authority remains a fact", () => {
   it("6/7. a trusted verdict from EITHER surface reports what it stated", () => {
     const fromIssue = reviewFactsAtHead(reviewFacts({ issues: [SPOOF.trusted_issue_comment] }));
     const fromReview = reviewFactsAtHead(reviewFacts({ reviews: [SPOOF.trusted_review_clean] }));
-    expect(fromIssue.trustedOutcomesAtHead[0].statedOutcome).toBe("clean");
-    expect(fromReview.trustedOutcomesAtHead[0].statedOutcome).toBe("clean");
+    expect(fromIssue.trustedOutcomesAtHead[0].statedOutcome).toBe(CLEAN);
+    expect(fromReview.trustedOutcomesAtHead[0].statedOutcome).toBe(CLEAN);
+  });
+
+  // -------------------------------------------------------------------------
+  // REPAIR ROUND 1 (#622 P2): an outcome must be POSITIVELY IDENTIFIED.
+  //
+  // Previously any non-empty trusted body lacking the clean phrase was labelled
+  // "findings", so a bot error, an acknowledgement or an inconclusive review
+  // each fabricated an outcome the packet had never observed. Inferring
+  // FINDINGS from "not clean" is the absence-of-proof mistake in reverse.
+  // -------------------------------------------------------------------------
+
+  const stated = (body: string) =>
+    reviewFactsAtHead(
+      reviewFacts({ reviews: [{ id: 5, user: { login: "c", id: 199175422, type: "Bot" }, state: "COMMENTED", commit_id: HEAD_A, body }] }),
+    ).trustedOutcomesAtHead[0].statedOutcome;
+
+  it("1. the exact clean phrase states CLEAN", () => {
+    expect(stated("Codex Review: Didn't find any major issues. Delightful!")).toBe(CLEAN);
+  });
+
+  it("2. explicit finding evidence states FINDINGS", () => {
+    // The reviewer's own preamble, measured on #613/#621/#622...
+    expect(stated("### Codex Review\n\nHere are some automated review suggestions for this pull request.")).toBe(FINDINGS);
+    // ...or finding-shaped severity markup carried in the body itself.
+    expect(stated("**<sub><sub>![P1 Badge](x)</sub></sub>  A finding**")).toBe(FINDINGS);
+  });
+
+  it("3. an arbitrary bot error states UNKNOWN, not findings", () => {
+    expect(stated("Sorry, an error occurred while generating this review.")).toBe(UNKNOWN);
+  });
+
+  it("4. an acknowledgement states UNKNOWN", () => {
+    expect(stated("Thanks - re-running now.")).toBe(UNKNOWN);
+  });
+
+  it("5. inconclusive prose states UNKNOWN", () => {
+    expect(stated("I was unable to complete the review.")).toBe(UNKNOWN);
+    expect(stated("Some entirely unrelated prose about the weather.")).toBe(UNKNOWN);
+  });
+
+  it("6. an empty body states UNKNOWN and is marked INCOMPLETE", () => {
+    const o = reviewFactsAtHead(reviewFacts({ reviews: [SPOOF.trusted_review_empty_body] })).trustedOutcomesAtHead[0];
+    expect(o.statedOutcome).toBe(UNKNOWN);
+    expect(o.completeness).toBe(INCOMPLETE);
+  });
+
+  it("7. an unauthorized spoof stays raw evidence and never becomes a trusted outcome", () => {
+    // Both surfaces, and finding-shaped markup from a human, which is the #616
+    // F4 scenario: the wording is copyable, the account id is not.
+    for (const issue of [SPOOF.spoofed_issue_comment, SPOOF.spoofed_by_lookalike_bot]) {
+      const rv = reviewFactsAtHead(reviewFacts({ issues: [issue] }));
+      expect(rv.trustedOutcomesAtHead).toEqual([]);
+      expect(rv.unauthorizedAtHead.length).toBe(1);
+    }
+    const human = { id: 7, user: { login: "someone", id: 12345678, type: "User" }, state: "COMMENTED", commit_id: HEAD_A,
+      body: "Here are some automated review suggestions for this pull request." };
+    const rv = reviewFactsAtHead(reviewFacts({ reviews: [human] }));
+    expect(rv.trustedOutcomesAtHead).toEqual([]);
+    expect(rv.unauthorizedAtHead.length).toBe(1);
+  });
+
+  it("a caller that supplies no outcome gets UNKNOWN, never a default verdict", () => {
+    const v = verdictEvidence({ sourceType: "review_object", sourceId: 1, user: { login: "c", id: 199175422, type: "Bot" }, reviewedCommit: HEAD_A });
+    expect(v.statedOutcome).toBe(UNKNOWN);
+  });
+
+  it("ANTI-VACUITY: the two positive phrases are what decide it", () => {
+    // If either detector stopped matching, cases 1 and 2 would silently become
+    // UNKNOWN and read as "correctly conservative" rather than broken.
+    expect(stated("Didn't find any major issues")).not.toBe(stated("unrecognized prose"));
+    expect(stated("automated review suggestions")).not.toBe(stated("unrecognized prose"));
   });
 
   it("8. a trusted verdict for a DIFFERENT head is stale, and stays visible", () => {

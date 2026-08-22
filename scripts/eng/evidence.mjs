@@ -25,6 +25,16 @@
 
 export const UNKNOWN = "UNKNOWN";
 
+/**
+ * What a verdict SAID, positively identified from its text. There is
+ * deliberately no "not clean" state: inferring FINDINGS from the ABSENCE of the
+ * clean phrase is the absence-of-proof mistake in reverse, and it made this
+ * tool report an outcome for bot error messages and acknowledgements that
+ * stated nothing at all.
+ */
+export const CLEAN = "CLEAN";
+export const FINDINGS = "FINDINGS";
+
 /** Is the evidence all of what exists? */
 export const COMPLETE = "COMPLETE";
 export const INCOMPLETE = "INCOMPLETE";
@@ -123,7 +133,7 @@ export function collectionEvidence(items, { totalCount = null, error = null, pag
  * one surface and invisible from the other, so they normalize to this shape and
  * one rule is applied to both.
  */
-export function verdictEvidence({ sourceType, sourceId, user, reviewedCommit, clean, hasBody = true }) {
+export function verdictEvidence({ sourceType, sourceId, user, reviewedCommit, statedOutcome = UNKNOWN, hasBody = true }) {
   const { authority, reason } = actorAuthority(user);
   // A body that says nothing states no verdict, however trusted its author.
   const completeness = hasBody && reviewedCommit ? COMPLETE : INCOMPLETE;
@@ -138,7 +148,7 @@ export function verdictEvidence({ sourceType, sourceId, user, reviewedCommit, cl
     actor: user?.login ?? UNKNOWN,
     actorId: user?.id ?? null,
     reviewedCommit: reviewedCommit ?? null,
-    clean: clean ?? null,
+    statedOutcome,
     completeness,
     authority,
     reason: `${completenessReason}; ${reason}`,

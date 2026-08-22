@@ -31,7 +31,7 @@
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from "node:child_process";
-import { collectionEvidence, evidence, verdictEvidence, UNKNOWN } from "./evidence.mjs";
+import { collectionEvidence, evidence, verdictEvidence, CLEAN, FINDINGS, UNKNOWN } from "./evidence.mjs";
 
 export { UNKNOWN };
 
@@ -54,6 +54,30 @@ const REVIEWED_COMMIT = /Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`/;
 
 /** Codex's clean wording. Again: wording is not authority. */
 const CLEAN_VERDICT = /Didn't find any major issues/i;
+
+/**
+ * The reviewer's own findings preamble. Measured on #613, #621 and #622, whose
+ * bodies all open "Here are some automated review suggestions for this pull
+ * request." Paired with the badge check below, this is POSITIVE identification.
+ */
+const FINDINGS_VERDICT = /automated review suggestions/i;
+
+/**
+ * WHAT THE VERDICT SAID, or UNKNOWN. Both outcomes must be positively
+ * identified from the text; anything unrecognized is UNKNOWN, never inferred.
+ *
+ * Reported by Codex on #622: any non-empty trusted body lacking the clean
+ * phrase was previously labelled "findings", so a bot error message, an
+ * acknowledgement or an inconclusive review each fabricated an outcome the
+ * packet had not observed.
+ */
+function statedOutcomeOf(body) {
+  const text = typeof body === "string" ? body.trim() : "";
+  if (text.length === 0) return UNKNOWN;
+  if (CLEAN_VERDICT.test(text)) return CLEAN;
+  if (FINDINGS_VERDICT.test(text) || SEVERITY_BADGE.test(text)) return FINDINGS;
+  return UNKNOWN;
+}
 
 /** An operator asks for a review by mentioning the bot. */
 const REVIEW_REQUEST = /@codex\s+review/i;
@@ -152,7 +176,7 @@ export function projectReview(r) {
       // A review body may state its head explicitly; otherwise the object's own
       // commit_id is the head it was submitted against.
       reviewedCommit: reviewedCommit ?? r.commit_id ?? null,
-      clean: hasBody ? CLEAN_VERDICT.test(body) : null,
+      statedOutcome: statedOutcomeOf(body),
       hasBody,
     }),
   };
@@ -184,7 +208,7 @@ export function projectIssueComment(c) {
             sourceId: c.id,
             user: c.user,
             reviewedCommit: verdictCommit,
-            clean: CLEAN_VERDICT.test(body),
+            statedOutcome: statedOutcomeOf(body),
             hasBody: body.trim().length > 0,
           }),
     isReviewRequest: isRequest,
