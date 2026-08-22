@@ -84,6 +84,9 @@ jobs:
             timeout: 15
 
     env:
+      # TEST-PORT-01: pin the historical port so the nightly matrix is unaffected
+      # by the per-worktree derivation used on developer machines.
+      HONE_E2E_PORT: "3111"
       NEXT_PUBLIC_APP_ORIGIN: "http://localhost:3111"
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321"
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "dummy-anon-key"

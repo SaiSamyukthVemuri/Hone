@@ -14,8 +14,9 @@ import {
 // ENGINE NOTE. The reproduction target is iOS Safari (WebKit), but this lane
 // runs the CHROMIUM engine at iPhone dimensions (iPhone 13 viewport + iOS UA +
 // hasTouch), plus a Pixel 5 control. The repo's E2E harness is hard-wired to a
-// plain-http http://localhost:3111 origin (e2e/helpers/local-env.ts refuses any
-// other), and a real WebKit context upgrades every localhost subresource to
+// plain-http http://localhost origin on a per-worktree derived port
+// (e2e/helpers/local-env.ts refuses any non-local host), and a real WebKit
+// context upgrades every localhost subresource to
 // https (no hydration) and drops Secure cookies over http (auth fails), so a
 // real-WebKit lane needs an HTTPS E2E harness, which is a separate infra
 // follow-up (see the PR's follow-up list). The ConfirmDialog under test is
@@ -27,11 +28,11 @@ import {
 // PAYMENT_WEB_SERVER_ENV, so the guarded fake Stripe is enabled ONLY here and in
 // the payment lane (HONE_E2E_FAKE_STRIPE=1 + a per-run HONE_E2E_RUN_ID, no Vercel
 // markers, sk_test_dummy), no real charge/refund/email/SMS/Google can leave the
-// lane; the journey additionally asserts zero real provider egress. Port 3111
-// (the proven magic-link redirect / site_url origin); the mobile job runs on its
-// own CI runner so there is no port collision, and reuseExistingServer is off in
-// CI. Locally it may reuse an already-running e2e server so lanes can share a
-// build.
+// lane; the journey additionally asserts zero real provider egress. PORT: 3111 in
+// CI (pinned by HONE_E2E_PORT, the proven magic-link redirect / site_url origin)
+// on its own runner; locally a per-worktree derived port. reuseExistingServer is
+// ALWAYS false, so this lane never adopts an already-running server - it starts
+// its own or fails loudly.
 export default defineConfig({
   testDir: "./e2e-mobile",
   timeout: 180_000,
@@ -65,7 +66,9 @@ export default defineConfig({
     command: "npm run e2e:payment-server",
     url: PAYMENT_E2E_APP_ORIGIN,
     env: PAYMENT_WEB_SERVER_ENV,
-    reuseExistingServer: !process.env.CI,
+    // TEST-PORT-01: Hone evidence never reuses a running server, so an occupied
+    // port fails loudly instead of adopting another worktree's server.
+    reuseExistingServer: false,
     timeout: 300_000,
   },
 });

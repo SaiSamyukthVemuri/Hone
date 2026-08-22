@@ -11,8 +11,9 @@ import { GOOGLE_E2E_APP_ORIGIN, GOOGLE_WEB_SERVER_ENV } from "./e2e-google/helpe
 //
 // Runs against a LOCAL Next production build + LOCAL Supabase only
 // (e2e/helpers/local-env.ts hard-fails on any hosted URL). The fake-Google guard
-// is fail-closed, so no real Google request can leave this lane. Port 3111 on its
-// OWN CI runner → no collision with the other browser lanes.
+// is fail-closed, so no real Google request can leave this lane. PORT: 3111 in CI
+// (pinned by HONE_E2E_PORT) on its OWN runner; locally a per-worktree derived
+// port (TEST-PORT-01). reuseExistingServer:false is unchanged.
 export default defineConfig({
   testDir: "./e2e-google",
   timeout: 180_000,

@@ -37,6 +37,17 @@ concurrency:
   group: hone-pr-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# TEST-PORT-01. Locally each git worktree DERIVES a candidate app port, and Hone
+# evidence never reuses a running server, so an occupied port fails loudly
+# instead of adopting another worktree's (scripts/worktree-resources.mjs). A CI
+# runner holds exactly one checkout and has no collision to solve, so every job
+# here pins the historical port explicitly. That keeps CI bit-identical to
+# before this change: same 3111 origin, same site_url seds below, same
+# magic-link flow. The derived range (3200-3999) excludes 3111, so the pinned
+# and derived paths cannot disagree.
+env:
+  HONE_E2E_PORT: "3111"
+
 jobs:
   # -------------------------------------------------------------------------
   # Changed-path detection. Runs first; every other lane keys off its outputs.

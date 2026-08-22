@@ -15,9 +15,9 @@
     "test:e2e:payment": "playwright test --config playwright.payment.config.ts",
     "test:e2e:mobile": "playwright test --config playwright.mobile.config.ts",
     "test:e2e:google": "playwright test --config playwright.google.config.ts",
-    "e2e:google-server": "next build && next start -p 3111",
-    "e2e:server": "next build && next start -p 3111",
-    "e2e:payment-server": "next build && next start -p 3111",
+    "e2e:google-server": "next build && next start",
+    "e2e:server": "next build && next start",
+    "e2e:payment-server": "next build && next start",
     "check:stripe-gates": "node scripts/check-stripe-gates.mjs",
     "check:migration-extensions": "node scripts/check-migration-extension-qualification.mjs",
     "check:fresh-managed": "node scripts/check-fresh-managed-extensions.mjs",
@@ -28,7 +28,8 @@
     "migration:state": "node scripts/migration-state.mjs",
     "ci:classify": "node scripts/classify-changes.mjs",
     "ci:plan": "node scripts/ci-plan.mjs",
-    "verify:changed": "node scripts/verify-changed.mjs"
+    "verify:changed": "node scripts/verify-changed.mjs",
+    "e2e:resources": "node scripts/worktree-resources.mjs"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.66.0",

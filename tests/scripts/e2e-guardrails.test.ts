@@ -17,6 +17,7 @@ const SEED = read("e2e/helpers/seed.ts");
 const SPEC = read("e2e/core-memory-loop.spec.ts");
 const FLOWS = read("e2e/helpers/flows.ts");
 const CONFIG = read("playwright.config.ts");
+const RESOURCES = read("scripts/worktree-resources.mjs");
 const CI = read(".github/workflows/ci.yml");
 const PKG = read("package.json");
 const UNIT_CONFIG = read("vitest.config.ts");
@@ -27,7 +28,19 @@ describe("e2e lane is local-only by construction", () => {
     expect(ENV).toMatch(
       /LOCAL_DB_URL = "postgresql:\/\/postgres:postgres@127\.0\.0\.1:54322\/postgres"/,
     );
-    expect(ENV).toMatch(/E2E_APP_ORIGIN = "http:\/\/localhost:3111"/);
+    // TEST-PORT-01. The app origin is no longer a literal, because a shared
+    // literal port is what let a run in one worktree attach to another's
+    // server. What must stay hardcoded is the HOST, and it does: the origin is
+    // built from E2E_HOST in scripts/worktree-resources.mjs, which is the
+    // literal "localhost" and is never read from the environment. Only a
+    // bounded integer port varies, so no env var can move this lane off the
+    // local machine.
+    expect(ENV).toMatch(/E2E_APP_ORIGIN: string = RESOURCES\.origin/);
+    expect(RESOURCES).toMatch(/export const E2E_HOST = "localhost";/);
+    expect(RESOURCES).toMatch(/`http:\/\/\$\{E2E_HOST\}:\$\{port\}`/);
+    expect(RESOURCES).toMatch(/\^\[0-9\]\{1,5\}\$/);
+    expect(RESOURCES).not.toMatch(/E2E_HOST\s*=\s*(process\.)?env/);
+    expect(RESOURCES).not.toMatch(/HONE_E2E_(HOST|ORIGIN|URL|BASE_URL)/);
   });
 
   it("hosted-URL overrides are refused before anything runs", () => {
@@ -120,8 +133,31 @@ describe("lane isolation", () => {
 
   it("the web server under test is a production build, not the dev watcher", () => {
     expect(CONFIG).toMatch(/npm run e2e:server/);
-    expect(JSON.parse(PKG).scripts["e2e:server"]).toBe(
-      "next build && next start -p 3111",
-    );
+    // TEST-PORT-01. The `-p 3111` flag is gone because the port is derived per
+    // worktree. `next start` reads PORT when no flag is given, and PORT is
+    // supplied by E2E_WEB_SERVER_ENV, so the server still cannot choose its own
+    // port and the build is still a production build.
+    const scripts = JSON.parse(PKG).scripts as Record<string, string>;
+    for (const s of ["e2e:server", "e2e:payment-server", "e2e:google-server"]) {
+      expect(scripts[s]).toBe("next build && next start");
+      expect(scripts[s]).not.toMatch(/-p\s|--port/);
+    }
+    expect(ENV).toMatch(/PORT: String\(E2E_APP_PORT\)/);
+  });
+
+  it("no lane may adopt an already-running server", () => {
+    // `!process.env.CI` is TRUE locally, which is how a run attached to another
+    // worktree's server on the shared port and reported green. Reuse is now off
+    // unconditionally, with no opt-in to re-enable it.
+    for (const cfg of [
+      "playwright.config.ts",
+      "playwright.mobile.config.ts",
+      "playwright.payment.config.ts",
+      "playwright.google.config.ts",
+    ]) {
+      expect(read(cfg)).toMatch(/reuseExistingServer: false/);
+      expect(read(cfg)).not.toMatch(/reuseExistingServer:\s*!process\.env\.CI/);
+      expect(read(cfg)).not.toMatch(/HONE_E2E_REUSE_SERVER/);
+    }
   });
 });
