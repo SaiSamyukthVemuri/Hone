@@ -51,6 +51,74 @@ export function mayAssertPositive(env) {
   return env?.completeness === COMPLETE && env?.authority === AUTHORIZED;
 }
 
+/** Certainty outcomes. UNKNOWN, declared above, is the third. */
+export const POSITIVE = "POSITIVE";
+export const PROVEN_NEGATIVE = "PROVEN_NEGATIVE";
+
+/**
+ * Read a property from a RAW payload, preserving the difference between
+ * ABSENT and PRESENT-WITH-NULL.
+ *
+ * This is the foundation of the whole pipeline. `raw.x ?? null` destroys that
+ * difference at the ingestion boundary, and once destroyed it cannot be
+ * recovered downstream however careful the consumer is. A retired vehicle
+ * learned this twice: an absent `in_reply_to_id` became `null`, `null` means
+ * PROVEN top-level, and a comment of unknown reply status became a positive
+ * trusted finding.
+ *
+ * ABSENCE IS UNKNOWN BY DEFAULT. A field may pass `absentMeans` to declare that
+ * its UPSTREAM API CONTRACT defines omission as a semantic value - but only
+ * where that contract is pinned by real evidence. This is an explicit,
+ * per-field, evidenced exception, never a general licence to read missing
+ * properties as meaningful.
+ *
+ * UNKNOWN is a STRING sentinel, not `undefined`, because these projections are
+ * serialized to JSON fixtures and `JSON.stringify` erases `undefined` outright.
+ * A representation that cannot survive its own fixtures would reintroduce the
+ * defect the moment a test round-tripped.
+ */
+export function sourceField(raw, key, { absentMeans = UNKNOWN } = {}) {
+  if (!raw || typeof raw !== "object") return UNKNOWN;
+  if (!Object.prototype.hasOwnProperty.call(raw, key)) return absentMeans;
+  return raw[key];
+}
+
+/**
+ * Reply vocabulary. It lives here rather than in a consumer because it is
+ * certainty vocabulary: a proven reply is a PROVEN_NEGATIVE for findings.
+ */
+export const PROVEN_TOP_LEVEL = "PROVEN_TOP_LEVEL";
+export const PROVEN_REPLY = "PROVEN_REPLY";
+
+/** True when a projected field carries no source information at all. */
+export const isUnknown = (v) => v === UNKNOWN;
+
+/**
+ * THE ONE SEMANTIC AUTHORITY for evidence certainty. Every positive delivery
+ * fact - CLEAN, GREEN, TRUSTED_FINDING - routes through here.
+ *
+ * THE LAW:
+ *   UNKNOWN never proves a negative, and never permits a positive.
+ *   A negative must be PROVEN, never inferred from absence.
+ *
+ * It extends `mayAssertPositive` with the distinction that gate cannot make on
+ * its own: NOT-POSITIVE splits into PROVEN_NEGATIVE and UNKNOWN. Verified, not
+ * assumed - `mayAssertPositive` returns false for BOTH `UNAUTHORIZED` and
+ * `UNKNOWN` authority, while those two require opposite outcomes.
+ *
+ * `provenNegative` carries negatives that are not expressible on the two
+ * dimensions - a comment PROVEN to be a reply is one. It is never used for
+ * absence.
+ */
+export function evidenceCertainty(env, { provenNegative = false } = {}) {
+  if (provenNegative) return PROVEN_NEGATIVE;
+  // UNAUTHORIZED is PROVEN: we know who wrote it and it is not the reviewer.
+  // UNKNOWN authority is not, and falls through.
+  if (env?.authority === UNAUTHORIZED) return PROVEN_NEGATIVE;
+  if (mayAssertPositive(env)) return POSITIVE;
+  return UNKNOWN;
+}
+
 /**
  * The reviewer whose verdict counts.
  *
@@ -77,7 +145,10 @@ export const CODEX_ACTOR = Object.freeze({
  * this" are different facts, and neither may produce a positive one.
  */
 export function actorAuthority(user, trusted = CODEX_ACTOR) {
-  if (!user || user.id === undefined || user.id === null) {
+  // An ABSENT actor and an actor whose id we could not read are both UNKNOWN -
+  // never UNAUTHORIZED. "We cannot tell who wrote this" is not "someone
+  // untrusted wrote this", and only the latter is a proven negative.
+  if (user === UNKNOWN || !user || user.id === undefined || user.id === null || user.id === UNKNOWN) {
     return { authority: UNKNOWN, reason: "actor identity is missing from the object" };
   }
   if (user.id === trusted.id && user.type === trusted.type) {

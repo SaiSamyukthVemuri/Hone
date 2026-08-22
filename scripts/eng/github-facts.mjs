@@ -31,7 +31,7 @@
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from "node:child_process";
-import { collectionEvidence, evidence, verdictEvidence, UNKNOWN } from "./evidence.mjs";
+import { collectionEvidence, evidence, sourceField, verdictEvidence, PROVEN_REPLY, PROVEN_TOP_LEVEL, UNKNOWN } from "./evidence.mjs";
 
 export { UNKNOWN };
 
@@ -95,6 +95,34 @@ export function ghFetcher({ repo = DEFAULT_REPO } = {}) {
 const shortSha = (sha) => (typeof sha === "string" ? sha.slice(0, 10) : sha);
 
 /**
+ * THE ONE FIELD WHOSE ABSENCE IS A SEMANTIC VALUE.
+ *
+ * GitHub returns `in_reply_to_id` ONLY on replies; it omits the property
+ * entirely on top-level review comments. Omission IS the statement "top-level".
+ *
+ * Censused across #610, #612, #613, #615 and #616 - 97 comments:
+ *   key ABSENT  -> 52, every one a top-level comment
+ *   key PRESENT -> 45, every one carrying a real id
+ *   PRESENT + null -> 0, never observed once
+ *
+ * The contract applies ONLY when the object is provably a GitHub review
+ * comment. `pull_request_review_id` is the discriminator - present on all 97.
+ * Without it we cannot know the object came from this API, so the contract does
+ * not apply and the answer is UNKNOWN rather than an assumed top-level.
+ *
+ * Every OTHER field keeps the default: absent means UNKNOWN.
+ */
+const REVIEW_COMMENT_DISCRIMINATOR = "pull_request_review_id";
+
+export function replyStatusOf(c) {
+  if (sourceField(c, REVIEW_COMMENT_DISCRIMINATOR) === UNKNOWN) return UNKNOWN;
+  const v = sourceField(c, "in_reply_to_id", { absentMeans: PROVEN_TOP_LEVEL });
+  if (v === PROVEN_TOP_LEVEL) return PROVEN_TOP_LEVEL;
+  // PRESENT + null was never observed. Do not invent a meaning for it.
+  return v === null || v === UNKNOWN ? UNKNOWN : PROVEN_REPLY;
+}
+
+/**
  * Project one inline review comment.
  *
  * BOTH shas are kept, deliberately. `originalCommitId` is where the finding was
@@ -106,15 +134,29 @@ export function projectInlineComment(c) {
   const body = String(c.body ?? "");
   const severity = body.match(SEVERITY_BADGE)?.[1] ?? null;
   const title = body.match(FINDING_TITLE)?.[1]?.trim().replace(/\*+$/, "") ?? null;
+  const user = sourceField(c, "user");
   return {
-    id: c.id,
-    author: c.user?.login ?? UNKNOWN,
-    authorId: c.user?.id ?? null,
-    commitId: c.commit_id ?? null,
-    originalCommitId: c.original_commit_id ?? null,
-    path: c.path ?? null,
+    id: sourceField(c, "id"),
+    // Every field a certainty decision reads is taken with sourceField, so an
+    // ABSENT property stays UNKNOWN instead of becoming a proven null. Display
+    // fields below may still coalesce; they decide nothing.
+    author: user === UNKNOWN ? UNKNOWN : (user?.login ?? UNKNOWN),
+    authorId: user === UNKNOWN ? UNKNOWN : sourceField(user, "id"),
+    commitId: sourceField(c, "commit_id"),
+    originalCommitId: sourceField(c, "original_commit_id"),
+    path: sourceField(c, "path"),
+    // `line` is the CURRENT display position and is mutable: GitHub rewrites it
+    // as the head moves and nulls it once outdated. Display only.
     line: c.line ?? c.original_line ?? null,
-    inReplyToId: c.in_reply_to_id ?? null,
+    // The STABLE original location, which identity keys on.
+    originalLine: sourceField(c, "original_line"),
+    // ABSENT -> UNKNOWN. PRESENT+null -> PROVEN top-level. PRESENT+id -> PROVEN
+    // reply. GitHub returns this on every review comment, so a null genuinely
+    // proves top-level; collapsing absence into it is what let an unknown
+    // comment become a positive finding.
+    inReplyToId: sourceField(c, "in_reply_to_id"),
+    // Decided by the declared field contract above, not by the consumer.
+    replyStatus: replyStatusOf(c),
     severity,
     title: severity ? title : null,
     reactionCount: c.reactions?.total_count ?? 0,
@@ -132,18 +174,19 @@ export function projectReview(r) {
   const body = String(r.body ?? "");
   const hasBody = body.trim().length > 0;
   const reviewedCommit = body.match(REVIEWED_COMMIT)?.[1] ?? null;
+  const user = sourceField(r, "user");
   return {
-    id: r.id,
-    author: r.user?.login ?? UNKNOWN,
-    authorId: r.user?.id ?? null,
-    state: r.state ?? UNKNOWN,
-    commitId: r.commit_id ?? null,
+    id: sourceField(r, "id"),
+    author: user === UNKNOWN ? UNKNOWN : (user?.login ?? UNKNOWN),
+    authorId: user === UNKNOWN ? UNKNOWN : sourceField(user, "id"),
+    state: sourceField(r, "state"),
+    commitId: sourceField(r, "commit_id"),
     submittedAt: r.submitted_at ?? null,
     hasBody,
     verdict: verdictEvidence({
       sourceType: "review_object",
       sourceId: r.id,
-      user: r.user,
+      user,
       // A review body may state its head explicitly; otherwise the object's own
       // commit_id is the head it was submitted against.
       reviewedCommit: reviewedCommit ?? r.commit_id ?? null,
@@ -165,10 +208,11 @@ export function projectIssueComment(c) {
   const body = String(c.body ?? "");
   const verdictCommit = body.match(REVIEWED_COMMIT)?.[1] ?? null;
   const isRequest = REVIEW_REQUEST.test(body);
+  const user = sourceField(c, "user");
   return {
-    id: c.id,
-    author: c.user?.login ?? UNKNOWN,
-    authorId: c.user?.id ?? null,
+    id: sourceField(c, "id"),
+    author: user === UNKNOWN ? UNKNOWN : (user?.login ?? UNKNOWN),
+    authorId: user === UNKNOWN ? UNKNOWN : sourceField(user, "id"),
     createdAt: c.created_at ?? null,
     isVerdictCandidate: verdictCommit !== null,
     verdict:
@@ -177,7 +221,7 @@ export function projectIssueComment(c) {
         : verdictEvidence({
             sourceType: "issue_comment",
             sourceId: c.id,
-            user: c.user,
+            user,
             reviewedCommit: verdictCommit,
             clean: CLEAN_VERDICT.test(body),
             hasBody: body.trim().length > 0,
@@ -191,9 +235,10 @@ export function projectIssueComment(c) {
 export function projectCheckRun(c) {
   return {
     name: c.name ?? UNKNOWN,
-    status: c.status ?? UNKNOWN,
-    conclusion: c.conclusion ?? null,
-    headSha: c.head_sha ?? null,
+    // status/conclusion/head_sha all feed the CI verdict, so absence is kept.
+    status: sourceField(c, "status"),
+    conclusion: sourceField(c, "conclusion"),
+    headSha: sourceField(c, "head_sha"),
   };
 }
 

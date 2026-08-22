@@ -242,7 +242,7 @@ describe("verdict authority", () => {
     expect(vs.length).toBe(2);
     for (const v of vs) {
       expect(Object.keys(v).sort()).toEqual(
-        ["actor", "actorId", "atHead", "authority", "clean", "completeness", "reason", "reviewedCommit", "sourceId", "sourceType", "usable"].sort(),
+        ["actor", "actorId", "atHead", "authority", "certainty", "clean", "completeness", "reason", "reviewedCommit", "sourceId", "sourceType"].sort(),
       );
     }
   });
@@ -349,10 +349,15 @@ describe("the real fixture histories are still reported correctly", () => {
     expect(s.findings.fresh).toBe(0);
   });
 
-  it("#616: this PR's own three findings are reported at its head", () => {
+  it("#616: only trusted findings are counted, and the look-alike is not", () => {
+    // This fixture is the MERGED head. The badge-carrying comment beside the
+    // real finding is a REPLY written by a human while documenting a spoof; it
+    // is now raw evidence rather than a counted finding.
     const s = summarize(FIX(616));
-    expect(s.findings.fresh).toBe(3);
-    expect(s.findings.bySeverity).toEqual({ P1: 2, P2: 1 });
+    expect(s.findings.fresh).toBe(1);
+    expect(s.findings.bySeverity).toEqual({ P2: 1 });
+    expect(s.findings.rawEvidence.length).toBeGreaterThan(0);
+    expect(s.findings.rawEvidence.some((e: { actorId: number }) => e.actorId === 26781116)).toBe(true);
   });
 
   it("every captured fixture's check-run collection is COMPLETE", () => {
