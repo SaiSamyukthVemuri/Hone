@@ -139,6 +139,7 @@ import {
 } from "@/components/client-budget-card";
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
+import { requireLoadedForTab } from "./deferred-reads";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -219,16 +220,33 @@ export default async function ClientCheatSheetPage({
   // lib/supabase/queries.ts as a reusable utility but is no longer
   // wired here; the explicit FK on the new read does the dedup
   // directly.
-  const appointmentTimeline = await getAppointmentsForClientProfile(
-    studio.id,
-    client.id,
-  );
-  const services = await getActiveServices(studio.id);
   const today = todayInTz(studio.timezone);
-  const intake = await getLatestIntakeForClient(studio.id, client.id);
-  // Portal access: the studio-branded login URL (no token) + read-only access
-  // hints (last link sent / last sign-in) from existing tables.
-  const portalAccess = await getPortalAccessSummary(studio.id, client.id);
+
+  // PERF2 (measured): which tab's exclusive reads this request must pay for.
+  //
+  // Production measurement of #610's `client-profile.domain` span put this
+  // page at p50 584ms / p95 698ms — five to thirteen times every other
+  // measured page-domain span, and roughly ten times this page's own identity
+  // span. The cause was structural rather than any one slow query: the reads
+  // below ran as a chain of single-await waves, and every profile load paid
+  // for every tab's data whether or not that tab was rendering.
+  //
+  // Each flag is derived from where the value is actually CONSUMED in the JSX
+  // below, not from the tab's name. Two are deliberately wider than they look:
+  //   * `intake` renders on health AND feeds computePortalPendingTasks, which
+  //     is an overview card;
+  //   * `portalMessages` renders on messages AND feeds that same overview
+  //     card. Gating either to a single tab would silently blank the overview
+  //     pending-task list, which is a product change, not an optimisation.
+  const isOverview = activeTab === "overview";
+  const needsIntake = isOverview || activeTab === "health";
+  const needsPortalMessages = isOverview || activeTab === "messages";
+  const needsSessionsData = activeTab === "sessions";
+  const needsTreatmentPlans = activeTab === "treatment";
+  const needsPersonalNotes = activeTab === "personal";
+  const needsPortalMessageReplies = activeTab === "messages";
+  const needsConsultationNotes = activeTab === "consultation";
+
   const portalLoginUrl = studio.slug
     ? `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(studio.slug)}`
     : `${getRequiredAppOrigin()}/portal/login`;
@@ -239,19 +257,28 @@ export default async function ClientCheatSheetPage({
   // Practitioner-confirmed Fitzpatrick lives in client.fitzpatrick_type
   // and is the canonical clinical value; it is never overwritten by
   // this derived display.
-  const submittedIntake = await getLatestSubmittedOrReviewedIntakeForClient(
-    studio.id,
-    client.id,
-  );
-  const selfReportedFitzpatrick = submittedIntake
-    ? computeFitzpatrickEstimate(
-        (submittedIntake.responses ?? {}) as Record<string, unknown>,
-      )
-    : null;
-  // tags read removed: Tags no longer renders on the main profile.
-  const pinnedNotes = await getPinnedNotesForClient(studio.id, client.id);
-  const treatmentPlans = await getTreatmentPlansForClient(studio.id, client.id);
+  // PERF2: ONE parallel wave for every read that depends only on
+  // (studio.id, client.id).
+  //
+  // These were previously eight separate single-await waves plus a ten-way
+  // Promise.all plus one more await — eleven serial round-trip waves where the
+  // real dependency graph is flat. Nothing here reads another entry's result;
+  // the only true dependency is on `client` from getClientById above, which
+  // still runs first because it gates notFound().
+  //
+  // Tab-exclusive reads are SKIPPED, not merely awaited together: widening the
+  // wave to keep every tab's data would make the page cheaper in wall-clock
+  // while doing strictly more database work, which is not the fix the
+  // measurement asked for. A skipped read yields the same empty/neutral value
+  // its consumer already handles, and its tab re-requests it on navigation.
   const [
+    appointmentTimeline,
+    services,
+    intake,
+    portalAccess,
+    submittedIntake,
+    pinnedNotes,
+    treatmentPlans,
     treatmentTotals,
     treatmentByArea,
     treatmentGoal,
@@ -262,62 +289,115 @@ export default async function ClientCheatSheetPage({
     consentLatestSignatures,
     activeCard,
     importedMemory,
+    portalAccessEvents,
   ] = await Promise.all([
-    getTotalTreatmentTime(studio.id, client.id),
-    getTreatmentTimeByArea(studio.id, client.id),
-    getTreatmentGoal(studio.id, client.id),
-    // Phase: personal notes (migration 0035). Returns null when the
-    // client has no row yet; the editor's defaultValues stay empty.
-    getClientPersonalNotes(studio.id, client.id),
-    // Migration 0053: secure portal messages for this client.
-    // Practitioner-side view includes notification + reviewed
-    // state. Empty array when the client has none.
-    getPortalMessagesForPractitionerView(studio.id, client.id),
-    // PR #129 (migration 0054): client replies to the messages
-    // above. Same studio+client scope; render inline under each
-    // parent message. Empty array when the client has not replied.
-    getPortalMessageRepliesForPractitionerView(studio.id, client.id),
-    // PR #134 (migration 0057): consent / e-sign foundation.
-    // Active templates (per-studio) + latest signature per template
-    // (per-client). Same studio scope; rendered as a read-only
-    // status card on the profile.
-    getConsentTemplatesForStudio(studio.id),
-    getLatestSignaturesForPractitionerView(studio.id, client.id),
-    // PR #135 (migration 0058): card-on-file Phase 1. Active card
-    // metadata only; Stripe identifiers stay off the wire. Rendered
-    // by the new PaymentMethodCard below ConsentSignaturesCard.
-    getActiveCardForStudioClient(studio.id, client.id),
-    // PR #259: read-only imported treatment memory (paper/Jane/spreadsheet
-    // history from Quick Import) for the Before Today briefing. RLS-backed,
-    // studio+client-scoped, voided rows excluded, newest-first, capped for
-    // display. Surfaced as a labelled "Imported treatment memory" section in
-    // BeforeTodayCard, never mixed with live charted history.
-    getImportedTreatmentMemoriesForClient(studio.id, client.id, {
-      limit: BEFORE_TODAY_IMPORTED_CAP,
-    }),
+    // PR #157: full appointment history joined to the linked session via the
+    // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
+    // on the Sessions tab.
+    needsSessionsData
+      ? getAppointmentsForClientProfile(studio.id, client.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getAppointmentsForClientProfile>>),
+    // Rendered outside every tab block, so always needed.
+    getActiveServices(studio.id),
+    needsIntake
+      ? getLatestIntakeForClient(studio.id, client.id)
+      : Promise.resolve(null),
+    // Portal access hints (last link sent / last sign-in). Overview card.
+    isOverview
+      ? getPortalAccessSummary(studio.id, client.id)
+      // Same shape the helper returns when the client has never been sent a
+      // link and has never signed in — the card already renders that state.
+      : Promise.resolve({ lastLinkSentAt: null, lastSeenAt: null }),
+    // Self-reported Fitzpatrick is derived from the latest submitted/reviewed
+    // intake only; a newer in_progress reissue does NOT clear it. The
+    // practitioner-confirmed value lives on client.fitzpatrick_type and is
+    // never overwritten by this derived display. Overview card.
+    isOverview
+      ? getLatestSubmittedOrReviewedIntakeForClient(studio.id, client.id)
+      : Promise.resolve(null),
+    isOverview
+      ? getPinnedNotesForClient(studio.id, client.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getPinnedNotesForClient>>),
+    needsTreatmentPlans
+      ? getTreatmentPlansForClient(studio.id, client.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getTreatmentPlansForClient>>),
+    needsSessionsData
+      ? getTotalTreatmentTime(studio.id, client.id)
+      // The zero value the helper itself returns for a client with no
+      // electrolysis rows; the Sessions card already renders it.
+      : Promise.resolve({ totalMinutes: 0, sessionCount: 0, lastSessionAt: null }),
+    needsSessionsData
+      ? getTreatmentTimeByArea(studio.id, client.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getTreatmentTimeByArea>>),
+    needsSessionsData
+      ? getTreatmentGoal(studio.id, client.id)
+      : Promise.resolve(null),
+    // Personal notes (migration 0035). Null when the client has no row yet;
+    // the editor's defaultValues stay empty.
+    needsPersonalNotes
+      ? getClientPersonalNotes(studio.id, client.id)
+      : Promise.resolve(null),
+    // Migration 0053: secure portal messages. Needed on messages (rendered)
+    // AND on overview (feeds computePortalPendingTasks below).
+    needsPortalMessages
+      ? getPortalMessagesForPractitionerView(studio.id, client.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getPortalMessagesForPractitionerView>>),
+    // PR #129 (migration 0054): client replies, rendered inline under each
+    // parent message. Messages tab only.
+    needsPortalMessageReplies
+      ? getPortalMessageRepliesForPractitionerView(studio.id, client.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getPortalMessageRepliesForPractitionerView>>),
+    // PR #134 (migration 0057): consent / e-sign. Overview status card, and
+    // both feed computePortalPendingTasks.
+    isOverview
+      ? getConsentTemplatesForStudio(studio.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getConsentTemplatesForStudio>>),
+    isOverview
+      ? getLatestSignaturesForPractitionerView(studio.id, client.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getLatestSignaturesForPractitionerView>>),
+    // PR #135 (migration 0058): card-on-file metadata only; Stripe identifiers
+    // stay off the wire. Overview card.
+    isOverview
+      ? getActiveCardForStudioClient(studio.id, client.id)
+      : Promise.resolve(null),
+    // PR #259: read-only imported treatment memory for the Before Today
+    // briefing. Overview card.
+    isOverview
+      ? getImportedTreatmentMemoriesForClient(studio.id, client.id, {
+          limit: BEFORE_TODAY_IMPORTED_CAP,
+        })
+      // The empty list shape, not []: ImportedMemoryList is an object.
+      : Promise.resolve({ items: [], hasItems: false, totalFound: 0 }),
+    // Portal Access PR 3: recent access events, fail-soft to [] pre-migration.
+    // Overview card.
+    isOverview
+      ? getRecentPortalAccessEvents(studio.id, client.id, 5)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
   ]);
+
+  const selfReportedFitzpatrick = submittedIntake
+    ? computeFitzpatrickEstimate(
+        (submittedIntake.responses ?? {}) as Record<string, unknown>,
+      )
+    : null;
+  // tags read removed: Tags no longer renders on the main profile.
   const practitionerNames: Record<string, string> = Object.fromEntries(
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
 
-  // Portal Access PR 3: outstanding portal tasks (from already-loaded data, no
-  // new queries) + recent portal access events (fail-soft: [] pre-migration).
+  // Portal Access PR 3: outstanding portal tasks, from already-loaded data —
+  // no new queries.
   const portalPendingTasks = computePortalPendingTasks({
     intakeStatus: intake?.status ?? null,
     activeConsentTemplates: consentTemplatesAll,
     latestSignatures: consentLatestSignatures,
     portalMessages,
   });
-  const portalAccessEvents = await getRecentPortalAccessEvents(
-    studio.id,
-    client.id,
-    5,
-  );
 
   // Migration 0126: dated consultation + skin/hair analysis clinical notes.
   // Loaded only when the Consultation tab is active so other tabs pay no cost.
   const clinicalNoteSections =
-    activeTab === "consultation"
+    needsConsultationNotes
       ? await buildClinicalNoteSections(client.id, { historyLimit: 25 })
       : null;
   // Migration 0183: CURRENT client budget context — practitioner-held client
@@ -325,13 +405,13 @@ export default async function ClientCheatSheetPage({
   // the same tab so other tabs pay no cost. Fails soft to the empty state
   // (no row yet, or 0183 not yet applied), so the tab never 500s.
   const budgetContext =
-    activeTab === "consultation"
+    needsConsultationNotes
       ? await getClientBudgetContext(client.id)
       : null;
   // Read-only latest-of-each-kind summary for the overview appointment-prep
   // briefing. Two light reads; only on the default overview tab.
   const clinicalNotesSummary =
-    activeTab === "overview"
+    isOverview
       ? await getClinicalNotesSummary(client.id)
       : null;
 
@@ -359,7 +439,12 @@ export default async function ClientCheatSheetPage({
   // PR #203: pre-client Watch/Plan context for the card's footer band
   // (may come from a different session than lastTreatment).
   let preClientWatchPlan: LastSessionSummary | null = null;
-  if (recentSessions.length > 0) {
+  // PERF2: `lastTreatment*` renders on the overview and sessions tabs only
+  // (LastVisitCard / FromLastVisitForToday). Other tabs paid two round trips
+  // — this session_blocks read plus attachStructuredAreas — for values they
+  // never render.
+  const needsLastTreatment = isOverview || activeTab === "sessions";
+  if (needsLastTreatment && recentSessions.length > 0) {
     const supabaseForSummary = await createClient();
     const { data: recentBlocks } = await supabaseForSummary
       .from("session_blocks")
@@ -453,7 +538,13 @@ export default async function ClientCheatSheetPage({
     sessionsNewestFirst: sessions,
     blocks: [],
   });
-  if (sessions.length > 0) {
+  // PERF2: TreatmentIntelligenceCard renders on the overview tab ONLY, and
+  // this is the widest read on the page — every session (cap 200) with its
+  // per-entry hairs, plus attachStructuredAreas. Six of the seven tabs were
+  // paying for it and rendering none of it. buildTreatmentIntelligence has
+  // already produced the blocks:[] value above, which is exactly what a
+  // client with no recorded blocks yields.
+  if (isOverview && sessions.length > 0) {
     const supabaseForIntel = await createClient();
     const { data: intelBlocks } = await supabaseForIntel
       .from("session_blocks")
@@ -538,6 +629,36 @@ export default async function ClientCheatSheetPage({
     !!client.emergency_contact_name || !!client.emergency_contact_phone;
 
   domain.end();
+
+  // DEV/TEST ONLY. Every entry names a read this tab RENDERS, paired with the
+  // gate that decided whether it ran. The keys are tab literals and the values
+  // are the gate flags, so the two sides cannot be edited by one change: if a
+  // gate stops covering a tab below, this throws instead of letting the tab
+  // render an empty state over data that exists. Returns immediately in
+  // production. See ./deferred-reads for what this does and does not prove.
+  requireLoadedForTab(activeTab, {
+    overview: {
+      // pinned notes, portal access + events, consent, card on file, imported
+      // memory, clinical-notes summary, treatment intelligence
+      overviewOnlyReads: isOverview,
+      intake: needsIntake,
+      portalMessages: needsPortalMessages,
+      lastTreatment: needsLastTreatment,
+    },
+    sessions: {
+      // appointment timeline, treatment totals, time by area, treatment goal
+      sessionsData: needsSessionsData,
+      lastTreatment: needsLastTreatment,
+    },
+    treatment: { treatmentPlans: needsTreatmentPlans },
+    messages: {
+      portalMessages: needsPortalMessages,
+      portalMessageReplies: needsPortalMessageReplies,
+    },
+    health: { intake: needsIntake },
+    consultation: { consultationNotes: needsConsultationNotes },
+    personal: { personalNotes: needsPersonalNotes },
+  });
 
   return (
     <div className="flex flex-col gap-10">

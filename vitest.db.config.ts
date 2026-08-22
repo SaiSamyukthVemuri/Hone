@@ -27,6 +27,12 @@ export default defineConfig({
     hookTimeout: 30_000,
     reporters: "default",
   },
+  // The repo tsconfig sets `jsx: "preserve"` because the Next compiler owns the
+  // transform in the app. This lane invokes a real SERVER COMPONENT (the Client
+  // Profile page) to observe the queries it issues, so the .tsx has to compile
+  // here too. Same setting the unit lane uses, and for the same reason: Vite 8
+  // transforms with oxc and ignores esbuild options when both are present.
+  oxc: { jsx: { runtime: "automatic" } },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./"),
