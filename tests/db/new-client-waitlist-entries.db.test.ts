@@ -660,6 +660,87 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
 // 8. NEGATIVE CONTROL — the mutation, performed for real and rolled back
 // ---------------------------------------------------------------------------
 describe("0185: negative control", () => {
+  it("the OLD status-only guard really did let removal evidence be rewritten", async () => {
+    // Sensitivity check for the review finding, not a restatement of it. The
+    // shipped guard freezes removed_at / removed_by_practitioner_id outside the
+    // legal transition; the guard it replaced checked the status COLUMN only.
+    //
+    // If the earlier form had ALSO refused this write, the regression test
+    // above would pass against both versions and prove nothing. So the old
+    // function body is reinstalled for real, inside a transaction that is then
+    // rolled back (DDL and function definitions are transactional in
+    // PostgreSQL), and the rewrite is observed to SUCCEED.
+    const created = await join(a.studioId, "Sensitivity", email("sensitivity"));
+    expect(await remove(a.studioId, created.entry_id!, a.userId)).toBe("removed");
+
+    const sentinel = new Error("intentional rollback");
+    let rewriteSucceededUnderOldGuard = false;
+
+    await expect(
+      adminTx(async (q) => {
+        await q(`
+          create or replace function public.new_client_waitlist_entries_transition_guard()
+          returns trigger
+          language plpgsql
+          set search_path = pg_catalog, pg_temp
+          as $old$
+          begin
+            if new.id is distinct from old.id
+               or new.studio_id is distinct from old.studio_id
+               or new.joined_at is distinct from old.joined_at
+               or new.source is distinct from old.source then
+              raise exception 'immutable' using errcode = 'check_violation';
+            end if;
+            if new.name is distinct from old.name
+               or new.email is distinct from old.email
+               or new.phone is distinct from old.phone then
+              raise exception 'immutable' using errcode = 'check_violation';
+            end if;
+            if new.status is distinct from old.status
+               and not (old.status = 'waiting' and new.status = 'removed') then
+              raise exception 'transition' using errcode = 'check_violation';
+            end if;
+            return new;
+          end;
+          $old$;
+        `);
+
+        const res = await q(
+          `update public.new_client_waitlist_entries
+              set removed_by_practitioner_id = $2, removed_at = now() - interval '10 days'
+            where id = $1
+            returning removed_by_practitioner_id`,
+          [created.entry_id, aMember.practitionerId],
+        );
+        rewriteSucceededUnderOldGuard =
+          res.rows.length === 1 &&
+          res.rows[0].removed_by_practitioner_id === aMember.practitionerId;
+
+        throw sentinel;
+      }),
+    ).rejects.toBe(sentinel);
+
+    expect(
+      rewriteSucceededUnderOldGuard,
+      "the old guard must actually permit the rewrite — otherwise the write-once test proves nothing",
+    ).toBe(true);
+
+    // The shipped guard is back, and it still refuses.
+    await expect(
+      adminQuery(
+        "update public.new_client_waitlist_entries set removed_by_practitioner_id = $2 where id = $1",
+        [created.entry_id, aMember.practitionerId],
+      ),
+    ).rejects.toThrow(/removal evidence is recorded once/);
+
+    // ...and the original attribution survived the whole exercise.
+    const row = await adminQuery(
+      "select removed_by_practitioner_id from public.new_client_waitlist_entries where id = $1",
+      [created.entry_id],
+    );
+    expect(row.rows[0].removed_by_practitioner_id).toBe(a.practitionerId);
+  });
+
   it("uniqueness WITHOUT studio scope breaks a legitimate cross-studio join", async () => {
     // The claim under test is that the STUDIO SCOPE in the shipped unique index
     // is what lets one person wait at two unrelated studios — not something
