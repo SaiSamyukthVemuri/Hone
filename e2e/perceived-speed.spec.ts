@@ -246,9 +246,12 @@ test.describe("UI-01 perceived speed — desktop", () => {
  * see PR #624). So React keeps the OLD page mounted until the destination
  * commits, which is precisely why the tapped control is still there to speak.
  *
- * Cases: (A) normal speed completes, (B) held response shows pending before the
- * destination, (D) warm prefetch leaves nothing stuck. (C) is the negative
+ * Cases: (A) an ordinary navigation completes and leaves nothing behind,
+ * (B) a held response shows pending BEFORE the destination. (C) is the negative
  * control, run by bypassing the presentation.
+ *
+ * There is no separate warm-cache case: on this route a tap always performs a
+ * real navigation, for the reasons recorded at case A.
  */
 async function provesSegmentChangeIsAcknowledged(page: Page) {
   const seed = await seedE2eStudio();
@@ -319,74 +322,36 @@ async function provesSegmentChangeIsAcknowledged(page: Page) {
     await expect(liveRegion).toHaveCount(0);
   });
 
-  await test.step("A + D: normal speed on a PROVEN-warm cache, nothing stuck", async () => {
-    // Nothing held and nothing blocked, against a cache proven warm below.
-    // Whether the mark paints here is timing, not contract: this step fixes no
-    // minimum display duration and asserts none. What it does assert is that
-    // the navigation completes and leaves no residue.
+  await test.step("A: an ordinary navigation completes and leaves nothing behind", async () => {
+    // Nothing held, nothing blocked — the everyday path.
     //
-    // But "warm" has to be ESTABLISHED, not hoped for. Link visibility only
-    // makes a prefetch ELIGIBLE; on a busy runner the click can beat it, and
-    // this step would silently become a second cold navigation that passes
-    // while proving nothing about the warm path. So we watch for a COMPLETED
-    // prefetch response and refuse to click until one has landed.
+    // There is deliberately NO separate "warm cache serves this instantly" case
+    // here, because on this route that scenario does not occur. Measured:
+    //
+    //   - the consultation CTA never produces its own `?tab=consultation`
+    //     prefetch request. Prefetching for these client destinations is keyed
+    //     by PATHNAME, so the neighbouring row action pointing at
+    //     /clients/<id> already covers it;
+    //   - and that pathname-level prefetch does not remove the click's real RSC
+    //     navigation — the tap still fetches.
+    //
+    // So every tap here performs a genuine navigation, and whether the mark is
+    // on screen long enough to notice is timing rather than contract. This step
+    // therefore fixes NO minimum pending-display duration and asserts none. It
+    // asserts only what must always hold: the destination arrives, and nothing
+    // pending is left behind.
     await page.unrouteAll({ behavior: "wait" });
-
-    let prefetchesCompleted = 0;
-    let coldNavigations = 0;
-    const countTraffic = (response: import("@playwright/test").Response) => {
-      const req = response.request();
-      const h = req.headers();
-      if (!new URL(req.url()).pathname.startsWith("/clients/")) return;
-      if (h["next-router-prefetch"] === "1") {
-        if (response.ok()) prefetchesCompleted += 1;
-      } else if (h["rsc"] === "1") {
-        coldNavigations += 1;
-      }
-    };
-    page.on("response", countTraffic);
-
     await page.goto("/dashboard");
-    const warmCta = page.getByTestId("today-consultation-notes").first();
-    await expect(warmCta).toBeVisible({ timeout: T });
-    // Make the prefetch eligible at every viewport — at 390px the control may
-    // start below the fold, where it would never be prefetched at all.
-    await warmCta.scrollIntoViewIfNeeded();
 
-    // THE PRECONDITION. Without this the step is vacuous.
-    await expect
-      .poll(() => prefetchesCompleted, { timeout: T })
-      .toBeGreaterThan(0);
+    const cta2 = page.getByTestId("today-consultation-notes").first();
+    await expect(cta2).toBeVisible({ timeout: T });
+    await cta2.click();
 
-    const navigationsBeforeClick = coldNavigations;
-    await warmCta.click();
     await expect(
       page.getByRole("heading", { level: 1, name: client.name }),
     ).toBeVisible({ timeout: T });
-
-    // MEASURED, and it corrects an assumption worth writing down.
-    //
-    // A completed AUTO prefetch does NOT satisfy this navigation: the tap still
-    // issues its own RSC request. That is consistent with what the prefetch
-    // actually contains — for a dynamic route with no loading.tsx there is no
-    // page data to cache, so there is nothing for the click to be served from.
-    // An earlier reading of "no request on click" was in-flight request DEDUPE
-    // (clicking while the speculative fetch was still open), not a warm cache
-    // serving the navigation.
-    //
-    // So on this route "warm" buys a head start, not an instant commit, and the
-    // mark can legitimately paint here too. This step therefore claims only
-    // what is true of BOTH timings: the navigation completes and leaves nothing
-    // behind. It fixes no minimum display duration in either direction.
-    expect(coldNavigations).toBeGreaterThan(navigationsBeforeClick);
-
-    // No residue specific to an instantly-satisfied navigation.
     await expect(page.locator("[data-link-pending]")).toHaveCount(0);
-    await expect(
-      page.getByTestId("today-consultation-notes"),
-    ).toHaveCount(0);
-
-    page.off("response", countTraffic);
+    await expect(page.locator('[role="status"]')).toHaveCount(0);
   });
 }
 
