@@ -68,20 +68,49 @@ import {
 // evaluated through lib/booking/slots.ts's own pure core, so a capacity figure
 // and the booking page cannot disagree about what is legal.
 //
-// EVERY COUNT IS CAPPED AND THE CAP IS OBSERVED. A studio large enough to hit
-// one of the caps below gets UNKNOWN for the figures that row set feeds, never
-// a quietly truncated number.
+// NO READ IS EVER CONSUMED AS COMPLETE UNLESS IT PROVABLY IS. Every read below
+// goes through `readAll`, which pages against an EXACT count and throws on a
+// PostgREST error. Two ways a briefing could otherwise lie with total
+// confidence, both closed here:
+//
+//   * A ROW CEILING. supabase/config.toml sets `max_rows = 1000`, so the Data
+//     API truncates a response long before any app-side limit is reached.
+//     Comparing the returned length against a larger app-side cap therefore
+//     proved nothing: a studio with 1,200 appointments looked complete at
+//     1,000 rows, and the missing 200 read as free time. `readAll` compares
+//     against the count PostgREST reports in Content-Range, which the row
+//     ceiling does not bound, so completeness is proved rather than assumed —
+//     and it stays correct whatever the deployment's ceiling happens to be.
+//
+//   * A FAILED READ. supabase-js RESOLVES with `{ data: null, error }` rather
+//     than rejecting, so a discarded error becomes an empty row set: zero
+//     booked hours, a wholly free calendar and a confident next opening, on
+//     the screen an owner uses to decide whether to accept work. `readAll`
+//     fails closed with a safe code and no row data, because no answer is
+//     better than a wrong one here.
+//
+// Beyond the per-read ceilings below the figures that row set feeds go UNKNOWN,
+// never truncated.
+
+/** supabase/config.toml `max_rows`. One page may not exceed the Data API's own ceiling. */
+const API_PAGE_SIZE = 1_000;
 
 const READ_CAPS = {
-  clients: 5_000,
-  futureAppointments: 2_000,
-  cohortConsultations: 2_000,
-  clientHistory: 8_000,
-  reservations: 8_000,
+  clients: 10_000,
+  futureAppointments: 10_000,
+  cohortConsultations: 10_000,
+  clientHistory: 20_000,
+  reservations: 20_000,
 } as const;
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+
+/** Whole days from `from` to `to`, both studio-local YYYY-MM-DD. Noon-anchored so DST cannot shift the count. */
+function daysBetweenLocal(from: string, to: string): number {
+  const ms = Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`);
+  return Math.round(ms / DAY_MS);
+}
 
 // ---------------------------------------------------------------------------
 // Public shape
@@ -171,16 +200,58 @@ function toBriefingAppointment(row: AppointmentRow): BriefingAppointment {
   };
 }
 
-/** A row set plus whether it reached its cap — a capped read is not a count. */
-type Capped<T> = { rows: T[]; truncated: boolean };
+/**
+ * A row set, whether it stopped short of everything, and the EXACT total the
+ * database reports — which stays truthful even when the rows do not.
+ */
+type Capped<T> = { rows: T[]; truncated: boolean; total: number | null };
 
-function capped<T>(rows: T[] | null, cap: number): Capped<T> {
-  const list = rows ?? [];
-  return { rows: list, truncated: list.length >= cap };
+type PageResult<T> = {
+  data: T[] | null;
+  error: { code?: string | null } | null;
+  count?: number | null;
+};
+
+/**
+ * Read every row of one studio-scoped query, or say so.
+ *
+ * `page(from, to)` must issue the SAME query with `{ count: "exact" }` and the
+ * given range. Paging stops when the accumulated rows reach the reported count
+ * (complete) or the per-read ceiling (truncated). A studio under the Data API's
+ * page ceiling — which is every real studio — costs exactly one request, so the
+ * two-wave read shape is unchanged for them.
+ */
+async function readAll<T>(
+  what: string,
+  cap: number,
+  page: (from: number, to: number) => PromiseLike<PageResult<T>>,
+): Promise<Capped<T>> {
+  const rows: T[] = [];
+  let total: number | null = null;
+  for (;;) {
+    const from = rows.length;
+    const to = Math.min(from + API_PAGE_SIZE, cap) - 1;
+    if (to < from) break; // the ceiling below is the limit, not the data
+    const { data, error, count } = await page(from, to);
+    // Fail CLOSED. A swallowed error here renders an empty calendar as a free one.
+    if (error) {
+      throw new Error(
+        `owner_capacity_read_failed:${what}:${error?.code ?? "unknown"}`,
+      );
+    }
+    if (typeof count === "number") total = count;
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length === 0) break;
+    if (total !== null && rows.length >= total) break;
+  }
+  // No count at all means completeness was never established; say so rather
+  // than assume it.
+  return { rows, truncated: total === null || rows.length < total, total };
 }
 
 function tooLarge(what: string, cap: number): string {
-  return `More than ${cap.toLocaleString()} ${what} in range; this briefing does not report a truncated figure.`;
+  return `This studio has more than ${cap.toLocaleString()} ${what} in range; this briefing does not report a partial figure.`;
 }
 
 function groupByClient(
@@ -243,6 +314,16 @@ function buildSchedule(params: {
 
     // The same 36-hour overlap window the per-day loader uses, so a late
     // previous-day reservation still reaches the day it runs into.
+    //
+    // The comparison is against the shadow's RAW `ends_at`, deliberately, and
+    // NOT against the buffered end `protectedIntervals` reconstructs. That is
+    // byte-for-byte what getAvailableSlots does (`gt("ends_at", windowStart)`),
+    // and parity is the whole reason this module exists: an appointment ending
+    // just before local midnight whose trailing buffer spills into the next day
+    // is dropped by BOTH paths alike. Widening it here alone would make this
+    // page disagree with the booking engine, which is worse than the shared
+    // edge — and that edge is only reachable by a studio open across midnight.
+    // It belongs to slots.ts, fixed in both paths at once, in its own change.
     const windowStart = utcInstantFromLocal(dateStr, "00:00", params.tz).getTime();
     const windowEnd = windowStart + 36 * HOUR_MS;
     const dayReservations = params.reservations.filter((r) => {
@@ -322,7 +403,15 @@ export async function getOwnerCapacityBriefing(
 
   const weeks = capacityWeeks(todayLocal, CAPACITY_HORIZON_WEEKS);
   const scheduleFirstLocal = weeks[0].startLocal;
-  const scheduleLastExclusive = weeks[weeks.length - 1].endLocalExclusive;
+  // The week grid is anchored to the CURRENT week's Sunday, so eight buckets
+  // reach only `56 − <days elapsed this week>` days past today: on a Saturday
+  // the last bucket ends 50 days out. Reporting is right to use calendar weeks,
+  // but the openings search must not then claim "none in the next 8 weeks"
+  // while never having looked at days 51–56. The schedule therefore runs to
+  // whichever is later, the eighth bucket's end or eight full weeks from today.
+  const scheduleDays =
+    CAPACITY_HORIZON_DAYS + daysBetweenLocal(scheduleFirstLocal, todayLocal);
+  const scheduleLastExclusive = addDays(scheduleFirstLocal, scheduleDays);
   const scheduleStartUtc = utcInstantFromLocal(scheduleFirstLocal, "00:00", tz);
   const scheduleEndUtc = utcInstantFromLocal(scheduleLastExclusive, "00:00", tz);
 
@@ -340,32 +429,43 @@ export async function getOwnerCapacityBriefing(
     reservationRows,
     cohortRows,
   ] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id")
-      .eq("studio_id", studio.id)
-      .is("archived_at", null)
-      .limit(READ_CAPS.clients)
-      .then((r) => capped(r.data as Array<{ id: string }> | null, READ_CAPS.clients)),
+    readAll<{ id: string }>("clients", READ_CAPS.clients, (from, to) =>
+      supabase
+        .from("clients")
+        .select("id", { count: "exact" })
+        .eq("studio_id", studio.id)
+        .is("archived_at", null)
+        .order("id")
+        .range(from, to),
+    ),
     // The ONE owner-declared authority for "this client is in a course of
     // treatment": an open treatment plan (0024). Never inferred from bookings.
-    supabase
-      .from("treatment_plans")
-      .select("client_id")
-      .eq("studio_id", studio.id)
-      .eq("status", "active")
-      .then((r) => (r.data ?? []) as Array<{ client_id: string }>),
-    supabase
-      .from("appointments")
-      .select(APPOINTMENT_SELECT)
-      .eq("studio_id", studio.id)
-      .in("status", ["confirmed", "completed"])
-      .gte("starts_at", nowIso)
-      .order("starts_at")
-      .limit(READ_CAPS.futureAppointments)
-      .then((r) =>
-        capped(r.data as AppointmentRow[] | null, READ_CAPS.futureAppointments),
-      ),
+    readAll<{ client_id: string }>(
+      "treatment_plans",
+      READ_CAPS.clients,
+      (from, to) =>
+        supabase
+          .from("treatment_plans")
+          .select("client_id", { count: "exact" })
+          .eq("studio_id", studio.id)
+          .eq("status", "active")
+          .order("client_id")
+          .range(from, to),
+    ),
+    readAll<AppointmentRow>(
+      "future_appointments",
+      READ_CAPS.futureAppointments,
+      (from, to) =>
+        supabase
+          .from("appointments")
+          .select(APPOINTMENT_SELECT, { count: "exact" })
+          .eq("studio_id", studio.id)
+          .in("status", ["confirmed", "completed"])
+          .gte("starts_at", nowIso)
+          .order("starts_at")
+          .order("id")
+          .range(from, to),
+    ),
     getStudioWideDefaultsSafe(supabase, studio.id),
     getStudioWideOverridesSafe(
       supabase,
@@ -373,37 +473,52 @@ export async function getOwnerCapacityBriefing(
       scheduleFirstLocal,
       scheduleLastExclusive,
     ),
-    supabase
-      .from("studio_blockouts")
-      .select("starts_on, ends_on")
-      .eq("studio_id", studio.id)
-      .lte("starts_on", scheduleLastExclusive)
-      .gte("ends_on", scheduleFirstLocal)
-      .then(
-        (r) =>
-          (r.data ?? []) as Array<Pick<StudioBlockout, "starts_on" | "ends_on">>,
-      ),
-    supabase
-      .from("studio_calendar_reservations")
-      .select("starts_at, ends_at, source_kind, source_id")
-      .eq("studio_id", studio.id)
-      .lt("starts_at", new Date(scheduleEndUtc.getTime() + 36 * HOUR_MS).toISOString())
-      .gt("ends_at", scheduleStartUtc.toISOString())
-      .limit(READ_CAPS.reservations)
-      .then((r) => capped(r.data as ReservationRow[] | null, READ_CAPS.reservations)),
+    readAll<Pick<StudioBlockout, "starts_on" | "ends_on">>(
+      "studio_blockouts",
+      READ_CAPS.clients,
+      (from, to) =>
+        supabase
+          .from("studio_blockouts")
+          .select("starts_on, ends_on", { count: "exact" })
+          .eq("studio_id", studio.id)
+          .lte("starts_on", scheduleLastExclusive)
+          .gte("ends_on", scheduleFirstLocal)
+          .order("starts_on")
+          .range(from, to),
+    ),
+    readAll<ReservationRow>(
+      "studio_calendar_reservations",
+      READ_CAPS.reservations,
+      (from, to) =>
+        supabase
+          .from("studio_calendar_reservations")
+          .select("starts_at, ends_at, source_kind, source_id", { count: "exact" })
+          .eq("studio_id", studio.id)
+          .lt(
+            "starts_at",
+            new Date(scheduleEndUtc.getTime() + 36 * HOUR_MS).toISOString(),
+          )
+          .gt("ends_at", scheduleStartUtc.toISOString())
+          .order("starts_at")
+          .order("source_id")
+          .range(from, to),
+    ),
     // Consultations old enough to have had a full conversion window.
-    supabase
-      .from("appointments")
-      .select(APPOINTMENT_SELECT)
-      .eq("studio_id", studio.id)
-      .in("status", ["confirmed", "completed"])
-      .gte("ends_at", cohortOldestIso)
-      .lte("ends_at", cohortNewestIso)
-      .order("ends_at")
-      .limit(READ_CAPS.cohortConsultations)
-      .then((r) =>
-        capped(r.data as AppointmentRow[] | null, READ_CAPS.cohortConsultations),
-      ),
+    readAll<AppointmentRow>(
+      "cohort_consultations",
+      READ_CAPS.cohortConsultations,
+      (from, to) =>
+        supabase
+          .from("appointments")
+          .select(APPOINTMENT_SELECT, { count: "exact" })
+          .eq("studio_id", studio.id)
+          .in("status", ["confirmed", "completed"])
+          .gte("ends_at", cohortOldestIso)
+          .lte("ends_at", cohortNewestIso)
+          .order("ends_at")
+          .order("id")
+          .range(from, to),
+    ),
   ]);
 
   const upcoming = futureRows.rows.map(toBriefingAppointment);
@@ -422,37 +537,47 @@ export async function getOwnerCapacityBriefing(
       ...cohortCandidates.map((a) => a.clientId),
     ]),
   ];
-  let history: Capped<AppointmentRow> = { rows: [], truncated: false };
+  let history: Capped<AppointmentRow> = { rows: [], truncated: false, total: 0 };
   if (consultationClientIds.length > 0) {
-    history = await supabase
-      .from("appointments")
-      .select(APPOINTMENT_SELECT)
-      .eq("studio_id", studio.id)
-      .in("client_id", consultationClientIds)
-      .in("status", ["confirmed", "completed"])
-      .order("starts_at")
-      .limit(READ_CAPS.clientHistory)
-      .then((r) => capped(r.data as AppointmentRow[] | null, READ_CAPS.clientHistory));
+    history = await readAll<AppointmentRow>(
+      "client_history",
+      READ_CAPS.clientHistory,
+      (from, to) =>
+        supabase
+          .from("appointments")
+          .select(APPOINTMENT_SELECT, { count: "exact" })
+          .eq("studio_id", studio.id)
+          .in("client_id", consultationClientIds)
+          .in("status", ["confirmed", "completed"])
+          .order("starts_at")
+          .order("id")
+          .range(from, to),
+    );
   }
   const historyByClient = groupByClient(history.rows.map(toBriefingAppointment));
 
   // --- clients --------------------------------------------------------------
   const activeClientIds = new Set(clientRows.rows.map((c) => c.id));
-  const totalRecords: Fact<number> = clientRows.truncated
-    ? unknown(tooLarge("client records", READ_CAPS.clients))
-    : known(activeClientIds.size);
+  // The EXACT count survives even when the id list does not: PostgREST reports
+  // it in Content-Range, which no row ceiling bounds. A studio too large to
+  // enumerate still gets a truthful total; only the figures that need the ids
+  // go unknown.
+  const totalRecords: Fact<number> =
+    clientRows.total !== null
+      ? known(clientRows.total)
+      : unknown(tooLarge("client records", READ_CAPS.clients));
 
   // An active plan for an archived client is history, not current care.
   const planClientIds = new Set(
-    planRows.map((p) => p.client_id).filter((id) => activeClientIds.has(id)),
+    planRows.rows.map((p) => p.client_id).filter((id) => activeClientIds.has(id)),
   );
   const ACTIVE_TREATMENT_BASIS =
     "A client with an open treatment plan (Settings → the client's Treatment tab). Hone records no other explicit statement that someone is in a course of treatment, and a client record on its own is not one.";
   // ZERO PLANS IS NOT ZERO CLIENTS. A studio that does not keep treatment plans
   // has an unanswerable question here, and printing "0 active treatment clients"
   // on an admission screen would be a lie with consequences.
-  const noPlanEvidence = planRows.length === 0;
-  const activeTreatment: Fact<number> = clientRows.truncated
+  const noPlanEvidence = !planRows.truncated && planRows.rows.length === 0;
+  const activeTreatment: Fact<number> = clientRows.truncated || planRows.truncated
     ? unknown(tooLarge("client records", READ_CAPS.clients))
     : noPlanEvidence
       ? unknown(
@@ -520,7 +645,10 @@ export async function getOwnerCapacityBriefing(
     ? "Per-practitioner capacity is enabled for this studio, so the studio-wide calendar is not the authority for openings or free hours."
     : reservationRows.truncated
       ? tooLarge("calendar reservations", READ_CAPS.reservations)
-      : null;
+      : // A closure this read did not return would be reported as open time.
+        blockoutRows.truncated
+        ? tooLarge("full-day closures", READ_CAPS.clients)
+        : null;
 
   let access: Fact<ReadonlyArray<NextOpening>>;
   let weekly: Fact<ReadonlyArray<WeekCapacity>>;
@@ -530,12 +658,12 @@ export async function getOwnerCapacityBriefing(
   } else {
     const schedule = buildSchedule({
       firstLocal: scheduleFirstLocal,
-      days: CAPACITY_HORIZON_DAYS,
+      days: scheduleDays,
       tz,
       bufferMinutes,
       defaults,
       overrides,
-      blockouts: blockoutRows,
+      blockouts: blockoutRows.rows,
       reservations: reservationRows.rows,
     });
     const probeDurationMs = PRIMARY_ACCESS_DURATION_MINUTES * 60_000;

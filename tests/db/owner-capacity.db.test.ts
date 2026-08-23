@@ -170,6 +170,30 @@ async function cookiesFor(accessToken: string, refreshToken: string): Promise<Ma
   return local;
 }
 
+/**
+ * A client whose reads on ONE table resolve with `{ data: null, error }` — the
+ * shape supabase-js really returns on a transient failure. It does not reject,
+ * which is exactly how a discarded error becomes an empty row set.
+ */
+function failingOn(table: string): SupabaseClient {
+  const build = (name: string) => {
+    const result =
+      name === table
+        ? { data: null, error: { code: "57014" }, count: null }
+        : { data: [], error: null, count: 0 };
+    const builder: Record<string | symbol, unknown> = {};
+    const proxy: unknown = new Proxy(builder, {
+      get: (_t, prop) =>
+        prop === "then"
+          ? (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
+              Promise.resolve(result).then(res, rej)
+          : () => proxy,
+    });
+    return proxy;
+  };
+  return { from: (name: string) => build(name) } as unknown as SupabaseClient;
+}
+
 function authedClient(accessToken: string): SupabaseClient {
   return createSupabaseClient(E2E_SUPABASE_URL, ANON, {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -532,6 +556,54 @@ describe("owner capacity briefing", () => {
     // the practitioner identity the gate itself needs.
     expect([...new Set(ALL_REQUESTS.slice(from))]).toEqual(["practitioners"]);
   }, 30_000);
+
+  // -------------------------------------------------------------------------
+  // Read soundness — a read that did not return the truth must not be consumed
+  // -------------------------------------------------------------------------
+
+  it("FAILS CLOSED when a read errors, rather than reporting a free calendar", async () => {
+    // supabase-js RESOLVES with { data: null, error } on a transient failure.
+    // Read as an empty row set, that renders zero booked hours, a wholly free
+    // calendar and a confident next opening — on an admission screen.
+    await expect(
+      getOwnerCapacityBriefing(studio, failingOn("studio_calendar_reservations")),
+    ).rejects.toThrow(/owner_capacity_read_failed:studio_calendar_reservations/);
+  });
+
+  it("reads PAST the Data API row ceiling instead of calling 1,000 rows complete", async () => {
+    // supabase/config.toml sets max_rows = 1000, so PostgREST truncates a
+    // response before any app-side limit is reached. The client whose plan is
+    // asserted below is the LAST one in id order, so it can only be seen by a
+    // read that went past the first page.
+    const big = await seedStudio(`cap-page-${randomUUID().slice(0, 6)}`);
+    await adminQuery("update public.studios set timezone = $2 where id = $1", [
+      big.studioId,
+      TZ,
+    ]);
+    await adminQuery(
+      `insert into public.clients (studio_id, name)
+       select $1, 'Paged ' || g from generate_series(1, 1049) g`,
+      [big.studioId],
+    );
+    const last = await adminQuery(
+      "select id from public.clients where studio_id = $1 order by id desc limit 1",
+      [big.studioId],
+    );
+    await adminQuery(
+      `insert into public.treatment_plans (studio_id, client_id, name, status)
+       values ($1, $2, 'Plan', 'active')`,
+      [big.studioId, last.rows[0].id],
+    );
+    const bigStudio = await loadStudio(big.studioId);
+    const session = await signIn(big.practitionerId, "cap-page");
+    const b = await getOwnerCapacityBriefing(bigStudio, authedClient(session.access_token));
+
+    // 1049 seeded + the one seedStudio creates. A ceiling-blind read reported
+    // 1,000 here and called it complete.
+    expect(b.clients.totalRecords).toEqual({ known: true, value: 1050 });
+    // And the plan intersection saw the client that lives beyond page one.
+    expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
+  }, 60_000);
 
   it("answers the owner in two waves of batched reads, with no per-day or per-client query", async () => {
     jar.clear();

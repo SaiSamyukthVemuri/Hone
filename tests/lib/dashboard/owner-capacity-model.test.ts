@@ -51,6 +51,18 @@ function reservation(
 }
 
 describe("week buckets", () => {
+  it("reach less than eight weeks past today on every day but Sunday", () => {
+    // Not a defect in the buckets — a constraint the OPENINGS SEARCH must
+    // respect. Anchoring to the current week's Sunday means the eighth bucket
+    // ends 56 days after that Sunday, which on a Saturday is only 50 days after
+    // today. A search bounded by the buckets would never look at days 51-56 and
+    // would still report "none in the next 8 weeks"; the loader extends its
+    // schedule by exactly this shortfall.
+    const saturday = capacityWeeks("2026-09-12", 8); // 2026-09-12 is a Saturday
+    expect(saturday[0].startLocal).toBe("2026-09-06");
+    expect(saturday[7].endLocalExclusive).toBe("2026-11-01"); // 50 days out
+  });
+
   it("anchors on the same Sunday the rest of the app uses, and runs forward", () => {
     // 2026-09-09 is a Wednesday; the week it belongs to starts Sunday the 6th.
     const weeks = capacityWeeks("2026-09-09", 3);
@@ -159,6 +171,39 @@ describe("one day's capacity", () => {
     expect(day.bookedMinutes).toBe(135);
     expect(day.freeMinutes).toBe(345);
     expect(bookedPercent(day)).toBe(28);
+  });
+
+  it("counts closed time ONCE when a break starts inside an appointment's buffer", () => {
+    // Verified legal against the real database: migration 0152 stores the
+    // appointment's ACTUAL end in the shadow and the GiST exclusion covers only
+    // that, so a block may begin inside the buffer this code reconstructs.
+    // 09:00-11:00 day, 09:00-10:00 appointment (+30 buffer), 10:00-11:00 block.
+    const day = dayCapacity({
+      ...base,
+      closeMs: open + 2 * HOUR,
+      intervals: [
+        reservation(open, open + HOUR + 30 * MIN, "appointment"),
+        reservation(open + HOUR, open + 2 * HOUR, "timed_block"),
+      ],
+    });
+    // ANTI-VACUITY: measuring booked directly as appointment-plus-buffer gives
+    // 90 against 60 net bookable — 150% booked, from two correct numbers.
+    expect(day.netBookableMinutes).toBe(60);
+    expect(day.freeMinutes).toBe(0);
+    expect(day.bookedMinutes).toBe(60);
+    expect(bookedPercent(day)).toBe(100);
+  });
+
+  it("keeps booked + free equal to net bookable, so the share cannot exceed 100%", () => {
+    const day = dayCapacity({
+      ...base,
+      intervals: [
+        reservation(open + HOUR, open + 2 * HOUR, "timed_block"),
+        reservation(open + 3 * HOUR, open + 4 * HOUR + 15 * MIN, "appointment"),
+      ],
+    });
+    expect(day.bookedMinutes + day.freeMinutes).toBe(day.netBookableMinutes);
+    expect(bookedPercent(day)!).toBeLessThanOrEqual(100);
   });
 
   it("counts only what is still ahead of now", () => {

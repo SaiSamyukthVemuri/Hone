@@ -216,14 +216,21 @@ export type DayCapacityInput = {
 
 /**
  * Net bookable = the open window still ahead, minus authoritative closed time.
- * Booked = appointment occupancy INCLUDING its protected buffer, because that
- * is the time the studio genuinely cannot resell.
+ * Free = what survives once every reservation is removed.
+ * Booked = what is left: `netBookable − free`.
  *
- * `freeMinutes` is measured from the surviving gaps rather than as
- * `netBookable − booked`. On a studio-wide timeline the two agree (the GiST
- * exclusion forbids overlapping reservations), and where they could not, the
- * gaps are the truthful answer — a subtraction can go negative from
- * double-counting and read as capacity that never existed.
+ * BOOKED IS DERIVED, NOT MEASURED, and that is the point. Measuring it directly
+ * as appointment-plus-buffer double-counts against closed time, because the two
+ * really can overlap: migration 0152 stores an appointment's ACTUAL end in the
+ * shadow and the GiST exclusion covers only that, so a break may legally begin
+ * inside the buffer this code reconstructs. Verified against the real database
+ * — a 09:00–10:00 appointment with a 30-minute buffer accepts a 10:00–11:00
+ * block beside it. Measured separately on a 09:00–11:00 day that yields 60 net
+ * bookable minutes and 90 booked ones: 150% booked, from two correct numbers.
+ *
+ * Deriving booked from the gaps keeps the three figures consistent by
+ * construction — booked + free = net bookable, always — so the share can never
+ * exceed 100%, and time that is closed is counted once, as closed.
  */
 export function dayCapacity({
   openMs,
@@ -241,17 +248,16 @@ export function dayCapacity({
     start,
     closeMs,
   );
-  const booked = mergeClipped(
-    intervals.filter((i) => i.sourceKind === "appointment"),
-    start,
-    closeMs,
-  );
   const free = gapsIn(mergeClipped(intervals, start, closeMs), start, closeMs);
 
+  const netBookableMinutes = (closeMs - start) / MINUTE_MS - minutesIn(closed);
+  const freeMinutes = minutesIn(free);
   return {
-    netBookableMinutes: (closeMs - start) / MINUTE_MS - minutesIn(closed),
-    bookedMinutes: minutesIn(booked),
-    freeMinutes: minutesIn(free),
+    netBookableMinutes,
+    // Never negative: `free` is a subset of the window that `closed` was also
+    // removed from, so it can never exceed what remains after the closures.
+    bookedMinutes: Math.max(0, netBookableMinutes - freeMinutes),
+    freeMinutes,
     usableOpenings: wholeOpenings(free, closeMs, probeDurationMs, bufferMs),
   };
 }
