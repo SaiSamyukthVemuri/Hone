@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { AppointmentCheckoutCell } from "@/components/appointment-checkout-cell";
@@ -704,10 +705,24 @@ export default async function DashboardPage({
           </div>
           {/* Day navigation: server-rendered links, so the URL is shareable,
               browser Back works, and no client-side date state exists — this
-              page deliberately holds ONE clock read and no timers. */}
+              page deliberately holds ONE clock read and no timers.
+
+              UI-01: PendingLink, not Link. This navigation changes only
+              `?day=`, so the segment never changes, React reuses the tree, and
+              a route-level loading boundary cannot render for it at all —
+              the page sits here complete and stale while the server re-runs
+              the whole briefing. Before this, tapping Next changed nothing on
+              screen until the new day landed.
+
+              PendingLink paints on the segment the thumb is on. It reports
+              Next's navigation state and nothing more: it starts no
+              navigation, and says nothing about which day is arriving. The
+              mark is absolutely positioned and the label only fades, so the
+              two arrows still do not move under the thumb between days —
+              which is the same promise the inert "Today" span above makes. */}
           <nav aria-label="Change day" className={DAY_NAV_GROUP}>
             {canGoBack ? (
-              <Link
+              <PendingLink
                 href={dashboardDayHref({
                   day: previousDay(selectedDayLocal),
                   todayLocal,
@@ -715,10 +730,11 @@ export default async function DashboardPage({
                 })}
                 aria-label="Previous day"
                 data-testid="dashboard-prev-day"
+                pendingLabel="Loading day…"
                 className={DAY_NAV_SEGMENT}
               >
                 ← Previous
-              </Link>
+              </PendingLink>
             ) : (
               <span
                 aria-label="Previous day"
@@ -741,16 +757,17 @@ export default async function DashboardPage({
                 Today
               </span>
             ) : (
-              <Link
+              <PendingLink
                 href={dashboardDayHref({ day: todayLocal, todayLocal, period })}
                 data-testid="dashboard-today"
+                pendingLabel="Loading day…"
                 className={DAY_NAV_SEGMENT + DAY_NAV_DIVIDE}
               >
                 Today
-              </Link>
+              </PendingLink>
             )}
             {canGoForward ? (
-              <Link
+              <PendingLink
                 href={dashboardDayHref({
                   day: nextDay(selectedDayLocal),
                   todayLocal,
@@ -758,10 +775,11 @@ export default async function DashboardPage({
                 })}
                 aria-label="Next day"
                 data-testid="dashboard-next-day"
+                pendingLabel="Loading day…"
                 className={DAY_NAV_SEGMENT + DAY_NAV_DIVIDE}
               >
                 Next →
-              </Link>
+              </PendingLink>
             ) : (
               <span
                 aria-label="Next day"
