@@ -573,7 +573,74 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
         "update public.new_client_waitlist_entries set removed_at = now() where id = $1",
         [created.entry_id],
       ),
-    ).rejects.toThrow(/removal_evidence_check/);
+      // Two independent layers refuse this: the BEFORE UPDATE trigger (which
+      // fires first) and the all-or-nothing CHECK behind it.
+    ).rejects.toThrow(/removal evidence is recorded once|removal_evidence_check/);
+  });
+
+  it("REMOVAL EVIDENCE IS WRITE-ONCE — it cannot be rewritten afterwards", async () => {
+    // The gap this closes: an UPDATE on an already-removed row that leaves
+    // `status` alone changes no other guarded field, satisfies the
+    // all-or-nothing CHECK, and satisfies the composite FK for ANY same-studio
+    // practitioner. Without this the file would call attribution durable while
+    // enforcing nothing — the 0183 failure shape.
+    const created = await join(a.studioId, "Durable Attribution", email("durable-attr"));
+    expect(await remove(a.studioId, created.entry_id!, a.userId)).toBe("removed");
+
+    for (const [label, sql, params] of [
+      [
+        "a different remover in the same studio",
+        "update public.new_client_waitlist_entries set removed_by_practitioner_id = $2 where id = $1",
+        [created.entry_id, aMember.practitionerId],
+      ],
+      [
+        "a different removal time",
+        "update public.new_client_waitlist_entries set removed_at = now() - interval '10 days' where id = $1",
+        [created.entry_id],
+      ],
+      [
+        "erasing the evidence entirely",
+        "update public.new_client_waitlist_entries set removed_at = null, removed_by_practitioner_id = null where id = $1",
+        [created.entry_id],
+      ],
+    ] as const) {
+      await expect(
+        adminQuery(sql, [...params]),
+        `${label} must be refused`,
+      ).rejects.toThrow(/removal evidence is recorded once|removal_evidence_check/);
+    }
+
+    // The original evidence is intact.
+    const row = await adminQuery(
+      "select removed_by_practitioner_id from public.new_client_waitlist_entries where id = $1",
+      [created.entry_id],
+    );
+    expect(row.rows[0].removed_by_practitioner_id).toBe(a.practitionerId);
+  });
+
+  it("but the transition ITSELF still records evidence — the guard is not a block", async () => {
+    // ANTI-VACUITY: a guard that refused the legal write too would pass every
+    // assertion above and break the product.
+    const created = await join(a.studioId, "Legal Removal", email("legal-removal"));
+    expect(await remove(a.studioId, created.entry_id!, a.userId)).toBe("removed");
+    const row = await adminQuery(
+      "select removed_at, removed_by_practitioner_id from public.new_client_waitlist_entries where id = $1",
+      [created.entry_id],
+    );
+    expect(row.rows[0].removed_at).not.toBeNull();
+    expect(row.rows[0].removed_by_practitioner_id).toBe(a.practitionerId);
+  });
+
+  it("an unrelated UPDATE on a removed row is still allowed", async () => {
+    // The guard is narrow: it freezes the two evidence columns, not the row.
+    const created = await join(a.studioId, "Touch Removed", email("touch-removed"));
+    await remove(a.studioId, created.entry_id!, a.userId);
+    await expect(
+      adminQuery(
+        "update public.new_client_waitlist_entries set updated_at = now() where id = $1",
+        [created.entry_id],
+      ),
+    ).resolves.toBeDefined();
   });
 
   it("an actor from ANOTHER studio cannot be recorded as the remover", async () => {

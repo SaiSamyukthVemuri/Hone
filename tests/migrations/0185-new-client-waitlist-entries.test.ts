@@ -274,6 +274,18 @@ describe("0185 — lifecycle law", () => {
     expect(CODE).toMatch(/before insert on public\.new_client_waitlist_entries/);
   });
 
+  it("freezes removal evidence OUTSIDE the transition that records it", () => {
+    // Guarding only the status COLUMN leaves a hole: an UPDATE on an
+    // already-removed row that leaves `status` alone changes no other guarded
+    // field, satisfies the all-or-nothing CHECK, and satisfies the composite FK
+    // for any same-studio practitioner. Attribution the file calls durable
+    // would then be rewritable — the 0183 shape, a contract stated in prose and
+    // enforced over a narrower set.
+    expect(CODE).toMatch(
+      /if not \(old\.status = 'waiting' and new\.status = 'removed'\)\s*\n\s*and \(new\.removed_at is distinct from old\.removed_at\s*\n\s*or new\.removed_by_practitioner_id is distinct from old\.removed_by_practitioner_id\) then/,
+    );
+  });
+
   it("requires removal evidence to be all-or-nothing", () => {
     expect(CODE).toMatch(
       /check \(\s*\n\s*\(status = 'removed'\s*\n\s*and removed_at is not null\s*\n\s*and removed_by_practitioner_id is not null\)/,

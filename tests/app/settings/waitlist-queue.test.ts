@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
-import { NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
+import {
+  NEW_CLIENT_WAITLIST_SLUGS_ENV,
+  NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV,
+} from "@/lib/booking/new-client-waitlist";
 
 // ===========================================================================
 // WAIT-02 — THE OPERATOR QUEUE
@@ -472,16 +475,33 @@ describe("the Settings tab is server-gated", () => {
     "utf8",
   );
 
-  it("appears only for an OWNER whose studio has the durable waitlist enabled", () => {
-    expect(LAYOUT).toContain(
-      "const waitlistTabVisible = isOwner && isNewClientWaitlistDurableEnabled(studio.slug);",
+  it("requires BOTH rollout flags, not just the durable one", () => {
+    // Either half alone describes a studio that is not taking durable waitlist
+    // requests. With the gate cleared, new clients book normally and nothing
+    // new can arrive; with the durable flag cleared, the queue is still the
+    // inbox. Advertising an intake surface in either state presents a stale
+    // queue as a live one — and the durable flag is documented as SUBORDINATE
+    // to the gate, so consulting it alone contradicts the contract.
+    expect(LAYOUT).toMatch(
+      /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*isNewClientWaitlistEnabled\(studio\.slug\) &&\s*\n\s*isNewClientWaitlistDurableEnabled\(studio\.slug\);/,
     );
     expect(LAYOUT).toContain('{ href: "/settings/waitlist", label: "Waitlist" }');
   });
 
-  it("derives the flag from the SERVER-RESOLVED studio, never a browser value", () => {
+  it("derives BOTH flags from the SERVER-RESOLVED studio, never a browser value", () => {
+    expect(LAYOUT).toContain("isNewClientWaitlistEnabled(studio.slug)");
     expect(LAYOUT).toContain("isNewClientWaitlistDurableEnabled(studio.slug)");
     expect(LAYOUT).not.toMatch(/searchParams|useSearchParams|props\.slug/);
+  });
+
+  it("hiding the TAB never hides the DATA — the page has no flag gate", () => {
+    // A rollback of either flag must not make committed entries unreachable.
+    // The page's only gate is ownership.
+    const PAGE = readFileSync(
+      path.resolve(__dirname, "../../../app/(app)/settings/waitlist/page.tsx"),
+      "utf8",
+    );
+    expect(PAGE).not.toMatch(/isNewClientWaitlist(Durable)?Enabled/);
   });
 
   it("sits inside the owner-only block", () => {
@@ -492,22 +512,40 @@ describe("the Settings tab is server-gated", () => {
     expect(waitlistIdx).toBeLessThan(closeOwnerIdx);
   });
 
-  it("the flag is genuinely consulted at runtime", async () => {
-    // Not a source-only claim: the predicate the layout calls really does
-    // answer false for an unlisted studio and true for a listed one.
-    const { isNewClientWaitlistDurableEnabled } = await import(
-      "@/lib/booking/new-client-waitlist"
+  it("the flags are genuinely consulted at runtime, and BOTH are required", async () => {
+    // Not a source-only claim: the two predicates the layout calls really do
+    // answer as the visibility rule needs, including the case the review
+    // found — durable set, gate cleared.
+    const { isNewClientWaitlistEnabled, isNewClientWaitlistDurableEnabled } =
+      await import("@/lib/booking/new-client-waitlist");
+    const originals = [NEW_CLIENT_WAITLIST_SLUGS_ENV, NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV].map(
+      (k) => [k, process.env[k]] as const,
     );
-    const original = process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV];
+    const set = (k: string, v: string | undefined) => {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    };
+    const visible = () =>
+      isNewClientWaitlistEnabled(SLUG) && isNewClientWaitlistDurableEnabled(SLUG);
     try {
-      delete process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV];
-      expect(isNewClientWaitlistDurableEnabled(SLUG)).toBe(false);
-      process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV] = ` ${SLUG.toUpperCase()} `;
-      expect(isNewClientWaitlistDurableEnabled(SLUG)).toBe(true);
-      expect(isNewClientWaitlistDurableEnabled(`${SLUG}-archive`)).toBe(false);
+      set(NEW_CLIENT_WAITLIST_SLUGS_ENV, undefined);
+      set(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, undefined);
+      expect(visible(), "neither flag").toBe(false);
+
+      set(NEW_CLIENT_WAITLIST_SLUGS_ENV, SLUG);
+      expect(visible(), "gate only — the queue is still the inbox").toBe(false);
+
+      set(NEW_CLIENT_WAITLIST_SLUGS_ENV, undefined);
+      set(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+      expect(visible(), "durable only — new clients book normally again").toBe(false);
+
+      set(NEW_CLIENT_WAITLIST_SLUGS_ENV, ` ${SLUG.toUpperCase()} `);
+      expect(visible(), "both, with trim + case folding").toBe(true);
+
+      set(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, `${SLUG}-archive`);
+      expect(visible(), "exact match only — no prefix or suffix").toBe(false);
     } finally {
-      if (original === undefined) delete process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV];
-      else process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV] = original;
+      for (const [k, v] of originals) set(k, v);
     }
   });
 });

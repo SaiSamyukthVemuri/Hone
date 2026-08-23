@@ -253,6 +253,16 @@ create trigger new_client_waitlist_entries_server_timestamps
 --      booking flow never created. `converted` therefore has NO legal
 --      transition in this release; the slice that performs real conversions
 --      replaces this function and states its own rule.
+--      REMOVAL EVIDENCE IS PART OF THAT HISTORY. Guarding only the status
+--      COLUMN would leave a hole: an UPDATE on an already-removed row that
+--      leaves `status` alone changes no guarded field, satisfies the
+--      all-or-nothing CHECK, and satisfies the composite FK for any
+--      same-studio practitioner — so "who removed this, and when" could be
+--      rewritten while the file called it durable attribution. That is the
+--      0183 failure shape exactly: a contract stated in prose and enforced
+--      over a narrower set than the prose describes. The two evidence columns
+--      may therefore change ONLY in the same statement that performs the legal
+--      waiting -> removed transition.
 --   3. CONTACT CORRECTION IS OUT OF SCOPE, LOUDLY. V1 ships no edit surface,
 --      so rather than leaving name/email/phone quietly mutable through a
 --      future accidental writer, they are frozen. Adding correction is then an
@@ -289,6 +299,17 @@ begin
     raise exception
       'new_client_waitlist_entries: the only permitted status transition is waiting -> removed (attempted % -> %)',
       old.status, new.status
+      using errcode = 'check_violation';
+  end if;
+
+  -- Removal evidence is WRITE-ONCE, at the moment of removal. Outside that one
+  -- transition neither column may move — not to a different practitioner, not
+  -- to a different time, and not back to NULL.
+  if not (old.status = 'waiting' and new.status = 'removed')
+     and (new.removed_at is distinct from old.removed_at
+          or new.removed_by_practitioner_id is distinct from old.removed_by_practitioner_id) then
+    raise exception
+      'new_client_waitlist_entries: removal evidence is recorded once, by the waiting -> removed transition, and cannot be rewritten afterwards'
       using errcode = 'check_violation';
   end if;
 
@@ -580,7 +601,7 @@ comment on column public.new_client_waitlist_entries.joined_at is
   'Server-assigned at INSERT by trigger, never accepted from the caller. This is the ordering key of the operator queue (joined_at, id), so a caller able to supply it could insert ahead of people already waiting.';
 
 comment on column public.new_client_waitlist_entries.removed_by_practitioner_id is
-  'The OWNER who removed this entry, verified inside remove_new_client_waitlist_entry from (studio_id, authenticated user id) — never supplied by the caller. Studio-scoped by composite FK per the 0179 actor doctrine so a removal cannot be attributed to a practitioner from another studio.';
+  'The OWNER who removed this entry, verified inside remove_new_client_waitlist_entry from (studio_id, authenticated user id) — never supplied by the caller. Studio-scoped by composite FK per the 0179 actor doctrine so a removal cannot be attributed to a practitioner from another studio. WRITE-ONCE: together with removed_at it may change only in the statement that performs the waiting -> removed transition, so attribution cannot be rewritten afterwards by the table owner or by a future definer command.';
 
 comment on function public.join_new_client_waitlist(uuid, text, text, text) is
   'Public new-client waitlist join. THE COMMIT POINT for WAIT-02. Atomic on the studio-scoped partial unique index: concurrent identical submissions yield exactly one `created` and one `already_waiting`, never two rows and never a raised unique violation. Returns created | already_waiting | invalid_input | studio_not_found | unknown. Validates and normalizes its own input. Writes exactly one table. service_role only.';

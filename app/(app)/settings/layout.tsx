@@ -1,5 +1,8 @@
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { isNewClientWaitlistDurableEnabled } from "@/lib/booking/new-client-waitlist";
+import {
+  isNewClientWaitlistEnabled,
+  isNewClientWaitlistDurableEnabled,
+} from "@/lib/booking/new-client-waitlist";
 import { SettingsNav, type SettingsNavItem } from "./SettingsNav";
 
 // Settings layout. The tab list is computed server-side based on
@@ -26,14 +29,25 @@ export default async function SettingsLayout({
 }) {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
-  // WAIT-02. The durable waitlist tab appears only for a studio whose waitlist
-  // is actually being recorded — a server-only allowlist, derived here from the
-  // SERVER-RESOLVED slug and never from anything the browser sent. Before that,
-  // the studio's queue is still its inbox and a tab reading "Waiting: 0" would
-  // be actively misleading. The page itself stays reachable by URL for an owner
-  // regardless, so committed entries never become invisible if the rollout is
-  // rolled back.
-  const waitlistTabVisible = isOwner && isNewClientWaitlistDurableEnabled(studio.slug);
+  // WAIT-02. The durable waitlist tab appears only for a studio that is BOTH
+  // waitlisting new clients AND recording those requests durably — the same
+  // subordinate contract the submit path enforces, derived here from the
+  // SERVER-RESOLVED slug and never from anything the browser sent.
+  //
+  // BOTH flags, not just the durable one. Either half alone describes a studio
+  // that is not taking durable waitlist requests: with the gate off, new
+  // clients book normally and nothing new can arrive; with the durable flag
+  // off, the studio's queue is still its inbox and a tab reading "Waiting: 0"
+  // would be actively misleading. Advertising an intake surface in either state
+  // presents a stale queue as a live one.
+  //
+  // Hiding the TAB is not hiding the DATA: /settings/waitlist stays reachable
+  // by URL for an owner in every rollback shape, so entries already committed
+  // never become unreachable.
+  const waitlistTabVisible =
+    isOwner &&
+    isNewClientWaitlistEnabled(studio.slug) &&
+    isNewClientWaitlistDurableEnabled(studio.slug);
 
   const items: SettingsNavItem[] = [
     { href: "/settings/profile", label: "Profile" },
