@@ -445,7 +445,6 @@ function canonicalRecord(): {
 }
 
 /** The marker that separates the head record from the carried history. */
-const CHAIN_MARKER = "CARRIES THE FULL CHECKSUM CHAIN FORWARD";
 
 /**
  * The frozen checksums the carried history must never lose, head to oldest.
@@ -481,9 +480,21 @@ const CARRIED_0184_NOTE_SHA256 =
   "a65f858e18b997279dc56a53161669480881eb525e1674c490554335827c68be";
 
 /**
- * Where the 0185 head stops and the frozen 0184 record begins. The carried
- * record contains this same phrase (0184 carried its own chain forward), so
- * the FIRST occurrence is the boundary.
+ * THE ONE DELIMITER. Where the 0185 head stops and the frozen 0184 record
+ * begins, used by BOTH the positional current-state guard and the whole-record
+ * digest — there is deliberately no second definition.
+ *
+ * There briefly was. `splitNote` searched the bare prefix "CARRIES THE FULL
+ * CHECKSUM CHAIN FORWARD" while the digest searched this full phrase, so the
+ * two guards split the note at different points. A stray mention of the bare
+ * words inside the head ended `head` early, and a second current-record claim
+ * placed after that mention but before the real delimiter fell into neither
+ * guard's view: the uniqueness check never saw it, and the digest — reading
+ * from the later, real delimiter — was still correct. Two definitions of one
+ * boundary is the whole defect, so there is now one.
+ *
+ * The carried record contains this same phrase (0184 carried its own chain
+ * forward), so the FIRST occurrence is the boundary.
  */
 const CARRIED_RECORD_BOUNDARY =
   "CARRIES THE FULL CHECKSUM CHAIN FORWARD so no earlier apply record is dropped: ";
@@ -509,8 +520,8 @@ const SUPERSESSION = /SUPERSEDES the (\d{4}) record as the CURRENT hosted-state 
  * "active" separable from "historical" without rewriting history.
  */
 function splitNote(note: string): { head: string; chain: string } {
-  const at = note.indexOf(CHAIN_MARKER);
-  if (at < 0) throw new Error("canonical note carries no chain-forward marker");
+  const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+  if (at < 0) throw new Error("canonical note carries no 0184 record boundary");
   return { head: note.slice(0, at), chain: note.slice(at) };
 }
 
@@ -657,7 +668,10 @@ describe("0185 — current hosted state", () => {
     expect(() => assertActiveRecordIs(doubled, "0184")).toThrow();
 
     // (c) the chain truncated away entirely
-    const truncated = note.slice(0, note.indexOf(CHAIN_MARKER) + CHAIN_MARKER.length + 10);
+    const truncated = note.slice(
+      0,
+      note.indexOf(CARRIED_RECORD_BOUNDARY) + CARRIED_RECORD_BOUNDARY.length + 10,
+    );
     expect(() => assertActiveRecordIs(truncated, "0184")).toThrow();
   });
 
@@ -680,6 +694,53 @@ describe("0185 — current hosted state", () => {
 
     // ...and it now fails.
     expect(() => assertActiveRecordIs(truncated, "0184")).toThrow();
+  });
+
+  it("CONTROL 0 — a stray mention of the bare phrase cannot hide a second claim", () => {
+    // The defect this unification closes, reproduced end to end.
+    //
+    // When `splitNote` searched the bare prefix and the digest searched the
+    // full delimiter, the two guards split the note at DIFFERENT points. Put a
+    // bare "CARRIES THE FULL CHECKSUM CHAIN FORWARD" inside the head, then a
+    // second current-record claim after it but still before the real
+    // delimiter, and that claim landed in the gap: the uniqueness check never
+    // saw it, and the digest — reading from the later, real delimiter — was
+    // still perfectly correct.
+    const note = canonicalRecord().hosted_note;
+    const anchor = "0185 IS NOW FROZEN.";
+    expect(note).toContain(anchor);
+    const injection =
+      "This record CARRIES THE FULL CHECKSUM CHAIN FORWARD. It also names " +
+      "the 0182 record as the CURRENT hosted-state record. ";
+    const mutated = note.replace(anchor, injection + anchor);
+    expect(mutated).not.toEqual(note);
+
+    // The mutation really is the reported shape.
+    const BARE = "CARRIES THE FULL CHECKSUM CHAIN FORWARD";
+    const bareAt = mutated.indexOf(BARE);
+    const realAt = mutated.indexOf(CARRIED_RECORD_BOUNDARY);
+    expect(bareAt).toBeGreaterThan(-1);
+    expect(realAt).toBeGreaterThan(bareAt); // the stray mention comes FIRST
+
+    // (a) THE OLD SPLIT WOULD HAVE HIDDEN IT. Cutting at the bare prefix
+    //     produces a head containing ZERO current-record claims, while two are
+    //     genuinely present before the real delimiter.
+    const oldHead = mutated.slice(0, bareAt);
+    const trueHead = mutated.slice(0, realAt);
+    expect(oldHead.split("as the CURRENT hosted-state record").length - 1).toBe(0);
+    expect(trueHead.split("as the CURRENT hosted-state record").length - 1).toBe(2);
+
+    // (b) THE CARRIED DIGEST IS UNAFFECTED, which is why the digest alone could
+    //     never have caught this.
+    expect(() => assertCarriedRecordIntact(mutated)).not.toThrow();
+    for (const [, sha] of CARRIED_CHAIN_ANCHORS) {
+      expect(mutated).toContain(sha);
+    }
+
+    // (c) THE UNIFIED BOUNDARY SEES IT. Both guards now split at the same
+    //     delimiter, so the second claim is inside HEAD and is rejected.
+    expect(splitNote(mutated).head).toBe(trueHead);
+    expect(() => assertActiveRecordIs(mutated, "0184")).toThrow();
   });
 
   it("CONTROL 3 — the real carried record matches the frozen digest", () => {
