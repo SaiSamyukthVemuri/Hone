@@ -194,11 +194,32 @@ function failingOn(table: string): SupabaseClient {
   return { from: (name: string) => build(name) } as unknown as SupabaseClient;
 }
 
-function authedClient(accessToken: string): SupabaseClient {
-  return createSupabaseClient(E2E_SUPABASE_URL, ANON, {
+/**
+ * A client for `accessToken`, returned only once the token is actually usable.
+ *
+ * The local GoTrue and PostgREST run in separate containers whose clocks drift
+ * by a second or so, so a JUST-minted JWT can be rejected with
+ * `PGRST303 "JWT issued at future"` for its first moment of life. It surfaces
+ * as whichever query happens to race first, which is why it looked like a
+ * different table each time.
+ *
+ * This is a harness race, not a product defect — and it was invisible until the
+ * briefing started failing closed instead of reading an errored response as an
+ * empty one, which is precisely the behaviour these tests exist to protect. The
+ * fix belongs here: wait for the token, rather than teaching production to
+ * retry past an auth error.
+ */
+async function authedClient(accessToken: string): Promise<SupabaseClient> {
+  const client = createSupabaseClient(E2E_SUPABASE_URL, ANON, {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const { error } = await client.from("practitioners").select("id").limit(1);
+    if (error?.code !== "PGRST303") return client;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("token never became valid: PostgREST kept reporting PGRST303");
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +371,7 @@ describe("owner capacity briefing", () => {
 
     // --- identities ---------------------------------------------------------
     const ownerSession = await signIn(seed.practitionerId, "cap-owner");
-    ownerClient = authedClient(ownerSession.access_token);
+    ownerClient = await authedClient(ownerSession.access_token);
     ownerCookies = await cookiesFor(
       ownerSession.access_token,
       ownerSession.refresh_token,
@@ -363,6 +384,9 @@ describe("owner capacity briefing", () => {
       memberSession.access_token,
       memberSession.refresh_token,
     );
+    // The page renders below drive these tokens through the app's own cookie
+    // path, so they must clear the same clock-skew window.
+    await authedClient(memberSession.access_token);
 
     // --- a studio that keeps NO treatment plans ----------------------------
     const planless = await seedStudio(`cap-noplan-${randomUUID().slice(0, 6)}`);
@@ -372,7 +396,7 @@ describe("owner capacity briefing", () => {
     ]);
     planlessStudio = await loadStudio(planless.studioId);
     const planlessSession = await signIn(planless.practitionerId, "cap-noplan");
-    planlessClient = authedClient(planlessSession.access_token);
+    planlessClient = await authedClient(planlessSession.access_token);
 
     renderPage = (await import("@/app/(app)/dashboard/capacity/page"))
       .default as unknown as () => Promise<unknown>;
@@ -596,7 +620,10 @@ describe("owner capacity briefing", () => {
     );
     const bigStudio = await loadStudio(big.studioId);
     const session = await signIn(big.practitionerId, "cap-page");
-    const b = await getOwnerCapacityBriefing(bigStudio, authedClient(session.access_token));
+    const b = await getOwnerCapacityBriefing(
+      bigStudio,
+      await authedClient(session.access_token),
+    );
 
     // 1049 seeded + the one seedStudio creates. A ceiling-blind read reported
     // 1,000 here and called it complete.
