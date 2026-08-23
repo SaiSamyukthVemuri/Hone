@@ -16,6 +16,18 @@ import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist
 // Plus the contracts that make a no-migration V1 safe: zero business DB
 // writes, `public.waitlist` untouched, PII confined to the two emails, and the
 // studio-scoped limiter consulted with the SERVER-RESOLVED studio id.
+//
+// WAIT-02 NOTE. This file is now the regression proof for the studio that has
+// NOT been moved to the durable record. `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`
+// is never set here, so every case below runs the notification-commit path
+// exactly as production does today — including its fail-closed semantics and
+// its refusal to touch a database at all (the mocked admin client throws on any
+// `from`/`rpc`, so a stray write would fail these tests, not pass them). The
+// durable path has its own file: new-client-waitlist-durable-commit.test.ts.
+//
+// The success SHAPE changed with WAIT-02 — `{ ok: true }` became
+// `{ ok: true, state, notification }` so the browser can tell "joined" from
+// "already waiting" — but nothing about WHEN this path succeeds did.
 
 const STUDIO_ID = "22222222-2222-4222-8222-222222222222";
 const SLUG = "waitlisted-studio";
@@ -172,7 +184,7 @@ const allLogs = () => [...consoleErrors, ...consoleWarns, ...consoleLogs].join("
 describe("commit semantics", () => {
   it("provider ACCEPTS with a message id -> success; studio first, client second", async () => {
     const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, state: "joined", notification: "sent" });
     expect(sends).toHaveLength(2);
 
     const [studioSend, clientSend] = sends;
@@ -275,13 +287,21 @@ describe("commit semantics", () => {
 
   it("studio committed + client confirmation NOT accepted -> overall success", async () => {
     scenario.clientOutcome = { status: "rejected", code: "validation_error" };
-    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
+    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
+      ok: true,
+      state: "joined",
+      notification: "sent",
+    });
     expect(sends).toHaveLength(2);
   });
 
   it("studio committed + client confirmation THROWS -> overall success", async () => {
     scenario.clientSendThrows = true;
-    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
+    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
+      ok: true,
+      state: "joined",
+      notification: "sent",
+    });
   });
 
   it("no operational studio recipient -> failure, nothing sent", async () => {
@@ -362,7 +382,11 @@ describe("refusals and ordering", () => {
 
 describe("zero business database writes", () => {
   it("a SUCCESSFUL submission performs exactly one DB operation: the studio lookup", async () => {
-    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
+    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
+      ok: true,
+      state: "joined",
+      notification: "sent",
+    });
     expect(dbOps).toEqual([`select:studios:${SLUG}`]);
   });
 

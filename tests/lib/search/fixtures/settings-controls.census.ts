@@ -46,6 +46,20 @@ export type SettingsControl = {
 };
 
 export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
+  // --------------------------------------------------------------- waitlist
+  // WAIT-02's operator queue. It configures nothing: it lists people waiting
+  // and offers one terminal action per row. There is no setting here to find,
+  // and the route itself carries an explicit NON_SEARCHABLE_ROUTES decision
+  // because the surface is pilot-gated per studio.
+  {
+    page: "/settings/waitlist",
+    label: "Remove",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "Per-row operational action on the new-client waitlist queue, not a configurable setting. It appears once per waiting person, so it has no single destination to advertise, and the page it lives on is deliberately not advertised either while the capability is pilot-gated per studio (NON_SEARCHABLE_ROUTES).",
+  },
+
   // ---------------------------------------------------------------- profile
   {
     page: "/settings/profile",

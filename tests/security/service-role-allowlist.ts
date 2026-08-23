@@ -305,10 +305,30 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "verifyCancellationToken",
   },
   {
+    path: "app/book/[slug]/waitlist-actions.ts",
+    purpose:
+      "WAIT-02 public new-client waitlist join — the sole caller of join_new_client_waitlist (migration 0185).",
+    // The scopeGuard is the COMMAND NAME rather than the generic
+    // `getStudioBySlug` this route already uses, following the B1 tightening
+    // applied to move-appointment-actions.ts: if this file ever stops going
+    // through the governed command — for example by reintroducing a direct
+    // insert into new_client_waitlist_entries — the allowlist test fails rather
+    // than continuing to vouch for a justification that is no longer true.
+    why: "Unauthenticated public surface: there is no session to satisfy RLS, and `authenticated` holds SELECT only on new_client_waitlist_entries while `anon` and `service_role` hold NOTHING on the table (0185), so no client role can write it at all. The action resolves the studio server-side from the public slug (getStudioBySlug), re-derives the waitlist gate from the SERVER-RESOLVED slug, and passes that studio.id as the command's tenant argument; the browser supplies only a lookup slug and bounded contact fields. join_new_client_waitlist is service_role-only (EXECUTE revoked from public/anon/authenticated), validates and normalizes its own input, owns the studio-scoped duplicate rule atomically, and writes exactly one table.",
+    scopeGuard: "join_new_client_waitlist",
+  },
+  {
     path: "app/book/[slug]/page.tsx",
     purpose: "Public booking / portal / token-scoped read.",
     why: "Session-less or portal-session path that cannot satisfy member RLS; the query is explicitly studio/client scoped (see scopeGuard). Service-role reads the tenant-scoped rows.",
     scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "app/(app)/settings/waitlist/actions.ts",
+    purpose:
+      "WAIT-02 operator removal of a new-client waitlist entry — the sole caller of remove_new_client_waitlist_entry (migration 0185).",
+    why: "The action resolves the studio + active practitioner server-side via getCurrentPractitionerWithStudio() and passes the server-derived studio.id + practitioner.user_id; the browser supplies only an entry id, never a studio_id, user_id or role. `authenticated` holds SELECT and nothing else on new_client_waitlist_entries (0185), so there is no direct-DML route to remove; the transition goes only through remove_new_client_waitlist_entry (service_role-only; EXECUTE revoked from public/anon/authenticated), which independently re-derives membership AND owner role from (studio_id, user_id), scopes the entry by BOTH id and studio_id so a cross-studio id is not found, locks the row, and owns the waiting -> removed transition. This file performs no waitlist DML of its own.",
+    scopeGuard: "remove_new_client_waitlist_entry",
   },
   {
     path: "app/calendar-feed/[token]/route.ts",

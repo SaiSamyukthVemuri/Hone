@@ -235,6 +235,19 @@ universal invariant** — several tables deliberately deviate (see "Deliberate e
   `record_keeping_audit_events`, `session_copy_operations`, `admin_action_events` and
   `client_portal_access_events`, all active). See
   [decisions/clinical-finalization-retired.md](./decisions/clinical-finalization-retired.md).
+- **Owner-tier read, command-only write.** `new_client_waitlist_entries` (0185) is the durable
+  new-client waitlist. It holds contact details for people who are **not clients**, so it
+  carries exactly one policy — an `is_studio_owner` SELECT — and no write policy for any role.
+  `authenticated` holds SELECT and nothing else; `anon` and **`service_role` hold nothing on
+  the table at all**, because both writers are SECURITY DEFINER commands that run as the table
+  owner (`join_new_client_waitlist` for the public join, `remove_new_client_waitlist_entry` for
+  operator removal, both service-role-EXECUTE only). Uniqueness is a **studio-scoped partial
+  unique index** on `(studio_id, email_normalized) where status = 'waiting'` — deliberately not
+  global, unlike the unrelated marketing `waitlist` table (0004), so the same person may wait at
+  two unrelated studios. `email_normalized` is a stored generated column, so the duplicate rule's
+  normalization lives at the authority that enforces it. Removal is a `waiting -> removed`
+  transition with actor and timestamp, never a DELETE, and a trigger permits **no other
+  transition** — `converted` is declared vocabulary with no writer in this release.
 - **Owner-tier read.** `record_keeping_exposure_incidents` (0088) is owner-only to read and
   edit (it carries sensitive personal/health detail), while any active member may still file
   a new incident. The audit table carries a matching owner-only carve-out for exposure rows.
