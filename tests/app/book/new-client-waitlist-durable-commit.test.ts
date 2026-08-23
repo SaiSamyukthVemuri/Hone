@@ -672,31 +672,51 @@ describe("privacy disclosure is coupled to the durable path", () => {
     expect(ACTION).toContain('rpc("join_new_client_waitlist"');
   });
 
-  it("the notice's SCOPE names waitlist joiners as a category of person", () => {
-    expect(PRIVACY).toMatch(/join a studio&rsquo;s new-client waitlist/i);
-    expect(PRIVACY).toMatch(/not clients of that studio/i);
+  it("the notice's SCOPE names these people as a category", () => {
+    expect(PRIVACY).toMatch(
+      /People whose contact details are submitted to a studio&rsquo;s\s+new-client waitlist/i,
+    );
+    expect(PRIVACY).toMatch(/not clients\s+of that studio/i);
   });
 
-  it("the notice discloses what is collected, and that the person submits it", () => {
+  it("the notice discloses what is collected", () => {
     expect(PRIVACY).toMatch(/<H3 id="from-waitlist-requests">/);
-    expect(PRIVACY).toMatch(/submits this information themselves/i);
-    expect(PRIVACY).toMatch(/a practitioner does not\s+enter it/i);
     // The three field groups the form and 0185 actually hold.
     expect(PRIVACY).toMatch(/Name and email address, and a phone number/i);
     expect(PRIVACY).toMatch(/Which studio the request was made to, and when/i);
     expect(PRIVACY).toMatch(/still waiting or has been removed/i);
   });
 
+  it("it CANNOT claim the named person submitted it — the form verifies nobody", () => {
+    // The action is unauthenticated and accepts arbitrary name/email/phone, so
+    // a parent, a partner, a practitioner or a malicious visitor can enter
+    // someone else's details. A notice asserting the data subject submitted
+    // their own information would be false in exactly the cases where accurate
+    // provenance matters most.
+    expect(PRIVACY).toMatch(
+      /We do not verify who filled it in, or that the person named owns the\s+contact details given/i,
+    );
+    expect(PRIVACY).toMatch(/may be submitted by someone other than the person it\s+names/i);
+    for (const forbidden of [
+      /submits this information themselves/i,
+      /a practitioner does not\s+enter it/i,
+      /the person who submitted it/i,
+    ]) {
+      expect(PRIVACY, `unverifiable provenance claim: ${forbidden}`).not.toMatch(forbidden);
+    }
+  });
+
   it("the notice states the USE and the studio's access", () => {
     expect(PRIVACY).toMatch(/operate that studio&rsquo;s waitlist/i);
-    expect(PRIVACY).toMatch(/acknowledgement to the person who submitted it/i);
+    // To the ADDRESS given — which is all the system actually knows.
+    expect(PRIVACY).toMatch(/acknowledgement to the email address given/i);
     expect(PRIVACY).toMatch(/studio can see and\s+manage the waitlist requests/i);
     // And it appears in the "how we use" list, where a reader looks for it.
     expect(PRIVACY).toMatch(/Operate a studio&rsquo;s new-client waitlist and communicate/i);
   });
 
-  it("it is TRUTHFUL about what joining does not do", () => {
-    expect(PRIVACY).toMatch(/does not create a client record, an\s+appointment, or an intake form/i);
+  it("it is TRUTHFUL about what submitting does not do", () => {
+    expect(PRIVACY).toMatch(/does not create a client record, an appointment,\s+or an intake form/i);
   });
 
   it("it invents NO retention, deletion, export or purge promise for this class", () => {

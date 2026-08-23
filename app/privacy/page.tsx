@@ -60,9 +60,12 @@ export default function PrivacyPolicyPage() {
           entered into Hone by the practitioner
         </li>
         <li>
-          <strong>People who join a studio&rsquo;s new-client waitlist</strong>{" "}
-          by submitting a request through that studio&rsquo;s public booking
-          page. They are not clients of that studio, and may never become one.
+          <strong>
+            People whose contact details are submitted to a studio&rsquo;s
+            new-client waitlist
+          </strong>{" "}
+          through that studio&rsquo;s public booking page. They are not clients
+          of that studio, and may never become one.
         </li>
       </UL>
       <P>
@@ -97,14 +100,19 @@ export default function PrivacyPolicyPage() {
       </UL>
 
       <H3 id="from-waitlist-requests">
-        From people who join a studio&rsquo;s waitlist
+        From a studio&rsquo;s public waitlist form
       </H3>
       <P>
         When a studio has its new-client waitlist turned on, its public booking
         page offers new clients a waitlist request instead of an appointment.
-        The person submits this information themselves; a practitioner does not
-        enter it, and submitting it does not create a client record, an
-        appointment, or an intake form.
+        The form is open to anyone who can reach that page.{" "}
+        <strong>
+          We do not verify who filled it in, or that the person named owns the
+          contact details given
+        </strong>
+        , so a request may be submitted by someone other than the person it
+        names. Submitting one does not create a client record, an appointment,
+        or an intake form.
       </P>
       <UL>
         <li>Name and email address, and a phone number if they choose to give one</li>
@@ -117,7 +125,7 @@ export default function PrivacyPolicyPage() {
       <P>
         This information is used to operate that studio&rsquo;s waitlist and to
         communicate about the request &mdash; a notice to the studio, and an
-        acknowledgement to the person who submitted it. The studio can see and
+        acknowledgement to the email address given. The studio can see and
         manage the waitlist requests made to it, through the access the product
         provides.
       </P>
