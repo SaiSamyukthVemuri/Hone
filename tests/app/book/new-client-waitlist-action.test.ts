@@ -39,6 +39,7 @@ const CANARY_PHONE = "+1-555-92837";
 type Send = {
   namespace: string;
   studioId: string;
+  eventScope?: string | null;
   to: string;
   subject: string;
   html: string;
@@ -206,6 +207,16 @@ describe("commit semantics", () => {
     await submitNewClientBookingWaitlistAction(form());
     expect(sends[0].studioId).toBe(STUDIO_ID);
     expect(sends[1].studioId).toBe(STUDIO_ID);
+  });
+
+  it("NEITHER send carries an event scope — this path's keys are unchanged", async () => {
+    // WAIT-02 added an optional third key component for callers that have a
+    // durable event identity. This path has none: the email IS the record, and
+    // an identical resubmission must still COLLAPSE at the provider rather than
+    // send twice. Passing a scope here would silently change every key.
+    await submitNewClientBookingWaitlistAction(form());
+    expect(sends[0].eventScope ?? null).toBeNull();
+    expect(sends[1].eventScope ?? null).toBeNull();
   });
 
   it("a FORGED slug cannot alter the tenant component used downstream", async () => {

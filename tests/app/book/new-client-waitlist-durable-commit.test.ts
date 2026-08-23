@@ -32,7 +32,15 @@ const CANARY_NAME = "PII_CANARY_NAME_44551";
 const CANARY_EMAIL = "pii_canary_44551@example.com";
 const CANARY_PHONE = "+1-555-44551";
 
-type Send = { namespace: string; studioId: string; to: string; subject: string; html: string; text: string };
+type Send = {
+  namespace: string;
+  studioId: string;
+  eventScope?: string | null;
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+};
 type RpcCall = { fn: string; args: Record<string, unknown> };
 type Outcome =
   | { status: "accepted"; messageId: string }
@@ -51,6 +59,7 @@ const scenario = {
   ownerEmail: "owner@studio.test" as string | null,
   rateLimited: false,
   commandResult: "created" as string | null,
+  entryId: "entry-1" as string | null,
   commandError: null as { code: string } | null,
   commandThrows: false,
   adminClientThrows: false,
@@ -70,6 +79,7 @@ function reset() {
     ownerEmail: "owner@studio.test",
     rateLimited: false,
     commandResult: "created",
+    entryId: "entry-1",
     commandError: null,
     commandThrows: false,
     adminClientThrows: false,
@@ -126,7 +136,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       trace.push(`rpc:${fn}`);
       if (scenario.commandThrows) throw new Error(`transport exploded ${CANARY_EMAIL}`);
       if (scenario.commandError) return { data: null, error: scenario.commandError };
-      return { data: [{ result: scenario.commandResult, entry_id: "entry-1" }], error: null };
+      return {
+        data: [{ result: scenario.commandResult, entry_id: scenario.entryId }],
+        error: null,
+      };
     },
     };
   },
@@ -293,11 +306,18 @@ describe("refusals leave nothing committed and say so", () => {
 });
 
 describe("transport failures are classified honestly", () => {
-  it("a MISSING command (42883) is a definite failure: nothing committed", async () => {
-    // The NEW-app/OLD-database skew — the durable flag switched on before
-    // migration 0185 was applied. "Contact the studio" would be wrong: there
-    // is nothing to contact them about.
-    scenario.commandError = { code: "42883" };
+  // A RETURNED code means the database answered and its transaction aborted, so
+  // nothing committed and "try again" is simply true. Sending the visitor to a
+  // human about a request that certainly does not exist strands a real lead.
+  it.each([
+    ["42883", "undefined_function — the command is not deployed (rollout skew)"],
+    ["PGRST202", "PostgREST has no such function in its schema cache"],
+    ["57014", "query_canceled / statement timeout"],
+    ["23514", "check_violation"],
+    ["42501", "insufficient_privilege"],
+    ["40001", "serialization_failure"],
+  ])("a RETURNED database error (%s) is a definite failure, not a dead end", async (code) => {
+    scenario.commandError = { code };
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
       ok: false,
       error: FAILED,
@@ -305,21 +325,55 @@ describe("transport failures are classified honestly", () => {
     expect(sends).toHaveLength(0);
   });
 
-  it("a missing PostgREST route (PGRST202) is treated the same way", async () => {
-    scenario.commandError = { code: "PGRST202" };
-    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
-      ok: false,
-      error: FAILED,
-    });
-  });
-
-  it("any OTHER database error is AMBIGUOUS: it may have committed", async () => {
-    scenario.commandError = { code: "57014" }; // query_canceled
+  it("NO error code is AMBIGUOUS: supabase-js reports a lost response that way", async () => {
+    // supabase-js does not throw on a network failure — it catches it and
+    // returns it as an `error` with an EMPTY code. The command may have
+    // committed and only the answer was lost.
+    scenario.commandError = { code: "" };
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
       ok: false,
       error: UNCONFIRMED,
     });
     expect(sends).toHaveLength(0);
+  });
+
+  it.each(["08006", "08003", "08000"])(
+    "SQLSTATE class 08 (%s, connection exception) stays AMBIGUOUS",
+    async (code) => {
+      // The connection dropped with the statement in flight: a commit that
+      // landed just before the drop is indistinguishable from one that never
+      // happened.
+      scenario.commandError = { code };
+      expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
+        ok: false,
+        error: UNCONFIRMED,
+      });
+    },
+  );
+
+  it("logs which way it classified, so a misfiled code is visible", async () => {
+    scenario.commandError = { code: "57014" };
+    await submitNewClientBookingWaitlistAction(form());
+    const definite = consoleErrors.find((l) =>
+      l.includes("new_client_waitlist_command_failed"),
+    );
+    expect(JSON.parse(definite!)).toMatchObject({ code: "57014", outcome: "definite" });
+
+    reset();
+    scenario.commandError = { code: "08006" };
+    await submitNewClientBookingWaitlistAction(form());
+    const inDoubt = consoleErrors.find((l) =>
+      l.includes("new_client_waitlist_command_failed"),
+    );
+    expect(JSON.parse(inDoubt!)).toMatchObject({ code: "08006", outcome: "in_doubt" });
+  });
+
+  it("still names the rollout skew distinctly — its fix is an operator action", async () => {
+    scenario.commandError = { code: "42883" };
+    await submitNewClientBookingWaitlistAction(form());
+    expect(
+      consoleErrors.some((l) => l.includes("new_client_waitlist_command_not_deployed")),
+    ).toBe(true);
   });
 
   it("a MISSING service-role key is a definite failure, not an ambiguous one", async () => {
@@ -340,6 +394,52 @@ describe("transport failures are classified honestly", () => {
       ok: false,
       error: UNCONFIRMED,
     });
+  });
+});
+
+// ===========================================================================
+// NOTIFICATION IDENTITY — one key per JOIN EVENT, not per payload
+// ===========================================================================
+//
+// 0185 deliberately lets a REMOVED person rejoin with identical details. That
+// renders a byte-identical email, so a payload-derived key would make the
+// provider replay the FIRST join's response and this path would report `sent`
+// for a notification nobody received. The durable entry id scopes the key.
+describe("notification idempotency is scoped to the join", () => {
+  it("both sends carry the durable entry id as their event scope", async () => {
+    await submitNewClientBookingWaitlistAction(form());
+    expect(sends.map((s) => [s.namespace, s.eventScope])).toEqual([
+      ["studio", "entry-1"],
+      ["client", "entry-1"],
+    ]);
+  });
+
+  it("a REJOIN with identical details gets a DIFFERENT scope", async () => {
+    await submitNewClientBookingWaitlistAction(form());
+    const firstJoin = sends.map((s) => s.eventScope);
+
+    // Same person, same details, same studio — but a new row after removal.
+    reset();
+    scenario.entryId = "entry-2";
+    await submitNewClientBookingWaitlistAction(form());
+
+    expect(firstJoin).toEqual(["entry-1", "entry-1"]);
+    expect(sends.map((s) => s.eventScope)).toEqual(["entry-2", "entry-2"]);
+  });
+
+  it("the MESSAGE is unchanged between the two joins — only the scope differs", async () => {
+    await submitNewClientBookingWaitlistAction(form());
+    const first = sends.map((s) => ({ to: s.to, subject: s.subject, text: s.text }));
+    reset();
+    scenario.entryId = "entry-2";
+    await submitNewClientBookingWaitlistAction(form());
+    expect(sends.map((s) => ({ to: s.to, subject: s.subject, text: s.text }))).toEqual(first);
+  });
+
+  it("no entry id means NO scope, never a wrong one", async () => {
+    scenario.entryId = null;
+    await submitNewClientBookingWaitlistAction(form());
+    expect(sends.map((s) => s.eventScope)).toEqual([null, null]);
   });
 });
 

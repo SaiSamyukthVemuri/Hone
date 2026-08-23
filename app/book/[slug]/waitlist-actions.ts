@@ -71,18 +71,48 @@ import type { Studio } from "@/lib/types/database";
 export type { NewClientWaitlistResult };
 
 /**
- * Errors that PROVE the command did not run. A missing function is the
- * NEW-app/OLD-database skew: the durable allowlist was switched on before
- * migration 0185 was applied. Nothing committed, so the visitor should be told
- * to try again rather than sent to a human about a request that never existed.
- *
- * Everything else — transport, timeout, an aborted connection — is genuinely
- * ambiguous: the command may have committed and only the answer was lost.
+ * Codes that name the NEW-app/OLD-database skew: the durable allowlist was
+ * switched on before migration 0185 was applied. Logged distinctly because the
+ * fix is an operator action, not a retry. Classification-wise they are ordinary
+ * definite failures (see below).
  */
 const COMMAND_NOT_DEPLOYED_CODES: ReadonlySet<string> = new Set([
   "42883", // PostgreSQL: undefined_function
   "PGRST202", // PostgREST: no function matching the request in the schema cache
 ]);
+
+/**
+ * Did the database ANSWER, or was the answer lost?
+ *
+ * A RETURNED error code means the request reached the database layer and was
+ * refused there: the command runs in one transaction, so it aborted and nothing
+ * committed. "Please try again in a moment" is then simply TRUE, and telling
+ * the visitor to phone the studio about a request that certainly does not exist
+ * strands a real lead behind a dead end.
+ *
+ * The exceptions are the genuinely in-doubt cases, and they are narrow:
+ *
+ *   * NO CODE AT ALL. supabase-js does not throw on a network failure — it
+ *     catches it and returns it as an `error` with an EMPTY code. That is a
+ *     lost response, not a refusal, and the command may well have committed.
+ *   * SQLSTATE CLASS 08 (connection exception). The connection dropped while
+ *     the statement was in flight; a commit that landed just before the drop is
+ *     indistinguishable from one that never happened.
+ *
+ * WHY THE DEFAULT FLIPPED FROM AMBIGUOUS TO DEFINITE. Under WAIT-01 a blind
+ * resubmit could duplicate a request that had already landed, so "try again"
+ * was the dangerous answer and ambiguity had to be preserved. WAIT-02's
+ * studio-scoped duplicate rule removes that hazard entirely: a retry of a
+ * submission that DID commit returns `already_waiting` and shows a calm panel.
+ * Retry is now self-correcting, so the unconfirmed dead end is reserved for the
+ * only cases where "we couldn't confirm" is the sole statement true in both
+ * worlds.
+ */
+function databaseAnsweredDefinitively(code: string): boolean {
+  if (code.length === 0) return false; // transport: the answer was lost
+  if (/^08/.test(code)) return false; // SQLSTATE class 08: connection exception
+  return true;
+}
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -132,6 +162,12 @@ async function sendClientAcknowledgement(
   // configured. Correlation is then unavailable, which is a degraded log, not
   // a reason to put the raw address in one.
   emailFingerprint: string | null,
+  /**
+   * The durable join this acknowledges, on the WAIT-02 path. NULL on the
+   * notification-commit path, which has no durable event and whose key must
+   * stay exactly as it is so an identical resubmission still collapses.
+   */
+  eventScope: string | null = null,
 ): Promise<void> {
   try {
     const clientEmail = buildNewClientWaitlistClientEmail({
@@ -141,6 +177,7 @@ async function sendClientAcknowledgement(
     const clientSend = await sendWaitlistEmailIdempotent({
       namespace: "client",
       studioId: studio.id,
+      eventScope,
       to: submission.email,
       subject: clientEmail.subject,
       html: clientEmail.html,
@@ -190,6 +227,9 @@ async function submitToDurableWaitlist(
   // rule and the concurrency resolution; this action supplies only the
   // server-resolved tenant and the bounded submission.
   let commandResult: string | null = null;
+  // The durable identity of THIS join. It scopes the notification idempotency
+  // key below, so a rejoin after removal is a distinct provider request.
+  let entryId: string | null = null;
   try {
     const { data, error } = await admin.rpc("join_new_client_waitlist", {
       p_studio_id: studio.id,
@@ -199,23 +239,28 @@ async function submitToDurableWaitlist(
     });
     if (error) {
       const code = typeof error.code === "string" ? error.code : "";
-      if (COMMAND_NOT_DEPLOYED_CODES.has(code)) {
-        logWaitlistEvent("new_client_waitlist_command_not_deployed", {
+      const definite = databaseAnsweredDefinitively(code);
+      logWaitlistEvent(
+        COMMAND_NOT_DEPLOYED_CODES.has(code)
+          ? "new_client_waitlist_command_not_deployed"
+          : "new_client_waitlist_command_failed",
+        {
           studioId: studio.id,
-          code,
-        });
-        return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
-      }
-      // Ambiguous: the command may have committed and only the answer was lost.
-      logWaitlistEvent("new_client_waitlist_command_failed", {
-        studioId: studio.id,
-        code: code || "unknown",
-        emailFingerprint,
-      });
-      return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED };
+          code: code || "none",
+          outcome: definite ? "definite" : "in_doubt",
+          emailFingerprint,
+        },
+      );
+      return {
+        ok: false,
+        error: definite
+          ? NEW_CLIENT_WAITLIST_SUBMIT_FAILED
+          : NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED,
+      };
     }
     const row = Array.isArray(data) ? data[0] : data;
     commandResult = (row?.result as string | undefined) ?? null;
+    entryId = typeof row?.entry_id === "string" ? row.entry_id : null;
   } catch {
     // A throw at transport level cannot distinguish "never ran" from
     // "committed, answer lost". Never claim they joined; never invite a blind
@@ -265,6 +310,12 @@ async function submitToDurableWaitlist(
       const studioSend = await sendWaitlistEmailIdempotent({
         namespace: "studio",
         studioId: studio.id,
+        // ONE KEY PER JOIN EVENT, not per payload. 0185 deliberately lets a
+        // removed person rejoin with identical details, which renders a
+        // byte-identical email: without this the provider would replay the
+        // FIRST join's response and this path would report `sent` for a
+        // notification the studio never received.
+        eventScope: entryId,
         to: recipient,
         subject: studioEmail.subject,
         html: studioEmail.html,
@@ -293,7 +344,7 @@ async function submitToDurableWaitlist(
     }
   }
 
-  await sendClientAcknowledgement(studio, submission, emailFingerprint);
+  await sendClientAcknowledgement(studio, submission, emailFingerprint, entryId);
   return { ok: true, state: "joined", notification };
 }
 
