@@ -156,6 +156,16 @@ async function provesTheTappedControlAcknowledges(
   // "Loading day…", and an aria-labelled control would mask exactly that bug.
   const todayLink = page.getByTestId("dashboard-today");
   await expect(todayLink).toBeVisible();
+
+  // The live region must already EXIST, and be empty, before anything is
+  // pending. A polite region inserted already containing its message is not
+  // reliably announced, so a conditionally-rendered one leaves the pending
+  // state silent for screen-reader users — who get no other signal, since the
+  // mark is aria-hidden and the label change is purely visual.
+  const liveRegion = todayLink.locator('[role="status"]');
+  await expect(liveRegion).toBeAttached();
+  await expect(liveRegion).toHaveText("");
+
   const resting = await todayLink.boundingBox();
   expect(resting).not.toBeNull();
   // The 44px interaction floor is a property of the RESTING control.
@@ -176,6 +186,10 @@ async function provesTheTappedControlAcknowledges(
     // not moved.
     await expect(tomorrow).toBeVisible();
 
+    // The SAME region that was already mounted now carries the message — it
+    // was not created for the occasion.
+    await expect(liveRegion).toHaveText("Loading day…");
+
     // The words that say WHERE the control goes survive the pending state.
     await expect(todayLink).toHaveAccessibleName(/Today/);
 
@@ -192,6 +206,8 @@ async function provesTheTappedControlAcknowledges(
     gate.release();
     await expect(today).toBeVisible({ timeout: T });
     await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+    // The region stays mounted and goes quiet, ready for the next tap.
+    await expect(page.getByTestId("dashboard-next-day").locator('[role="status"]')).toHaveText("");
   });
 }
 

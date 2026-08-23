@@ -21,6 +21,10 @@ import path from "node:path";
 //   3. AUTHORITY. A pending state may say a request is in flight and nothing
 //      else. It must never read as an outcome.
 
+const { createElement } = await import("react");
+const { renderToStaticMarkup } = await import("react-dom/server");
+const { PendingLink } = await import("@/components/pending-link");
+
 const ROOT = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -103,6 +107,39 @@ describe("PendingLink avoids the two traps a screenshot cannot show", () => {
     expect(code).toContain("absolute");
     expect(code).toMatch(/cx\("relative"/);
     expect(code).toContain("pointer-events-none");
+  });
+});
+
+describe("PendingLink's live region exists BEFORE it has anything to say", () => {
+  // Outside a <Link>, useLinkStatus reports idle, so this renders the RESTING
+  // control — which is exactly the state the rule is about.
+  const atRest = renderToStaticMarkup(
+    createElement(PendingLink, { href: "/x", children: "Go" } as never),
+  );
+
+  it("mounts the status region at rest, empty", () => {
+    // THE RULE, and it is not cosmetic. A polite live region must exist before
+    // its content changes; a role="status" node inserted already containing its
+    // message is not reliably announced — that is role="alert" behaviour. Codex
+    // caught this at e30bebde: the region was rendered inside `{pending && …}`,
+    // so the pending state was SILENT for screen-reader users, who get no other
+    // signal (the mark is aria-hidden, the label change is purely visual).
+    expect(atRest).toContain('role="status"');
+    // Empty at rest, so it adds nothing to the link's accessible name until
+    // there is genuinely something to say.
+    expect(atRest).toMatch(/role="status"[^>]*>(<\/span>|\s*<\/span>)/);
+  });
+
+  it("still renders no pending MARK at rest", () => {
+    // Only the live region is unconditional. The decorative mark stays
+    // conditional, which is what keeps the control at its resting size.
+    expect(atRest).not.toContain("data-link-pending");
+    expect(atRest).not.toContain("animate-spin");
+  });
+
+  it("keeps the label's own text at rest", () => {
+    expect(atRest).toContain("Go");
+    expect(atRest).not.toContain("opacity-0");
   });
 });
 

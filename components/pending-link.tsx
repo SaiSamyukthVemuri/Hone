@@ -100,28 +100,40 @@ function PendingLabel({
       >
         {children}
       </span>
+      {/* The mark that replaces the label. Decorative — the sentence a screen
+          reader gets is the live region below, not this. */}
       {pending && (
-        <>
-          {/* The mark that replaces the label. Decorative — the sentence a
-              screen reader gets is the live region below, not this. */}
-          <span
-            data-link-pending="true"
-            aria-hidden="true"
-            className={cx(
-              "pointer-events-none absolute inset-0 m-auto size-4",
-              "animate-spin rounded-full border-2 border-current border-t-transparent",
-              // Reduced motion keeps the MARK and drops only the rotation;
-              // closing the ring makes the still frame read as a deliberate
-              // glyph rather than a broken circle. The state change survives
-              // without motion, and it is a shape change, never colour alone.
-              "motion-reduce:animate-none motion-reduce:border-t-current",
-            )}
-          />
-          <span role="status" className="sr-only">
-            {pendingLabel}
-          </span>
-        </>
+        <span
+          data-link-pending="true"
+          aria-hidden="true"
+          className={cx(
+            "pointer-events-none absolute inset-0 m-auto size-4",
+            "animate-spin rounded-full border-2 border-current border-t-transparent",
+            // Reduced motion keeps the MARK and drops only the rotation;
+            // closing the ring makes the still frame read as a deliberate
+            // glyph rather than a broken circle. The state change survives
+            // without motion, and it is a shape change, never colour alone.
+            "motion-reduce:animate-none motion-reduce:border-t-current",
+          )}
+        />
       )}
+      {/* MOUNTED AT ALL TIMES; only its TEXT changes.
+       *
+       * This element must NOT be rendered conditionally. A polite live region
+       * has to exist before its content changes: a `role="status"` node that is
+       * inserted already containing its message is not reliably announced (that
+       * is `role="alert"` behaviour, not this one). Mounting it pre-populated
+       * left the pending state silent for exactly the screen-reader users this
+       * label exists to serve — the announcement is the ONLY signal they get,
+       * since the mark beside it is aria-hidden and the label change is purely
+       * visual.
+       *
+       * Empty at rest, so it contributes nothing to the link's accessible name
+       * until there is genuinely something to say.
+       */}
+      <span role="status" className="sr-only">
+        {pending ? pendingLabel : ""}
+      </span>
     </>
   );
 }
