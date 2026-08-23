@@ -66,6 +66,18 @@ import type { Studio } from "@/lib/types/database";
 // and NOWHERE else. No log line, error message or event authored here carries
 // them — nor the idempotency key or canonical payload, which are derived from
 // them.
+//
+// NO MEMBERSHIP ORACLE. This action is public and unauthenticated, so its
+// answer must not tell an anonymous caller whether a given address was ALREADY
+// on a studio's waitlist. `created` and `already_waiting` therefore return the
+// IDENTICAL value — `{ ok: true }` — and the form renders identical copy. The
+// database keeps the distinction and this file still acts on it (a duplicate
+// notifies nobody and writes no row); it simply never reaches the browser.
+//
+// That is also why no "we could not confirm the studio notification" caveat is
+// returned any more: a duplicate can never produce one, so its presence would
+// have leaked the same bit in reverse — seeing it would prove the address was
+// NOT previously waiting.
 // ===========================================================================
 
 export type { NewClientWaitlistResult };
@@ -272,10 +284,18 @@ async function submitToDurableWaitlist(
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED };
   }
 
-  // Calm and idempotent. No second notification, no error framing: repeating a
-  // submission is not a mistake and must not read like one.
+  // Calm, idempotent, and EXTERNALLY INDISTINGUISHABLE from a fresh join. No
+  // second row (the database refused it), no second notification, and no hint
+  // in the answer. Deliberately NOT "send another notification so the paths
+  // match": that would turn this form into a mail amplifier pointed at whoever
+  // the caller names.
   if (commandResult === "already_waiting") {
-    return { ok: true, state: "already_waiting" };
+    // Operator visibility only. studio id is an internal UUID, not personal
+    // data, and no contact detail or fingerprint is recorded here.
+    logWaitlistEvent("new_client_waitlist_duplicate_submission", {
+      studioId: studio.id,
+    });
+    return { ok: true };
   }
 
   if (commandResult !== "created") {
@@ -290,6 +310,9 @@ async function submitToDurableWaitlist(
   }
 
   // ---- COMMITTED. Everything below is notification and cannot change that. --
+  // Tracked for the operator log line at the end, never for the response: the
+  // browser now learns nothing beyond "success", so this is the only place the
+  // notification outcome is still visible.
   let notification: "sent" | "unconfirmed" = "unconfirmed";
   const recipient = studioNotificationRecipient(studio);
   if (!recipient) {
@@ -345,7 +368,15 @@ async function submitToDurableWaitlist(
   }
 
   await sendClientAcknowledgement(studio, submission, emailFingerprint, entryId);
-  return { ok: true, state: "joined", notification };
+
+  // The operator's replacement for the caveat the visitor used to see. It goes
+  // no further than the log: returning it would reintroduce the oracle, because
+  // a duplicate can never carry it.
+  logWaitlistEvent("new_client_waitlist_joined", {
+    studioId: studio.id,
+    notification,
+  });
+  return { ok: true };
 }
 
 // ===========================================================================
@@ -426,7 +457,7 @@ async function submitViaStudioNotification(
   }
 
   await sendClientAcknowledgement(studio, submission, emailFingerprint);
-  return { ok: true, state: "joined", notification: "sent" };
+  return { ok: true };
 }
 
 export async function submitNewClientBookingWaitlistAction(

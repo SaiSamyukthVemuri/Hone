@@ -59,6 +59,11 @@ export default function PrivacyPolicyPage() {
           <strong>Clients</strong> of those practitioners whose information is
           entered into Hone by the practitioner
         </li>
+        <li>
+          <strong>People who join a studio&rsquo;s new-client waitlist</strong>{" "}
+          by submitting a request through that studio&rsquo;s public booking
+          page. They are not clients of that studio, and may never become one.
+        </li>
       </UL>
       <P>
         We process data on behalf of practitioners. Practitioners are the{" "}
@@ -90,6 +95,32 @@ export default function PrivacyPolicyPage() {
         <li>Emergency contact information</li>
         <li>Health intake responses</li>
       </UL>
+
+      <H3 id="from-waitlist-requests">
+        From people who join a studio&rsquo;s waitlist
+      </H3>
+      <P>
+        When a studio has its new-client waitlist turned on, its public booking
+        page offers new clients a waitlist request instead of an appointment.
+        The person submits this information themselves; a practitioner does not
+        enter it, and submitting it does not create a client record, an
+        appointment, or an intake form.
+      </P>
+      <UL>
+        <li>Name and email address, and a phone number if they choose to give one</li>
+        <li>Which studio the request was made to, and when it was submitted</li>
+        <li>
+          Whether the request is still waiting or has been removed by the
+          studio, and which practitioner removed it
+        </li>
+      </UL>
+      <P>
+        This information is used to operate that studio&rsquo;s waitlist and to
+        communicate about the request &mdash; a notice to the studio, and an
+        acknowledgement to the person who submitted it. The studio can see and
+        manage the waitlist requests made to it, through the access the product
+        provides.
+      </P>
 
       <H3 id="automatically-when-you-use-hone">
         Automatically when you use Hone
@@ -159,6 +190,10 @@ export default function PrivacyPolicyPage() {
         <li>
           Send appointment reminders and confirmations on behalf of
           practitioners (only when the practitioner has enabled this)
+        </li>
+        <li>
+          Operate a studio&rsquo;s new-client waitlist and communicate about a
+          waitlist request
         </li>
         <li>Process payments and billing</li>
         <li>Respond to support requests</li>

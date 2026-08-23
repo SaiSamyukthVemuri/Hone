@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   NEW_CLIENT_WAITLIST_SLUGS_ENV,
   NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV,
@@ -189,7 +193,7 @@ afterEach(() => {
 describe("the database is the commit point", () => {
   it("`created` -> joined, and the command ran BEFORE any email", async () => {
     const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: true, state: "joined", notification: "sent" });
+    expect(result).toEqual({ ok: true });
     expect(trace).toEqual(["rpc:join_new_client_waitlist", "send:studio", "send:client"]);
   });
 
@@ -199,38 +203,26 @@ describe("the database is the commit point", () => {
     // is a committed row.
     scenario.studioOutcome = { status: "rejected", code: "validation_error" };
     const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: true, state: "joined", notification: "unconfirmed" });
+    expect(result).toEqual({ ok: true });
     expect(rpcCalls).toHaveLength(1);
   });
 
   it("an AMBIGUOUS studio notification still reports joined", async () => {
     scenario.studioOutcome = { status: "ambiguous", reason: "timeout" };
-    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
-      ok: true,
-      state: "joined",
-      notification: "unconfirmed",
-    });
+    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
   });
 
   it("a THROWING studio notification still reports joined", async () => {
     // A provider throw AFTER the commit must not become the visitor's answer,
     // and must not abort the courtesy acknowledgement either.
     scenario.studioSendThrows = true;
-    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
-      ok: true,
-      state: "joined",
-      notification: "unconfirmed",
-    });
+    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
     expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
   });
 
   it("a THROWING client acknowledgement cannot downgrade the join either", async () => {
     scenario.clientSendThrows = true;
-    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
-      ok: true,
-      state: "joined",
-      notification: "sent",
-    });
+    expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
   });
 
   it("NO studio recipient configured still reports joined, and sends nothing to the studio", async () => {
@@ -238,7 +230,7 @@ describe("the database is the commit point", () => {
     // The row exists regardless, and the operator queue reads the row.
     scenario.ownerEmail = null;
     const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: true, state: "joined", notification: "unconfirmed" });
+    expect(result).toEqual({ ok: true });
     expect(sends.map((s) => s.namespace)).toEqual(["client"]);
   });
 
@@ -270,7 +262,7 @@ describe("duplicate submission", () => {
   it("is calm, idempotent, and sends NOTHING", async () => {
     scenario.commandResult = "already_waiting";
     const result = await submitNewClientBookingWaitlistAction(form());
-    expect(result).toEqual({ ok: true, state: "already_waiting" });
+    expect(result).toEqual({ ok: true });
     expect(sends).toHaveLength(0);
   });
 
@@ -279,6 +271,113 @@ describe("duplicate submission", () => {
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result.ok).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(/try again|error/i);
+  });
+
+  it("still creates NO second row and NO second notification", async () => {
+    // The internal distinction is preserved even though the caller cannot see
+    // it: a duplicate must not manufacture a row or a message.
+    scenario.commandResult = "already_waiting";
+    await submitNewClientBookingWaitlistAction(form());
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist"]);
+    expect(sends).toHaveLength(0);
+    expect(tableAccess).toEqual([]);
+  });
+
+  it("is still visible to the OPERATOR, in a PII-free log line", async () => {
+    scenario.commandResult = "already_waiting";
+    await submitNewClientBookingWaitlistAction(form());
+    const line = consoleErrors.find((l) =>
+      l.includes("new_client_waitlist_duplicate_submission"),
+    );
+    expect(line).toBeDefined();
+    const parsed = JSON.parse(line!);
+    expect(parsed.studioId).toBe(STUDIO_ID);
+    expect(line).not.toContain(CANARY_NAME);
+    expect(line).not.toContain(CANARY_EMAIL);
+    expect(line).not.toContain(CANARY_PHONE);
+  });
+});
+
+// ===========================================================================
+// NO PUBLIC MEMBERSHIP ORACLE
+// ===========================================================================
+//
+// This action is public and unauthenticated. If a fresh join and an
+// already-waiting duplicate answer differently, then typing someone's address
+// into the form once tells an anonymous caller whether that named person has
+// asked this studio for treatment. The limiters bound volume; they do not stop
+// one targeted probe.
+//
+// So the two outcomes must be externally IDENTICAL. Both are driven through
+// the REAL action here, and the results compared as bytes rather than shapes.
+describe("a duplicate is externally indistinguishable from a fresh join", () => {
+  async function resultFor(commandResult: string) {
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, SLUG);
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+    scenario.commandResult = commandResult;
+    return submitNewClientBookingWaitlistAction(form());
+  }
+
+  it("returns a BYTE-IDENTICAL value for `created` and `already_waiting`", async () => {
+    const created = await resultFor("created");
+    const duplicate = await resultFor("already_waiting");
+    expect(duplicate).toEqual(created);
+    expect(JSON.stringify(duplicate)).toBe(JSON.stringify(created));
+    expect(Object.keys(duplicate as object)).toEqual(["ok"]);
+  });
+
+  it("stays identical even when the studio notification is NOT accepted", async () => {
+    // The old caveat field leaked the same bit in reverse: only a fresh join
+    // could ever carry it, so seeing it proved the address was NOT already
+    // waiting. A provider failure must therefore change nothing visible.
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, SLUG);
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+    scenario.commandResult = "created";
+    scenario.studioOutcome = { status: "rejected", code: "validation_error" };
+    const failedNotice = await submitNewClientBookingWaitlistAction(form());
+
+    const duplicate = await resultFor("already_waiting");
+    expect(JSON.stringify(failedNotice)).toBe(JSON.stringify(duplicate));
+  });
+
+  it("carries no field, code or wording that could name either outcome", async () => {
+    for (const outcome of ["created", "already_waiting"]) {
+      const serialized = JSON.stringify(await resultFor(outcome));
+      expect(serialized).toBe('{"ok":true}');
+      for (const leak of [/already/i, /waiting/i, /duplicate/i, /joined/i, /unconfirmed/i, /notification/i]) {
+        expect(serialized, `${outcome} leaked ${leak}`).not.toMatch(leak);
+      }
+    }
+  });
+
+  it("renders ONE confirmation panel, whose props cannot carry the outcome", async () => {
+    // Structural, not asserted: the panel takes only a studio name, so there is
+    // nothing for it to branch on. Rendering it twice must be byte-identical,
+    // and it must not contain either of the removed messages.
+    const { NewClientWaitlistJoinedPanel } = await import(
+      "@/app/book/[slug]/NewClientWaitlistForm"
+    );
+    const first = renderToStaticMarkup(
+      createElement(NewClientWaitlistJoinedPanel, { studioName: "Willow Electrolysis" }),
+    );
+    const second = renderToStaticMarkup(
+      createElement(NewClientWaitlistJoinedPanel, { studioName: "Willow Electrolysis" }),
+    );
+    expect(second).toBe(first);
+    expect(first).toContain("You\u2019re on the waitlist.");
+    expect(first).not.toMatch(/already on this studio/i);
+    expect(first).not.toMatch(/couldn\u2019t confirm the notification/i);
+  });
+
+  it("the whole form module contains neither removed message", async () => {
+    const src = readFileSync(
+      path.resolve(__dirname, "../../../app/book/[slug]/NewClientWaitlistForm.tsx"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/already on this studio/i);
+    expect(src).not.toMatch(/confirm the notification to the studio/i);
   });
 });
 
@@ -471,7 +570,7 @@ describe("the gate still governs everything", () => {
     setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, undefined);
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(rpcCalls).toHaveLength(0);
-    expect(result).toEqual({ ok: true, state: "joined", notification: "sent" });
+    expect(result).toEqual({ ok: true });
   });
 
   it("the durable flag is EXACT-MATCH, not a prefix or substring", async () => {
@@ -540,5 +639,95 @@ describe("PII never leaves the emails and the row", () => {
     );
     expect(line).toBeDefined();
     expect(JSON.parse(line!).detail).toBe("validation_error");
+  });
+});
+
+// ===========================================================================
+// THE PUBLIC PRIVACY NOTICE MUST COVER THIS DATA CLASS
+// ===========================================================================
+//
+// WAIT-02 persists personal information for a person who is deliberately NOT a
+// client, supplied directly by that person rather than entered by a
+// practitioner. Before this, the notice's scope was exactly two categories —
+// practitioners, and clients whose information a practitioner enters — and
+// neither covers a prospect.
+//
+// The coupling is anchored HERE, on the durable path itself, rather than on
+// migration 0185: a migration file is permanent, so anchoring there would keep
+// demanding the disclosure long after any retirement. The rule that matters is
+// "while the durable waitlist can still write a prospect row".
+describe("privacy disclosure is coupled to the durable path", () => {
+  const ACTION = readFileSync(
+    path.resolve(__dirname, "../../../app/book/[slug]/waitlist-actions.ts"),
+    "utf8",
+  );
+  const PRIVACY = readFileSync(
+    path.resolve(__dirname, "../../../app/privacy/page.tsx"),
+    "utf8",
+  );
+
+  it("ANTI-VACUITY: the durable write path is still present", () => {
+    // If this ever stops being true the assertions below are moot, and that
+    // must be a visible decision rather than a silently passing suite.
+    expect(ACTION).toContain('rpc("join_new_client_waitlist"');
+  });
+
+  it("the notice's SCOPE names waitlist joiners as a category of person", () => {
+    expect(PRIVACY).toMatch(/join a studio&rsquo;s new-client waitlist/i);
+    expect(PRIVACY).toMatch(/not clients of that studio/i);
+  });
+
+  it("the notice discloses what is collected, and that the person submits it", () => {
+    expect(PRIVACY).toMatch(/<H3 id="from-waitlist-requests">/);
+    expect(PRIVACY).toMatch(/submits this information themselves/i);
+    expect(PRIVACY).toMatch(/a practitioner does not\s+enter it/i);
+    // The three field groups the form and 0185 actually hold.
+    expect(PRIVACY).toMatch(/Name and email address, and a phone number/i);
+    expect(PRIVACY).toMatch(/Which studio the request was made to, and when/i);
+    expect(PRIVACY).toMatch(/still waiting or has been removed/i);
+  });
+
+  it("the notice states the USE and the studio's access", () => {
+    expect(PRIVACY).toMatch(/operate that studio&rsquo;s waitlist/i);
+    expect(PRIVACY).toMatch(/acknowledgement to the person who submitted it/i);
+    expect(PRIVACY).toMatch(/studio can see and\s+manage the waitlist requests/i);
+    // And it appears in the "how we use" list, where a reader looks for it.
+    expect(PRIVACY).toMatch(/Operate a studio&rsquo;s new-client waitlist and communicate/i);
+  });
+
+  it("it is TRUTHFUL about what joining does not do", () => {
+    expect(PRIVACY).toMatch(/does not create a client record, an\s+appointment, or an intake form/i);
+  });
+
+  it("it invents NO retention, deletion, export or purge promise for this class", () => {
+    // The recorded limitation is that none of those exist yet
+    // (docs/03_SECURITY_AND_PRIVACY.md §8). The notice must not contradict it.
+    const section = PRIVACY.slice(
+      PRIVACY.indexOf('<H3 id="from-waitlist-requests">'),
+      PRIVACY.indexOf('<H3 id="automatically-when-you-use-hone">'),
+    );
+    expect(section.length).toBeGreaterThan(200);
+    for (const forbidden of [
+      /retain|retention/i,
+      /delete|deletion|erase/i,
+      /purge/i,
+      /export|download/i,
+      /\b\d+\s*(day|month|year)/i,
+      /HIPAA|PHIPA|PIPEDA|SOC ?2/i,
+      /marketing/i,
+      /\bsell\b|\bsold\b/i,
+    ]) {
+      expect(section, `waitlist disclosure must not claim ${forbidden}`).not.toMatch(forbidden);
+    }
+  });
+
+  it("the recorded export/retention limitation is still on the record", () => {
+    const RISKS = readFileSync(
+      path.resolve(__dirname, "../../../docs/03_SECURITY_AND_PRIVACY.md"),
+      "utf8",
+    );
+    expect(RISKS).toMatch(/New-client waitlist export \/ offboarding/);
+    expect(RISKS).toMatch(/not\*\* included in the `\/settings\/data` studio export/);
+    expect(RISKS).toMatch(/no retention or purge policy covers it yet/);
   });
 });

@@ -18,11 +18,7 @@ vi.mock("@/app/book/[slug]/actions", () => ({
   publicBookAppointmentAction: async () => ({ ok: false, error: "not used" }),
 }));
 vi.mock("@/app/book/[slug]/waitlist-actions", () => ({
-  submitNewClientBookingWaitlistAction: async () => ({
-    ok: true as const,
-    state: "joined" as const,
-    notification: "sent" as const,
-  }),
+  submitNewClientBookingWaitlistAction: async () => ({ ok: true as const }),
 }));
 
 const { PublicBookForm } = await import("@/app/book/[slug]/PublicBookForm");

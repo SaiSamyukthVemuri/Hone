@@ -97,13 +97,11 @@ export const NEW_CLIENT_WAITLIST_SUBMIT_FAILED =
 export const NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED =
   "We couldn't confirm your waitlist request. Please contact the studio before submitting again.";
 
-// NOTE. The copy for WAIT-02's two new visitor-facing outcomes — "already on
-// this waitlist" and "the studio notification could not be confirmed" — lives
-// in NewClientWaitlistForm.tsx beside the rest of that surface's wording, not
-// here. This module is `server-only`, so a client component cannot import from
-// it, and a constant duplicated across the boundary is a string free to drift
-// from the one actually rendered. The SERVER decides `state` and
-// `notification`; the BROWSER decides how to say them.
+// NOTE. There is deliberately no constant here for a "you are already on this
+// waitlist" message or a "we could not confirm the studio notification" one.
+// Both existed and both were removed: each let an anonymous caller distinguish
+// which database outcome occurred, which is the enumeration this surface must
+// not permit. See NewClientWaitlistResult below.
 
 // Bounded input. Public, unauthenticated surface: everything is length-capped
 // before it reaches a database lookup, a rate limiter or an email template.
@@ -213,15 +211,30 @@ export function validateWaitlistSubmission(raw: {
 /**
  * The outcome of a public waitlist submission, as the browser sees it.
  *
- * `state` answers "am I on the list?" and is the ONLY thing that decides
- * whether the success surface renders. `notification` is strictly secondary
- * reporting about the studio's copy of the news: under WAIT-02 the database
- * commit already happened, so no notification outcome can retract a join.
+ * ONE SUCCESS SHAPE, DELIBERATELY. This type used to carry `state` ("joined"
+ * vs "already_waiting") and `notification` ("sent" vs "unconfirmed"), and the
+ * form rendered different copy for each. On an UNAUTHENTICATED endpoint that
+ * is a MEMBERSHIP ORACLE: one request per address told an anonymous prober
+ * whether that named person had asked this studio for treatment. The per-IP
+ * and per-email limiters do not stop a single targeted probe, and for an
+ * electrolysis studio the disclosure is exactly the sensitive fact.
  *
- * `already_waiting` carries no notification field on purpose — a duplicate
- * submission sends nothing, so there is no outcome to report.
+ * So there is now nothing to read. Success is success — a newly created entry
+ * and an already-waiting duplicate return this identical value and render
+ * identical copy.
+ *
+ * The distinction is NOT lost, only moved behind the boundary: the database
+ * command still returns `created` / `already_waiting`, the action still uses
+ * it to decide whether to notify, and both it and the notification outcome are
+ * still recorded in the PII-free server logs where they were already kept.
+ *
+ * WHAT THIS DOES NOT CLOSE: a duplicate skips two provider calls and so
+ * answers measurably faster. Equalising that would mean either sending a
+ * second notification on every duplicate (rejected — it turns the form into a
+ * mail amplifier aimed at whoever the prober names) or padding responses to a
+ * constant time (disproportionate here). The timing residual is documented
+ * rather than papered over.
  */
 export type NewClientWaitlistResult =
-  | { ok: true; state: "joined"; notification: "sent" | "unconfirmed" }
-  | { ok: true; state: "already_waiting" }
+  | { ok: true }
   | { ok: false; error: string };

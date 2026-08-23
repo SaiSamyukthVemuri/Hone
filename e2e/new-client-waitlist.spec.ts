@@ -24,9 +24,12 @@ const WAITLIST_SLUG = "e2e-waitlist-p0";
 // email WAS the record. Under WAIT-02 the record is a committed row, so the
 // same refusal must produce:
 //
-//   * a real durable row,
-//   * a success surface that says so,
-//   * and a calm, secondary "we couldn't confirm the notification" line.
+//   * a real durable row, and
+//   * a success surface that says so.
+//
+// It must NOT produce a "we couldn't confirm the notification" line: that
+// caveat was removed because only a FRESH join could ever carry it, so showing
+// it proved the submitted address was not already on the list.
 //
 // A run of this spec against the old behaviour fails immediately, which is
 // exactly the regression guard the commit-point move needs.
@@ -151,10 +154,13 @@ test.describe("new client at a waitlisted studio", () => {
     await expect(
       page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
     ).toBeVisible({ timeout: 60_000 });
-    // ...with the secondary notification caveat, and NOT a failure.
+    // ...and the panel says NOTHING about the notification. It used to carry a
+    // "we couldn't confirm the notification to the studio" caveat, which only a
+    // FRESH join could ever produce — so its presence proved the address was not
+    // already waiting. See the duplicate scenario below.
     await expect(
       page.getByText(/couldn[\u2019']t confirm the notification to the studio/i),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(
       page.getByText(/couldn't record your waitlist request|couldn't confirm your waitlist request/i),
     ).toHaveCount(0);
@@ -177,9 +183,17 @@ test.describe("new client at a waitlisted studio", () => {
     ).toBe(0);
   });
 
-  test("a second submission is calm and adds no row", async ({ page }) => {
+  // THE ENUMERATION PROOF, end to end through the real stack.
+  //
+  // The first submission creates a row; the second is refused as a duplicate by
+  // the database. If the visible outcome differed at all, anyone could type a
+  // name and address into a public form and learn whether that person had asked
+  // this studio for treatment. So the two are compared as RENDERED TEXT, not as
+  // two separate expectations that happen to look similar.
+  test("a duplicate submission is visually indistinguishable from the first", async ({ page }) => {
     const seed = await seedWaitlistStudio();
     const email = canaryEmail(seed.runId);
+    const panels: string[] = [];
 
     for (const attempt of [1, 2]) {
       await page.goto(`/book/${WAITLIST_SLUG}`);
@@ -189,28 +203,34 @@ test.describe("new client at a waitlisted studio", () => {
       ).toBeVisible({ timeout: 20_000 });
       await fillAndSubmitWaitlist(page, { name: "Repeat Submitter", email });
 
-      if (attempt === 1) {
-        await expect(
-          page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
-        ).toBeVisible({ timeout: 60_000 });
-      } else {
-        // Calm, not an error, and nothing that invites a third attempt.
-        await expect(
-          page.getByRole("heading", { name: /you[\u2019']re already on this studio[\u2019']s waitlist/i }),
-        ).toBeVisible({ timeout: 60_000 });
-        // Calm means: no error copy anywhere, and the form itself is gone —
-        // there is nothing left to press that would submit a third time.
-        // (`getByRole("alert")` is NOT the check: Next's route announcer is a
-        // permanent empty alert region on every page, so it always matches.)
-        await expect(
-          page.getByText(
-            /couldn[\u2019']t record your waitlist request|couldn[\u2019']t confirm your waitlist request|too many requests/i,
-          ),
-        ).toHaveCount(0);
-        await expect(page.getByRole("button", { name: /^join waitlist$/i })).toHaveCount(0);
-      }
+      const panel = page.getByRole("status").filter({
+        has: page.getByRole("heading", { name: /you[\u2019']re on the waitlist/i }),
+      });
+      await expect(panel, `attempt ${attempt}`).toBeVisible({ timeout: 60_000 });
+      panels.push((await panel.innerText()).replace(/\s+/g, " ").trim());
+
+      // Calm on BOTH: no error copy, and the form is gone, so nothing invites a
+      // further attempt. (`getByRole("alert")` is NOT the check — Next's route
+      // announcer is a permanent empty alert region on every page.)
+      await expect(
+        page.getByText(
+          /couldn[\u2019']t record your waitlist request|couldn[\u2019']t confirm your waitlist request|too many requests/i,
+        ),
+      ).toHaveCount(0);
+      await expect(page.getByRole("button", { name: /^join waitlist$/i })).toHaveCount(0);
+      // Neither removed, outcome-revealing message appears on either attempt.
+      await expect(page.getByText(/already on this studio/i)).toHaveCount(0);
+      await expect(
+        page.getByText(/couldn[\u2019']t confirm the notification to the studio/i),
+      ).toHaveCount(0);
     }
 
+    // The load-bearing assertion: identical rendered text, character for
+    // character, for a fresh join and for a duplicate.
+    expect(panels[1], "a duplicate must read exactly like a fresh join").toBe(panels[0]);
+    expect(panels[0]).toContain("You\u2019re on the waitlist.");
+
+    // ...while the database still refused the second row.
     const rows = await waitlistRows(seed.studioId);
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe("waiting");
