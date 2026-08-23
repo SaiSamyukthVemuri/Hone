@@ -1393,8 +1393,21 @@ function AppointmentRow({
           status={appt.status}
           paymentState={paymentState}
         />
-        <Link
+        {/* UI-01B: PendingLink, not Link. This is a SEGMENT change, so no
+            route boundary is involved and — with zero loading.tsx in the tree —
+            React keeps this row mounted while the destination RSC is in flight.
+            The control the thumb is on is therefore still there to speak, and
+            it is the only thing that can: nothing else on screen changes until
+            the new page commits.
+
+            `pendingLabel` says "Opening…" because this control's LABEL varies
+            (Open client / Start charting / Continue charting / Review) while
+            its destination is always a client-scoped page. It describes the
+            REQUEST, never an outcome. */}
+        <PendingLink
           href={nextAction.href}
+          data-testid="today-next-action"
+          pendingLabel="Opening…"
           /* `min-h-[44px]` — this was the ONE control in the action area below
              the touch target, at 34px, while all three SECONDARY actions were
              already 44px. The most important control on the row was the
@@ -1402,7 +1415,7 @@ function AppointmentRow({
           className="inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
         >
           {nextAction.label}
-        </Link>
+        </PendingLink>
         {/* Secondary by design: borderless, so it never competes with the
             resolved primary action (Start/Continue charting) or the checkout
             cell above it. Sibling of the row-body link, never nested inside
@@ -1419,23 +1432,25 @@ function AppointmentRow({
               drawer, no second textarea, no second note action, no second
               clinical-note loader — a second writer is precisely what this
               contract exists to prevent. */}
-          <Link
+          <PendingLink
             href={`/clients/${appt.client_id}?tab=consultation`}
             data-testid="today-consultation-notes"
+            pendingLabel="Opening client…"
             className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
           >
             {isConsultationVisit
               ? "Start consultation notes"
               : "Consultation notes"}
-          </Link>
+          </PendingLink>
           {intakeAction && (
-            <Link
+            <PendingLink
               href={intakeAction.href}
               data-testid="today-review-intake"
+              pendingLabel="Opening intake…"
               className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
             >
               {intakeAction.label}
-            </Link>
+            </PendingLink>
           )}
           {/* Only for a TRUSTED "no card". Reuses the existing practitioner
               portal-link authority whole; sends nothing until she clicks. */}
