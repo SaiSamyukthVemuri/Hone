@@ -177,6 +177,15 @@ export const BROWSER_GROUPS = {
       // already fails safe to EXTENDED coverage, so the spec runs whenever it
       // matters.
       "authenticated-route-error-containment.spec.ts",
+      // UI-01: the shared pending-navigation primitive, a sibling concern to
+      // the app-shell error boundary above it — PendingLink is what every
+      // query-only navigation (day nav, period pills, calendar toolbar) has
+      // instead of a route boundary, which structurally cannot render for
+      // them. Same placement and same reasoning as the line above: the shell
+      // family lives here, and NOT in `smoke`, because any diff that can reach
+      // this mechanism is unattributable application code that already fails
+      // safe to EXTENDED.
+      "perceived-speed.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
