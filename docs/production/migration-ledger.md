@@ -78,12 +78,24 @@ read-only inspection of variable NAMES only — no value was read or printed, an
 no Vercel configuration was modified. Willow's public booking page still renders
 `newClientWaitlistEnabled: true`, i.e. the **WAIT-01** behaviour, unchanged.
 
-**No business data was mutated.** Rows created in `clients`, `appointments`,
-`sessions` and `client_intake_forms` during the apply window were **measured**
-as `0, 0, 0, 0`. This is consistent with the migration's executable contract:
-its only `insert` statement sits inside the body of `join_new_client_waitlist`
-(between that function's `$$` delimiters) and therefore runs when the RPC is
-called, never during the apply.
+**Two separate facts, deliberately not merged into one.**
+
+**MEASURED — zero business-row CREATIONS.** Rows *created* in `clients`,
+`appointments`, `sessions` and `client_intake_forms` during the operator-observed
+apply window were counted as `0, 0, 0, 0`.
+
+**NOT MEASURED — updates and deletions.** That count says nothing about `UPDATE`
+or `DELETE` performed by concurrent production traffic in the same window. Only
+creations were counted, so only creations are claimed. An earlier draft of this
+record read "no business data was mutated"; that overstated the evidence and is
+corrected here.
+
+**SOURCE CONTRACT — 0185 itself performs no DML against those tables during
+apply.** This is a statement about the migration file, not about the database's
+concurrent traffic: its only `insert` sits inside the body of
+`join_new_client_waitlist` (between that function's `$$` delimiters) and
+therefore executes when the RPC is invoked, never while the migration is being
+applied.
 
 **`0185` IS NOW FROZEN.** Its bytes are production truth; any correction is a
 NEW migration.

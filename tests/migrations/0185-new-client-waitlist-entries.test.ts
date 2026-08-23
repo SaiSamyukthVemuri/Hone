@@ -446,6 +446,19 @@ function canonicalRecord(): {
 
 /** The marker that separates the head record from the carried history. */
 const CHAIN_MARKER = "CARRIES THE FULL CHECKSUM CHAIN FORWARD";
+
+/**
+ * The frozen checksums the carried history must never lose, head to oldest.
+ * Exactly the anchors the retired 0184 helper protected. A record that drops
+ * one has truncated production apply history, however well-formed its head
+ * still reads.
+ */
+const CARRIED_CHAIN_ANCHORS: ReadonlyArray<readonly [string, string]> = [
+  ["0183", "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb"],
+  ["0182", "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57"],
+  ["0181", "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f"],
+  ["0171", "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6"],
+];
 const SUPERSESSION = /SUPERSEDES the (\d{4}) record as the CURRENT hosted-state record/;
 
 /**
@@ -494,8 +507,20 @@ function assertActiveRecordIs(note: string, expectedSuperseded: string): void {
   // The head must be the record for the migration that is actually applied.
   expect(head).toContain(`${fileForVersion(VERSION)} APPLIED to production`);
 
-  // And the chain must still be carried, not truncated.
-  expect(chain.length).toBeGreaterThan(500);
+  // AND THE CHAIN MUST STILL BE CARRIED, ANCHOR BY ANCHOR.
+  //
+  // This was briefly `chain.length > 500`, which proved almost nothing: the
+  // note could be truncated immediately after the historical 0184 -> 0183
+  // supersession and still leave ~3,500 characters, keeping that wording intact
+  // while silently dropping every checksum from 0183 back to 0171. The helper
+  // this law replaced pinned those four SHAs by hand, and losing them was a
+  // real weakening, not a simplification.
+  //
+  // Pinned against the CHAIN specifically, never the whole note, so the active
+  // 0185 head can never satisfy a historical anchor by accident.
+  for (const [label, sha] of CARRIED_CHAIN_ANCHORS) {
+    expect(chain, `carried chain lost its ${label} checksum anchor`).toContain(sha);
+  }
 }
 
 describe("0185 — current hosted state", () => {
@@ -578,9 +603,43 @@ describe("0185 — current hosted state", () => {
     expect(doubled).not.toEqual(note);
     expect(() => assertActiveRecordIs(doubled, "0184")).toThrow();
 
-    // (c) the chain truncated away
+    // (c) the chain truncated away entirely
     const truncated = note.slice(0, note.indexOf(CHAIN_MARKER) + CHAIN_MARKER.length + 10);
     expect(() => assertActiveRecordIs(truncated, "0184")).toThrow();
+  });
+
+  it("ANTI-VACUITY: truncating the chain after the 0184 -> 0183 handoff is caught", () => {
+    // The exact case a character-count threshold missed. Cut the note right
+    // after the historical 0184 -> 0183 supersession: the head is untouched,
+    // that wording survives, and ~3,500 characters remain — so a length check
+    // passes while 0183, 0182, 0181 and 0171 have all been dropped.
+    const note = canonicalRecord().hosted_note;
+    const clause = "SUPERSEDES the 0183 record as the CURRENT hosted-state record";
+    const truncated = note.slice(0, note.indexOf(clause) + clause.length);
+
+    // The truncation really is the shape that used to slip through.
+    const { chain } = splitNote(truncated);
+    expect(chain.length).toBeGreaterThan(500);
+    expect(chain).toContain(clause);
+    for (const [, sha] of CARRIED_CHAIN_ANCHORS) {
+      expect(truncated).not.toContain(sha);
+    }
+
+    // ...and it now fails.
+    expect(() => assertActiveRecordIs(truncated, "0184")).toThrow();
+  });
+
+  it("each carried anchor is load-bearing on its own", () => {
+    // Dropping any SINGLE checksum must fail, not just wholesale truncation.
+    const note = canonicalRecord().hosted_note;
+    for (const [label, sha] of CARRIED_CHAIN_ANCHORS) {
+      const without = note.split(sha).join("REMOVED");
+      expect(without, label).not.toEqual(note);
+      expect(
+        () => assertActiveRecordIs(without, "0184"),
+        `losing the ${label} anchor went undetected`,
+      ).toThrow();
+    }
   });
 
   it("ANTI-VACUITY: extra HISTORICAL supersessions must NOT fail the guard", () => {
