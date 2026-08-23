@@ -812,6 +812,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Redirect-only alias kept for old bookmarks; breaks & blocks were consolidated into /settings/availability, which is what search advertises.",
   },
   {
+    route: "/settings/waitlist",
+    reason:
+      "WAIT-02 operator queue for the new-client waitlist. Its Settings tab appears only for a studio whose durable waitlist is switched on, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
+  },
+  {
     route: "/settings/payments/refresh",
     reason:
       "Payment-provider onboarding callback landing page, not a navigable setting.",

@@ -33,10 +33,41 @@ import "server-only";
 // the send path (lib/email/new-client-waitlist-send.ts), not here. Deriving a
 // key anywhere other than where the payload is built is what allowed a key and
 // its payload to drift apart in an earlier attempt.
+//
+// NOR IS THE DUPLICATE RULE. WAIT-02's "one waiting entry per normalized email
+// per studio" is defined and enforced by migration 0185 — a generated column
+// plus a studio-scoped partial unique index. A TypeScript re-implementation of
+// it here would be a second copy of the same law, free to drift from the one
+// that actually decides.
 // ===========================================================================
 
 /** Server-only env var naming the studios whose NEW-client intake is waitlisted. */
 export const NEW_CLIENT_WAITLIST_SLUGS_ENV = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
+
+/**
+ * Server-only env var naming the studios whose waitlist submissions are
+ * COMMITTED TO THE DATABASE (WAIT-02) rather than delivered as an email
+ * (WAIT-01).
+ *
+ * This is a STAGED-ROLLOUT switch, not a second admission-control authority.
+ * `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` above remains the single answer to "is
+ * this studio's new-client intake waitlisted?"; this one answers only "has the
+ * durable record been turned on for it yet?", and is consulted exclusively on
+ * paths the gate has already opened.
+ *
+ * It exists because WAIT-01 is ALREADY LIVE. Shipping the durable path on the
+ * existing flag alone would mean the deploy itself activates a new commit point
+ * for a studio currently relying on the old one, with no operator GO in
+ * between and no way back except a revert. The only alternative — clearing the
+ * gate list to keep the code dark — would reopen new-client booking, which is
+ * the exact failure the gate exists to prevent.
+ *
+ * DEFAULT OFF, exactly like the gate: unset / empty / whitespace-only is OFF
+ * for every studio, so deploying this changes nothing anywhere until an
+ * operator opts a studio in, and clearing it is the whole kill switch.
+ */
+export const NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV =
+  "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS";
 
 /** Machine-readable refusal code on the public booking result. */
 export const NEW_CLIENT_WAITLIST_REFUSAL_CODE = "new_client_waitlist" as const;
@@ -55,14 +86,22 @@ export const NEW_CLIENT_WAITLIST_SUBMIT_FAILED =
   "We couldn't record your waitlist request. Please try again in a moment.";
 
 /**
- * DISTINCT copy for the AMBIGUOUS case: the provider neither clearly accepted
- * nor clearly refused (timeout, or a concurrent request already in flight under
- * the same key). The studio may or may not have received it, so "try again"
- * would be actively wrong — a blind resubmit could duplicate a request that did
- * land. Point at a human, and never claim they joined.
+ * DISTINCT copy for the AMBIGUOUS case: the request neither clearly landed nor
+ * clearly failed. Under WAIT-01 that meant a provider timeout or a concurrent
+ * send under the same key; under WAIT-02 it means the database command threw in
+ * transport, which cannot distinguish "never ran" from "committed and the
+ * answer was lost". Either way "try again" would be actively wrong — a blind
+ * resubmit could duplicate a request that did land. Point at a human, and never
+ * claim they joined.
  */
 export const NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED =
   "We couldn't confirm your waitlist request. Please contact the studio before submitting again.";
+
+// NOTE. There is deliberately no constant here for a "you are already on this
+// waitlist" message or a "we could not confirm the studio notification" one.
+// Both existed and both were removed: each let an anonymous caller distinguish
+// which database outcome occurred, which is the enumeration this surface must
+// not permit. See NewClientWaitlistResult below.
 
 // Bounded input. Public, unauthenticated surface: everything is length-capped
 // before it reaches a database lookup, a rate limiter or an email template.
@@ -90,6 +129,13 @@ function parseWaitlistSlugs(raw: string | undefined): ReadonlySet<string> {
   return slugs;
 }
 
+/** Exact-match membership of a studio slug in one server-only allowlist env var. */
+function slugIsListed(envVar: string, studioSlug: string | null | undefined): boolean {
+  const slug = typeof studioSlug === "string" ? studioSlug.trim().toLowerCase() : "";
+  if (slug.length === 0) return false;
+  return parseWaitlistSlugs(process.env[envVar]).has(slug);
+}
+
 /**
  * Is this studio's NEW-client intake currently waitlisted?
  *
@@ -100,9 +146,21 @@ function parseWaitlistSlugs(raw: string | undefined): ReadonlySet<string> {
 export function isNewClientWaitlistEnabled(
   studioSlug: string | null | undefined,
 ): boolean {
-  const slug = typeof studioSlug === "string" ? studioSlug.trim().toLowerCase() : "";
-  if (slug.length === 0) return false;
-  return parseWaitlistSlugs(process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV]).has(slug);
+  return slugIsListed(NEW_CLIENT_WAITLIST_SLUGS_ENV, studioSlug);
+}
+
+/**
+ * Is this studio's waitlist COMMITTED TO THE DATABASE yet (WAIT-02)?
+ *
+ * Same server-resolved-slug requirement as the gate above, and the same
+ * exact-match semantics. SUBORDINATE to the gate: the submit path only reaches
+ * this question after `isNewClientWaitlistEnabled` has already said yes, so
+ * listing a studio here while its gate is off enables nothing.
+ */
+export function isNewClientWaitlistDurableEnabled(
+  studioSlug: string | null | undefined,
+): boolean {
+  return slugIsListed(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, studioSlug);
 }
 
 export type WaitlistSubmission = {
@@ -149,3 +207,34 @@ export function validateWaitlistSubmission(raw: {
     value: { name, email, phone: phoneRaw.length === 0 ? null : phoneRaw },
   };
 }
+
+/**
+ * The outcome of a public waitlist submission, as the browser sees it.
+ *
+ * ONE SUCCESS SHAPE, DELIBERATELY. This type used to carry `state` ("joined"
+ * vs "already_waiting") and `notification` ("sent" vs "unconfirmed"), and the
+ * form rendered different copy for each. On an UNAUTHENTICATED endpoint that
+ * is a MEMBERSHIP ORACLE: one request per address told an anonymous prober
+ * whether that named person had asked this studio for treatment. The per-IP
+ * and per-email limiters do not stop a single targeted probe, and for an
+ * electrolysis studio the disclosure is exactly the sensitive fact.
+ *
+ * So there is now nothing to read. Success is success — a newly created entry
+ * and an already-waiting duplicate return this identical value and render
+ * identical copy.
+ *
+ * The distinction is NOT lost, only moved behind the boundary: the database
+ * command still returns `created` / `already_waiting`, the action still uses
+ * it to decide whether to notify, and both it and the notification outcome are
+ * still recorded in the PII-free server logs where they were already kept.
+ *
+ * WHAT THIS DOES NOT CLOSE: a duplicate skips two provider calls and so
+ * answers measurably faster. Equalising that would mean either sending a
+ * second notification on every duplicate (rejected — it turns the form into a
+ * mail amplifier aimed at whoever the prober names) or padding responses to a
+ * constant time (disproportionate here). The timing residual is documented
+ * rather than papered over.
+ */
+export type NewClientWaitlistResult =
+  | { ok: true }
+  | { ok: false; error: string };

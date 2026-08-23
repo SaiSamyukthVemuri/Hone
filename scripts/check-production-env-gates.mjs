@@ -56,9 +56,40 @@
  * to >=1 recipient. This is operations reliability hardening before live
  * payments. It does NOT send any email or read alert content.
  *
- * Secrets: this script reads only the PRESENCE (and, for OPS_ALERT_EMAILS, the
- * recipient COUNT) of the env vars. It prints variable NAMES only, never their
- * values (no Upstash secrets, no configured alert email addresses).
+ * Gate 4, WAIT-02B STAGE-A DURABLE WAITLIST KILL SWITCH:
+ * This one is the OPPOSITE SHAPE to the others. They fail when required config
+ * is MISSING; this fails when optional config is PRESENT.
+ *
+ * Stage A ships the durable new-client waitlist DARK. The table stores personal
+ * information for prospects whom the current public privacy notice does not
+ * cover: it scopes itself to practitioners and to clients whose details a
+ * practitioner enters, and a waitlist prospect is neither. Collecting it before
+ * Stage B ships that disclosure would put personal data outside every disclosed
+ * category, so "the flag is empty" is a SECURITY property, not a preference.
+ *
+ * Until this gate existed that property rested entirely on documentation plus
+ * repository tests, and neither can see the Vercel Production environment. One
+ * mistyped dashboard entry would have activated prospect collection with
+ * nothing failing. This gate makes it structural: a production build ABORTS
+ * while the allowlist names any studio.
+ *
+ * Normalisation mirrors parseWaitlistSlugs() in lib/booking/new-client-waitlist.ts
+ * (split "," / trim / drop empties), so unset, empty, whitespace-only and
+ * comma-only all mean "no studio configured" and all PASS — exactly the values
+ * the runtime treats as OFF. Anything that can actually name a studio FAILS.
+ *
+ * Off-production is untouched: local, CI and preview still set the reserved e2e
+ * slug so the browser lane can exercise the feature.
+ *
+ * No bypass, and no exception for any named studio. Stage B removes or changes
+ * this gate in the SAME authorized release that ships the public disclosure,
+ * its dates, the notice evidence and the explicit activation GO. Stage A must
+ * not contain an activation path.
+ *
+ * Secrets: this script reads only the PRESENCE (and, for OPS_ALERT_EMAILS and
+ * the durable waitlist allowlist, a COUNT) of the env vars. It prints variable
+ * NAMES only, never their values (no Upstash secrets, no configured alert email
+ * addresses, no studio slugs).
  */
 
 // Required for public rate limiting in production. Names must match the
@@ -90,6 +121,25 @@ function isMissing(name) {
 // prints an address.
 function opsAlertRecipientCount() {
   const raw = process.env[OPS_ALERT_DELIVERY_ENV_VAR];
+  if (!raw) return 0;
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0).length;
+}
+
+// WAIT-02B Stage A: the durable new-client waitlist allowlist. Read at runtime
+// by isNewClientWaitlistDurableEnabled() in lib/booking/new-client-waitlist.ts.
+// During Stage A this MUST name no studio in production.
+const DURABLE_WAITLIST_ENV_VAR = "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS";
+
+// How many studios the durable allowlist actually enables. Mirrors
+// parseWaitlistSlugs() in lib/booking/new-client-waitlist.ts (split "," / trim
+// / drop empties) so a whitespace-only or comma-only value, which enables
+// nobody at runtime, correctly counts as zero. Reads the count only, never
+// prints a slug.
+function durableWaitlistStudioCount() {
+  const raw = process.env[DURABLE_WAITLIST_ENV_VAR];
   if (!raw) return 0;
   return raw
     .split(",")
@@ -151,7 +201,8 @@ function main() {
       `SKIP public-rate-limit-env: not a production deploy ` +
         `(VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"}). ` +
         `Required production env vars (Upstash rate-limit + ${OPS_ALERT_DELIVERY_ENV_VAR} ` +
-        `critical-alert delivery) are enforced only on Vercel production builds.\n`,
+        `critical-alert delivery) and the Stage-A ${DURABLE_WAITLIST_ENV_VAR} kill switch ` +
+        `are enforced only on Vercel production builds.\n`,
     );
     process.exit(0);
   }
@@ -225,6 +276,30 @@ function main() {
         `lib/ops/alert-email.ts; when unset they exist only as a durable ops_alerts row + the /admin/ops-alerts ` +
         `page, so operators may not see a critical failure in time.\n` +
         `Fix: set ${OPS_ALERT_DELIVERY_ENV_VAR} in the Vercel Production environment, then redeploy.\n`,
+    );
+  }
+
+  // Gate 4, WAIT-02B Stage-A durable waitlist kill switch.
+  // INVERTED: fails when the allowlist is POPULATED. See the header.
+  const enabledStudios = durableWaitlistStudioCount();
+  if (enabledStudios === 0) {
+    process.stdout.write(
+      `PASS stage-a-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} enables no studio ` +
+        `in production; the durable new-client waitlist stays dark.\n`,
+    );
+  } else {
+    failed = true;
+    // NAME and COUNT only, never the configured slug(s).
+    process.stderr.write(
+      `FAIL stage-a-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} is set in production ` +
+        `and enables ${enabledStudios} studio(s). During WAIT-02B Stage A it must enable NONE.\n` +
+        `Stage A deploys the durable new-client waitlist DARK. Its table stores personal ` +
+        `information for prospects that the current public privacy notice does not cover, so ` +
+        `enabling a studio now would collect personal data outside every disclosed category.\n` +
+        `Fix: clear ${DURABLE_WAITLIST_ENV_VAR} in the Vercel Production environment, then redeploy.\n` +
+        `This gate has no bypass and no per-studio exception. Enabling a studio is Stage B's ` +
+        `job, in the same authorized release that ships the public disclosure, its effective ` +
+        `date, the notice evidence that policy requires, and the explicit activation GO.\n`,
     );
   }
 

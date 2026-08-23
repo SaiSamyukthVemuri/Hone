@@ -194,6 +194,73 @@ describe("namespaces, encoding and hygiene", () => {
   });
 });
 
+// ===========================================================================
+// THE EVENT SCOPE (WAIT-02) — one key per JOIN, not per payload
+// ===========================================================================
+//
+// "Same tenant + same bytes = same request" was true while the email WAS the
+// record. Migration 0185 makes it false: a REMOVED person may rejoin with
+// identical details, which is a genuinely new event with its own durable row
+// but a byte-identical message. Without a third component the provider replays
+// the first join's response and the caller reports a send nobody received.
+describe("event scope", () => {
+  it("OMITTING it produces the EXACT key the two-component form always produced", () => {
+    // This is a CONTRACT, not an accident: the notification-commit path still
+    // depends on identical resubmissions collapsing, so its keys must not move.
+    const p = studioPayload();
+    const withoutArg = waitlistIdempotencyKey("studio", STUDIO_A, p);
+    for (const empty of [undefined, null, ""] as const) {
+      expect(waitlistIdempotencyKey("studio", STUDIO_A, p, empty)).toBe(withoutArg);
+    }
+    // ...and it is still exactly prefix / studio id / sha256 hex.
+    expect(withoutArg).toMatch(
+      new RegExp(`^hone-waitlist-studio-v2/${STUDIO_A}/[0-9a-f]{64}$`),
+    );
+  });
+
+  it("TWO JOINS by the same person at the same studio get DIFFERENT keys", () => {
+    const p = studioPayload();
+    expect(waitlistIdempotencyKey("studio", STUDIO_A, p, "entry-1")).not.toBe(
+      waitlistIdempotencyKey("studio", STUDIO_A, p, "entry-2"),
+    );
+  });
+
+  it("the SAME join is still stable — a scoped key is deterministic", () => {
+    const p = studioPayload();
+    expect(waitlistIdempotencyKey("studio", STUDIO_A, p, "entry-1")).toBe(
+      waitlistIdempotencyKey("studio", STUDIO_A, p, "entry-1"),
+    );
+  });
+
+  it("a scoped key never collides with an UNscoped one", () => {
+    const p = studioPayload();
+    expect(waitlistIdempotencyKey("studio", STUDIO_A, p, "entry-1")).not.toBe(
+      waitlistIdempotencyKey("studio", STUDIO_A, p),
+    );
+  });
+
+  it("the scope does NOT weaken tenant or namespace separation", () => {
+    const p = studioPayload();
+    expect(waitlistIdempotencyKey("studio", STUDIO_A, p, "entry-1")).not.toBe(
+      waitlistIdempotencyKey("studio", STUDIO_B, p, "entry-1"),
+    );
+    expect(waitlistIdempotencyKey("client", STUDIO_A, p, "entry-1")).not.toBe(
+      waitlistIdempotencyKey("studio", STUDIO_A, p, "entry-1"),
+    );
+  });
+
+  it("a scoped key still carries no PII and stays inside the provider ceiling", () => {
+    const p = studioPayload();
+    for (const ns of ["studio", "client"] as const) {
+      const key = waitlistIdempotencyKey(ns, STUDIO_A, p, "11111111-2222-4333-8444-555555555555");
+      expect(key).not.toContain("Ada");
+      expect(key).not.toContain("ada@example.test");
+      expect(key).not.toContain(SHARED_OWNER);
+      expect(key.length).toBeLessThanOrEqual(IDEMPOTENCY_KEY_MAX);
+    }
+  });
+});
+
 // --- transport harness ------------------------------------------------------
 
 type Attempt = { key: string | undefined; payload: unknown };
@@ -256,6 +323,27 @@ describe("the sender derives the key it transmits", () => {
     expect(attempts).toHaveLength(2);
     expect(attempts[1].key).not.toBe(attempts[0].key);
     expect(attempts[1].payload).toEqual(attempts[0].payload);
+  });
+
+  it("transmits the EVENT-SCOPED key when the caller supplies one", async () => {
+    const { transport, attempts } = transportFrom([
+      { kind: "ok", id: "re_1" },
+      { kind: "ok", id: "re_2" },
+    ]);
+    await send(transport, { eventScope: "entry-1" });
+    await send(transport, { eventScope: "entry-2" });
+    expect(attempts).toHaveLength(2);
+    // Identical bytes, identical tenant, DIFFERENT keys — which is the whole
+    // point: a rejoin after removal must not replay the first join's response.
+    expect(attempts[1].payload).toEqual(attempts[0].payload);
+    expect(attempts[1].key).not.toBe(attempts[0].key);
+    expect(attempts[0].key).not.toBe(EXPECTED_KEY);
+  });
+
+  it("omitting the event scope transmits the unchanged two-component key", async () => {
+    const { transport, attempts } = transportFrom([{ kind: "ok", id: "re_1" }]);
+    await send(transport, { eventScope: null });
+    expect(attempts[0].key).toBe(EXPECTED_KEY);
   });
 
   it("refuses to send at all without a tenant scope, rather than minting an unscoped key", async () => {

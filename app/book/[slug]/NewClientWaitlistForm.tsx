@@ -18,6 +18,21 @@ import { submitNewClientBookingWaitlistAction } from "./waitlist-actions";
 // modified client JavaScript cannot book around it: the public booking action
 // carries its own independent gate.
 //
+// WAIT-02: THE SUCCESS SURFACE IS ONE SURFACE, AND IT SAYS ONE THING.
+// "You're on the waitlist" renders only when the SERVER reports success — a
+// durable record exists (or, for a studio still on the WAIT-01 commit point,
+// the studio notification was accepted). It is never inferred from the request
+// having completed.
+//
+// AND IT SAYS THE SAME THING EITHER WAY. A newly created entry and an
+// already-waiting duplicate produce the same server value and therefore the
+// same panel. That is not a simplification, it is the point: this form is
+// public and unauthenticated, so copy that distinguished the two would let
+// anyone type a name and address and learn whether that person had asked this
+// studio for treatment. The panel below is a separate component whose props
+// carry NO outcome discriminator, so the disclosure cannot come back by
+// accident — there is nothing for it to branch on.
+//
 // COPY DISCIPLINE. Nothing here says "we are fully booked" or "no appointments
 // available" — both would be false for EXISTING clients, who keep their normal
 // booking path and are one click away. Nothing exposes utilization, capacity,
@@ -34,6 +49,37 @@ const INK = "#0A0A0A";
 const MUTED = "#6B6B6B";
 
 const NOT_A_RESERVATION = "Joining the waitlist does not reserve an appointment.";
+
+/**
+ * The confirmation surface. Exported so it can be rendered and compared
+ * directly in tests, and separated so the invariant is STRUCTURAL rather than
+ * asserted: it receives only the studio name, so no rendering of it can vary
+ * with which database outcome occurred.
+ */
+export function NewClientWaitlistJoinedPanel({ studioName }: { studioName: string }) {
+  return (
+    <div
+      className="flex w-full max-w-full flex-col gap-4 p-6"
+      style={{ backgroundColor: CARD_BG, border: `1px solid ${CARD_BORDER}` }}
+      role="status"
+      aria-live="polite"
+    >
+      <h2
+        className="font-[var(--font-fraunces)] text-[24px] font-bold leading-tight md:text-[28px]"
+        style={{ letterSpacing: "-0.02em" }}
+      >
+        You&rsquo;re on the waitlist.
+      </h2>
+      <p className="text-[15px] leading-[1.6]" style={{ color: INK }}>
+        {studioName} will contact you when consultation and treatment
+        availability can be offered.
+      </p>
+      <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
+        {NOT_A_RESERVATION}
+      </p>
+    </div>
+  );
+}
 
 export function NewClientWaitlistForm({
   slug,
@@ -52,6 +98,9 @@ export function NewClientWaitlistForm({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Set only by a successful server answer, so the confirmation panel can never
+  // render without one. A boolean deliberately: there is no second success
+  // state left to hold.
   const [joined, setJoined] = useState(false);
   const [submitting, startSubmitting] = useTransition();
 
@@ -76,30 +125,7 @@ export function NewClientWaitlistForm({
     });
   }
 
-  if (joined) {
-    return (
-      <div
-        className="flex w-full max-w-full flex-col gap-4 p-6"
-        style={{ backgroundColor: CARD_BG, border: `1px solid ${CARD_BORDER}` }}
-        role="status"
-        aria-live="polite"
-      >
-        <h2
-          className="font-[var(--font-fraunces)] text-[24px] font-bold leading-tight md:text-[28px]"
-          style={{ letterSpacing: "-0.02em" }}
-        >
-          You&rsquo;re on the waitlist.
-        </h2>
-        <p className="text-[15px] leading-[1.6]" style={{ color: INK }}>
-          {studioName} will contact you when consultation and treatment
-          availability can be offered.
-        </p>
-        <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
-          {NOT_A_RESERVATION}
-        </p>
-      </div>
-    );
-  }
+  if (joined) return <NewClientWaitlistJoinedPanel studioName={studioName} />;
 
   return (
     <div className="flex w-full max-w-full flex-col gap-6">

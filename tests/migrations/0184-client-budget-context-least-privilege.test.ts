@@ -90,10 +90,15 @@ function assertSingleCurrentRecord(note: string): void {
 }
 
 describe("0184: file and numbering", () => {
-  it("is the repository maximum and carries the version exactly once", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
+  it("carries the version exactly once and is no longer the repository maximum", () => {
+    // THE REPOSITORY-MAXIMUM HAND-OFF HAPPENED. 0185 (the durable new-client
+    // waitlist) is now the maximum, so per CLAUDE.md the "nothing above me"
+    // tripwire moves to ITS file and must not be duplicated here. The complete
+    // list of versions above 0184 is deliberately not pinned, so a later
+    // migration is not a mechanical edit to this file.
     expect(countVersion(VERSION)).toBe(1);
-    expect(versionsAbove(VERSION)).toEqual([]);
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toContain("0185");
   });
 
   it("is a NEW migration — 0183 was applied and must not be edited", () => {
@@ -103,20 +108,21 @@ describe("0184: file and numbering", () => {
     expect(migrationState().versions).toContain("0183");
   });
 
-  it("IS applied to production — hosted state is declared, not derived", () => {
-    // THE HAND-OFF HAPPENED. This block previously asserted the PRE-APPLY
-    // state (hosted 0183, pending ["0184"]) and was written to go red the
-    // moment the rollout ran, so the apply could not be recorded without
-    // updating the canonical record in the same change. 0184 was applied on
-    // 2026-08-17 and this block was flipped in that same change.
+  it("IS applied to production, and is still the hosted maximum", () => {
+    // THE APPLY HAND-OFF HAPPENED. This block previously asserted the
+    // PRE-APPLY state (hosted 0183, pending ["0184"]) and was written to go
+    // red the moment the rollout ran. 0184 was applied on 2026-08-17 and it
+    // was flipped in that same change.
     //
-    // repo == hosted now: nothing is pending, and 0185 is available but NOT
-    // claimed.
+    // repo != hosted again, and that is CORRECT, not drift: 0185 exists in the
+    // repository and has NOT been applied to production. `hosted_migration_max`
+    // is DECLARED in docs/production/migration-state.json and may only move in
+    // the change that records a real production apply — so it must still read
+    // 0184 here until 0185 is actually applied under its own authorization.
     const state = migrationState();
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.next_free_migration).toBe("0185");
+    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.pending_migrations).toContain("0185");
   });
 
   it("stamps the CURRENT apply as an OPERATOR-OBSERVED window, not a server time", () => {
@@ -192,9 +198,15 @@ describe("0184: file and numbering", () => {
     );
   });
 
-  it("0185 is available but NOT claimed", () => {
-    expect(migrationState().next_free_migration).toBe("0185");
-    expect(countVersion("0185")).toBe(0);
+  it("0185 is now CLAIMED, exactly once, and is not applied to production", () => {
+    // This block previously asserted 0185 was free. It is not any more: the
+    // durable new-client waitlist claimed it, and a claim must be visible from
+    // the migration that used to guard the number.
+    const state = migrationState();
+    expect(countVersion("0185")).toBe(1);
+    expect(state.next_free_migration).toBe("0186");
+    // Claimed in the repository is NOT applied in production.
+    expect(state.hosted_migration_max).toBe(VERSION);
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {

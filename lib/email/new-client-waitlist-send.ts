@@ -70,6 +70,27 @@ import { FROM_ADDRESS, resend } from "./client";
 // COROLLARY the callers must honour: the payload must be a PURE FUNCTION of the
 // submission. Nothing volatile (a wall clock, a nonce) may appear in it, or two
 // submissions of the same details would never collapse.
+//
+// ===========================================================================
+// OPTIONAL THIRD COMPONENT — THE EVENT SCOPE (WAIT-02)
+// ===========================================================================
+//
+// "Same tenant + same bytes = same request" was TRUE while the email WAS the
+// record: there was nothing else a resubmission could mean. WAIT-02 made it
+// false. A durable entry can be REMOVED and the same person can then REJOIN
+// with byte-identical details, which is a genuinely NEW event with its own
+// database row — but it renders the same payload for the same studio, so the
+// two-component key would replay the first send's response and this module
+// would report `accepted` for a message nobody received.
+//
+// So callers that HAVE a durable event identity pass it as `eventScope`, and
+// the key becomes one-per-event instead of one-per-payload.
+//
+// Callers that do NOT pass it keep their EXACT previous key, byte for byte —
+// the notification-commit path still depends on identical resubmissions
+// collapsing, because there it really is the same request. The component is
+// therefore additive: it does not renumber the v2 marker, because no existing
+// key identity changed.
 // ===========================================================================
 
 /**
@@ -107,24 +128,35 @@ function canonicalPayload(p: ProviderPayload): string {
 }
 
 /**
- * Derive the provider idempotency key from the tenant AND the exact payload.
+ * Derive the provider idempotency key from the tenant, an OPTIONAL durable
+ * event identity, and the exact payload.
  *
  * Exported so the tests can pin the identity invariants directly; production
- * callers never pass a key, they pass a namespace + studio id and let this
- * module derive it from the payload it is about to send.
+ * callers never pass a key, they pass a namespace + studio id (+ event scope
+ * where they have one) and let this module derive it from the payload it is
+ * about to send.
  *
- * Length: prefix (22) + "/" + uuid (36) + "/" + sha256 hex (64) = 124 chars,
- * comfortably inside the provider ceiling.
+ * Omitting `eventScope` yields the EXACT key this function produced before the
+ * component existed — that is a contract, not an accident, and it is what lets
+ * the notification-commit path keep collapsing identical resubmissions.
+ *
+ * Length: prefix (22) + "/" + uuid (36) + "/" + optional uuid (36) + "/" +
+ * sha256 hex (64) = 124 without the scope, 161 with it, both comfortably inside
+ * the provider ceiling.
  */
 export function waitlistIdempotencyKey(
   namespace: WaitlistKeyNamespace,
   studioId: string,
   payload: ProviderPayload,
+  eventScope?: string | null,
 ): string {
   const payloadHash = createHash("sha256")
     .update(canonicalPayload(payload), "utf8")
     .digest("hex");
-  return `${KEY_PREFIX[namespace]}/${studioId}/${payloadHash}`;
+  const scope = typeof eventScope === "string" && eventScope.length > 0
+    ? `${eventScope}/`
+    : "";
+  return `${KEY_PREFIX[namespace]}/${studioId}/${scope}${payloadHash}`;
 }
 
 /**
@@ -219,6 +251,12 @@ export async function sendWaitlistEmailIdempotent(args: {
   namespace: WaitlistKeyNamespace;
   /** SERVER-RESOLVED studios.id. Never a slug, a name, or an owner email. */
   studioId: string;
+  /**
+   * Durable identity of the EVENT this send announces (WAIT-02 passes the
+   * waitlist entry id). Omit it when the send IS the record and an identical
+   * resubmission must collapse.
+   */
+  eventScope?: string | null;
   to: string;
   subject: string;
   html: string;
@@ -250,7 +288,12 @@ export async function sendWaitlistEmailIdempotent(args: {
   };
   // Derived from THIS object — the one about to be sent — plus the tenant, so
   // neither component can drift from what is actually transmitted.
-  const idempotencyKey = waitlistIdempotencyKey(args.namespace, args.studioId, payload);
+  const idempotencyKey = waitlistIdempotencyKey(
+    args.namespace,
+    args.studioId,
+    payload,
+    args.eventScope,
+  );
 
   const first = await attempt(transport, payload, idempotencyKey);
   if (first.status !== "ambiguous") return first;
