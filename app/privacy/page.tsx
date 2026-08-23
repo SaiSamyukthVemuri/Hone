@@ -417,6 +417,14 @@ export default function PrivacyPolicyPage() {
         controller of the record.
       </P>
       <P>
+        <strong>New-client waitlist requests are not covered by the retention
+        criteria or the deletion process described in this section.</strong> A
+        request stays on the studio&rsquo;s waitlist until the studio removes
+        it; removing it marks the request as removed and keeps the record,
+        rather than erasing it. We do not operate a retention schedule or an
+        automatic deletion process for waitlist requests today.
+      </P>
+      <P>
         Deletion can also be constrained by law and by professional
         record-retention obligations. Electrolysis and laser treatment records
         are clinical records, and practitioners are frequently required to

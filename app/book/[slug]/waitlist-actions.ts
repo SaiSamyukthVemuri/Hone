@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
@@ -78,6 +79,16 @@ import type { Studio } from "@/lib/types/database";
 // returned any more: a duplicate can never produce one, so its presence would
 // have leaked the same bit in reverse — seeing it would prove the address was
 // NOT previously waiting.
+//
+// AND IT IS WHY THE NOTIFICATIONS RUN AFTER THE RESPONSE. Identical bytes are
+// not enough while the two branches take visibly different amounts of time to
+// produce them: a duplicate returned as soon as the command answered, whereas a
+// fresh join first awaited two provider calls, each able to burn a 15s timeout
+// and then retry. Comparing a target address against a control address would
+// have read that difference off a stopwatch. Both branches now return as soon
+// as the database has answered, and the sends are scheduled post-response —
+// NOT by mailing duplicates, which would point the form at whoever the prober
+// names.
 // ===========================================================================
 
 export type { NewClientWaitlistResult };
@@ -128,6 +139,20 @@ function databaseAnsweredDefinitively(code: string): boolean {
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Run work AFTER the response has been sent, so its duration cannot be measured
+ * by the caller. Mirrors `schedule()` in lib/analytics/server.ts: if `after()`
+ * is unavailable or we are outside a request scope, fall back to
+ * fire-and-forget rather than letting scheduling itself throw.
+ */
+function schedulePostResponse(work: () => Promise<void>): void {
+  try {
+    after(work);
+  } catch {
+    void work();
+  }
 }
 
 /** Bounded, PII-free structured log. Never carries the key or raw input. */
@@ -309,73 +334,79 @@ async function submitToDurableWaitlist(
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
   }
 
-  // ---- COMMITTED. Everything below is notification and cannot change that. --
-  // Tracked for the operator log line at the end, never for the response: the
-  // browser now learns nothing beyond "success", so this is the only place the
-  // notification outcome is still visible.
-  let notification: "sent" | "unconfirmed" = "unconfirmed";
-  const recipient = studioNotificationRecipient(studio);
-  if (!recipient) {
-    // Under WAIT-01 this was fatal — with no destination the request vanished.
-    // It is no longer: the studio's record is the row, and the operator queue
-    // reads it regardless of whether any address was configured.
-    logWaitlistEvent("new_client_waitlist_no_studio_recipient", {
-      studioId: studio.id,
-    });
-  } else {
-    try {
-      const studioEmail = buildNewClientWaitlistStudioEmail({
-        studioName: studio.name,
-        name: submission.name,
-        email: submission.email,
-        phone: submission.phone,
-      });
-      const studioSend = await sendWaitlistEmailIdempotent({
-        namespace: "studio",
+  // ---- COMMITTED. Everything below is notification and cannot change that,
+  // ---- and none of it is awaited before the caller gets an answer.
+  schedulePostResponse(async () => {
+    // Tracked for the operator log line at the end, never for the response: the
+    // browser now learns nothing beyond "success", so this is the only place the
+    // notification outcome is still visible.
+    let notification: "sent" | "unconfirmed" = "unconfirmed";
+    const recipient = studioNotificationRecipient(studio);
+    if (!recipient) {
+      // Under WAIT-01 this was fatal — with no destination the request vanished.
+      // It is no longer: the studio's record is the row, and the operator queue
+      // reads it regardless of whether any address was configured.
+      logWaitlistEvent("new_client_waitlist_no_studio_recipient", {
         studioId: studio.id,
-        // ONE KEY PER JOIN EVENT, not per payload. 0185 deliberately lets a
-        // removed person rejoin with identical details, which renders a
-        // byte-identical email: without this the provider would replay the
-        // FIRST join's response and this path would report `sent` for a
-        // notification the studio never received.
-        eventScope: entryId,
-        to: recipient,
-        subject: studioEmail.subject,
-        html: studioEmail.html,
-        text: studioEmail.text,
       });
-      if (studioSend.status === "accepted") {
-        notification = "sent";
-      } else {
-        // Refused and ambiguous are the SAME fact to a visitor who is already
-        // on the list, and the distinction is recorded here rather than shown.
-        // `code`/`reason` are provider error NAMES, never messages, which can
-        // embed the recipient address.
-        logWaitlistEvent("new_client_waitlist_studio_email_not_accepted", {
+    } else {
+      try {
+        const studioEmail = buildNewClientWaitlistStudioEmail({
+          studioName: studio.name,
+          name: submission.name,
+          email: submission.email,
+          phone: submission.phone,
+        });
+        const studioSend = await sendWaitlistEmailIdempotent({
+          namespace: "studio",
           studioId: studio.id,
-          status: studioSend.status,
-          detail:
-            studioSend.status === "ambiguous" ? studioSend.reason : studioSend.code,
+          // ONE KEY PER JOIN EVENT, not per payload. 0185 deliberately lets a
+          // removed person rejoin with identical details, which renders a
+          // byte-identical email: without this the provider would replay the
+          // FIRST join's response and this path would report `sent` for a
+          // notification the studio never received.
+          eventScope: entryId,
+          to: recipient,
+          subject: studioEmail.subject,
+          html: studioEmail.html,
+          text: studioEmail.text,
+        });
+        if (studioSend.status === "accepted") {
+          notification = "sent";
+        } else {
+          // Refused and ambiguous are the SAME fact to a visitor who is already
+          // on the list, and the distinction is recorded here rather than shown.
+          // `code`/`reason` are provider error NAMES, never messages, which can
+          // embed the recipient address.
+          logWaitlistEvent("new_client_waitlist_studio_email_not_accepted", {
+            studioId: studio.id,
+            status: studioSend.status,
+            detail:
+              studioSend.status === "ambiguous" ? studioSend.reason : studioSend.code,
+            emailFingerprint,
+          });
+        }
+      } catch {
+        logWaitlistEvent("new_client_waitlist_studio_email_threw", {
+          studioId: studio.id,
           emailFingerprint,
         });
       }
-    } catch {
-      logWaitlistEvent("new_client_waitlist_studio_email_threw", {
-        studioId: studio.id,
-        emailFingerprint,
-      });
     }
-  }
 
-  await sendClientAcknowledgement(studio, submission, emailFingerprint, entryId);
+    await sendClientAcknowledgement(studio, submission, emailFingerprint, entryId);
 
-  // The operator's replacement for the caveat the visitor used to see. It goes
-  // no further than the log: returning it would reintroduce the oracle, because
-  // a duplicate can never carry it.
-  logWaitlistEvent("new_client_waitlist_joined", {
-    studioId: studio.id,
-    notification,
+    // The operator's replacement for the caveat the visitor used to see. It goes
+    // no further than the log: returning it would reintroduce the oracle, because
+    // a duplicate can never carry it.
+    logWaitlistEvent("new_client_waitlist_joined", {
+      studioId: studio.id,
+      notification,
+    });
   });
+
+  // Reached at the same point in the flow as the duplicate branch above: the
+  // command has answered and nothing else has been awaited.
   return { ok: true };
 }
 

@@ -70,10 +70,12 @@ const scenario = {
   studioOutcome: { status: "accepted", messageId: "re_studio_1" } as Outcome,
   clientOutcome: { status: "accepted", messageId: "re_client_1" } as Outcome,
   studioSendThrows: false,
+  studioSendHangs: false,
   clientSendThrows: false,
 };
 
 function reset() {
+  deferred.length = 0;
   sends.length = 0;
   rpcCalls.length = 0;
   tableAccess.length = 0;
@@ -90,11 +92,28 @@ function reset() {
     studioOutcome: { status: "accepted", messageId: "re_studio_1" },
     clientOutcome: { status: "accepted", messageId: "re_client_1" },
     studioSendThrows: false,
+    studioSendHangs: false,
     clientSendThrows: false,
   });
 }
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
+
+// Post-response work is CAPTURED, not run. That is what makes "the action
+// returned before any provider call" an assertion rather than a hope: nothing
+// in `deferred` has executed until a test drains it.
+const deferred: Array<() => Promise<void>> = [];
+vi.mock("next/server", () => ({
+  after: (work: () => Promise<void>) => {
+    deferred.push(work);
+  },
+}));
+
+/** Run everything the action scheduled for after the response. */
+async function flushPostResponse(): Promise<void> {
+  const queued = deferred.splice(0, deferred.length);
+  for (const work of queued) await work();
+}
 
 vi.mock("@/lib/rate-limit/public", () => ({
   limitNewClientBookingWaitlist: async () =>
@@ -117,6 +136,7 @@ vi.mock("@/lib/email/new-client-waitlist-send", () => ({
     sends.push(opts);
     trace.push(`send:${opts.namespace}`);
     if (opts.namespace === "studio") {
+      if (scenario.studioSendHangs) return new Promise(() => {});
       if (scenario.studioSendThrows) throw new Error(`studio send exploded ${CANARY_EMAIL}`);
       return scenario.studioOutcome;
     }
@@ -194,6 +214,9 @@ describe("the database is the commit point", () => {
   it("`created` -> joined, and the command ran BEFORE any email", async () => {
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: true });
+    // Nothing has been sent yet: the sends are post-response work.
+    expect(trace).toEqual(["rpc:join_new_client_waitlist"]);
+    await flushPostResponse();
     expect(trace).toEqual(["rpc:join_new_client_waitlist", "send:studio", "send:client"]);
   });
 
@@ -203,6 +226,7 @@ describe("the database is the commit point", () => {
     // is a committed row.
     scenario.studioOutcome = { status: "rejected", code: "validation_error" };
     const result = await submitNewClientBookingWaitlistAction(form());
+    await flushPostResponse();
     expect(result).toEqual({ ok: true });
     expect(rpcCalls).toHaveLength(1);
   });
@@ -217,6 +241,7 @@ describe("the database is the commit point", () => {
     // and must not abort the courtesy acknowledgement either.
     scenario.studioSendThrows = true;
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({ ok: true });
+    await flushPostResponse();
     expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
   });
 
@@ -231,6 +256,7 @@ describe("the database is the commit point", () => {
     scenario.ownerEmail = null;
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: true });
+    await flushPostResponse();
     expect(sends.map((s) => s.namespace)).toEqual(["client"]);
   });
 
@@ -350,6 +376,73 @@ describe("a duplicate is externally indistinguishable from a fresh join", () => 
         expect(serialized, `${outcome} leaked ${leak}`).not.toMatch(leak);
       }
     }
+  });
+
+  it("NEITHER outcome awaits a provider call before answering", async () => {
+    // Byte-identical results are not enough on their own. A fresh join used to
+    // await two provider calls — each able to burn a 15s timeout and then retry
+    // — while a duplicate returned as soon as the command answered. Comparing a
+    // target address against a control address would read that off a stopwatch.
+    //
+    // `after()` is mocked to CAPTURE rather than run, so "no send had happened
+    // when the action returned" is a fact this test observes, not an inference.
+    for (const outcome of ["created", "already_waiting"]) {
+      reset();
+      setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, SLUG);
+      setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+      scenario.commandResult = outcome;
+
+      await submitNewClientBookingWaitlistAction(form());
+
+      expect(sends, `${outcome} sent mail before responding`).toHaveLength(0);
+      expect(trace, `${outcome} awaited more than the command`).toEqual([
+        "rpc:join_new_client_waitlist",
+      ]);
+    }
+  });
+
+  it("only the FRESH join schedules post-response work — a duplicate mails nobody", async () => {
+    // The equalisation must not be "send on duplicates too": that would aim the
+    // form's mail at whoever a prober names. A duplicate schedules nothing, and
+    // still answers at the same point in the flow.
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, SLUG);
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+    scenario.commandResult = "already_waiting";
+    await submitNewClientBookingWaitlistAction(form());
+    expect(deferred).toHaveLength(0);
+    await flushPostResponse();
+    expect(sends).toHaveLength(0);
+
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, SLUG);
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+    scenario.commandResult = "created";
+    await submitNewClientBookingWaitlistAction(form());
+    expect(deferred).toHaveLength(1);
+    await flushPostResponse();
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
+  });
+
+  it("a HANGING provider cannot slow the answer for either outcome", async () => {
+    // The sharpest form of the same property: even if every send blocks
+    // forever, both branches still return. Before this repair the fresh-join
+    // branch would have hung here for the provider's full timeout.
+    for (const outcome of ["created", "already_waiting"]) {
+      reset();
+      setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, SLUG);
+      setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+      scenario.commandResult = outcome;
+      scenario.studioSendHangs = true;
+
+      const answered = await Promise.race([
+        submitNewClientBookingWaitlistAction(form()).then(() => "answered" as const),
+        new Promise<"hung">((r) => setTimeout(() => r("hung"), 1_000)),
+      ]);
+      expect(answered, `${outcome} blocked on the provider`).toBe("answered");
+    }
+    // Leave nothing hanging for the next test.
+    deferred.length = 0;
   });
 
   it("renders ONE confirmation panel, whose props cannot carry the outcome", async () => {
@@ -507,6 +600,7 @@ describe("transport failures are classified honestly", () => {
 describe("notification idempotency is scoped to the join", () => {
   it("both sends carry the durable entry id as their event scope", async () => {
     await submitNewClientBookingWaitlistAction(form());
+    await flushPostResponse();
     expect(sends.map((s) => [s.namespace, s.eventScope])).toEqual([
       ["studio", "entry-1"],
       ["client", "entry-1"],
@@ -515,12 +609,14 @@ describe("notification idempotency is scoped to the join", () => {
 
   it("a REJOIN with identical details gets a DIFFERENT scope", async () => {
     await submitNewClientBookingWaitlistAction(form());
+    await flushPostResponse();
     const firstJoin = sends.map((s) => s.eventScope);
 
     // Same person, same details, same studio — but a new row after removal.
     reset();
     scenario.entryId = "entry-2";
     await submitNewClientBookingWaitlistAction(form());
+    await flushPostResponse();
 
     expect(firstJoin).toEqual(["entry-1", "entry-1"]);
     expect(sends.map((s) => s.eventScope)).toEqual(["entry-2", "entry-2"]);
@@ -528,16 +624,19 @@ describe("notification idempotency is scoped to the join", () => {
 
   it("the MESSAGE is unchanged between the two joins — only the scope differs", async () => {
     await submitNewClientBookingWaitlistAction(form());
+    await flushPostResponse();
     const first = sends.map((s) => ({ to: s.to, subject: s.subject, text: s.text }));
     reset();
     scenario.entryId = "entry-2";
     await submitNewClientBookingWaitlistAction(form());
+    await flushPostResponse();
     expect(sends.map((s) => ({ to: s.to, subject: s.subject, text: s.text }))).toEqual(first);
   });
 
   it("no entry id means NO scope, never a wrong one", async () => {
     scenario.entryId = null;
     await submitNewClientBookingWaitlistAction(form());
+    await flushPostResponse();
     expect(sends.map((s) => s.eventScope)).toEqual([null, null]);
   });
 });
@@ -614,6 +713,7 @@ describe("PII never leaves the emails and the row", () => {
       reset();
       apply();
       await submitNewClientBookingWaitlistAction(form());
+      await flushPostResponse();
       const logs = consoleErrors.join("\n");
       expect(logs).not.toContain(CANARY_NAME);
       expect(logs).not.toContain(CANARY_EMAIL);
@@ -634,6 +734,7 @@ describe("PII never leaves the emails and the row", () => {
   it("a provider error NAME is logged, never its message", async () => {
     scenario.studioOutcome = { status: "rejected", code: "validation_error" };
     await submitNewClientBookingWaitlistAction(form());
+    await flushPostResponse();
     const line = consoleErrors.find((l) =>
       l.includes("new_client_waitlist_studio_email_not_accepted"),
     );
@@ -739,6 +840,27 @@ describe("privacy disclosure is coupled to the durable path", () => {
     ]) {
       expect(section, `waitlist disclosure must not claim ${forbidden}`).not.toMatch(forbidden);
     }
+  });
+
+  it("the GLOBAL retention section does not over-promise for this class", () => {
+    // Adding waitlist people to the notice's SCOPE also brings them under
+    // section 9, which describes retention criteria and a deletion-request
+    // process that nothing implements for these rows — contradicting the
+    // recorded limitation in docs/03 §8. The earlier version of this test
+    // searched only the waitlist subsection and missed exactly that.
+    const retention = PRIVACY.slice(
+      PRIVACY.indexOf('<H2 id="data-retention">'),
+      PRIVACY.indexOf('<H2 id="security">'),
+    );
+    expect(retention.length).toBeGreaterThan(500);
+    expect(retention).toMatch(
+      /New-client waitlist requests are not covered by the retention\s+criteria or the deletion process described in this section/i,
+    );
+    expect(retention).toMatch(/until the studio removes\s+it/i);
+    expect(retention).toMatch(/marks the request as removed and keeps the record/i);
+    expect(retention).toMatch(
+      /do not operate a retention schedule or an\s+automatic deletion process for waitlist requests today/i,
+    );
   });
 
   it("the recorded export/retention limitation is still on the record", () => {
