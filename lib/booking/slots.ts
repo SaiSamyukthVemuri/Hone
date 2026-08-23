@@ -63,14 +63,14 @@ type StudioRow = {
   practitioner_capacity_enabled?: boolean;
 };
 
-type DefaultRow = {
+export type DefaultRow = {
   day_of_week: number;
   is_open: boolean;
   open_time: string | null;
   close_time: string | null;
 };
 
-type OverrideRow = {
+export type OverrideRow = {
   is_open: boolean;
   open_time: string | null;
   close_time: string | null;
@@ -81,7 +81,7 @@ type OverrideRow = {
 // confirmed appointments (with trailing buffer), one-off timed
 // blocks, and full-day blockouts. Only the interval is selected;
 // category labels and private notes never reach the public page.
-type ReservationRow = {
+export type ReservationRow = {
   starts_at: string;
   ends_at: string;
   source_kind?: string;
@@ -213,6 +213,98 @@ function trimTime(t: string | null): string | null {
   return t.slice(0, 5);
 }
 
+// The three columns a weekly default and a dated override have in common, and
+// the only three the precedence rule reads.
+export type AvailabilityWindowRow = Pick<
+  DefaultRow,
+  "is_open" | "open_time" | "close_time"
+>;
+
+/** One date's resolved open window on one timeline. */
+export type DayWindow = {
+  isOpen: boolean;
+  openTime: string | null;
+  closeTime: string | null;
+};
+
+// THE precedence rule: a dated override wins over the weekly default, and an
+// override that says CLOSED closes the day even though a default exists.
+//
+// Exported because a caller reading these tables in BULK — one query for a
+// horizon rather than two probes per date — must resolve a day exactly as the
+// per-day loader below does. A second copy of "is this Tuesday open?" is how a
+// downstream reader starts disagreeing with the booking page.
+//
+// A NOTE ON WHO APPLIES THE PRECEDENCE, so this is not read as more than it is.
+// The per-day loader below probes the override FIRST and only then the default,
+// so by the time a row reaches here the choice is already made and it calls
+// `pickDayWindow(row, null)` — it takes the NORMALISATION from this function,
+// not the precedence. A batched caller holds both rows at once and passes them
+// both, taking the precedence from here too. The two agree by construction,
+// because `pickDayWindow(row, null)` and `pickDayWindow(null, row)` are the
+// same call, which is exactly why one function can serve both shapes.
+export function pickDayWindow(
+  override: AvailabilityWindowRow | null | undefined,
+  def: AvailabilityWindowRow | null | undefined,
+): DayWindow {
+  const row = override ?? def ?? null;
+  if (!row) return { isOpen: false, openTime: null, closeTime: null };
+  return {
+    isOpen: row.is_open,
+    openTime: trimTime(row.open_time),
+    closeTime: trimTime(row.close_time),
+  };
+}
+
+// One reservation's PROTECTED interval in epoch milliseconds, plus the source it
+// came from so a caller that must tell booked time from closed time can.
+export type ProtectedInterval = {
+  start: number;
+  end: number;
+  sourceKind: string | undefined;
+};
+
+// Conflict intervals are SOURCE-AWARE. Post-migration 0152 the appointment
+// shadow rows in studio_calendar_reservations store the ACTUAL treatment
+// interval (starts_at, ends_at) with NO trailing buffer, so the protected end
+// must be reconstructed per source:
+//   - appointment rows: protectedEnd = ends_at + the CURRENT studio buffer.
+//     This matches the authoritative DB buffer validator (0152's
+//     enforce_appointment_buffer / appointment_buffer_conflict); without it the
+//     generator would offer a start at an appointment's actual end that the DB
+//     then rejects (e.g. 14:00 right after a 13:00–14:00 appt with a 30-min buffer).
+//   - timed_block / recurring-break / full_day_blockout rows: raw (starts_at,
+//     ends_at). These carry no buffer and MUST NOT be widened past their end.
+//
+// Exported for the same reason as pickDayWindow: the buffer reconstruction is a
+// rule, not an implementation detail, and a second copy of it would drift.
+export function protectedIntervals(
+  reservations: ReadonlyArray<ReservationRow>,
+  bufferMinutes: number,
+  excludeReservation?: ReservationExclusion,
+): ProtectedInterval[] {
+  const bufferMs = Math.max(0, bufferMinutes) * 60_000;
+  return reservations
+    // Exclude ONLY the exact own-reservation of the appointment being moved (the
+    // (source_kind, source_id) pair is unique). Every other reservation stays a conflict.
+    .filter(
+      (r) =>
+        !(
+          excludeReservation !== undefined &&
+          r.source_kind === excludeReservation.sourceKind &&
+          r.source_id === excludeReservation.sourceId
+        ),
+    )
+    .map((r) => {
+      const start = new Date(r.starts_at).getTime();
+      const actualEnd = new Date(r.ends_at).getTime();
+      // Re-apply the current buffer ONLY for appointments (0152 stores actual ends).
+      const protectedEnd =
+        r.source_kind === "appointment" ? actualEnd + bufferMs : actualEnd;
+      return { start, end: protectedEnd, sourceKind: r.source_kind };
+    });
+}
+
 export async function getAvailableSlots(
   supabase: SupabaseClient,
   studio: StudioRow,
@@ -250,13 +342,12 @@ export async function getAvailableSlots(
 
   // Determine open window: override wins over default. When ON, a
   // practitioner-specific row (0135) wins over the studio-wide fallback.
-  let openTime: string | null = null;
-  let closeTime: string | null = null;
-  let isOpen = false;
-  const applyWindow = (row: OverrideRow | DefaultRow) => {
-    isOpen = row.is_open;
-    openTime = trimTime(row.open_time);
-    closeTime = trimTime(row.close_time);
+  let window: DayWindow = { isOpen: false, openTime: null, closeTime: null };
+  const applyWindow = (row: AvailabilityWindowRow) => {
+    // Each branch below probes the override FIRST and only then the default, so
+    // precedence is already settled by the time a row arrives here; this reads
+    // the three columns through the one shared rule.
+    window = pickDayWindow(row, null);
   };
 
   if (capacityOn) {
@@ -322,6 +413,7 @@ export async function getAvailableSlots(
     }
   }
 
+  const { isOpen, openTime, closeTime } = window;
   if (!isOpen || !openTime || !closeTime) return [];
 
   // Load every reservation whose interval overlaps the day's
@@ -344,39 +436,70 @@ export async function getAvailableSlots(
     ? reservationBase.eq("resource_key", practitionerId)
     : reservationBase.eq("studio_id", studio.id));
 
+  // Everything above this line LOADS one day's inputs; every RULE lives in
+  // buildDaySlots below, which getAvailableSlots is now simply the day-loader
+  // for. The split exists so a caller that already holds these inputs — one
+  // that read a whole horizon in a single query rather than three per day —
+  // can reach the same candidate generation without a second implementation
+  // of it. There is one algorithm, and it is this one.
+  return buildDaySlots({
+    dateStr,
+    tz,
+    duration,
+    buffer,
+    openTime,
+    closeTime,
+    reservations: (reservations ?? []) as ReservationRow[],
+    excludeReservation,
+    options,
+  });
+}
+
+/** One day's already-loaded slot inputs. Nothing here reads. */
+export type DaySlotInput = {
+  /** Studio-local calendar date, YYYY-MM-DD. */
+  dateStr: string;
+  /** Studio timezone. */
+  tz: string;
+  /** Service duration in minutes. */
+  duration: number;
+  /** The CURRENT studio buffer in minutes. */
+  buffer: number;
+  /** This date's resolved window on the resolved timeline, "HH:MM". */
+  openTime: string;
+  closeTime: string;
+  /**
+   * Reservations whose interval overlaps the day, ALREADY scoped to the right
+   * timeline (studio-wide, or one practitioner's resource_key when capacity is
+   * on) by the caller — this core does not know which, and does not decide.
+   */
+  reservations: ReadonlyArray<ReservationRow>;
+  excludeReservation?: ReservationExclusion;
+  options?: SlotPackingOptions;
+};
+
+// The candidate-generation rules, with no I/O. Moved here verbatim from the
+// body of getAvailableSlots; the day loader above passes exactly what it used
+// to compute inline, so behaviour is unchanged.
+export function buildDaySlots({
+  dateStr,
+  tz,
+  duration,
+  buffer,
+  openTime,
+  closeTime,
+  reservations,
+  excludeReservation,
+  options,
+}: DaySlotInput): Slot[] {
   const durationMs = duration * 60_000;
   const bufferMs = buffer * 60_000;
 
-  // Conflict intervals are SOURCE-AWARE. Post-migration 0152 the appointment
-  // shadow rows in studio_calendar_reservations store the ACTUAL treatment
-  // interval (starts_at, ends_at) with NO trailing buffer, so the protected end
-  // must be reconstructed per source:
-  //   - appointment rows: protectedEnd = ends_at + the CURRENT studio buffer.
-  //     This matches the authoritative DB buffer validator (0152's
-  //     enforce_appointment_buffer / appointment_buffer_conflict); without it the
-  //     generator would offer a start at an appointment's actual end that the DB
-  //     then rejects (e.g. 14:00 right after a 13:00–14:00 appt with a 30-min buffer).
-  //   - timed_block / recurring-break / full_day_blockout rows: raw (starts_at,
-  //     ends_at). These carry no buffer and MUST NOT be widened past their end.
-  const conflicts = ((reservations ?? []) as ReservationRow[])
-    // Exclude ONLY the exact own-reservation of the appointment being moved (the
-    // (source_kind, source_id) pair is unique). Every other reservation stays a conflict.
-    .filter(
-      (r) =>
-        !(
-          excludeReservation !== undefined &&
-          r.source_kind === excludeReservation.sourceKind &&
-          r.source_id === excludeReservation.sourceId
-        ),
-    )
-    .map((r) => {
-      const start = new Date(r.starts_at).getTime();
-      const actualEnd = new Date(r.ends_at).getTime();
-      // Re-apply the current buffer ONLY for appointments (0152 stores actual ends).
-      const protectedEnd =
-        r.source_kind === "appointment" ? actualEnd + bufferMs : actualEnd;
-      return { start, end: protectedEnd };
-    });
+  const conflicts = protectedIntervals(
+    reservations,
+    buffer,
+    excludeReservation,
+  );
 
   const openMin = localMinutesSinceMidnight(openTime);
   const closeMin = localMinutesSinceMidnight(closeTime);
