@@ -14,7 +14,99 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-17, post-0184 apply)
+## Current state (verified 2026-08-23, post-0185 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0185** (`0185_new_client_waitlist_entries.sql`, applied **2026-08-23**, operator-observed apply window `20:31:19Z` – `20:31:39Z`) |
+| **Repo migration max** | **0185** — **hosted == repo.** Nothing pending. Next free number is **0186** (available, **not claimed**). |
+| **Total migrations in repo** | **184** (`0001` … `0157`, `0159` … `0185` — **no `0158`**) — derived by `npm run migration:state` |
+| **Total applied in production** | **NOT COUNTED, AND NOT CLAIMED.** The post-apply `migration list` was read to confirm the ordered tail `0184 \| 0184`, `0185 \| 0185` and that **zero** migrations remain pending; the history table was **not** row-counted. |
+| **`0185` raw checksum (frozen)** | `663a5d826d4c9e610c3bf7ec599dea577772ba521326488add77153f39a14ffc` — derived from the production blob (`git cat-file blob <prod>:supabase/migrations/0185_new_client_waitlist_entries.sql`), not copied from console history |
+| **`0184` raw checksum (frozen)** | `aa110edadd459e0f11062e3904ea7ad54a54a75c31d9342b762a533ecc07694c` |
+| **`0183` raw checksum (frozen)** | `a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb` |
+| **Dry run** | proposed `0185_new_client_waitlist_entries.sql` **and nothing else**; **DRY-RUN EXIT 0** |
+| **Apply exit status** | ✅ **PUSH EXIT CODE 0 EXPLICITLY CAPTURED.** CLI output ended `Finished supabase db push.` |
+| **Apply timestamp** | ⚠️ **OPERATOR-OBSERVED CLIENT-SIDE WINDOW**, `2026-08-23T20:31:19Z` – `20:31:39Z`. **No server-generated migration timestamp was captured, and none is invented.** |
+| **Applied from** | application production `48f0238900c07bd5d2dfed5c1ebbd832e77fdc50` (PR #629, WAIT-02B Stage A, already merged and deployed) |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — confirmed from `supabase/.temp/project-ref` against the ref named in this ledger and in `migration-state.json` before any command ran |
+| **Supabase CLI** | pinned `2.102.0` |
+| **Where the apply ran** | the **hone-dev-01 repository host**, from the operator-authenticated Supabase CLI session. *(This differs from earlier records: that host previously held no production credential. It does now, via an operator CLI login.)* |
+| **Post-apply verification** | `migration list --linked` read `0185 \| 0185` with **zero pending**; structural proof taken by read-only `db query --linked`. |
+
+### Application ordering — the reverse of 0183/0184
+
+`0184` was applied while its application code sat in an unmerged PR. `0185` is
+the opposite and deliberately so: **the code shipped first and dark.** PR #629
+merged to `48f02389`, deployed successfully, and only then was the migration
+applied. The capability is therefore live in code and live in schema while
+being reachable by nobody.
+
+### Post-apply structural proof (read-only, production)
+
+| Property | Verified value |
+|---|---|
+| `public.new_client_waitlist_entries` | exists |
+| Row count | **0** — no synthetic prospect was inserted, and none is claimed |
+| RLS | `relrowsecurity = true`, `relforcerowsecurity = false` |
+| Policies | exactly **one**: `new_client_waitlist_entries_owner_select`, `cmd = r`, `using is_studio_owner(studio_id)` |
+| Table grants | `authenticated` = **SELECT only**; `postgres` = owner. **`anon` and `service_role` hold nothing** — neither appears in `role_table_grants` |
+| `email_normalized` | generated **STORED**, expression `lower(btrim(email))` |
+| Foreign keys | `new_client_waitlist_entries_studio_id_fkey`, `new_client_waitlist_entries_removed_by_same_studio_fk` |
+| Studio-scoped uniqueness | `CREATE UNIQUE INDEX new_client_waitlist_entries_one_waiting_per_email ON (studio_id, email_normalized) WHERE (status = 'waiting')` |
+| Queue index | `(studio_id, status, joined_at, id)` |
+| Triggers | `new_client_waitlist_entries_server_timestamps`, `..._set_updated_at`, `..._transition_guard` |
+| `join_new_client_waitlist` | exists, `SECURITY DEFINER`, ACL `postgres=X, service_role=X` **only**; deployed body contains the `on conflict (studio_id, email_normalized) where status = …` atomic join and the `already_waiting` code |
+| `remove_new_client_waitlist_entry` | exists, `SECURITY DEFINER`, same ACL; deployed body contains `not_a_member` and `not_owner` |
+| Write-once removal evidence | deployed `transition_guard` body contains the removal-evidence clause, the `waiting -> removed` transition law, and the frozen-contact clause |
+
+### Dark-state facts at this record
+
+```
+CODE            = LIVE
+0185            = APPLIED
+TABLE / RPCS    = LIVE BUT EMPTY
+DURABLE FLAG    = EMPTY
+ANY STUDIO      = NOT ENABLED
+WILLOW          = NOT ENABLED
+PUBLIC POLICY   = UNCHANGED
+```
+
+`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was confirmed **absent** from the
+Vercel Production environment both immediately before and after the apply, by
+read-only inspection of variable NAMES only — no value was read or printed, and
+no Vercel configuration was modified. Willow's public booking page still renders
+`newClientWaitlistEnabled: true`, i.e. the **WAIT-01** behaviour, unchanged.
+
+**Two separate facts, deliberately not merged into one.**
+
+**MEASURED — zero business-row CREATIONS.** Rows *created* in `clients`,
+`appointments`, `sessions` and `client_intake_forms` during the operator-observed
+apply window were counted as `0, 0, 0, 0`.
+
+**NOT MEASURED — updates and deletions.** That count says nothing about `UPDATE`
+or `DELETE` performed by concurrent production traffic in the same window. Only
+creations were counted, so only creations are claimed. An earlier draft of this
+record read "no business data was mutated"; that overstated the evidence and is
+corrected here.
+
+**SOURCE CONTRACT — 0185 itself performs no DML against those tables during
+apply.** This is a statement about the migration file, not about the database's
+concurrent traffic: its only `insert` sits inside the body of
+`join_new_client_waitlist` (between that function's `$$` delimiters) and
+therefore executes when the RPC is invoked, never while the migration is being
+applied.
+
+**`0185` IS NOW FROZEN.** Its bytes are production truth; any correction is a
+NEW migration.
+
+**Stage B remains separate and blocked**, on the truthful public privacy
+disclosure for waitlist prospects, the policy's `lastUpdated` / future
+`effectiveDate` and the notice process that policy itself requires, explicit
+studio-enablement GO, and human activation smoke. None of that is done, and
+nothing here should be read as progress on it.
+
+## Previous state (verified 2026-08-17, post-0184 apply)
 
 | Field | Value |
 |---|---|
