@@ -58,20 +58,37 @@ const T = 30_000;
  * the navigation was served from cache and every "pending appeared" assertion
  * below would be describing a window that was never opened.
  */
-async function holdNavigation(page: Page, matches: (url: URL) => boolean) {
+async function holdNavigation(
+  page: Page,
+  matches: (url: URL) => boolean,
+  opts: { blockPrefetch?: boolean } = {},
+) {
   let open!: () => void;
   const gate = new Promise<void>((resolve) => {
     open = resolve;
   });
   let held = 0;
+  let prefetchesBlocked = 0;
 
   await page.route(
     (url) => matches(url),
     async (route) => {
       const headers = route.request().headers();
-      const isNavigation =
-        headers["rsc"] === "1" && headers["next-router-prefetch"] !== "1";
-      if (isNavigation) {
+      if (headers["next-router-prefetch"] === "1") {
+        // SEGMENT CHANGES ONLY. Next AUTO-prefetches a <Link> when it enters
+        // the viewport, and for a different pathname that prefetch can satisfy
+        // the whole navigation — the click then issues NO request and there is
+        // nothing to hold. A proof built on that window would be describing a
+        // coincidence. Blocking the speculative fetch leaves the cache empty so
+        // the tap must make a cold request we control, which is also the only
+        // case where perceived speed matters. Query-only navigation does not
+        // need this: the destination is the same pathname we are already on.
+        if (opts.blockPrefetch) {
+          prefetchesBlocked += 1;
+          await route.abort();
+          return;
+        }
+      } else if (headers["rsc"] === "1") {
         held += 1;
         await gate;
       }
@@ -81,6 +98,7 @@ async function holdNavigation(page: Page, matches: (url: URL) => boolean) {
 
   return {
     held: () => held,
+    prefetchesBlocked: () => prefetchesBlocked,
     /**
      * Let the held request through. Deliberately does NOT unroute: with the
      * gate open the handler is a pass-through, and removing interception in
@@ -216,6 +234,139 @@ test.describe("UI-01 perceived speed — desktop", () => {
     page,
   }) => {
     await provesTheTappedControlAcknowledges(page);
+  });
+});
+
+/**
+ * UI-01B — SEGMENT-CHANGING navigation (Dashboard -> Client Profile).
+ *
+ * Different mechanism from the day nav above, same primitive. A segment change
+ * has no route boundary in this app (there are zero loading.tsx files, and one
+ * cannot be added: above a query-navigated segment it stalls that navigation —
+ * see PR #624). So React keeps the OLD page mounted until the destination
+ * commits, which is precisely why the tapped control is still there to speak.
+ *
+ * Cases: (A) an ordinary navigation completes and leaves nothing behind,
+ * (B) a held response shows pending BEFORE the destination. (C) is the negative
+ * control, run by bypassing the presentation.
+ *
+ * There is no separate warm-cache case: on this route a tap always performs a
+ * real navigation, for the reasons recorded at case A.
+ */
+async function provesSegmentChangeIsAcknowledged(page: Page) {
+  const seed = await seedE2eStudio();
+  const client = await seedTodayVisit(seed, "Segment Change");
+  await loginAsOwner(page, seed);
+
+  // Installed BEFORE the dashboard renders so the destination is never
+  // prefetched and the click must issue a cold request we hold.
+  const gate = await holdNavigation(
+    page,
+    (url) => url.pathname.startsWith("/clients/"),
+    { blockPrefetch: true },
+  );
+
+  await page.goto("/dashboard");
+
+  const cta = page.getByTestId("today-consultation-notes").first();
+  const dashboardHeading = page.getByRole("heading", { level: 1, name: "Dashboard" });
+  const destination = page.getByRole("heading", { level: 1, name: client.name });
+
+  await expect(cta).toBeVisible({ timeout: T });
+  await expect(dashboardHeading).toBeVisible();
+  const dashboardUrl = page.url();
+
+  // The live region exists and is empty before anything is pending.
+  const liveRegion = cta.locator('[role="status"]');
+  await expect(liveRegion).toBeAttached();
+  await expect(liveRegion).toHaveText("");
+
+  const resting = await cta.boundingBox();
+  expect(resting).not.toBeNull();
+  expect(resting!.height).toBeGreaterThanOrEqual(44);
+
+  await cta.click();
+
+  await test.step("B: the tap is acknowledged before the destination exists", async () => {
+    await expect(tapAcknowledgement(cta)).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+    expect(gate.prefetchesBlocked()).toBeGreaterThan(0);
+
+    // The old Dashboard is still mounted — this is what a segment change does
+    // WITHOUT a route boundary, and what makes the control available to speak.
+    await expect(dashboardHeading).toBeVisible();
+    await expect(cta).toBeVisible();
+
+    // The destination does not exist yet.
+    await expect(destination).toHaveCount(0);
+
+    // The request is described, never an outcome.
+    await expect(liveRegion).toHaveText("Opening client…");
+
+    // Accessible name survives; the control neither moves nor resizes.
+    await expect(cta).toHaveAccessibleName(/consultation notes/i);
+    expect(await cta.boundingBox()).toEqual(resting);
+
+    // The transition has not committed, so the URL has not moved.
+    expect(page.url()).toBe(dashboardUrl);
+  });
+
+  await test.step("B: release -> destination renders, pending clears globally", async () => {
+    gate.release();
+    await expect(destination).toBeVisible({ timeout: T });
+    const landed = new URL(page.url());
+    expect(landed.pathname).toBe(`/clients/${client.clientId}`);
+    // The requested tab is preserved — the acknowledgement changed no semantics.
+    expect(landed.searchParams.get("tab")).toBe("consultation");
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+    await expect(liveRegion).toHaveCount(0);
+  });
+
+  await test.step("A: an ordinary navigation completes and leaves nothing behind", async () => {
+    // Nothing held, nothing blocked — the everyday path.
+    //
+    // There is deliberately NO separate "warm cache serves this instantly" case
+    // here, because on this route that scenario does not occur. Measured:
+    //
+    //   - the consultation CTA never produces its own `?tab=consultation`
+    //     prefetch request. Prefetching for these client destinations is keyed
+    //     by PATHNAME, so the neighbouring row action pointing at
+    //     /clients/<id> already covers it;
+    //   - and that pathname-level prefetch does not remove the click's real RSC
+    //     navigation — the tap still fetches.
+    //
+    // So every tap here performs a genuine navigation, and whether the mark is
+    // on screen long enough to notice is timing rather than contract. This step
+    // therefore fixes NO minimum pending-display duration and asserts none. It
+    // asserts only what must always hold: the destination arrives, and nothing
+    // pending is left behind.
+    await page.unrouteAll({ behavior: "wait" });
+    await page.goto("/dashboard");
+
+    const cta2 = page.getByTestId("today-consultation-notes").first();
+    await expect(cta2).toBeVisible({ timeout: T });
+    await cta2.click();
+
+    await expect(
+      page.getByRole("heading", { level: 1, name: client.name }),
+    ).toBeVisible({ timeout: T });
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+    await expect(page.locator('[role="status"]')).toHaveCount(0);
+  });
+}
+
+test.describe("UI-01B segment change — desktop", () => {
+  test("Dashboard -> Client Profile is acknowledged on the tapped control", async ({
+    page,
+  }) => {
+    await provesSegmentChangeIsAcknowledged(page);
+  });
+});
+
+test.describe("UI-01B segment change — 390px", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test("the same acknowledgement on a phone", async ({ page }) => {
+    await provesSegmentChangeIsAcknowledged(page);
   });
 });
 
