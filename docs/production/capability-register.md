@@ -4,9 +4,19 @@
 [current-state.md](./current-state.md). Where the two disagree, re-verify both against
 production; neither document is evidence for the other.
 
-- **Reconciled:** 2026-07-27
-- **Runtime-bearing baseline:** application HEAD `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`
-  (PR #478 merge; superseded at runtime by the PR #482 merge `d77d4434`). Production migration max **0160**.
+- **Reconciled:** 2026-08-23
+- **Runtime-bearing baseline:** application HEAD `48f0238900c07bd5d2dfed5c1ebbd832e77fdc50`
+  (PR #629 merge, WAIT-02B Stage A). The branch HEAD is above it at
+  `b9e0003fa5809b328fffeb8d352af319138bd531`, which is documentation-and-tests only.
+- **Migration state:** **not restated here.** Hosted max is declared once in
+  [`migration-state.json`](./migration-state.json); repo max and the next free number are
+  derived by `npm run migration:state`; the reconciled position with apply evidence is
+  [migration-ledger.md](./migration-ledger.md). This register previously carried its own copy
+  of the number and drifted 25 migrations behind the ledger — that copy is gone deliberately.
+- **Tenant classification:** [current-state.md](./current-state.md) **§0** is canonical.
+  Real-customer activity is **Willow Electrolysis only**; `hone-synthetic-twin` is a sanctioned
+  synthetic test tenant whose rows are **never** customer activity. Counts in this register are
+  tenant-scoped and carry an as-of stamp.
 - **Amended 2026-07-29:** §3 rewritten from *dormant / parked* to **RETIRED** — signed and
   finalized clinical records are not a Hone product capability. Decision record:
   [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md).
@@ -14,9 +24,15 @@ production; neither document is evidence for the other.
   now **database-enforced**: both studio flags pinned `false` by validated CHECK constraints,
   `EXECUTE` revoked from every runtime role on all 10 retired functions, `finalized`/`void`
   transitions refused, `INSERT` refused on all three signed ledgers, and the 0120
-  `hone.correction_session_id` permit removed. `0158` remains intentionally skipped. **UI/code removal is still pending PR #482's deployment** — the deployed application at
+  `hone.correction_session_id` permit removed. `0158` remains intentionally skipped. ~~**UI/code removal is still pending PR #482's deployment** — the deployed application at
   `058b8bcb…` retains the dead Finalize/Correction components, but they are flag-gated and both flags
-  are constrained `false`, so they are unreachable. The **one legacy controlled-test artifact** (1
+  are constrained `false`, so they are unreachable.~~ **CLOSED 2026-07-30, recorded here 2026-08-23.**
+  PR #482 merged as `d77d4434` and deployed; `FinalizeSessionCard`, `RecordVersionsPanel`,
+  `finalize-actions.ts` and `correction-actions.ts` are **absent from the tree** at the current
+  production SHA. The struck text above is preserved as the dated record of what was true on
+  2026-07-29; it stopped being true the next day and this register carried it for three weeks
+  while [current-state.md](./current-state.md) §3 correctly recorded the removal — a
+  contradiction between two canonical documents on a reachability claim. The **one legacy controlled-test artifact** (1
   finalized session + 1 snapshot, non-Willow) is retained unchanged and its hash still re-derives;
   **Willow has 0 non-draft sessions**. **Snapshot v2 remains permanently rejected.**
 - **Amended 2026-07-30 (second entry): migration `0160` is APPLIED and verified in production.** The
@@ -26,7 +42,8 @@ production; neither document is evidence for the other.
   `electrolysis_entries.session_id`, `electrolysis_entries.block_id` clearable only to NULL,
   `laser_entries.session_id`); **ordinary charting stays fully editable** and no signed-record
   capability returned. It closed **no** other clinical write risk — L18, L19, L20 and L21 all remain
-  open. Repository and hosted migration max are both `0160`.
+  open. *(The migration-max sentence that stood here has been removed: see the **Migration state**
+  bullet above. It read `0160` while production was at `0185`.)*
 
 Related: [current-state.md](./current-state.md) ·
 [known-limitations.md](./known-limitations.md) · [migration-ledger.md](./migration-ledger.md) ·
@@ -67,7 +84,7 @@ read the Limitations column.
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Charting | Session blocks, observation chips, treatment areas, Before Today / Treatment Intelligence | Merged | applied (≤0130) | Deployed | Enabled for all studios (no flag) | ✅ 49 `session_blocks`, 33 `electrolysis_entries` in production | ✅ in continuous operator use | production row counts | — |
+| Charting | Session blocks, observation chips, treatment areas, Before Today / Treatment Intelligence | Merged | applied (≤0130) | Deployed | Enabled for all studios (no flag) | ✅ **Willow: 96 `session_blocks`, 86 `electrolysis_entries`** *(2026-08-23)*; controlled test 12/6; Synthetic Twin 66/1 — **not customer activity** | ✅ in continuous operator use | production row counts | — |
 | Charting | **Phase A — unified "Treatment observations & skin response" box** (PR #479) | Merged | code-only, no migration | Deployed (in `3cabdca`, carried into `96b28d6`) | Enabled for all studios | ⚠️ deployed and reachable; no post-deploy production charting event recorded during verification | **Pending** | `lib/sessions/charting-labels.ts`; `block-setup-form.tsx:1325`; `lib/observation-chips.ts:15` | Chloe on-device acceptance |
 | Charting | Legacy `reaction_type` folded into the unified representation | Merged | — | Deployed | Enabled | ⚠️ code path verified; shipped in PR #479 | **Pending** | `lib/observation-chips.ts:221-225` | — |
 | Charting | Reaction-driven analytics consume the unified representation | Merged | — | Deployed | Enabled | ⚠️ code path verified; shipped in PR #479 | **Pending** | `lib/dashboard/clients-needing-attention.ts:126` | — |
@@ -83,13 +100,13 @@ read the Limitations column.
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Whole-session copy | Editable ephemeral preview ("Copy areas & settings from last session") | Merged (PR #478) | ✅ 0157 applied 2026-07-27T02:01:29Z | Deployed (`96b28d6`) | Enabled — no feature flag | **❌ NOT production exercised** | **Pending** | `session_copy_operations` = **0 rows** | Deployment verification deliberately performed zero copy operations |
-| Whole-session copy | Zero writes before the explicit commit | Merged | — | Deployed | Enabled | ❌ **not exercised** — consistent with the row above; the 0-row ledger is evidence the feature has not been *used*, not evidence the guarantee was *tested* in production | **Pending** | `session_copy_operations` = 0 rows | Preview is component memory only |
-| Whole-session copy | One atomic commit (`copy_session_setup`) | Merged | ✅ function present | Deployed | Enabled | ❌ never invoked in production | **Pending** | `pg_proc`: SECURITY DEFINER, `search_path=""` | — |
-| Whole-session copy | Source locking + stale-source rejection | Merged | ✅ fingerprint + source-id helpers | Deployed | Enabled | ❌ | **Pending** | `_whole_session_copy_fingerprint`, `_whole_session_copy_source_id` | Both helpers are **private** (service_role only) |
-| Whole-session copy | Idempotency + provenance ledger | Merged | ✅ `session_copy_operations` | Deployed | Enabled | ❌ 0 rows | **Pending** | `(target_session_id, idempotency_key)` UNIQUE | Retry/double-submit is an at-most-once no-op |
-| Whole-session copy | Reusable setup only — **minutes and outcomes excluded** | Merged | ✅ enforced in the RPC body | Deployed | Enabled | ❌ | **Pending** | 0157 RPC body | Clinical outcomes are never copied forward |
-| Whole-session copy | **Galvanic intensity forced literal NULL** at the destination | Merged | ✅ enforced in the RPC body | Deployed | Enabled | ❌ | **Pending** | 0157 RPC body; fingerprint excludes it | Forged-spec-safe: the destination insert does not read the client value |
+| Whole-session copy | Editable ephemeral preview ("Copy areas & settings from last session") | Merged (PR #478) | ✅ 0157 applied 2026-07-27T02:01:29Z | Deployed | Enabled — no feature flag | ✅ **PRODUCTION EXERCISED — 24 operations, all at Willow**, 2026-07-28 → 2026-08-23 | **Pending** | `session_copy_operations` = **24 rows** *(2026-08-23)* | Exercise is not acceptance. The original deployment verification did perform zero copy operations; that is now history |
+| Whole-session copy | Zero writes before the explicit commit | Merged | — | Deployed | Enabled | ⚠️ the surrounding feature is exercised (24 operations), but a *negative* guarantee is not proven by a ledger row — no production evidence isolates an abandoned preview | **Pending** | 24 committed operations; abandoned previews leave nothing to count, by design | Preview is component memory only |
+| Whole-session copy | One atomic commit (`copy_session_setup`) | Merged | ✅ function present | Deployed | Enabled | ✅ **invoked 24 times in production**, all at Willow | **Pending** | 24 `session_copy_operations` rows; `pg_proc`: SECURITY DEFINER, `search_path=""` | — |
+| Whole-session copy | Source locking + stale-source rejection | Merged | ✅ fingerprint + source-id helpers | Deployed | Enabled | ⚠️ exercised on the accept path (24 commits); **no production rejection was observed or counted** | **Pending** | `_whole_session_copy_fingerprint`, `_whole_session_copy_source_id` | Both helpers are **private** (service_role only). The refusal branch remains unevidenced in production |
+| Whole-session copy | Idempotency + provenance ledger | Merged | ✅ `session_copy_operations` | Deployed | Enabled | ✅ **24 rows** *(2026-08-23)*; the ledger is populated and in routine use | **Pending** | `(target_session_id, idempotency_key)` UNIQUE | Retry/double-submit is an at-most-once no-op. No production **duplicate-retry** event was isolated |
+| Whole-session copy | Reusable setup only — **minutes and outcomes excluded** | Merged | ✅ enforced in the RPC body | Deployed | Enabled | ✅ enforced on 24 real commits | **Pending** | 0157 RPC body | Clinical outcomes are never copied forward |
+| Whole-session copy | **Galvanic intensity forced literal NULL** at the destination | Merged | ✅ enforced in the RPC body | Deployed | Enabled | ✅ enforced on 24 real commits | **Pending** | 0157 RPC body; fingerprint excludes it | Forged-spec-safe: the destination insert does not read the client value |
 | Whole-session copy | Commit RPC unreachable from the browser | Merged | ✅ | Deployed | Enabled | n/a | n/a | `copy_session_setup` EXECUTE: anon **false**, authenticated **false**, service_role true | Invoked only by the authenticated server action with a server-derived practitioner id |
 
 ## 3. Clinical finalization, corrections and amendments — RETIRED
@@ -97,7 +114,7 @@ read the Limitations column.
 **Signed / finalized clinical records are RETIRED** by product decision (2026-07-29), enforced in
 production by migration **0159**, applied and verified 2026-07-30. This is `Retired`, not `Dormant`
 and not `Held`: both studio flags are pinned
-`false` by CHECK constraint, so **no role can enable them** — not a studio owner through the
+`false` by CHECK constraint on **every studio** (re-verified across all six tenants 2026-08-23), so **no role can enable them** — not a studio owner through the
 `studios: owners update` policy, not `service_role`. Treatment sessions are ordinary, editable
 operational records; practitioners correct mistakes by editing. There is no snapshot v2, and no
 document ever promised one. Reasoning, retained legacy artifact and the reintroduction bar:
@@ -105,18 +122,18 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Clinical record | Phase 1 — finalization boundary (0119, PR #399) | **RETIRED** — practitioner-facing Finalize surface removed | 0119 applied; **0159 retires it** (nothing dropped) | Deployed, unreachable | **RETIRED** — `clinical_finalization_enabled` false on **all 5 studios** and **pinned false** by `studios_clinical_finalization_retired`; `EXECUTE` on `finalize_session` revoked from every runtime role; `sessions_guard_retired_finalization` refuses any transition into `finalized`/`void` | ✅ historically **exactly once**, on the controlled non-Willow test studio (2026-07-11T00:42:12Z) | n/a — never offered to Willow | 1 `finalized` session of 76 + 1 `clinical_record_snapshots` row whose `content_hash` **still re-derives to a MATCH**, both on the test studio; Willow has **0** non-draft sessions; 0 `void` | **RETIRED — no next gate.** The one legacy artifact is retained unchanged, deliberately **not deleted and not regenerated** |
+| Clinical record | Phase 1 — finalization boundary (0119, PR #399) | **RETIRED** — practitioner-facing Finalize surface removed | 0119 applied; **0159 retires it** (nothing dropped) | Deployed, unreachable | **RETIRED** — `clinical_finalization_enabled` false on **every studio** (all six, 2026-08-23) and **pinned false** by `studios_clinical_finalization_retired`; `EXECUTE` on `finalize_session` revoked from every runtime role; `sessions_guard_retired_finalization` refuses any transition into `finalized`/`void` | ✅ historically **exactly once**, on the controlled non-Willow test studio (2026-07-11T00:42:12Z) | n/a — never offered to Willow | 1 `finalized` session of 76 + 1 `clinical_record_snapshots` row whose `content_hash` **still re-derives to a MATCH**, both on the test studio; Willow has **0** non-draft sessions; 0 `void` | **RETIRED — no next gate.** The one legacy artifact is retained unchanged, deliberately **not deleted and not regenerated** |
 | Clinical record | Phase 2 — corrections/amendments backend (0120, PR #400) | **RETIRED** — practitioner-facing signed-Correction surface removed | 0120 applied; **0159 retires it** | Deployed, unreachable | **RETIRED** — `clinical_corrections_enabled` false on all studios and **pinned false** by `studios_clinical_corrections_retired`; `EXECUTE` revoked on `correct_finalized_session` / `amend_finalized_session` / `amend_finalized_session_with_image` / `build_session_snapshot`; `INSERT` refused on all three signed-record ledgers | **❌ never** | n/a | `clinical_record_amendments` = **0 rows**; `clinical_audit_events` = **0 rows** | **RETIRED — no next gate.** Backend preserved and **must not be weakened** — not to allow later enablement, but to keep the legacy evidence immutable, keep the retirement fail-closed, and forbid `authenticated` `TRUNCATE` on the six clinical tables and any write to the three signed-record ledgers (ordinary row DML on the five app-written tables is NOT revoked — see known-limitations L18) |
 | Clinical record | Amendment-path reliability + observability (PR #402) | **RETIRED with Phase 2** | no migration | Deployed, unreachable | **RETIRED** | ❌ | n/a | PR #402 | The path it instrumented cannot execute |
 | Clinical record | `clinical_audit_events` — **not** the operational audit trail | **RETIRED with Phase 2** | 0120 applied; 0159 blocks `INSERT` | Deployed, immutable | **RETIRED** | ❌ 0 rows | n/a | its CHECK permits only `operation_type in ('correction','amendment')` | Named "audit" but scoped to signed corrections/amendments only. **Ordinary audit is retained and active**: `session_audit`, `record_keeping_audit_events`, `session_copy_operations`, `admin_action_events`, `client_portal_access_events` |
-| Clinical record | Append-only clinical notes (`client_clinical_notes`, 0126/0127) | Merged | ✅ applied | Deployed | Enabled — all studios, no flag | ✅ 1 production row | ✅ | `client_clinical_notes` = 1 row | **Unrelated to 0119/0120 and NOT retired.** A correction/revision here is a **new row** (`supersedes_note_id`), never a signed snapshot |
+| Clinical record | Append-only clinical notes (`client_clinical_notes`, 0126/0127) | Merged | ✅ applied | Deployed | Enabled — all studios, no flag | ✅ **Willow: 52 `client_clinical_notes`** *(2026-08-23)*; Synthetic Twin 3; 55 all-tenant | ✅ | production row counts | **Unrelated to 0119/0120 and NOT retired.** A correction/revision here is a **new row** (`supersedes_note_id`), never a signed snapshot |
 | Clinical record | Finalized photo **content** immutability | Never built | — | — | — | — | — | 0119 header scope note | **RETIRED, not a later phase** — it was a sub-requirement of a capability Hone no longer offers. The live private-bucket / service-role-only / EXIF / identity-freeze protections are unaffected |
 
 ## 4. Probe inventory and record keeping
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Record keeping | Sterile items, disinfectants, exposure incidents + audit | Merged | applied (0085–0088, 0096) | Deployed | Enabled | ✅ 8 `record_keeping_sterile_items` rows | ✅ | production row count | Exposure-incident history is **owner-only** |
+| Record keeping | Sterile items, disinfectants, exposure incidents + audit | Merged | applied (0085–0088, 0096) | Deployed | Enabled | ✅ **Willow: 8 `record_keeping_sterile_items`** *(2026-08-23)*; Synthetic Twin holds 5 more — not customer activity | ✅ | production row count | Exposure-incident history is **owner-only** |
 | Record keeping | Overdue-disinfectant "Replace now" alerts (PR #422) | Merged | no migration | Deployed | Enabled | ⚠️ read-time computed; auto-resolves, leaves no row | ⚠️ unverified — no acceptance record | PR #422 | Not separately instrumented by design |
 | Record keeping | Probe-lot ↔ inventory durable link (0155) | Merged | ✅ 0155 applied | Deployed | Enabled | — no linked block yet | **Pending** | `session_blocks.probe_inventory_item_id` | Legacy `probe_lots` table stays **dormant** |
 
@@ -124,7 +141,7 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Booking | Public booking (service selection, availability scan, intake gating, hashed-token manage/cancel/reschedule) | Merged | applied | Deployed | Enabled | ✅ 101 appointments across production | ✅ | production row count | — |
+| Booking | Public booking (service selection, availability scan, intake gating, hashed-token manage/cancel/reschedule) | Merged | applied | Deployed | Enabled | ✅ **215 appointments at Willow** *(2026-08-23)* — all-tenant 382 includes the Synthetic Twin's 141 and is **not** a customer figure | ✅ | production row count | — |
 | Booking | Practitioner calendar (mobile single-day timeline; desktop week/month + preview drawer) | Merged | no migration | Deployed | Enabled | ✅ | ✅ | PRs #380–#383 | — |
 | Booking | Move appointment — atomic same-record (0133, PRs #431/#434) | Merged | ✅ 0133 applied | Deployed | Enabled | ⚠️ available/custom-time paths deployed; no `moved` audit rows recorded at the last read | **Pending** for owner custom-time | migration 0133 | — |
 | Booking | Manual-override booking: actual overlap HARD / buffer SOFT (0152) | Merged | ✅ 0152 applied | Deployed | Enabled | ✅ | ✅ | migration 0152 | Owner override bypasses **buffer only**, never real overlap |
@@ -136,9 +153,9 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Portal | Magic-link login, portal tasks, append-only access-event log (0111) | Merged | ✅ applied | Deployed | Enabled | ✅ 21 `client_portal_sessions` | ✅ | production row count | — |
-| Portal | Portal messages + replies | Merged | ✅ applied (0053–0055) | Deployed | Enabled | ✅ 11 `client_portal_messages` | ✅ | production row count | One-way studio→client + client replies |
-| Intake | Intake forms + reminders + terminal-state immutability (0118) | Merged | ✅ applied | Deployed | Enabled | ✅ 29 `client_intake_forms` | ✅ | production row count | Submitted/reviewed answers immutable to members |
+| Portal | Magic-link login, portal tasks, append-only access-event log (0111) | Merged | ✅ applied | Deployed | Enabled | ✅ **Willow: 32 `client_portal_sessions`** *(2026-08-23)*; controlled test 6; Synthetic Twin 0 | ✅ | production row count | — |
+| Portal | Portal messages + replies | Merged | ✅ applied (0053–0055) | Deployed | Enabled | ✅ **11 `client_portal_messages` all-tenant — 2 at Willow, 9 on the controlled test studio** *(2026-08-23)* | ✅ | production row count | One-way studio→client + client replies |
+| Intake | Intake forms + reminders + terminal-state immutability (0118) | Merged | ✅ applied | Deployed | Enabled | ✅ **Willow: 72 `client_intake_forms`** *(2026-08-23)*; controlled test 6; Synthetic Twin 50 — **not customer activity** | ✅ | production row count | Submitted/reviewed answers immutable to members |
 | Consent | Versioned consent templates + e-signatures (0057, 0060, 0072) | Merged | ✅ applied | Deployed | Enabled | ✅ 19 `client_consent_signatures` | ✅ | production row count | ⚠️ **Draft wording — lawyer review required before relying on enforceability** |
 
 ## 7. Payments and Stripe
@@ -146,8 +163,8 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
 | Payments | Stripe Connect onboarding (live + test, mode-scoped 0103) | Merged | ✅ applied | Deployed | **Enabled for 2 studios** — Willow Electrolysis and the controlled test studio | ✅ both hold `stripe_account_status='enabled'`, charges+payouts true in **live** mode | ✅ | `studio_payment_settings`: 4 rows (live+test per studio) | Per-studio, after supervised onboarding |
-| Payments | Owner-run **session payment** charges, live mode | Merged | ✅ applied | Deployed | Enabled for the 2 approved studios | ✅ **Willow: 6 succeeded live charges, most recent 2026-07-26**; test studio: 2 succeeded live | ✅ | `payment_charge_attempts` grouped by studio + `stripe_livemode` | This is the strongest production-exercise evidence in the system |
-| Payments | Card-on-file (SetupIntent), live/test isolation | Merged | ✅ applied (0058/0059/0104) | Deployed | Enabled | ✅ 8 `client_payment_methods`, 9 `client_stripe_customers` | ✅ | production row counts | `require_card_on_file` = **false** on every studio |
+| Payments | Owner-run **session payment** charges, live mode | Merged | ✅ applied | Deployed | Enabled for the 2 approved studios | ✅ **Willow: 30 succeeded live charges of 34 attempts, most recent 2026-08-20T22:48:49Z** *(2026-08-23)*; test studio: 2 succeeded live; **Synthetic Twin: no payment rows at all** | ✅ | `payment_charge_attempts` grouped by studio + `stripe_livemode` | This is the strongest production-exercise evidence in the system |
+| Payments | Card-on-file (SetupIntent), live/test isolation | Merged | ✅ applied (0058/0059/0104) | Deployed | Enabled | ✅ **Willow: 18 `client_payment_methods`, 18 `client_stripe_customers`** *(2026-08-23)*; controlled test 2 and 3 | ✅ | production row counts | `require_card_on_file` = **false** on every studio |
 | Payments | Card add/replace studio notification (0154) | Merged | ✅ applied | Deployed | Enabled | ⚠️ 30 `practitioner_notifications` exist in total; **no per-type count was verified** for `card_added` / `card_replaced` | ⚠️ unverified | migration 0154; dedupe on the mode-scoped SetupIntent | Per-type production exercise is **unknown pending verification** |
 | Payments | Receipts (session-payment receipt email) | Merged | — | Deployed | Enabled | ✅ receipt columns populated on charge rows | ✅ | `payment_charge_attempts.receipt_status` | — |
 | Payments | Refunds (full-amount) | Merged | ✅ applied | Deployed | Enabled | **❌ zero production refunds** | — | `stripe_refunds` = **0 rows** | Code path proven in earlier controlled testing; no current-baseline production refund exists |
@@ -193,9 +210,9 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Tenancy | Studio isolation via RLS `is_studio_member` + composite same-studio FKs (0094, 0151) | Merged | ✅ applied | Deployed | Enabled | ✅ 5 studios coexist | ✅ | migrations 0094/0151 | 0151 closed the appointments cross-studio-reference gap |
+| Tenancy | Studio isolation via RLS `is_studio_member` + composite same-studio FKs (0094, 0151) | Merged | ✅ applied | Deployed | Enabled | ✅ **6 studios coexist** — 1 real-customer, 1 controlled test, 1 synthetic, 3 empty *(2026-08-23; see [current-state.md](./current-state.md) §0)* | ✅ | migrations 0094/0151 | 0151 closed the appointments cross-studio-reference gap |
 | Tenancy | Multi-studio user support + studio switcher (PRs #378/#379) | Merged | no migration | Deployed | Enabled | ✅ | ✅ | httpOnly `hone_selected_studio` cookie, re-validated per request | — |
-| Multi-practitioner | Practitioner roster | Merged | ✅ applied | Deployed | Enabled | ✅ 6 practitioners across 5 studios; Willow has 2 | ✅ | production row counts | — |
+| Multi-practitioner | Practitioner roster | Merged | ✅ applied | Deployed | Enabled | ✅ **2 practitioners at Willow**; 7 across all six tenants, which includes the controlled test and synthetic studios *(2026-08-23)* | ✅ | production row counts | — |
 | Multi-practitioner | Capacity foundation — collision/resource-key model (0134) | Merged | ✅ applied | Deployed | `practitioner_capacity_enabled` **true on the controlled test studio ONLY**; **false on Willow** | ⚠️ exercised only on the test studio | — | per-studio flag values | — |
 | Multi-practitioner | Per-practitioner availability + scoped blocks/breaks (0135, 0137–0139) | Merged | ✅ applied | Deployed | follows the capacity flag | — **no recorded operation**; the flag is on for the test studio but no capacity-scoped row or audit event was verified | — | migrations 0135–0139; per-studio flag values | Production exercise **unknown pending verification** |
 | Multi-practitioner | Internal booking + move/reassign commands (0142–0150) | Merged | ✅ applied | Deployed | follows the capacity flag | — **no recorded operation verified** | — | migrations 0142–0150 | Authoritative in-DB duration; owner-only length override. Production exercise **unknown pending verification** |
@@ -207,7 +224,7 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
 | Onboarding | Onboarding v2 — welcome email + resumable wizard (0140) | Merged | ✅ applied | Deployed | `onboarding_v2_enabled` **true on the controlled test studio ONLY** | ⚠️ 1 `studio_onboarding` row | — | per-studio flag values | Nudges + analytics **deferred** |
-| Onboarding | Invitation reconciliation + single authoritative consent (0141) | Merged | ✅ applied | Deployed | Enabled | ✅ 11 `pending_invitations` | ⚠️ | migration 0141 | Nothing fabricates consent; nothing activates a membership merely because an Auth user was created |
+| Onboarding | Invitation reconciliation + single authoritative consent (0141) | Merged | ✅ applied | Deployed | Enabled | ✅ **12 `pending_invitations`** all-tenant — **5 at Willow** *(2026-08-23)* | ⚠️ | migration 0141 | Nothing fabricates consent; nothing activates a membership merely because an Auth user was created |
 | Onboarding | Practitioner signup | Merged | ✅ applied | Deployed | **Invite-only** | ✅ | ✅ | magic-link login creates an account only for a pending invitation | Deliberate pilot posture |
 | Onboarding | Self-serve studio creation | — | — | — | — | ❌ | — | — | **Not built.** New studios are provisioned through the operator runbook |
 
@@ -215,7 +232,7 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Photos | Private `treatment-images` bucket, service-role signed URLs, EXIF stripping (0092/0093) | Merged | ✅ applied | Deployed | Enabled | ✅ 3 `treatment_images` rows | ✅ | production row count | Objects are **service-role only**; no public URLs |
+| Photos | Private `treatment-images` bucket, service-role signed URLs, EXIF stripping (0092/0093) | Merged | ✅ applied | Deployed | Enabled | ✅ **3 `treatment_images`** all-tenant *(2026-08-23)* — 1 Willow, 2 controlled test, **0 synthetic** | ✅ | production row count | Objects are **service-role only**; no public URLs |
 | Photos | Multi-file upload + per-file validation | Merged | no migration | Deployed | Enabled | ✅ | ✅ | PR #368 | — |
 | Photos | Finalized-record photo **content** immutability | Never built | — | — | — | — | — | 0119 header | **RETIRED with finalization — see §3.** Not a later phase |
 | Exports | Per-client procedure record pull with filtered print | Merged | — | Deployed | Enabled | ⚠️ not instrumented | ✅ | PR #223 | — |
@@ -224,8 +241,8 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
-| Ops | `ops_alerts` with redaction + never-throws contract (0067) | Merged | ✅ applied | Deployed | Enabled | ✅ **0 unresolved alerts** at reconciliation | ✅ | `ops_alerts where resolved_at is null` = 0 | Zero *unresolved* — not a claim of zero incidents ever |
-| Ops | Admin action audit log (0113, `/admin/audit`) | Merged | ✅ applied | Deployed | Enabled | ✅ 5 `admin_action_events` | ✅ | production row count | Service-role only; no token/URL/IP/PII columns |
+| Ops | `ops_alerts` with redaction + never-throws contract (0067) | Merged | ✅ applied | Deployed | Enabled | ⚠️ **4 unresolved alerts** *(2026-08-23)* — all `session_payment_charge_failed`, severity warning, raised at Willow 19:30:48Z–19:32:39Z; they are the 4 non-succeeded live charge attempts | ✅ | `ops_alerts where resolved_at is null` = **4** of 7 rows total | **Corrects a standing "0 unresolved" claim** carried unverified from 2026-07-27. Unresolved rows are not a claim about incidents ever — and neither is zero, without a fresh read |
+| Ops | Admin action audit log (0113, `/admin/audit`) | Merged | ✅ applied | Deployed | Enabled | ✅ **7 `admin_action_events`** all-tenant *(2026-08-23)* — 3 carry a studio, 4 carry none | ✅ | production row count | Service-role only; no token/URL/IP/PII columns |
 | Ops | `scripts/verify-production.mjs` read-only health check | Merged | — | n/a | n/a | ✅ | ✅ | derives expected migration max from the repo — no hardcoded literal | Reports INCOMPLETE for the Upstash heartbeat when local creds are absent |
 | Ops | `scripts/check-stripe-gates.mjs` | Merged | — | n/a | n/a | ✅ | ✅ | — | A gate suite, **not** proof of security |
 | Ops | Sentry error monitoring | Merged | no migration | Deployed | Enabled | ⚠️ | — | `sendDefaultPii` off, deny-by-default scrubbers, Replay/Logs OFF | Console contents **not verifiable** from code/CLI alone |
@@ -235,19 +252,53 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 
 ---
 
+## 14. New-client waitlist (admission control)
+
+Two capabilities, two stages. **Do not collapse them into one status.** WAIT-01 is live and its
+commit point is an email. WAIT-02B Stage A is deployed and reachable by nobody.
+
+| Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
+|---|---|---|---|---|---|---|---|---|---|
+| Waitlist | **WAIT-01 — email-delivered new-client waitlist** (PR #601) | Merged | no migration | Deployed | ✅ **ENABLED for one studio** — `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` present on the Vercel **Production** target only *(names read, no value)* | ✅ pilot activated 2026-08-19; one controlled canary submission at release | ⚠️ operator-observed at release; no separate acceptance record since | `/book/willow-electrolysis` renders `newClientWaitlistEnabled: true` *(2026-08-23)*; [release record](./releases/2026-08-19-willow-new-client-waitlist.md) | Commit point is the **studio notification email**, not a row. Clearing the env var is the whole kill switch |
+| Waitlist | **WAIT-02B Stage A — durable studio-scoped waitlist** (PR #629, `48f02389`) | Merged | ✅ **0185 applied 2026-08-23**, frozen | Deployed | ❌ **NOT ENABLED anywhere** — `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` **absent from Vercel Production**; **Willow not enabled** | ❌ **never** — `new_client_waitlist_entries` = **0 rows** at apply verification and **0 now** *(2026-08-23)* | n/a at this stage | migration 0185; `lib/booking/new-client-waitlist.ts`; env var **names** only | **DORMANT.** A table existing is not data being collected. See **L25** |
+| Waitlist | `join_new_client_waitlist` / `remove_new_client_waitlist_entry` | Merged | ✅ present, SECURITY DEFINER | Deployed | ❌ unreachable — no studio on the durable allowlist | ❌ never invoked | n/a | 0185 body; EXECUTE held by `postgres` and `service_role` only — `anon` and `authenticated` hold none | — |
+| Waitlist | Studio-scoped duplicate rule | Merged | ✅ generated `email_normalized` + partial unique index on `(studio_id, email_normalized) WHERE status='waiting'` | Deployed | ❌ | ❌ no row has ever existed to test it against | n/a | migration 0185 | **No global email uniqueness** — tenancy is structural |
+| Waitlist | Stage-A kill switch (**inverted build gate**) | Merged | no migration | Deployed | ✅ **active and enforcing** | ✅ every production build since `48f02389` has passed it | n/a | `scripts/check-production-env-gates.mjs` Gate 4 | A Vercel **production build FAILS** while the durable allowlist enables any studio. *"No bypass and no per-studio exception."* Stage B is a code-and-release action, not an env flip |
+| Waitlist | **WAIT-02B Stage B — durable collection enabled** | — | — | — | **NOT STARTED** | ❌ | — | — | Blocked on the public privacy disclosure for prospects, the policy's `lastUpdated` + a future `effectiveDate`, explicit studio-enablement GO, and human activation smoke |
+
+**Overall new-client waitlist posture: WAIT-01 enabled and exercised at one studio; WAIT-02B
+Stage A DB applied + deployed + DORMANT with zero rows; Stage B not started.** Never describe
+the durable waitlist as live, enabled, active, or collecting.
+
+---
+
 ## Capability register summary
 
 | Bucket | Count | Examples |
 |---|---|---|
-| Deployed + enabled + production-exercised + in routine operator use | ~20 | booking, charting core, portal, intake, consent, photos, live session payments, record keeping |
-| Deployed + enabled + **human acceptance pending** | 8 | Phase A charting (unified box, galvanic retirement, 0.733 precision, pulse relabel, notes sizing), whole-session copy, numbing notes, probe-lot linkage |
-| Deployed + **DB applied** + **never production-exercised** | 5 | whole-session copy commit path, refunds (current baseline), disputes, public-booking card collection, probe-lot linkage |
-| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 7 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow |
+| Deployed + enabled + production-exercised + in routine operator use | ~21 | booking, charting core, portal, intake, consent, photos, live session payments, record keeping, **whole-session copy** |
+| Deployed + enabled + **human acceptance pending** | 8 | Phase A charting (unified box, galvanic retirement, 0.733 precision, pulse relabel, notes sizing), whole-session copy *(now also production-exercised — the two are independent)*, numbing notes, probe-lot linkage |
+| Deployed + **DB applied** + **never production-exercised** | 5 | refunds (current baseline), disputes, public-booking card collection, probe-lot linkage, **the durable new-client waitlist (WAIT-02B Stage A)**. **Whole-session copy has left this bucket** — 24 production operations |
+| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 8 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow, **the durable new-client waitlist on every studio** |
 | **Held** behind a deliberate server-side gate | 3 | live manual fees, public-booking card collection, public practitioner assignment |
-| **Deferred** by product decision | 1 | direct new-client consultation booking route |
+| **Deferred** by product decision | 1 | direct new-client consultation booking route *(distinct from the WAIT-01 waitlist, which is live at Willow — see §14)* |
 | **RETIRED** by product decision (terminal; DB-enforced) | 5 | signed/finalized clinical records (0119), signed-record corrections/amendments (0120), amendment-path observability (PR #402), `clinical_audit_events`, finalized-photo content immutability — see §3 |
 | **Not built** | 5 | deposits/packages/partial payments, broad self-serve live payments, inbound-busy/two-way calendar, broad-SaaS SMS, self-serve studio creation |
 
-**The single most load-bearing distinction in this register:** whole-session copy and the
-Phase A charting correction are *deployed and enabled* but **not yet exercised by the
-person who asked for them**. Engineering delivery is complete; human acceptance is not.
+**The single most load-bearing distinction in this register:** *production exercised* and
+*human accepted* are independent, and whole-session copy now shows why. It is
+**production exercised** — 24 real operations at the live studio between 2026-07-28 and
+2026-08-23 — and it is still **not human accepted**, because Chloe has not confirmed she has
+used it and accepts its behaviour. Usage is evidence of exercise. Only a person saying so is
+evidence of acceptance.
+
+The Phase A charting correction sits differently again: deployed and enabled, with **no
+per-item production-exercise evidence measured in either direction**, and not accepted. Do not
+borrow the charting surface's general activity as evidence for any individual Phase A item.
+
+<!-- canonical-facts:ignore-start reason=quotes-the-superseded-not-exercised-claim -->
+*This register previously asserted that whole-session copy was "not yet exercised by the person
+who asked for them". That was true when written on 2026-07-27 and false from 2026-07-28
+onward; it stood here for roughly four weeks. The correction is recorded rather than quietly
+overwritten, because a register that silently changes its mind teaches readers not to trust it.*
+<!-- canonical-facts:ignore-end -->

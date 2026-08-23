@@ -10,15 +10,39 @@ posture see [current-state.md](./current-state.md).
 > carry pre-merge or pre-apply wording ("not hosted-applied", "NOT cron-registered", "hosted
 > max stays 013x") that is **no longer true**. Notably: **migration 0132 IS applied**; the
 > calendar cron routes **ARE** registered in `vercel.json` (PR #430); `calendar_sync_outbox`
-> and `calendar_event_links` each hold **one row**, not zero. The production migration max is
-> **0157** and the runtime-bearing head is **`96b28d6…`**. Trust
+> and `calendar_event_links` each hold **one row**, not zero.
+>
+> **This preamble no longer states the current migration max or the current runtime-bearing
+<!-- canonical-facts:ignore-start reason=quotes-the-superseded-preamble-numbers -->
+> head.** It used to, and both went stale — it read *"the production migration max is 0157 and
+> the runtime-bearing head is `96b28d6…`"* long after production had moved past both. A
+<!-- canonical-facts:ignore-end -->
+> changelog is a record of what shipped, not a second copy of current state. For current
+> truth: hosted max is declared in [`migration-state.json`](./migration-state.json), repo max
+> and next free are derived by `npm run migration:state`, and the reconciled position lives in
 > [current-state.md](./current-state.md) and [migration-ledger.md](./migration-ledger.md).
+>
+> **Historical rows below are NOT rewritten** when today differs from their THEN-state. That is
+> the point of a changelog. Only this preamble is kept current.
 
-## Most recent wave (through 2026-07-27)
+## Most recent wave
+
+*Ordered by PR number, not by date — a row's position implies nothing about when it shipped.
+This section previously carried a "(through 2026-07-27)" heading while containing rows dated
+2026-08-19 and later.*
+
+**Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479** plus **#601**,
+**#629** and **#630**. Roughly 150 merges between them — including migrations 0159–0184 — have
+**no row here**. Those releases are recorded in [migration-ledger.md](./migration-ledger.md) and
+in the git history; they were deliberately **not** backfilled during the 2026-08-23
+reconciliation, whose scope was current truth rather than historical completeness. Do not read a
+missing row as "not shipped".
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
-| **#601** | none | Willow pilot activated; controlled canary exercised | New-client waitlist admission control | Release record: [releases/2026-08-19-willow-new-client-waitlist.md](./releases/2026-08-19-willow-new-client-waitlist.md) |
+| **#630** | none (records `0185`) | **Documentation + tests only — NOT runtime-bearing** | Canonical hosted-state record for the `0185` production apply; re-pinned the carried checksum chain | Merged `b9e0003fa5809b328fffeb8d352af319138bd531`. **Advanced the branch HEAD above the runtime-bearing SHA without changing anything Hone does** — the diff touches no `app/`, `lib/`, `components/`, `supabase/` or `scripts/` path. Deployed as `dpl_5jGQkF4PjsoyiyKJCqRc6o4bsxwu` (Ready) |
+| **#629** | **0185** | **DB applied · deployed · DARK — no studio enabled, 0 rows, not exercised** | **WAIT-02B Stage A** — durable studio-scoped new-client waitlist: `new_client_waitlist_entries` plus `join_new_client_waitlist` / `remove_new_client_waitlist_entry`. Moves the commit point for a waitlist request off the studio notification email and onto a committed database row | **CODE-FIRST AND DARK — the reverse of 0183/0184's migration-first ordering, deliberately.** Merged `48f0238900c07bd5d2dfed5c1ebbd832e77fdc50` and deployed (`dpl_8iRpfwjbYQHXmbNqrUJnnvFjqH35`, Ready) **before** migration `0185` was applied on 2026-08-23. `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` is **absent from Vercel Production**; **Willow is not enabled** and continues to serve WAIT-01. Ships an **inverted build gate** (`scripts/check-production-env-gates.mjs`) that **fails a production build** while the durable allowlist enables any studio. Stage B not started — see [known-limitations.md](./known-limitations.md) L25 |
+| **#601** | none | Willow pilot activated; controlled canary exercised | New-client waitlist admission control (**WAIT-01** — commit point is the studio notification email, not a database row) | Release record: [releases/2026-08-19-willow-new-client-waitlist.md](./releases/2026-08-19-willow-new-client-waitlist.md) |
 | **#478** | **0157** | **Deployed + enabled — NOT production-exercised; human acceptance pending** | Whole-session copy — "Copy areas & settings from last session": editable ephemeral preview, zero writes before an explicit commit, one atomic commit, source locking + stale-source rejection, idempotency + provenance ledger | **Migration-first** — 0157 applied 2026-07-27T02:01:29Z, *before* the merge at 13:12:34Z. Additive: one table + four SECURITY DEFINER functions (`search_path=""`); no backfill, no existing clinical object mutated. Commit RPC is **service-role only**. Reusable setup only — **minutes and outcomes never copied**; galvanic intensity forced to literal NULL. **`session_copy_operations` = 0 rows — no real copy has ever been performed.** Merge SHA `96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`; Vercel prod `dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb` |
 | **#479** | none (code-only) | **Deployed + enabled — human acceptance pending** | Phase A charting correction: ONE unified *Treatment observations & skin response* box; galvanic-intensity retirement; exact `0.733 seconds` thermolysis display; *Thermolysis pulse count* relabel; larger *Additional notes* | Reaction-driven analytics consume the unified representation; legacy `reaction_type` folded in so historical rows still surface. **Galvanic intensity history preserved — the column was not dropped**; only new writes and ordinary display drop it (`galvanic_ma` / `galvanic_duration_seconds` remain **active**). No migration, no data operation, no flag change. Merge SHA `3cabdcaa9e196afc45db63e98eb8ca72ef0a5051` |
 | #477 | **0156** | Live | Conditional numbing notes — optional free-text kept only when `numbing_status='used'` | Migration-first. Nullable column, no default, no backfill, no CHECK/length cap, no RLS change |

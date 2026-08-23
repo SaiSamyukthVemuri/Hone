@@ -1303,7 +1303,7 @@ These shipped behaviour with **no migration**, so they never advance the migrati
 
 ---
 
-## Notes on 0108–0113 *(historical detail — these were the newest six as of 2026-07-10; the production max is now 0157 and the newest six are 0152–0157, covered in the tail table above)*
+## Notes on 0108–0113 *(historical detail — these were the newest six as of 2026-07-10. For the current production max, see **Current state** at the top of this file and [`migration-state.json`](./migration-state.json); this heading previously named a "now" max of its own and went stale.)*
 
 - **0108 observation chips** — additive; legacy chip data is backfilled from the free-text
   `comments` field **on row edit**, so rows never re-edited retain unstructured chips (a
@@ -1330,6 +1330,20 @@ and contains pending/unapplied language that is now superseded. Those dated entr
 retained as history; they are **not** current state.
 
 Superseded claims you may still encounter in dated material:
+
+<!-- canonical-facts:ignore-start reason=quotes-superseded-max-claims-verbatim -->
+- **"the production max is now 0157"** (this file's own 0108–0113 heading, and the
+  `release-changelog.md` preamble) — superseded. **No document restates a current max in prose
+  any more.** Hosted max is declared once in [`migration-state.json`](./migration-state.json);
+  repo max and the next free number are derived by `npm run migration:state`. Pinned by
+  `tests/docs/canonical-production-facts.test.ts`.
+- **"Production migration max is 0165 / 0163 / 0162 / 0160"** in `current-state.md`,
+  `capability-register.md` and `known-limitations.md` — superseded 2026-08-23. Each document
+  had hand-copied its own number and each drifted independently; `current-state.md` reached the
+  point of carrying **three different numbers in a single table cell**. The copies are removed,
+  not corrected. **Historical apply records in this file keep their literal numbers** — they
+  are evidence of what was true at each apply and are never rewritten.
+<!-- canonical-facts:ignore-end -->
 
 - "0096 not yet applied" / "0095 NOT yet applied" / "0093 / 0094 must not be applied until
   approved" — **all applied.**
