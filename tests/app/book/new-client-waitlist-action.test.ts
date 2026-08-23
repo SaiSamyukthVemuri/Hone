@@ -16,6 +16,20 @@ import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist
 // Plus the contracts that make a no-migration V1 safe: zero business DB
 // writes, `public.waitlist` untouched, PII confined to the two emails, and the
 // studio-scoped limiter consulted with the SERVER-RESOLVED studio id.
+//
+// WAIT-02 NOTE. This file is now the regression proof for the studio that has
+// NOT been moved to the durable record. `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`
+// is never set here, so every case below runs the notification-commit path
+// exactly as production does today — including its fail-closed semantics and
+// its refusal to touch a database at all (the mocked admin client throws on any
+// `from`/`rpc`, so a stray write would fail these tests, not pass them). The
+// durable path has its own file: new-client-waitlist-durable-commit.test.ts.
+//
+// The success SHAPE is `{ ok: true }` and nothing more. It briefly carried
+// `state` and `notification` so the browser could tell "joined" from "already
+// waiting"; that was removed because on a public, unauthenticated endpoint it
+// let anyone learn whether a named address was already on a studio's waitlist.
+// Nothing about WHEN this path succeeds changed, then or now.
 
 const STUDIO_ID = "22222222-2222-4222-8222-222222222222";
 const SLUG = "waitlisted-studio";
@@ -27,6 +41,7 @@ const CANARY_PHONE = "+1-555-92837";
 type Send = {
   namespace: string;
   studioId: string;
+  eventScope?: string | null;
   to: string;
   subject: string;
   html: string;
@@ -194,6 +209,16 @@ describe("commit semantics", () => {
     await submitNewClientBookingWaitlistAction(form());
     expect(sends[0].studioId).toBe(STUDIO_ID);
     expect(sends[1].studioId).toBe(STUDIO_ID);
+  });
+
+  it("NEITHER send carries an event scope — this path's keys are unchanged", async () => {
+    // WAIT-02 added an optional third key component for callers that have a
+    // durable event identity. This path has none: the email IS the record, and
+    // an identical resubmission must still COLLAPSE at the provider rather than
+    // send twice. Passing a scope here would silently change every key.
+    await submitNewClientBookingWaitlistAction(form());
+    expect(sends[0].eventScope ?? null).toBeNull();
+    expect(sends[1].eventScope ?? null).toBeNull();
   });
 
   it("a FORGED slug cannot alter the tenant component used downstream", async () => {

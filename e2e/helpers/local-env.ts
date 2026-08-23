@@ -123,6 +123,11 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // rest of the browser suite runs with the feature OFF — which is what makes
   // the extended run itself the flag-OFF regression proof.
   NEW_CLIENT_WAITLIST_STUDIO_SLUGS: "e2e-waitlist-p0",
+  // WAIT-02 durable persistence, enabled for that SAME single reserved slug so
+  // the browser lane exercises the database commit point rather than the
+  // superseded email one. Same containment argument: no other seeded studio
+  // holds this slug, so every other spec still runs with both flags OFF.
+  NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: "e2e-waitlist-p0",
   TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000000",
   TWILIO_AUTH_TOKEN: "dummy-twilio-token",
   TWILIO_FROM_NUMBER: "+15555550100",

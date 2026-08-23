@@ -79,13 +79,19 @@ function policyDefinition(name: string, sql: string = CODE): string {
 
 describe("0183: file and numbering", () => {
   it("carries the version exactly once", () => {
-    // 0183 is NO LONGER the repository maximum — 0184 (its least-privilege
-    // repair) now is, and per CLAUDE.md only the CURRENT maximum's own test
-    // may assert isRepoMax. The "nothing above me" tripwire is served
-    // centrally by tests/migrations/0184-*.test.ts.
+    // 0183 is NO LONGER the repository maximum, and per CLAUDE.md only the
+    // CURRENT maximum's own test may assert isRepoMax. The "nothing above me"
+    // tripwire is served centrally by the current maximum's own file.
+    //
+    // The full list of versions above 0183 is deliberately NOT pinned here.
+    // It was (`toEqual(["0184"])`), which made every future migration a
+    // mechanical edit to this file — precisely the 18-file sweep CLAUDE.md
+    // exists to stop. What 0183 actually cares about is the RELATIONSHIP: its
+    // least-privilege repair landed as a separate, higher migration because
+    // 0183's own bytes were already frozen in production.
     expect(countVersion(VERSION)).toBe(1);
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0184"]);
+    expect(versionsAbove(VERSION)).toContain("0184");
   });
 
   it("IS applied to production, and is no longer the CURRENT record", () => {
