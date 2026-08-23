@@ -453,6 +453,46 @@ const CHAIN_MARKER = "CARRIES THE FULL CHECKSUM CHAIN FORWARD";
  * one has truncated production apply history, however well-formed its head
  * still reads.
  */
+/**
+ * THE INTEGRITY BOUNDARY: a digest of the ENTIRE carried 0184 record.
+ *
+ * Four named anchors were not enough, and the way they failed is worth keeping
+ * written down. They closed suffix truncation but said nothing about the middle
+ * of the chain: deleting the whole 0180 clause drops 261 characters and that
+ * record's checksum while leaving all four anchors present, so an enumeration
+ * passed while apply history was gone. `toContain` is also order-blind.
+ *
+ * Enumerating all thirteen carried records would just be a longer list with the
+ * same shape of gap — the next omission would be mine again. So the boundary is
+ * now ONE invariant that cannot be partially satisfied: the carried record must
+ * be byte-identical to the 0184 `hosted_note` as it existed on this PR's
+ * production base, 48f0238900c07bd5d2dfed5c1ebbd832e77fdc50.
+ *
+ * Derived mechanically from that commit — `git show <base>:docs/production/
+ * migration-state.json`, parse `hosted_note`, sha256 the exact UTF-8 bytes. Not
+ * copied from prose, not taken from this branch's own suffix, no whitespace
+ * normalisation, no trimming.
+ *
+ * It covers the 0184 narrative and every link behind it — 0183, 0182, 0181,
+ * 0180, 0179, 0178, 0177, 0176, 0175, 0174, 0173, 0172 and the 0171 tail —
+ * with every checksum, every evidence statement and the exact ordering.
+ */
+const CARRIED_0184_NOTE_SHA256 =
+  "a65f858e18b997279dc56a53161669480881eb525e1674c490554335827c68be";
+
+/**
+ * Where the 0185 head stops and the frozen 0184 record begins. The carried
+ * record contains this same phrase (0184 carried its own chain forward), so
+ * the FIRST occurrence is the boundary.
+ */
+const CARRIED_RECORD_BOUNDARY =
+  "CARRIES THE FULL CHECKSUM CHAIN FORWARD so no earlier apply record is dropped: ";
+
+/**
+ * Readable landmarks only. These are no longer the integrity boundary — the
+ * digest above is — but they name what a reader should expect to find, and a
+ * failure here is easier to interpret than a digest mismatch.
+ */
 const CARRIED_CHAIN_ANCHORS: ReadonlyArray<readonly [string, string]> = [
   ["0183", "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb"],
   ["0182", "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57"],
@@ -472,6 +512,25 @@ function splitNote(note: string): { head: string; chain: string } {
   const at = note.indexOf(CHAIN_MARKER);
   if (at < 0) throw new Error("canonical note carries no chain-forward marker");
   return { head: note.slice(0, at), chain: note.slice(at) };
+}
+
+/** The frozen 0184 record carried inside the current note, exactly. */
+function carriedRecord(note: string): string {
+  const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+  if (at < 0) throw new Error("canonical note carries no 0184 record boundary");
+  return note.slice(at + CARRIED_RECORD_BOUNDARY.length);
+}
+
+/** THE integrity boundary. One invariant, impossible to partially satisfy. */
+function assertCarriedRecordIntact(note: string): void {
+  const digest = createHash("sha256")
+    .update(carriedRecord(note), "utf8")
+    .digest("hex");
+  expect(
+    digest,
+    "the carried 0184 record is no longer byte-identical to the production-base " +
+      "hosted_note: apply history has been edited, truncated or reordered",
+  ).toBe(CARRIED_0184_NOTE_SHA256);
 }
 
 /**
@@ -507,17 +566,11 @@ function assertActiveRecordIs(note: string, expectedSuperseded: string): void {
   // The head must be the record for the migration that is actually applied.
   expect(head).toContain(`${fileForVersion(VERSION)} APPLIED to production`);
 
-  // AND THE CHAIN MUST STILL BE CARRIED, ANCHOR BY ANCHOR.
-  //
-  // This was briefly `chain.length > 500`, which proved almost nothing: the
-  // note could be truncated immediately after the historical 0184 -> 0183
-  // supersession and still leave ~3,500 characters, keeping that wording intact
-  // while silently dropping every checksum from 0183 back to 0171. The helper
-  // this law replaced pinned those four SHAs by hand, and losing them was a
-  // real weakening, not a simplification.
-  //
-  // Pinned against the CHAIN specifically, never the whole note, so the active
-  // 0185 head can never satisfy a historical anchor by accident.
+  // AND THE CARRIED RECORD MUST BE BYTE-IDENTICAL TO THE FROZEN ORIGINAL.
+  // This is the integrity boundary; the anchors below are landmarks.
+  assertCarriedRecordIntact(note);
+
+  // Landmarks, kept for readability.
   for (const [label, sha] of CARRIED_CHAIN_ANCHORS) {
     expect(chain, `carried chain lost its ${label} checksum anchor`).toContain(sha);
   }
@@ -629,6 +682,67 @@ describe("0185 — current hosted state", () => {
     expect(() => assertActiveRecordIs(truncated, "0184")).toThrow();
   });
 
+  it("CONTROL 3 — the real carried record matches the frozen digest", () => {
+    const note = canonicalRecord().hosted_note;
+    const carried = carriedRecord(note);
+    expect(carried.length).toBe(6101);
+    expect(createHash("sha256").update(carried, "utf8").digest("hex")).toBe(
+      CARRIED_0184_NOTE_SHA256,
+    );
+    expect(() => assertCarriedRecordIntact(note)).not.toThrow();
+  });
+
+  it("CONTROL 1 — MID-CHAIN DELETION is caught (the exact reported case)", () => {
+    // Codex's reproduction: remove the whole 0180 clause. All four landmark
+    // anchors survive, so the enumeration this replaced still passed while that
+    // record's checksum and evidence were gone.
+    const note = canonicalRecord().hosted_note;
+    const from = note.indexOf("the 0180 record (");
+    const to = note.indexOf("the 0179 record (");
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const mutated = note.slice(0, from) + note.slice(to);
+
+    // It really is the reported shape: shorter, 0180's checksum gone, and every
+    // landmark anchor still present.
+    expect(mutated.length).toBeLessThan(note.length);
+    expect(mutated).not.toContain(
+      "d5d8271da38588a89e0727ce7a2a5c417ee8e079ad283acdc1fa55f90727eb8d",
+    );
+    for (const [, sha] of CARRIED_CHAIN_ANCHORS) {
+      expect(mutated).toContain(sha);
+    }
+
+    // ...and the digest catches it.
+    expect(() => assertCarriedRecordIntact(mutated)).toThrow();
+    expect(() => assertActiveRecordIs(mutated, "0184")).toThrow();
+  });
+
+  it("CONTROL 2 — REORDERING carried links is caught", () => {
+    // Same bytes, different order. Every anchor is present and nothing is
+    // missing, so no containment check could ever see this.
+    const note = canonicalRecord().hosted_note;
+    const a = "the 0177 record (";
+    const b = "the 0176 record (";
+    const c = "the 0175 record (";
+    const ia = note.indexOf(a), ib = note.indexOf(b), ic = note.indexOf(c);
+    expect(ia).toBeGreaterThan(-1);
+    expect(ib).toBeGreaterThan(ia);
+    expect(ic).toBeGreaterThan(ib);
+    const swapped =
+      note.slice(0, ia) + note.slice(ib, ic) + note.slice(ia, ib) + note.slice(ic);
+
+    // Nothing lost — identical length, and every anchor still present.
+    expect(swapped.length).toBe(note.length);
+    expect(swapped).not.toEqual(note);
+    for (const [, sha] of CARRIED_CHAIN_ANCHORS) {
+      expect(swapped).toContain(sha);
+    }
+
+    // ...and the digest catches it.
+    expect(() => assertCarriedRecordIntact(swapped)).toThrow();
+  });
+
   it("each carried anchor is load-bearing on its own", () => {
     // Dropping any SINGLE checksum must fail, not just wholesale truncation.
     const note = canonicalRecord().hosted_note;
@@ -642,14 +756,18 @@ describe("0185 — current hosted state", () => {
     }
   });
 
-  it("ANTI-VACUITY: extra HISTORICAL supersessions must NOT fail the guard", () => {
-    // This is what separates the positional law from mere counting. Appending
-    // another truthful historical record to the chain is legitimate and must
-    // stay legitimate — a guard that went red here would force history to be
-    // rewritten on every apply.
+  it("the positional law is NOT a global phrase count", () => {
+    // What separates the positional law from counting: the real record already
+    // contains a SECOND "as the CURRENT hosted-state record" — 0184's own
+    // supersession of 0183, frozen inside the carried chain — and the guard
+    // passes anyway. A global count would fail here and would force frozen
+    // history to be rewritten on every apply.
     const note = canonicalRecord().hosted_note;
-    const withMoreHistory =
-      note + " the 0170 record SUPERSEDES the 0169 record as the CURRENT hosted-state record.";
-    expect(() => assertActiveRecordIs(withMoreHistory, "0184")).not.toThrow();
+    expect(note.split("as the CURRENT hosted-state record").length - 1).toBeGreaterThan(1);
+    expect(() => assertActiveRecordIs(note, "0184")).not.toThrow();
+
+    // (Appending to the chain is no longer a legitimate operation to tolerate:
+    // the carried record is byte-frozen by digest, and the controls below prove
+    // that any edit to it — deletion, reordering — is caught.)
   });
 });
