@@ -821,10 +821,29 @@ describe("no studio is enabled at merge time", () => {
   const REPO = path.resolve(__dirname, "../../../");
   const read = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 
-  /** Every committed file that mentions the durable flag by name. */
+  /**
+   * Every committed CONFIGURATION-CAPABLE file that names the durable flag.
+   *
+   * The census exists to catch surfaces that could silently configure or
+   * activate the flag — runtime readers, env/config files, seeds, deployment
+   * scripts, and harnesses that deliberately set it. Pure prose cannot, which
+   * is why Markdown is excluded.
+   *
+   * `docs/production/migration-state.json` is excluded BY EXACT PATH for the
+   * same reason: it is prose-in-JSON. It is the canonical hosted-state record,
+   * and since the 0185 apply it truthfully states that the variable
+   * NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS was measured ABSENT from the
+   * Vercel Production environment. Naming the variable exactly is the point of
+   * that record, and it must not be made vaguer to satisfy a grep — but the
+   * file cannot configure anything, so it does not belong in this census.
+   *
+   * The exclusion is deliberately ONE PATH. Not `*.json`, not `docs/**`, not
+   * `docs/production/**`: any of those would let a future config-capable file
+   * slip in under the same umbrella.
+   */
   function filesNamingTheFlag(): string[] {
     return execSync(
-      `git grep -l NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS -- . ':!*.md' || true`,
+      `git grep -l NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS -- . ':!*.md' ':!docs/production/migration-state.json' || true`,
       { cwd: REPO },
     )
       .toString()

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   countVersion,
   fileForVersion,
   isRepoMax,
+  migrationState,
   versionsAbove,
 } from "./helpers/migration-state";
 
@@ -417,5 +419,178 @@ describe("0185 — blast radius", () => {
     // It reuses the shared 0015 helper rather than redefining it.
     expect(CODE).toContain("execute function public.set_updated_at()");
     expect(CODE).not.toMatch(/create or replace function public\.set_updated_at/);
+  });
+});
+
+// ===========================================================================
+// CURRENT HOSTED STATE — 0185 OWNS IT NOW
+// ===========================================================================
+//
+// Inherited from 0184's block at the apply hand-off. Whichever migration is
+// the applied head owns these facts; a superseded migration's file must not
+// keep deciding them, or it has to be rewritten on every future apply.
+//
+// 0185 was applied to production on 2026-08-23. It is now FROZEN: any
+// correction is a NEW migration.
+
+function canonicalRecord(): {
+  hosted_migration_max: string;
+  hosted_applied_at: string;
+  hosted_applied_at_precision: string;
+  hosted_note: string;
+} {
+  return JSON.parse(
+    readFileSync(path.join(ROOT, "docs/production/migration-state.json"), "utf8"),
+  );
+}
+
+/** The marker that separates the head record from the carried history. */
+const CHAIN_MARKER = "CARRIES THE FULL CHECKSUM CHAIN FORWARD";
+const SUPERSESSION = /SUPERSEDES the (\d{4}) record as the CURRENT hosted-state record/;
+
+/**
+ * Split the canonical note into the HEAD record and the carried CHAIN.
+ *
+ * The note is written newest-first: the active record, then the chain-forward
+ * marker, then every superseded record verbatim. That ordering is what makes
+ * "active" separable from "historical" without rewriting history.
+ */
+function splitNote(note: string): { head: string; chain: string } {
+  const at = note.indexOf(CHAIN_MARKER);
+  if (at < 0) throw new Error("canonical note carries no chain-forward marker");
+  return { head: note.slice(0, at), chain: note.slice(at) };
+}
+
+/**
+ * THE ACTIVE-RECORD INVARIANT.
+ *
+ * Deliberately NOT "the phrase appears exactly once in the note". Historical
+ * records may — and now do — truthfully preserve the exact words they used
+ * while they were current; 0184's own supersession of 0183 is immutable
+ * evidence and must survive verbatim. Counting occurrences globally would
+ * force a rewrite of frozen history to satisfy a guard, which is backwards.
+ *
+ * So the law is positional: the HEAD names exactly one current record, and it
+ * is 0185 superseding 0184. Everything after the chain marker is history and
+ * may say whatever it truthfully said at the time.
+ */
+function assertActiveRecordIs(note: string, expectedSuperseded: string): void {
+  const { head, chain } = splitNote(note);
+
+  const inHead = [...head.matchAll(new RegExp(SUPERSESSION, "g"))];
+  expect(
+    inHead.length,
+    "the HEAD of the canonical note must name exactly ONE current hosted record",
+  ).toBe(1);
+  expect(
+    inHead[0][1],
+    "the active supersession must name the migration being replaced",
+  ).toBe(expectedSuperseded);
+
+  // No stray "X is CURRENT" claim in the head beyond that one supersession.
+  const currentClaims = head.split("as the CURRENT hosted-state record").length - 1;
+  expect(currentClaims, "a second current-record claim in the head").toBe(1);
+
+  // The head must be the record for the migration that is actually applied.
+  expect(head).toContain(`${fileForVersion(VERSION)} APPLIED to production`);
+
+  // And the chain must still be carried, not truncated.
+  expect(chain.length).toBeGreaterThan(500);
+}
+
+describe("0185 — current hosted state", () => {
+  it("is the APPLIED production head", () => {
+    const state = migrationState();
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.repo_migration_max).toBe(VERSION);
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.next_free_migration).toBe("0186");
+    expect(countVersion("0186")).toBe(0);
+  });
+
+  it("the canonical apply record is 0185's, and its precision is stated", () => {
+    const rec = canonicalRecord();
+    expect(rec.hosted_migration_max).toBe(VERSION);
+    // Operator-observed close of the apply window, NEVER a server timestamp.
+    expect(rec.hosted_applied_at).toBe("2026-08-23T20:31:39Z");
+    expect(rec.hosted_applied_at_precision).toMatch(/operator-observed/i);
+    expect(rec.hosted_applied_at_precision).toMatch(
+      /NOT a server-generated migration timestamp/i,
+    );
+    expect(rec.hosted_note).toMatch(/PUSH EXIT CODE 0 EXPLICITLY CAPTURED/);
+    expect(rec.hosted_note).toMatch(/DRY-RUN EXIT 0/);
+  });
+
+  it("carries 0185's production checksum, matching the file on disk", () => {
+    const digest = createHash("sha256").update(SQL, "utf8").digest("hex");
+    expect(digest).toBe(
+      "663a5d826d4c9e610c3bf7ec599dea577772ba521326488add77153f39a14ffc",
+    );
+    expect(canonicalRecord().hosted_note).toContain(digest);
+  });
+
+  it("records the dark-state facts, so a reader cannot infer activation", () => {
+    const note = canonicalRecord().hosted_note;
+    expect(note).toMatch(/ROW COUNT 0/);
+    expect(note).toMatch(/NO synthetic production prospect was inserted/i);
+    expect(note).toMatch(/WILLOW IS NOT ENABLED/);
+    expect(note).toMatch(/PUBLIC PRIVACY POLICY IS\s+UNCHANGED/);
+    expect(note).toMatch(/ABSENT from the Vercel Production environment/i);
+  });
+
+  it("THE ACTIVE RECORD IS 0185 SUPERSEDING 0184", () => {
+    assertActiveRecordIs(canonicalRecord().hosted_note, "0184");
+  });
+
+  it("carried HISTORY may keep its original current-record wording", () => {
+    // The point of the positional law. 0184's own supersession of 0183 is
+    // frozen evidence living in the chain; it must NOT have to be rewritten,
+    // and its presence must NOT fail the guard.
+    const { chain } = splitNote(canonicalRecord().hosted_note);
+    expect(chain).toContain(
+      "SUPERSEDES the 0183 record as the CURRENT hosted-state record",
+    );
+    expect(() =>
+      assertActiveRecordIs(canonicalRecord().hosted_note, "0184"),
+    ).not.toThrow();
+  });
+
+  it("ANTI-VACUITY: a wrong or duplicated ACTIVE record is caught", () => {
+    // Mutates a COPY. The real record is never touched.
+    const note = canonicalRecord().hosted_note;
+    expect(() => assertActiveRecordIs(note, "0184")).not.toThrow();
+
+    // (a) the active transition naming the wrong migration
+    const wrongTarget = note.replace(
+      "SUPERSEDES the 0184 record as the CURRENT",
+      "SUPERSEDES the 0183 record as the CURRENT",
+    );
+    expect(wrongTarget).not.toEqual(note);
+    expect(() => assertActiveRecordIs(wrongTarget, "0184")).toThrow();
+
+    // (b) a SECOND current-record claim injected into the head
+    const doubled = note.replace(
+      "SUPERSEDES the 0184 record as the CURRENT hosted-state record",
+      "SUPERSEDES the 0184 record as the CURRENT hosted-state record and also " +
+        "the 0182 record as the CURRENT hosted-state record",
+    );
+    expect(doubled).not.toEqual(note);
+    expect(() => assertActiveRecordIs(doubled, "0184")).toThrow();
+
+    // (c) the chain truncated away
+    const truncated = note.slice(0, note.indexOf(CHAIN_MARKER) + CHAIN_MARKER.length + 10);
+    expect(() => assertActiveRecordIs(truncated, "0184")).toThrow();
+  });
+
+  it("ANTI-VACUITY: extra HISTORICAL supersessions must NOT fail the guard", () => {
+    // This is what separates the positional law from mere counting. Appending
+    // another truthful historical record to the chain is legitimate and must
+    // stay legitimate — a guard that went red here would force history to be
+    // rewritten on every apply.
+    const note = canonicalRecord().hosted_note;
+    const withMoreHistory =
+      note + " the 0170 record SUPERSEDES the 0169 record as the CURRENT hosted-state record.";
+    expect(() => assertActiveRecordIs(withMoreHistory, "0184")).not.toThrow();
   });
 });
