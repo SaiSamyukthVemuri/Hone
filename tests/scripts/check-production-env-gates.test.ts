@@ -32,6 +32,18 @@ const URL_SENTINEL = "URLVAL_must_never_be_printed";
 const TOKEN_SENTINEL = "TOKVAL_must_never_be_printed";
 // PR #291: a configured OPS_ALERT_EMAILS address must never be printed either.
 const OPS_EMAIL_SENTINEL = "ops-alerts+secret@example.invalid";
+// WAIT-02B Stage A: a configured studio slug must never be printed either.
+// Shaped like a real slug so the case is realistic, and distinctive so a leak
+// anywhere in stdout/stderr is unmissable.
+const DURABLE_SLUG_SENTINEL = "willowlike-studio-must-never-be-printed";
+const DURABLE_SLUG_SENTINEL_2 = "second-studio-must-never-be-printed";
+// The env every production gate needs, so a case can isolate ONE gate.
+const PRODUCTION_BASELINE = {
+  VERCEL_ENV: "production",
+  UPSTASH_REDIS_REST_URL: URL_SENTINEL,
+  UPSTASH_REDIS_REST_TOKEN: TOKEN_SENTINEL,
+  OPS_ALERT_EMAILS: OPS_EMAIL_SENTINEL,
+};
 
 function run(env: Record<string, string>) {
   return spawnSync("node", [SCRIPT_PATH], {
@@ -193,6 +205,110 @@ describe("check-production-env-gates script (PR #262)", () => {
   });
 });
 
+// ===========================================================================
+// WAIT-02B STAGE A — THE DURABLE WAITLIST KILL SWITCH
+// ===========================================================================
+//
+// INVERTED relative to every other gate here: those fail when required config
+// is MISSING, this fails when optional config is PRESENT.
+//
+// Stage A ships the durable new-client waitlist dark. Its table stores personal
+// information for prospects the current public privacy notice does not cover,
+// so "the allowlist is empty in production" is a security property. Repository
+// tests and documentation cannot see the Vercel dashboard; without this gate
+// one mistyped entry would activate prospect collection with nothing failing.
+describe("Stage-A durable waitlist kill switch", () => {
+  it("PASSES when the allowlist is UNSET in production", () => {
+    const r = run(PRODUCTION_BASELINE);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/^PASS stage-a-durable-waitlist-env/m);
+  });
+
+  it.each([
+    ["empty string", ""],
+    ["whitespace only", "   "],
+    ["commas only", ",,,"],
+    ["commas and whitespace", " , ,  , "],
+  ])("PASSES when the allowlist is present but enables nobody (%s)", (_label, value) => {
+    // Mirrors parseWaitlistSlugs(): these all mean OFF at runtime, so the gate
+    // must not fail a deploy over a value that enables no studio.
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: value,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/^PASS stage-a-durable-waitlist-env/m);
+  });
+
+  it("FAILS a production build when ONE studio is configured", () => {
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: DURABLE_SLUG_SENTINEL,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    const out = r.stdout + r.stderr;
+    expect(out).toMatch(/FAIL stage-a-durable-waitlist-env/);
+    expect(out).toContain("NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS");
+    // THE VALUE MUST NEVER APPEAR.
+    expect(out).not.toContain(DURABLE_SLUG_SENTINEL);
+  });
+
+  it("FAILS with MULTIPLE comma-separated studios, and prints none of them", () => {
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DURABLE_SLUG_SENTINEL}, ${DURABLE_SLUG_SENTINEL_2}`,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    const out = r.stdout + r.stderr;
+    expect(out).toMatch(/FAIL stage-a-durable-waitlist-env/);
+    // A count is fine; the slugs are not.
+    expect(out).toMatch(/enables 2 studio\(s\)/);
+    expect(out).not.toContain(DURABLE_SLUG_SENTINEL);
+    expect(out).not.toContain(DURABLE_SLUG_SENTINEL_2);
+  });
+
+  it("does NOT fail a PREVIEW deploy with the allowlist populated", () => {
+    // Preview and the e2e lane legitimately set the reserved slug.
+    const r = run({
+      VERCEL_ENV: "preview",
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: DURABLE_SLUG_SENTINEL,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/FAIL stage-a-durable-waitlist-env/);
+    expect(r.stdout + r.stderr).not.toContain(DURABLE_SLUG_SENTINEL);
+  });
+
+  it("does NOT fail a LOCAL/CI build with the allowlist populated", () => {
+    const r = run({
+      NODE_ENV: "production",
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: DURABLE_SLUG_SENTINEL,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/FAIL stage-a-durable-waitlist-env/);
+  });
+
+  it("is INDEPENDENT of the other gates in both directions", () => {
+    // A populated allowlist fails even when everything else is correct...
+    const onlyWaitlist = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: DURABLE_SLUG_SENTINEL,
+    });
+    expect(onlyWaitlist.status).toBe(1);
+    expect(onlyWaitlist.stdout).toMatch(/^PASS public-rate-limit-env/m);
+    expect(onlyWaitlist.stdout).toMatch(/^PASS ops-alert-delivery-env/m);
+
+    // ...and an empty allowlist does not rescue a build that is broken
+    // elsewhere. Upstash missing, allowlist clean.
+    const onlyUpstash = run({
+      VERCEL_ENV: "production",
+      OPS_ALERT_EMAILS: OPS_EMAIL_SENTINEL,
+    });
+    expect(onlyUpstash.status).toBe(1);
+    expect(onlyUpstash.stdout + onlyUpstash.stderr).toMatch(/FAIL public-rate-limit-env/);
+    expect(onlyUpstash.stdout).toMatch(/^PASS stage-a-durable-waitlist-env/m);
+  });
+});
+
 describe("check-production-env-gates contract is pinned in source", () => {
   it("keys production on VERCEL_ENV, NOT NODE_ENV", () => {
     expect(SCRIPT_SOURCE).toMatch(/VERCEL_ENV\s*===\s*"production"/);
@@ -222,6 +338,31 @@ describe("check-production-env-gates contract is pinned in source", () => {
     expect(SCRIPT_SOURCE).not.toMatch(/resend|nodemailer|sendEmail|fetch\(|import\s+/i);
     // No new external alert provider env (Slack / PagerDuty / OpsGenie / webhook URL).
     expect(SCRIPT_SOURCE).not.toMatch(/SLACK|PAGERDUTY|OPSGENIE|WEBHOOK_URL|DISCORD/i);
+  });
+
+  it("names the Stage-A durable waitlist var and gives it its own gate label", () => {
+    expect(SCRIPT_SOURCE).toContain("NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS");
+    expect(SCRIPT_SOURCE).toMatch(/stage-a-durable-waitlist-env/);
+    // Normalisation mirrors the runtime parser, so whitespace/comma-only PASSES.
+    expect(SCRIPT_SOURCE).toMatch(/durableWaitlistStudioCount/);
+  });
+
+  it("the Stage-A gate is PRODUCTION-ONLY and has NO per-studio exception", () => {
+    // It lives inside main(), after the production early-return, so it cannot
+    // fire off-production. And no studio may be carved out of it by name.
+    const afterGuard = SCRIPT_SOURCE.slice(SCRIPT_SOURCE.indexOf("function main()"));
+    expect(afterGuard).toContain("stage-a-durable-waitlist-env");
+    expect(SCRIPT_SOURCE.toLowerCase()).not.toContain("willow");
+  });
+
+  it("has NO escape hatch for the Stage-A gate specifically", () => {
+    // The file-wide BYPASS/ALLOW pin above covers process.env.X_BYPASS forms;
+    // this closes the shapes that pin would miss for this feature.
+    expect(SCRIPT_SOURCE).not.toMatch(/SKIP_WAITLIST|WAITLIST_BYPASS|ALLOW_DURABLE|FORCE_DURABLE/i);
+    // Exactly one place decides, and it is the count. No second predicate.
+    expect(
+      [...SCRIPT_SOURCE.matchAll(/durableWaitlistStudioCount\(\)/g)],
+    ).toHaveLength(2); // the definition's own call site + the gate
   });
 
   it("does NOT touch Stripe / live-payment gates", () => {

@@ -843,8 +843,10 @@ describe("no studio is enabled at merge time", () => {
       "e2e/helpers/local-env.ts",
       "e2e/new-client-waitlist.spec.ts",
       "lib/booking/new-client-waitlist.ts",
+      "scripts/check-production-env-gates.mjs",
       "tests/app/book/new-client-waitlist-action.test.ts",
       "tests/app/book/new-client-waitlist-durable-commit.test.ts",
+      "tests/scripts/check-production-env-gates.test.ts",
     ]);
   });
 
