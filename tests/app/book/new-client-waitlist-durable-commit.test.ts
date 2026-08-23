@@ -863,6 +863,22 @@ describe("privacy disclosure is coupled to the durable path", () => {
     );
   });
 
+  it("the policy's LAST-UPDATED stamp moved with the text", () => {
+    // A materially expanded data category behind an unchanged "last updated"
+    // date leaves a reader unable to tell the document changed at all.
+    expect(PRIVACY).toMatch(/const POLICY_LAST_UPDATED = "(?!May 22, 2026)[^"]+"/);
+    expect(PRIVACY).toMatch(/lastUpdated=\{POLICY_LAST_UPDATED\}/);
+  });
+
+  it("the EFFECTIVE date was NOT quietly moved with it", () => {
+    // Section 13 promises account holders 30 days' notice before a material
+    // change takes effect. Re-issuing the policy is a rollout decision that
+    // belongs with that notice; an edit must not assert it silently.
+    expect(PRIVACY).toMatch(/const POLICY_EFFECTIVE_DATE = "May 22, 2026"/);
+    expect(PRIVACY).toMatch(/effectiveDate=\{POLICY_EFFECTIVE_DATE\}/);
+    expect(PRIVACY).toMatch(/30 days before\s+taking effect/);
+  });
+
   it("the recorded export/retention limitation is still on the record", () => {
     const RISKS = readFileSync(
       path.resolve(__dirname, "../../../docs/03_SECURITY_AND_PRIVACY.md"),

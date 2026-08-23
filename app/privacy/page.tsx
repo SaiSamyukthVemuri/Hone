@@ -13,12 +13,27 @@ export const metadata: Metadata = {
     "How Hone collects, uses, stores, shares, and protects personal information.",
 };
 
+/**
+ * When the policy took effect. NOT moved by an edit: section 13 promises
+ * account holders 30 days' notice before a MATERIAL change takes effect, so
+ * re-issuing the policy is a rollout decision that belongs with that notice,
+ * not something to stamp on because the text changed.
+ */
+const POLICY_EFFECTIVE_DATE = "May 22, 2026";
+
+/**
+ * When the text last changed — moved on the day the new-client waitlist
+ * category was added, so a reader can see the document changed rather than
+ * having to diff it. Must move whenever this page's substance does.
+ */
+const POLICY_LAST_UPDATED = "August 23, 2026";
+
 export default function PrivacyPolicyPage() {
   return (
     <PolicyLayout
       title="Hone Privacy Policy"
-      effectiveDate="May 22, 2026"
-      lastUpdated="May 22, 2026"
+      effectiveDate={POLICY_EFFECTIVE_DATE}
+      lastUpdated={POLICY_LAST_UPDATED}
     >
       <H2 id="who-we-are">1. Who we are</H2>
       <P>
