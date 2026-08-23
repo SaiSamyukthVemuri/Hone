@@ -888,6 +888,22 @@ export default async function DashboardPage({
         todayLocal={todayLocal}
       />
 
+      {/* The owner's capacity briefing. A LINK, not a card: the figures on it
+          are studio-wide practice analytics that an ordinary practitioner must
+          not see, and the page refuses them server-side. Rendering it here
+          keeps the surface reachable without another nav tab. */}
+      {isOwner && (
+        <Link
+          href="/dashboard/capacity"
+          className="flex items-baseline justify-between gap-3 rounded-lg border border-neutral-200 px-4 py-3 text-sm hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-900"
+        >
+          <span className="font-medium">Practice capacity</span>
+          <span className="text-neutral-500">
+            How booked you are, and whether you can take more clients &rarr;
+          </span>
+        </Link>
+      )}
+
       {/* CHLOE D2, setup that is DONE is not daily work.
           ------------------------------------------------------------------
           This card used to render in both states. Once every required item was

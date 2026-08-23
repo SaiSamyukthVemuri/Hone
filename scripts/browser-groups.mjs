@@ -187,6 +187,10 @@ export const BROWSER_GROUPS = {
       "practitioner-reassignment-studio-b.spec.ts",
       "practitioner-schedule-owner.spec.ts",
       "practitioner-schedule-studio-b.spec.ts",
+      // The owner capacity briefing: owner-only studio-wide practice analytics.
+      // This group already owns "owner/admin ... and capacity", and the spec's
+      // subject is exactly that pair — who may read it, and what it reports.
+      "owner-practice-capacity.spec.ts",
     ],
   },
   marketing: {

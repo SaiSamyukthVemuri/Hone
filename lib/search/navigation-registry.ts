@@ -103,6 +103,35 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     defaultShortcut: true,
   },
   {
+    id: "practice-capacity",
+    title: "Practice capacity",
+    category: "Navigation",
+    href: "/dashboard/capacity",
+    description:
+      "How booked you are, when the next opening is, and whether you can take more clients",
+    keywords: [
+      "capacity",
+      "practice capacity",
+      "how booked",
+      "booked",
+      "free hours",
+      "openings",
+      "next opening",
+      "take more clients",
+      "new clients",
+      "admission",
+      "intake",
+      "conversion",
+      "utilisation",
+      "utilization",
+      "analytics",
+    ],
+    // Studio-wide practice analytics. An ordinary practitioner must not be
+    // offered the destination, and the page refuses them server-side as well.
+    visibility: "owner",
+    priority: 15,
+  },
+  {
     id: "clients",
     title: "Clients",
     category: "Navigation",
