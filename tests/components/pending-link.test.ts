@@ -168,27 +168,57 @@ describe("PendingLink announces the request, never an outcome", () => {
   });
 });
 
-describe("the day navigation is wired to it, and nothing else was swept up", () => {
+describe("the dashboard is wired to it, and nothing else was swept up", () => {
   const dashboard = read("app/(app)/dashboard/page.tsx");
 
-  it("uses PendingLink for exactly the three day-nav segments", () => {
-    expect(dashboard.match(/<PendingLink/g) ?? []).toHaveLength(3);
-    for (const testid of [
-      "dashboard-prev-day",
-      "dashboard-today",
-      "dashboard-next-day",
-    ]) {
+  // UI-01A: same-pathname query navigation, where no route boundary can render.
+  const QUERY_NAV = [
+    "dashboard-prev-day",
+    "dashboard-today",
+    "dashboard-next-day",
+  ];
+  // UI-01B: the appointment row's three SEGMENT-changing actions. Proven safe
+  // by the pre-implementation experiment: with zero loading.tsx the old tree
+  // and the tapped control both stay mounted while the destination is pending.
+  const SEGMENT_NAV = [
+    "today-next-action",
+    "today-consultation-notes",
+    "today-review-intake",
+  ];
+
+  it("uses PendingLink for exactly the six named controls", () => {
+    expect(dashboard.match(/<PendingLink/g) ?? []).toHaveLength(
+      QUERY_NAV.length + SEGMENT_NAV.length,
+    );
+    for (const testid of [...QUERY_NAV, ...SEGMENT_NAV]) {
       expect(dashboard).toMatch(
-        new RegExp(`<PendingLink[\\s\\S]{0,400}${testid}`),
+        new RegExp(`<PendingLink[\\s\\S]{0,600}${testid}`),
       );
     }
   });
 
   it("leaves every other Link on the page alone", () => {
-    // A shared pending primitive invites a mechanical sweep. It is applied
-    // where a route boundary structurally cannot help — query-only navigation —
-    // and nowhere else. The dashboard still has many plain <Link> elements and
-    // that is the intended state.
+    // A shared pending primitive invites a mechanical sweep. It is applied to
+    // named controls only. Two deliberate exclusions on THIS surface:
+    //
+    //   - the appointment row BODY link (-> /calendar/<id>) is itself a flex
+    //     container with two positioned children; PendingLink wraps children in
+    //     one span, which would collapse them into a single track. It needs a
+    //     layout-transparent variant of the primitive, not this one.
+    //   - the birthday link, which is low-frequency.
+    //
+    // The dashboard still has many plain <Link> elements and that is intended.
     expect((dashboard.match(/<Link/g) ?? []).length).toBeGreaterThan(5);
+    expect(dashboard).toMatch(/<Link[\s\S]{0,200}href=\{`\/calendar\/\$\{appt\.id\}`\}/);
+  });
+
+  it("gives every converted control a request-shaped pending label", () => {
+    for (const label of ["Loading day…", "Opening…", "Opening client…", "Opening intake…"]) {
+      expect(dashboard).toContain(`pendingLabel="${label}"`);
+    }
+    // Never an outcome.
+    for (const outcome of ["Opened", "Loaded", "Ready", "Done"]) {
+      expect(dashboard).not.toContain(`pendingLabel="${outcome}`);
+    }
   });
 });

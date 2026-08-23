@@ -123,8 +123,20 @@ describe("B — Consultation notes", () => {
     expect(PAGE_CODE).not.toMatch(/client_clinical_notes/);
     expect(PAGE_CODE).not.toMatch(/<textarea|<dialog|role="dialog"/);
     expect(PAGE_CODE).not.toMatch(/"use server"/);
-    // And the action stays a plain navigation.
-    expect(ROW).toMatch(/<Link[\s\S]{0,400}today-consultation-notes/);
+    // And the action stays a plain NAVIGATION: an anchor with an href, never
+    // a button, a form or a server action.
+    //
+    // The rule is "a next/link element", not one spelling of it. UI-01B swapped
+    // this control to PendingLink, which IS next/link with a pending
+    // presentation layered on top — same anchor, same href, same activation,
+    // and it starts no navigation of its own. This assertion had pinned the
+    // spelling of the thing instead of the property it protects, so it went red
+    // on a change that could not affect what it was guarding. The negative is
+    // now stated outright rather than implied by the positive.
+    expect(ROW).toMatch(/<(Pending)?Link[\s\S]{0,400}today-consultation-notes/);
+    expect(ROW).not.toMatch(
+      /<(button|form)[\s\S]{0,400}today-consultation-notes/,
+    );
   });
 });
 
