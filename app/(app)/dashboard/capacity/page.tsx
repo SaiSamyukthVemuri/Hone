@@ -155,12 +155,20 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
         </div>
       </section>
 
+      {/* The heading used to read "Treatment time on the calendar", which is a
+          claim about the CALENDAR while the figure is a claim about CURRENT
+          CLIENTS. Archiving a client does not cancel their appointments — the
+          calendar still shows them — so an archived client's live booking sits
+          outside this client-rooted snapshot and the old wording could have
+          published a known total that understated the diary, or read zero while
+          work was still on it. The measurement is right for the population this
+          page is about; the label was the defect. */}
       <section>
-        <SectionLabel as="h2">Treatment time on the calendar</SectionLabel>
+        <SectionLabel as="h2">Future treatment time for current clients</SectionLabel>
         <div className="mt-3">
           <Card
-            label="Future treatment time booked"
-            note="Treatment only, buffers excluded. Consultations are not counted."
+            label="Treatment time booked"
+            note="Current, non-archived clients only. Treatment appointments only; consultations and buffers are excluded."
           >
             <Figure
               fact={futureTreatmentMinutes}

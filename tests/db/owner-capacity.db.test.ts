@@ -506,6 +506,19 @@ describe("owner capacity briefing", () => {
     const markup = renderToStaticMarkup((await renderPage()) as never);
     expect(markup).toContain("Practice capacity");
     expect(markup).toContain("No future treatment booked");
+
+    // PRESENTATION TRUTH. The treatment-time figure is scoped to CURRENT
+    // clients by construction — the snapshot is rooted on them. Archiving a
+    // client does not cancel their appointments, so a calendar-wide claim would
+    // be an overstatement the number cannot support.
+    expect(markup).not.toContain("Treatment time on the calendar");
+    expect(markup).toContain("Future treatment time for current clients");
+    // All four facts the copy must carry, asserted individually so a future
+    // rewrite cannot quietly drop one.
+    expect(markup).toMatch(/Current, non-archived clients only/);
+    expect(markup).toMatch(/Treatment appointments only/);
+    expect(markup).toMatch(/consultations and buffers are excluded/i);
+    expect(markup).toMatch(/Future treatment time/);
   }, 30_000);
 
   it("refuses an ordinary practitioner, and issues NO studio-wide analytics query for them", async () => {
