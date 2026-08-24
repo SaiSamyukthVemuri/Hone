@@ -5,6 +5,7 @@ import {
 } from "@/lib/email/templates/reminders";
 import {
   INTAKE_CTA_LABEL,
+  INTAKE_IGNORE_LINE,
   INTAKE_SECTION_COPY,
 } from "@/lib/email/templates/intake-reminder";
 
@@ -64,6 +65,11 @@ describe.each(BUILDERS)("$kind reminder without an intake link", ({ build }) => 
     expect(withNull.text).toBe(email.text);
     expect(withNull.subject).toBe(email.subject);
   });
+
+  it("does not render the caveat either - it belongs to the intake section", () => {
+    expect(email.text).not.toContain(INTAKE_IGNORE_LINE);
+    expect(email.html).not.toContain(htmlEscape(INTAKE_IGNORE_LINE));
+  });
 });
 
 describe.each(BUILDERS)("$kind reminder WITH an intake link", ({ kind, build }) => {
@@ -105,6 +111,22 @@ describe.each(BUILDERS)("$kind reminder WITH an intake link", ({ kind, build }) 
     expect(email.text.length).toBeGreaterThan(plain.text.length);
   });
 
+  it("carries the completed-form caveat, so it stays true if the client submits before delivery", () => {
+    // Intake state is read LIVE before the send decision, but the client can
+    // still submit between that read and provider delivery. This line is what
+    // keeps the section truthful when it loses that race - the same constant
+    // the standalone intake email uses, never a second wording.
+    expect(email.text).toContain(INTAKE_IGNORE_LINE);
+    expect(email.html).toContain(htmlEscape(INTAKE_IGNORE_LINE));
+  });
+
+  it("places the caveat after the CTA, as the closing line of the section", () => {
+    const ctaAt = email.text.indexOf(INTAKE_CTA_LABEL);
+    const caveatAt = email.text.indexOf(INTAKE_IGNORE_LINE);
+    expect(ctaAt).toBeGreaterThan(-1);
+    expect(caveatAt).toBeGreaterThan(ctaAt);
+  });
+
   it("keeps the appointment-reminder subject, with no intake wording", () => {
     expect(email.subject).toBe(plain.subject);
     expect(email.subject).toMatch(/^Reminder: Electrolysis (tomorrow|today) at /);
@@ -135,5 +157,34 @@ describe.each(BUILDERS)("$kind reminder WITH an intake link", ({ kind, build }) 
     const all = `${email.subject}\n${email.text}\n${email.html}`;
     expect(all).not.toMatch(/\b(delivered|received|opened)\b/i);
     expect(all).not.toMatch(/still incomplete/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE INVARIANT the P2 was raised against
+// ---------------------------------------------------------------------------
+describe("every composed branch that carries the intake CTA carries the caveat", () => {
+  it("holds for both windows, both renderings, with and without a link", () => {
+    const checked: string[] = [];
+    for (const { kind, build } of BUILDERS) {
+      for (const intakeUrl of [INTAKE_URL, null]) {
+        const email = build({ ...base, intakeUrl });
+        const branches: Array<[string, string, string]> = [
+          [`${kind}/html`, email.html, htmlEscape(INTAKE_IGNORE_LINE)],
+          [`${kind}/text`, email.text, INTAKE_IGNORE_LINE],
+        ];
+        for (const [label, rendered, caveat] of branches) {
+          const hasCta = rendered.includes(INTAKE_CTA_LABEL);
+          // CTA present => caveat present. CTA absent => neither.
+          expect(
+            rendered.includes(caveat),
+            `${label} (link=${intakeUrl !== null})`,
+          ).toBe(hasCta);
+          checked.push(label);
+        }
+      }
+    }
+    // Guard against the loop silently checking nothing.
+    expect(checked).toHaveLength(8);
   });
 });

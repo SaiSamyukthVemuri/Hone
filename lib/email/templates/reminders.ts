@@ -1,6 +1,7 @@
 import { localTimeString12h } from "@/lib/booking/tz";
 import {
   INTAKE_CTA_LABEL,
+  INTAKE_IGNORE_LINE,
   INTAKE_LINK_FALLBACK_LINE,
   INTAKE_SECTION_COPY,
   type IntakeReminderKind,
@@ -107,6 +108,14 @@ function reminderHtml(opts: {
           // appointment details keeps intake-completion state off the
           // recipient's lock screen while leaving it the first thing read
           // after the facts.
+          //
+          // THE CAVEAT IS LOAD-BEARING, not politeness. Intake state is read
+          // LIVE before the send decision, but the client can still submit
+          // between that read and provider delivery - a race the cron cannot
+          // close. INTAKE_IGNORE_LINE is what keeps this section truthful when
+          // it loses that race, so every branch carrying the CTA must carry it
+          // too. Same constant the standalone intake email uses; no second
+          // wording exists to drift.
           intake && p.intakeUrl
             ? `<tr><td style="padding:24px 0 0 0; font-family:-apple-system, system-ui, sans-serif; font-size:16px; font-weight:600; line-height:1.5;">
                 ${escapeHtml(intake.heading)}
@@ -122,6 +131,9 @@ function reminderHtml(opts: {
               <tr><td style="padding-bottom:8px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
                 ${escapeHtml(INTAKE_LINK_FALLBACK_LINE)}<br />
                 <span style="word-break:break-all;">${escapeHtml(p.intakeUrl)}</span>
+              </td></tr>
+              <tr><td style="padding-bottom:8px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
+                ${escapeHtml(INTAKE_IGNORE_LINE)}
               </td></tr>`
             : ""
         }
@@ -184,7 +196,7 @@ ${timeStr} (${p.timezone})
 Duration: ${p.durationMinutes} minutes
 ${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
 ${p.treatmentTimeLine ? `\n${p.treatmentTimeLine}\n` : ""}
-${intake && p.intakeUrl ? `\n${intake.heading}\n\n${intake.body}\n\n${INTAKE_CTA_LABEL}: ${p.intakeUrl}\n` : ""}
+${intake && p.intakeUrl ? `\n${intake.heading}\n\n${intake.body}\n\n${INTAKE_CTA_LABEL}: ${p.intakeUrl}\n\n${INTAKE_IGNORE_LINE}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Cancel: ${p.cancellationUrl}
