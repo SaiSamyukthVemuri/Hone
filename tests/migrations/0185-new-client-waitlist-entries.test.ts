@@ -5,9 +5,7 @@ import path from "node:path";
 import {
   countVersion,
   fileForVersion,
-  isRepoMax,
   migrationState,
-  versionsAbove,
 } from "./helpers/migration-state";
 
 // 0185 — the durable, studio-scoped new-client waitlist (WAIT-02).
@@ -53,10 +51,12 @@ const STATEMENTS = CODE.replace(/'(?:[^']|'')*'/g, "''");
 const TABLE = "public.new_client_waitlist_entries";
 
 describe("0185 — migration state", () => {
-  it("is the current repository maximum, exactly once, with nothing above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
+  // The "nothing above me" tripwire moved to 0186 when it landed: per
+  // CLAUDE.md only the CURRENT repository maximum may assert isRepoMax, so
+  // that a new migration does not turn every older per-migration test red.
+  // Uniqueness of this version is still this file's own business.
+  it("exists exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
-    expect(versionsAbove(VERSION)).toEqual([]);
   });
 
   it("is named for what it creates", () => {
@@ -590,12 +590,15 @@ function assertActiveRecordIs(note: string, expectedSuperseded: string): void {
 describe("0185 — current hosted state", () => {
   it("is the APPLIED production head", () => {
     const state = migrationState();
+    // 0185 is what production has RUN. Whether the repository has since
+    // claimed a higher number is a different question and not this file's:
+    // migration-first ordering means a claimed-but-unapplied migration is the
+    // NORMAL state between merge and apply.
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0186");
-    expect(countVersion("0186")).toBe(0);
+    expect(state.pending_migrations).not.toContain(VERSION);
+    expect(Number(state.repo_migration_max)).toBeGreaterThanOrEqual(
+      Number(VERSION),
+    );
   });
 
   it("the canonical apply record is 0185's, and its precision is stated", () => {

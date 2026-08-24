@@ -40,6 +40,9 @@ export default async function StudioSettingsPage() {
             studio.notify_practitioner_on_new_booking,
           send_24h_reminders: studio.send_24h_reminders,
           send_2h_reminders: studio.send_2h_reminders,
+          // Absent only on a row read before 0186 is applied; the column
+          // defaults true, so absent must display as ON, never OFF.
+          send_intake_reminders: studio.send_intake_reminders ?? true,
           auto_mark_no_shows: studio.auto_mark_no_shows,
           send_no_show_followup: studio.send_no_show_followup,
           show_treatment_time_to_clients: studio.show_treatment_time_to_clients,

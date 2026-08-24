@@ -71,11 +71,14 @@ describe("0184: file and numbering", () => {
     // this file protects. What is no longer true is that it is the LATEST
     // thing production has run.
     const state = migrationState();
+    // WHAT THIS BLOCK OWNS is 0184's own status: applied, and no longer the
+    // head. The REPO-side current state (repo max, pending, next free) is
+    // deliberately NOT asserted here - it belongs to whichever migration is
+    // currently the repository maximum, and pinning it in this file is what
+    // made every older per-migration test go red on each new number.
     expect(state.hosted_migration_max).toBe("0185");
-    expect(state.repo_migration_max).toBe("0185");
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0186");
+    expect(Number(state.hosted_migration_max)).toBeGreaterThan(184);
+    expect(state.pending_migrations).not.toContain("0184");
     // 0184 is still in the applied chain, below the head.
     expect(Number(state.hosted_migration_max)).toBeGreaterThan(Number(VERSION));
   });
@@ -157,16 +160,16 @@ describe("0184: file and numbering", () => {
     );
   });
 
-  it("0185 is now APPLIED, exactly once, and 0186 is the free number", () => {
+  it("0185 is APPLIED and remains a single file", () => {
     // This block has tracked 0185 through its whole life from the migration
     // that used to guard the number: free -> claimed -> applied. It is applied
-    // now, so "claimed but not in production" is no longer the truth to hold.
+    // now, and that is the last transition this file needs to witness. The
+    // NEXT free number is not asserted here: it moves on every new migration
+    // and is derived by scripts/migration-state.mjs, whose own tests own it.
     const state = migrationState();
     expect(countVersion("0185")).toBe(1);
     expect(state.hosted_migration_max).toBe("0185");
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0186");
-    expect(countVersion("0186")).toBe(0);
+    expect(state.pending_migrations).not.toContain("0185");
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {
