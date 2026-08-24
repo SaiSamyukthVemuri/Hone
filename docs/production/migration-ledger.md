@@ -14,7 +14,55 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-23, post-0185 apply)
+## Current state (verified 2026-08-24, post-0186 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0186** (`0186_intake_reminder_24h_2h.sql`) |
+| **Repo migration max** | **0186** — **hosted == repo.** Nothing pending. Next free number is **0187** (available, **not claimed**). |
+| **Total migrations in repo** | **185** (`0001` … `0157`, `0159` … `0186` — **no `0158`**) — derived by `npm run migration:state` |
+| **Apply date/time** | ⚠️ **NOT CAPTURED** — `hosted_applied_at` is `null`. No apply instant, no apply window and no calendar date were captured, and none is invented. |
+| **Verified applied** | **2026-08-24** — when the applied state was read and recorded. |
+| **Applied from** | application production `5bbd37a5ceaeb105e65840971392823a2e68aabd` (the **PR #632** merge commit) |
+| **`0186` raw checksum (frozen)** | `4041b38653198976233e5bf1ea41b68b349a587ed2c1fa43c251d9c6c629e66e` — derived from the production blob, not copied from console history |
+| **Also not captured** | dry-run output and exit code, push exit code, server-generated migration timestamp, CLI version, project ref, and where the apply ran. **None of it is invented.** |
+| **Post-apply verification** | hosted maximum reads **`0186`** with **zero pending**; the new column was read and is recorded below. |
+
+### The one thing 0186 adds
+
+```sql
+alter table public.studios
+  add column if not exists send_intake_reminders boolean not null default true;
+```
+
+Executable surface: `begin` · `set local lock_timeout` ·
+`alter table … add column if not exists` · `comment on column` · `commit`.
+**No `INSERT`, `UPDATE`, `DELETE` or `TRUNCATE` anywhere in the migration** — a
+statement about the file, pinned by
+`tests/migrations/0186-intake-reminder-24h-2h.test.ts`, not a measured
+production row count.
+
+### Verified structural result (read-only, production)
+
+| Property | Verified value |
+|---|---|
+| `public.studios.send_intake_reminders` | exists |
+| Type | `boolean` |
+| Nullability | **`NOT NULL`** |
+| Default | **`true`** |
+| Existing rows | **6 studios — 6 `true`, 0 `null`** |
+
+### The 0098 7d/3d state is preserved, not reinterpreted
+
+`intake_reminder_7d_*` and `intake_reminder_3d_*` — the columns, their partial
+indexes, and the two `claim_email_send` / `record_email_result` branches from
+`0098` — **remain intact** and are **historical**. The application simply stops
+writing them; removing them is a separate, later change.
+
+**`0186` IS NOW FROZEN.** Its bytes are production truth; any correction is a
+NEW migration. `0187` is available and **not claimed**.
+
+## Previous state (verified 2026-08-23, post-0185 apply)
 
 | Field | Value |
 |---|---|
