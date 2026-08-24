@@ -129,32 +129,82 @@ describe("Fact", () => {
 // ---------------------------------------------------------------------------
 // Read soundness
 // ---------------------------------------------------------------------------
+//
+// The briefing is ONE statement rooted on current clients, so the stub below
+// models exactly that: a root rowset, an exact root count, and per-client
+// embedded aggregates. It exercises the shapes the real Data API produces,
+// including the one that cost this module a redesign — an embedded rowset
+// silently clipped while the response's own Content-Range still describes only
+// the root.
 
 const STUDIO = { id: "s1", timezone: "America/Toronto" } as unknown as Studio;
 
-type Canned = { rows: unknown[]; count: number | null; error?: { code: string } };
+type StubBooking = {
+  id: string;
+  starts_at: string;
+  ends_at: string;
+  status: string;
+  service: { modality: string | null; name: string } | null;
+};
+
+type StubClient = {
+  id: string;
+  /** Open plans for this client. A COUNT in the real read, never rows. */
+  plans: number;
+  bookings: StubBooking[];
+  /**
+   * What the embedded COUNT reports, when it differs from `bookings.length` —
+   * i.e. the clipped case. Defaults to honest agreement.
+   */
+  trueBookingCount?: number;
+  /** Drop the aggregate entirely, the way a disabled/absent count would. */
+  noBookingCount?: boolean;
+};
+
+const booking = (over: Partial<StubBooking> = {}): StubBooking => ({
+  id: "b1",
+  starts_at: "2026-09-01T14:00:00.000Z",
+  ends_at: "2026-09-01T15:00:00.000Z",
+  status: "confirmed",
+  service: { modality: "laser", name: "Session" },
+  ...over,
+});
+
+type Stub = {
+  clients: StubClient[];
+  /** Exact root count. Defaults to the number of client rows (i.e. complete). */
+  count?: number | null;
+  error?: { code: string };
+};
 
 /**
  * A Supabase client stub whose every builder method returns itself and which
- * resolves to a canned page per table — the same thenable shape supabase-js
- * presents. `range` is honoured so paging can be observed.
+ * resolves to one canned response — the same thenable shape supabase-js
+ * presents. `range` is recorded so "exactly one statement" can be asserted.
  */
-function stubClient(byTable: Record<string, Canned>): {
+function stubClient(stub: Stub): {
   client: SupabaseClient;
-  ranges: Record<string, Array<[number, number]>>;
+  calls: { table: string; range: [number, number] }[];
 } {
-  const ranges: Record<string, Array<[number, number]>> = {};
+  const calls: { table: string; range: [number, number] }[] = [];
   const from = (table: string) => {
-    const canned = byTable[table] ?? { rows: [], count: 0 };
     let lo = 0;
     let hi = Number.MAX_SAFE_INTEGER;
     const result = () => {
-      if (canned.error) return { data: null, error: canned.error, count: null };
-      (ranges[table] ??= []).push([lo, hi]);
+      if (stub.error) return { data: null, error: stub.error, count: null };
+      calls.push({ table, range: [lo, hi] });
+      const rows = stub.clients.slice(lo, hi + 1).map((c) => ({
+        id: c.id,
+        plan_count: [{ count: c.plans }],
+        bookings: c.bookings,
+        booking_count: c.noBookingCount
+          ? []
+          : [{ count: c.trueBookingCount ?? c.bookings.length }],
+      }));
       return {
-        data: canned.rows.slice(lo, hi + 1),
+        data: rows,
         error: null,
-        count: canned.count,
+        count: stub.count === undefined ? stub.clients.length : stub.count,
       };
     };
     const builder: Record<string | symbol, unknown> = {};
@@ -176,79 +226,56 @@ function stubClient(byTable: Record<string, Canned>): {
     });
     return proxy;
   };
-  return { client: { from } as unknown as SupabaseClient, ranges };
+  return { client: { from } as unknown as SupabaseClient, calls };
 }
 
-const clientRows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `c${i}` }));
+const manyClients = (n: number): StubClient[] =>
+  Array.from({ length: n }, (_, i) => ({ id: `c${i}`, plans: 0, bookings: [] }));
 
-describe("getOwnerCapacityBriefing — read soundness", () => {
-  it("FAILS CLOSED when a read errors, rather than reporting an idle studio", async () => {
+describe("getOwnerCapacityBriefing — one statement, one snapshot", () => {
+  it("FAILS CLOSED when the read errors, rather than reporting an idle studio", async () => {
     // supabase-js RESOLVES with { data: null, error } on a transient failure.
     // Read as an empty row set that becomes "no active clients, nothing booked"
     // — a confident, wrong screen.
-    const { client } = stubClient({
-      clients: { rows: [], count: null, error: { code: "57014" } },
-    });
+    const { client } = stubClient({ clients: [], error: { code: "57014" } });
     await expect(getOwnerCapacityBriefing(STUDIO, client)).rejects.toThrow(
-      /owner_capacity_read_failed:clients:57014/,
+      /owner_capacity_read_failed:capacity_snapshot:57014/,
     );
   });
 
-  it("names the failing table, so a failure is diagnosable rather than generic", async () => {
-    const { client } = stubClient({
-      treatment_plans: { rows: [], count: null, error: { code: "PGRST301" } },
-    });
-    await expect(getOwnerCapacityBriefing(STUDIO, client)).rejects.toThrow(
-      /owner_capacity_read_failed:treatment_plans:PGRST301/,
-    );
-  });
-
-  it("issues exactly ONE request per read, and never unions two into a population", async () => {
-    // Offset paging cannot produce a snapshot. Between two range() requests a
-    // row can be inserted, archived, cancelled or deleted, shifting every later
-    // offset — read the first 1,000 of 1,050 clients, archive one of them, and
-    // the next request returns 49 against a new count of 1,049. The arithmetic
-    // says complete while a live client was skipped. There is no cursor or
-    // retry that fixes it without a transaction boundary this module cannot
-    // open, so multi-request enumeration is gone rather than patched.
-    const { client, ranges } = stubClient({
-      clients: { rows: clientRows(1050), count: 1050 },
-      treatment_plans: { rows: [{ client_id: "c1049" }], count: 1 },
-      appointments: { rows: [], count: 0 },
+  it("issues EXACTLY ONE statement, against the client root", async () => {
+    // Three requests are three snapshots, and joining them reports combinations
+    // of states that never coexisted — a plan closed and a booking inserted
+    // between two of them is enough. One statement is one snapshot by
+    // construction, so the count of statements IS the correctness property.
+    const { client, calls } = stubClient({
+      clients: [{ id: "c0", plans: 1, bookings: [booking()] }],
     });
     await getOwnerCapacityBriefing(STUDIO, client);
-    expect(ranges.clients).toEqual([[0, 999]]);
-    expect(ranges.treatment_plans).toEqual([[0, 999]]);
-    expect(ranges.appointments).toEqual([[0, 999]]);
+    expect(calls).toEqual([{ table: "clients", range: [0, 999] }]);
   });
 
-  it("keeps the exact TOTAL but refuses every id-dependent figure past the ceiling", async () => {
+  it("keeps the exact TOTAL but refuses every id-dependent figure past the root ceiling", async () => {
     // The operator's worked example: 1,050 clients, one response carries 1,000.
     // Content-Range still reports 1,050 truthfully and the ceiling does not
-    // bound it, so the total survives. Who is in treatment, who has nothing
-    // booked and how deeply anyone is booked are computed over the IDENTIFIERS,
-    // which were never fully in hand — so they must not be reported at all.
-    const { client } = stubClient({
-      clients: { rows: clientRows(1050), count: 1050 },
-      treatment_plans: { rows: [{ client_id: "c1049" }], count: 1 },
-      appointments: { rows: [], count: 0 },
-    });
+    // bound it, so the total survives. Everything computed over the IDENTIFIERS
+    // must not be reported at all.
+    const { client } = stubClient({ clients: manyClients(1000), count: 1050 });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.clients.totalRecords).toEqual({ known: true, value: 1050 });
     expect(b.clients.activeTreatment.known).toBe(false);
     expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
     expect(b.depth.known).toBe(false);
+    expect(b.futureTreatmentMinutes.known).toBe(false);
   });
 
-  it("a rowset that exactly fills one response IS complete, so the ceiling is not a false alarm", async () => {
-    // The guard must be `rows.length !== total`, not "did we hit the ceiling".
-    // A studio of exactly 1,000 is fully in hand and must still get real
-    // figures, or the fix would have replaced a false zero with a false unknown.
-    const { client } = stubClient({
-      clients: { rows: clientRows(1000), count: 1000 },
-      treatment_plans: { rows: [{ client_id: "c999" }], count: 1 },
-      appointments: { rows: [], count: 0 },
-    });
+  it("a root rowset that exactly fills one response IS complete, so the ceiling is not a false alarm", async () => {
+    // The guard is `rows.length !== total`, not "did we touch the ceiling".
+    // Without this control the fix could trade a false zero for a permanent
+    // false unknown and no test would notice.
+    const rows = manyClients(1000);
+    rows[999] = { id: "c999", plans: 1, bookings: [] };
+    const { client } = stubClient({ clients: rows, count: 1000 });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.clients.totalRecords).toEqual({ known: true, value: 1000 });
     expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
@@ -258,111 +285,116 @@ describe("getOwnerCapacityBriefing — read soundness", () => {
     });
   });
 
-  it("refuses id-dependent figures when the PLANS read is the one that overflows", async () => {
-    // Symmetry: the clients read being complete proves nothing about the plans
-    // read, and active treatment is an intersection of both.
+  it("goes UNKNOWN, never zero, when PostgREST reports no root count at all", async () => {
     const { client } = stubClient({
-      clients: { rows: clientRows(5), count: 5 },
-      treatment_plans: {
-        rows: Array.from({ length: 1000 }, (_, i) => ({ client_id: `c${i}` })),
-        count: 1200,
-      },
-      appointments: { rows: [], count: 0 },
-    });
-    const b = await getOwnerCapacityBriefing(STUDIO, client);
-    expect(b.clients.totalRecords).toEqual({ known: true, value: 5 });
-    expect(b.clients.activeTreatment.known).toBe(false);
-    expect(b.depth.known).toBe(false);
-  });
-
-  it("goes UNKNOWN, never zero, when PostgREST reports no count at all", async () => {
-    // No count means completeness was never established. Reporting the rows
-    // that did arrive would present a truncated studio as a small one.
-    const { client } = stubClient({
-      clients: { rows: clientRows(3), count: null },
-      treatment_plans: { rows: [{ client_id: "c1" }], count: 1 },
-      appointments: { rows: [], count: 0 },
+      clients: [{ id: "c0", plans: 1, bookings: [] }],
+      count: null,
     });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.clients.totalRecords.known).toBe(false);
     expect(b.clients.activeTreatment.known).toBe(false);
-    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
     expect(b.depth.known).toBe(false);
   });
 
-  it("a studio with no treatment plans reports UNKNOWN active clients, not zero", async () => {
+  // -------------------------------------------------------------------------
+  // The embedded ceiling — the reason this module is one statement and not one
+  // query with a naive embed
+  // -------------------------------------------------------------------------
+
+  it("detects a CLIPPED embedded rowset, which the response itself does not report", async () => {
+    // Measured against the real Data API: a client with 1,100 qualifying
+    // appointments comes back with 1,000, per parent row, and Content-Range
+    // describes only the ROOT. Nothing in the response body says rows are
+    // missing — so the rows are checked against a count of the same filtered
+    // population, asked for in the same statement.
     const { client } = stubClient({
-      clients: { rows: clientRows(5), count: 5 },
-      treatment_plans: { rows: [], count: 0 },
-      appointments: { rows: [], count: 0 },
+      clients: [
+        {
+          id: "c0",
+          plans: 1,
+          bookings: [booking({ id: "b1" })],
+          trueBookingCount: 1100,
+        },
+      ],
     });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.futureTreatmentMinutes.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
+    if (b.futureTreatmentMinutes.known) throw new Error("unreachable");
+    expect(b.futureTreatmentMinutes.reason).toMatch(/more future appointments/i);
+    // The client population itself was never in doubt.
+    expect(b.clients.totalRecords).toEqual({ known: true, value: 1 });
+    expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
+  });
+
+  it("treats a MISSING embedded count as unestablished, not as agreement", async () => {
+    // No count to check against is the same epistemic state as a short read.
+    const { client } = stubClient({
+      clients: [{ id: "c0", plans: 1, bookings: [booking()], noBookingCount: true }],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.futureTreatmentMinutes.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+  });
+
+  it("a clipped rowset OUTSIDE the active population spares booking depth", async () => {
+    // Depth reads only the active-treatment population, so a stranger's clipped
+    // bookings cannot change it. The studio-wide minutes total still degrades.
+    const { client } = stubClient({
+      clients: [
+        { id: "c0", plans: 1, bookings: [] },
+        { id: "stranger", plans: 0, bookings: [booking()], trueBookingCount: 1100 },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.futureTreatmentMinutes.known).toBe(false);
+    expect(b.depth).toEqual({
+      known: true,
+      value: { zero: 1, oneOrMore: 0, twoOrMore: 0, threeOrMore: 0 },
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Active treatment is an intersection, and an empty one is UNKNOWN
+  // -------------------------------------------------------------------------
+
+  it("a studio with no treatment plans reports UNKNOWN active clients, not zero", async () => {
+    const { client } = stubClient({ clients: manyClients(5) });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.clients.totalRecords).toEqual({ known: true, value: 5 });
     expect(b.clients.activeTreatment.known).toBe(false);
     if (b.clients.activeTreatment.known) throw new Error("unreachable");
     expect(b.clients.activeTreatment.reason).toMatch(/It is not zero/);
-    // And the figures that depend on it inherit the absence rather than
-    // inventing a denominator.
     expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
     expect(b.depth.known).toBe(false);
   });
 
-  it("does not count an active plan belonging to an archived client", async () => {
-    // The clients read already excludes archived rows, so a plan whose client
-    // is absent from that set is history, not current care.
-    const { client } = stubClient({
-      clients: { rows: [{ id: "c0" }], count: 1 },
-      treatment_plans: {
-        rows: [{ client_id: "c0" }, { client_id: "archived-one" }],
-        count: 2,
-      },
-      appointments: { rows: [], count: 0 },
-    });
-    const b = await getOwnerCapacityBriefing(STUDIO, client);
-    expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
-  });
-
   it("when EVERY open plan belongs to an archived client, active treatment is UNKNOWN — not zero", async () => {
-    // The negative control the previous test was missing. Excluding the
-    // archived plan is correct; the bug was what happened when exclusion
-    // emptied the set. `planRows.rows` is non-empty, so a "no plans on file"
-    // guard never fired, and the screen printed a confident 0 — which on a page
-    // about chasing work reads as "nobody needs booking". A studio with no
-    // plans and a studio whose only plans are archived are the SAME state: no
-    // evidence any CURRENT client is in a course of treatment.
-    const { client } = stubClient({
-      clients: { rows: [{ id: "c0" }], count: 1 },
-      treatment_plans: { rows: [{ client_id: "archived-one" }], count: 1 },
-      appointments: { rows: [], count: 0 },
-    });
+    // Rooting on CURRENT clients makes this structural: an archived client's
+    // plan is not in the result at all. The empty intersection must still read
+    // UNKNOWN rather than a confident 0, which on a page about chasing work
+    // would read as "nobody needs booking".
+    const { client } = stubClient({ clients: [{ id: "c0", plans: 0, bookings: [] }] });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.clients.activeTreatment.known).toBe(false);
     if (b.clients.activeTreatment.known) throw new Error("unreachable");
     expect(b.clients.activeTreatment.reason).toMatch(/It is not zero/);
-    // And everything derived from it inherits the absence.
     expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
     expect(b.depth.known).toBe(false);
-    // The client total is unaffected — it never needed the plans.
     expect(b.clients.totalRecords).toEqual({ known: true, value: 1 });
   });
 
+  // -------------------------------------------------------------------------
+  // Service classification
+  // -------------------------------------------------------------------------
+
   it("reports the treatment time booked, and who is holding nothing", async () => {
     const { client } = stubClient({
-      clients: { rows: [{ id: "c0" }, { id: "c1" }], count: 2 },
-      treatment_plans: { rows: [{ client_id: "c0" }, { client_id: "c1" }], count: 2 },
-      appointments: {
-        rows: [
-          {
-            id: "a1",
-            client_id: "c0",
-            starts_at: "2026-09-01T14:00:00.000Z",
-            ends_at: "2026-09-01T15:00:00.000Z",
-            status: "confirmed",
-            service: { modality: "laser", name: "Session" },
-          },
-        ],
-        count: 1,
-      },
+      clients: [
+        { id: "c0", plans: 1, bookings: [booking()] },
+        { id: "c1", plans: 1, bookings: [] },
+      ],
     });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.futureTreatmentMinutes).toEqual({ known: true, value: 60 });
@@ -376,29 +408,15 @@ describe("getOwnerCapacityBriefing — read soundness", () => {
     });
   });
 
-  it("an appointment with NO SERVICE is UNKNOWN, and takes its dependent figures with it", async () => {
+  it("a booking with NO SERVICE is UNKNOWN, and takes its dependent figures with it", async () => {
     // service_id is nullable, and the embed also vanishes when a service row is
     // deleted. Modality and name are the whole input to isConsultationService,
-    // so the classification genuinely cannot be made. Calling it treatment was
-    // a guess wearing a fact's clothes, and it failed in the direction that
+    // so the classification genuinely cannot be made. Calling it treatment was a
+    // guess wearing a fact's clothes, and it failed in the direction that
     // matters: a consultation whose service was deleted counted as booked
     // treatment and removed its client from the "nothing booked" list.
     const { client } = stubClient({
-      clients: { rows: [{ id: "c0" }], count: 1 },
-      treatment_plans: { rows: [{ client_id: "c0" }], count: 1 },
-      appointments: {
-        rows: [
-          {
-            id: "a1",
-            client_id: "c0",
-            starts_at: "2026-09-01T14:00:00.000Z",
-            ends_at: "2026-09-01T15:00:00.000Z",
-            status: "confirmed",
-            service: null,
-          },
-        ],
-        count: 1,
-      },
+      clients: [{ id: "c0", plans: 1, bookings: [booking({ service: null })] }],
     });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.futureTreatmentMinutes.known).toBe(false);
@@ -406,34 +424,16 @@ describe("getOwnerCapacityBriefing — read soundness", () => {
     expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
     if (b.futureTreatmentMinutes.known) throw new Error("unreachable");
     expect(b.futureTreatmentMinutes.reason).toMatch(/no service on record/i);
-    // The client population itself is unaffected — only the appointment-derived
-    // figures degrade.
     expect(b.clients.totalRecords).toEqual({ known: true, value: 1 });
     expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
   });
 
   it("an unclassifiable booking OUTSIDE the active population spares booking depth", async () => {
-    // Depth is computed only over active treatment clients, so an orphaned
-    // appointment for someone with no open plan cannot change it. Total
-    // committed minutes sums every booking, so that one still degrades. Two
-    // different blast radii, deliberately not merged — failing depth closed
-    // here would be over-refusal, which is its own kind of untruth.
     const { client } = stubClient({
-      clients: { rows: [{ id: "c0" }, { id: "stranger" }], count: 2 },
-      treatment_plans: { rows: [{ client_id: "c0" }], count: 1 },
-      appointments: {
-        rows: [
-          {
-            id: "a1",
-            client_id: "stranger",
-            starts_at: "2026-09-01T14:00:00.000Z",
-            ends_at: "2026-09-01T15:00:00.000Z",
-            status: "confirmed",
-            service: null,
-          },
-        ],
-        count: 1,
-      },
+      clients: [
+        { id: "c0", plans: 1, bookings: [] },
+        { id: "stranger", plans: 0, bookings: [booking({ service: null })] },
+      ],
     });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.futureTreatmentMinutes.known).toBe(false);
@@ -449,23 +449,14 @@ describe("getOwnerCapacityBriefing — read soundness", () => {
 
   it("a CANCELLED service-less booking does not contaminate anything", async () => {
     // Classification is only attempted for bookings the studio is committed to.
-    // A cancelled one is out of scope before its service is ever consulted.
     const { client } = stubClient({
-      clients: { rows: [{ id: "c0" }], count: 1 },
-      treatment_plans: { rows: [{ client_id: "c0" }], count: 1 },
-      appointments: {
-        rows: [
-          {
-            id: "a1",
-            client_id: "c0",
-            starts_at: "2026-09-01T14:00:00.000Z",
-            ends_at: "2026-09-01T15:00:00.000Z",
-            status: "cancelled",
-            service: null,
-          },
-        ],
-        count: 1,
-      },
+      clients: [
+        {
+          id: "c0",
+          plans: 1,
+          bookings: [booking({ status: "cancelled", service: null })],
+        },
+      ],
     });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.futureTreatmentMinutes).toEqual({ known: true, value: 0 });
@@ -477,21 +468,13 @@ describe("getOwnerCapacityBriefing — read soundness", () => {
 
   it("does not count a booked CONSULTATION as the client having treatment booked", async () => {
     const { client } = stubClient({
-      clients: { rows: [{ id: "c0" }], count: 1 },
-      treatment_plans: { rows: [{ client_id: "c0" }], count: 1 },
-      appointments: {
-        rows: [
-          {
-            id: "a1",
-            client_id: "c0",
-            starts_at: "2026-09-01T14:00:00.000Z",
-            ends_at: "2026-09-01T15:00:00.000Z",
-            status: "confirmed",
-            service: { modality: "consultation", name: "Consult" },
-          },
-        ],
-        count: 1,
-      },
+      clients: [
+        {
+          id: "c0",
+          plans: 1,
+          bookings: [booking({ service: { modality: "consultation", name: "Consult" } })],
+        },
+      ],
     });
     const b = await getOwnerCapacityBriefing(STUDIO, client);
     expect(b.clients.activeTreatmentWithoutFutureBooking).toEqual({

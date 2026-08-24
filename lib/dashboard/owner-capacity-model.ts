@@ -172,6 +172,63 @@ export function summarizeBookingDepth(
   return depth;
 }
 
+// ---------------------------------------------------------------------------
+// The snapshot
+// ---------------------------------------------------------------------------
+
+/**
+ * One current client as the single analytics statement returned them, with the
+ * two pieces of evidence hung off them.
+ *
+ * `bookingsComplete` exists because the Data API clips an EMBEDDED rowset at the
+ * same ceiling it clips a top-level one — measured, not assumed: a client with
+ * 1,100 qualifying appointments came back with 1,000 of them, and the response's
+ * Content-Range describes only the ROOT, so nothing in the response body says
+ * rows went missing. The loader therefore asks for the true count alongside the
+ * rows and compares them per client; this flag is that comparison's answer.
+ */
+export type ClientSnapshot = {
+  clientId: string;
+  /** At least one open treatment plan. Derived from a COUNT, never from rows. */
+  hasOpenPlan: boolean;
+  /** False when this client's booking rows were clipped by the embed ceiling. */
+  bookingsComplete: boolean;
+  bookings: ReadonlyArray<BriefingAppointment>;
+};
+
+export type SnapshotSummary = {
+  readonly activeTreatmentClientIds: ReadonlySet<string>;
+  readonly treatmentCountByClient: ReadonlyMap<string, number>;
+  readonly treatmentMinutes: number;
+  readonly unclassifiedClientIds: ReadonlySet<string>;
+  /** Clients whose booking evidence was clipped, so nothing may be summed over them. */
+  readonly incompleteBookingClientIds: ReadonlySet<string>;
+};
+
+/**
+ * Fold the whole snapshot at once. Every figure the briefing reports is derived
+ * from THIS one value, so no two of them can describe different moments.
+ *
+ * The per-booking rules are unchanged and still live in `summarizeFutureTreatment`
+ * — this only regroups them around the client rows the single statement returns.
+ */
+export function summarizeSnapshot(
+  clients: ReadonlyArray<ClientSnapshot>,
+): SnapshotSummary {
+  const treatment = summarizeFutureTreatment(clients.flatMap((c) => [...c.bookings]));
+  return {
+    activeTreatmentClientIds: new Set(
+      clients.filter((c) => c.hasOpenPlan).map((c) => c.clientId),
+    ),
+    treatmentCountByClient: treatment.countByClient,
+    treatmentMinutes: treatment.minutes,
+    unclassifiedClientIds: treatment.unclassifiedClientIds,
+    incompleteBookingClientIds: new Set(
+      clients.filter((c) => !c.bookingsComplete).map((c) => c.clientId),
+    ),
+  };
+}
+
 /**
  * How "active treatment client" was established, stated on the screen itself.
  *

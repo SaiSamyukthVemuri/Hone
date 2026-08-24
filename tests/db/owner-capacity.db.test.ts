@@ -417,6 +417,39 @@ describe("owner capacity briefing", () => {
     expect(b.clients.totalRecords).toEqual({ known: true, value: 1 });
   }, 60_000);
 
+  it("a CLOSED plan is not active-treatment evidence — the embedded filter really binds", async () => {
+    // The plan evidence is an embedded aggregate with its own filters. If those
+    // filters silently failed to bind, every closed plan in the studio's history
+    // would count as active treatment and the screen would be confidently wrong
+    // in the worst direction. Proved against real rows rather than trusted.
+    const s = await seedStudio(`cap-closed-${randomUUID().slice(0, 6)}`);
+    await adminQuery("update public.studios set timezone = $2 where id = $1", [
+      s.studioId,
+      TZ,
+    ]);
+    const c = await newClient(s.studioId, "Finished a course");
+    await adminQuery(
+      `insert into public.treatment_plans
+         (studio_id, client_id, name, suggested_visit_count, status, closed_at)
+       values ($1, $2, 'Done', 6, 'closed', now())`,
+      [s.studioId, c],
+    );
+    const st = await loadStudio(s.studioId);
+    const session = await signIn(s.practitionerId, "cap-closed");
+    const b = await getOwnerCapacityBriefing(st, await authedClient(session.access_token));
+
+    // The plan row exists and is genuinely closed.
+    const plans = await adminQuery(
+      "select status from public.treatment_plans where studio_id = $1",
+      [s.studioId],
+    );
+    expect(plans.rows.map((r) => r.status)).toEqual(["closed"]);
+
+    // So there is no evidence anyone is in active treatment — UNKNOWN, not 0.
+    expect(b.clients.activeTreatment.known).toBe(false);
+    expect(b.clients.totalRecords).toEqual({ known: true, value: 2 });
+  }, 60_000);
+
   it("a future booking whose SERVICE WAS DELETED degrades the figures it feeds", async () => {
     // The production state Codex named: service_id is nullable and the embed
     // also disappears when the service row is deleted. Proved by actually
@@ -582,14 +615,60 @@ describe("owner capacity briefing", () => {
     const tally: Record<string, number> = {};
     for (const table of taken) tally[table] = (tally[table] ?? 0) + 1;
 
-    // The identity read the gate needs, then three studio-scoped reads issued
-    // together. Six clients cost NOTHING extra here.
-    expect(tally).toEqual({
-      practitioners: 1,
-      clients: 1,
-      treatment_plans: 1,
-      appointments: 1,
-    });
-    expect(taken).toHaveLength(4);
+    // The identity read the gate needs, then ONE analytics statement. Not three
+    // — three requests are three snapshots, and the join across them can report
+    // a combination of states that never coexisted. Six clients, their plans
+    // and their bookings all arrive in that single statement, so this tally is
+    // the snapshot property expressed as a number.
+    expect(tally).toEqual({ practitioners: 1, clients: 1 });
+    expect(taken).toHaveLength(2);
   }, 30_000);
+
+  it("detects a CLIPPED embedded rowset against the real Data API", async () => {
+    // Measured, not assumed. The Data API clips an EMBEDDED rowset at the same
+    // ceiling it clips a top-level one, PER PARENT ROW, and the response's
+    // Content-Range describes only the ROOT — so nothing in the response body
+    // says rows went missing. A naive embed would have silently undercounted
+    // exactly the way the old offset paging did.
+    const s = await seedStudio(`cap-embed-${randomUUID().slice(0, 6)}`);
+    await adminQuery("update public.studios set timezone = $2 where id = $1", [
+      s.studioId,
+      TZ,
+    ]);
+    const c = await newClient(s.studioId, "Very busy");
+    await openPlan(s.studioId, c);
+    const svc = await newService(s.studioId, "Busy svc", "laser");
+    // 1,100 well-spaced future bookings: past the 1,000-row embed ceiling.
+    await adminQuery(
+      `insert into public.appointments
+         (studio_id, client_id, service_id, starts_at, ends_at, duration_minutes,
+          buffer_minutes_snapshot, blocked_ends_at, status)
+       select $1, $2, $3,
+              now() + (g * interval '3 hours') + interval '2 days',
+              now() + (g * interval '3 hours') + interval '2 days' + interval '30 minutes',
+              30, 15,
+              now() + (g * interval '3 hours') + interval '2 days' + interval '45 minutes',
+              'confirmed'
+       from generate_series(1, 1100) g`,
+      [s.studioId, c, svc],
+    );
+    const seeded = await adminQuery(
+      "select count(*)::int as n from public.appointments where studio_id = $1",
+      [s.studioId],
+    );
+    expect(seeded.rows[0].n).toBe(1100);
+
+    const st = await loadStudio(s.studioId);
+    const session = await signIn(s.practitionerId, "cap-embed");
+    const b = await getOwnerCapacityBriefing(st, await authedClient(session.access_token));
+
+    // The client population is small and fully in hand...
+    expect(b.clients.totalRecords).toEqual({ known: true, value: 2 });
+    expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
+    // ...but the bookings behind these figures are not, and that is detected
+    // rather than silently rounded down to the 1,000 that came back.
+    expect(b.futureTreatmentMinutes.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
+  }, 180_000);
 });
