@@ -8,7 +8,7 @@
 // loader beside it holds every read.
 //
 // THE ONE DISCIPLINE THIS FILE EXISTS TO ENFORCE: an absent input is UNKNOWN,
-// never zero. A studio that records no treatment plans does not have zero
+// never zero — and never a confident guess in either direction. A studio that records no treatment plans does not have zero
 // active treatment clients — it has an unanswerable question, and printing "0"
 // would read as "nobody is in treatment" on a screen an owner uses to decide
 // whether to chase work. Every derived figure therefore travels as a `Fact<T>`.
@@ -38,14 +38,30 @@ export function unknown<T>(reason: string): Fact<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * An appointment reduced to the fields the briefing reasons about.
- * `isConsultation` is resolved by the loader through `isConsultationService`,
- * the same predicate the public booking page and its server guard share — this
- * module never re-decides it.
+ * What a future booking IS, as far as the studio's own records can say.
  *
- * An appointment with NO service is treatment, not a consultation: it is booked
- * studio time with a client, and calling it a consultation would quietly drop
- * it out of the booked-treatment counts below.
+ * The third member is the point. `appointments.service_id` is NULLABLE, and the
+ * embedded service also disappears when a service row is deleted, so "no
+ * service on this appointment" is a real production state — not a hypothetical.
+ * It carries NO modality and NO name, which are the only two things
+ * `isConsultationService` reads, so the classification genuinely cannot be
+ * made.
+ *
+ * It previously collapsed into `treatment`, on the reasoning that booked studio
+ * time with a client is treatment unless proven otherwise. That is a guess
+ * wearing a fact's clothes, and it fails in the direction that matters: a
+ * consultation whose service was later deleted was counted as booked treatment,
+ * which both inflated committed treatment minutes and removed its client from
+ * the "nothing booked" list an owner uses to decide who to chase.
+ */
+export type ServiceClassification = "consultation" | "treatment" | "unknown";
+
+/**
+ * An appointment reduced to the fields the briefing reasons about.
+ * `serviceClass` is resolved by the loader through `isConsultationService`, the
+ * same predicate the public booking page and its server guard share — this
+ * module never re-decides it, and never infers it from duration, client
+ * history, notes or anything else.
  */
 export type BriefingAppointment = {
   id: string;
@@ -53,7 +69,7 @@ export type BriefingAppointment = {
   startsAt: string;
   endsAt: string;
   status: string;
-  isConsultation: boolean;
+  serviceClass: ServiceClassification;
 };
 
 const ACTIVE_STATUSES = new Set(["confirmed", "completed"]);
@@ -72,6 +88,18 @@ export type FutureTreatment = {
   readonly countByClient: ReadonlyMap<string, number>;
   /** Real treatment time on the calendar, in minutes. Buffers excluded. */
   readonly minutes: number;
+  /**
+   * Clients holding an in-scope future booking whose service class could not be
+   * established. These appointments are folded into NEITHER count above — they
+   * are the reason a caller must degrade a figure to UNKNOWN rather than the
+   * contents of one.
+   *
+   * Carried as CLIENT IDS, not a bare flag, so a caller can ask the narrower
+   * question: booking depth is only contaminated when an unclassifiable
+   * booking belongs to a client in the active-treatment population, whereas
+   * total committed treatment minutes is contaminated by any of them.
+   */
+  readonly unclassifiedClientIds: ReadonlySet<string>;
 };
 
 /**
@@ -90,14 +118,24 @@ export function summarizeFutureTreatment(
   upcoming: ReadonlyArray<BriefingAppointment>,
 ): FutureTreatment {
   const countByClient = new Map<string, number>();
+  const unclassifiedClientIds = new Set<string>();
   let minutes = 0;
   for (const a of upcoming) {
-    if (a.isConsultation || !isActiveBooking(a)) continue;
+    if (!isActiveBooking(a)) continue;
+    // NEITHER counted NOR discarded. Skipping it silently would report the
+    // client as having nothing booked; counting it would report time the studio
+    // may never spend treating. Record who it belongs to and let the caller
+    // degrade the affected figure instead.
+    if (a.serviceClass === "unknown") {
+      unclassifiedClientIds.add(a.clientId);
+      continue;
+    }
+    if (a.serviceClass === "consultation") continue;
     countByClient.set(a.clientId, (countByClient.get(a.clientId) ?? 0) + 1);
     const span = new Date(a.endsAt).getTime() - new Date(a.startsAt).getTime();
     if (Number.isFinite(span) && span > 0) minutes += span / 60_000;
   }
-  return { countByClient, minutes };
+  return { countByClient, minutes, unclassifiedClientIds };
 }
 
 export type BookingDepth = {

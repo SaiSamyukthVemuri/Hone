@@ -388,6 +388,80 @@ describe("owner capacity briefing", () => {
     expect(b.clients.activeTreatmentBasis).toMatch(/open treatment plan/i);
   });
 
+  it("a studio whose ONLY open plans belong to archived clients reports UNKNOWN, not zero", async () => {
+    // Against real rows: the plan is genuinely open, its client is genuinely
+    // archived, and the intersection is genuinely empty. A "no plans on file"
+    // guard cannot see this state, because there IS a plan on file.
+    const s = await seedStudio(`cap-arch-${randomUUID().slice(0, 6)}`);
+    await adminQuery("update public.studios set timezone = $2 where id = $1", [
+      s.studioId,
+      TZ,
+    ]);
+    const gone = await newClient(s.studioId, "Archived only", true);
+    await openPlan(s.studioId, gone);
+    const st = await loadStudio(s.studioId);
+    const session = await signIn(s.practitionerId, "cap-arch");
+    const b = await getOwnerCapacityBriefing(st, await authedClient(session.access_token));
+
+    // The plan row really is there and really is active.
+    const plans = await adminQuery(
+      "select count(*)::int as n from public.treatment_plans where studio_id = $1 and status = 'active'",
+      [s.studioId],
+    );
+    expect(plans.rows[0].n).toBe(1);
+
+    expect(b.clients.activeTreatment.known).toBe(false);
+    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+    // seedStudio's own (non-archived) client is still counted.
+    expect(b.clients.totalRecords).toEqual({ known: true, value: 1 });
+  }, 60_000);
+
+  it("a future booking whose SERVICE WAS DELETED degrades the figures it feeds", async () => {
+    // The production state Codex named: service_id is nullable and the embed
+    // also disappears when the service row is deleted. Proved by actually
+    // deleting it, so the appointment survives with a null service_id through
+    // the shipped ON DELETE behaviour rather than by writing null directly.
+    const s = await seedStudio(`cap-nosvc-${randomUUID().slice(0, 6)}`);
+    await adminQuery("update public.studios set timezone = $2 where id = $1", [
+      s.studioId,
+      TZ,
+    ]);
+    const c = await newClient(s.studioId, "Has an orphaned booking");
+    await openPlan(s.studioId, c);
+    const doomed = await newService(s.studioId, "Doomed", "laser");
+    await seedAppointment({
+      studioId: s.studioId,
+      clientId: c,
+      serviceId: doomed,
+      dateStr: SOON,
+      start: "09:00",
+      end: "10:00",
+      status: "confirmed",
+    });
+    await adminQuery("delete from public.services where id = $1", [doomed]);
+
+    // The appointment survived the deletion with no service attached.
+    const orphan = await adminQuery(
+      "select service_id from public.appointments where studio_id = $1",
+      [s.studioId],
+    );
+    expect(orphan.rows).toHaveLength(1);
+    expect(orphan.rows[0].service_id).toBeNull();
+
+    const st = await loadStudio(s.studioId);
+    const session = await signIn(s.practitionerId, "cap-nosvc");
+    const b = await getOwnerCapacityBriefing(st, await authedClient(session.access_token));
+
+    // It is neither counted as treatment nor silently dropped: both are wrong,
+    // in opposite directions.
+    expect(b.futureTreatmentMinutes.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
+    // The client population is untouched by an appointment-classification gap.
+    expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
+  }, 60_000);
+
   // -------------------------------------------------------------------------
   // Owner authority
   // -------------------------------------------------------------------------
@@ -418,11 +492,19 @@ describe("owner capacity briefing", () => {
   // Read soundness — a read that did not return the truth must not be consumed
   // -------------------------------------------------------------------------
 
-  it("reads PAST the Data API row ceiling instead of calling 1,000 rows complete", async () => {
-    // supabase/config.toml sets max_rows = 1000, so PostgREST truncates a
-    // response before any app-side limit is reached. The client whose plan is
-    // asserted below is the LAST one in id order, so it can only be seen by a
-    // read that went past the first page.
+  it("keeps the exact TOTAL past the real row ceiling, and refuses every id-dependent figure", async () => {
+    // supabase/config.toml sets max_rows = 1000, so ONE response cannot carry
+    // this studio's 1,050 clients — against the real Data API, not a stub.
+    //
+    // What survives is the exact count: PostgREST reports it in Content-Range
+    // and the ceiling does not bound it. What cannot survive is anything
+    // computed over the IDENTIFIERS. This module used to close that gap by
+    // issuing a second range() request and treating the union as one
+    // population; it is not one. Offsets are evaluated against live data, so a
+    // row archived between the two requests shifts every later offset and the
+    // arithmetic still says "complete". There is no cursor or retry that fixes
+    // it without a transaction boundary this module has no vehicle for — it is
+    // Data API reads only, no RPC — so the enumeration is refused instead.
     const big = await seedStudio(`cap-page-${randomUUID().slice(0, 6)}`);
     await adminQuery("update public.studios set timezone = $2 where id = $1", [
       big.studioId,
@@ -445,10 +527,44 @@ describe("owner capacity briefing", () => {
       await authedClient(session.access_token),
     );
 
-    // 1049 seeded + the one seedStudio creates. A ceiling-blind read reported
-    // 1,000 here and called it complete.
+    // 1049 seeded + the one seedStudio creates.
     expect(b.clients.totalRecords).toEqual({ known: true, value: 1050 });
-    // And the plan intersection saw the client that lives beyond page one.
+    // Everything that needed the ids is refused, including the plan that lives
+    // beyond the ceiling. This is a real product ceiling for large studios,
+    // stated rather than papered over.
+    expect(b.clients.activeTreatment.known).toBe(false);
+    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+  }, 120_000);
+
+  it("a studio that exactly fills one response still gets real figures", async () => {
+    // The guard is "rows returned !== exact count", not "we touched the
+    // ceiling". Without this control the ceiling fix could have replaced a
+    // false zero with a permanent false unknown and no test would notice.
+    const exact = await seedStudio(`cap-exact-${randomUUID().slice(0, 6)}`);
+    await adminQuery("update public.studios set timezone = $2 where id = $1", [
+      exact.studioId,
+      TZ,
+    ]);
+    // seedStudio already created one client; add 999 for exactly 1,000.
+    await adminQuery(
+      `insert into public.clients (studio_id, name)
+       select $1, 'Exact ' || g from generate_series(1, 999) g`,
+      [exact.studioId],
+    );
+    const one = await adminQuery(
+      "select id from public.clients where studio_id = $1 order by id limit 1",
+      [exact.studioId],
+    );
+    await openPlan(exact.studioId, one.rows[0].id as string);
+    const exactStudio = await loadStudio(exact.studioId);
+    const session = await signIn(exact.practitionerId, "cap-exact");
+    const b = await getOwnerCapacityBriefing(
+      exactStudio,
+      await authedClient(session.access_token),
+    );
+
+    expect(b.clients.totalRecords).toEqual({ known: true, value: 1000 });
     expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
     expect(b.clients.activeTreatmentWithoutFutureBooking).toEqual({
       known: true,
