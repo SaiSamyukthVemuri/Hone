@@ -116,6 +116,21 @@ export function readCanonicalRecord(file = CANONICAL_STATE_FILE) {
       `hosted_migration_max must be a four-digit string, got ${JSON.stringify(raw.hosted_migration_max)}`,
     );
   }
+  // NULL IS A LEGITIMATE VALUE, and 0186's is null: its exact apply date/time
+  // was never captured, so the field is left empty rather than filled with the
+  // nearest plausible value. A non-null value must still be the ISO date or
+  // instant every earlier record uses — accepting any string would let a
+  // consumer's date parsing fail on something that loaded cleanly.
+  const appliedAt = raw.hosted_applied_at;
+  if (
+    appliedAt !== null &&
+    !(typeof appliedAt === "string" &&
+      /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z)?$/.test(appliedAt))
+  ) {
+    throw new MigrationStateError(
+      `hosted_applied_at must be null or YYYY-MM-DD[THH:MM:SSZ], got ${JSON.stringify(appliedAt)}`,
+    );
+  }
   return raw;
 }
 
@@ -182,7 +197,9 @@ if (process.argv[1] && process.argv[1].endsWith("migration-state.mjs")) {
     console.log(`repo max            ${state.repo_migration_max}`);
     console.log(`hosted max          ${state.hosted_migration_max}`);
     console.log(
-      `hosted applied at   ${state.hosted_applied_at}` +
+      // Null renders as words, not as a bare "null" that reads like a broken
+      // tool. 0186's apply date/time was never captured.
+      `hosted applied at   ${state.hosted_applied_at ?? "NOT CAPTURED"}` +
         (state.hosted_applied_at_precision ? ` (precision qualified — see the canonical record)` : ""),
     );
     console.log(`next free           ${state.next_free_migration}`);

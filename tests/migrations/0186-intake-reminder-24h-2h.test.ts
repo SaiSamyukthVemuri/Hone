@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   countVersion,
   fileForVersion,
   isRepoMax,
+  migrationState,
   versionsAbove,
 } from "./helpers/migration-state";
 
@@ -149,5 +151,81 @@ describe("0186 — safety: nothing structural, nothing destructive", () => {
       );
     }
     expect(statements).toHaveLength(5);
+  });
+});
+
+// ===========================================================================
+// CURRENT HOSTED STATE — 0186 OWNS IT NOW
+// ===========================================================================
+//
+// Inherited from 0185's file at the apply hand-off. Whichever migration is the
+// applied head owns these facts; a superseded migration's file must not keep
+// deciding them, or it has to be rewritten on every future apply.
+//
+// Deliberately small. This block records WHAT PRODUCTION HAS RUN and nothing
+// else: it does not police the wording of the record's prose, and it makes no
+// claim about email, SMS or cron, none of which is needed to establish hosted
+// migration state.
+
+function canonicalRecord(): {
+  hosted_migration_max: string;
+  /** NULLABLE — null right now, because 0186's apply date/time was not captured. */
+  hosted_applied_at: string | null;
+  hosted_applied_at_precision: string;
+  hosted_note: string;
+} {
+  return JSON.parse(
+    readFileSync(path.join(ROOT, "docs/production/migration-state.json"), "utf8"),
+  );
+}
+
+describe("0186 — current hosted state", () => {
+  it("is the APPLIED production head, with nothing pending", () => {
+    const state = migrationState();
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.repo_migration_max).toBe(VERSION);
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.next_free_migration).toBe("0187");
+  });
+
+  it("the apply date/time was NOT CAPTURED, and is represented truthfully", () => {
+    // Null, not the nearest plausible date. The verification date is a separate
+    // fact and an upper bound; it is never the apply date.
+    const rec = canonicalRecord();
+    expect(rec.hosted_applied_at).toBeNull();
+    expect(migrationState().hosted_applied_at).toBeNull();
+    expect(rec.hosted_applied_at_precision).toBe(
+      "The exact apply date/time for 0186 was not captured. " +
+        "0186 was verified applied on 2026-08-24.",
+    );
+  });
+
+  it("the canonical record is 0186's, and carries its production checksum", () => {
+    const rec = canonicalRecord();
+    expect(rec.hosted_migration_max).toBe(VERSION);
+    const digest = createHash("sha256").update(SQL, "utf8").digest("hex");
+    expect(digest).toBe(
+      "4041b38653198976233e5bf1ea41b68b349a587ed2c1fa43c251d9c6c629e66e",
+    );
+    expect(rec.hosted_note).toContain(digest);
+    expect(rec.hosted_note).toContain(`${FILE} APPLIED to production`);
+  });
+
+  it("carries the earlier apply records forward, unedited", () => {
+    // A new head must not truncate the chain. The 0185, 0184 and 0183 records
+    // and their frozen checksums stay exactly where they were.
+    const note = canonicalRecord().hosted_note;
+    for (const [label, sha] of [
+      ["0185", "663a5d826d4c9e610c3bf7ec599dea577772ba521326488add77153f39a14ffc"],
+      ["0184", "aa110edadd459e0f11062e3904ea7ad54a54a75c31d9342b762a533ecc07694c"],
+      ["0183", "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb"],
+      ["0171", "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6"],
+    ] as const) {
+      expect(note, `the carried chain lost its ${label} checksum`).toContain(sha);
+    }
+    expect(note).toContain(
+      "SUPERSEDES the 0185 record as the CURRENT hosted-state record",
+    );
   });
 });
