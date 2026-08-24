@@ -156,7 +156,7 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 | Portal | Magic-link login, portal tasks, append-only access-event log (0111) | Merged | ✅ applied | Deployed | Enabled | ✅ **Willow: 32 `client_portal_sessions`** *(2026-08-23)*; controlled test 6; Synthetic Twin 0 | ✅ | production row count | — |
 | Portal | Portal messages + replies | Merged | ✅ applied (0053–0055) | Deployed | Enabled | ✅ **11 `client_portal_messages` all-tenant — 2 at Willow, 9 on the controlled test studio** *(2026-08-23)* | ✅ | production row count | One-way studio→client + client replies |
 | Intake | Intake forms + reminders + terminal-state immutability (0118) | Merged | ✅ applied | Deployed | Enabled | ✅ **Willow: 72 `client_intake_forms`** *(2026-08-23)*; controlled test 6; Synthetic Twin 50 — **not customer activity** | ✅ | production row count | Submitted/reviewed answers immutable to members |
-| Consent | Versioned consent templates + e-signatures (0057, 0060, 0072) | Merged | ✅ applied | Deployed | Enabled | ✅ 19 `client_consent_signatures` | ✅ | production row count | ⚠️ **Draft wording — lawyer review required before relying on enforceability** |
+| Consent | Versioned consent templates + e-signatures (0057, 0060, 0072) | Merged | ✅ applied | Deployed | Enabled | ✅ **Willow: 49 `client_consent_signatures`** *(2026-08-23)*; controlled test 3; Synthetic Twin 0 — **not customer activity**; 52 all-tenant | ✅ | production row counts | ⚠️ **Draft wording — lawyer review required before relying on enforceability** |
 
 ## 7. Payments and Stripe
 

@@ -150,8 +150,16 @@ Behaviour:
 
 **Production exercise: yes.** `session_copy_operations` holds **24 rows, all 24 on
 `willow-electrolysis`**, from **2026-07-28T20:39:54Z** through **2026-08-23T19:40:49Z**
-*(as of 2026-08-23, read-only query)*. The commit path, its idempotency guarantee and the
-provenance ledger have executed repeatedly against real production data at the live studio.
+*(as of 2026-08-23, read-only query)*. The commit path and the provenance ledger have executed
+repeatedly against real production data at Willow.
+
+**What those 24 rows do NOT evidence.** They are **all accept-path commits**. The idempotency
+guarantee is **enforced by the reviewed database contract** — the `(target_session_id,
+idempotency_key)` UNIQUE in migration 0157 — but **no production duplicate-retry event has been
+isolated**, and neither has a **stale-source rejection**. The guarantee is not weakened by this;
+it is simply not *separately production-exercised*, and this document does not claim it is. Same
+boundary as [known-limitations.md](./known-limitations.md) L2 and
+[capability-register.md](./capability-register.md) §2.
 
 <!-- canonical-facts:ignore-start reason=quotes-the-superseded-zero-row-claim -->
 > **Corrected 2026-08-23.** This section previously read *"Production exercise: none —
