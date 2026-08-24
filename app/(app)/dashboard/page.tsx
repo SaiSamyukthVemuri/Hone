@@ -909,6 +909,23 @@ export default async function DashboardPage({
         todayLocal={todayLocal}
       />
 
+      {/* OWNER-CAP Slice 1: the owner's capacity briefing. A LINK, not a card:
+          the figures on it are studio-wide practice analytics an ordinary
+          practitioner must not be shown, and the page refuses them server-side
+          before issuing a single analytics read. Rendering it here keeps the
+          surface reachable without another nav tab. */}
+      {isOwner && (
+        <Link
+          href="/dashboard/capacity"
+          className="flex items-baseline justify-between gap-3 rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-sunken"
+        >
+          <span className="font-medium">Practice capacity</span>
+          <span className="text-fg-muted">
+            Who is in treatment, and who has nothing booked &rarr;
+          </span>
+        </Link>
+      )}
+
       {/* CHLOE D2, setup that is DONE is not daily work.
           ------------------------------------------------------------------
           This card used to render in both states. Once every required item was
