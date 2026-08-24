@@ -277,7 +277,7 @@ describe("Stage-B durable waitlist activation guard", () => {
     expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
     expect(r.stdout).toMatch(/^PASS stage-b-durable-waitlist-env/m);
-    expect(out).toMatch(/explicitly enables 1 studio\(s\)/);
+    expect(out).toMatch(/carries 1 distinct slug-shaped entry\b/);
     // A COUNT is fine. THE SLUG IS NOT, on the pass path just as on the fail path.
     expect(out).not.toContain(VALID_SLUG_SENTINEL);
   });
@@ -289,9 +289,84 @@ describe("Stage-B durable waitlist activation guard", () => {
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
-    expect(out).toMatch(/explicitly enables 2 studio\(s\)/);
+    expect(out).toMatch(/carries 2 distinct slug-shaped entries/);
     expect(out).not.toContain(VALID_SLUG_SENTINEL);
     expect(out).not.toContain(DURABLE_SLUG_SENTINEL_2);
+  });
+
+  // -------------------------------------------------------------------------
+  // CODEX (#637). The PASS line said the allowlist "explicitly enables N
+  // studio(s) ... each named in full and matched by exact slug equality". This
+  // script has NO DATABASE ACCESS. Two facts stand between a well-shaped entry
+  // and an activated studio, and it can decide NEITHER:
+  //
+  //   1. EXISTENCE — "studio-that-never-existed" is perfectly slug-shaped and
+  //      names nothing; only a query against studios.slug could tell.
+  //   2. ADMISSION — the durable list is subordinate to
+  //      NEW_CLIENT_WAITLIST_STUDIO_SLUGS, which this script never reads, so a
+  //      real studio named here whose intake gate is off activates nothing.
+  //
+  // So the number is an UPPER BOUND on activation. Reporting it as studios
+  // enabled asserted both facts on evidence the script does not have — the same
+  // over-claim, one layer down, that this PR removes from the privacy notice.
+  // -------------------------------------------------------------------------
+  it("reports CONFIGURED ENTRIES and states plainly that it proves no activation", () => {
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${VALID_SLUG_SENTINEL}, ${DURABLE_SLUG_SENTINEL_2}`,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    const out = r.stdout + r.stderr;
+    // Counts ENTRIES, and says so in the units it actually measured.
+    expect(out).toMatch(/carries 2 distinct slug-shaped entries/);
+    // Names the missing evidence for BOTH unprovable facts, not just one.
+    expect(out).toMatch(/no database access/i);
+    expect(out).toMatch(/does NOT prove any entry names an existing studio/);
+    expect(out).toContain("NEW_CLIENT_WAITLIST_STUDIO_SLUGS");
+    expect(out).toMatch(/cannot tell whether a named studio.s new-client intake is waitlisted/);
+    // States the number's real meaning: a ceiling, not a result.
+    expect(out).toMatch(/the MOST studios this value could activate/);
+    expect(out).toMatch(/not as a\s+count of studios activated/);
+  });
+
+  it("NEGATIVE CONTROL: the PASS line may never claim studios are enabled", () => {
+    // Across every populated shape, including the ones whose wording is
+    // assembled separately (single, plural, duplicate-collapsed).
+    for (const value of [
+      VALID_SLUG_SENTINEL,
+      `${VALID_SLUG_SENTINEL}, ${DURABLE_SLUG_SENTINEL_2}`,
+      `${VALID_SLUG_SENTINEL}, ${VALID_SLUG_SENTINEL.toUpperCase()}`,
+    ]) {
+      const r = run({
+        ...PRODUCTION_BASELINE,
+        NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: value,
+      });
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      const out = r.stdout + r.stderr;
+      for (const banned of [
+        /\benables \d+ studio/i,
+        /\bexplicitly enables\b/i,
+        /\b\d+ studios? (?:are |is )?(?:now )?(?:enabled|active|activated)\b/i,
+        /\bmatched by exact slug equality\b/i,
+        /\beach named in full\b/i,
+      ]) {
+        expect(out, `must not claim activation: ${banned}`).not.toMatch(banned);
+      }
+    }
+  });
+
+  // The DARK line is the one place a studio-level claim IS proven: an empty set
+  // makes slugIsListed() false for every slug that could ever exist, with no
+  // database needed. It must keep saying so — weakening it to "no entries"
+  // would give away a guarantee the script genuinely holds.
+  it("still makes the PROVEN studio-level claim on the dark path", () => {
+    const r = run(PRODUCTION_BASELINE);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/names no studio/);
+    expect(r.stdout).toMatch(/stays dark/);
+    expect(r.stdout).toMatch(/every studio\s+remains on the WAIT-01 commit point/);
+    // No shape-only caveat here: there is nothing unproven to caveat.
+    expect(r.stdout).not.toMatch(/SHAPE ONLY/);
   });
 
   it("normalises case and padding exactly as the runtime does, and still passes", () => {
@@ -300,7 +375,7 @@ describe("Stage-B durable waitlist activation guard", () => {
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: PADDED_MIXED_CASE_SENTINEL,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/explicitly enables 1 studio\(s\)/);
+    expect(r.stdout + r.stderr).toMatch(/carries 1 distinct slug-shaped entry\b/);
   });
 
   // ---- malformed / unsafe activation config --------------------------------
@@ -375,8 +450,9 @@ describe("Stage-B durable waitlist activation guard", () => {
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
-    expect(out).toMatch(/explicitly enables 1 studio\(s\)/);
-    // The operator typed more than they enabled: said plainly, as counts only.
+    expect(out).toMatch(/carries 1 distinct slug-shaped entry\b/);
+    // The operator typed more than survives normalisation: said plainly, as
+    // counts only.
     expect(out).toMatch(/2 entries supplied; 1 duplicate normalised away/);
     expect(out).not.toContain(DUP_A);
     expect(out).not.toContain(DUP_A_MIXED_CASE);
@@ -388,7 +464,7 @@ describe("Stage-B durable waitlist activation guard", () => {
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, ${DUP_A}, ${DUP_A_MIXED_CASE}`,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/explicitly enables 1 studio\(s\)/);
+    expect(r.stdout).toMatch(/carries 1 distinct slug-shaped entry\b/);
     expect(r.stdout).toMatch(/3 entries supplied; 2 duplicate normalised away/);
   });
 
@@ -398,7 +474,7 @@ describe("Stage-B durable waitlist activation guard", () => {
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, ${DUP_B}`,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/explicitly enables 2 studio\(s\)/);
+    expect(r.stdout).toMatch(/carries 2 distinct slug-shaped entries/);
     expect(r.stdout).not.toMatch(/duplicate/);
   });
 
@@ -480,15 +556,15 @@ describe("gate and runtime normalise the allowlist identically", () => {
   const A = "studio-alpha-parity";
   const B = "studio-beta-parity";
 
-  /** How many studios the GATE reports for this value, via its PASS line. */
-  function gateEnabledCount(value: string): number {
+  /** How many entries the GATE reports for this value, via its PASS line. */
+  function gateConfiguredCount(value: string): number {
     const r = run({
       ...PRODUCTION_BASELINE,
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: value,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     if (/names no studio/.test(r.stdout)) return 0;
-    const m = r.stdout.match(/explicitly enables (\d+) studio\(s\)/);
+    const m = r.stdout.match(/carries (\d+) distinct slug-shaped entr(?:y|ies)/);
     expect(m, r.stdout).toBeTruthy();
     return Number((m as RegExpMatchArray)[1]);
   }
@@ -515,7 +591,7 @@ describe("gate and runtime normalise the allowlist identically", () => {
     ["empty", "", [A, B], 0],
     ["comma and whitespace only", " , ,  , ", [A, B], 0],
   ])("agrees on %s", (_label, value, candidates, expected) => {
-    const gate = gateEnabledCount(value as string);
+    const gate = gateConfiguredCount(value as string);
     const runtime = runtimeEnabledCount(value as string, candidates as string[]);
     expect(gate, `gate count for ${JSON.stringify(value)}`).toBe(expected);
     expect(runtime, `runtime count for ${JSON.stringify(value)}`).toBe(expected);
@@ -596,9 +672,9 @@ describe("check-production-env-gates contract is pinned in source", () => {
   // split array; the runtime's parseWaitlistSlugs() returns a Set. Pinned at
   // the source as well as behaviourally, so the defect has a name here.
   it("counts UNIQUE slugs the way the runtime does — a Set, not an array length", () => {
-    expect(SCRIPT_SOURCE).toMatch(/const enabled = new Set\(\)/);
-    expect(SCRIPT_SOURCE).toMatch(/enabled: enabled\.size/);
-    expect(SCRIPT_SOURCE).not.toMatch(/enabled: \w+\.length/);
+    expect(SCRIPT_SOURCE).toMatch(/const configured = new Set\(\)/);
+    expect(SCRIPT_SOURCE).toMatch(/configured: configured\.size/);
+    expect(SCRIPT_SOURCE).not.toMatch(/configured: \w+\.length/);
     // ...and validity is still decided per SUPPLIED entry, before collapsing.
     expect(SCRIPT_SOURCE).toMatch(/for \(const entry of supplied\)/);
     expect(SCRIPT_SOURCE).toMatch(/supplied: supplied\.length/);

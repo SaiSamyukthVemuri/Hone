@@ -150,8 +150,8 @@ export default function PrivacyPolicyPage() {
         <li>Your phone number, if you choose to give one; it is optional</li>
         <li>Which studio&rsquo;s waitlist you joined, and when</li>
         <li>
-          Whether you are still waiting, or have been removed from that
-          waitlist by the studio
+          Where the studio keeps its waitlist with us, whether you are still
+          waiting, or have been removed from that waitlist by the studio
         </li>
       </UL>
       <P>
@@ -301,19 +301,39 @@ export default function PrivacyPolicyPage() {
       </P>
       <P>
         <strong>With the studio whose waitlist you joined.</strong> A waitlist
-        entry belongs to that one studio: we store it for that studio, it is
-        visible only to that studio, and it is not shared with any other studio
-        on Hone.
+        request belongs to that one studio: we handle it for that studio alone,
+        it is visible only to that studio, and it is not shared with any other
+        studio on Hone.
       </P>
       <P>
-        We also try to notify that studio by email so it can act on your request
-        sooner, and to send you an acknowledgement that you joined. Those emails
-        are <strong>attempted, not guaranteed</strong>: a message can fail to
-        send or fail to arrive, and a studio may have no email address set up to
+        <strong>What happens to your request depends on the studio.</strong> A
+        studio&rsquo;s new-client waitlist is either kept with us as a stored
+        record, or not kept by us at all. Which applies is a setting on the
+        studio, not on you, and it can change. You can ask the studio, or write
+        to <strong>privacy@hone.care</strong> and we will tell you.
+      </P>
+      <P>
+        <strong>Where the waitlist is kept with us</strong>, your entry is
+        recorded when you submit it. We also try to notify that studio by email
+        so it can act on your request sooner, and to send you an
+        acknowledgement that you joined. Those emails are{" "}
+        <strong>attempted, not guaranteed</strong>: a message can fail to send
+        or fail to arrive, and a studio may have no email address set up to
         receive one. <strong>Your entry is stored either way.</strong> A
         notification that never arrives does not mean your request was not
-        recorded. Joining a waitlist still does not create an appointment or a
-        client record for you.
+        recorded.
+      </P>
+      <P>
+        <strong>Where it is not kept with us</strong>, we store no waitlist
+        entry for you at all. Your details are passed to the studio by email,
+        and that message is the request itself rather than a notification about
+        a record on our side &mdash; so if it cannot be sent, we tell you the
+        request did not go through rather than telling you that you joined.
+        From that point your details are held by the studio, in its own systems.
+      </P>
+      <P>
+        Under either handling, joining a waitlist does not create an
+        appointment, a client record, or an intake form for you.
       </P>
       <P>
         <strong>In connection with a business transfer</strong>, such as a
@@ -430,9 +450,10 @@ export default function PrivacyPolicyPage() {
       <P>
         <strong>If you joined a studio&rsquo;s new-client waitlist</strong> and
         no longer want to be on it, or want to know what that studio holds about
-        you, contact the studio &mdash; it is the controller of your entry and
+        you, contact the studio &mdash; it is the controller of your request and
         can remove you. You may also write to{" "}
-        <strong>privacy@hone.care</strong> and we will assist. You do not need
+        <strong>privacy@hone.care</strong>, and we will assist and tell you
+        which of the two handlings in section 6 applies. You do not need
         an account with us to make either request.
       </P>
 
@@ -471,14 +492,25 @@ export default function PrivacyPolicyPage() {
         controller of the record.
       </P>
       <P>
-        A <strong>new-client waitlist entry</strong> is kept for as long as the
-        studio keeps it. When a studio removes someone from its waitlist, the
-        entry is marked as removed and retained as a record that the request was
-        made and acted on, rather than erased &mdash; the same archiving
-        distinction described above. We do not currently run an automatic timed
-        purge of waitlist entries, and we do not claim any fixed retention
-        period for them. Permanent deletion is handled case by case through the
-        process above.
+        A <strong>stored new-client waitlist entry</strong> &mdash; one held for
+        a studio whose waitlist is kept with us, as section 6 describes &mdash;
+        is kept for as long as the studio keeps it. When a studio removes
+        someone from its waitlist, the entry is marked as removed and retained
+        as a record that the request was made and acted on, rather than erased
+        &mdash; the same archiving distinction described above. We do not
+        currently run an automatic timed purge of waitlist entries, and we do
+        not claim any fixed retention period for them. Permanent deletion is
+        handled case by case through the process above.
+      </P>
+      <P>
+        Where a studio&rsquo;s waitlist is <strong>not</strong> kept with us,
+        there is no entry on our side to retain, and none for us to delete. What
+        persists is the email carrying your request &mdash; in the
+        studio&rsquo;s mailbox, and for a limited period with the email provider
+        named in section 6 that carried it &mdash; together with whatever the
+        studio records in its own systems. Ask the studio to remove you; we can
+        tell you which handling applies, but we cannot delete a record we do not
+        hold.
       </P>
       <P>
         Deletion can also be constrained by law and by professional

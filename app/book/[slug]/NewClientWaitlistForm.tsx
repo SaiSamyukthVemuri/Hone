@@ -68,12 +68,23 @@ const NOT_A_RESERVATION = "Joining the waitlist does not reserve an appointment.
 
 /**
  * Plain-language collection notice, split around the studio name so the
- * sentence names the studio the details actually go to. Says WHO stores it,
- * WHAT is stored, WHY, and links to the full notice — nothing more; every
+ * sentence names the studio the details actually go to. Says WHO handles it,
+ * WHAT is collected, WHY, and links to the full notice — nothing more; every
  * further claim would need the policy to support it.
+ *
+ * "USE", NOT "STORE", AND THAT IS NOT A HEDGE. There are two commit points
+ * (see app/book/[slug]/waitlist-actions.ts), chosen per studio by the
+ * server-only durable allowlist: a studio on WAIT-02 gets a stored row, a
+ * studio on WAIT-01 gets an email to the studio and NO record on our side.
+ * Production currently names no studio, so "Hone will store this" is false for
+ * every submission this form takes today. This component is a client component
+ * and deliberately does not learn which path applies — that would put a
+ * server-only activation fact into the browser bundle for a caption. So the
+ * notice states what is true under BOTH paths, and app/privacy/page.tsx §6
+ * carries the distinction, one link away.
  */
 const COLLECTION_NOTICE =
-  "will store the name, email and phone number you enter here to manage this waitlist and contact you about availability.";
+  "use the name, email and phone number you enter here to manage this waitlist and contact you about availability.";
 
 /**
  * The confirmation surface. Exported so it can be rendered and compared

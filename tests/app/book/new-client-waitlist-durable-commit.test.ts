@@ -811,6 +811,39 @@ describe("Stage B records what closed, and what is still open", () => {
     expect(RISKS).toContain("does not invent one");
   });
 
+  // CODEX (#637). Two claims in this PR were true of the DURABLE path and
+  // asserted of everything. The register and the env doc are where an operator
+  // reads them, so both corrections have to survive there, not only in the
+  // artefacts they describe.
+  it("records that the notice distinguishes the two commit points", () => {
+    expect(RISKS).toContain(
+      "distinguishes the two commit points rather than claiming one for everybody",
+    );
+    expect(RISKS).toContain("gets no record on Hone's side at all");
+    // ANTI-VACUITY: the policy really does carry the distinction the register
+    // credits it with, on both sides of it.
+    const policy = readFileSync(
+      path.resolve(__dirname, "../../../app/privacy/page.tsx"),
+      "utf8",
+    );
+    expect(policy).toContain("<strong>Where the waitlist is kept with us</strong>");
+    expect(policy).toContain("<strong>Where it is not kept with us</strong>");
+    expect(policy).not.toContain("we store it for that studio");
+  });
+
+  it("warns that a green deploy-time check is NOT proof of activation", () => {
+    expect(ENV_DOC).toContain("A green check is not proof of activation.");
+    expect(ENV_DOC).toContain("CONFIGURED NORMALISED ENTRIES");
+    expect(ENV_DOC).toContain("upper bound on what could activate");
+    // ANTI-VACUITY: the script really does report entries rather than studios.
+    const gate = readFileSync(
+      path.resolve(__dirname, "../../../scripts/check-production-env-gates.mjs"),
+      "utf8",
+    );
+    expect(gate).toContain("distinct slug-shaped");
+    expect(gate).not.toMatch(/explicitly enables/);
+  });
+
   it("states the CONSEQUENCE: activation stays explicit, and has not been taken", () => {
     expect(RISKS).toContain("PRODUCTION STILL ENABLES ZERO STUDIOS");
     expect(RISKS).toContain("Activation remains an explicit operator step");

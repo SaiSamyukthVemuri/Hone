@@ -84,7 +84,11 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     expect(PRIVACY).toMatch(/Your name and email address/);
     expect(PRIVACY).toMatch(/Your phone number, if you choose to give one; it is optional/);
     expect(PRIVACY).toMatch(/Which studio&rsquo;s waitlist you joined, and when/);
-    expect(PRIVACY).toMatch(/Whether you are still waiting, or have been removed/);
+    // Scoped: waiting/removed is a column on a stored entry. Where no entry is
+    // stored there is no such status, so the bullet may not claim it outright.
+    expect(PRIVACY).toMatch(
+      /Where the studio keeps its waitlist with us, whether you are still\s+waiting, or have been removed/,
+    );
   });
 
   it("does NOT over-claim: no health data is asked for, and no client record is created", () => {
@@ -103,7 +107,7 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   it("states who the entry is shared with, and that it is single-studio", () => {
     expect(PRIVACY).toMatch(/With the studio whose waitlist you joined/);
     expect(PRIVACY).toMatch(/visible only to that studio/);
-    expect(PRIVACY).toMatch(/not shared with any other studio/);
+    expect(PRIVACY).toMatch(/not shared with any other\s+studio/);
   });
 
   // -------------------------------------------------------------------------
@@ -119,19 +123,131 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   // wording is pinned POSITIVELY (what is guaranteed) and NEGATIVELY (the
   // categorical phrasings that must never come back).
   // -------------------------------------------------------------------------
-  it("guarantees STORAGE — the entry is stored regardless of any email", () => {
-    expect(PRIVACY).toMatch(/we store it for that studio/);
+  // -------------------------------------------------------------------------
+  // CODEX (#637), SECOND PASS. The §6 text said, of every waitlist request,
+  // "we store it for that studio" and "Your entry is stored either way".
+  // THERE ARE TWO COMMIT POINTS, chosen per studio by the server-only durable
+  // allowlist (app/book/[slug]/waitlist-actions.ts, step 5):
+  //
+  //   WAIT-02 durable  — one row in new_client_waitlist_entries; the emails are
+  //                      notifications on top of it, and failure cannot retract
+  //                      it. THIS is the path the old wording described.
+  //   WAIT-01 legacy   — NO record on Hone's side at all. The studio email IS
+  //                      the request; a refusal or a missing recipient FAILS the
+  //                      submission and the visitor is told so.
+  //
+  // The allowlist ships naming NO studio, so at publication the unconditional
+  // wording was false for every submission the form actually takes. A privacy
+  // notice claiming durable storage that does not happen is the same class of
+  // untruth as the delivery promise removed above, in the opposite direction.
+  // -------------------------------------------------------------------------
+  it("distinguishes the two handlings instead of claiming one for everybody", () => {
+    // The disjunction itself, stated without asserting which studios are which.
+    expect(PRIVACY).toMatch(
+      /<strong>What happens to your request depends on the studio\.<\/strong>/,
+    );
+    expect(PRIVACY).toMatch(
+      /new-client waitlist is either kept with us as a stored\s+record, or not kept by us at all/,
+    );
+    // Which one applies is knowable on request, not left as a mystery.
+    expect(PRIVACY).toMatch(/Which applies is a setting on the\s+studio, not on you/);
+    expect(PRIVACY).toMatch(/You can ask the studio, or write\s+to <strong>privacy@hone\.care<\/strong>/);
+  });
+
+  it("guarantees STORAGE only WHERE the waitlist is kept with us", () => {
+    // The strong guarantee survives — scoped to the path that earns it.
+    expect(PRIVACY).toMatch(
+      /<strong>Where the waitlist is kept with us<\/strong>, your entry is\s+recorded when you submit it/,
+    );
     expect(PRIVACY).toMatch(/<strong>Your entry is stored either way\.<\/strong>/);
     expect(PRIVACY).toMatch(
       /A\s+notification that never arrives does not mean your request was not\s+recorded/,
     );
+    // ORDERING: the guarantee must sit INSIDE the scoped paragraph, not before
+    // it, or the scope is decorative. Both live in one <P>; the next <P> opens
+    // after the guarantee.
+    const scope = PRIVACY.indexOf("<strong>Where the waitlist is kept with us</strong>");
+    const guarantee = PRIVACY.indexOf("<strong>Your entry is stored either way.</strong>");
+    expect(scope).toBeGreaterThan(-1);
+    expect(guarantee).toBeGreaterThan(scope);
+    expect(PRIVACY.slice(scope, guarantee)).not.toContain("</P>");
+  });
+
+  it("states the legacy path truthfully: no record, and no false success", () => {
+    expect(PRIVACY).toMatch(
+      /<strong>Where it is not kept with us<\/strong>, we store no waitlist\s+entry for you at all/,
+    );
+    // The email is the request, not a notification about a record.
+    expect(PRIVACY).toMatch(
+      /that message is the request itself rather than a notification about\s+a record on our side/,
+    );
+    // And the refusal semantics the code actually has: told it failed, never
+    // told they joined.
+    expect(PRIVACY).toMatch(
+      /if it cannot be sent, we tell you the\s+request did not go through rather than telling you that you joined/,
+    );
+    expect(PRIVACY).toMatch(/your details are held by the studio, in its own systems/);
+  });
+
+  it("NEGATIVE CONTROL: the unconditional storage claim cannot come back", () => {
+    // The exact phrasing that was wrong.
+    expect(PRIVACY).not.toMatch(/we store it for that studio/i);
+    // ...and the shapes it would return as. Each asserts a record for EVERY
+    // request, which is false while any studio sits on the WAIT-01 commit
+    // point. None of these matches the scoped guarantee, which is phrased
+    // "Your entry is stored either way." and lives inside the kept-with-us
+    // paragraph — that sentence is checked separately, below.
+    for (const banned of [
+      /\bwe (?:always |will )?store (?:it|them|your entry|your request|every|all)\b/i,
+      /\bevery (?:waitlist )?(?:request|entry|submission) is (?:stored|recorded|kept)\b/i,
+      /\ball waitlist (?:requests|entries|submissions) are (?:stored|recorded|kept)\b/i,
+      /\bwe keep a record of every\b/i,
+      /\bis stored regardless\b/i,
+    ]) {
+      expect(PRIVACY, `must not claim universal storage: ${banned}`).not.toMatch(banned);
+    }
+  });
+
+  it("NEGATIVE CONTROL: the scoped guarantee exists ONCE, and only in its own scope", () => {
+    // A second copy of "stored either way" somewhere unscoped would restore the
+    // untruth while leaving every assertion above green.
+    const guarantee = "Your entry is stored either way.";
+    const hits = [...PRIVACY.matchAll(/Your entry is stored either way\./g)];
+    expect(hits, `expected exactly one "${guarantee}"`).toHaveLength(1);
+
+    const at = hits[0].index as number;
+    const scope = PRIVACY.lastIndexOf(
+      "<strong>Where the waitlist is kept with us</strong>",
+      at,
+    );
+    expect(scope, "the guarantee must follow its scoping clause").toBeGreaterThan(-1);
+    // ...and inside the SAME paragraph: no </P> may intervene.
+    expect(PRIVACY.slice(scope, at)).not.toContain("</P>");
+  });
+
+  it("ANTI-VACUITY: the code really does have two commit points, and ships on the legacy one", () => {
+    // If there were only one path, the scoping above would be noise. Pin the
+    // branch, and that the durable one is opt-in per studio.
+    const action = read("app/book/[slug]/waitlist-actions.ts");
+    expect(action).toMatch(
+      /isNewClientWaitlistDurableEnabled\(studio\.slug\)\s*\?\s*submitToDurableWaitlist[\s\S]{0,120}submitViaStudioNotification/,
+    );
+    // The legacy path fails the submission when the studio email cannot be
+    // sent — i.e. nothing is recorded and the visitor is not told they joined.
+    expect(action).toMatch(
+      /new_client_waitlist_no_studio_recipient[\s\S]{0,200}NEW_CLIENT_WAITLIST_SUBMIT_FAILED/,
+    );
+    // And the durable path is OFF unless a studio is named in the allowlist.
+    const lib = read("lib/booking/new-client-waitlist.ts");
+    expect(lib).toMatch(/DEFAULT OFF/);
+    expect(lib).toMatch(/return slugIsListed\(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, studioSlug\)/);
   });
 
   it("does NOT guarantee email delivery — notification is attempted, not promised", () => {
     expect(PRIVACY).toMatch(/We also try to notify that studio by email/);
-    expect(PRIVACY).toMatch(/to send you an acknowledgement that you joined/);
+    expect(PRIVACY).toMatch(/to send you an\s+acknowledgement that you joined/);
     expect(PRIVACY).toMatch(/<strong>attempted, not guaranteed<\/strong>/);
-    expect(PRIVACY).toMatch(/a message can fail to\s+send or fail to arrive/);
+    expect(PRIVACY).toMatch(/a message can fail to\s+send\s+or fail to arrive/);
     // The no-recipient case is a real production state, not a hypothetical.
     expect(PRIVACY).toMatch(/a studio may have no email address set up to\s+receive one/);
   });
@@ -172,7 +288,7 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
 
   it("does not imply a waitlist join creates an appointment or client record", () => {
     expect(PRIVACY).toMatch(
-      /Joining a waitlist still does not create an appointment or a\s+client record for you/,
+      /Under either handling, joining a waitlist does not create an\s+appointment, a client record, or an intake form for you/,
     );
   });
 
@@ -193,11 +309,26 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   // THE ONE THE STAGE-A RECORD CALLED OUT: no retention policy covers this data
   // yet. The policy must say that truthfully rather than invent a period.
   it("describes waitlist retention TRUTHFULLY and invents no statutory period", () => {
-    expect(PRIVACY).toMatch(/A <strong>new-client waitlist entry<\/strong> is kept for as long as the\s+studio keeps it/);
+    expect(PRIVACY).toMatch(
+      /A <strong>stored new-client waitlist entry<\/strong> &mdash; one held for\s+a studio whose waitlist is kept with us, as section 6 describes &mdash;\s+is kept for as long as the studio keeps it/,
+    );
     // Removal is a terminal status transition that RETAINS the row. Say so.
     expect(PRIVACY).toMatch(/marked as removed and retained/);
-    expect(PRIVACY).toMatch(/We do not currently run an automatic timed\s+purge of waitlist entries/);
-    expect(PRIVACY).toMatch(/we do not claim any fixed retention\s+period for them/);
+    expect(PRIVACY).toMatch(/We do not\s+currently run an automatic timed purge of waitlist entries/);
+    expect(PRIVACY).toMatch(/we do\s+not claim any fixed retention period for them/);
+  });
+
+  it("says what is retained where NO entry of ours exists — and what we cannot delete", () => {
+    expect(PRIVACY).toMatch(
+      /Where a studio&rsquo;s waitlist is <strong>not<\/strong> kept with us,\s+there is no entry on our side to retain, and none for us to delete/,
+    );
+    // What DOES persist, named honestly: the mail itself, the provider already
+    // disclosed in §6, and the studio's own systems. No invented period.
+    expect(PRIVACY).toMatch(/the email carrying your request/);
+    expect(PRIVACY).toMatch(/for a limited period with the email provider\s+named in section 6/);
+    expect(PRIVACY).toMatch(/we cannot delete a record we do not\s+hold/);
+    // §6 must really name a provider, or the cross-reference is a dead pointer.
+    expect(PRIVACY).toMatch(/Resend \(transactional email delivery\)/);
   });
 
   it("invents no new statutory retention number anywhere", () => {
@@ -253,10 +384,43 @@ describe("policy dates — the section 13 rule is stated, not invented", () => {
 describe("public waitlist form — notice at the point of collection", () => {
   const html = waitlistHtml();
 
-  it("names WHO stores it, WHAT is stored, and WHY", () => {
-    expect(html).toContain("Willow Electrolysis and Hone will store");
+  it("names WHO handles it, WHAT is collected, and WHY", () => {
+    expect(html).toContain("Willow Electrolysis and Hone use");
     expect(html).toContain("the name, email and phone number you enter here");
     expect(html).toContain("to manage this waitlist and contact you about availability");
+  });
+
+  // The notice is rendered by a CLIENT component that deliberately does not
+  // know which commit point the studio is on — learning it would put a
+  // server-only activation fact in the browser bundle for a caption. So the
+  // wording has to be true under BOTH, which rules out "store".
+  it("does not promise storage the studio's commit point may not provide", () => {
+    expect(html).not.toMatch(/\bHone will store\b/i);
+    expect(html).not.toMatch(/\b(?:we|Hone) (?:will |always )?(?:store|keep|save|record)s? (?:it|your|the name)\b/i);
+    // And the component must not have acquired the flag to work around it:
+    // no predicate, no env read, and no prop carrying the answer into the
+    // browser. (The comment above it may — and does — explain WHY not.)
+    expect(FORM).not.toMatch(/isNewClientWaitlistDurableEnabled/);
+    expect(FORM).not.toMatch(/process\.env/);
+    expect(FORM).not.toMatch(/NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS/);
+    expect(FORM).toMatch(
+      /export function NewClientWaitlistForm\(\{\s*slug,\s*studioName,\s*onContinueAsExistingClient,\s*\}: \{\s*slug: string;\s*studioName: string;\s*onContinueAsExistingClient: \(\) => void;\s*\}\)/,
+    );
+  });
+
+  // The browser lane asserts this same notice is VISIBLE at 390px, by locating
+  // it with a text regex. That regex lives in another file and cannot see this
+  // constant, so a copy edit here is exactly how the extended shard goes red
+  // twenty minutes later for a reason that has nothing to do with the browser.
+  // Check the agreement here, in milliseconds.
+  it("the e2e locator for this notice still matches what the form renders", () => {
+    const spec = read("e2e/new-client-waitlist.spec.ts");
+    const source = spec.match(
+      /const collectionNotice = page\.getByText\(\s*\/([^\n]*?)\/([a-z]*),?\s*\)/,
+    );
+    expect(source, "e2e spec must still locate the notice by text regex").toBeTruthy();
+    const [, pattern, flags] = source as RegExpMatchArray;
+    expect(html).toMatch(new RegExp(pattern, flags));
   });
 
   it("links to the privacy policy from the collection surface itself", () => {
@@ -265,7 +429,7 @@ describe("public waitlist form — notice at the point of collection", () => {
   });
 
   it("is NOT hidden, collapsed, or visually suppressed", () => {
-    const at = html.indexOf("Willow Electrolysis and Hone will store");
+    const at = html.indexOf("Willow Electrolysis and Hone use");
     // From the notice's own <p ...> tag, so its class/style attributes are in
     // scope — they sit before the text, not after it.
     const notice = html.slice(html.lastIndexOf("<p", at));
@@ -279,7 +443,7 @@ describe("public waitlist form — notice at the point of collection", () => {
 
   it("sits WITH the submit control, not in a footer far from it", () => {
     const cta = html.indexOf("Join waitlist");
-    const notice = html.indexOf("Willow Electrolysis and Hone will store");
+    const notice = html.indexOf("Willow Electrolysis and Hone use");
     expect(cta).toBeGreaterThan(-1);
     expect(notice).toBeGreaterThan(cta);
     // Adjacent: only the not-a-reservation caption sits between them.

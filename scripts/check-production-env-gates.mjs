@@ -78,15 +78,34 @@
  * activation it was holding open a place for.
  *
  * WHAT REPLACES IT IS NOT "NOTHING". Activation stays EXPLICIT and PER STUDIO,
- * and this gate now enforces the one property the runtime cannot report at
- * deploy time: that every entry CAN NAME A REAL STUDIO. Membership is exact
+ * and this gate enforces the one property it can actually decide at deploy
+ * time: that every entry is SHAPED like a studio slug. Membership is exact
  * equality against `studios.slug` after trim + lowercase
  * (parseWaitlistSlugs / slugIsListed in lib/booking/new-client-waitlist.ts), so
  * an entry that is not slug-shaped matches nothing. A wildcard is therefore
  * already inert at runtime — but SILENTLY inert, which is the failure mode this
  * gate exists to convert into a loud one. An operator who sets "*" believing it
- * enables every studio would otherwise deploy green and see no waitlist, and an
- * operator who mistypes one real slug would enable nobody with nothing failing.
+ * enables every studio would otherwise deploy green and see no waitlist.
+ *
+ * WHAT THIS GATE CANNOT DECIDE, AND THEREFORE MUST NOT REPORT. It is a
+ * dependency-free build-time script with NO DATABASE ACCESS and no module
+ * graph. Two facts are consequently out of its reach, and both stand between a
+ * well-shaped entry and an actually-activated studio:
+ *
+ *   1. EXISTENCE. "studio-that-never-existed" is perfectly slug-shaped and
+ *      names nothing. Only a query against `studios.slug` could tell, and this
+ *      script issues none.
+ *   2. ADMISSION. The durable allowlist is SUBORDINATE to
+ *      NEW_CLIENT_WAITLIST_STUDIO_SLUGS: submit only consults it for a studio
+ *      the gate has ALREADY waitlisted, so naming a real studio here whose
+ *      intake gate is off activates nothing.
+ *
+ * So the count this gate prints is CONFIGURED NORMALISED ENTRIES — an UPPER
+ * BOUND on what could activate, never a count of studios activated. Saying
+ * "enables N studios" would assert both facts above on evidence the script does
+ * not have, which is the same over-claim, one layer down, that Stage B1 exists
+ * to remove from the privacy notice. A mistyped-but-well-shaped slug still
+ * deploys green here; what proves activation is the product, not this script.
  *
  * THERE IS NO GLOBAL ENABLE TO GUARD AGAINST, BY CONSTRUCTION. Nothing in the
  * runtime turns any value into "all studios": the only question it asks is
@@ -155,6 +174,15 @@ function opsAlertRecipientCount() {
 // its durable prospect record. Unset means every studio stays dark.
 const DURABLE_WAITLIST_ENV_VAR = "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS";
 
+// NAMED HERE, DELIBERATELY NEVER READ. The admission-control allowlist that the
+// durable one is subordinate to. It appears only inside the PASS message, as
+// part of saying what this script has NOT checked: a studio named in the
+// durable list activates nothing unless its intake is also waitlisted here.
+// Reading it would turn a reporting-honesty fix into a new deploy-failure mode,
+// which is not what this gate was asked to do — and it still could not prove
+// the studio exists, so the upper-bound framing would stand either way.
+const WAITLIST_GATE_ENV_VAR = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
+
 // The shape a `studios.slug` can actually have. MIRRORS the SLUG_RE that
 // app/(app)/settings/booking/actions.ts and lib/studios/new-studio.ts both
 // enforce when a slug is written, and the mirror is pinned by
@@ -168,7 +196,7 @@ const DURABLE_WAITLIST_ENV_VAR = "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS";
 // space, a leading or trailing hyphen, or more than 64 characters.
 const STUDIO_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
-// What the durable allowlist actually asks production to do.
+// What the durable allowlist is CONFIGURED to ask production to do.
 //
 // Normalisation mirrors parseWaitlistSlugs() in
 // lib/booking/new-client-waitlist.ts (split "," / trim / lowercase / drop
@@ -176,16 +204,23 @@ const STUDIO_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 // runtime, correctly reports zero. Reads COUNTS only, never a slug.
 //
 // AND IT COLLAPSES DUPLICATES, BECAUSE THE RUNTIME DOES. parseWaitlistSlugs
-// returns a SET, so "studio-a, Studio-A" normalises to ONE member and enables
-// ONE studio. Counting the split array reported TWO — the two normalisers
-// agreeing on which studios are enabled while disagreeing on how many, which is
-// exactly the drift a duplicated parser exists to be suspected of. The count an
-// operator reads at deploy time must be the count the runtime will act on.
+// returns a SET, so "studio-a, Studio-A" normalises to ONE member and can
+// activate at most ONE studio. Counting the split array reported TWO — the two
+// normalisers agreeing on WHICH entries survive while disagreeing on how many,
+// which is exactly the drift a duplicated parser exists to be suspected of. The
+// count an operator reads at deploy time must be the count the runtime's own
+// parser would produce for the same string.
 //
-//   supplied  non-empty entries the operator actually typed
-//   enabled   UNIQUE normalised slugs, i.e. how many studios activate
-//   unusable  how many SUPPLIED entries cannot be a studio slug, and so would
-//             silently match nothing
+//   supplied    non-empty entries the operator actually typed
+//   configured  UNIQUE normalised slug-shaped entries — the MOST studios this
+//               value could activate. NOT a count of activated studios: this
+//               script cannot prove an entry names an existing `studios.slug`
+//               row, and does not read NEW_CLIENT_WAITLIST_STUDIO_SLUGS, so it
+//               cannot tell whether that studio's intake is waitlisted at all.
+//               See the header. An UPPER BOUND is the strongest true statement
+//               available here.
+//   unusable    how many SUPPLIED entries cannot be a studio slug in any
+//               database, and so would silently match nothing
 function durableWaitlistActivation() {
   const raw = process.env[DURABLE_WAITLIST_ENV_VAR];
   const supplied = !raw
@@ -198,16 +233,16 @@ function durableWaitlistActivation() {
   // VALIDATE EVERY SUPPLIED ENTRY *BEFORE* ANY COLLAPSING. Deduplicating first
   // would let a repeated valid slug absorb a malformed neighbour — the list
   // "studio-a, bad slug, studio-a" must FAIL on the middle entry, not pass as
-  // one studio. So validity is decided per typed entry; only the VALID ones are
+  // one entry. So validity is decided per typed entry; only the VALID ones are
   // then collapsed into the set the runtime would build.
-  const enabled = new Set();
+  const configured = new Set();
   let unusable = 0;
   for (const entry of supplied) {
-    if (STUDIO_SLUG_RE.test(entry)) enabled.add(entry);
+    if (STUDIO_SLUG_RE.test(entry)) configured.add(entry);
     else unusable += 1;
   }
 
-  return { supplied: supplied.length, enabled: enabled.size, unusable };
+  return { supplied: supplied.length, configured: configured.size, unusable };
 }
 
 // Google Calendar OAuth/crypto env (Phase A). NAMES only, never values.
@@ -344,27 +379,37 @@ function main() {
 
   // Gate 4, WAIT-02B Stage-B durable waitlist activation guard.
   // VALIDATE-IF-PRESENT: an empty list is the dark shipping state and PASSES;
-  // a populated list PASSES only when every entry can name a real studio. See
-  // the header for why the Stage-A blanket prohibition is gone.
+  // a populated list PASSES only when every entry is SHAPED like a studio slug.
+  // See the header for why the Stage-A blanket prohibition is gone, and for the
+  // two facts (existence, admission) this script cannot decide — which is why
+  // the populated PASS reports CONFIGURED ENTRIES rather than enabled studios.
   const durable = durableWaitlistActivation();
   if (durable.unusable === 0) {
     // Duplicates are not an error — the runtime collapses them silently — but
-    // the operator typed more entries than studios they enabled, so say so.
+    // the operator typed more entries than survive normalisation, so say so.
     // A COUNT, never a slug.
-    const duplicates = durable.supplied - durable.enabled;
+    const duplicates = durable.supplied - durable.configured;
     process.stdout.write(
-      durable.enabled === 0
-        ? `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} names no studio ` +
+      durable.configured === 0
+        ? // PROVEN, not merely configured: an empty set makes slugIsListed()
+          // false for every possible slug, so this one IS a statement about
+          // studios rather than about entries.
+          `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} names no studio ` +
             `in production; the durable new-client waitlist stays dark and every studio ` +
             `remains on the WAIT-01 commit point.\n`
-        : `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} explicitly enables ` +
-            `${durable.enabled} studio(s) in production, each named in full and matched by exact ` +
-            `slug equality; every studio not named stays dark.` +
+        : `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} carries ` +
+            `${durable.configured} distinct slug-shaped ` +
+            `entr${durable.configured === 1 ? "y" : "ies"} in production.` +
             (duplicates > 0
               ? ` (${durable.supplied} entries supplied; ${duplicates} duplicate normalised away, ` +
                 `exactly as the runtime does.)`
               : "") +
-            `\n`,
+            ` SHAPE ONLY: this build-time check has no database access, so it does NOT prove any ` +
+            `entry names an existing studio, and it does not read ${WAITLIST_GATE_ENV_VAR}, so it ` +
+            `cannot tell whether a named studio's new-client intake is waitlisted at all. ` +
+            `Treat ${durable.configured} as the MOST studios this value could activate, not as a ` +
+            `count of studios activated; verify activation in the product. Every studio not ` +
+            `named here stays dark.\n`,
     );
   } else {
     failed = true;

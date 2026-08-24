@@ -150,7 +150,7 @@ test.describe("new client at a waitlisted studio", () => {
     //     A notice that is present in the markup but pushed off-screen, or that
     //     links to a 404, is not a notice.
     const collectionNotice = page.getByText(
-      /will store the name, email and phone number you enter here/i,
+      /use the name, email and phone number you enter here/i,
     );
     await expect(collectionNotice).toBeVisible();
     const privacyLink = page.getByRole("link", { name: /privacy policy/i });
