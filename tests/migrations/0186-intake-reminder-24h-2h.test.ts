@@ -179,6 +179,28 @@ function canonicalRecord(): {
   );
 }
 
+/**
+ * THE ONE DELIMITER between the 0186 head record and the frozen 0185 record it
+ * carries. The carried record contains this same phrase (0185 carried its own
+ * chain forward), so the FIRST occurrence is the boundary.
+ */
+const CARRIED_RECORD_BOUNDARY =
+  "CARRIES THE FULL CHECKSUM CHAIN FORWARD so no earlier apply record is dropped: ";
+
+/**
+ * sha256 of the ENTIRE `hosted_note` as it stood on this PR's production base,
+ * 5bbd37a5ceaeb105e65840971392823a2e68aabd — i.e. the complete frozen 0185
+ * record, 11,189 bytes, covering 0184, 0183, 0182, 0181, 0180, 0179, 0178,
+ * 0177, 0176, 0175, 0174, 0173, 0172 and the 0171 tail with every checksum and
+ * the exact ordering.
+ *
+ * Derived mechanically: `git show <base>:docs/production/migration-state.json`,
+ * parse `hosted_note`, sha256 the exact UTF-8 bytes. Not copied from prose, not
+ * taken from this branch's own suffix, no whitespace normalisation.
+ */
+const CARRIED_0185_NOTE_SHA256 =
+  "3103c7cee06dab14107c4c7f048666fb24271dd60a4c68e80586691cf07000e9";
+
 describe("0186 — current hosted state", () => {
   it("is the APPLIED production head, with nothing pending", () => {
     const state = migrationState();
@@ -213,19 +235,72 @@ describe("0186 — current hosted state", () => {
   });
 
   it("carries the earlier apply records forward, unedited", () => {
-    // A new head must not truncate the chain. The 0185, 0184 and 0183 records
-    // and their frozen checksums stay exactly where they were.
+    // THE INTEGRITY BOUNDARY IS THE DIGEST, NOT AN ENUMERATION.
+    //
+    // This block briefly proved "unedited" with four `toContain` checksum
+    // anchors, and that is not what the word means: deleting the whole carried
+    // 0180 clause drops 261 bytes and that record's checksum while every anchor
+    // and the supersession phrase survive, so the suite passed on a chain that
+    // was no longer intact. `toContain` is also order-blind. The 0185 file had
+    // already learned this and replaced its own anchor list with a digest; the
+    // digest was lost when this PR's scope was collapsed, and is restored here.
+    //
+    // The expected value is the sha256 of the ENTIRE hosted_note as it stood on
+    // this PR's production base, 5bbd37a5 — derived mechanically from that
+    // commit, not transcribed.
     const note = canonicalRecord().hosted_note;
-    for (const [label, sha] of [
-      ["0185", "663a5d826d4c9e610c3bf7ec599dea577772ba521326488add77153f39a14ffc"],
-      ["0184", "aa110edadd459e0f11062e3904ea7ad54a54a75c31d9342b762a533ecc07694c"],
-      ["0183", "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb"],
-      ["0171", "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6"],
-    ] as const) {
-      expect(note, `the carried chain lost its ${label} checksum`).toContain(sha);
-    }
-    expect(note).toContain(
+    const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+    expect(at, "the note carries no 0185 record boundary").toBeGreaterThan(-1);
+    const carried = note.slice(at + CARRIED_RECORD_BOUNDARY.length);
+
+    expect(carried.length).toBe(11189);
+    expect(
+      createHash("sha256").update(carried, "utf8").digest("hex"),
+      "the carried 0185 record is no longer byte-identical to the production-base " +
+        "hosted_note: apply history has been edited, truncated or reordered",
+    ).toBe(CARRIED_0185_NOTE_SHA256);
+
+    // The active supersession still names the record being replaced.
+    expect(note.slice(0, at)).toContain(
       "SUPERSEDES the 0185 record as the CURRENT hosted-state record",
     );
+  });
+
+  it("NEGATIVE CONTROL: a mid-chain deletion turns the digest red", () => {
+    // Codex's exact reproduction. Remove the whole carried 0180 clause: every
+    // checksum anchor the old guard enumerated survives, so the enumeration
+    // stayed green — and the digest does not. Mutates a copy; the real record
+    // is never touched.
+    const note = canonicalRecord().hosted_note;
+    const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+    const carried = note.slice(at + CARRIED_RECORD_BOUNDARY.length);
+    const digest = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+
+    const from = carried.indexOf("the 0180 record (");
+    const to = carried.indexOf("the 0179 record (");
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const mutated = carried.slice(0, from) + carried.slice(to);
+
+    // It really is the shape the enumeration missed: shorter, 0180's checksum
+    // gone, every previously-anchored checksum still present.
+    expect(mutated.length).toBeLessThan(carried.length);
+    expect(mutated).not.toContain(
+      "d5d8271da38588a89e0727ce7a2a5c417ee8e079ad283acdc1fa55f90727eb8d",
+    );
+    for (const sha of [
+      "663a5d826d4c9e610c3bf7ec599dea577772ba521326488add77153f39a14ffc",
+      "aa110edadd459e0f11062e3904ea7ad54a54a75c31d9342b762a533ecc07694c",
+      "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb",
+      "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6",
+    ]) {
+      expect(mutated).toContain(sha);
+    }
+
+    // ...and the digest catches it.
+    expect(digest(mutated)).not.toBe(CARRIED_0185_NOTE_SHA256);
+
+    // Restored byte-identically -> green again.
+    expect(digest(carried)).toBe(CARRIED_0185_NOTE_SHA256);
   });
 });
