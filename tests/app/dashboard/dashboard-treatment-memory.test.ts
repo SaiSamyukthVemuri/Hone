@@ -221,13 +221,28 @@ describe("every #517 field family is reachable from Today", () => {
 // URL does not change lives in e2e/dashboard-treatment-memory-inline.spec.ts,
 // which clicks the real control in a real browser and waits.
 describe("D1: the disclosure never navigates away from the Dashboard", () => {
-  /** The whole source span of the Today row's body <Link>, opening tag included. */
+  /**
+   * The whole source span of the Today row's body link, opening tag included.
+   *
+   * Located by the PROPERTY — an element whose name ends in `Link` carrying
+   * THIS href — and not by one spelling of it. UI-01C swapped this control to
+   * PendingContainerLink: still next/link, still the same anchor, the same
+   * href and the same activation, with a layout-transparent pending
+   * presentation rendered as an out-of-flow sibling INSIDE it. Nothing about
+   * that can affect the D1 invariant below, so a locator that pinned the
+   * literal `<Link` went red on a change it does not guard. The nested-content
+   * rule is stated over the children, which is where it belongs.
+   */
   function rowBodyLink(): string {
-    const open = DASH.indexOf("<Link\n          href={`/calendar/${appt.id}`}");
-    expect(open, "the row-body calendar link must exist").toBeGreaterThan(-1);
-    const close = DASH.indexOf("</Link>", open);
+    const opening = /<(\w*Link)\n\s+href=\{`\/calendar\/\$\{appt\.id\}`\}/.exec(
+      DASH,
+    );
+    expect(opening, "the row-body calendar link must exist").not.toBeNull();
+    const open = opening!.index;
+    const closeTag = `</${opening![1]}>`;
+    const close = DASH.indexOf(closeTag, open);
     expect(close).toBeGreaterThan(open);
-    return DASH.slice(open, close + "</Link>".length);
+    return DASH.slice(open, close + closeTag.length);
   }
 
   /**

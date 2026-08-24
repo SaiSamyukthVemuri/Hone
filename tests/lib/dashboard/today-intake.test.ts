@@ -36,13 +36,23 @@ const INTAKE_QUERIES = readFileSync(
 // `responses`"), so read-width and wording assertions run over executable
 // lines only.
 function executableOnly(source: string): string {
-  return source
-    .split("\n")
-    .filter((l) => {
-      const t = l.trim();
-      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
-    })
-    .join("\n");
+  return (
+    source
+      // JSX comment BLOCKS first. A line filter cannot see them: only the
+      // opening line begins with `{/*`, and every line after it begins with
+      // ordinary prose, so the body of a `{/* … */}` comment reached the
+      // assertions below as if it were code. That made this guard trip on a
+      // dashboard comment that merely used the word "acknowledgement" while
+      // explaining a navigation. Prose must not be able to trip a source
+      // assertion any more than it may satisfy one.
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .split("\n")
+      .filter((l) => {
+        const t = l.trim();
+        return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+      })
+      .join("\n")
+  );
 }
 
 // A whole top-level function body, including nested blocks. A naive
