@@ -208,6 +208,8 @@ export function SessionPaymentPrepareCard({
   appointmentId = null,
   settledMethod = null,
   settledAmountCents = null,
+  settlementQuotedAmountCents = null,
+  canRecordSettlement = true,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -228,6 +230,12 @@ export function SessionPaymentPrepareCard({
   // The live attested disposition, when one exists. Server-resolved.
   settledMethod?: SettlementMethod | null;
   settledAmountCents?: number | null;
+  // The appointment-resolved price, available with or without a session.
+  settlementQuotedAmountCents?: number | null;
+  // The UI's copy of the database's own rule: only a COMPLETED appointment can
+  // carry a disposition. Defaults true so the session page, which only renders
+  // this card for a real session, is unchanged.
+  canRecordSettlement?: boolean;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
@@ -275,6 +283,28 @@ export function SessionPaymentPrepareCard({
     ) ?? null;
   const latestHistoricalAttempt =
     eligibility.existingAttempts[0] ?? null;
+  // PAY-SETTLE / 0187. WHETHER HONE STILL HOLDS CARD MONEY — which is a
+  // different question from "is there an active attempt".
+  //
+  // A fully refunded charge keeps `status = 'succeeded'` forever (the card fact
+  // is history and is never rewritten), so it stays an `activeAttempt` and used
+  // to hide the settlement controls permanently. But the money went BACK: the
+  // SQL deliberately permits recording that the client then paid cash, and the
+  // UI has to agree or there is no route to record the replacement payment at
+  // all — the dashboard just says "Refunded" forever.
+  //
+  // FULL MEANS FULL, IN CENTS. `refundStatus === "succeeded"` says a refund
+  // succeeded, not that all of it went back; the schema allows
+  // refundAmountCents < amountCents. A PARTIAL refund therefore still counts as
+  // money held, exactly as the database computes it, so nobody can be recorded
+  // as paying cash for money the studio is still holding on a card.
+  const fullyRefunded =
+    activeAttempt !== null &&
+    activeAttempt.status === "succeeded" &&
+    activeAttempt.refundStatus === "succeeded" &&
+    (activeAttempt.refundAmountCents ?? 0) >= activeAttempt.amountCents;
+  const cardMoneyHeld = activeAttempt !== null && !fullyRefunded;
+
   const previousTerminalAttempt =
     !activeAttempt &&
     latestHistoricalAttempt &&
@@ -474,14 +504,15 @@ export function SessionPaymentPrepareCard({
           collection the database refuses, and a control that always fails is
           worse than no control. The refusal still lives in SQL — this only
           keeps the UI from asking. */}
-      {appointmentId && !activeAttempt && (
+      {appointmentId && canRecordSettlement && !cardMoneyHeld && (
         <AppointmentSettlementControls
           appointmentId={appointmentId}
           isOwner={isOwner}
           settledMethod={settledMethod}
           settledAmountCents={settledAmountCents}
           defaultAmountCents={
-            presentation.prepareFormAmount?.amountCents ?? null
+            presentation.prepareFormAmount?.amountCents ??
+            settlementQuotedAmountCents
           }
         />
       )}

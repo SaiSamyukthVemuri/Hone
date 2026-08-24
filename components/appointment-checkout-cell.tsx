@@ -31,12 +31,39 @@ export function AppointmentCheckoutCell({
 
   if (paymentState === "paid" || paymentState === "refunded") {
     const label = paymentState === "paid" ? "Paid" : "Refunded";
-    return (
+    const badge = (
       <span
         data-testid={`appointment-payment-${paymentState}`}
         className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
       >
         <span aria-hidden>✓</span> {label}
+      </span>
+    );
+    if (paymentState !== "refunded") return badge;
+
+    // PAY-SETTLE / 0187. A REFUNDED VISIT NEEDS A ROUTE BACK.
+    //
+    // The refund gave the money back, so the visit is unpaid again — and the
+    // client very often then pays another way. Until now the row said
+    // "Refunded" forever with no control on it at all, so there was no way to
+    // record the replacement payment from the surface the practitioner
+    // actually uses.
+    //
+    // The badge STAYS: the card fact and the refund fact are history and are
+    // never rewritten. What is added is a way in. Whether anything may
+    // actually be recorded is decided twice below this — the payment card only
+    // offers the controls when the refund was FULL (measured in cents, so a
+    // partial refund still counts as money held), and the 0187 commands refuse
+    // independently. This is a door, not a decision.
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        {badge}
+        <CheckoutButton
+          appointmentId={appointmentId}
+          status={status}
+          variant="compact"
+          label="Record outcome"
+        />
       </span>
     );
   }

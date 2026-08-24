@@ -998,6 +998,11 @@ export default async function SessionDetailPage({
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          // The UI's copy of the database's own rule: only a COMPLETED
+          // appointment can carry a disposition (0187 answers anything else
+          // with `not_completed`). Offering the controls on a visit that has
+          // not happened yet would be a button that always fails.
+          canRecordSettlement={finishAppt?.status === "completed"}
           // Trusted, server-derived owner flag: gates the owner-only Technical
           // payment details disclosure + the Refund button (server refund
           // authorization is unchanged; it is owner-only there too).

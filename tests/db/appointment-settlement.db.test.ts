@@ -328,6 +328,17 @@ describe("0187 — settlement and card charging exclude each other", () => {
 
   it("PERMITS cash after a full refund, because the money went back", async () => {
     const s = await scenario({ attempt: "refunded" });
+    // The seeder stamps refund_status without an amount, which is a row
+    // production never writes: the refund helper always sets
+    // refund_amount_cents = amount_cents (v1 is full-refund-only). The block is
+    // released by CENTS, not by status, so the fixture is completed to match
+    // what a real refund looks like. A status with no amount deliberately keeps
+    // blocking — see the fail-closed case below.
+    await adminQuery(
+      `update public.payment_charge_attempts
+          set refund_amount_cents = amount_cents where studio_id = $1`,
+      [s.studioId],
+    );
     const out = await record(
       s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE,
     );
@@ -405,6 +416,179 @@ describe("0187 — settlement and card charging exclude each other", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].method).toBe("still_owes");
     expect(rows[0].superseded_at).toBeNull();
+  });
+});
+
+describe("0187 — P1-B: settlement never requires a treatment session", () => {
+  it("a completed appointment with NO session can still be recorded as paid cash", async () => {
+    // The card path legitimately needs a session (the amount comes off the
+    // treatment record). A cash record does not, and forcing one is the exact
+    // coupling that produced the fake-payment workaround.
+    const s = await scenario({ withSession: false, attempt: "none" });
+    const sessions = await adminQuery(
+      `select count(*)::int n from public.sessions where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(sessions.rows[0].n).toBe(0);
+
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
+    expect(out.result).toBe("recorded");
+
+    // AND NO SESSION WAS MANUFACTURED to make it work.
+    const after = await adminQuery(
+      `select count(*)::int n from public.sessions where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(after.rows[0].n).toBe(0);
+  });
+
+  it("waived stays owner-only on a session-less appointment", async () => {
+    const s = await scenario({ withSession: false, attempt: "none" });
+    const member = await seedMember(
+      { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
+      "nosess-member",
+    );
+    expect((await waive(member.userId, s.studioId, s.appointmentId)).result).toBe("not_owner");
+    expect((await waive(s.practitionerUserId, s.studioId, s.appointmentId)).result).toBe("recorded");
+  });
+
+  it("cross-studio authority is unchanged when there is no session", async () => {
+    const a = await scenario({ withSession: false, attempt: "none" });
+    const b = await scenario({ withSession: false, attempt: "none" });
+    expect(
+      (await record(a.practitionerUserId, a.studioId, b.appointmentId, "paid_cash")).result,
+    ).toBe("not_found");
+    expect(await liveRows(b.studioId)).toHaveLength(0);
+  });
+});
+
+describe("0187 — P2: a FULL refund releases the block, a PARTIAL one does not", () => {
+  async function setRefund(studioId: string, amountCents: number | null) {
+    await adminQuery(
+      `update public.payment_charge_attempts
+          set refund_status = 'succeeded',
+              refund_amount_cents = $2,
+              refunded_at = now()
+        where studio_id = $1`,
+      [studioId, amountCents],
+    );
+  }
+
+  it("succeeded + NO refund -> card money blocks settlement", async () => {
+    const s = await scenario({ attempt: "succeeded" });
+    const out = await record(
+      s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE,
+    );
+    expect(out.result).toBe("card_payment_exists");
+  });
+
+  it("succeeded + PARTIAL refund -> STILL blocks, because the studio still holds money", async () => {
+    const s = await scenario({ attempt: "succeeded" });
+    const amount = (
+      await adminQuery(
+        `select amount_cents from public.payment_charge_attempts where studio_id=$1`,
+        [s.studioId],
+      )
+    ).rows[0].amount_cents as number;
+    // refund_status says a refund SUCCEEDED. Only part of the money went back.
+    await setRefund(s.studioId, Math.floor(amount / 2));
+
+    const out = await record(
+      s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE,
+    );
+    expect(out.result).toBe("card_payment_exists");
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("succeeded + FULL refund -> a replacement settlement is permitted", async () => {
+    const s = await scenario({ attempt: "succeeded" });
+    const amount = (
+      await adminQuery(
+        `select amount_cents from public.payment_charge_attempts where studio_id=$1`,
+        [s.studioId],
+      )
+    ).rows[0].amount_cents as number;
+    await setRefund(s.studioId, amount);
+
+    const out = await record(
+      s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", amount, TEST_MODE,
+    );
+    expect(out.result).toBe("recorded");
+  });
+
+  it("the replacement records new truth WITHOUT rewriting either card fact", async () => {
+    const s = await scenario({ attempt: "succeeded" });
+    const before = (
+      await adminQuery(
+        `select id, status, stripe_payment_intent_id, stripe_charge_id, charged_at, amount_cents
+           from public.payment_charge_attempts where studio_id=$1`,
+        [s.studioId],
+      )
+    ).rows[0];
+    await setRefund(s.studioId, before.amount_cents as number);
+
+    expect(
+      (await record(
+        s.practitionerUserId, s.studioId, s.appointmentId, "paid_e_transfer",
+        before.amount_cents as number, TEST_MODE,
+      )).result,
+    ).toBe("recorded");
+
+    const after = (
+      await adminQuery(
+        `select id, status, refund_status, refund_amount_cents,
+                stripe_payment_intent_id, stripe_charge_id, charged_at
+           from public.payment_charge_attempts where studio_id=$1`,
+        [s.studioId],
+      )
+    ).rows[0];
+    // THE CARD SUCCESS IS STILL HISTORY.
+    expect(after.id).toBe(before.id);
+    expect(after.status).toBe("succeeded");
+    expect(after.stripe_payment_intent_id).toBe(before.stripe_payment_intent_id);
+    expect(after.stripe_charge_id).toBe(before.stripe_charge_id);
+    expect(after.charged_at).toEqual(before.charged_at);
+    // AND SO IS THE REFUND.
+    expect(after.refund_status).toBe("succeeded");
+    expect(after.refund_amount_cents).toBe(before.amount_cents);
+    // The replacement is a separate, attested fact on a separate table.
+    const rows = await liveRows(s.studioId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].method).toBe("paid_e_transfer");
+  });
+
+  it("a refund whose AMOUNT is unknown keeps blocking — fail closed", async () => {
+    // refund_status = 'succeeded' with a NULL amount cannot prove the money
+    // went back. Production never writes this row, but guessing "probably
+    // full" is how a studio ends up recorded as paid twice, so the unknown
+    // resolves against releasing the block.
+    const s = await scenario({ attempt: "succeeded" });
+    await setRefund(s.studioId, null);
+    const out = await record(
+      s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE,
+    );
+    expect(out.result).toBe("card_payment_exists");
+  });
+
+  it("no Stripe object is created or altered anywhere in that flow", async () => {
+    // Structural: the settlement path holds no Stripe column to write and the
+    // commands touch exactly one table. Proven by counting attempt rows, which
+    // is where any fabricated Stripe fact would have to live.
+    const s = await scenario({ attempt: "succeeded" });
+    const amount = (
+      await adminQuery(
+        `select amount_cents from public.payment_charge_attempts where studio_id=$1`,
+        [s.studioId],
+      )
+    ).rows[0].amount_cents as number;
+    await setRefund(s.studioId, amount);
+    await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", amount, TEST_MODE);
+
+    const attempts = await adminQuery(
+      `select count(*)::int n from public.payment_charge_attempts where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(attempts.rows[0].n).toBe(1);
   });
 });
 

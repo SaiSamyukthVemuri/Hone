@@ -531,8 +531,19 @@ $$;
 -- unblock real money.
 --
 -- 'succeeded' AND NOT FULLY REFUNDED is what counts as money Hone holds. After
--- a full refund the money went back, so recording that the client then paid
+-- a FULL refund the money went back, so recording that the client then paid
 -- cash is TRUE and must be permitted — the refund fact itself is never touched.
+--
+-- FULL MEANS FULL, MEASURED IN CENTS, NOT INFERRED FROM refund_status.
+-- `refund_status = 'succeeded'` says a refund SUCCEEDED, not that all of the
+-- money went back. Today's helper is full-refund-only (0078: "full refund only
+-- (helper sets refund_amount_cents = amount_cents)"), but the schema's CHECK is
+-- `refund_amount_cents <= amount_cents` — it deliberately leaves room for
+-- partial refunds, and 0078 says so in as many words. Testing the status alone
+-- would mean the FIRST partial refund silently releases the settlement block on
+-- an appointment where the studio still holds most of the money, and the client
+-- could then be recorded as having paid it again in cash. So the amount is
+-- compared explicitly, and a partial refund keeps blocking.
 create or replace function public.appointment_has_live_card_money(
   p_studio_id uuid,
   p_appointment_id uuid,
@@ -557,7 +568,10 @@ as $$
        and (
          a.status in ('ready', 'pending_stripe')
          or (a.status = 'succeeded'
-             and a.refund_status is distinct from 'succeeded')
+             and not (
+               a.refund_status = 'succeeded'
+               and coalesce(a.refund_amount_cents, 0) >= a.amount_cents
+             ))
        )
   );
 $$;

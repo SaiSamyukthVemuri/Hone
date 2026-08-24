@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
-import { todayInTz } from "@/lib/booking/tz";
+// ONE price resolver, shared with the quick-checkout context so the amount the
+// modal offers and the amount the action snapshots cannot disagree.
+import { resolveAppointmentQuotedAmountCents } from "@/lib/billing/appointment-settlement";
 import {
   isPractitionerMethod,
   isSettlementMethod,
@@ -54,79 +55,6 @@ function readId(rows: unknown): string | null {
     | { settlement_id?: unknown }
     | null;
   return typeof row?.settlement_id === "string" ? row.settlement_id : null;
-}
-
-/**
- * THE PRICE SNAPSHOT, resolved server-side from the SAME resolver the card path
- * uses.
- *
- * `resolveAuthoritativeSessionPaymentAmount` is the single pure resolver behind
- * getAuthoritativeSessionPaymentAmount (the prepare action's reference price)
- * and behind the dashboard's free-visit detection. Reusing it here is what
- * stops FIN-01A drifting away from what Checkout displayed.
- *
- * It is resolved from the APPOINTMENT rather than from a session, because a
- * cash settlement must not require charting first — that coupling is the whole
- * reason the fake-payment workaround existed. The lookup mirrors
- * getFreeAppointmentIds: appointment -> service -> this client's custom pricing.
- *
- * Returns null when the price cannot be resolved. Null is stored as null: a
- * zero would be a manufactured financial fact, and this release exists to stop
- * manufacturing those.
- */
-async function resolveQuotedAmountCents(
-  studioId: string,
-  appointmentId: string,
-  studioTimezone: string,
-): Promise<number | null> {
-  const supabase = await createClient();
-  const { data: appt, error: apptError } = await supabase
-    .from("appointments")
-    .select(
-      "id, client_id, duration_minutes, service:services(name, price_cents)",
-    )
-    .eq("studio_id", studioId)
-    .eq("id", appointmentId)
-    .maybeSingle();
-  if (apptError || !appt) return null;
-
-  const svcEmbed = (appt as { service?: unknown }).service;
-  const svc = (Array.isArray(svcEmbed) ? svcEmbed[0] : svcEmbed) as
-    | { name?: string | null; price_cents?: number | null }
-    | null;
-  if (!svc?.name) return null;
-
-  const clientId = (appt as { client_id: string | null }).client_id;
-  const { data: pricingRows, error: pricingError } = clientId
-    ? await supabase
-        .from("client_pricing")
-        .select("service_name, price_cents, notes, effective_from")
-        .eq("studio_id", studioId)
-        .eq("client_id", clientId)
-    : { data: [] as never[], error: null };
-  // A failed pricing read inverts prices (a positive custom price over a $0
-  // menu service), so it is never treated as "no custom pricing". No snapshot
-  // is better than a wrong one.
-  if (pricingError) return null;
-
-  const result = resolveAuthoritativeSessionPaymentAmount({
-    service: { name: svc.name, price_cents: svc.price_cents ?? null },
-    appointmentDurationMinutes:
-      (appt as { duration_minutes: number | null }).duration_minutes ?? null,
-    customPricing: (pricingRows ?? []) as Array<{
-      service_name: string;
-      price_cents: number;
-      notes: string | null;
-      effective_from: string;
-    }>,
-    today: todayInTz(studioTimezone),
-  });
-
-  if (result.kind === "resolved") return result.amountCents;
-  // An authoritative $0 service is a real price, and the only one that is
-  // truthfully zero.
-  if (result.kind === "free") return 0;
-  return null;
 }
 
 function parseAmountCents(raw: FormDataEntryValue | null): number | null {
@@ -182,7 +110,7 @@ export async function recordAppointmentSettlementAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-  const quoted = await resolveQuotedAmountCents(
+  const quoted = await resolveAppointmentQuotedAmountCents(
     studioId,
     appointmentId,
     studioTimezone,
@@ -249,7 +177,7 @@ export async function waiveAppointmentFeeAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-  const quoted = await resolveQuotedAmountCents(
+  const quoted = await resolveAppointmentQuotedAmountCents(
     studioId,
     appointmentId,
     studioTimezone,
@@ -318,7 +246,7 @@ export async function supersedeAppointmentSettlementAction(
   if (formData.get("note") && note === null) return failure("invalid_input");
 
   const quoted = appointmentId
-    ? await resolveQuotedAmountCents(studioId, appointmentId, studioTimezone)
+    ? await resolveAppointmentQuotedAmountCents(studioId, appointmentId, studioTimezone)
     : null;
 
   const supabase = await createClient();
