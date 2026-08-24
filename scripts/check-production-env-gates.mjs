@@ -77,35 +77,49 @@
  * prohibition therefore has nothing left to protect and would only stop the
  * activation it was holding open a place for.
  *
- * WHAT REPLACES IT IS NOT "NOTHING". Activation stays EXPLICIT and PER STUDIO,
- * and this gate enforces the one property it can actually decide at deploy
- * time: that every entry is SHAPED like a studio slug. Membership is exact
- * equality against `studios.slug` after trim + lowercase
- * (parseWaitlistSlugs / slugIsListed in lib/booking/new-client-waitlist.ts), so
- * an entry that is not slug-shaped matches nothing. A wildcard is therefore
- * already inert at runtime — but SILENTLY inert, which is the failure mode this
- * gate exists to convert into a loud one. An operator who sets "*" believing it
- * enables every studio would otherwise deploy green and see no waitlist.
+ * WHAT REPLACES IT REPORTS CONFIG, AND BLOCKS NOTHING. Activation stays
+ * EXPLICIT and PER STUDIO. This gate describes what the allowlist is CONFIGURED
+ * to say, using the runtime's own normalisation, and it does not fail a build
+ * over the durable allowlist at all.
  *
  * WHAT THIS GATE CANNOT DECIDE, AND THEREFORE MUST NOT REPORT. It is a
  * dependency-free build-time script with NO DATABASE ACCESS and no module
- * graph. Two facts are consequently out of its reach, and both stand between a
- * well-shaped entry and an actually-activated studio:
+ * graph. Three facts are out of its reach, and each stands between a configured
+ * entry and an actually-activated studio:
  *
- *   1. EXISTENCE. "studio-that-never-existed" is perfectly slug-shaped and
- *      names nothing. Only a query against `studios.slug` could tell, and this
- *      script issues none.
+ *   1. EXISTENCE. Only a query against `studios.slug` could say whether an
+ *      entry identifies a studio, and this script issues none.
  *   2. ADMISSION. The durable allowlist is SUBORDINATE to
  *      NEW_CLIENT_WAITLIST_STUDIO_SLUGS: submit only consults it for a studio
  *      the gate has ALREADY waitlisted, so naming a real studio here whose
  *      intake gate is off activates nothing.
+ *   3. THE DATABASE'S SLUG DOMAIN. See the next block — this one cost a real
+ *      defect.
  *
- * So the count this gate prints is CONFIGURED NORMALISED ENTRIES — an UPPER
- * BOUND on what could activate, never a count of studios activated. Saying
- * "enables N studios" would assert both facts above on evidence the script does
- * not have, which is the same over-claim, one layer down, that Stage B1 exists
- * to remove from the privacy notice. A mistyped-but-well-shaped slug still
- * deploys green here; what proves activation is the product, not this script.
+ * THE APP-WRITER CONVENTION IS NOT THE DATABASE INVARIANT. An earlier Stage-B1
+ * draft treated the 1–64 lowercase-alnum-hyphen shape as the set of slugs a
+ * studio can have, and FAILED a production build on anything outside it. That
+ * is the shape TODAY'S WRITERS enforce, not the shape the column permits.
+ * Migration 0010 adds `slug text` plus a UNIQUE constraint and NO check on
+ * shape or length, and its name-based backfill concatenates a 7-character id
+ * suffix without truncating — so a legacy, backfilled or directly-created row
+ * can hold a 65-character slug that `slugIsListed()` matches exactly. The gate
+ * would have aborted the deploy of a perfectly legitimate activation while
+ * telling the operator the entry could identify no studio. A build gate must never
+ * be STRICTER than the runtime it guards, least of all while claiming to speak
+ * for the database.
+ *
+ * So the convention check survives only as a NON-BLOCKING WARNING, and it says
+ * what it actually knows: this entry is outside the convention current writers
+ * use, legacy rows may differ, verify in the product. It asserts nothing about
+ * whether a studio exists.
+ *
+ * The count this gate prints is CONFIGURED NORMALISED ENTRIES — an UPPER BOUND
+ * on what could activate, never a count of studios activated. Saying "enables N
+ * studios" would assert facts 1 and 2 on evidence the script does not have,
+ * which is the same over-claim, one layer down, that Stage B1 exists to remove
+ * from the privacy notice. What proves activation is the product, not this
+ * script.
  *
  * THERE IS NO GLOBAL ENABLE TO GUARD AGAINST, BY CONSTRUCTION. Nothing in the
  * runtime turns any value into "all studios": the only question it asks is
@@ -183,18 +197,21 @@ const DURABLE_WAITLIST_ENV_VAR = "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS";
 // the studio exists, so the upper-bound framing would stand either way.
 const WAITLIST_GATE_ENV_VAR = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
 
-// The shape a `studios.slug` can actually have. MIRRORS the SLUG_RE that
+// The shape CURRENT APPLICATION WRITERS give a new slug — NOT the domain of
+// `studios.slug`, which carries a UNIQUE constraint and no shape or length
+// CHECK (see the header). MIRRORS the SLUG_RE that
 // app/(app)/settings/booking/actions.ts and lib/studios/new-studio.ts both
-// enforce when a slug is written, and the mirror is pinned by
+// enforce on write, and the mirror is pinned by
 // tests/scripts/check-production-env-gates.test.ts, which reads the literal out
 // of all three files and compares them. Duplicated rather than shared because
 // this script is a dependency-free build-time check with no module graph.
 //
-// Lowercase-only is not a restriction here: entries are lowercased first,
-// exactly as parseWaitlistSlugs() does, so "Studio-One" normalises and passes.
-// What cannot pass is anything a slug can never be: "*", "%", an embedded
-// space, a leading or trailing hyphen, or more than 64 characters.
-const STUDIO_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+// USED ONLY TO WARN. An entry outside this shape is unusual enough to mention
+// — it may be the "*" of an operator who believed one value enables everything
+// — but it is NOT evidence that no studio matches, so it must never fail a
+// build. Lowercase-only is not a restriction: entries are lowercased first,
+// exactly as parseWaitlistSlugs() does, so "Studio-One" normalises inside it.
+const MODERN_WRITER_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 // What the durable allowlist is CONFIGURED to ask production to do.
 //
@@ -211,16 +228,20 @@ const STUDIO_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 // count an operator reads at deploy time must be the count the runtime's own
 // parser would produce for the same string.
 //
-//   supplied    non-empty entries the operator actually typed
-//   configured  UNIQUE normalised slug-shaped entries — the MOST studios this
-//               value could activate. NOT a count of activated studios: this
-//               script cannot prove an entry names an existing `studios.slug`
-//               row, and does not read NEW_CLIENT_WAITLIST_STUDIO_SLUGS, so it
-//               cannot tell whether that studio's intake is waitlisted at all.
-//               See the header. An UPPER BOUND is the strongest true statement
-//               available here.
-//   unusable    how many SUPPLIED entries cannot be a studio slug in any
-//               database, and so would silently match nothing
+//   supplied        non-empty entries the operator actually typed
+//   configured      UNIQUE normalised entries — exactly the set
+//                   parseWaitlistSlugs() would build for the same string, and
+//                   the MOST studios this value could activate. NOT a count of
+//                   activated studios: this script cannot prove an entry
+//                   identifies a `studios.slug` row, and does not read
+//                   NEW_CLIENT_WAITLIST_STUDIO_SLUGS, so it cannot tell whether
+//                   that studio's intake is waitlisted at all. See the header.
+//                   An UPPER BOUND is the strongest true statement available.
+//   unconventional  how many SUPPLIED entries fall outside the shape current
+//                   application writers enforce. A REPORTING signal only — the
+//                   column permits shapes those writers no longer produce, so
+//                   this is never evidence that no studio matches, and it never
+//                   fails a build.
 function durableWaitlistActivation() {
   const raw = process.env[DURABLE_WAITLIST_ENV_VAR];
   const supplied = !raw
@@ -230,19 +251,27 @@ function durableWaitlistActivation() {
         .map((entry) => entry.trim().toLowerCase())
         .filter((entry) => entry.length > 0);
 
-  // VALIDATE EVERY SUPPLIED ENTRY *BEFORE* ANY COLLAPSING. Deduplicating first
-  // would let a repeated valid slug absorb a malformed neighbour — the list
-  // "studio-a, bad slug, studio-a" must FAIL on the middle entry, not pass as
-  // one entry. So validity is decided per typed entry; only the VALID ones are
-  // then collapsed into the set the runtime would build.
+  // EVERY non-empty entry is CONFIGURED, because the runtime puts every one of
+  // them in its Set — including "*", which stays a LITERAL string there and
+  // matches only a studio whose slug is literally "*". Filtering any of them
+  // out here would make this count disagree with parseWaitlistSlugs(), which is
+  // the one number it exists to mirror.
+  //
+  // The convention signal is counted over SUPPLIED entries, BEFORE collapsing,
+  // so a repeated conventional slug cannot absorb an unconventional neighbour:
+  // "studio-a, bad slug, studio-a" reports 1 of 3, not 0 of 1.
   const configured = new Set();
-  let unusable = 0;
+  let unconventional = 0;
   for (const entry of supplied) {
-    if (STUDIO_SLUG_RE.test(entry)) configured.add(entry);
-    else unusable += 1;
+    configured.add(entry);
+    if (!MODERN_WRITER_SLUG_RE.test(entry)) unconventional += 1;
   }
 
-  return { supplied: supplied.length, configured: configured.size, unusable };
+  return {
+    supplied: supplied.length,
+    configured: configured.size,
+    unconventional,
+  };
 }
 
 // Google Calendar OAuth/crypto env (Phase A). NAMES only, never values.
@@ -377,57 +406,64 @@ function main() {
     );
   }
 
-  // Gate 4, WAIT-02B Stage-B durable waitlist activation guard.
-  // VALIDATE-IF-PRESENT: an empty list is the dark shipping state and PASSES;
-  // a populated list PASSES only when every entry is SHAPED like a studio slug.
-  // See the header for why the Stage-A blanket prohibition is gone, and for the
-  // two facts (existence, admission) this script cannot decide — which is why
-  // the populated PASS reports CONFIGURED ENTRIES rather than enabled studios.
+  // Gate 4, WAIT-02B Stage-B durable waitlist activation REPORT.
+  // REPORT-ONLY, BY DESIGN: it never sets `failed`. An empty list is the dark
+  // shipping state; a populated list is described using the runtime's own
+  // normalisation. See the header for the three facts this script cannot decide
+  // — existence, admission, and the database's actual slug domain — which is
+  // why it reports CONFIGURED ENTRIES and warns rather than blocking.
   const durable = durableWaitlistActivation();
-  if (durable.unusable === 0) {
+  if (durable.configured === 0) {
+    // PROVEN, not merely configured: an empty set makes slugIsListed() false
+    // for every possible slug, so this one IS a statement about studios rather
+    // than about entries.
+    process.stdout.write(
+      `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} names no studio ` +
+        `in production; the durable new-client waitlist stays dark and every studio ` +
+        `remains on the WAIT-01 commit point.\n`,
+    );
+  } else {
     // Duplicates are not an error — the runtime collapses them silently — but
     // the operator typed more entries than survive normalisation, so say so.
     // A COUNT, never a slug.
     const duplicates = durable.supplied - durable.configured;
     process.stdout.write(
-      durable.configured === 0
-        ? // PROVEN, not merely configured: an empty set makes slugIsListed()
-          // false for every possible slug, so this one IS a statement about
-          // studios rather than about entries.
-          `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} names no studio ` +
-            `in production; the durable new-client waitlist stays dark and every studio ` +
-            `remains on the WAIT-01 commit point.\n`
-        : `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} carries ` +
-            `${durable.configured} distinct slug-shaped ` +
-            `entr${durable.configured === 1 ? "y" : "ies"} in production.` +
-            (duplicates > 0
-              ? ` (${durable.supplied} entries supplied; ${duplicates} duplicate normalised away, ` +
-                `exactly as the runtime does.)`
-              : "") +
-            ` SHAPE ONLY: this build-time check has no database access, so it does NOT prove any ` +
-            `entry names an existing studio, and it does not read ${WAITLIST_GATE_ENV_VAR}, so it ` +
-            `cannot tell whether a named studio's new-client intake is waitlisted at all. ` +
-            `Treat ${durable.configured} as the MOST studios this value could activate, not as a ` +
-            `count of studios activated; verify activation in the product. Every studio not ` +
-            `named here stays dark.\n`,
+      `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} carries ` +
+        `${durable.configured} distinct normalised configuration ` +
+        `entr${durable.configured === 1 ? "y" : "ies"} in production.` +
+        (duplicates > 0
+          ? ` (${durable.supplied} entries supplied; ${duplicates} duplicate normalised away, ` +
+            `exactly as the runtime does.)`
+          : "") +
+        ` CONFIG SHAPE ONLY: this build-time check has no database access, so it does not ` +
+        `prove any entry identifies a studio, and it does not read ${WAITLIST_GATE_ENV_VAR}, ` +
+        `so it cannot tell whether a named studio's new-client intake is waitlisted at all. ` +
+        `Treat ${durable.configured} as the MOST studios this value could activate, not as a ` +
+        `count of studios activated; verify activation in the product. Every studio not ` +
+        `named here stays dark.\n`,
     );
-  } else {
-    failed = true;
-    // NAME and COUNTS only, never the configured slug(s) — not even the
-    // rejected ones, which are just as much a studio identifier as the valid.
-    // Counted over SUPPLIED entries, so a repeated valid slug cannot mask one.
-    process.stderr.write(
-      `FAIL stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} has ${durable.unusable} ` +
-        `of ${durable.supplied} entr${durable.supplied === 1 ? "y" : "ies"} that cannot be a studio ` +
-        `slug in production.\n` +
-        `Membership is EXACT equality against studios.slug after trim + lowercase, so an entry ` +
-        `of the wrong shape — a wildcard, an embedded space, a leading/trailing hyphen, over 64 ` +
-        `characters — matches no studio and activates nothing. Shipping it would look like an ` +
-        `activation and behave like an empty list.\n` +
-        `There is no wildcard: enabling N studios means naming N slugs, each exactly as it ` +
-        `appears in studios.slug.\n` +
-        `Fix: correct or clear ${DURABLE_WAITLIST_ENV_VAR} in the Vercel Production environment, ` +
-        `then redeploy. This gate has no bypass and no per-studio exception.\n`,
+  }
+
+  // NON-BLOCKING WARNING. Worth saying, not worth refusing a deploy over. The
+  // operator who sets "*" believing one value enables everything sees this —
+  // and so does the operator activating a legacy studio whose slug predates the
+  // current writer convention, who must still be able to ship. It asserts
+  // NOTHING about whether a studio exists. COUNTS only, never a slug.
+  if (durable.unconventional > 0) {
+    process.stdout.write(
+      `WARN stage-b-durable-waitlist-env: ${durable.unconventional} of ${durable.supplied} ` +
+        `configured entr${durable.supplied === 1 ? "y" : "ies"} ` +
+        `${durable.unconventional === 1 ? "falls" : "fall"} outside the slug ` +
+        `convention used by current application writers (1-64 characters; lowercase letters, ` +
+        `digits and hyphens; no leading or trailing hyphen).\n` +
+        `That convention is what today's writers ENFORCE, not what the column PERMITS: ` +
+        `studios.slug carries a UNIQUE constraint and no shape or length check, so a legacy, ` +
+        `backfilled or directly-created row may sit outside it and still be matched exactly by ` +
+        `the runtime. This is NOT evidence either way about whether a studio matches, and it ` +
+        `does NOT fail the build.\n` +
+        `No value is ever interpreted as a pattern: a wildcard character is compared ` +
+        `literally and never expanded, so enabling N studios still means naming N slugs. ` +
+        `Verify activation in the product.\n`,
     );
   }
 

@@ -840,8 +840,37 @@ describe("Stage B records what closed, and what is still open", () => {
       path.resolve(__dirname, "../../../scripts/check-production-env-gates.mjs"),
       "utf8",
     );
-    expect(gate).toContain("distinct slug-shaped");
+    expect(gate).toContain("distinct normalised configuration");
     expect(gate).not.toMatch(/explicitly enables/);
+  });
+
+  // CODEX (#637) P2-B. The gate treated the current app-writer slug shape as
+  // the database's domain and FAILED a build on anything outside it, which
+  // would have blocked activation for a legacy studio whose slug the column
+  // still permits. The doc an operator reads must record that it no longer
+  // adjudicates.
+  it("records that the deploy-time check is report-only, not an adjudicator", () => {
+    expect(ENV_DOC).toContain("report-only");
+    expect(ENV_DOC).toContain("not the domain of `studios.slug`");
+    expect(ENV_DOC).toContain("non-blocking WARNING");
+    expect(RISKS).toContain("report-only");
+    // ANTI-VACUITY: the script really cannot fail on this variable any more.
+    const gate = readFileSync(
+      path.resolve(__dirname, "../../../scripts/check-production-env-gates.mjs"),
+      "utf8",
+    );
+    const guard = gate.slice(gate.indexOf("Gate 4, WAIT-02B Stage-B durable waitlist"));
+    expect(guard).toMatch(/WARN stage-b-durable-waitlist-env/);
+    expect(guard).not.toMatch(/failed = true/);
+    expect(guard).not.toMatch(/FAIL stage-b-durable-waitlist-env/);
+    // ...and the premise the fix rests on is recorded where it can be checked.
+    const m0010 = readFileSync(
+      path.resolve(__dirname, "../../../supabase/migrations/0010_booking_v1.sql"),
+      "utf8",
+    );
+    expect(m0010).toContain("add column if not exists slug text");
+    expect(m0010).toContain("add constraint studios_slug_unique unique (slug)");
+    expect(m0010).not.toMatch(/studios_slug_(?:format|shape|length)_check/);
   });
 
   it("states the CONSEQUENCE: activation stays explicit, and has not been taken", () => {

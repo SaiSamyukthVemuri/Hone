@@ -239,7 +239,26 @@ const VALID_SLUG_SENTINEL = "willowlike-studio-must-never-be-printed";
 // only one that may exist anywhere is the reserved e2e slug. Test fixtures must
 // not weaken that scan by adding literals it has to be taught to ignore.
 const PADDED_MIXED_CASE_SENTINEL = "  Willowlike-Studio-UPPER  ";
-const UNUSABLE_SENTINEL = "*";
+const UNCONVENTIONAL_SENTINEL = "*";
+
+/**
+ * Claims the gate has no evidence for, in EITHER direction.
+ *
+ * It has no database access and never reads NEW_CLIENT_WAITLIST_STUDIO_SLUGS,
+ * so it can say neither that an entry identifies a studio nor that it does not.
+ * The first three are the activation over-claim; the last three are its mirror
+ * image — asserting non-existence from a shape the database does not enforce.
+ */
+const BANNED_GATE_CLAIMS = [
+  /\benables \d+ studio/i,
+  /\bexplicitly enables\b/i,
+  /\b\d+ studios? (?:are |is )?(?:now )?(?:enabled|active|activated)\b/i,
+  /\bmatched by exact slug equality\b/i,
+  /\beach named in full\b/i,
+  /\bcannot be a studio slug\b/i,
+  /\bmatches no studio\b/i,
+  /\bidentifies no studio\b/i,
+];
 
 describe("Stage-B durable waitlist activation guard", () => {
   it("PASSES and stays DARK when the allowlist is UNSET in production", () => {
@@ -277,7 +296,7 @@ describe("Stage-B durable waitlist activation guard", () => {
     expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
     expect(r.stdout).toMatch(/^PASS stage-b-durable-waitlist-env/m);
-    expect(out).toMatch(/carries 1 distinct slug-shaped entry\b/);
+    expect(out).toMatch(/carries 1 distinct normalised configuration entry\b/);
     // A COUNT is fine. THE SLUG IS NOT, on the pass path just as on the fail path.
     expect(out).not.toContain(VALID_SLUG_SENTINEL);
   });
@@ -289,7 +308,7 @@ describe("Stage-B durable waitlist activation guard", () => {
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
-    expect(out).toMatch(/carries 2 distinct slug-shaped entries/);
+    expect(out).toMatch(/carries 2 distinct normalised configuration entries/);
     expect(out).not.toContain(VALID_SLUG_SENTINEL);
     expect(out).not.toContain(DURABLE_SLUG_SENTINEL_2);
   });
@@ -318,10 +337,10 @@ describe("Stage-B durable waitlist activation guard", () => {
     expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
     // Counts ENTRIES, and says so in the units it actually measured.
-    expect(out).toMatch(/carries 2 distinct slug-shaped entries/);
+    expect(out).toMatch(/carries 2 distinct normalised configuration entries/);
     // Names the missing evidence for BOTH unprovable facts, not just one.
     expect(out).toMatch(/no database access/i);
-    expect(out).toMatch(/does NOT prove any entry names an existing studio/);
+    expect(out).toMatch(/does not\s+prove any entry identifies a studio/);
     expect(out).toContain("NEW_CLIENT_WAITLIST_STUDIO_SLUGS");
     expect(out).toMatch(/cannot tell whether a named studio.s new-client intake is waitlisted/);
     // States the number's real meaning: a ceiling, not a result.
@@ -343,14 +362,35 @@ describe("Stage-B durable waitlist activation guard", () => {
       });
       expect(r.status, r.stdout + r.stderr).toBe(0);
       const out = r.stdout + r.stderr;
-      for (const banned of [
-        /\benables \d+ studio/i,
-        /\bexplicitly enables\b/i,
-        /\b\d+ studios? (?:are |is )?(?:now )?(?:enabled|active|activated)\b/i,
-        /\bmatched by exact slug equality\b/i,
-        /\beach named in full\b/i,
-      ]) {
+      for (const banned of BANNED_GATE_CLAIMS) {
         expect(out, `must not claim activation: ${banned}`).not.toMatch(banned);
+      }
+    }
+  });
+
+  // Proof 7. The same three phrasings must be absent on EVERY path, including
+  // the warning ones — an unconventional entry is exactly where the old code
+  // asserted "cannot be a studio slug" and "matches no studio", neither of
+  // which this script has the evidence to say.
+  it("NEGATIVE CONTROL: no path asserts existence in either direction", () => {
+    const long = "a".repeat(65);
+    for (const value of [
+      undefined,
+      "",
+      " , , ",
+      VALID_SLUG_SENTINEL,
+      `${VALID_SLUG_SENTINEL}, ${DURABLE_SLUG_SENTINEL_2}`,
+      UNCONVENTIONAL_SENTINEL,
+      long,
+      `${VALID_SLUG_SENTINEL}, ${UNCONVENTIONAL_SENTINEL}`,
+    ]) {
+      const env: Record<string, string> = { ...PRODUCTION_BASELINE };
+      if (value !== undefined) env.NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS = value;
+      const r = run(env);
+      expect(r.status, `${value}: ${r.stdout}${r.stderr}`).toBe(0);
+      const out = r.stdout + r.stderr;
+      for (const banned of BANNED_GATE_CLAIMS) {
+        expect(out, `${JSON.stringify(value)} must not say: ${banned}`).not.toMatch(banned);
       }
     }
   });
@@ -366,7 +406,7 @@ describe("Stage-B durable waitlist activation guard", () => {
     expect(r.stdout).toMatch(/stays dark/);
     expect(r.stdout).toMatch(/every studio\s+remains on the WAIT-01 commit point/);
     // No shape-only caveat here: there is nothing unproven to caveat.
-    expect(r.stdout).not.toMatch(/SHAPE ONLY/);
+    expect(r.stdout).not.toMatch(/CONFIG SHAPE ONLY/);
   });
 
   it("normalises case and padding exactly as the runtime does, and still passes", () => {
@@ -375,14 +415,24 @@ describe("Stage-B durable waitlist activation guard", () => {
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: PADDED_MIXED_CASE_SENTINEL,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/carries 1 distinct slug-shaped entry\b/);
+    expect(r.stdout + r.stderr).toMatch(/carries 1 distinct normalised configuration entry\b/);
   });
 
-  // ---- malformed / unsafe activation config --------------------------------
+  // ---- unconventional activation config: WARN, never FAIL -----------------
   //
-  // Every one of these matches NO studio at runtime (membership is exact
-  // equality against studios.slug). The danger is not that they enable too
-  // much — it is that they enable NOTHING while looking like an activation.
+  // CODEX (#637) P2-B. An earlier draft FAILED the build on anything outside
+  // the 1–64 lowercase-alnum-hyphen shape, calling it "unusable" and claiming
+  // it "matches no studio". That shape is what TODAY'S WRITERS enforce, not the
+  // domain of `studios.slug`: migration 0010 adds `slug text` plus a UNIQUE
+  // constraint and NO shape or length check, and its name-based backfill
+  // appends a 7-character id suffix without truncating. A legacy, backfilled or
+  // directly-created row can therefore hold a 65-character slug that
+  // slugIsListed() matches exactly — and the gate would have aborted that
+  // studio's activation while telling the operator the entry identified none.
+  //
+  // A build gate must never be STRICTER than the runtime it guards. The shape
+  // check survives as a non-blocking WARNING that asserts nothing about
+  // existence.
   it.each([
     ["a bare wildcard", "*"],
     ["a SQL-style wildcard", "%"],
@@ -394,33 +444,51 @@ describe("Stage-B durable waitlist activation guard", () => {
     ["a URL rather than a slug", "https://hone.care/book/willow"],
     ["a slug over 64 characters", "a".repeat(65)],
     ["a quoted slug", '"willow-electrolysis"'],
-  ])("FAILS a production build on %s", (_label, value) => {
+  ])("WARNS but does NOT fail a production build on %s", (_label, value) => {
     const r = run({
       ...PRODUCTION_BASELINE,
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: value,
     });
-    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
-    expect(out).toMatch(/FAIL stage-b-durable-waitlist-env/);
+    expect(out).toMatch(/^WARN stage-b-durable-waitlist-env/m);
+    expect(out).not.toMatch(/FAIL stage-b-durable-waitlist-env/);
     expect(out).toContain("NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS");
-    // Not even a REJECTED entry is printed: it is still a studio identifier.
+    // Not even a WARNED entry is printed: it is still a studio identifier.
     expect(out).not.toContain(value);
+    // The warning must not decide existence in EITHER direction.
+    expect(out).not.toMatch(/matches no studio|cannot be a studio slug|identifies no studio/i);
   });
 
-  it("FAILS the whole list when only ONE entry of several is unusable", () => {
-    // Partial correctness must not ship: the operator believes N studios are on.
+  // THE CONCRETE REPRODUCTION Codex gave. Length alone must never block.
+  it("a 65-character lowercase slug does NOT fail the build", () => {
+    const long = "a".repeat(65);
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: long,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    const out = r.stdout + r.stderr;
+    // It still counts as configured — the runtime would put it in its Set.
+    expect(out).toMatch(/carries 1 distinct normalised configuration entry\b/);
+    expect(out).toMatch(/^WARN stage-b-durable-waitlist-env/m);
+    expect(out).toMatch(/no shape or length check/);
+    expect(out).not.toContain(long);
+  });
+
+  it("WARNS on a partly-unconventional list without failing, counting over supplied", () => {
     const r = run({
       ...PRODUCTION_BASELINE,
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${VALID_SLUG_SENTINEL}, not a slug`,
     });
-    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
-    expect(out).toMatch(/has 1 of 2 entries that cannot be a studio slug/);
+    expect(out).toMatch(/1 of 2 configured entries falls outside the slug convention/);
     expect(out).not.toContain(VALID_SLUG_SENTINEL);
     expect(out).not.toContain("not a slug");
   });
 
-  it("never prints a slug on ANY path — pass, fail, or dark", () => {
+  it("never prints a slug on ANY path — pass, warn, or dark", () => {
     for (const value of [undefined, VALID_SLUG_SENTINEL, "*", `${VALID_SLUG_SENTINEL},*`]) {
       const env: Record<string, string> = { ...PRODUCTION_BASELINE };
       if (value !== undefined) env.NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS = value;
@@ -450,7 +518,7 @@ describe("Stage-B durable waitlist activation guard", () => {
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
-    expect(out).toMatch(/carries 1 distinct slug-shaped entry\b/);
+    expect(out).toMatch(/carries 1 distinct normalised configuration entry\b/);
     // The operator typed more than survives normalisation: said plainly, as
     // counts only.
     expect(out).toMatch(/2 entries supplied; 1 duplicate normalised away/);
@@ -464,7 +532,7 @@ describe("Stage-B durable waitlist activation guard", () => {
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, ${DUP_A}, ${DUP_A_MIXED_CASE}`,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/carries 1 distinct slug-shaped entry\b/);
+    expect(r.stdout).toMatch(/carries 1 distinct normalised configuration entry\b/);
     expect(r.stdout).toMatch(/3 entries supplied; 2 duplicate normalised away/);
   });
 
@@ -474,33 +542,33 @@ describe("Stage-B durable waitlist activation guard", () => {
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, ${DUP_B}`,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/carries 2 distinct slug-shaped entries/);
+    expect(r.stdout).toMatch(/carries 2 distinct normalised configuration entries/);
     expect(r.stdout).not.toMatch(/duplicate/);
   });
 
-  // THE ORDERING PROPERTY. Validity is decided per TYPED entry, before any
-  // collapsing, so a repeated valid slug can never absorb a malformed one.
-  it("a duplicate CANNOT hide an invalid entry between its copies", () => {
+  // THE ORDERING PROPERTY. The convention signal is computed per TYPED entry,
+  // before any collapsing, so a repeated conventional slug can never absorb an
+  // unconventional neighbour and silence the warning.
+  it("a duplicate CANNOT hide an unconventional entry between its copies", () => {
     const r = run({
       ...PRODUCTION_BASELINE,
       NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, bad slug, ${DUP_A}`,
     });
-    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
     const out = r.stdout + r.stderr;
-    expect(out).toMatch(/FAIL stage-b-durable-waitlist-env/);
-    // Counted over SUPPLIED entries — 1 bad of the 3 typed, not of the 1 unique.
-    expect(out).toMatch(/has 1 of 3 entries that cannot be a studio slug/);
+    // Counted over SUPPLIED entries — 1 of the 3 typed, not of the 2 unique.
+    expect(out).toMatch(/1 of 3 configured entries falls outside the slug convention/);
     expect(out).not.toContain(DUP_A);
     expect(out).not.toContain("bad slug");
   });
 
   // ---- off-production is untouched -----------------------------------------
-  it("does NOT fail a PREVIEW deploy, even with an unusable allowlist", () => {
+  it("does NOT fail a PREVIEW deploy, even with an unconventional allowlist", () => {
     // Preview and the e2e lane legitimately set the reserved slug; neither is
     // a production deploy and neither is validated here.
     const r = run({
       VERCEL_ENV: "preview",
-      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: UNUSABLE_SENTINEL,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: UNCONVENTIONAL_SENTINEL,
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(r.stdout + r.stderr).not.toMatch(/FAIL stage-b-durable-waitlist-env/);
@@ -516,12 +584,14 @@ describe("Stage-B durable waitlist activation guard", () => {
   });
 
   it("is INDEPENDENT of the other gates in both directions", () => {
-    // An unusable allowlist fails even when everything else is correct...
+    // An unconventional allowlist WARNS without disturbing anything else, and
+    // without failing the build — the durable gate is report-only now.
     const onlyWaitlist = run({
       ...PRODUCTION_BASELINE,
-      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: UNUSABLE_SENTINEL,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: UNCONVENTIONAL_SENTINEL,
     });
-    expect(onlyWaitlist.status).toBe(1);
+    expect(onlyWaitlist.status, onlyWaitlist.stdout + onlyWaitlist.stderr).toBe(0);
+    expect(onlyWaitlist.stdout).toMatch(/^WARN stage-b-durable-waitlist-env/m);
     expect(onlyWaitlist.stdout).toMatch(/^PASS public-rate-limit-env/m);
     expect(onlyWaitlist.stdout).toMatch(/^PASS ops-alert-delivery-env/m);
 
@@ -564,7 +634,7 @@ describe("gate and runtime normalise the allowlist identically", () => {
     });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     if (/names no studio/.test(r.stdout)) return 0;
-    const m = r.stdout.match(/carries (\d+) distinct slug-shaped entr(?:y|ies)/);
+    const m = r.stdout.match(/carries (\d+) distinct normalised configuration entr(?:y|ies)/);
     expect(m, r.stdout).toBeTruthy();
     return Number((m as RegExpMatchArray)[1]);
   }
@@ -600,6 +670,36 @@ describe("gate and runtime normalise the allowlist identically", () => {
 
   it("agrees that no unlisted studio is enabled (no global enable crept in)", () => {
     expect(runtimeEnabledCount(`${A}, ${A.toUpperCase()}`, ["some-other-studio"])).toBe(0);
+  });
+
+  // Proof 6, EXTENDED FOR P2-B. The old gate filtered unconventional entries
+  // out of its count while parseWaitlistSlugs() kept them, so the two parsers
+  // disagreed on exactly the inputs the gate then failed the build over. Now
+  // every non-empty entry is configured in both, and parity holds there too.
+  it.each([
+    ["a wildcard-looking literal", "*", ["*", A], 1],
+    ["a 65-character slug", "a".repeat(65), ["a".repeat(65), A], 1],
+    ["an unconventional entry beside a conventional one", `*, ${A}`, ["*", A], 2],
+  ])("agrees on %s, which the gate no longer filters out", (_label, value, candidates, expected) => {
+    const gate = gateConfiguredCount(value as string);
+    const runtime = runtimeEnabledCount(value as string, candidates as string[]);
+    expect(gate, `gate count for ${JSON.stringify(value)}`).toBe(expected);
+    expect(runtime, `runtime count for ${JSON.stringify(value)}`).toBe(expected);
+    expect(gate).toBe(runtime);
+  });
+
+  // Proof 5. A wildcard-looking value is a LITERAL string on both sides. It
+  // must never behave as a pattern, and there is no global-enable mode.
+  it("a wildcard-looking value enables only a studio literally named that", () => {
+    // It matches the literal, and nothing else — not even one other studio.
+    expect(runtimeEnabledCount("*", ["*"])).toBe(1);
+    expect(runtimeEnabledCount("*", [A, B, "willow-electrolysis"])).toBe(0);
+    expect(runtimeEnabledCount("%", [A, B])).toBe(0);
+    expect(runtimeEnabledCount(".*", [A, B])).toBe(0);
+    // And no value is read as "every studio".
+    for (const global of ["*", "all", "true", "1", "ALL", "%"]) {
+      expect(runtimeEnabledCount(global, [A, B]), `${global} must enable nobody`).toBe(0);
+    }
   });
 });
 
@@ -675,9 +775,13 @@ describe("check-production-env-gates contract is pinned in source", () => {
     expect(SCRIPT_SOURCE).toMatch(/const configured = new Set\(\)/);
     expect(SCRIPT_SOURCE).toMatch(/configured: configured\.size/);
     expect(SCRIPT_SOURCE).not.toMatch(/configured: \w+\.length/);
-    // ...and validity is still decided per SUPPLIED entry, before collapsing.
+    // ...and the convention signal is still computed per SUPPLIED entry,
+    // before collapsing.
     expect(SCRIPT_SOURCE).toMatch(/for \(const entry of supplied\)/);
     expect(SCRIPT_SOURCE).toMatch(/supplied: supplied\.length/);
+    // EVERY non-empty entry is configured — no filtering, or the count would
+    // stop mirroring parseWaitlistSlugs().
+    expect(SCRIPT_SOURCE).toMatch(/configured\.add\(entry\);\s*\n\s*if \(!MODERN_WRITER_SLUG_RE/);
   });
 
   it("has NO escape hatch for the activation guard specifically", () => {

@@ -151,7 +151,7 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     );
     // Which one applies is knowable on request, not left as a mystery.
     expect(PRIVACY).toMatch(/Which applies is a setting on the\s+studio, not on you/);
-    expect(PRIVACY).toMatch(/You can ask the studio, or write\s+to <strong>privacy@hone\.care<\/strong>/);
+    expect(PRIVACY).toMatch(/Ask the studio, or write to\{" "\}/);
   });
 
   it("guarantees STORAGE only WHERE the waitlist is kept with us", () => {
@@ -175,18 +175,86 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
 
   it("states the legacy path truthfully: no record, and no false success", () => {
     expect(PRIVACY).toMatch(
-      /<strong>Where it is not kept with us<\/strong>, we store no waitlist\s+entry for you at all/,
+      /<strong>Where it is not kept with us<\/strong>, we keep no waitlist\s+entry for you at all/,
     );
     // The email is the request, not a notification about a record.
     expect(PRIVACY).toMatch(
-      /that message is the request itself rather than a notification about\s+a record on our side/,
+      /that message is the request itself\s+rather than a notification about a record on our side/,
     );
     // And the refusal semantics the code actually has: told it failed, never
     // told they joined.
     expect(PRIVACY).toMatch(
-      /if it cannot be sent, we tell you the\s+request did not go through rather than telling you that you joined/,
+      /If the message is not accepted, we tell you the request did not\s+go through rather than telling you that you joined/,
     );
-    expect(PRIVACY).toMatch(/your details are held by the studio, in its own systems/);
+  });
+
+  // -------------------------------------------------------------------------
+  // CODEX (#637), THIRD PASS — P1. The paragraph above previously ended "From
+  // that point your details are held by the studio, in its own systems", and
+  // §9 said what persists is "the email carrying your request — in the
+  // studio's mailbox". Both assert DELIVERY.
+  //
+  // submitViaStudioNotification() returns success on `studioSend.status ===
+  // "accepted"`, and waitlist-actions.ts states in terms what that means:
+  // Resend accepted the request AND returned an id. It is NOT inbox delivery,
+  // recipient acceptance, non-spam placement, or that a human saw it. A later
+  // bounce therefore leaves NO Hone row and NO mailbox copy — the request
+  // exists nowhere — while the visitor was already told it went through.
+  //
+  // So the policy may state the ATTEMPT and the ACCEPTANCE. It may not state
+  // arrival, and it may not state that the studio holds anything.
+  // -------------------------------------------------------------------------
+  it("distinguishes accepted-for-sending from delivered, in plain language", () => {
+    expect(PRIVACY).toMatch(/Instead we <strong>attempt to send<\/strong> your/);
+    expect(PRIVACY).toMatch(
+      /our email service accepted the message for sending; that\s+is not the same as the studio receiving it/,
+    );
+    expect(PRIVACY).toMatch(/we cannot promise it\s+arrives/);
+    // Retention says the same thing, and refuses to promise a deletion of
+    // something never stored.
+    expect(PRIVACY).toMatch(/We cannot promise it\s+arrived, and we cannot tell you that any such copy exists/);
+    expect(PRIVACY).toMatch(
+      /we will not claim to delete a record we\s+never held/,
+    );
+  });
+
+  it("NEGATIVE CONTROL: WAIT-01 success may never imply persistence anywhere", () => {
+    // The two exact phrasings that were wrong.
+    expect(PRIVACY).not.toMatch(/your details are held by the studio/i);
+    expect(PRIVACY).not.toMatch(/in the\s+studio&rsquo;s mailbox/i);
+    // ...and the shapes they would return as. Each asserts that a copy EXISTS
+    // after a submission Hone only knows was accepted for sending.
+    for (const banned of [
+      /\bthe email persists\b/i,
+      /\bpersists in the studio\b/i,
+      /\bthe studio (?:holds|retains|keeps|has) your (?:request|details|information)\b/i,
+      /\bis (?:held|retained|stored) by the studio\b/i,
+      /\ba copy (?:remains|exists|is kept) in the studio\b/i,
+      /\bthe studio(?:&rsquo;s|'s)? mailbox (?:holds|keeps|retains)\b/i,
+    ]) {
+      expect(PRIVACY, `must not assert studio-side persistence: ${banned}`).not.toMatch(banned);
+    }
+    // Hedged forms are the point, so they must survive: "may remain", "may keep".
+    expect(PRIVACY).toMatch(/copies of it may remain in/);
+    expect(PRIVACY).toMatch(/the studio may keep it under its own practices/);
+  });
+
+  it("ANTI-VACUITY: provider acceptance really is all the code knows", () => {
+    const action = read("app/book/[slug]/waitlist-actions.ts");
+    // The commit law itself: accepted -> success.
+    expect(action).toMatch(/if \(studioSend\.status !== "accepted"\)/);
+    // And the file says, in terms, that acceptance is not delivery.
+    expect(action).toMatch(
+      /"Accepted" means the Resend API accepted the request AND returned an id for\s*\n\/\/ it\. It does NOT mean inbox delivery/,
+    );
+    // WAIT-01 writes NO row: the only rpc in the file is the durable path's.
+    const legacy = action.slice(
+      action.indexOf("async function submitViaStudioNotification"),
+      action.indexOf("export async function submitNewClientBookingWaitlistAction"),
+    );
+    expect(legacy.length).toBeGreaterThan(0);
+    expect(legacy).not.toMatch(/\.rpc\(/);
+    expect(legacy).not.toMatch(/join_new_client_waitlist/);
   });
 
   it("NEGATIVE CONTROL: the unconditional storage claim cannot come back", () => {
@@ -318,17 +386,101 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     expect(PRIVACY).toMatch(/we do\s+not claim any fixed retention period for them/);
   });
 
-  it("says what is retained where NO entry of ours exists — and what we cannot delete", () => {
+  it("says what is retained where NO entry of ours exists — hedged, not asserted", () => {
     expect(PRIVACY).toMatch(
-      /Where a studio&rsquo;s waitlist is <strong>not<\/strong> kept with us,\s+there is no entry on our side to retain, and none for us to delete/,
+      /Where a studio&rsquo;s waitlist is <strong>not<\/strong> kept with us,\s+we keep no waitlist entry for you, so there is nothing on our side to\s+retain and nothing for us to delete/,
     );
-    // What DOES persist, named honestly: the mail itself, the provider already
-    // disclosed in §6, and the studio's own systems. No invented period.
-    expect(PRIVACY).toMatch(/the email carrying your request/);
-    expect(PRIVACY).toMatch(/for a limited period with the email provider\s+named in section 6/);
-    expect(PRIVACY).toMatch(/we cannot delete a record we do not\s+hold/);
-    // §6 must really name a provider, or the cross-reference is a dead pointer.
-    expect(PRIVACY).toMatch(/Resend \(transactional email delivery\)/);
+    // What MAY persist, and whose practices govern it. Every verb hedged,
+    // because provider acceptance is all Hone ever knows. No invented period,
+    // and no provider named in the public copy.
+    expect(PRIVACY).toMatch(/We attempt to send your request to\s+the studio by email/);
+    expect(PRIVACY).toMatch(
+      /copies of it may remain in\s+the studio&rsquo;s systems and in the email systems that carried it/,
+    );
+    expect(PRIVACY).toMatch(/under their retention practices rather than ours/);
+  });
+
+  // -------------------------------------------------------------------------
+  // CODEX (#637), THIRD PASS — P2-A. §6 said "write to privacy@hone.care and we
+  // will tell you" which handling applies, and §8 promised to "tell you which
+  // of the two handlings in section 6 applies". Hone cannot honour that for a
+  // PAST request:
+  //
+  //   * WAIT-01 writes no row, so nothing records that the request existed;
+  //   * the mode is read from process.env per call (UNCACHED, by design), so
+  //     only the CURRENT value is knowable;
+  //   * a studio can be added to the durable allowlist later, which rewrites
+  //     the answer the current config gives for an older submission;
+  //   * new_client_waitlist_entries has no column recording the handling, and
+  //     join_new_client_waitlist takes no such argument.
+  //
+  // The repair QUALIFIES the promise rather than adding storage to satisfy it.
+  // -------------------------------------------------------------------------
+  it("promises only the CURRENT handling, never a historical reconstruction", () => {
+    expect(PRIVACY).toMatch(
+      /we can tell you how that\s+studio&rsquo;s waitlist is handled <strong>now<\/strong>/,
+    );
+    expect(PRIVACY).toMatch(
+      /We do not\s+record, for each request, which handling was in force when it was made/,
+    );
+    expect(PRIVACY).toMatch(
+      /for an earlier request we may not be able to establish\s+afterwards which of the two applied/,
+    );
+    // §8 keeps the access route USEFUL where a record exists, and honest where
+    // it does not.
+    expect(PRIVACY).toMatch(
+      /Where we hold a\s+waitlist entry for you we can find it and act on it/,
+    );
+    expect(PRIVACY).toMatch(
+      /we may not be able to tell\s+you afterwards which handling applied or whether the message reached the\s+studio/,
+    );
+  });
+
+  it("NEGATIVE CONTROL: no unconditional promise to identify a past handling", () => {
+    for (const banned of [
+      /\bwe will tell you which handling\b/i,
+      /\bwe (?:will|can) tell you which of the two handlings\b(?![\s\S]{0,40}now)/i,
+      /\bwe will assist and tell you\b/i,
+      /\bwe can always tell you\b/i,
+      /\bwe (?:will|can) determine which handling applied\b/i,
+      /\bwe keep a record of which handling\b/i,
+    ]) {
+      expect(PRIVACY, `must not promise historical reconstruction: ${banned}`).not.toMatch(banned);
+    }
+  });
+
+  it("ANTI-VACUITY: nothing in the architecture records the handling per request", () => {
+    const action = read("app/book/[slug]/waitlist-actions.ts");
+    const lib = read("lib/booking/new-client-waitlist.ts");
+    const migration = read("supabase/migrations/0185_new_client_waitlist_entries.sql");
+
+    // Mode comes from CURRENT config, read per call rather than cached.
+    expect(lib).toMatch(/return parseWaitlistSlugs\(process\.env\[envVar\]\)\.has\(slug\)/);
+    expect(lib).toMatch(/UNCACHED/);
+
+    // The durable command carries no handling/mode argument...
+    expect(action).toMatch(/rpc\("join_new_client_waitlist", \{/);
+    const call = action.slice(action.indexOf('rpc("join_new_client_waitlist"'));
+    const args = call.slice(0, call.indexOf("}"));
+    for (const forbidden of ["handling", "mode", "commit_point", "durable"]) {
+      expect(args.toLowerCase(), `rpc args must not carry ${forbidden}`).not.toContain(forbidden);
+    }
+    // ...and the table has no column to put one in. SQL comments are stripped
+    // first, so this asserts something about the COLUMNS rather than about the
+    // prose that documents them.
+    const table = migration.slice(
+      migration.indexOf("create table if not exists public.new_client_waitlist_entries"),
+    );
+    const columns = table
+      .slice(0, table.indexOf(");"))
+      .split("\n")
+      .map((line) => line.replace(/--.*$/, ""))
+      .join("\n")
+      .toLowerCase();
+    expect(columns).toContain("status text not null default 'waiting'"); // anti-vacuity
+    for (const forbidden of ["handling", "commit_point", "durable", "wait_01", "wait01"]) {
+      expect(columns, `table must not carry ${forbidden}`).not.toContain(forbidden);
+    }
   });
 
   it("invents no new statutory retention number anywhere", () => {
@@ -492,7 +644,9 @@ describe("the activation guard rests on the disclosure above", () => {
 
   it("activation still requires an explicit per-studio name in production", () => {
     expect(GATE).toContain("NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS");
-    expect(GATE).toMatch(/STUDIO_SLUG_RE/);
+    // The convention regex survives as a WARNING signal only (P2-B): it is the
+    // shape current writers enforce, not the database's domain.
+    expect(GATE).toMatch(/MODERN_WRITER_SLUG_RE/);
     // No bypass, no named exception.
     expect(GATE).not.toMatch(/SKIP_WAITLIST|WAITLIST_BYPASS|ALLOW_DURABLE|FORCE_DURABLE/i);
     expect(GATE.toLowerCase()).not.toContain("willow");

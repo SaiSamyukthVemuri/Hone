@@ -309,8 +309,12 @@ export default function PrivacyPolicyPage() {
         <strong>What happens to your request depends on the studio.</strong> A
         studio&rsquo;s new-client waitlist is either kept with us as a stored
         record, or not kept by us at all. Which applies is a setting on the
-        studio, not on you, and it can change. You can ask the studio, or write
-        to <strong>privacy@hone.care</strong> and we will tell you.
+        studio, not on you, and it can change. Ask the studio, or write to{" "}
+        <strong>privacy@hone.care</strong>, and we can tell you how that
+        studio&rsquo;s waitlist is handled <strong>now</strong>. We do not
+        record, for each request, which handling was in force when it was made
+        &mdash; so for an earlier request we may not be able to establish
+        afterwards which of the two applied.
       </P>
       <P>
         <strong>Where the waitlist is kept with us</strong>, your entry is
@@ -324,12 +328,16 @@ export default function PrivacyPolicyPage() {
         recorded.
       </P>
       <P>
-        <strong>Where it is not kept with us</strong>, we store no waitlist
-        entry for you at all. Your details are passed to the studio by email,
-        and that message is the request itself rather than a notification about
-        a record on our side &mdash; so if it cannot be sent, we tell you the
-        request did not go through rather than telling you that you joined.
-        From that point your details are held by the studio, in its own systems.
+        <strong>Where it is not kept with us</strong>, we keep no waitlist
+        entry for you at all. Instead we <strong>attempt to send</strong> your
+        details to the studio by email, and that message is the request itself
+        rather than a notification about a record on our side. What we can
+        confirm is that our email service accepted the message for sending; that
+        is not the same as the studio receiving it, and we cannot promise it
+        arrives. If the message is not accepted, we tell you the request did not
+        go through rather than telling you that you joined. Where it does
+        arrive, the studio may keep it under its own practices &mdash; but we
+        cannot tell you that such a copy exists.
       </P>
       <P>
         Under either handling, joining a waitlist does not create an
@@ -452,8 +460,11 @@ export default function PrivacyPolicyPage() {
         no longer want to be on it, or want to know what that studio holds about
         you, contact the studio &mdash; it is the controller of your request and
         can remove you. You may also write to{" "}
-        <strong>privacy@hone.care</strong>, and we will assist and tell you
-        which of the two handlings in section 6 applies. You do not need
+        <strong>privacy@hone.care</strong>, and we will assist. Where we hold a
+        waitlist entry for you we can find it and act on it. Where we kept none,
+        there is nothing on our side to look up, and we may not be able to tell
+        you afterwards which handling applied or whether the message reached the
+        studio. You do not need
         an account with us to make either request.
       </P>
 
@@ -504,13 +515,14 @@ export default function PrivacyPolicyPage() {
       </P>
       <P>
         Where a studio&rsquo;s waitlist is <strong>not</strong> kept with us,
-        there is no entry on our side to retain, and none for us to delete. What
-        persists is the email carrying your request &mdash; in the
-        studio&rsquo;s mailbox, and for a limited period with the email provider
-        named in section 6 that carried it &mdash; together with whatever the
-        studio records in its own systems. Ask the studio to remove you; we can
-        tell you which handling applies, but we cannot delete a record we do not
-        hold.
+        we keep no waitlist entry for you, so there is nothing on our side to
+        retain and nothing for us to delete. We attempt to send your request to
+        the studio by email. If that message arrives, copies of it may remain in
+        the studio&rsquo;s systems and in the email systems that carried it,
+        under their retention practices rather than ours. We cannot promise it
+        arrived, and we cannot tell you that any such copy exists. Ask the
+        studio to remove you &mdash; and we will not claim to delete a record we
+        never held.
       </P>
       <P>
         Deletion can also be constrained by law and by professional
