@@ -446,33 +446,23 @@ export async function handlePaymentIntentSucceeded(
     };
   }
 
-  if (
-    attempt.status === "failed" ||
-    attempt.status === "cancelled" ||
-    attempt.status === "blocked"
-  ) {
-    await recordOpsAlert({
-      severity: "critical",
-      event: "payment_intent_succeeded_local_terminal_mismatch",
-      message:
-        `Stripe says payment_intent.succeeded but Hone payment_charge_attempts row is in terminal local state '${attempt.status}'. Row was NOT flipped to 'succeeded'.`,
-      studioId: attempt.studio_id,
-      clientId: attempt.client_id,
-      stripeEventId: event.id,
-      stripePaymentIntentId: pi.id,
-      route: ROUTE,
-      safeDetails: {
-        attempt_id: attempt.id,
-        local_status: attempt.status,
-        resolution_via: resolution.via,
-      },
-    });
-    return {
-      eventType: event.type,
-      attemptId: attempt.id,
-      localTerminalMismatch: attempt.status,
-    };
-  }
+  // PAY-SETTLE / 0187. THE TERMINAL SHORTCUT USED TO LIVE HERE, AND IT HID THE
+  // ANSWER.
+  //
+  // A locally terminal row (failed / cancelled / blocked) returned straight
+  // out with a generic "row is in a terminal local state" alert, before the
+  // locked command was ever called. But the MOST LIKELY way this row becomes
+  // terminal is a settlement retiring it — the settlement usually commits well
+  // before the webhook arrives — so the common case reported the least useful
+  // thing: "terminal", when the truth was "Stripe took money for a visit the
+  // studio recorded as paid in cash, and somebody has to refund it or supersede
+  // the record".
+  //
+  // The status branches now live INSIDE the command, after its settlement
+  // conflict check and under the shared lock, which is the only place that can
+  // tell those two apart. Terminal rows still reach the same critical alert and
+  // the same return shape; they simply get there by a route that can recognise
+  // the conflict first.
 
   // ready / pending_stripe: reconcile to succeeded. Conditional
   // UPDATE on status='ready' OR 'pending_stripe' so a concurrent
@@ -513,9 +503,13 @@ export async function handlePaymentIntentSucceeded(
     );
   }
   const outcome = (Array.isArray(rpcRows) ? rpcRows[0] : rpcRows) as
-    | { result?: string }
+    | { result?: string; status_before?: string | null }
     | null;
   const reconcileResult = outcome?.result ?? null;
+  // The status the command read UNDER THE LOCK. Preferred over the pre-lock
+  // read wherever it is reported, because the pre-lock one can be stale by
+  // exactly the race this command exists to serialize.
+  const statusBefore = outcome?.status_before ?? null;
 
   // STRIPE SAYS MONEY MOVED AND THE STUDIO SAYS THE VISIT WAS SETTLED IN CASH.
   //
@@ -550,12 +544,18 @@ export async function handlePaymentIntentSucceeded(
 
   // Carried unchanged: a locally terminal row is never flipped. The command
   // re-checks this under the lock, so the earlier read cannot go stale.
+  // Genuinely terminal for reasons that have nothing to do with a settlement —
+  // a failed charge, an operator cancellation, a blocked row. Same alert, same
+  // event name and same return shape as before this moved; the status reported
+  // is the one the command read UNDER THE LOCK (`status_before`), which cannot
+  // be stale the way the pre-read could.
   if (reconcileResult === "terminal_mismatch") {
+    const terminalStatus = statusBefore ?? attempt.status;
     await recordOpsAlert({
       severity: "critical",
       event: "payment_intent_succeeded_local_terminal_mismatch",
       message:
-        `Stripe says payment_intent.succeeded but Hone payment_charge_attempts row is in a terminal local state. Row was NOT flipped to 'succeeded'.`,
+        `Stripe says payment_intent.succeeded but Hone payment_charge_attempts row is in terminal local state '${terminalStatus}'. Row was NOT flipped to 'succeeded'.`,
       studioId: attempt.studio_id,
       clientId: attempt.client_id,
       stripeEventId: event.id,
@@ -563,14 +563,36 @@ export async function handlePaymentIntentSucceeded(
       route: ROUTE,
       safeDetails: {
         attempt_id: attempt.id,
-        local_status: attempt.status,
+        local_status: terminalStatus,
         resolution_via: resolution.via,
       },
     });
     return {
       eventType: event.type,
       attemptId: attempt.id,
-      localTerminalMismatch: attempt.status,
+      localTerminalMismatch: terminalStatus,
+    };
+  }
+
+  // PAY-SETTLE / 0187 — P2. ANOTHER LEGITIMATE WRITER WON THE ROW.
+  //
+  // The row was ready/pending_stripe at the read above, and the action-layer
+  // success writer committed before this command took the lock. THIS WEBHOOK
+  // CHANGED NOTHING, so it must not claim it did: falling through to the
+  // success return below would report `reconciledFromStatus` for a
+  // reconciliation that never happened, which is precisely the
+  // no-false-reconciliation contract this handler has always kept (before the
+  // command existed, the same race produced the zero-row warning).
+  //
+  // Reported as the ordinary idempotent outcome, the same shape the
+  // already-succeeded-at-read-time branch returns, because it is the same fact
+  // observed a moment later.
+  if (reconcileResult === "already_succeeded") {
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      alreadySucceeded: true,
+      resolutionVia: resolution.via,
     };
   }
 
@@ -602,10 +624,11 @@ export async function handlePaymentIntentSucceeded(
     };
   }
 
+  // Reached only on `reconciled`: the command actually moved the row.
   return {
     eventType: event.type,
     attemptId: attempt.id,
-    reconciledFromStatus: attempt.status,
+    reconciledFromStatus: statusBefore ?? attempt.status,
     resolutionVia: resolution.via,
   };
 }
