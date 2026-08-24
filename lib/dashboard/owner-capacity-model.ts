@@ -187,10 +187,25 @@ export function summarizeBookingDepth(
  * rows went missing. The loader therefore asks for the true count alongside the
  * rows and compares them per client; this flag is that comparison's answer.
  */
+/**
+ * What the snapshot can say about one client's open-plan evidence.
+ *
+ * THREE STATES, NOT TWO. The embedded plan COUNT cannot be clipped, but
+ * "cannot be clipped" is not "always present": an absent, malformed or
+ * non-numeric aggregate is a real shape, and collapsing it into `none` reports
+ * a client as having no open plan when the truth is that nobody looked
+ * successfully. That understates the active-treatment population while still
+ * publishing it as a known number — the worst combination available.
+ *
+ * `none` is reserved for a count that was genuinely read and was genuinely
+ * zero. That is a fact, and it is not the same fact as an unreadable count.
+ */
+export type PlanEvidence = "open" | "none" | "unknown";
+
 export type ClientSnapshot = {
   clientId: string;
-  /** At least one open treatment plan. Derived from a COUNT, never from rows. */
-  hasOpenPlan: boolean;
+  /** Open-plan evidence, derived from a COUNT and never from rows. */
+  planEvidence: PlanEvidence;
   /** False when this client's booking rows were clipped by the embed ceiling. */
   bookingsComplete: boolean;
   bookings: ReadonlyArray<BriefingAppointment>;
@@ -198,6 +213,16 @@ export type ClientSnapshot = {
 
 export type SnapshotSummary = {
   readonly activeTreatmentClientIds: ReadonlySet<string>;
+  /**
+   * False when ANY current client's plan evidence could not be established.
+   *
+   * It is deliberately a property of the WHOLE population rather than a set of
+   * offending clients: the figures it guards are counts OVER that population,
+   * so one unreadable client makes the count itself unprovable. Omitting that
+   * client from `activeTreatmentClientIds` and publishing the remainder is
+   * precisely the understated-but-confident number this flag exists to prevent.
+   */
+  readonly planEvidenceComplete: boolean;
   readonly treatmentCountByClient: ReadonlyMap<string, number>;
   readonly treatmentMinutes: number;
   readonly unclassifiedClientIds: ReadonlySet<string>;
@@ -218,8 +243,9 @@ export function summarizeSnapshot(
   const treatment = summarizeFutureTreatment(clients.flatMap((c) => [...c.bookings]));
   return {
     activeTreatmentClientIds: new Set(
-      clients.filter((c) => c.hasOpenPlan).map((c) => c.clientId),
+      clients.filter((c) => c.planEvidence === "open").map((c) => c.clientId),
     ),
+    planEvidenceComplete: clients.every((c) => c.planEvidence !== "unknown"),
     treatmentCountByClient: treatment.countByClient,
     treatmentMinutes: treatment.minutes,
     unclassifiedClientIds: treatment.unclassifiedClientIds,

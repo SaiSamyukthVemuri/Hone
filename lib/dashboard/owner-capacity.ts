@@ -15,6 +15,7 @@ import {
   type BriefingAppointment,
   type ClientSnapshot,
   type Fact,
+  type PlanEvidence,
   type ServiceClassification,
 } from "./owner-capacity-model";
 
@@ -187,10 +188,31 @@ function toBriefingAppointment(row: BookingRow, clientId: string): BriefingAppoi
   };
 }
 
-/** An embedded aggregate arrives as a one-element array; absent means unusable. */
+/**
+ * An embedded aggregate arrives as a one-element array. Absent, empty, or
+ * carrying anything that is not a finite non-negative number is UNUSABLE, and
+ * unusable is reported as such — never coerced to a number, because every
+ * coercion here invents evidence.
+ */
 function embeddedCount(embed: CountEmbed | null | undefined): number | null {
   const n = embed?.[0]?.count;
-  return typeof n === "number" ? n : null;
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Open-plan evidence for one client, as three states rather than two.
+ *
+ * `?? 0` used to stand here, which collapsed an unreadable count into "no open
+ * plan". The count itself cannot be clipped — but that is not the same as
+ * always being present, and the collapse quietly removed a client from the
+ * active-treatment population while the population was still published as a
+ * KNOWN number. A genuinely-read zero is a fact; an unreadable count is not the
+ * same fact.
+ */
+function planEvidenceOf(embed: CountEmbed | null | undefined): PlanEvidence {
+  const n = embeddedCount(embed);
+  if (n === null) return "unknown";
+  return n > 0 ? "open" : "none";
 }
 
 type Snapshot = {
@@ -260,9 +282,8 @@ async function readSnapshot(
     const trueBookings = embeddedCount(row.booking_count);
     return {
       clientId: row.id,
-      // A count, so it cannot have been clipped. Absent means unusable, and an
-      // unusable count is not evidence of a plan.
-      hasOpenPlan: (embeddedCount(row.plan_count) ?? 0) > 0,
+      // Three states. An unreadable count is not evidence of absence.
+      planEvidence: planEvidenceOf(row.plan_count),
       // No count to check against is the same as a short read: not established.
       bookingsComplete: trueBookings !== null && bookings.length === trueBookings,
       bookings: bookings.map((b) => toBriefingAppointment(b, row.id)),
@@ -291,6 +312,9 @@ function notEnumerable(what: string): string {
  */
 const UNCLASSIFIABLE_BOOKING =
   "A future appointment has no service on record, so whether it is treatment or a consultation cannot be established; this briefing does not guess.";
+
+const PLAN_EVIDENCE_UNREADABLE =
+  "The open-plan evidence for at least one current client could not be read, so the active-treatment population cannot be proven complete. A count over the clients that did answer would be lower than the truth, so none is reported.";
 
 const CLIPPED_BOOKINGS =
   "One client has more future appointments than a single read can return, so the bookings behind this figure are not all in hand.";
@@ -330,14 +354,22 @@ export async function getOwnerCapacityBriefing(
   // studio that keeps no plans and a studio whose every open plan belongs to an
   // archived client are the SAME epistemic state: no evidence that any current
   // client is in a course of treatment.
+  // ONE UNREADABLE CLIENT INVALIDATES THE POPULATION, not just its own row.
+  // Dropping that client from `activeIds` and publishing the remainder is
+  // exactly how a confident, understated count gets onto the screen — checked
+  // BEFORE the empty-intersection branch, because an all-unreadable studio
+  // would otherwise be reported as "no plans on file", which is a different
+  // claim from "the plans could not be read".
   const activeIds = summary.activeTreatmentClientIds;
   const activeTreatment: Fact<number> = snapshot.rootTruncated
     ? unknown(rootReason)
-    : activeIds.size === 0
-      ? unknown(
-          "No open treatment plan for a current client is on file, so who is in active treatment cannot be established. It is not zero.",
-        )
-      : known(activeIds.size);
+    : !summary.planEvidenceComplete
+      ? unknown(PLAN_EVIDENCE_UNREADABLE)
+      : activeIds.size === 0
+        ? unknown(
+            "No open treatment plan for a current client is on file, so who is in active treatment cannot be established. It is not zero.",
+          )
+        : known(activeIds.size);
 
   // TWO DIFFERENT BLAST RADII, deliberately not merged.
   //

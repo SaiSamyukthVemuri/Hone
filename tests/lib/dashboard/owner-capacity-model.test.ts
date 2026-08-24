@@ -151,6 +151,11 @@ type StubClient = {
   id: string;
   /** Open plans for this client. A COUNT in the real read, never rows. */
   plans: number;
+  /**
+   * Replace the plan aggregate verbatim — for the absent and malformed shapes
+   * a real response can carry. `[]`, a non-numeric count, NaN, a negative.
+   */
+  planCountEmbed?: unknown;
   bookings: StubBooking[];
   /**
    * What the embedded COUNT reports, when it differs from `bookings.length` —
@@ -195,7 +200,8 @@ function stubClient(stub: Stub): {
       calls.push({ table, range: [lo, hi] });
       const rows = stub.clients.slice(lo, hi + 1).map((c) => ({
         id: c.id,
-        plan_count: [{ count: c.plans }],
+        plan_count:
+          c.planCountEmbed !== undefined ? c.planCountEmbed : [{ count: c.plans }],
         bookings: c.bookings,
         booking_count: c.noBookingCount
           ? []
@@ -383,6 +389,121 @@ describe("getOwnerCapacityBriefing — one statement, one snapshot", () => {
     expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
     expect(b.depth.known).toBe(false);
     expect(b.clients.totalRecords).toEqual({ known: true, value: 1 });
+  });
+
+  // -------------------------------------------------------------------------
+  // Plan evidence is TRI-STATE: open / none / unreadable
+  // -------------------------------------------------------------------------
+
+  it("one client's MISSING plan count refuses the whole active-treatment population", async () => {
+    // The defect this replaced: `?? 0` classified the unreadable client as
+    // having no plan, `activeIds` stayed non-empty because the OTHER client
+    // answered, and the loader published a known active-treatment count that
+    // was too low — confident and understated, the worst combination.
+    const { client } = stubClient({
+      clients: [
+        { id: "a", plans: 1, bookings: [] },
+        { id: "b", plans: 0, planCountEmbed: [], bookings: [] },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.clients.activeTreatment.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
+    // The specific regression, stated as its own assertion.
+    expect(b.clients.activeTreatment).not.toEqual({ known: true, value: 1 });
+    if (b.clients.activeTreatment.known) throw new Error("unreachable");
+    expect(b.clients.activeTreatment.reason).toMatch(/could not be read/i);
+  });
+
+  it.each([
+    ["absent embed", [] as unknown],
+    ["null embed", null as unknown],
+    ["non-numeric count", [{ count: "many" }] as unknown],
+    ["NaN count", [{ count: Number.NaN }] as unknown],
+    ["negative count", [{ count: -1 }] as unknown],
+    ["not an array", { count: 1 } as unknown],
+  ])("a MALFORMED plan count (%s) takes the same UNKNOWN path as a missing one", async (
+    _label,
+    embed,
+  ) => {
+    // Malformed is not absence. Every one of these shapes must refuse rather
+    // than coerce to a number.
+    const { client } = stubClient({
+      clients: [
+        { id: "a", plans: 1, bookings: [] },
+        { id: "b", plans: 0, planCountEmbed: embed, bookings: [] },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.clients.activeTreatment.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+  });
+
+  it("a VALID ZERO plan count is a fact, not an absence", async () => {
+    // The control that stops the fix over-correcting: a genuinely-read 0 must
+    // still mean "this client has no open plan", so the population stays
+    // provable and the client is simply not in it.
+    const { client } = stubClient({
+      clients: [
+        { id: "a", plans: 1, bookings: [] },
+        { id: "b", plans: 0, bookings: [] },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
+    expect(b.clients.activeTreatmentWithoutFutureBooking).toEqual({
+      known: true,
+      value: 1,
+    });
+    expect(b.depth).toEqual({
+      known: true,
+      value: { zero: 1, oneOrMore: 0, twoOrMore: 0, threeOrMore: 0 },
+    });
+  });
+
+  it("a VALID POSITIVE plan count works normally", async () => {
+    const { client } = stubClient({
+      clients: [{ id: "a", plans: 3, bookings: [booking()] }],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    // Three open plans is still ONE client in active treatment.
+    expect(b.clients.activeTreatment).toEqual({ known: true, value: 1 });
+    expect(b.depth).toEqual({
+      known: true,
+      value: { zero: 0, oneOrMore: 1, twoOrMore: 0, threeOrMore: 0 },
+    });
+  });
+
+  it("an unreadable plan count leaves booking-only figures independently truthful", async () => {
+    // Plan evidence and booking evidence are different questions. Committed
+    // treatment minutes does not depend on plan membership, so refusing it here
+    // would be over-refusal — its own kind of untruth.
+    const { client } = stubClient({
+      clients: [
+        { id: "a", plans: 0, planCountEmbed: [], bookings: [booking()] },
+        { id: "b", plans: 1, bookings: [] },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.clients.activeTreatment.known).toBe(false);
+    expect(b.depth.known).toBe(false);
+    // ...but these two are unaffected.
+    expect(b.futureTreatmentMinutes).toEqual({ known: true, value: 60 });
+    expect(b.clients.totalRecords).toEqual({ known: true, value: 2 });
+  });
+
+  it("an all-unreadable studio says the plans could not be READ, not that there are none", async () => {
+    // Two different claims. Ordering the guards the other way round would emit
+    // "no open treatment plan is on file", which is a statement about the
+    // studio rather than about the read.
+    const { client } = stubClient({
+      clients: [{ id: "a", plans: 0, planCountEmbed: [], bookings: [] }],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    if (b.clients.activeTreatment.known) throw new Error("unreachable");
+    expect(b.clients.activeTreatment.reason).toMatch(/could not be read/i);
+    expect(b.clients.activeTreatment.reason).not.toMatch(/It is not zero/);
   });
 
   // -------------------------------------------------------------------------
