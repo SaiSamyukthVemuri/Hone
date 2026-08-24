@@ -142,9 +142,39 @@ describe("FREE-01 no money-moving path", () => {
     expect(CELL).toMatch(/paymentState === "free"/);
     expect(CELL).toMatch(/No payment required/);
     const freeIdx = CELL.indexOf('paymentState === "free"');
-    const checkoutIdx = CELL.indexOf("<CheckoutButton");
     expect(freeIdx).toBeGreaterThan(-1);
-    expect(checkoutIdx).toBeGreaterThan(freeIdx); // free returns before Checkout
+
+    // THE INVARIANT: a free visit never reaches a money-moving control.
+    //
+    // This used to be "the FIRST <CheckoutButton appears after the free
+    // branch", which held only while the fall-through was the only one in the
+    // file. PAY-SETTLE / 0187 added a second entry point inside the REFUNDED
+    // branch (a refunded visit needs a route to record the replacement
+    // payment), and that branch returns long before the free check is reached
+    // — so the first-occurrence test started failing while the guarantee it
+    // exists to protect was untouched.
+    //
+    // Stated properly instead, in two halves that are both about reachability
+    // rather than about text order:
+    //   1. the free branch RETURNS, so nothing below it can run for a free
+    //      visit;
+    //   2. the terminal fall-through to Checkout is the LAST one in the file
+    //      and sits after the free branch.
+    const freeBranch = CELL.slice(freeIdx, CELL.indexOf('paymentState === "unavailable"'));
+    expect(freeBranch).toMatch(/return \(/);
+    expect(freeBranch).not.toMatch(/<CheckoutButton/);
+
+    const terminalCheckoutIdx = CELL.lastIndexOf("<CheckoutButton");
+    expect(terminalCheckoutIdx).toBeGreaterThan(freeIdx);
+
+    // And every OTHER Checkout entry point sits inside a branch that has
+    // already returned for a non-free state, so none of them is reachable
+    // from `free`.
+    const earlier = CELL.slice(0, freeIdx);
+    for (const idx of [...earlier.matchAll(/<CheckoutButton/g)].map((m) => m.index!)) {
+      const guard = earlier.slice(0, idx);
+      expect(guard).toMatch(/paymentState === "refunded"/);
+    }
   });
 
   it("F7 the session prepare card shows a calm free state, never Prepare", () => {

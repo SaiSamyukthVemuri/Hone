@@ -148,6 +148,12 @@ export type SessionPaymentChargeResult =
       attemptId?: string;
     };
 
+// PAY-SETTLE / 0187. Practitioner-facing, safe, and specific about WHY: a
+// generic "not in a chargeable state" would send Chloe hunting for a card
+// problem that does not exist.
+const SETTLED_EXTERNALLY_MESSAGE =
+  "This appointment already has a recorded outcome (paid another way, or waived), so no card charge was made. The studio owner can correct that record if a card charge is the right thing.";
+
 type ClaimRow = {
   result: string;
   attempt_id: string | null;
@@ -953,6 +959,40 @@ export async function runSessionPaymentCharge(args: {
       stripeChargeId: null,
     };
   }
+  // PAY-SETTLE / 0187. TERMINAL, AND BEFORE ANY STRIPE CALL.
+  //
+  // THE DEFECT THIS CLOSES. The branches around it recognise a fixed set of
+  // claim results and everything else FALLS THROUGH to the create-and-confirm
+  // call in step 6b below. 0187 taught the claim command to refuse
+  // a visit already recorded as paid in cash / by e-transfer / another way /
+  // waived — and the database does refuse: it takes the shared appointment
+  // advisory key, returns `settled_externally`, and leaves the attempt in
+  // `ready`. But an unrecognised result reached Stripe anyway, so the client's
+  // card was charged for a visit the studio had already been paid for, and the
+  // success write then matched zero rows (the attempt was never moved to
+  // pending_stripe) and reported manual review. That is precisely the
+  // double-collection this release exists to prevent, arriving through the one
+  // layer above the guarantee.
+  //
+  // Handled as `blocked` rather than as a new outcome member deliberately:
+  // `blocked` already means "not in a chargeable state", it is accepted by
+  // every existing consumer union (the manual-fee action narrows the union and
+  // would have to be widened for a new member), and a new member is exactly the
+  // kind of thing that falls through a narrower switch somewhere else. The
+  // specificity belongs in the message, which is what the practitioner reads.
+  //
+  // NOTHING IS WRITTEN HERE. No Stripe call, no status transition, no receipt,
+  // no success/failure/manual-review record. The attempt stays exactly as the
+  // database left it, so the owner can correct the settlement and charge, or
+  // cancel the attempt, with no residue either way.
+  if (claim.result === "settled_externally") {
+    return {
+      ok: false,
+      outcome: "blocked",
+      message: SETTLED_EXTERNALLY_MESSAGE,
+    };
+  }
+
   if (
     claim.result === "not_found" ||
     claim.result === "not_authorized" ||

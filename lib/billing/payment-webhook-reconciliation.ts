@@ -446,33 +446,23 @@ export async function handlePaymentIntentSucceeded(
     };
   }
 
-  if (
-    attempt.status === "failed" ||
-    attempt.status === "cancelled" ||
-    attempt.status === "blocked"
-  ) {
-    await recordOpsAlert({
-      severity: "critical",
-      event: "payment_intent_succeeded_local_terminal_mismatch",
-      message:
-        `Stripe says payment_intent.succeeded but Hone payment_charge_attempts row is in terminal local state '${attempt.status}'. Row was NOT flipped to 'succeeded'.`,
-      studioId: attempt.studio_id,
-      clientId: attempt.client_id,
-      stripeEventId: event.id,
-      stripePaymentIntentId: pi.id,
-      route: ROUTE,
-      safeDetails: {
-        attempt_id: attempt.id,
-        local_status: attempt.status,
-        resolution_via: resolution.via,
-      },
-    });
-    return {
-      eventType: event.type,
-      attemptId: attempt.id,
-      localTerminalMismatch: attempt.status,
-    };
-  }
+  // PAY-SETTLE / 0187. THE TERMINAL SHORTCUT USED TO LIVE HERE, AND IT HID THE
+  // ANSWER.
+  //
+  // A locally terminal row (failed / cancelled / blocked) returned straight
+  // out with a generic "row is in a terminal local state" alert, before the
+  // locked command was ever called. But the MOST LIKELY way this row becomes
+  // terminal is a settlement retiring it — the settlement usually commits well
+  // before the webhook arrives — so the common case reported the least useful
+  // thing: "terminal", when the truth was "Stripe took money for a visit the
+  // studio recorded as paid in cash, and somebody has to refund it or supersede
+  // the record".
+  //
+  // The status branches now live INSIDE the command, after its settlement
+  // conflict check and under the shared lock, which is the only place that can
+  // tell those two apart. Terminal rows still reach the same critical alert and
+  // the same return shape; they simply get there by a route that can recognise
+  // the conflict first.
 
   // ready / pending_stripe: reconcile to succeeded. Conditional
   // UPDATE on status='ready' OR 'pending_stripe' so a concurrent
@@ -483,35 +473,134 @@ export async function handlePaymentIntentSucceeded(
       ? pi.latest_charge
       : (pi.latest_charge?.id ?? null);
   const admin = createAdminClient();
-  const updates: Record<string, unknown> = {
-    status: "succeeded",
-    charged_at: new Date().toISOString(),
-    failure_code: null,
-    failure_message_safe: null,
-    failed_at: null,
-  };
-  if (!attempt.stripe_payment_intent_id) {
-    updates.stripe_payment_intent_id = pi.id;
-  }
-  if (!attempt.stripe_charge_id && latestChargeId) {
-    updates.stripe_charge_id = latestChargeId;
-  }
-  const { data: updatedRows, error: updateErr } = await admin
-    .from("payment_charge_attempts")
-    .update(updates)
-    .eq("id", attempt.id)
-    .in("status", ["ready", "pending_stripe"])
-    .select("id");
-  if (updateErr) {
+
+  // PAY-SETTLE / 0187. THE WRITE MOVED INTO THE DATABASE, UNDER THE SHARED
+  // APPOINTMENT ADVISORY KEY.
+  //
+  // This used to be a direct conditional UPDATE with no lock, and it was the
+  // one writer that could turn a RETIRABLE state (`ready`) into money while a
+  // settlement was deciding. Two orderings, both bad: a settlement could pass
+  // its card-money check on the still-`ready` row, this could commit
+  // `succeeded`, and the settlement would insert anyway — a card charge and an
+  // external settlement on the same visit. Or the settlement retired the row
+  // first and a real Stripe success survived only as an ops alert.
+  //
+  // The command takes the same key the settlement commands and the claim
+  // command take, so all three now serialize. Nothing about which transitions
+  // are legal changed: it is still ready/pending_stripe -> succeeded only, and
+  // still conditional, so a concurrent action-layer write is not double-stamped.
+  const { data: rpcRows, error: rpcErr } = await admin.rpc(
+    "reconcile_card_payment_succeeded",
+    {
+      p_attempt_id: attempt.id,
+      p_stripe_payment_intent_id: pi.id,
+      p_stripe_charge_id: latestChargeId,
+    },
+  );
+  if (rpcErr) {
     throw new Error(
-      `payment_intent_succeeded_update_failed:${updateErr.code}:${updateErr.message}`,
+      `payment_intent_succeeded_update_failed:${rpcErr.code}:${rpcErr.message}`,
     );
   }
+  const outcome = (Array.isArray(rpcRows) ? rpcRows[0] : rpcRows) as
+    | { result?: string; status_before?: string | null }
+    | null;
+  const reconcileResult = outcome?.result ?? null;
+  // The status the command read UNDER THE LOCK. Preferred over the pre-lock
+  // read wherever it is reported, because the pre-lock one can be stale by
+  // exactly the race this command exists to serialize.
+  const statusBefore = outcome?.status_before ?? null;
+
+  // STRIPE SAYS MONEY MOVED AND THE STUDIO SAYS THE VISIT WAS SETTLED IN CASH.
+  //
+  // Both cannot be collected, and neither fact may be quietly discarded. The
+  // command refused to flip the row, so no double collection exists in the
+  // data; what exists is a contradiction that a person has to resolve — refund
+  // the card, or supersede the settlement. That is not a decision a webhook
+  // handler is entitled to make, so it is raised at CRITICAL and left alone.
+  if (reconcileResult === "settled_externally_conflict") {
+    await recordOpsAlert({
+      severity: "critical",
+      event: "payment_intent_succeeded_settled_externally_conflict",
+      message:
+        "Stripe reports payment_intent.succeeded for an appointment that already has a recorded non-card settlement (paid cash / e-transfer / another way / waived). The local attempt was NOT flipped to succeeded. Resolve by refunding the card charge or superseding the settlement record.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      stripePaymentIntentId: pi.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        read_status: attempt.status,
+        attempted_status: "succeeded",
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      settledExternallyConflict: true,
+    };
+  }
+
+  // Carried unchanged: a locally terminal row is never flipped. The command
+  // re-checks this under the lock, so the earlier read cannot go stale.
+  // Genuinely terminal for reasons that have nothing to do with a settlement —
+  // a failed charge, an operator cancellation, a blocked row. Same alert, same
+  // event name and same return shape as before this moved; the status reported
+  // is the one the command read UNDER THE LOCK (`status_before`), which cannot
+  // be stale the way the pre-read could.
+  if (reconcileResult === "terminal_mismatch") {
+    const terminalStatus = statusBefore ?? attempt.status;
+    await recordOpsAlert({
+      severity: "critical",
+      event: "payment_intent_succeeded_local_terminal_mismatch",
+      message:
+        `Stripe says payment_intent.succeeded but Hone payment_charge_attempts row is in terminal local state '${terminalStatus}'. Row was NOT flipped to 'succeeded'.`,
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      stripePaymentIntentId: pi.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        local_status: terminalStatus,
+        resolution_via: resolution.via,
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      localTerminalMismatch: terminalStatus,
+    };
+  }
+
+  // PAY-SETTLE / 0187 — P2. ANOTHER LEGITIMATE WRITER WON THE ROW.
+  //
+  // The row was ready/pending_stripe at the read above, and the action-layer
+  // success writer committed before this command took the lock. THIS WEBHOOK
+  // CHANGED NOTHING, so it must not claim it did: falling through to the
+  // success return below would report `reconciledFromStatus` for a
+  // reconciliation that never happened, which is precisely the
+  // no-false-reconciliation contract this handler has always kept (before the
+  // command existed, the same race produced the zero-row warning).
+  //
+  // Reported as the ordinary idempotent outcome, the same shape the
+  // already-succeeded-at-read-time branch returns, because it is the same fact
+  // observed a moment later.
+  if (reconcileResult === "already_succeeded") {
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      alreadySucceeded: true,
+      resolutionVia: resolution.via,
+    };
+  }
+
   // PR #263: zero-row detection. The status-conditional UPDATE matched
   // no row: the attempt left ready/pending_stripe between the read
   // above and this write (a concurrent action-layer or webhook write).
   // Do NOT report a reconciliation that did not happen.
-  if (!updatedRows || updatedRows.length === 0) {
+  if (reconcileResult === "zero_rows" || reconcileResult === "not_found") {
     await recordOpsAlert({
       severity: "warning",
       event: "payment_intent_succeeded_reconcile_zero_rows",
@@ -535,10 +624,11 @@ export async function handlePaymentIntentSucceeded(
     };
   }
 
+  // Reached only on `reconciled`: the command actually moved the row.
   return {
     eventType: event.type,
     attemptId: attempt.id,
-    reconciledFromStatus: attempt.status,
+    reconciledFromStatus: statusBefore ?? attempt.status,
     resolutionVia: resolution.via,
   };
 }
