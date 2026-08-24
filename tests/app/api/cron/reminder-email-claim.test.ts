@@ -26,9 +26,11 @@ function codeOnly(src: string): string {
 const CODE = codeOnly(ROUTE);
 
 // The appointment email pass is sendReminderPass only; scope assertions there
-// so the SMS pass AND the PR #306 intake-reminder pass (both inserted after it,
-// each with their own claim) cannot satisfy them. End the slice at whichever of
-// those two passes comes first.
+// so the SMS pass (which has its own claim_sms_send slot) cannot satisfy them.
+// Since 0186 the separate intake-reminder pass is gone - the intake nudge is
+// composed INTO this pass under this pass's single claim - so the slice now
+// ends at the SMS pass. The lookup is kept tolerant of either name so the
+// slice can never silently become the whole file.
 const EMAIL_PASS_END = Math.min(
   ...[
     CODE.indexOf("async function sendIntakeReminderPass"),
@@ -51,7 +53,7 @@ describe("email reminder pass: claim before send", () => {
     const claimIdx = EMAIL_PASS.indexOf(
       "await claimEmailSend(admin, appt.id, emailType)",
     );
-    const sendIdx = EMAIL_PASS.indexOf("const result = await sendFn(");
+    const sendIdx = EMAIL_PASS.indexOf("result = await sendFn(");
     expect(claimIdx).toBeGreaterThan(-1);
     expect(sendIdx).toBeGreaterThan(claimIdx);
   });
@@ -105,13 +107,23 @@ describe("email reminder pass: preserved behavior", () => {
     );
   });
 
-  it("studio toggle and missing-email rows still skip before any claim", () => {
+  it("the cheap row guards are all evaluated before any claim", () => {
+    // Since 0186 the studio reminder toggle is no longer a SKIP - it is an
+    // input to which email gets composed, because a studio with the reminder
+    // off may still owe a standalone intake reminder. What must not regress is
+    // that nothing claims a slot before the cheap in-memory guards have run:
+    // a claim costs an attempt off the 3-strike cap.
     const toggleIdx = EMAIL_PASS.indexOf("[studioToggle]");
     const emailIdx = EMAIL_PASS.indexOf("if (!appt.client?.email) continue;");
     const claimIdx = EMAIL_PASS.indexOf("await claimEmailSend(");
     expect(toggleIdx).toBeGreaterThan(-1);
-    expect(emailIdx).toBeGreaterThan(toggleIdx);
+    expect(emailIdx).toBeGreaterThan(-1);
+    expect(claimIdx).toBeGreaterThan(toggleIdx);
     expect(claimIdx).toBeGreaterThan(emailIdx);
+    // A row that can produce no email at all never reaches the claim.
+    expect(EMAIL_PASS).toMatch(
+      /if \(!wantsReminder && !intakeEnabled\) continue;/,
+    );
   });
 
   it("the SMS pass still uses its own claim (claim_sms_send path untouched)", () => {

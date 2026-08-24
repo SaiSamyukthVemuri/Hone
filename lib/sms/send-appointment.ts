@@ -276,6 +276,11 @@ type SendReminderInput = {
   appointmentId: string;
   startsAt: Date;
   timezone: string;
+  // A FRESH secure intake link, or null. The cron passes non-null ONLY when
+  // send_intake_reminders is on, this window's SMS toggle is on, and the LIVE
+  // intake read after the appointment re-check said in_progress. The consent
+  // gate, the claim and the Twilio contract below are untouched by it.
+  intakeUrl?: string | null;
   studio: Pick<
     Studio,
     // PR #155: "id" included so SMS alerts carry studio_id (see
@@ -308,6 +313,7 @@ export async function send24hReminderSmsToClient(
         startsAt: input.startsAt,
         timezone: input.timezone,
         manageUrl: input.manageUrl,
+        intakeUrl: input.intakeUrl ?? null,
       }),
     to: (normalizedPhone) => normalizedPhone,
   });
@@ -328,6 +334,7 @@ export async function send2hReminderSmsToClient(
         startsAt: input.startsAt,
         timezone: input.timezone,
         manageUrl: input.manageUrl,
+        intakeUrl: input.intakeUrl ?? null,
       }),
     to: (normalizedPhone) => normalizedPhone,
   });

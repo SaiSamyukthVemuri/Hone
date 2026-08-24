@@ -775,13 +775,20 @@ export default async function AppointmentDetailPage({
             iso={data.confirmation_sent_at}
             attempts={data.confirmation_send_attempts}
           />
+          {/* "email", not "reminder". Since 0186 these columns are the
+              per-window EMAIL slot: when a studio has the appointment
+              reminder off but intake reminders on, the email that consumed
+              this slot was a standalone intake reminder. Labelling the row
+              "24-hour reminder" would then claim a reminder was sent that
+              was not - the same overclaim class as the pre-0100 postcare
+              "Sent" badge. */}
           <EmailRow
-            label="24-hour reminder"
+            label="24-hour email"
             iso={data.reminder_24h_sent_at}
             attempts={data.reminder_24h_send_attempts}
           />
           <EmailRow
-            label="2-hour reminder"
+            label="2-hour email"
             iso={data.reminder_2h_sent_at}
             attempts={data.reminder_2h_send_attempts}
           />

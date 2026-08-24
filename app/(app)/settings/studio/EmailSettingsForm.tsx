@@ -11,6 +11,7 @@ type Toggle = {
     | "notify_practitioner_on_new_booking"
     | "send_24h_reminders"
     | "send_2h_reminders"
+    | "send_intake_reminders"
     | "auto_mark_no_shows"
     | "send_no_show_followup"
     | "show_treatment_time_to_clients"
@@ -41,6 +42,12 @@ const TOGGLES: ReadonlyArray<Toggle> = [
   },
   { key: "send_24h_reminders", label: "Send 24-hour reminders" },
   { key: "send_2h_reminders", label: "Send 2-hour reminders" },
+  {
+    key: "send_intake_reminders",
+    label: "Send intake form reminders",
+    helper:
+      "Reminds clients who have not finished their intake form, about 24 hours and again about 2 hours before their appointment. It rides along with the reminders above when those are on, and sends on its own when they are off. Clients who have already submitted are never reminded.",
+  },
   {
     key: "auto_mark_no_shows",
     label: "Automatically mark no-shows",
@@ -74,6 +81,7 @@ type Props = {
     | "notify_practitioner_on_new_booking"
     | "send_24h_reminders"
     | "send_2h_reminders"
+    | "send_intake_reminders"
     | "auto_mark_no_shows"
     | "send_no_show_followup"
     | "show_treatment_time_to_clients"

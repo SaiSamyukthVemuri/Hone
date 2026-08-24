@@ -126,6 +126,10 @@ export async function setStudioEmailSettingsAction(
       ),
       send_24h_reminders: readBool(formData, "send_24h_reminders"),
       send_2h_reminders: readBool(formData, "send_2h_reminders"),
+      // Migration 0186. Independent of the two reminder toggles above: a
+      // studio may run intake reminders with appointment reminders off, and
+      // the cron then sends the intake nudge standalone in the same window.
+      send_intake_reminders: readBool(formData, "send_intake_reminders"),
       auto_mark_no_shows: false,                  // FORCE-OFF (Blocker 1)
       send_no_show_followup: false,               // FORCE-OFF (Blocker 1)
       show_treatment_time_to_clients: readBool(
