@@ -20,7 +20,12 @@ export type MigrationState = {
   permanently_skipped: string[];
   hosted_migration_max: string;
   hosted_migration_max_number: number;
-  hosted_applied_at: string;
+  /**
+   * NULL when the apply date/time was never captured — as for 0186. A consumer
+   * must handle null; `JSON.parse` is `any`, so declaring `string` here would
+   * be a lie the compiler could not catch.
+   */
+  hosted_applied_at: string | null;
   /**
    * Non-null when `hosted_applied_at` is NOT a full instant — e.g. 0182, whose
    * apply was reported with no clock reading, so the field carries a calendar
