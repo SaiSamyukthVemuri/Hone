@@ -103,7 +103,84 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   it("states who the entry is shared with, and that it is single-studio", () => {
     expect(PRIVACY).toMatch(/With the studio whose waitlist you joined/);
     expect(PRIVACY).toMatch(/visible only to that studio/);
-    expect(PRIVACY).toMatch(/not shared with\s+any other studio/);
+    expect(PRIVACY).toMatch(/not shared with any other studio/);
+  });
+
+  // -------------------------------------------------------------------------
+  // CODEX P1 (#637). The first draft of §6 said the entry "is emailed to that
+  // studio" and that "We also email you an acknowledgement" — both stated as
+  // fact. app/book/[slug]/waitlist-actions.ts guarantees NEITHER: a durable
+  // join returns success when the studio has no valid owner_email, when the
+  // provider refuses or throws (every send outcome is swallowed and logged),
+  // and on `already_waiting`, which returns before any send is even scheduled.
+  //
+  // A privacy notice that promises delivery the code does not attempt is the
+  // exact class of untruth this whole PR exists to remove, so the corrected
+  // wording is pinned POSITIVELY (what is guaranteed) and NEGATIVELY (the
+  // categorical phrasings that must never come back).
+  // -------------------------------------------------------------------------
+  it("guarantees STORAGE — the entry is stored regardless of any email", () => {
+    expect(PRIVACY).toMatch(/we store it for that studio/);
+    expect(PRIVACY).toMatch(/<strong>Your entry is stored either way\.<\/strong>/);
+    expect(PRIVACY).toMatch(
+      /A\s+notification that never arrives does not mean your request was not\s+recorded/,
+    );
+  });
+
+  it("does NOT guarantee email delivery — notification is attempted, not promised", () => {
+    expect(PRIVACY).toMatch(/We also try to notify that studio by email/);
+    expect(PRIVACY).toMatch(/to send you an acknowledgement that you joined/);
+    expect(PRIVACY).toMatch(/<strong>attempted, not guaranteed<\/strong>/);
+    expect(PRIVACY).toMatch(/a message can fail to\s+send or fail to arrive/);
+    // The no-recipient case is a real production state, not a hypothetical.
+    expect(PRIVACY).toMatch(/a studio may have no email address set up to\s+receive one/);
+  });
+
+  it("NEGATIVE CONTROL: the categorical delivery claims cannot come back", () => {
+    // The two exact phrasings Codex flagged.
+    expect(PRIVACY).not.toMatch(/is emailed to that studio/i);
+    expect(PRIVACY).not.toMatch(/We also email you an acknowledgement/i);
+    // ...and the shapes they would return as. Each asserts delivery of a
+    // waitlist message as a fact rather than an attempt.
+    for (const banned of [
+      /\bwe (?:will |always )?email you\b/i,
+      /\bwe (?:will |always )?email the studio\b/i,
+      /\bwe (?:will |always )?email that studio\b/i,
+      /\byou will receive an (?:email|acknowledgement)\b/i,
+      /\bthe studio will receive\b/i,
+      /\bis (?:emailed|sent) to the studio\b/i,
+      /\bguarantee\w* (?:delivery|that .{0,40}email)\b/i,
+    ]) {
+      expect(PRIVACY, `must not promise delivery: ${banned}`).not.toMatch(banned);
+    }
+  });
+
+  it("ANTI-VACUITY: the code really does treat delivery as best effort", () => {
+    // If the implementation ever DID guarantee delivery, the hedged wording
+    // above would be the untruth and this block would be protecting the wrong
+    // thing. Pin the three success-without-send paths that make it correct.
+    const action = read("app/book/[slug]/waitlist-actions.ts");
+    // 1. already_waiting returns before any send is scheduled.
+    expect(action).toMatch(
+      /if \(commandResult === "already_waiting"\)[\s\S]{0,400}?return \{ ok: true \};/,
+    );
+    // 2. no studio recipient: logged, and the join still succeeds.
+    expect(action).toMatch(/new_client_waitlist_no_studio_recipient/);
+    // 3. every acknowledgement outcome, including a throw, is swallowed.
+    expect(action).toMatch(/new_client_waitlist_client_email_threw/);
+  });
+
+  it("does not imply a waitlist join creates an appointment or client record", () => {
+    expect(PRIVACY).toMatch(
+      /Joining a waitlist still does not create an appointment or a\s+client record for you/,
+    );
+  });
+
+  it("keeps the collection surface's truthful 'contact you about availability' wording", () => {
+    // Deliberately UNCHANGED by the P1 repair: it already promised only that
+    // the studio may contact you, never that an email is delivered.
+    expect(FORM).toContain("contact you about availability");
+    expect(FORM).not.toMatch(/\bwe (?:will |always )?email you\b/i);
   });
 
   it("gives a prospect a removal / access route that does not need an account", () => {

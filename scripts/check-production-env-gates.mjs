@@ -175,22 +175,39 @@ const STUDIO_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 // empties) so a whitespace-only or comma-only value, which enables nobody at
 // runtime, correctly reports zero. Reads COUNTS only, never a slug.
 //
-//   enabled   how many studios the list asks to activate
-//   unusable  how many of those entries cannot be a studio slug, and so would
+// AND IT COLLAPSES DUPLICATES, BECAUSE THE RUNTIME DOES. parseWaitlistSlugs
+// returns a SET, so "studio-a, Studio-A" normalises to ONE member and enables
+// ONE studio. Counting the split array reported TWO — the two normalisers
+// agreeing on which studios are enabled while disagreeing on how many, which is
+// exactly the drift a duplicated parser exists to be suspected of. The count an
+// operator reads at deploy time must be the count the runtime will act on.
+//
+//   supplied  non-empty entries the operator actually typed
+//   enabled   UNIQUE normalised slugs, i.e. how many studios activate
+//   unusable  how many SUPPLIED entries cannot be a studio slug, and so would
 //             silently match nothing
 function durableWaitlistActivation() {
   const raw = process.env[DURABLE_WAITLIST_ENV_VAR];
-  const entries = !raw
+  const supplied = !raw
     ? []
     : raw
         .split(",")
         .map((entry) => entry.trim().toLowerCase())
         .filter((entry) => entry.length > 0);
+
+  // VALIDATE EVERY SUPPLIED ENTRY *BEFORE* ANY COLLAPSING. Deduplicating first
+  // would let a repeated valid slug absorb a malformed neighbour — the list
+  // "studio-a, bad slug, studio-a" must FAIL on the middle entry, not pass as
+  // one studio. So validity is decided per typed entry; only the VALID ones are
+  // then collapsed into the set the runtime would build.
+  const enabled = new Set();
   let unusable = 0;
-  for (const entry of entries) {
-    if (!STUDIO_SLUG_RE.test(entry)) unusable += 1;
+  for (const entry of supplied) {
+    if (STUDIO_SLUG_RE.test(entry)) enabled.add(entry);
+    else unusable += 1;
   }
-  return { enabled: entries.length, unusable };
+
+  return { supplied: supplied.length, enabled: enabled.size, unusable };
 }
 
 // Google Calendar OAuth/crypto env (Phase A). NAMES only, never values.
@@ -331,6 +348,10 @@ function main() {
   // the header for why the Stage-A blanket prohibition is gone.
   const durable = durableWaitlistActivation();
   if (durable.unusable === 0) {
+    // Duplicates are not an error — the runtime collapses them silently — but
+    // the operator typed more entries than studios they enabled, so say so.
+    // A COUNT, never a slug.
+    const duplicates = durable.supplied - durable.enabled;
     process.stdout.write(
       durable.enabled === 0
         ? `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} names no studio ` +
@@ -338,15 +359,21 @@ function main() {
             `remains on the WAIT-01 commit point.\n`
         : `PASS stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} explicitly enables ` +
             `${durable.enabled} studio(s) in production, each named in full and matched by exact ` +
-            `slug equality; every studio not named stays dark.\n`,
+            `slug equality; every studio not named stays dark.` +
+            (duplicates > 0
+              ? ` (${durable.supplied} entries supplied; ${duplicates} duplicate normalised away, ` +
+                `exactly as the runtime does.)`
+              : "") +
+            `\n`,
     );
   } else {
     failed = true;
     // NAME and COUNTS only, never the configured slug(s) — not even the
     // rejected ones, which are just as much a studio identifier as the valid.
+    // Counted over SUPPLIED entries, so a repeated valid slug cannot mask one.
     process.stderr.write(
       `FAIL stage-b-durable-waitlist-env: ${DURABLE_WAITLIST_ENV_VAR} has ${durable.unusable} ` +
-        `of ${durable.enabled} entr${durable.enabled === 1 ? "y" : "ies"} that cannot be a studio ` +
+        `of ${durable.supplied} entr${durable.supplied === 1 ? "y" : "ies"} that cannot be a studio ` +
         `slug in production.\n` +
         `Membership is EXACT equality against studios.slug after trim + lowercase, so an entry ` +
         `of the wrong shape — a wildcard, an embedded space, a leading/trailing hyphen, over 64 ` +

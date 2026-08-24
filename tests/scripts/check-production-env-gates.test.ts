@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  isNewClientWaitlistDurableEnabled,
+  NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV,
+} from "@/lib/booking/new-client-waitlist";
 
 // PR #262: Production public-rate-limit env gate.
 //
@@ -353,6 +357,67 @@ describe("Stage-B durable waitlist activation guard", () => {
     }
   });
 
+  // ---- CODEX P2 (#637): DUPLICATES COLLAPSE, EXACTLY AS THE RUNTIME DOES ----
+  //
+  // The gate first counted the split array while parseWaitlistSlugs() builds a
+  // SET, so "studio-a, Studio-A" enabled ONE studio at runtime and was reported
+  // as TWO at deploy time. The two normalisers agreed on WHICH studios activate
+  // and disagreed on HOW MANY — the count an operator reads to decide whether
+  // the config is what they meant.
+  const DUP_A = "studio-alpha-must-never-be-printed";
+  const DUP_A_MIXED_CASE = "Studio-Alpha-Must-Never-Be-Printed";
+  const DUP_B = "studio-beta-must-never-be-printed";
+
+  it("counts UNIQUE normalised slugs: the same slug in two cases is ONE studio", () => {
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, ${DUP_A_MIXED_CASE}`,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    const out = r.stdout + r.stderr;
+    expect(out).toMatch(/explicitly enables 1 studio\(s\)/);
+    // The operator typed more than they enabled: said plainly, as counts only.
+    expect(out).toMatch(/2 entries supplied; 1 duplicate normalised away/);
+    expect(out).not.toContain(DUP_A);
+    expect(out).not.toContain(DUP_A_MIXED_CASE);
+  });
+
+  it("collapses a longer duplicate run to one studio", () => {
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, ${DUP_A}, ${DUP_A_MIXED_CASE}`,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/explicitly enables 1 studio\(s\)/);
+    expect(r.stdout).toMatch(/3 entries supplied; 2 duplicate normalised away/);
+  });
+
+  it("says nothing about duplicates when there are none", () => {
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, ${DUP_B}`,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/explicitly enables 2 studio\(s\)/);
+    expect(r.stdout).not.toMatch(/duplicate/);
+  });
+
+  // THE ORDERING PROPERTY. Validity is decided per TYPED entry, before any
+  // collapsing, so a repeated valid slug can never absorb a malformed one.
+  it("a duplicate CANNOT hide an invalid entry between its copies", () => {
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: `${DUP_A}, bad slug, ${DUP_A}`,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    const out = r.stdout + r.stderr;
+    expect(out).toMatch(/FAIL stage-b-durable-waitlist-env/);
+    // Counted over SUPPLIED entries — 1 bad of the 3 typed, not of the 1 unique.
+    expect(out).toMatch(/has 1 of 3 entries that cannot be a studio slug/);
+    expect(out).not.toContain(DUP_A);
+    expect(out).not.toContain("bad slug");
+  });
+
   // ---- off-production is untouched -----------------------------------------
   it("does NOT fail a PREVIEW deploy, even with an unusable allowlist", () => {
     // Preview and the e2e lane legitimately set the reserved slug; neither is
@@ -395,6 +460,70 @@ describe("Stage-B durable waitlist activation guard", () => {
     expect(onlyUpstash.stdout + onlyUpstash.stderr).toMatch(/FAIL public-rate-limit-env/);
     expect(onlyUpstash.stdout).toMatch(/^PASS stage-b-durable-waitlist-env/m);
     expect(onlyUpstash.stdout + onlyUpstash.stderr).not.toContain(VALID_SLUG_SENTINEL);
+  });
+});
+
+// ===========================================================================
+// NORMALISATION PARITY: THE BUILD-TIME GATE vs THE RUNTIME
+// ===========================================================================
+//
+// The parser is duplicated on purpose — the gate is a dependency-free build
+// script with no module graph, and its own contract test forbids an import. A
+// duplicated parser is only safe while something proves the copies agree, and
+// Codex P2 (#637) is what happens when nothing does: they agreed on WHICH
+// studios activate and disagreed on HOW MANY.
+//
+// This drives BOTH for the same env value and compares the answers. It is a
+// behavioural comparison, not a source comparison: the gate is only reachable
+// as a process, and what must match is the answer, not the syntax.
+describe("gate and runtime normalise the allowlist identically", () => {
+  const A = "studio-alpha-parity";
+  const B = "studio-beta-parity";
+
+  /** How many studios the GATE reports for this value, via its PASS line. */
+  function gateEnabledCount(value: string): number {
+    const r = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: value,
+    });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    if (/names no studio/.test(r.stdout)) return 0;
+    const m = r.stdout.match(/explicitly enables (\d+) studio\(s\)/);
+    expect(m, r.stdout).toBeTruthy();
+    return Number((m as RegExpMatchArray)[1]);
+  }
+
+  /** How many DISTINCT studios the RUNTIME actually enables for that value. */
+  function runtimeEnabledCount(value: string, candidates: string[]): number {
+    const original = process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV];
+    process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV] = value;
+    try {
+      return candidates.filter((slug) => isNewClientWaitlistDurableEnabled(slug))
+        .length;
+    } finally {
+      if (original === undefined) delete process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV];
+      else process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV] = original;
+    }
+  }
+
+  it.each([
+    ["the P2 case: same slug, two cases", `${A}, ${A.toUpperCase()}`, [A, B], 1],
+    ["a longer duplicate run", `${A}, ${A}, ${A.toUpperCase()}`, [A, B], 1],
+    ["two genuinely distinct studios", `${A}, ${B}`, [A, B], 2],
+    ["padding and stray separators", ` ${A} , , ${B} ,`, [A, B], 2],
+    ["mixed case with padding, duplicated", `  ${A.toUpperCase()}  ,${A}`, [A, B], 1],
+    ["empty", "", [A, B], 0],
+    ["comma and whitespace only", " , ,  , ", [A, B], 0],
+  ])("agrees on %s", (_label, value, candidates, expected) => {
+    const gate = gateEnabledCount(value as string);
+    const runtime = runtimeEnabledCount(value as string, candidates as string[]);
+    expect(gate, `gate count for ${JSON.stringify(value)}`).toBe(expected);
+    expect(runtime, `runtime count for ${JSON.stringify(value)}`).toBe(expected);
+    expect(gate).toBe(runtime);
+  });
+
+  it("agrees that no unlisted studio is enabled (no global enable crept in)", () => {
+    expect(runtimeEnabledCount(`${A}, ${A.toUpperCase()}`, ["some-other-studio"])).toBe(0);
   });
 });
 
@@ -461,6 +590,18 @@ describe("check-production-env-gates contract is pinned in source", () => {
       const src = readFileSync(path.resolve(REPO_ROOT, rel), "utf8");
       expect(slugRe(src), `${rel} must define the same SLUG_RE`).toBe(gate);
     }
+  });
+
+  // CODEX P2 (#637). The regression shape was `enabled: entries.length` on the
+  // split array; the runtime's parseWaitlistSlugs() returns a Set. Pinned at
+  // the source as well as behaviourally, so the defect has a name here.
+  it("counts UNIQUE slugs the way the runtime does — a Set, not an array length", () => {
+    expect(SCRIPT_SOURCE).toMatch(/const enabled = new Set\(\)/);
+    expect(SCRIPT_SOURCE).toMatch(/enabled: enabled\.size/);
+    expect(SCRIPT_SOURCE).not.toMatch(/enabled: \w+\.length/);
+    // ...and validity is still decided per SUPPLIED entry, before collapsing.
+    expect(SCRIPT_SOURCE).toMatch(/for \(const entry of supplied\)/);
+    expect(SCRIPT_SOURCE).toMatch(/supplied: supplied\.length/);
   });
 
   it("has NO escape hatch for the activation guard specifically", () => {

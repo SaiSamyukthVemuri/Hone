@@ -301,10 +301,19 @@ export default function PrivacyPolicyPage() {
       </P>
       <P>
         <strong>With the studio whose waitlist you joined.</strong> A waitlist
-        entry belongs to that one studio: it is visible only to that studio, it
-        is emailed to that studio so it can act on it, and it is not shared with
-        any other studio on Hone. We also email you an acknowledgement that you
-        joined.
+        entry belongs to that one studio: we store it for that studio, it is
+        visible only to that studio, and it is not shared with any other studio
+        on Hone.
+      </P>
+      <P>
+        We also try to notify that studio by email so it can act on your request
+        sooner, and to send you an acknowledgement that you joined. Those emails
+        are <strong>attempted, not guaranteed</strong>: a message can fail to
+        send or fail to arrive, and a studio may have no email address set up to
+        receive one. <strong>Your entry is stored either way.</strong> A
+        notification that never arrives does not mean your request was not
+        recorded. Joining a waitlist still does not create an appointment or a
+        client record for you.
       </P>
       <P>
         <strong>In connection with a business transfer</strong>, such as a
