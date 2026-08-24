@@ -198,6 +198,11 @@ const CARRIED_RECORD_BOUNDARY =
  * parse `hosted_note`, sha256 the exact UTF-8 bytes. Not copied from prose, not
  * taken from this branch's own suffix, no whitespace normalisation.
  */
+/** The phrase a current-record claim is made with. Counted, never merely found. */
+const CURRENT_RECORD_PHRASE = "as the CURRENT hosted-state record";
+/** Captures WHICH record an active supersession names. */
+const SUPERSESSION = /SUPERSEDES the (\d{4}) record as the CURRENT hosted-state record/g;
+
 const CARRIED_0185_NOTE_SHA256 =
   "3103c7cee06dab14107c4c7f048666fb24271dd60a4c68e80586691cf07000e9";
 
@@ -260,10 +265,85 @@ describe("0186 — current hosted state", () => {
         "hosted_note: apply history has been edited, truncated or reordered",
     ).toBe(CARRIED_0185_NOTE_SHA256);
 
-    // The active supersession still names the record being replaced.
-    expect(note.slice(0, at)).toContain(
-      "SUPERSEDES the 0185 record as the CURRENT hosted-state record",
+    // The head's own law is asserted separately, below.
+  });
+
+  it("THE HEAD NAMES EXACTLY ONE CURRENT RECORD, and it supersedes 0185", () => {
+    // THE OTHER HALF OF THE SAME INVARIANT. The digest above freezes the
+    // carried SUFFIX; it says nothing about the head, and a bare `toContain`
+    // on the supersession phrase said almost nothing either — a second,
+    // contradictory "…the 0182 record as the CURRENT hosted-state record"
+    // could sit alongside the real one and both checks stayed green.
+    //
+    // POSITIONAL, NOT GLOBAL. The count is taken over the HEAD ONLY. Carried
+    // history legitimately contains older CURRENT wording — 0185's supersession
+    // of 0184, and 0184's of 0183 — which is frozen evidence and must never be
+    // rewritten to satisfy a guard.
+    const note = canonicalRecord().hosted_note;
+    const head = note.slice(0, note.indexOf(CARRIED_RECORD_BOUNDARY));
+
+    expect(
+      head.split(CURRENT_RECORD_PHRASE).length - 1,
+      "the head must name exactly ONE current hosted-state record",
+    ).toBe(1);
+
+    const claims = [...head.matchAll(SUPERSESSION)].map((m) => m[1]);
+    expect(claims).toEqual(["0185"]);
+
+    // ...and the global count is deliberately GREATER than one, which is what
+    // makes the positional law different from counting occurrences.
+    expect(note.split(CURRENT_RECORD_PHRASE).length - 1).toBeGreaterThan(1);
+  });
+
+  it("NEGATIVE CONTROL: a second CURRENT claim in the head turns this red", () => {
+    // Codex's reproduction. Mutates a copy; the real record is never touched.
+    const note = canonicalRecord().hosted_note;
+    const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+    const head = note.slice(0, at);
+    const real = "SUPERSEDES the 0185 record as the CURRENT hosted-state record";
+    expect(head).toContain(real);
+
+    const poisonedHead = head.replace(
+      real,
+      `${real} and also the 0182 record as the CURRENT hosted-state record`,
     );
+    expect(poisonedHead).not.toEqual(head);
+
+    // THE COUNT IS THE PRIMARY LAW, and this is why. The injected claim never
+    // says "SUPERSEDES", so the target regex still reports a single, correct
+    // ["0185"] — a guard built only on that regex would pass. Counting the
+    // PHRASE is what catches a second current-record claim however it is
+    // worded.
+    expect(poisonedHead.split(CURRENT_RECORD_PHRASE).length - 1).toBe(2);
+    expect([...poisonedHead.matchAll(SUPERSESSION)].map((m) => m[1])).toEqual([
+      "0185",
+    ]);
+
+    // The target check is load-bearing too, for the other mutation: a single
+    // claim that names the WRONG record.
+    const wrongTarget = head.replace(
+      real,
+      "SUPERSEDES the 0182 record as the CURRENT hosted-state record",
+    );
+    expect(wrongTarget.split(CURRENT_RECORD_PHRASE).length - 1).toBe(1);
+    expect([...wrongTarget.matchAll(SUPERSESSION)].map((m) => m[1])).toEqual([
+      "0182",
+    ]);
+
+    // ...while the carried suffix is untouched, which is exactly why the digest
+    // alone could never have caught this.
+    const poisoned = poisonedHead + note.slice(at);
+    const carried = poisoned.slice(
+      poisoned.indexOf(CARRIED_RECORD_BOUNDARY) + CARRIED_RECORD_BOUNDARY.length,
+    );
+    expect(carried.length).toBe(11189);
+    expect(createHash("sha256").update(carried, "utf8").digest("hex")).toBe(
+      CARRIED_0185_NOTE_SHA256,
+    );
+
+    // Restored byte-identically -> green again.
+    expect(head.split(CURRENT_RECORD_PHRASE).length - 1).toBe(1);
+    expect([...head.matchAll(SUPERSESSION)].map((m) => m[1])).toEqual(["0185"]);
   });
 
   it("NEGATIVE CONTROL: a mid-chain deletion turns the digest red", () => {
