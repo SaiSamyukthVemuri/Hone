@@ -190,7 +190,8 @@ const CARRIED_RECORD_BOUNDARY =
 /**
  * sha256 of the ENTIRE `hosted_note` as it stood on this PR's production base,
  * 5bbd37a5ceaeb105e65840971392823a2e68aabd — i.e. the complete frozen 0185
- * record, 11,189 bytes, covering 0184, 0183, 0182, 0181, 0180, 0179, 0178,
+ * record — 11,209 UTF-8 bytes (11,189 UTF-16 code units; the record contains
+ * em dashes and curly quotes) — covering 0184, 0183, 0182, 0181, 0180, 0179, 0178,
  * 0177, 0176, 0175, 0174, 0173, 0172 and the 0171 tail with every checksum and
  * the exact ordering.
  *
@@ -258,7 +259,13 @@ describe("0186 — current hosted state", () => {
     expect(at, "the note carries no 0185 record boundary").toBeGreaterThan(-1);
     const carried = note.slice(at + CARRIED_RECORD_BOUNDARY.length);
 
-    expect(carried.length).toBe(11189);
+    // BYTES, NOT CHARACTERS. This pin read `carried.length` and called the
+    // result a byte count. The carried record contains em dashes and curly
+    // quotes, so String.length reports 11,189 UTF-16 code units while the UTF-8
+    // encoding is 11,209 bytes — the assertion passed while the invariant it
+    // documented was false by 20. The digest below was always correct, because
+    // it hashes UTF-8; that is why the mislabel never failed anything.
+    expect(Buffer.byteLength(carried, "utf8")).toBe(11209);
     expect(
       createHash("sha256").update(carried, "utf8").digest("hex"),
       "the carried 0185 record is no longer byte-identical to the production-base " +
@@ -336,7 +343,7 @@ describe("0186 — current hosted state", () => {
     const carried = poisoned.slice(
       poisoned.indexOf(CARRIED_RECORD_BOUNDARY) + CARRIED_RECORD_BOUNDARY.length,
     );
-    expect(carried.length).toBe(11189);
+    expect(Buffer.byteLength(carried, "utf8")).toBe(11209);
     expect(createHash("sha256").update(carried, "utf8").digest("hex")).toBe(
       CARRIED_0185_NOTE_SHA256,
     );
