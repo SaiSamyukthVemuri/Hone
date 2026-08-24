@@ -134,22 +134,31 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
       </section>
 
       <section>
-        <SectionLabel as="h2">How deeply they are booked</SectionLabel>
+        {/* EVERY LABEL HERE SAYS "TREATMENT" ON PURPOSE. The bands are folded by
+            summarizeFutureTreatment, which deliberately excludes consultations —
+            so an active client whose only future booking is a consultation
+            belongs in the zero band. The copy used to say "every future
+            appointment" and the zero card used to read "Nothing booked", which
+            told the owner the opposite of what the number does and would prompt
+            a follow-up call to someone already in the diary. Something IS
+            booked; it is simply not treatment. */}
+        <SectionLabel as="h2">Future treatment booking depth</SectionLabel>
         <p className="mt-1 text-xs text-fg-muted">
-          Counted across every future appointment, cumulatively — a client with three
-          booked treatments appears in all three bands.
+          Counted across future treatment appointments only, cumulatively — a client
+          with three booked treatments appears in all three bands. Consultations do
+          not count.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-4">
-          <Card label="Nothing booked">
+          <Card label="No treatment booked">
             <Figure fact={factOf(depth, (d) => d.zero)} />
           </Card>
-          <Card label="1 or more">
+          <Card label="1 or more treatments">
             <Figure fact={factOf(depth, (d) => d.oneOrMore)} />
           </Card>
-          <Card label="2 or more">
+          <Card label="2 or more treatments">
             <Figure fact={factOf(depth, (d) => d.twoOrMore)} />
           </Card>
-          <Card label="3 or more">
+          <Card label="3 or more treatments">
             <Figure fact={factOf(depth, (d) => d.threeOrMore)} />
           </Card>
         </div>

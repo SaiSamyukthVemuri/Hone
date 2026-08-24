@@ -519,6 +519,20 @@ describe("owner capacity briefing", () => {
     expect(markup).toMatch(/Treatment appointments only/);
     expect(markup).toMatch(/consultations and buffers are excluded/i);
     expect(markup).toMatch(/Future treatment time/);
+
+    // BOOKING DEPTH IS TREATMENT-ONLY, and every visible label must say so.
+    // The bands exclude consultations, so a client whose only future booking is
+    // a consultation sits in the zero band — calling that "Nothing booked" told
+    // the owner the opposite of what the number does, and would prompt a
+    // follow-up call to someone already in the diary.
+    expect(markup).not.toContain("every future appointment");
+    expect(markup).not.toContain("Nothing booked");
+    expect(markup).toMatch(/Counted across future treatment appointments only/);
+    expect(markup).toMatch(/Consultations do not count/);
+    expect(markup).toContain("No treatment booked");
+    expect(markup).toContain("1 or more treatments");
+    expect(markup).toContain("2 or more treatments");
+    expect(markup).toContain("3 or more treatments");
   }, 30_000);
 
   it("refuses an ordinary practitioner, and issues NO studio-wide analytics query for them", async () => {
