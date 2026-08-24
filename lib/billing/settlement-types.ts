@@ -135,5 +135,10 @@ export const SETTLEMENT_RESULT_MESSAGE: Record<SettlementResultCode, string> = {
   not_found: "Appointment not found in this studio.",
   not_owner: "Only the studio owner can do that.",
   owner_only: "Only the studio owner can waive a fee.",
-  invalid_input: "That outcome could not be recorded. Check the amount and try again.",
+  // Covers two different things and must not blame the practitioner for
+  // either: an amount she typed that will not parse, and a SERVICE PRICE the
+  // studio has recorded above what a settlement snapshot can hold. She typed
+  // neither of those wrong in the second case.
+  invalid_input:
+    "That outcome could not be recorded. Check the amount, or ask the studio owner to review this service's price.",
 };

@@ -679,6 +679,12 @@ begin
      where a.studio_id = p_studio_id
        and a.charge_reason = 'session_payment'
        and a.status = 'ready'
+       -- FAIL CLOSED on anything that looks like it reached the provider. Such
+       -- a row is blocked by appointment_has_live_card_money instead, so the
+       -- command refuses before it ever gets here; this is the second of the
+       -- two independent failures that would be needed to erase the evidence.
+       and a.stripe_payment_intent_id is null
+       and a.charged_at is null
        and coalesce(a.appointment_id, s.appointment_id) = p_appointment_id
   )
   update public.payment_charge_attempts t
@@ -690,7 +696,9 @@ begin
    where t.id = target.id
      -- Re-asserted in the UPDATE itself, so a row that advanced to
      -- pending_stripe between the CTE and the write is not retired.
-     and t.status = 'ready';
+     and t.status = 'ready'
+     and t.stripe_payment_intent_id is null
+     and t.charged_at is null;
 
   get diagnostics v_count = row_count;
   return v_count;
@@ -757,12 +765,17 @@ as $$
        and (a.stripe_livemode = true or p_livemode = false)
        and coalesce(a.appointment_id, s.appointment_id) = p_appointment_id
        and (
-         -- `ready` is still card money to this predicate. The settlement
-         -- commands retire a ready attempt BEFORE calling it, so by the time
-         -- this runs a ready row means one that could not be retired — and the
-         -- card claim path, which never retires anything, must still be blocked
-         -- by it.
-         a.status in ('ready', 'pending_stripe')
+         -- MONEY IN FLIGHT AT STRIPE. Never retirable, always blocking.
+         a.status = 'pending_stripe'
+         -- A PREPARED ROW CARRYING EXECUTION EVIDENCE. `ready` normally means
+         -- prepared-and-never-sent, which the settlement commands retire. A
+         -- ready row that already holds a PaymentIntent id or a charged_at does
+         -- NOT mean that: something reached Stripe and the row has not caught
+         -- up. Retiring it would erase the only local trace of a charge that
+         -- may exist at the provider, so this FAILS CLOSED and blocks instead.
+         or (a.status = 'ready'
+             and (a.stripe_payment_intent_id is not null
+                  or a.charged_at is not null))
          or (a.status = 'succeeded'
              and not (
                a.refund_status = 'succeeded'
@@ -852,6 +865,7 @@ declare
   v_practitioner uuid;
   v_note         text := nullif(btrim(coalesce(p_note, '')), '');
   v_status       text;
+  v_quoted       integer;
   v_id           uuid;
   v_at           timestamptz;
 begin
@@ -911,21 +925,64 @@ begin
   -- database take a lock on its behalf. Released automatically at commit.
   perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(p_appointment_id));
 
-  -- CHOOSING A NON-CARD OUTCOME RETIRES A PREPARED-BUT-UNCHARGED ATTEMPT.
-  -- Same lock, same transaction, and BEFORE card money is assessed — so the
-  -- practitioner does not have to find a cancellation screen that does not
-  -- exist before she can write down that the client paid cash. Only `ready` is
-  -- touched; pending_stripe and succeeded are left alone and still refuse
-  -- below.
-  perform public.retire_ready_card_attempts(
-    p_studio_id, p_appointment_id, v_practitioner);
+  -- ---------------------------------------------------------------------
+  -- SIDE-EFFECT ORDERING. EVERY REFUSAL IS DECIDED BEFORE ANYTHING IS WRITTEN.
+  --
+  -- The first draft retired the prepared card attempt and only then asked
+  -- whether the settlement could be recorded. A refusal below is a plain
+  -- `return query` — a NORMAL RETURN, which COMMITS — so a practitioner could
+  -- be told `card_payment_exists` or `already_settled` while her prepared
+  -- charge had already been silently cancelled. Reachable in ordinary use:
+  -- payment_charge_attempts_active_session_payment_uniq is scoped to
+  -- (session_id, stripe_livemode), so one appointment can legitimately carry a
+  -- ready attempt on one session and a pending_stripe or succeeded attempt on
+  -- another, or across two modes.
+  --
+  -- So retirement is now the LAST thing before the insert, and every refusal
+  -- happens above it. A refused settlement mutates ZERO payment-charge rows.
+  -- If the insert itself raises, the transaction rolls back and the retirement
+  -- goes with it.
+  -- ---------------------------------------------------------------------
+  -- 1. IS THIS VISIT ALREADY SETTLED? Asked directly rather than inferred from
+  --    a unique-index conflict after the fact, because by then the retirement
+  --    would already have happened.
+  select t.id, t.recorded_at into v_id, v_at
+    from public.appointment_settlements t
+   where t.studio_id = p_studio_id
+     and t.appointment_id = p_appointment_id
+     and t.superseded_at is null
+   limit 1;
+  if v_id is not null then
+    return query select 'already_settled'::text, v_id, v_at;
+    return;
+  end if;
 
-  -- CARD TRUTH OUTRANKS ATTESTATION, IN BOTH TIME DIRECTIONS. Evaluated under
-  -- the lock and from PERSISTED state.
+  -- 2. CARD MONEY THAT CANNOT BE RETIRED. pending_stripe is in flight;
+  --    succeeded-and-retained is money Hone holds; a ready row carrying
+  --    execution evidence is not safely "merely prepared".
   if public.appointment_has_live_card_money(p_studio_id, p_appointment_id, coalesce(p_livemode, true)) then
     return query select 'card_payment_exists'::text, null::uuid, null::timestamptz;
     return;
   end if;
+
+  -- 3. THE SERVICE-VALUE SNAPSHOT, derived ONCE into a local. Called a second
+  --    time it could return a different number than the one validated, because
+  --    pricing is ordinary mutable data.
+  v_quoted := public.appointment_quoted_amount_cents(p_studio_id, p_appointment_id);
+  if v_quoted is not null and (v_quoted < 0 or v_quoted > 200000) then
+    -- A RESOLVED price outside this column's domain. NOT clamped, because
+    -- 200000 would be a fabricated service value in the number FIN-01A divides
+    -- by; NOT nulled, because NULL means "could not be resolved" and this price
+    -- resolved perfectly well. A closed refusal instead, so the table CHECK is
+    -- never the control flow and no raw database error reaches a practitioner.
+    return query select 'invalid_input'::text, null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  -- 4. ONLY NOW. Choosing a non-card outcome is the decision not to use the
+  --    prepared charge, and by this point the settlement WILL be written.
+  perform public.retire_ready_card_attempts(
+    p_studio_id, p_appointment_id, v_practitioner);
 
   insert into public.appointment_settlements (
     studio_id, appointment_id, method, amount_cents,
@@ -933,8 +990,9 @@ begin
   )
   values (
     p_studio_id, p_appointment_id, p_method, p_amount_cents,
-    -- DERIVED, never supplied. See appointment_quoted_amount_cents.
-    public.appointment_quoted_amount_cents(p_studio_id, p_appointment_id),
+    -- The value validated above, not a second call: pricing is mutable, and a
+    -- re-derivation could store a number that was never checked.
+    v_quoted,
     v_practitioner, v_note
   )
   on conflict (studio_id, appointment_id) where superseded_at is null
@@ -988,6 +1046,7 @@ declare
   v_practitioner uuid;
   v_note         text := nullif(btrim(coalesce(p_note, '')), '');
   v_status       text;
+  v_quoted       integer;
   v_id           uuid;
   v_at           timestamptz;
 begin
@@ -1029,16 +1088,52 @@ begin
 
   perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(p_appointment_id));
 
-  -- A waiver is equally a decision not to use the prepared attempt.
-  perform public.retire_ready_card_attempts(
-    p_studio_id, p_appointment_id, v_practitioner);
+  -- ---------------------------------------------------------------------
+  -- SIDE-EFFECT ORDERING. EVERY REFUSAL IS DECIDED BEFORE ANYTHING IS WRITTEN.
+  --
+  -- The first draft retired the prepared card attempt and only then asked
+  -- whether the settlement could be recorded. A refusal below is a plain
+  -- `return query` — a NORMAL RETURN, which COMMITS — so a practitioner could
+  -- be told `card_payment_exists` or `already_settled` while her prepared
+  -- charge had already been silently cancelled. Reachable in ordinary use:
+  -- payment_charge_attempts_active_session_payment_uniq is scoped to
+  -- (session_id, stripe_livemode), so one appointment can legitimately carry a
+  -- ready attempt on one session and a pending_stripe or succeeded attempt on
+  -- another, or across two modes.
+  --
+  -- So retirement is now the LAST thing before the insert, and every refusal
+  -- happens above it. A refused settlement mutates ZERO payment-charge rows.
+  -- If the insert itself raises, the transaction rolls back and the retirement
+  -- goes with it.
+  -- 1. already settled?
+  select t.id, t.recorded_at into v_id, v_at
+    from public.appointment_settlements t
+   where t.studio_id = p_studio_id
+     and t.appointment_id = p_appointment_id
+     and t.superseded_at is null
+   limit 1;
+  if v_id is not null then
+    return query select 'already_settled'::text, v_id, v_at;
+    return;
+  end if;
 
+  -- 2. Money Hone actually holds cannot be waived away. Refund it first; the
+  --    refund is the reversal instrument, and it lives in the card ledger.
   if public.appointment_has_live_card_money(p_studio_id, p_appointment_id, coalesce(p_livemode, true)) then
-    -- Money Hone actually holds cannot be waived away. Refund it first; the
-    -- refund is the reversal instrument, and it lives in the card ledger.
     return query select 'card_payment_exists'::text, null::uuid, null::timestamptz;
     return;
   end if;
+
+  -- 3. the snapshot, once.
+  v_quoted := public.appointment_quoted_amount_cents(p_studio_id, p_appointment_id);
+  if v_quoted is not null and (v_quoted < 0 or v_quoted > 200000) then
+    return query select 'invalid_input'::text, null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  -- 4. a waiver is equally a decision not to use the prepared attempt.
+  perform public.retire_ready_card_attempts(
+    p_studio_id, p_appointment_id, v_practitioner);
 
   insert into public.appointment_settlements (
     studio_id, appointment_id, method, amount_cents,
@@ -1046,7 +1141,7 @@ begin
   )
   values (
     p_studio_id, p_appointment_id, 'waived', p_amount_cents,
-    public.appointment_quoted_amount_cents(p_studio_id, p_appointment_id),
+    v_quoted,
     v_practitioner, v_note
   )
   on conflict (studio_id, appointment_id) where superseded_at is null
@@ -1114,6 +1209,7 @@ declare
   v_note           text := nullif(btrim(coalesce(p_note, '')), '');
   v_old            public.appointment_settlements%rowtype;
   v_appointment_id uuid;
+  v_quoted         integer;
   v_id             uuid;
   v_at             timestamptz;
 begin
@@ -1184,14 +1280,23 @@ begin
   -- A correction cannot conjure external money for a visit Hone was actually
   -- paid for. Refund the card charge first if the card fact is the wrong one;
   -- the card fact is never mutated from here.
-  perform public.retire_ready_card_attempts(
-    p_studio_id, v_old.appointment_id, v_practitioner);
-
+  -- SAME ORDERING LAW. stale_target above, then card money, then the snapshot,
+  -- and only then retirement — so a refused correction mutates zero
+  -- payment-charge rows and leaves the settlement history untouched.
   if p_method <> 'still_owes'
      and public.appointment_has_live_card_money(p_studio_id, v_old.appointment_id, coalesce(p_livemode, true)) then
     return query select 'card_payment_exists'::text, null::uuid, v_old.id, null::timestamptz;
     return;
   end if;
+
+  v_quoted := public.appointment_quoted_amount_cents(p_studio_id, v_old.appointment_id);
+  if v_quoted is not null and (v_quoted < 0 or v_quoted > 200000) then
+    return query select 'invalid_input'::text, null::uuid, v_old.id, null::timestamptz;
+    return;
+  end if;
+
+  perform public.retire_ready_card_attempts(
+    p_studio_id, v_old.appointment_id, v_practitioner);
 
   -- RETIRE FIRST, THEN INSERT. The single-truth partial unique index counts
   -- LIVE rows and is checked immediately, so inserting the replacement while
@@ -1214,7 +1319,7 @@ begin
   )
   values (
     v_id, p_studio_id, v_old.appointment_id, p_method, p_amount_cents,
-    public.appointment_quoted_amount_cents(p_studio_id, v_old.appointment_id),
+    v_quoted,
     v_practitioner, v_note,
     v_old.id, v_reason
   )

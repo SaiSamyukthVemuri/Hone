@@ -403,23 +403,101 @@ describe("0187 — a prepared card charge does not dead-end settlement", () => {
     for (const forbidden of ["pending_stripe", "succeeded", "failed", "blocked"]) {
       expect(fn).not.toContain(`'${forbidden}'`);
     }
-    // Nothing is deleted, and no money/card/Stripe column is rewritten.
+    // Nothing is deleted, and no money/card/Stripe column is WRITTEN. Scoped to
+    // the SET clause: the WHERE clause legitimately READS
+    // stripe_payment_intent_id and charged_at, because that is how a row
+    // carrying execution evidence is excluded from retirement.
     expect(fn).not.toMatch(/delete\s+from/i);
-    expect(fn).not.toMatch(/amount_cents|stripe_|signature/i);
+    const setClause = fn.slice(fn.indexOf("set status ="), fn.indexOf("from target"));
+    expect(setClause).not.toMatch(/amount_cents|stripe_|signature|charged_at/i);
   });
 
-  it("retirement happens under the shared lock, BEFORE card money is assessed", () => {
-    for (const fn of ["record_appointment_settlement", "waive_appointment_fee"]) {
+  it("EVERY refusal is decided BEFORE retirement, in all three commands", () => {
+    // THE ORDERING LAW. A refusal is a plain `return query` — a normal return,
+    // which COMMITS — so retiring first and refusing afterwards silently
+    // cancelled a prepared charge and then reported that nothing was recorded.
+    // Retirement is now the LAST thing before the insert.
+    for (const fn of [
+      "record_appointment_settlement",
+      "waive_appointment_fee",
+      "supersede_appointment_settlement",
+    ]) {
       const body = CODE.slice(
         CODE.indexOf(`create or replace function public.${fn}(`),
       ).split("$$;")[0];
       const lock = body.indexOf("pg_advisory_xact_lock");
+      const cardMoney = body.indexOf("appointment_has_live_card_money");
+      const quoted = body.indexOf("v_quoted :=");
       const retire = body.indexOf("retire_ready_card_attempts");
-      const assess = body.indexOf("appointment_has_live_card_money");
+      const insert = body.indexOf("insert into public.appointment_settlements");
+
       expect(lock).toBeGreaterThan(0);
-      expect(retire).toBeGreaterThan(lock);
-      expect(assess).toBeGreaterThan(retire);
+      expect(cardMoney).toBeGreaterThan(lock);
+      expect(quoted).toBeGreaterThan(cardMoney);
+      expect(retire).toBeGreaterThan(quoted);
+      expect(insert).toBeGreaterThan(retire);
     }
+  });
+
+  it("an existing settlement is DETECTED, not inferred from a unique conflict", () => {
+    // Inferring it from ON CONFLICT would mean the retirement had already run.
+    for (const fn of ["record_appointment_settlement", "waive_appointment_fee"]) {
+      const body = CODE.slice(
+        CODE.indexOf(`create or replace function public.${fn}(`),
+      ).split("$$;")[0];
+      const detect = body.indexOf("t.superseded_at is null");
+      const retire = body.indexOf("retire_ready_card_attempts");
+      expect(detect).toBeGreaterThan(0);
+      expect(retire).toBeGreaterThan(detect);
+    }
+  });
+
+  it("a resolved price outside the column's domain is a CLOSED refusal", () => {
+    for (const fn of [
+      "record_appointment_settlement",
+      "waive_appointment_fee",
+      "supersede_appointment_settlement",
+    ]) {
+      const body = CODE.slice(
+        CODE.indexOf(`create or replace function public.${fn}(`),
+      ).split("$$;")[0];
+      expect(body).toMatch(
+        /if v_quoted is not null and \(v_quoted < 0 or v_quoted > 200000\) then/,
+      );
+      // Never clamped to the ceiling, and never nulled to slip past the CHECK:
+      // one fabricates the service value, the other claims it was unresolvable.
+      expect(body).not.toMatch(/v_quoted := 200000/);
+      expect(body).not.toMatch(/least\(v_quoted/);
+    }
+  });
+
+  it("the snapshot is derived ONCE per command and the SAME value is stored", () => {
+    for (const fn of [
+      "record_appointment_settlement",
+      "waive_appointment_fee",
+      "supersede_appointment_settlement",
+    ]) {
+      const body = CODE.slice(
+        CODE.indexOf(`create or replace function public.${fn}(`),
+      ).split("$$;")[0];
+      // Pricing is ordinary mutable data: two calls could validate one number
+      // and store another.
+      expect(
+        [...body.matchAll(/appointment_quoted_amount_cents\(/g)],
+      ).toHaveLength(1);
+      expect(body).toMatch(/\n    v_quoted,/);
+    }
+  });
+
+  it("a ready row carrying execution evidence is never retired", () => {
+    const fn = CODE.slice(
+      CODE.indexOf("create or replace function public.retire_ready_card_attempts("),
+    ).split("$$;")[0];
+    expect(fn).toMatch(/a\.stripe_payment_intent_id is null/);
+    expect(fn).toMatch(/a\.charged_at is null/);
+    // And re-asserted on the UPDATE itself.
+    expect(fn).toMatch(/t\.stripe_payment_intent_id is null/);
+    expect(fn).toMatch(/t\.charged_at is null/);
   });
 
   it("the CARD claim path retires nothing", () => {

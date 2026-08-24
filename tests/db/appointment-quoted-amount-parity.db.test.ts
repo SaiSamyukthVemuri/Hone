@@ -279,6 +279,149 @@ describe("the DB snapshot and the pure resolver agree on the price law", () => {
   });
 });
 
+describe("a resolved price outside the snapshot's domain is a CLOSED refusal", () => {
+  // appointment_settlements.quoted_amount_cents is bounded 0..200000, but
+  // services.price_cents and client_pricing.price_cents are bounded only by
+  // >= 0. So a studio can legitimately record a $2,500 service, the helper
+  // resolves it perfectly well, and the INSERT then trips the CHECK — which
+  // surfaced to the practitioner as an authorization failure.
+  //
+  // NOT CLAMPED to 200000: that would fabricate the service value in the number
+  // FIN-01A divides by. NOT nulled: NULL means the price could not be resolved,
+  // and this one resolved fine. A closed business result instead, decided
+  // BEFORE any write.
+  async function settle(s: SeededStudio, appointmentId: string) {
+    return asUser(s.userId, async (q) => {
+      const r = await q(
+        `select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,null,false)`,
+        [s.studioId, appointmentId],
+      );
+      return r.rows[0] as { result: string };
+    });
+  }
+
+  const settlementCount = async (studioId: string) =>
+    (
+      await adminQuery(
+        `select count(*)::int n from public.appointment_settlements where studio_id=$1`,
+        [studioId],
+      )
+    ).rows[0].n as number;
+
+  it("exactly 200000 is ACCEPTED and stored", async () => {
+    const s = await studio("bound-ok");
+    const { appointmentId } = await seedAppointment(s, { servicePriceCents: 200000 });
+    expect((await settle(s, appointmentId)).result).toBe("recorded");
+    const row = (
+      await adminQuery(
+        `select quoted_amount_cents from public.appointment_settlements where studio_id=$1`,
+        [s.studioId],
+      )
+    ).rows[0];
+    expect(row.quoted_amount_cents).toBe(200000);
+  });
+
+  it("200001 is a closed refusal, with zero rows written", async () => {
+    const s = await studio("bound-over-1");
+    const { appointmentId } = await seedAppointment(s, { servicePriceCents: 200001 });
+    expect((await settle(s, appointmentId)).result).toBe("invalid_input");
+    expect(await settlementCount(s.studioId)).toBe(0);
+  });
+
+  it("250000 is a closed refusal, not a CHECK error", async () => {
+    const s = await studio("bound-over-2");
+    const { appointmentId } = await seedAppointment(s, { servicePriceCents: 250000 });
+    // The point is that this RESOLVES and is then refused in business terms.
+    expect(await dbQuoted(s.studioId, appointmentId)).toBe(250000);
+    expect((await settle(s, appointmentId)).result).toBe("invalid_input");
+    expect(await settlementCount(s.studioId)).toBe(0);
+  });
+
+  it("an out-of-range CUSTOM price refuses the same way", async () => {
+    const s = await studio("bound-custom");
+    const { appointmentId, serviceName } = await seedAppointment(s, { servicePriceCents: 9000 });
+    const today = await studioToday(s.studioId);
+    await addPricing(s, serviceName!, 300000, isoDaysFromToday(today, -1));
+    expect((await settle(s, appointmentId)).result).toBe("invalid_input");
+    expect(await settlementCount(s.studioId)).toBe(0);
+  });
+
+  it("an out-of-range price does NOT retire a prepared card attempt", async () => {
+    // The refusal is decided before retirement, so a practitioner is never left
+    // with a cancelled charge AND no settlement.
+    const s = await studio("bound-ready");
+    const { appointmentId } = await seedAppointment(s, { servicePriceCents: 250000 });
+    const sessionId = randomUUID();
+    const attemptId = randomUUID();
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, appointment_id)
+       values ($1,$2,$3,$4,'electrolysis',$5)`,
+      [sessionId, s.studioId, s.clientId, s.practitionerId, appointmentId],
+    );
+    await adminQuery(
+      `insert into public.payment_charge_attempts
+         (id, studio_id, charge_reason, client_id, session_id, appointment_id,
+          created_by_practitioner_id, amount_cents, currency, status, stripe_livemode)
+       values ($1,$2,'session_payment',$3,$4,$5,$6,4500,'cad','ready',false)`,
+      [attemptId, s.studioId, s.clientId, sessionId, appointmentId, s.practitionerId],
+    );
+
+    expect((await settle(s, appointmentId)).result).toBe("invalid_input");
+    expect(
+      (await adminQuery(`select status from public.payment_charge_attempts where id=$1`, [attemptId]))
+        .rows[0].status,
+    ).toBe("ready");
+  });
+
+  it("an explicit $0 is stored, and a missing or ambiguous price is stored as NULL", async () => {
+    const zero = await studio("bound-zero");
+    const z = await seedAppointment(zero, { servicePriceCents: 0 });
+    expect((await settle(zero, z.appointmentId)).result).toBe("recorded");
+    expect(
+      (await adminQuery(
+        `select quoted_amount_cents from public.appointment_settlements where studio_id=$1`,
+        [zero.studioId],
+      )).rows[0].quoted_amount_cents,
+    ).toBe(0);
+
+    const missing = await studio("bound-missing");
+    const m = await seedAppointment(missing, { servicePriceCents: null });
+    expect((await settle(missing, m.appointmentId)).result).toBe("recorded");
+    expect(
+      (await adminQuery(
+        `select quoted_amount_cents from public.appointment_settlements where studio_id=$1`,
+        [missing.studioId],
+      )).rows[0].quoted_amount_cents,
+    ).toBeNull();
+
+    const amb = await studio("bound-ambiguous");
+    const a = await seedAppointment(amb, { servicePriceCents: 9000 });
+    const today = await studioToday(amb.studioId);
+    const d = isoDaysFromToday(today, -2);
+    await addPricing(amb, a.serviceName!, 7000, d);
+    await addPricing(amb, a.serviceName!, 8000, d);
+    expect((await settle(amb, a.appointmentId)).result).toBe("recorded");
+    expect(
+      (await adminQuery(
+        `select quoted_amount_cents from public.appointment_settlements where studio_id=$1`,
+        [amb.studioId],
+      )).rows[0].quoted_amount_cents,
+    ).toBeNull();
+  });
+
+  it("the practitioner's attested amount is untouched by any of this", async () => {
+    const s = await studio("bound-amount");
+    const { appointmentId } = await seedAppointment(s, { servicePriceCents: 9000 });
+    await settle(s, appointmentId);
+    expect(
+      (await adminQuery(
+        `select amount_cents from public.appointment_settlements where studio_id=$1`,
+        [s.studioId],
+      )).rows[0].amount_cents,
+    ).toBe(4500);
+  });
+});
+
 describe("the caller has nothing left to forge", () => {
   it("no settlement command exposes a quoted-price parameter", async () => {
     const r = await adminQuery(

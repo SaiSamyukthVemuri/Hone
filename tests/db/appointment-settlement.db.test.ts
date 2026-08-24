@@ -64,11 +64,12 @@ async function waive(
   studioId: string,
   appointmentId: string,
   amountCents = 4500,
+  livemode = LIVE,
 ) {
   return asUser(userId, async (q) => {
     const r = await q(
       `select * from public.waive_appointment_fee($1,$2,$3,$4,$5)`,
-      [studioId, appointmentId, amountCents, null, LIVE],
+      [studioId, appointmentId, amountCents, null, livemode],
     );
     return r.rows[0] as { result: string; settlement_id: string | null };
   });
@@ -967,6 +968,225 @@ describe("0187 — a PREPARED card charge never dead-ends settlement", () => {
     expect(replay.result).toBe("already_settled");
     expect(replay.settlement_id).toBe(a.settlement_id);
     expect(await liveRows(s.studioId)).toHaveLength(1);
+  });
+});
+
+describe("0187 — A REFUSED SETTLEMENT MUTATES ZERO ATTEMPT ROWS", () => {
+  // THE ORDERING LAW. A refusal below is a plain `return query` — a normal
+  // return, which COMMITS — so retiring first and refusing afterwards silently
+  // cancelled a practitioner's prepared charge and then told her the settlement
+  // could not be recorded. Every case here proves the ready row survives.
+  const statusOf = async (id: string) =>
+    (await adminQuery(`select status from public.payment_charge_attempts where id=$1`, [id]))
+      .rows[0].status as string;
+
+  /** A second attempt on a SECOND session of the same appointment. The active
+   *  uniqueness index is (session_id, stripe_livemode), so this is legal. */
+  async function secondAttempt(s: PaymentScenario, status: string): Promise<string> {
+    const sessionId = randomUUID();
+    const id = randomUUID();
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, appointment_id)
+       values ($1,$2,$3,$4,'electrolysis',$5)`,
+      [sessionId, s.studioId, s.clientId, s.practitionerId, s.appointmentId],
+    );
+    await adminQuery(
+      `insert into public.payment_charge_attempts
+         (id, studio_id, charge_reason, client_id, session_id, appointment_id,
+          created_by_practitioner_id, amount_cents, currency, status, stripe_livemode,
+          client_payment_method_id, card_authorization_signature_id,
+          stripe_payment_intent_id, charged_at)
+       select $1::uuid, studio_id, charge_reason, client_id, $2::uuid, appointment_id,
+              created_by_practitioner_id, amount_cents, currency, $3::text, stripe_livemode,
+              client_payment_method_id, card_authorization_signature_id,
+              case when $3::text in ('pending_stripe','succeeded')
+                   then 'pi_x_' || left($1::text, 8) end,
+              case when $3::text = 'succeeded' then now() end
+         from public.payment_charge_attempts where studio_id = $4::uuid limit 1`,
+      [id, sessionId, status, s.studioId],
+    );
+    return id;
+  }
+
+  it("A · ready + nothing blocking -> records, and the ready row IS retired", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const ready = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+    expect(
+      (await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE)).result,
+    ).toBe("recorded");
+    expect(await statusOf(ready)).toBe("cancelled");
+  });
+
+  it("B · ready + an existing live settlement -> already_settled, READY UNTOUCHED", async () => {
+    const s = await scenario({ attempt: "ready" });
+    expect(
+      (await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE)).result,
+    ).toBe("recorded");
+    // A charge prepared AFTERWARDS, e.g. in another tab.
+    const ready = await secondAttempt(s, "ready");
+
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_e_transfer", 4500, TEST_MODE);
+    expect(out.result).toBe("already_settled");
+    expect(await statusOf(ready)).toBe("ready");
+  });
+
+  it("C · ready + pending_stripe -> card_payment_exists, BOTH rows untouched", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const ready = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+    const pending = await secondAttempt(s, "pending_stripe");
+
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+    expect(out.result).toBe("card_payment_exists");
+    expect(await statusOf(ready)).toBe("ready");
+    expect(await statusOf(pending)).toBe("pending_stripe");
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("D · ready + succeeded retained money -> card_payment_exists, BOTH rows untouched", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const ready = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+    const succeeded = await secondAttempt(s, "succeeded");
+
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+    expect(out.result).toBe("card_payment_exists");
+    expect(await statusOf(ready)).toBe("ready");
+    const row = (
+      await adminQuery(
+        `select status, charged_at, stripe_payment_intent_id
+           from public.payment_charge_attempts where id=$1`,
+        [succeeded],
+      )
+    ).rows[0];
+    expect(row.status).toBe("succeeded");
+    expect(row.charged_at).not.toBeNull();
+  });
+
+  it("D · a waiver refused for the same reason also leaves the ready row alone", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const ready = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+    await secondAttempt(s, "succeeded");
+    // TEST_MODE, because the seeded attempts are test-mode rows: in a LIVE
+    // deployment test money is deliberately ignored (the asymmetric rule).
+    expect(
+      (await waive(s.practitionerUserId, s.studioId, s.appointmentId, 4500, TEST_MODE)).result,
+    ).toBe("card_payment_exists");
+    expect(await statusOf(ready)).toBe("ready");
+  });
+
+  it("E · ready + an out-of-range service price -> closed refusal, READY UNTOUCHED", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const ready = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+    // A service the studio priced above what a settlement snapshot can hold.
+    // services.price_cents is bounded only by >= 0.
+    const svc = randomUUID();
+    await adminQuery(
+      `insert into public.services (id, studio_id, name, price_cents) values ($1,$2,$3,250000)`,
+      [svc, s.studioId, `Expensive ${svc.slice(0, 8)}`],
+    );
+    await adminQuery(`update public.appointments set service_id=$2 where id=$1`, [
+      s.appointmentId,
+      svc,
+    ]);
+
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+    expect(out.result).toBe("invalid_input");
+    expect(await statusOf(ready)).toBe("ready");
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("F · a replay after success returns already_settled and cancels nothing further", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const first = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+    await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+    expect(await statusOf(first)).toBe("cancelled");
+    const cancelledAt = (
+      await adminQuery(`select cancelled_at from public.payment_charge_attempts where id=$1`, [first])
+    ).rows[0].cancelled_at;
+
+    // A charge prepared after the settlement, then a replayed submission.
+    const later = await secondAttempt(s, "ready");
+    const replay = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+    expect(replay.result).toBe("already_settled");
+    // The later attempt is NOT collateral damage, and the first cancellation is
+    // not re-stamped.
+    expect(await statusOf(later)).toBe("ready");
+    expect(
+      (await adminQuery(`select cancelled_at from public.payment_charge_attempts where id=$1`, [first]))
+        .rows[0].cancelled_at,
+    ).toEqual(cancelledAt);
+  });
+
+  it("G · if the settlement write raises, the retirement rolls back with it", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const ready = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+
+    // Driven through a transaction the test aborts after the command returns,
+    // which is exactly what a raise inside the insert would do.
+    const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
+    try {
+      const c = await pool.connect();
+      await c.query("begin");
+      await c.query("set local role authenticated");
+      await c.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: s.practitionerUserId, role: "authenticated" }),
+      ]);
+      const r = await c.query(
+        `select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,null,$3)`,
+        [s.studioId, s.appointmentId, TEST_MODE],
+      );
+      expect(r.rows[0].result).toBe("recorded");
+      // Inside the transaction the row is retired...
+      expect(
+        (await c.query(`select status from public.payment_charge_attempts where id=$1`, [ready]))
+          .rows[0].status,
+      ).toBe("cancelled");
+      await c.query("rollback");
+      c.release();
+    } finally {
+      await pool.end();
+    }
+
+    // ...and outside it, nothing happened at all. Retirement and settlement are
+    // one atom.
+    expect(await statusOf(ready)).toBe("ready");
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("a ready row carrying EXECUTION EVIDENCE is never retired — fail closed", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const ready = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+    // Something reached Stripe and the row has not caught up. Erasing this is
+    // the one thing worse than blocking.
+    await adminQuery(
+      `update public.payment_charge_attempts set stripe_payment_intent_id='pi_evidence' where id=$1`,
+      [ready],
+    );
+
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+    expect(out.result).toBe("card_payment_exists");
+    expect(await statusOf(ready)).toBe("ready");
+    expect(
+      (await adminQuery(
+        `select stripe_payment_intent_id from public.payment_charge_attempts where id=$1`,
+        [ready],
+      )).rows[0].stripe_payment_intent_id,
+    ).toBe("pi_evidence");
   });
 });
 
